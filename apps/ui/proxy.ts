@@ -44,7 +44,7 @@ function brandGate(request: NextRequest): NextResponse {
 
 export async function proxy(request: NextRequest) {
     const pathname = request.nextUrl.pathname
-    if (process.env.RERUN_DESKTOP_APP === '1' && (pathname === '/desktop' || pathname.startsWith('/desktop/') || pathname === '/api/desktop' || pathname.startsWith('/api/desktop/'))) {
+    if (process.env.RERUN_DESKTOP_APP === '1' && (pathname === '/desktop' || pathname.startsWith('/desktop/') || pathname === '/api/desktop' || pathname.startsWith('/api/desktop/') || pathname === '/api/webhooks/engine')) {
         return NextResponse.next()
     }
 
