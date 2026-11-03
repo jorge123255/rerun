@@ -389,7 +389,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         const resolved = await resolveRunModel(baseAgent, override)
         agent = resolved === baseAgent.resolved ? baseAgent : { ...baseAgent, resolved }
         ;({ connection, provider, model } = resolved)
-        assertDesktopProvider(provider)
+        assertDesktopProvider(provider, resolved.connection?.id)
         const t0 = Date.now()
         const order = turnOrder(provider, await answeringModel(provider, model))
         const ctx: RunContext = { agent, sessionId, logger, provider, model, turnOrder: order, author, writer, abortSignal: controller.signal, callTargets: [], hostBreaker: new HostBreaker(), partialResults, skillProposals }
