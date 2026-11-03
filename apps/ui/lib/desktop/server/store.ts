@@ -19,6 +19,8 @@ export type DesktopSession = {
     title: string
     createdAt: string
     updatedAt: string
+    modelConnectionId: string | null
+    model: string | null
 }
 
 function agentOf(row: Row): DesktopAgent {
@@ -34,6 +36,9 @@ function agentOf(row: Row): DesktopAgent {
 }
 
 function sessionOf(row: Row): DesktopSession {
+    const modelConnectionId = row.model_connection_id == null ? null : String(row.model_connection_id)
+    const model = row.model == null ? null : String(row.model)
+    const choice = modelConnectionId && model ? { modelConnectionId, model } : null
     return {
         id: String(row.id),
         agentId: String(row.agent_id),
@@ -41,6 +46,8 @@ function sessionOf(row: Row): DesktopSession {
         title: String(row.title),
         createdAt: String(row.created_at),
         updatedAt: String(row.updated_at),
+        modelConnectionId: choice?.modelConnectionId ?? null,
+        model: choice?.model ?? null,
     }
 }
 
@@ -89,12 +96,19 @@ export async function findDesktopSession(db: Client, id: string): Promise<Deskto
     return result.rows[0] ? sessionOf(result.rows[0]) : null
 }
 
-export async function createDesktopSession(db: Client, input: { agentId: string; engineSessionId: string; title: string }): Promise<DesktopSession> {
+export async function createDesktopSession(db: Client, input: { agentId: string; engineSessionId: string; title: string; model?: { connectionId: string; model: string } | null }): Promise<DesktopSession> {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
     await db.execute({
-        sql: 'INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-        args: [id, input.agentId, input.engineSessionId, input.title.slice(0, 80) || 'New conversation', now, now],
+        sql: 'INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at, model_connection_id, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        args: [id, input.agentId, input.engineSessionId, input.title.slice(0, 80) || 'New conversation', now, now, input.model?.connectionId ?? null, input.model?.model ?? null],
     })
     return (await findDesktopSession(db, id))!
+}
+
+export async function setDesktopSessionModel(db: Client, id: string, pick: { connectionId: string; model: string } | null): Promise<void> {
+    await db.execute({
+        sql: 'UPDATE desktop_sessions SET model_connection_id = ?, model = ? WHERE id = ?',
+        args: [pick?.connectionId ?? null, pick?.model ?? null, id],
+    })
 }

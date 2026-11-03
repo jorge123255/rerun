@@ -22,6 +22,7 @@ test('loads only when a row opens, exposes recorded step/tool outcomes as text, 
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
         if (url.endsWith('/details')) { detailReads++; return Response.json(detail) }
         if (url.endsWith('/runs')) return Response.json({ runs: [run] })
+        if (String(url).includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         throw new Error(`Unexpected request ${url}`)
     }))
     const container = document.createElement('div'); document.body.append(container)

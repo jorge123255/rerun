@@ -8,6 +8,7 @@ const inputSchema = z.object({
     sessionId: z.string().min(1).optional(),
     text: z.string().trim().min(1).max(20_000),
     attachmentPath: z.string().min(1).max(4096).optional(),
+    modelChoice: z.object({ connectionId: z.string().trim().min(1).max(256), model: z.string().trim().min(1).max(256) }).optional(),
 })
 
 export async function POST(request: Request): Promise<Response> {

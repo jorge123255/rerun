@@ -13,6 +13,8 @@ import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { AttachmentChip, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
+import { DesktopModelSelector } from './DesktopModelSelector'
+import type { DesktopModelPick } from '@/lib/desktop/chat-model'
 
 async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMessage[]> {
     const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`, { signal })
@@ -53,6 +55,13 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     const [stopping, setStopping] = useState(false)
     const [stopError, setStopError] = useState<string>()
     const [liveSessionId, setLiveSessionId] = useState<string | null>(null)
+    const conversationChoice = useRef<DesktopModelPick | undefined>(undefined)
+    const modelSession = useRef(sessionId)
+    if (modelSession.current !== sessionId) {
+        modelSession.current = sessionId
+        conversationChoice.current = undefined
+    }
+    const rememberModel = useCallback((choice: DesktopModelPick | undefined) => { conversationChoice.current = choice }, [])
 
     const sendToEngine = useCallback<typeof fetch>(async (url, init) => {
         const pending = pendingAttachment.current
@@ -179,7 +188,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
         // A file can change or disappear after selection. Keep both drafts until the server accepts it.
         if (attachment) pendingAttachment.current = { key: draftKey, input }
         else setInput('')
-        const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(attachment && { attachmentPath: attachment }) }
+        const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(conversationChoice.current && { modelChoice: conversationChoice.current }), ...(attachment && { attachmentPath: attachment }) }
         void sendMessage({ text, ...(attachment && { metadata: { attachmentPath: attachment } }) }, { body })
     }
 
@@ -249,6 +258,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             onSelect={path => setDraftAttachment(draftKey, path)} />
                         {attachment && <AttachmentChip path={attachment} disabled={generating || stopping} onRemove={() => setDraftAttachment(draftKey)} />}
                     </div>
+                    <DesktopModelSelector agentId={agent.id} sessionId={sessionId} disabled={generating || stopping} onConversationChoice={rememberModel} />
                     <label htmlFor="desktop-message" className="sr-only">Message {agent.name}</label>
                     <Textarea
                         id="desktop-message"

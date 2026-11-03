@@ -22,6 +22,7 @@ test('switching, failed loads, retry, and New chat keep drafts and never show an
         if (url.includes('/second/messages')) return failSecond ? Response.json({ error: 'History unavailable' }, { status: 502 }) : messages('Second answer.')
         if (url.includes('/slow/messages')) return new Promise<Response>(resolve => { resolveSlow = resolve })
         if (url.endsWith('/chat')) sends++
+        if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         throw new Error('Unexpected request: ' + url)
     }))
     const container = document.createElement('div')

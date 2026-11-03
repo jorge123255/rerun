@@ -3,12 +3,14 @@ import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, pa
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
 import { transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
 import { sanitizeIdentifier } from '@/lib/utils'
+import { resolveDesktopChatModel } from './chat-model'
+import type { DesktopModelPick } from '../chat-model'
 import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } from './settings'
 import { DesktopHttpError } from './auth'
 import { readCoworkerFile } from './coworker-files'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
-import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession } from './store'
+import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession, setDesktopSessionModel } from './store'
 
 // Compatibility endpoint for the original OpenAI setup form.
 export async function connectDesktopOpenAI(runtime: DesktopRuntime, apiKey: string) {
@@ -66,27 +68,28 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
     }
 }
 
-export async function startDesktopChat(runtime: DesktopRuntime, input: { agentId: string; sessionId?: string; text: string; attachmentPath?: string }): Promise<{ response: Response; sessionId: string }> {
+export async function startDesktopChat(runtime: DesktopRuntime, input: { agentId: string; sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick }): Promise<{ response: Response; sessionId: string }> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     const agent = await findDesktopAgent(db, input.agentId)
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     const existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
     const file = input.attachmentPath === undefined ? undefined : await readCoworkerFile(runtime, agent.id, input.attachmentPath, 'attach')
-    const { connection, model } = await desktopModel(runtime)
+    const resolved = await resolveDesktopChatModel(runtime, agent, existing, input.modelChoice)
+    if (input.modelChoice && existing) await setDesktopSessionModel(db, existing.id, input.modelChoice)
     const engineResponse = await chat(engineOf(runtime), agent.engineAgentId, {
         sessionId: existing?.engineSessionId,
         message: input.text,
         workspaceAttachment: file && { path: file.path, content: file.content },
-        connectionId: connection.id,
-        model,
+        connectionId: resolved.connectionId,
+        model: resolved.model,
         source: 'dashboard',
         author: { id: 'local-profile-1', name: 'Local User' },
     })
     if (!engineResponse.ok || !engineResponse.body) throw new DesktopHttpError(502, 'The engine could not start this conversation')
     const engineSessionId = engineResponse.headers.get('x-session-id')
     if (!engineSessionId) throw new DesktopHttpError(502, 'The engine did not return a conversation ID')
-    const session = existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: input.text.trim().slice(0, 80) || 'New conversation' })
+    const session = existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: input.text.trim().slice(0, 80) || 'New conversation', model: input.modelChoice ?? null })
     const headers = new Headers({
         'content-type': engineResponse.headers.get('content-type') ?? 'text/event-stream',
         'x-vercel-ai-ui-message-stream': engineResponse.headers.get('x-vercel-ai-ui-message-stream') ?? 'v1',

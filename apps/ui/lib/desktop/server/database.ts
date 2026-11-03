@@ -45,10 +45,16 @@ async function initialize(dataRoot: string): Promise<Client> {
             engine_session_id TEXT NOT NULL UNIQUE,
             title TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            model_connection_id TEXT,
+            model TEXT
         );
         PRAGMA user_version = 1;
     `)
+    const columns = await client.execute('PRAGMA table_info(desktop_sessions)')
+    const names = new Set(columns.rows.map(row => String(row.name)))
+    if (!names.has('model_connection_id')) await client.execute('ALTER TABLE desktop_sessions ADD COLUMN model_connection_id TEXT')
+    if (!names.has('model')) await client.execute('ALTER TABLE desktop_sessions ADD COLUMN model TEXT')
     const now = new Date().toISOString()
     await client.batch([
         { sql: 'INSERT OR IGNORE INTO desktop_profile (id, display_name, created_at, updated_at) VALUES (1, ?, ?, ?)', args: ['Local User', now, now] },
