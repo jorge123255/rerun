@@ -10,12 +10,14 @@ import { PUT as save } from './route'
 
 const hooks = vi.hoisted(() => ({
     wrapWrite: undefined as undefined | ((target: string, handle: import('node:fs/promises').FileHandle) => import('node:fs/promises').FileHandle),
+    beforeReadOpen: undefined as undefined | ((target: string) => Promise<void>),
     beforeRename: undefined as undefined | (() => Promise<void>),
 }))
 vi.mock('node:fs/promises', async importOriginal => {
     const fs = await importOriginal<typeof import('node:fs/promises')>()
     return { ...fs,
         open: async (...args: Parameters<typeof fs.open>) => {
+            if ((Number(args[1] ?? 0) & 3) === 0) await hooks.beforeReadOpen?.(String(args[0]))
             const handle = await fs.open(...args)
             return hooks.wrapWrite && (Number(args[1] ?? 0) & 3) !== 0 ? hooks.wrapWrite(String(args[0]), handle) : handle
         },
@@ -50,6 +52,7 @@ beforeEach(async () => {
     }
 })
 afterEach(async () => {
+    hooks.beforeReadOpen = undefined
     hooks.wrapWrite = undefined
     hooks.beforeRename = undefined
     await closeDesktopDatabase(root)
@@ -105,6 +108,7 @@ test('a write that fails part way keeps the original and leaves no partial or te
     expect(response.status).toBe(500)
     expect(await readFile(join(workspace('engine-alice'), 'docs/notes.md'), 'utf8')).toBe('# Alice notes')
     expect(await leftovers(join(workspace('engine-alice'), 'docs'))).toEqual([])
+    hooks.beforeReadOpen = undefined
     hooks.wrapWrite = undefined
     expect((await put(alice, { path: 'docs/notes.md', content: '# retry', baseHash: opened.hash })).status).toBe(200)
     expect(await readFile(join(workspace('engine-alice'), 'docs/notes.md'), 'utf8')).toBe('# retry')
@@ -134,6 +138,7 @@ test('redirected folders and links cannot write into another coworker’s worksp
 
 test('a folder swapped for a sibling link after validation cannot redirect the save', async () => {
     const docs = join(workspace('engine-alice'), 'docs')
+    hooks.beforeReadOpen = undefined
     hooks.wrapWrite = undefined
     let swapped = false
     hooks.beforeRename = async () => {
@@ -142,7 +147,7 @@ test('a folder swapped for a sibling link after validation cannot redirect the s
         await rename(docs, `${docs}-moved`)
         await symlink(join(workspace('engine-bob'), 'docs'), docs)
     }
-    const response = await put(alice, { path: 'docs/notes.md', content: 'pwned', baseHash: null })
+    const response = await put(alice, { path: 'docs/notes.md', content: 'pwned', baseHash: hashText('# Alice notes') })
     // The pinned folder is the one that was validated, so the save lands there (or is refused), never in Bob's.
     expect(await readFile(join(workspace('engine-bob'), 'docs/notes.md'), 'utf8')).toBe('# Bob notes')
     if (response.status === 200) expect(await readFile(join(`${docs}-moved`, 'notes.md'), 'utf8')).toBe('pwned')
@@ -152,12 +157,12 @@ test('a folder swapped for a sibling link after validation cannot redirect the s
 test('only existing text or Markdown files can be saved', async () => {
     await writeFile(join(workspace('engine-alice'), 'docs', 'run.sh'), 'echo hi')
     await writeFile(join(workspace('engine-alice'), 'docs', 'bin.md'), Buffer.from([0xff, 0xfe, 0x00, 0x41]))
-    expect((await put(alice, { path: 'docs/run.sh', content: 'x', baseHash: null })).status).toBe(415)
-    expect((await put(alice, { path: 'docs/missing.md', content: 'x', baseHash: null })).status).toBe(404)
-    expect((await put(alice, { path: 'docs/bin.md', content: 'x', baseHash: null })).status).toBe(415)
+    expect((await put(alice, { path: 'docs/run.sh', content: 'x', baseHash: 'opened' })).status).toBe(415)
+    expect((await put(alice, { path: 'docs/missing.md', content: 'x', baseHash: 'opened' })).status).toBe(404)
+    expect((await put(alice, { path: 'docs/bin.md', content: 'x', baseHash: 'opened' })).status).toBe(415)
     expect((await preview(alice, 'docs/bin.md')).hash).toBeUndefined()
-    expect((await put(alice, { path: 'docs/notes.md', content: 'a\u0000b', baseHash: null })).status).toBe(415)
-    expect((await put(alice, { path: 'docs/notes.md', content: 'x'.repeat(256 * 1024 + 1), baseHash: null })).status).toBe(413)
+    expect((await put(alice, { path: 'docs/notes.md', content: 'a\u0000b', baseHash: 'opened' })).status).toBe(415)
+    expect((await put(alice, { path: 'docs/notes.md', content: 'x'.repeat(256 * 1024 + 1), baseHash: 'opened' })).status).toBe(413)
     expect((await put(alice, { path: 'docs/notes.md' })).status).toBe(400)
     expect(await readFile(join(workspace('engine-alice'), 'docs/notes.md'), 'utf8')).toBe('# Alice notes')
 })
@@ -168,4 +173,67 @@ test('a save needs the desktop session and same-origin request', async () => {
     { params: Promise.resolve({ agentId: alice }) })
     expect(response.status).toBeGreaterThanOrEqual(400)
     expect(await readFile(join(workspace('engine-alice'), 'docs/notes.md'), 'utf8')).toBe('# Alice notes')
+})
+
+test('review simultaneous edits both reach final check on same base', async () => {
+    const path = 'docs/notes.md'
+    const prev = await preview(alice, path)
+    let atRename = 0
+    let resume!: () => void
+    const both = new Promise<void>(r => { resume = r })
+    const timeout = setTimeout(resume, 1200)
+    hooks.beforeRename = async () => { if (++atRename === 2) resume(); await both }
+    const results = await Promise.all(['first new body', 'second new body'].map(content => put(alice, {path, content, baseHash: prev.hash})))
+    clearTimeout(timeout)
+    const disk = await readFile(join(workspace('engine-alice'), path), 'utf8')
+    console.info('RACE STATUS',results.map(x=>x.status), 'DISK',disk)
+    expect(results.map(x=>x.status).sort()).toEqual([200,409])
+    const loser = results.find(result => result.status === 409)!
+    const current = (await loser.json()).current
+    expect(current.content).toBe(disk)
+    expect(current.hash).toBe(hashText(disk))
+    expect(await leftovers(join(workspace('engine-alice'), 'docs'))).toEqual([])
+})
+test('review a deletion in the final publish window is preserved', async () => {
+    const path = 'docs/notes.md', full = join(workspace('engine-alice'), path)
+    const prev = await preview(alice, path)
+    hooks.beforeRename = async () => { await rm(full) }
+    const response = await put(alice, { path, content: 'stale edit', baseHash: prev.hash })
+    expect(response.status).toBe(404)
+    await expect(readFile(full, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await leftovers(join(workspace('engine-alice'), 'docs'))).toEqual([])
+})
+test('review explicit null hash bypasses stale detection without conflict confirmation', async () => {
+    const path='docs/notes.md'
+    await preview(alice,path)
+    await writeFile(join(workspace('engine-alice'),path), 'new disk data')
+    const response = await put(alice,{path,content:'overwriting null',baseHash:null})
+    console.info('NULL STATUS',response.status,'DISK',await readFile(join(workspace('engine-alice'),path),'utf8'))
+    expect(response.status).not.toBe(200)
+})
+test('review a newly created file in final publish window is preserved',async () => {
+    const path='docs/notes.md', full=join(workspace('engine-alice'),path)
+    const prev=await preview(alice,path)
+    hooks.beforeRename = async () => { await rm(full); await writeFile(full,'external replacement') }
+    const response=await put(alice,{path,content:'stale edit',baseHash:prev.hash})
+    console.info('REPLACEMENT STATUS',response.status,'DISK',await readFile(full,'utf8'))
+    expect(await readFile(full,'utf8')).toBe('external replacement')
+})
+test('review growth after lstat does not read or return oversized content',async () => {
+    const path='docs/notes.md', full=join(workspace('engine-alice'),path)
+    const prev=await preview(alice,path)
+    hooks.beforeReadOpen=async target=>{ if(target.endsWith('/notes.md')) {hooks.beforeReadOpen=undefined;await writeFile(full,'X'.repeat(400000))} }
+    const response=await put(alice,{path,content:'draft',baseHash:prev.hash})
+    const body=await response.json()
+    console.info('GROWTH STATUS',response.status,'RETURNED',body.current?.content?.length)
+    expect(response.status).toBe(413)
+})
+test('review final publish after directory moved outside selected workspace',async () => {
+    const path='docs/notes.md'
+    const prev=await preview(alice,path)
+    const original=join(workspace('engine-alice'),'docs'), moved=join(workspace('engine-bob'),'formerly-alice')
+    hooks.beforeRename=async()=>{ hooks.beforeRename=undefined; await rename(original,moved); await mkdir(original) }
+    const response=await put(alice,{path,content:'alice edit',baseHash:prev.hash})
+    console.info('OTHER WORKSPACE STATUS',response.status,'DISK',await readFile(join(moved,'notes.md'),'utf8'))
+    expect(await readFile(join(moved,'notes.md'),'utf8')).toBe('# Alice notes')
 })

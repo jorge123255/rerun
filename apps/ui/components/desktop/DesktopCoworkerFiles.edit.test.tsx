@@ -104,7 +104,7 @@ test('a stale save keeps both the newer disk text and the draft, then reload or 
     expect(document.querySelector<HTMLTextAreaElement>('[data-testid="file-editor"] textarea')!.value).toBe('my draft')
     expect(files.alice).toBe('coworker wrote this')
     // Reload: editor takes the disk version, the draft stays visible to copy.
-    await click('Reload newer version')
+    await click('Keep theirs')
     expect(document.querySelector<HTMLTextAreaElement>('[data-testid="file-editor"] textarea')!.value).toBe('coworker wrote this')
     expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Your previous edits"]')!.value).toBe('my draft')
     await type('merged')
@@ -126,7 +126,7 @@ test('save mine anyway retries against the version shown', async () => {
     await type('mine')
     await click('Save changes')
     await flush()
-    await click('Save mine anyway')
+    await click('Overwrite')
     await flush()
     expect(files.alice).toBe('mine')
     expect(puts.map(p => p.baseHash)).toEqual([hashText('opened'), hashText('newer')])

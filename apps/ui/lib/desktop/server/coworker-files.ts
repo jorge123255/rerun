@@ -282,15 +282,23 @@ export class CoworkerFileConflict extends Error {
     constructor(readonly current: { content: string; hash: string } | null) { super('This file changed on disk since you opened it.') }
 }
 
-/**
- * Port of FileDetail's writeFileAction/saveTextFile for the Mac: replaces one existing UTF-8 .txt/.md
- * file in the coworker's workspace. `baseHash` is the hash the editor opened (null = overwrite on
- * purpose after a conflict). Unlike the engine route upstream, the compare happens in the same
- * pinned folder as the write: the new text goes to a hidden temp file, is synced, the disk copy is
- * re-checked against `baseHash`, and only then is the temp renamed over the name. A failed or
- * interrupted write therefore leaves the original untouched and never publishes a partial file.
- */
-export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string | null): Promise<SaveCoworkerFileResult> {
+const saveLocks = new Map<string, Promise<void>>()
+
+async function withSaveLock<T>(key: string, run: () => Promise<T>): Promise<T> {
+    const previous = saveLocks.get(key) ?? Promise.resolve()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const tail = previous.then(() => gate)
+    saveLocks.set(key, tail)
+    await previous
+    try { return await run() } finally {
+        release()
+        if (saveLocks.get(key) === tail) saveLocks.delete(key)
+    }
+}
+
+/** Serialize our own saves, then publish without replacing any writer that landed in the meantime. */
+export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string): Promise<SaveCoworkerFileResult> {
     const bytes = Buffer.from(content, 'utf8')
     if (bytes.byteLength > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
     if (content.includes('\0') || looksBinary(content)) throw new DesktopHttpError(415, 'Only text can be saved here.')
@@ -298,68 +306,127 @@ export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string,
     const name = rel.split('/').pop() ?? ''
     if (!rel || name.startsWith('.') || !EDITABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be edited here.')
     if (!root || !target) throw new DesktopHttpError(404, 'File not found')
+    if (!baseHash) throw new DesktopHttpError(400, 'The opened file version is required for every save.')
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
-    // `target` is the canonical file; a link inside the workspace saves through to what it points at.
     const folder = dirname(target)
     const finalName = basename(target)
     if (!inside(root, folder)) throw outside()
-    let dir: FileHandle
-    try { dir = await openResolved(folder, true) } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new DesktopHttpError(404, 'File not found')
-        throw error
-    }
-    try {
-        const pinned = await pinnedDirectory(dir)
-        const readCurrent = async () => {
-            const info = await lstat(join(pinned, finalName)).catch(error => { if (missing(error)) return null; throw error })
-            if (!info) return null
-            if (!info.isFile()) throw outside()
-            if (info.size > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
-            const handle = await open(join(pinned, finalName), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-            try {
-                const text = editableText(await handle.readFile())
-                if (text === null) throw new DesktopHttpError(415, 'This file is not UTF-8 text, so it can’t be edited here.')
-                return { content: text, hash: hashText(text), mode: info.mode & 0o777 }
-            } finally { await handle.close() }
-        }
-        const check = async () => {
-            const current = await readCurrent()
-            if (!current) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
-            if (baseHash !== null && current.hash !== baseHash) throw new CoworkerFileConflict({ content: current.content, hash: current.hash })
-            return current
-        }
-        const { mode } = await check()
-        const tempName = `.rerun-edit-${randomBytes(12).toString('hex')}`
-        const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
-        let handle: FileHandle
-        try {
-            handle = process.platform === 'darwin'
-                ? await open(join(folder, tempName), flags | 0x20000000, mode)
-                : await open(`${pinned}/${tempName}`, flags | constants.O_NOFOLLOW, mode)
-        } catch (error) {
-            if (['ELOOP', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw outside()
+    return withSaveLock(target, async () => {
+        let dir: FileHandle
+        try { dir = await openResolved(folder, true) } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new DesktopHttpError(404, 'File not found')
             throw error
         }
-        const tempPath = join(pinned, tempName)
-        let published = false
         try {
-            try {
-                const [opened, listed] = await Promise.all([handle.stat({ bigint: true }), lstat(tempPath, { bigint: true })])
-                if (opened.ino !== listed.ino || opened.dev !== listed.dev) throw outside()
-                await handle.writeFile(bytes)
-                await handle.sync()
-            } finally {
-                await handle.close()
+            const pinned = await pinnedDirectory(dir)
+            const assertFolderUnmoved = async () => {
+                const [opened, listed, actual] = await Promise.all([
+                    dir.stat({ bigint: true }),
+                    lstat(folder, { bigint: true }).catch(() => null),
+                    realpath(folder).catch(() => null),
+                ])
+                if (!listed || !actual || actual !== folder || !inside(root, actual) || opened.dev !== listed.dev || opened.ino !== listed.ino) throw outside()
             }
-            // Re-read right before publishing so a write that landed while ours was in flight is not lost.
-            await check()
-            await rename(tempPath, join(pinned, finalName))
-            published = true
+            const readCurrent = async (fileName = finalName) => {
+                const info = await lstat(join(pinned, fileName)).catch(error => { if (missing(error)) return null; throw error })
+                if (!info) return null
+                if (!info.isFile()) throw outside()
+                const handle = await open(join(pinned, fileName), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+                try {
+                    const opened = await handle.stat()
+                    if (!opened.isFile()) throw outside()
+                    if (opened.size > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
+                    const buffer = Buffer.alloc(Math.min(opened.size, EDIT_BYTES + 1))
+                    let bytesRead = 0
+                    while (bytesRead < buffer.length) {
+                        const read = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead)
+                        if (!read.bytesRead) break
+                        bytesRead += read.bytesRead
+                    }
+                    if (bytesRead > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
+                    const after = await handle.stat()
+                    if (!after.isFile() || after.size > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
+                    const text = editableText(buffer.subarray(0, bytesRead))
+                    if (text === null) throw new DesktopHttpError(415, 'This file is not UTF-8 text, so it can’t be edited here.')
+                    return { content: text, hash: hashText(text), mode: opened.mode & 0o777 }
+                } finally { await handle.close() }
+            }
+            const check = async () => {
+                const current = await readCurrent()
+                if (!current) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+                if (current.hash !== baseHash) throw new CoworkerFileConflict({ content: current.content, hash: current.hash })
+                return current
+            }
+            const { mode } = await check()
+            const tempName = `.rerun-edit-${randomBytes(12).toString('hex')}`
+            const backupName = `.rerun-backup-${randomBytes(12).toString('hex')}`
+            const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+            let handle: FileHandle
+            try {
+                handle = process.platform === 'darwin'
+                    ? await open(join(folder, tempName), flags | 0x20000000, mode)
+                    : await open(`${pinned}/${tempName}`, flags | constants.O_NOFOLLOW, mode)
+            } catch (error) {
+                if (['ELOOP', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw outside()
+                throw error
+            }
+            const tempPath = join(pinned, tempName)
+            const backupPath = join(pinned, backupName)
+            const finalPath = join(pinned, finalName)
+            let backupCreated = false
+            let published = false
+            const restoreBackup = async () => {
+                if (!backupCreated) return
+                try {
+                    await link(backupPath, finalPath)
+                    await unlink(backupPath)
+                    backupCreated = false
+                } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+                }
+            }
+            try {
+                try {
+                    const [opened, listed] = await Promise.all([handle.stat({ bigint: true }), lstat(tempPath, { bigint: true })])
+                    if (opened.ino !== listed.ino || opened.dev !== listed.dev) throw outside()
+                    await handle.writeFile(bytes)
+                    await handle.sync()
+                } finally {
+                    await handle.close()
+                }
+                await check()
+                await assertFolderUnmoved()
+                try { await rename(finalPath, backupPath) } catch (error) {
+                    if (missing(error)) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+                    throw error
+                }
+                backupCreated = true
+                try {
+                    await assertFolderUnmoved()
+                    const current = await readCurrent(backupName)
+                    if (!current) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+                    if (current.hash !== baseHash) throw new CoworkerFileConflict({ content: current.content, hash: current.hash })
+                    await assertFolderUnmoved()
+                    try { await link(tempPath, finalPath) } catch (error) {
+                        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+                        const competing = await readCurrent()
+                        if (!competing) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+                        throw new CoworkerFileConflict({ content: competing.content, hash: competing.hash })
+                    }
+                    published = true
+                    await unlink(tempPath).catch(() => {})
+                    await unlink(backupPath).catch(() => {})
+                    backupCreated = false
+                } catch (error) {
+                    await restoreBackup()
+                    throw error
+                }
+            } finally {
+                if (!published) await unlink(tempPath).catch(() => {})
+            }
         } finally {
-            if (!published) await unlink(tempPath).catch(() => {})
+            await dir.close()
         }
-    } finally {
-        await dir.close()
-    }
-    return { path: rel, hash: hashText(content), size: bytes.byteLength }
+        return { path: rel, hash: hashText(content), size: bytes.byteLength }
+    })
 }

@@ -209,8 +209,8 @@ function FileEditor({ base, path, content, hash, onClose, onSaved }: { base: str
             <p className="font-medium">{name} changed on disk after you opened it. Your edits are still in the editor; the newer version is below. Nothing was saved.</p>
             <pre data-testid="conflict-disk" className="max-h-32 overflow-auto rounded border bg-muted/30 p-2 font-mono whitespace-pre-wrap break-words">{conflict.content}</pre>
             <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={reload} disabled={saving}>Reload newer version</Button>
-                <Button type="button" size="sm" onClick={() => void save(conflict.hash)} disabled={saving}>Save mine anyway</Button>
+                <Button type="button" variant="outline" size="sm" onClick={reload} disabled={saving}>Keep theirs</Button>
+                <Button type="button" size="sm" onClick={() => void save(conflict.hash)} disabled={saving}>Overwrite</Button>
             </div>
         </div>}
         {setAside !== null && <div className="space-y-1 text-xs" data-testid="set-aside">

@@ -10,7 +10,7 @@ export function PUT(request: Request, { params }: Context) {
     return desktopRoute(request, async runtime => {
         const { agentId } = await params
         const body = await request.json().catch(() => null) as { path?: unknown; content?: unknown; baseHash?: unknown } | null
-        if (!body || typeof body.path !== 'string' || typeof body.content !== 'string' || !(body.baseHash === null || typeof body.baseHash === 'string')) {
+        if (!body || typeof body.path !== 'string' || typeof body.content !== 'string' || typeof body.baseHash !== 'string' || body.baseHash.length === 0) {
             throw new DesktopHttpError(400, 'Send a path, the new text and the hash the editor opened.')
         }
         try {
