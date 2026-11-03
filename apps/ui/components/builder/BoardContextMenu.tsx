@@ -22,6 +22,7 @@ type BoardContextMenuProps = {
 export function BoardContextMenu({ children, target, onTargetClear }: BoardContextMenuProps) {
     const agents = useBoardStore(state => state.agents)
     const spaces = useBoardStore(state => state.spaces)
+    const renameAgent = useBoardStore(state => state.renameAgent)
     const openAgentChat = useBoardStore(state => state.openAgentChat)
     const openAgentSettings = useBoardStore(state => state.openAgentSettings)
     const beginAgentDuplicatePlacement = useBoardStore(state => state.beginAgentDuplicatePlacement)
@@ -139,6 +140,7 @@ export function BoardContextMenu({ children, target, onTargetClear }: BoardConte
 
             <RenameAgentDialog
                 agent={agentToRename}
+                onRename={renameAgent}
                 open={!!renameAgentId}
                 onOpenChange={open => {
                     if (!open) setRenameAgentId(null)

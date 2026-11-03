@@ -44,6 +44,8 @@ In **Files**, **Import file** copies a single local `.txt` or `.md` document of 
 
 Selecting a tile or a Find chat result opens the coworker in Rerun’s shared side panel. At desktop widths it sits along the right edge of the isometric board. Narrow windows use the original bottom sheet. Closing the panel returns focus to the coworker’s tile and retains the board’s pan and zoom. The workspace menu provides access to Settings and coworkers.
 
+Right-click a coworker’s tile, or focus the tile and press Shift+F10, then choose **Rename**. The Mac uses Rerun’s rename dialog and derives the @handle from the new display name. It keeps the same coworker and chat IDs. An open panel keeps its selected conversation and unsent text when the board label changes.
+
 The coworker panel uses Rerun’s **open chat tabs**. Select **+** to start a chat, or choose a saved conversation from Chats or Find chat to open it in the strip. Each conversation has its own messages, model choice and running reply. The Mac database remembers up to eight open tabs and the active tab per coworker across launches. Closing a tab keeps its conversation in Chats.
 
 The composer’s model picker can follow the workspace model, star a coworker default, or choose a model for just one conversation. A new chat’s choice is saved on its first send. An alternate created with **Regenerate reply** inherits an explicit chat choice, while an alternate of a chat following defaults continues to follow them.

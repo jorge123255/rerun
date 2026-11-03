@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { reconcileDesktopRenames } from '@/lib/desktop/server/coworker-rename'
+import { engineOf } from '@/lib/desktop/server/settings'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopCoworker } from '@/lib/desktop/server/engine'
@@ -12,7 +14,9 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request): Promise<Response> {
     return desktopRoute(request, async runtime => {
-        const agents = await listDesktopAgents(await openDesktopDatabase(runtime.dataRoot))
+        const db = await openDesktopDatabase(runtime.dataRoot)
+        await reconcileDesktopRenames(db, engineOf(runtime), runtime.launchNonce)
+        const agents = await listDesktopAgents(db)
         return Response.json({ agents: agents.map(desktopAgentView) })
     })
 }

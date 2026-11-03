@@ -39,6 +39,13 @@ async function initialize(dataRoot: string): Promise<Client> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS desktop_rename_checks (
+            agent_id TEXT PRIMARY KEY REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            handle TEXT NOT NULL,
+            operation_id TEXT NOT NULL,
+            launch_nonce TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS desktop_sessions (
             id TEXT PRIMARY KEY,
             agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,

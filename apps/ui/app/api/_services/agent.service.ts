@@ -13,6 +13,7 @@ import { AGENT_SPAN, UNPLACED_COL, agentsOverlap, isPlaced } from '@/lib/board/i
 import type { GridPosition } from '@/lib/board/types'
 import { createServiceRoleClient } from '@/supabase/serviceRole'
 import { selectMany, selectSingle } from '@/supabase/supabase-helpers'
+import { allocateHandle } from '@/lib/agent-handle'
 import { sanitizeIdentifier } from '@/lib/utils'
 import { duplicateAgentName } from '@/lib/copy-name'
 import { PLAN_LIMIT_REASON, hasFreeAgentSlot } from './capacity.service'
@@ -94,13 +95,6 @@ export async function moveAgentToBox(agentId: string, spaceId: string): Promise<
     if (error) return { ok: false, error: `Failed to move agent: ${error.message}` }
 
     return { ok: true, position }
-}
-
-function allocateHandle(displayName: string, taken: Set<string>): string {
-    const base = sanitizeIdentifier(displayName).replace(/^_+|_+$/g, '') || 'agent'
-    let candidate = base
-    for (let i = 2; taken.has(candidate); i++) candidate = `${base}_${i}`
-    return candidate
 }
 
 // The mention token / call_agent resolution key. Derived from the free display name, unique per

@@ -3,6 +3,7 @@ import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS } from
 import { createConnection, listConnections, patchConnection, setBoxDefault, updateConnectionKeys } from '@/lib/engine/client'
 import { desktopProvider, type SettingsChange } from '../settings'
 import { DesktopHttpError } from './auth'
+import { reconcileDesktopRenames } from './coworker-rename'
 import { openDesktopDatabase } from './database'
 import { readDesktopBootstrap } from './store'
 import { desktopAgentView } from './views'
@@ -20,7 +21,10 @@ export async function readDesktopProviders(runtime: DesktopRuntime) {
 
 export async function readDesktopWorkspace(runtime: DesktopRuntime) {
     const [bootstrap, providers] = await Promise.all([
-        openDesktopDatabase(runtime.dataRoot).then(readDesktopBootstrap),
+        openDesktopDatabase(runtime.dataRoot).then(async db => {
+            await reconcileDesktopRenames(db, engineOf(runtime), runtime.launchNonce)
+            return readDesktopBootstrap(db)
+        }),
         readDesktopProviders(runtime),
     ])
     return { ...bootstrap, ...providers, agents: bootstrap.agents.map(desktopAgentView) }

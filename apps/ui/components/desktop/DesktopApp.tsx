@@ -139,6 +139,15 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         }
     }
 
+    async function renameCoworker(id: string, name: string) {
+        const { agent } = await json<{ agent: DesktopAgentView }>(await fetch(`/api/desktop/agents/${encodeURIComponent(id)}`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name }),
+        }))
+        setAgents(current => current.map(existing => existing.id === id ? agent : existing))
+    }
+
     function showBoard(create = false) {
         setSettings(false)
         setCreating(create)
@@ -174,7 +183,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
-                    onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
+                    onRename={renameCoworker} onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
                 {selectedAgent && <div inert={!panelOpen} aria-hidden={!panelOpen || undefined}>
                     <SidePanel isOpen={panelOpen} onDismiss={closePanel}>
                         <section ref={panelContent} tabIndex={-1} aria-label="Coworker chat" className="flex h-full min-h-0 flex-col outline-none"

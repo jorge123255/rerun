@@ -7,17 +7,19 @@ import type { DesktopAgentView } from './DesktopApp'
 import { useBoardActivity } from './useBoardActivity'
 import type { BoardActivityStatus } from '@/lib/desktop/board-activity'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
+import { DesktopBoardMenu } from './DesktopBoardMenu'
 import { DesktopFindChat } from './DesktopFindChat'
 
 const ACTIVITY_LABEL: Record<BoardActivityStatus, string> = { working: 'Working', idle: 'Idle', unreachable: 'Activity unavailable', unknown: 'Checking activity' }
 
-export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation }: {
+export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation, onRename }: {
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
     selectedAgentId?: string | null
     panelInsetRight?: number
     onOpen: (id: string) => void
+    onRename?: (id: string, name: string) => Promise<void>
     onCreate: () => void
     onDismiss?: () => void
     onOpenConversation?: (hit: DesktopConversationHit) => void
@@ -46,10 +48,11 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
     return (
         <section aria-label="Team board" className="relative isolate min-h-0 min-w-0 flex-1">
             <h1 className="sr-only">Team board</h1>
-            <div className="absolute inset-0">
+            <DesktopBoardMenu agents={agents} onOpen={onOpen} onRename={onRename}>{onTileContextMenu =>
                 <IsoGrid
                     tiles={tiles}
                     containers={[box]}
+                    onTileContextMenu={onTileContextMenu}
                     selectedTileId={selectedAgentId}
                     frameInset={{ left: 0, right: panelInsetRight }}
                     fitToContent
@@ -63,7 +66,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
                     }}
                     onContainerSelect={tiles.length ? undefined : id => { if (id) onCreate() }}
                 />
-            </div>
+            }</DesktopBoardMenu>
             <div className="absolute top-4 left-4 z-40 flex items-start gap-2">{workspaceMenu}</div>
             <ChromeBar className="absolute bottom-4 left-4 z-40" aria-label="Board actions" role="group">
                 {onOpenConversation && <><DesktopFindChat onSelect={onOpenConversation} /><ChromeDivider /></>}

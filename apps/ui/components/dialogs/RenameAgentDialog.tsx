@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { useBoardStore } from '@/stores/board.store'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
@@ -18,23 +17,35 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>
 
-export function RenameAgentDialog({ agent, open, onOpenChange }: { agent: { id: string; name: string } | undefined; open: boolean; onOpenChange: (open: boolean) => void }) {
-    const renameAgent = useBoardStore(s => s.renameAgent)
+export function RenameAgentDialog({ agent, open, onOpenChange, onRename, onRestoreFocus }: {
+    agent: { id: string; name: string } | undefined
+    open: boolean
+    onOpenChange: (open: boolean) => void
+    onRename: (id: string, name: string) => void | Promise<void>
+    onRestoreFocus?: () => void
+}) {
     const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { name: agent?.name ?? '' } })
 
     useEffect(() => {
         if (open) form.reset({ name: agent?.name ?? '' })
     }, [open, agent?.name, form])
 
-    const onSubmit = form.handleSubmit(values => {
+    const onSubmit = form.handleSubmit(async values => {
         const name = values.name.trim()
-        if (agent && name !== agent.name) renameAgent(agent.id, name)
-        onOpenChange(false)
+        try {
+            if (agent && name !== agent.name) await onRename(agent.id, name)
+            onOpenChange(false)
+        } catch (error) {
+            form.setError('name', { message: error instanceof Error ? error.message : 'Could not rename this coworker.' }, { shouldFocus: true })
+        }
     })
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-md">
+        <Dialog open={open} onOpenChange={next => { if (!form.formState.isSubmitting) onOpenChange(next) }}>
+            <DialogContent className="sm:max-w-md" onCloseAutoFocus={onRestoreFocus ? event => {
+                event.preventDefault()
+                onRestoreFocus()
+            } : undefined}>
                 <Form {...form}>
                     <form onSubmit={onSubmit} className="flex flex-col gap-4">
                         <DialogHeader>
@@ -48,7 +59,7 @@ export function RenameAgentDialog({ agent, open, onOpenChange }: { agent: { id: 
                             render={({ field }) => (
                                 <FormItem>
                                     <FormControl>
-                                        <Input label="Name" required autoFocus {...field} />
+                                        <Input label="Name" required autoFocus readOnly={form.formState.isSubmitting} {...field} />
                                     </FormControl>
                                     <FormMessage />
                                 </FormItem>
@@ -56,10 +67,10 @@ export function RenameAgentDialog({ agent, open, onOpenChange }: { agent: { id: 
                         />
 
                         <DialogFooter>
-                            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                            <Button type="button" variant="outline" disabled={form.formState.isSubmitting} onClick={() => onOpenChange(false)}>
                                 Cancel
                             </Button>
-                            <Button type="submit" disabled={!form.watch('name').trim()}>
+                            <Button type="submit" disabled={form.formState.isSubmitting || !form.watch('name').trim()}>
                                 Rename
                             </Button>
                         </DialogFooter>
