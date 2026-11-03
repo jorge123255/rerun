@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from './database'
-import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession, listDesktopAgents, listDesktopConnections, listDesktopSessions, readDesktopBootstrap, saveDesktopConnection } from './store'
+import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession, listDesktopAgents, listDesktopSessions, readDesktopBootstrap } from './store'
 
 let root: string
 let db: Client
@@ -25,7 +25,6 @@ describe('desktop store', () => {
         expect(bootstrap.profile).toEqual({ id: 1, displayName: 'Local User' })
         expect(bootstrap.workspace).toEqual({ id: 1, name: 'My workspace' })
         expect(bootstrap.agents).toEqual([])
-        expect(bootstrap.connections).toEqual([])
     })
 
     it('stores engine agent IDs separately from stable local IDs', async () => {
@@ -45,11 +44,4 @@ describe('desktop store', () => {
         await expect(listDesktopSessions(db, agent.id)).resolves.toEqual([second, first])
     })
 
-    it('stores only provider metadata, never API keys', async () => {
-        await saveDesktopConnection(db, { id: 'connection-1', provider: 'openai', name: 'OpenAI' })
-        await expect(listDesktopConnections(db)).resolves.toEqual([{ id: 'connection-1', provider: 'openai', name: 'OpenAI' }])
-        const columns = await db.execute("PRAGMA table_info('desktop_connections')")
-        expect(columns.rows.map(row => String(row.name))).not.toContain('apiKey')
-        expect(columns.rows.map(row => String(row.name))).not.toContain('api_key')
-    })
 })

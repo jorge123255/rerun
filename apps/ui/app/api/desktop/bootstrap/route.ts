@@ -1,13 +1,8 @@
-import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
-import { readDesktopBootstrap } from '@/lib/desktop/server/store'
-import { desktopAgentView } from '@/lib/desktop/server/views'
+import { readDesktopWorkspace } from '@/lib/desktop/server/settings'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: Request): Promise<Response> {
-    return desktopRoute(request, async runtime => {
-        const bootstrap = await readDesktopBootstrap(await openDesktopDatabase(runtime.dataRoot))
-        return Response.json({ ...bootstrap, agents: bootstrap.agents.map(desktopAgentView) })
-    })
+export async function GET(request: Request) {
+    return desktopRoute(request, async runtime => Response.json(await readDesktopWorkspace(runtime)))
 }

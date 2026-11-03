@@ -1,37 +1,20 @@
 import 'server-only'
-import { chat, createAgent, createConnection, getSessionMessages, updateConnectionKeys } from '@/lib/engine/client'
-import type { EngineConnection } from '@/lib/engine/types'
+import { chat, createAgent, getSessionMessages } from '@/lib/engine/client'
 import { transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
 import { sanitizeIdentifier } from '@/lib/utils'
-import { DEFAULT_CONNECTION_MODELS } from '@rerun/contracts'
+import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } from './settings'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
-import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession, listDesktopConnections, saveDesktopConnection, type DesktopConnection } from './store'
+import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession } from './store'
 
-function engineOf(runtime: DesktopRuntime): EngineConnection {
-    return { baseUrl: runtime.engine.origin, apiKey: runtime.engine.apiKey }
-}
-
-export async function connectDesktopOpenAI(runtime: DesktopRuntime, apiKey: string): Promise<DesktopConnection> {
-    const key = apiKey.trim()
-    if (!key) throw new DesktopHttpError(400, 'An OpenAI API key is required')
-    const db = await openDesktopDatabase(runtime.dataRoot)
-    const existing = (await listDesktopConnections(db))[0]
-    if (existing) {
-        await updateConnectionKeys(engineOf(runtime), existing.id, { set: { OPENAI_API_KEY: key } })
-        return existing
-    }
-    const created = await createConnection(engineOf(runtime), {
-        name: 'OpenAI',
-        provider: 'openai',
-        models: DEFAULT_CONNECTION_MODELS.openai,
-        extraModels: [],
-        keys: { OPENAI_API_KEY: key },
-    })
-    const connection = { id: created.id, provider: 'openai' as const, name: created.name }
-    await saveDesktopConnection(db, connection)
-    return connection
+// Compatibility endpoint for the original OpenAI setup form.
+export async function connectDesktopOpenAI(runtime: DesktopRuntime, apiKey: string) {
+    await changeDesktopSettings(runtime, { action: 'key', provider: 'openai', apiKey })
+    const { connections } = await readDesktopProviders(runtime)
+    const connection = connections.find(c => c.provider === 'openai')
+    if (!connection) throw new DesktopHttpError(502, 'Could not read the saved connection.')
+    return { id: connection.id, provider: connection.provider, name: connection.name }
 }
 
 export async function createDesktopCoworker(runtime: DesktopRuntime, input: { name: string; description?: string }) {
@@ -40,8 +23,7 @@ export async function createDesktopCoworker(runtime: DesktopRuntime, input: { na
     const description = input.description?.trim() ?? ''
     if (description.length > 2000) throw new DesktopHttpError(400, 'Description is too long')
     const db = await openDesktopDatabase(runtime.dataRoot)
-    const connection = (await listDesktopConnections(db))[0]
-    if (!connection) throw new DesktopHttpError(400, 'Connect OpenAI before creating a coworker')
+    const { connection } = await desktopModel(runtime)
     const handle = `${sanitizeIdentifier(name).replace(/^_+|_+$/g, '') || 'coworker'}-${crypto.randomUUID().slice(0, 8)}`
     const created = await createAgent(engineOf(runtime), {
         config: {
@@ -49,8 +31,8 @@ export async function createDesktopCoworker(runtime: DesktopRuntime, input: { na
             displayName: name,
             description,
             enabled: true,
-            connectionId: connection?.id ?? null,
-            provider: connection ? 'openai' : null,
+            connectionId: connection.id,
+            provider: connection.provider,
             model: null,
         },
     })
@@ -63,12 +45,12 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: { agentId
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     const existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
-    const connection = (await listDesktopConnections(db))[0]
-    if (!connection) throw new DesktopHttpError(400, 'Connect OpenAI before starting a conversation')
+    const { connection, model } = await desktopModel(runtime)
     const engineResponse = await chat(engineOf(runtime), agent.engineAgentId, {
         sessionId: existing?.engineSessionId,
         message: input.text,
-        connectionId: connection?.id,
+        connectionId: connection.id,
+        model,
         source: 'dashboard',
         author: { id: 'local-profile-1', name: 'Local User' },
     })

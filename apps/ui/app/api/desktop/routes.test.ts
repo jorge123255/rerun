@@ -1,9 +1,11 @@
+import { connectionFixture } from '@/test/desktop-connection-engine'
 import { createServer, type Server } from 'node:http'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDesktopDatabase } from '@/lib/desktop/server/database'
+import { PATCH as patchSettings } from './settings/route'
 import { GET as getBootstrap } from './bootstrap/route'
 import { POST as connectProvider } from './providers/openai/route'
 import { GET as listAgents, POST as createAgent } from './agents/route'
@@ -18,14 +20,12 @@ let server: Server
 
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-desktop-routes-'))
+    const connections = connectionFixture()
     server = createServer(async (req, res) => {
         let text = ''
         for await (const chunk of req) text += chunk
         const body = text ? JSON.parse(text) : null
-        if (req.method === 'POST' && req.url === '/connections') {
-            res.writeHead(201, { 'content-type': 'application/json' })
-            return res.end(JSON.stringify({ id: 'connection-1', name: 'OpenAI', provider: 'openai', models: body.models, extraModels: [], createdAt: '2026-01-01T00:00:00.000Z', connected: true, credentialRejected: false, planLimits: null }))
-        }
+        if (connections(req, res, body)) return
         if (req.method === 'POST' && req.url === '/agents') {
             res.writeHead(201, { 'content-type': 'application/json' })
             return res.end(JSON.stringify({ id: 'engine-agent-1', config: { name: body.config.name }, soul: '' }))
@@ -117,6 +117,23 @@ describe('desktop API routes', () => {
         const messages = await getMessages(request(`/api/desktop/sessions/${localSessionId}/messages`), { params: Promise.resolve({ sessionId: localSessionId }) })
         const messageBody = await messages.json()
         expect(messageBody.messages[0]).toMatchObject({ role: 'user', parts: [{ type: 'text', text: 'Hello' }] })
+    })
+
+    it('requires a local session and same origin for settings, and never returns a key', async () => {
+        const write = () => request('/api/desktop/settings', { method: 'PATCH', body: { action: 'key', provider: 'google', apiKey: 'fixture-only-secret' } })
+        const foreign = write()
+        foreign.headers.set('origin', 'https://example.invalid')
+        expect((await patchSettings(foreign)).status).toBe(403)
+        const anonymous = write()
+        anonymous.headers.delete('cookie')
+        expect((await patchSettings(anonymous)).status).toBe(401)
+        const saved = await patchSettings(write())
+        expect(saved.status).toBe(200)
+        const reply = await saved.text()
+        expect(reply).toContain('"provider":"google"')
+        expect(reply).not.toContain('fixture-only-secret')
+        expect((await patchSettings(request('/api/desktop/settings', { method: 'PATCH', body: { action: 'key', provider: 'codex', apiKey: 'test' } }))).status).toBe(400)
+        expect((await patchSettings(request('/api/desktop/settings', { method: 'PATCH', body: { action: 'default', connectionId: 'connection-1', model: 'not-offered' } }))).status).toBe(400)
     })
 
     it('validates input before calling the engine', async () => {

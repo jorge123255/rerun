@@ -20,8 +20,6 @@ export type DesktopSession = {
     updatedAt: string
 }
 
-export type DesktopConnection = { id: string; provider: 'openai'; name: string }
-
 function agentOf(row: Row): DesktopAgent {
     return {
         id: String(row.id),
@@ -46,17 +44,15 @@ function sessionOf(row: Row): DesktopSession {
 }
 
 export async function readDesktopBootstrap(db: Client) {
-    const [profile, workspace, agents, connections] = await Promise.all([
+    const [profile, workspace, agents] = await Promise.all([
         db.execute('SELECT id, display_name FROM desktop_profile WHERE id = 1'),
         db.execute('SELECT id, name FROM desktop_workspace WHERE id = 1'),
         listDesktopAgents(db),
-        listDesktopConnections(db),
     ])
     return {
         profile: { id: 1, displayName: String(profile.rows[0].display_name) },
         workspace: { id: 1, name: String(workspace.rows[0].name) },
         agents,
-        connections,
     }
 }
 
@@ -98,17 +94,4 @@ export async function createDesktopSession(db: Client, input: { agentId: string;
         args: [id, input.agentId, input.engineSessionId, input.title.slice(0, 80) || 'New conversation', now, now],
     })
     return (await findDesktopSession(db, id))!
-}
-
-export async function saveDesktopConnection(db: Client, connection: DesktopConnection): Promise<void> {
-    await db.execute({
-        sql: `INSERT INTO desktop_connections (id, workspace_id, provider, name, created_at) VALUES (?, 1, ?, ?, ?)
-              ON CONFLICT(provider) DO UPDATE SET id = excluded.id, name = excluded.name`,
-        args: [connection.id, connection.provider, connection.name, new Date().toISOString()],
-    })
-}
-
-export async function listDesktopConnections(db: Client): Promise<DesktopConnection[]> {
-    const result = await db.execute('SELECT id, provider, name FROM desktop_connections ORDER BY name')
-    return result.rows.map(row => ({ id: String(row.id), provider: 'openai', name: String(row.name) }))
 }

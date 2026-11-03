@@ -26,13 +26,6 @@ async function initialize(dataRoot: string): Promise<Client> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS desktop_connections (
-            id TEXT PRIMARY KEY,
-            workspace_id INTEGER NOT NULL REFERENCES desktop_workspace(id),
-            provider TEXT NOT NULL CHECK (provider = 'openai') UNIQUE,
-            name TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
         CREATE TABLE IF NOT EXISTS desktop_agents (
             id TEXT PRIMARY KEY,
             workspace_id INTEGER NOT NULL REFERENCES desktop_workspace(id),

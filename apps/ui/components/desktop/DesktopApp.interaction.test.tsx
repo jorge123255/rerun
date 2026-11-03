@@ -13,12 +13,12 @@ test('a reopened workspace can replace a saved key and recover after a failed sa
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
-    const initialData = { profile: { id: 1, displayName: 'Local User' }, workspace: { id: 1, name: 'Workspace' }, agents: [], connections: [{ id: 'example-connection', provider: 'openai' as const, name: 'OpenAI' }] }
-    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: 'Synthetic save failure' }, { status: 500 })).mockResolvedValueOnce(Response.json({ connection: initialData.connections[0] }))
+    const initialData = { profile: { id: 1, displayName: 'Local User' }, workspace: { id: 1, name: 'Workspace' }, agents: [], default: null, connections: [{ id: 'example-connection', name: 'OpenAI', provider: 'openai' as const, models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }] }
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: 'Synthetic save failure' }, { status: 500 })).mockResolvedValueOnce(Response.json({ connections: initialData.connections, default: null }))
     vi.stubGlobal('fetch', fetcher)
-    const button = (text: string) => [...container.querySelectorAll('button')].find(item => item.textContent === text)!
+    const button = (text: string) => [...container.querySelectorAll('button')].find(item => item.textContent?.trim() === text)!
     const enterKey = async () => {
-        const input = container.querySelector<HTMLInputElement>('#openai-key')!
+        const input = container.querySelector<HTMLInputElement>('#desktop-api-key')!
         await act(async () => {
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'example-replacement-key')
             input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -28,20 +28,18 @@ test('a reopened workspace can replace a saved key and recover after a failed sa
     const submit = async () => { await act(async () => { container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) }) }
     try {
         await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
-        expect(container.querySelector('#openai-key')).toBeNull()
-        await act(async () => { button('Change API key').click() })
-        expect(container.querySelector<HTMLInputElement>('#openai-key')!.type).toBe('password')
+        expect(container.querySelector('#desktop-api-key')).toBeNull()
+        await act(async () => { button('Settings').click() })
+        expect(container.querySelector<HTMLInputElement>('#desktop-api-key')!.type).toBe('password')
         await enterKey()
         await submit()
         expect(container.textContent).toContain('Synthetic save failure')
-        expect(container.querySelector('#openai-key')).not.toBeNull()
+        expect(container.querySelector('#desktop-api-key')).not.toBeNull()
         await submit()
         expect(fetcher).toHaveBeenCalledTimes(2)
-        expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ apiKey: 'example-replacement-key' })
-        expect(container.querySelector('#openai-key')).toBeNull()
-        expect(container.textContent).toContain('API key saved. Your next message will use it.')
-        await act(async () => { button('Change API key').click() })
-        expect(container.querySelector<HTMLInputElement>('#openai-key')!.value).toBe('')
+        expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ action: 'key', provider: 'openai', connectionId: 'example-connection', apiKey: 'example-replacement-key' })
+        expect(container.textContent).toContain('API key saved.')
+        expect(container.querySelector<HTMLInputElement>('#desktop-api-key')!.value).toBe('')
     } finally { await act(async () => { root.unmount() }) }
 })
 
@@ -75,7 +73,7 @@ test('a board tile opens the saved conversation and New chat starts a separate s
         await act(async () => { input.form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
     }
     try {
-        await act(async () => { root.render(<DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], connections: [{ id: 'key', provider: 'openai', name: 'OpenAI' }] }} />) })
+        await act(async () => { root.render(<DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], default: null, connections: [{ id: 'key', name: 'OpenAI', provider: 'openai' as const, models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }] }} />) })
         const tile = container.querySelector<HTMLElement>('[aria-label="Open chat with Researcher"]')!
         await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
         expect(container.textContent).toContain('Saved answer')

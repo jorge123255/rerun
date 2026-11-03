@@ -1,3 +1,6 @@
+import { DEFAULT_CONNECTION_MODELS } from '@rerun/contracts'
+import { changeDesktopSettings } from './settings'
+import { connectionFixture } from '@/test/desktop-connection-engine'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,7 +8,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDesktopDatabase } from './database'
 import { connectDesktopOpenAI, createDesktopCoworker, readDesktopHistory, startDesktopChat } from './engine'
-import { createDesktopAgent, listDesktopConnections } from './store'
+import { createDesktopAgent } from './store'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 
@@ -37,13 +40,11 @@ function json(res: ServerResponse, value: unknown, status = 200, headers: Record
 beforeEach(async () => {
     seen.length = 0
     root = await mkdtemp(join(tmpdir(), 'rerun-desktop-engine-'))
+    const connections = connectionFixture()
     server = createServer(async (req, res) => {
         const body = await bodyOf(req)
         seen.push({ method: req.method!, url: req.url!, authorization: req.headers.authorization ?? null, body })
-        if (req.method === 'POST' && req.url === '/connections') {
-            return json(res, { id: 'connection-1', name: 'OpenAI', provider: 'openai', models: body.models, extraModels: [], createdAt: '2026-01-01T00:00:00.000Z', connected: true, credentialRejected: false, planLimits: null }, 201)
-        }
-        if (req.method === 'PATCH' && req.url === '/connections/connection-1/keys') return json(res, { keys: ['OPENAI_API_KEY'] })
+        if (connections(req, res, body)) return
         if (req.method === 'POST' && req.url === '/agents') {
             return json(res, { id: 'engine-agent-1', config: { name: body.config.name }, soul: '' }, 201)
         }
@@ -85,12 +86,10 @@ describe('desktop engine workflows', () => {
     it('sends an OpenAI key only to the engine and reconnects without a duplicate connection', async () => {
         await expect(connectDesktopOpenAI(runtime, 'first-api-key')).resolves.toEqual({ id: 'connection-1', provider: 'openai', name: 'OpenAI' })
         await connectDesktopOpenAI(runtime, 'replacement-api-key')
-        const db = await openDesktopDatabase(root)
-        await expect(listDesktopConnections(db)).resolves.toHaveLength(1)
         expect(seen[0].authorization).toBe('Bearer engine-secret')
-        expect(seen[0].body?.keys).toEqual({ OPENAI_API_KEY: 'first-api-key' })
+        expect(seen.find(req => req.method === 'POST')?.body?.keys).toEqual({ OPENAI_API_KEY: 'first-api-key' })
         expect(seen.filter(request => request.method === 'POST' && request.url === '/connections')).toHaveLength(1)
-        expect(seen.at(-1)?.body).toEqual({ set: { OPENAI_API_KEY: 'replacement-api-key' } })
+        expect(seen.find(req => req.method === 'PATCH')?.body).toEqual({ set: { OPENAI_API_KEY: 'replacement-api-key' } })
     })
 
     it('creates a coworker and streams chat with only the local session ID exposed', async () => {
@@ -112,15 +111,29 @@ describe('desktop engine workflows', () => {
     })
 
     it('refuses to create a coworker without a local provider connection', async () => {
-        await expect(createDesktopCoworker(runtime, { name: 'Researcher' })).rejects.toMatchObject({ status: 400, message: 'Connect OpenAI before creating a coworker' })
-        expect(seen).toHaveLength(0)
+        await expect(createDesktopCoworker(runtime, { name: 'Researcher' })).rejects.toMatchObject({ status: 400, message: 'Connect a provider and choose a default model in Settings.' })
+        expect(seen.map(req => req.url)).toEqual(['/connections'])
     })
 
     it('refuses to start chat without a local provider connection', async () => {
         const db = await openDesktopDatabase(root)
         const agent = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'Researcher' })
-        await expect(startDesktopChat(runtime, { agentId: agent.id, text: 'Hello' })).rejects.toMatchObject({ status: 400, message: 'Connect OpenAI before starting a conversation' })
-        expect(seen).toHaveLength(0)
+        await expect(startDesktopChat(runtime, { agentId: agent.id, text: 'Hello' })).rejects.toMatchObject({ status: 400, message: 'Connect a provider and choose a default model in Settings.' })
+        expect(seen.map(req => req.url)).toEqual(['/connections'])
+    })
+
+    it('uses a changed workspace default on an existing coworker and conversation', async () => {
+        await connectDesktopOpenAI(runtime, 'example-key')
+        const agent = await createDesktopCoworker(runtime, { name: 'Writer' })
+        const first = await startDesktopChat(runtime, { agentId: agent.id, text: 'First turn' })
+        await first.response.body?.cancel()
+        await changeDesktopSettings(runtime, { action: 'key', provider: 'anthropic', apiKey: 'example-claude-key' })
+        const model = DEFAULT_CONNECTION_MODELS.anthropic[1]
+        await changeDesktopSettings(runtime, { action: 'default', connectionId: 'connection-2', model })
+        const second = await startDesktopChat(runtime, { agentId: agent.id, sessionId: first.sessionId, text: 'Second turn' })
+        await second.response.body?.cancel()
+        expect(seen.filter(r => r.url.endsWith('/chat')).at(-1)?.body).toMatchObject({ connectionId: 'connection-2', model, sessionId: 'engine-session-1' })
+        expect(second.sessionId).toBe(first.sessionId)
     })
 
     it('reopens engine history through a local session mapping', async () => {
