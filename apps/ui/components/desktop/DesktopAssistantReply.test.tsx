@@ -17,6 +17,8 @@ afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    Reflect.deleteProperty(document, 'execCommand')
 })
 const markdown = [
     '## Desk notes', '', '1. First item', '2. Second item', '', '| Name | Count |', '| --- | --- |', '| Iris | 2 |',
@@ -44,10 +46,23 @@ test('renders Markdown during a stream and in the settled reply; copy uses text 
     expect(container.querySelector('a')?.target).toBe('_blank')
     expect(container.querySelector('a')?.href).toBe('https://example.org/reference')
     expect(container.textContent).not.toContain('Private trace')
-    const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
+    const data = new DataTransfer()
+    const command = vi.fn(() => {
+        const event = new Event('copy', { cancelable: true })
+        Object.defineProperty(event, 'clipboardData', { value: data })
+        document.dispatchEvent(event)
+        return event.defaultPrevented
+    })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: command })
     const button = container.querySelector<HTMLButtonElement>('button[aria-label="Copy reply"]')!
+    vi.stubGlobal('navigator', { userActivation: { isActive: false } })
     await act(async () => button.click())
-    expect(write).toHaveBeenCalledWith(markdown + ' Final sentence.')
+    expect(command).not.toHaveBeenCalled()
+    expect(button.textContent).toBe('Copy')
+    vi.stubGlobal('navigator', { userActivation: { isActive: true } })
+    await act(async () => button.click())
+    expect(command.mock.calls).toEqual([['copy']])
+    expect(data.getData('text/plain')).toBe(markdown + ' Final sentence.')
     expect(button.textContent).toBe('Copied')
 })
 

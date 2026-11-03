@@ -26,6 +26,25 @@ const noPlugins = {}
 const noRehypePlugins: [] = []
 const copyFailed = () => toast.error('Could not copy this reply. Try again.')
 
+// Rerun denies asynchronous clipboard access. Use Chromium's ordinary, user-activated
+// Copy command so the Mac receives only this reply's plain text and no read permission.
+function copyReplyText(text: string) {
+    if (window.top !== window || !navigator.userActivation?.isActive) throw Error('Copy requires an active user gesture')
+    let written = false
+    const onCopy = (event: ClipboardEvent) => {
+        event.preventDefault()
+        if (!event.clipboardData) return
+        event.clipboardData.setData('text/plain', text)
+        written = true
+    }
+    document.addEventListener('copy', onCopy, { once: true })
+    try {
+        if (!document.execCommand('copy') || !written) throw Error('Could not copy reply')
+    } finally {
+        document.removeEventListener('copy', onCopy)
+    }
+}
+
 function replyMarkdown(text: string, streaming = false) {
     return <MessageResponse components={desktopComponents} plugins={noPlugins} rehypePlugins={noRehypePlugins}
         controls={false} skipHtml mode={streaming ? 'streaming' : 'static'} isAnimating={streaming}
@@ -35,7 +54,7 @@ function replyMarkdown(text: string, streaming = false) {
 }
 
 export function DesktopAssistantReply({ message, streaming }: { message: UIMessage; streaming: boolean }) {
-    const { copied, copy } = useCopy(copyFailed)
+    const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const blocks: ReactNode[] = []
     let text = '', paragraph = ''
     for (const [index, part] of message.parts.entries()) {
