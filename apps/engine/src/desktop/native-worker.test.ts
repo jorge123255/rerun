@@ -19,8 +19,8 @@ const { writeAgentConfig } = await import('../agents/config-write.js')
 const { createDesktopNativeWorker } = await import('./native-worker.js')
 
 const id = 'native-worker-owner', other = 'native-worker-sibling'
-const grant = (read: boolean, shell: boolean) => agentConfigSchema.parse({ name: id, tools: { desktopCodexGrants: { workspaceRead: read, shell } } })
-const ctx = (read: boolean, shell: boolean, controller: AbortController) => ({ agent: { id, config: grant(read, shell) }, abortSignal: controller.signal }) as RunContext
+const grant = (read: boolean, shell: boolean, edit = false) => agentConfigSchema.parse({ name: id, tools: { desktopCodexGrants: { workspaceRead: read, shell, workspaceWrite: edit } } })
+const ctx = (read: boolean, shell: boolean, controller: AbortController, edit = false) => ({ agent: { id, config: grant(read, shell, edit) }, abortSignal: controller.signal }) as RunContext
 const runner = join(root, 'bin/rerun-codex')
 beforeAll(async () => {
     for (const p of [join(root, 'bin'), workspaceDir(id), workspaceDir(other)]) await mkdir(p, { recursive: true })
@@ -137,5 +137,42 @@ it.runIf(process.platform === 'darwin')('starts an empty worker for shell-only, 
         await worker.close()
         await expect(access(worker.cwd)).rejects.toThrow()
         await expect(createDesktopNativeWorker(ctx(false, true, controller))).rejects.toThrow('changed')
+    } finally { await worker.close() }
+})
+
+it.runIf(process.platform === 'darwin')('allows bounded temporary patch RPCs without shell or persistent writes, rejects aliases and revokes access', async () => {
+    await writeAgentConfig(id, grant(true, false, true))
+    await writeFile(join(workspaceDir(other), 'patch-private-other.txt'), 'other private bytes')
+    const controller = new AbortController()
+    const worker = await createDesktopNativeWorker(ctx(true, false, controller, true))
+    try {
+        const ws = new WebSocket(worker.url); await once(ws, 'open')
+        const rpc = async (method: string, params: unknown) => {
+            const wait = once(ws, 'message')
+            ws.send(JSON.stringify({ id: randomUUID(), method, params }))
+            return JSON.parse((await wait)[0].toString())
+        }
+        expect((await rpc('initialize', { clientName: 'patch-test', resumeSessionId: null })).result).toBeDefined()
+        ws.send(JSON.stringify({ method: 'initialized', params: {} }))
+        const file = join(worker.cwd, 'edit.md')
+        const write = (target: string, data: Buffer) => rpc('fs/writeFile', { path: pathToFileURL(target).href, dataBase64: data.toString('base64'), sandbox: null })
+        expect((await write(file, Buffer.from('scratch only'))).error).toBeUndefined()
+        expect(await readFile(file, 'utf8')).toBe('scratch only')
+        await expect(access(join(workspaceDir(id), 'edit.md'))).rejects.toThrow()
+        await symlink(workspaceDir(other), join(worker.cwd, 'symlink'))
+        await link(join(workspaceDir(other), 'patch-private-other.txt'), join(worker.cwd, 'alias'))
+        for (const target of [join(worker.cwd, 'symlink', 'patch-private-other.txt'), join(worker.cwd, 'alias'), join(workspaceDir(other), 'patch-private-other.txt'), join(worker.cwd, '.hidden')]) {
+            expect((await write(target, Buffer.from('blocked'))).error).toBeDefined()
+        }
+        expect((await write(file, Buffer.alloc(65 * 1024, 97))).error).toBeDefined()
+        expect((await write(file, Buffer.from([0, 255]))).error).toBeDefined()
+        expect((await rpc('fs/remove', { path: pathToFileURL(worker.cwd).href, recursive: true })).error).toBeDefined()
+        expect((await rpc('process/start', { cwd: pathToFileURL(worker.cwd).href, argv: ['/bin/sh','-c','echo forbidden'] })).error).toBeDefined()
+        expect((await rpc('fs/remove', { path: pathToFileURL(file).href, recursive: false, force: false })).error).toBeUndefined()
+        await expect(access(file)).rejects.toThrow()
+        expect(await readFile(join(workspaceDir(other), 'patch-private-other.txt'), 'utf8')).toBe('other private bytes')
+        const ended = once(ws, 'close')
+        await writeAgentConfig(id, grant(true, false, false))
+        await ended
     } finally { await worker.close() }
 })

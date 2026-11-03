@@ -330,6 +330,10 @@ describe('resolveModel on the codex subscription', () => {
             const scoped = codexAppServerCalls.at(-1)!.defaultSettings
             expect(scoped).toMatchObject({ cwd: worker.cwd, sandboxPolicy: { type: 'externalSandbox', networkAccess: 'restricted' }, env: { RERUN_NATIVE_EXEC_URL: worker.url } })
             expect(scoped.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(['mcp__rerun', 'functions'])
+            agent.config.tools.desktopCodexGrants = { workspaceWrite: true }
+            expect(() => resolveModel(agent, undefined, tools)).toThrow('isolated Codex command worker')
+            resolveModel(agent, undefined, tools, [], undefined, undefined, worker)
+            expect(codexAppServerCalls.at(-1)!.defaultSettings.env).toMatchObject({ RERUN_NATIVE_EXEC_URL: worker.url, RERUN_NATIVE_SHELL: '0' })
             agent.config.tools.desktopCodexGrants = { codeMode: true }
             resolveModel(agent, undefined, tools)
             const host = codexAppServerCalls.at(-1)!.defaultSettings

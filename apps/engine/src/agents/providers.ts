@@ -344,7 +344,7 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
     const names = Object.keys(localTools)
     const native = desktopCodexGrantsOf(agent.config.tools)
     const worker = options.nativeWorker
-    if (desktop && native.shell && !worker) throw new Error('The isolated Codex command worker is unavailable.')
+    if (desktop && (native.shell || native.workspaceWrite) && !worker) throw new Error('The isolated Codex command worker is unavailable.')
     const directNamespaces = [...(names.length ? [`mcp__${BRIDGE_SERVER_NAME}`] : []), ...(worker ? ['functions'] : [])]
     return createCodexAppServer({
         defaultSettings: {
@@ -355,6 +355,7 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
                     RERUN_DESKTOP_CODEX_WEB: native.webSearch ? '1' : '0',
                     RERUN_DESKTOP_CODEX_CODE_MODE: native.codeMode ? '1' : '0',
                     RERUN_NATIVE_EXEC_URL: worker?.url ?? '',
+                    RERUN_NATIVE_SHELL: worker && native.shell ? '1' : '0',
                 },
             }),
             ...(worker && { cwd: worker.cwd }),

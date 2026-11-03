@@ -7,6 +7,8 @@
 (allow file-read* (literal "/") (subpath "/System") (subpath "/usr/lib") (subpath "/usr/bin") (subpath "/bin") (literal "/private/etc/zshenv") (literal "/private/etc/zprofile") (literal "/dev/null") (literal "/dev/zero") (literal "/dev/urandom") (literal (param "BINARY")))
 (allow file-read* file-write* (subpath (param "SCRATCH")) (literal "/dev/null") (subpath "/dev/fd") (regex #"^/dev/(ttys|ptys)[0-9]+"))
 (allow file-read* file-write* (require-all (process-path (param "BINARY")) (subpath (param "STATE"))))
+(deny file-link)
+(deny file-write-create (vnode-type SYMLINK))
 (allow file-read-metadata (process-path (param "BINARY")))
 (allow mach-lookup (process-path (param "BINARY")))
 (allow process-fork signal (process-path (param "BINARY")))

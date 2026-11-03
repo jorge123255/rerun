@@ -2,7 +2,7 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:chil
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { lstat, mkdir, mkdtemp, opendir, readdir, realpath, rm } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -27,12 +27,46 @@ function inside(root: string, path: unknown): boolean {
     } catch { return false }
 }
 
-// Filesystem RPCs and native process launches are limited to this snapshot. Only the shell can
-// write scratch. Raw native patch/write RPCs remain unavailable to the model.
-function admit(method: string, params: Record<string, unknown>, root: string): boolean {
-    if (['initialize', 'initialized', 'environmentConfig/read', 'process/terminate', 'process/read', 'process/write'].includes(method)) return true
-    if (['fs/getMetadata', 'fs/readFile', 'fs/readDirectory'].includes(method)) return inside(root, params.path)
-    if (method !== 'process/start' || !inside(root, params.cwd)) return false
+// The initial snapshot has fresh single-link files, and the worker Seatbelt forbids creating
+// either kind of link. Also check the full path before each file RPC, including partial creates.
+async function scratchTarget(root: string, input: unknown, leaf: 'any' | 'file' | 'directory') {
+    if (typeof input !== 'string' || !inside(root, input)) return false
+    const target = input.startsWith('file:') ? fileURLToPath(input) : input
+    const parts = relative(root, target).split(sep).filter(Boolean)
+    if (parts.length === 0) return leaf !== 'file'
+    if (parts.length > 16 || parts.some(part => part.startsWith('.') || part.length > 255 || /[\\\p{Cc}]/u.test(part))) return false
+    let path = root
+    for (const [index, part] of parts.entries()) {
+        path = join(path, part)
+        try {
+            const stat = await lstat(path)
+            if (stat.isSymbolicLink()) return false
+            if (index < parts.length - 1) { if (!stat.isDirectory()) return false }
+            else if (stat.isDirectory()) return leaf !== 'file'
+            else return leaf !== 'directory' && stat.isFile() && stat.nlink === 1 && stat.size <= 64 * 1024
+        } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
+    }
+    return true
+}
+
+function textEdit(data: unknown): boolean {
+    if (typeof data !== 'string' || data.length > 88_000 || data.length % 4) return false
+    const bytes = Buffer.from(data, 'base64')
+    if (bytes.length > 64 * 1024 || bytes.includes(0) || bytes.toString('base64') !== data) return false
+    try { new TextDecoder('utf-8', { fatal: true }).decode(bytes); return true } catch { return false }
+}
+
+async function admit(method: string, params: Record<string, unknown>, root: string, shell: boolean, edit: boolean) {
+    if (['initialize', 'initialized', 'environmentConfig/read'].includes(method)) return true
+    if (method === 'fs/getMetadata') return scratchTarget(root, params.path, 'any')
+    if (method === 'fs/readFile') return scratchTarget(root, params.path, 'file')
+    if (method === 'fs/readDirectory') return scratchTarget(root, params.path, 'directory')
+    if (method === 'fs/writeFile') return edit && textEdit(params.dataBase64) && scratchTarget(root, params.path, 'file')
+    if (method === 'fs/remove') return edit && params.recursive === false && scratchTarget(root, params.path, 'file')
+    if (method === 'fs/createDirectory') return edit && scratchTarget(root, params.path, 'directory')
+    if (!shell) return false
+    if (['process/terminate', 'process/read', 'process/write'].includes(method)) return true
+    if (method !== 'process/start' || !await scratchTarget(root, params.cwd, 'directory')) return false
     const argv = params.argv
     return Array.isArray(argv) && argv.every(arg => typeof arg === 'string') && argv.length > 1 && ['/bin/bash', '/bin/zsh', '/bin/sh'].includes(argv[0])
 }
@@ -84,12 +118,13 @@ export async function createDesktopNativeWorker(ctx: RunContext): Promise<Deskto
     if (process.platform !== 'darwin' || process.env.RERUN_DESKTOP_APP !== '1') throw new Error('Native commands require the Mac desktop app.')
     const launcher = process.env.RERUN_DESKTOP_CODEX_RUNNER
     if (!launcher || !isAbsolute(launcher)) throw new Error('The packaged native command runner is unavailable.')
-    const includeFiles = desktopCodexGrantsOf(ctx.agent.config.tools).workspaceRead
+    const { workspaceRead: includeFiles, shell, workspaceWrite: edit } = desktopCodexGrantsOf(ctx.agent.config.tools)
+    if (!shell && !edit) throw new Error('Native commands and temporary edits are off for this coworker.')
     const active = async () => {
         ctx.abortSignal?.throwIfAborted()
         const config = await readAgentConfig(ctx.agent.id)
         const grants = desktopCodexGrantsOf(config.tools)
-        if (!grants.shell || (includeFiles && !grants.workspaceRead)) throw new Error('Native command access changed for this coworker.')
+        if ((shell && !grants.shell) || (edit && !grants.workspaceWrite) || (includeFiles && !grants.workspaceRead)) throw new Error('Native command access changed for this coworker.')
     }
     await active()
     const binDir = dirname(await realpath(launcher))
@@ -140,20 +175,20 @@ export async function createDesktopNativeWorker(ctx: RunContext): Promise<Deskto
             ws.on('error', () => ws.terminate())
             ws.once('close', () => { workers.delete(ws); stopProcess(child) })
             let sequence = Promise.resolve()
-            function enqueue(bytes: number, operation: () => void) {
+            function enqueue(bytes: number, operation: () => void | Promise<void>) {
                 transfer += bytes
                 if (closed || transfer > MAX_TRANSFER) { abort(); return }
                 sequence = sequence.then(async () => {
                     await active()
-                    if (!closed && ws.readyState === WebSocket.OPEN) operation()
+                    if (!closed && ws.readyState === WebSocket.OPEN) await operation()
                 }).catch(abort)
             }
             ws.on('message', data => {
                 const text = data.toString()
-                enqueue(Buffer.byteLength(text), () => {
+                enqueue(Buffer.byteLength(text), async () => {
                     const message = JSON.parse(text) as { method: string; params?: Record<string, unknown>; id?: unknown }
                     const params = message.params ?? {}
-                    if (!admit(message.method, params, cwd)) {
+                    if (!await admit(message.method, params, cwd, shell, edit)) {
                         if (message.id !== undefined) ws.send(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32001, message: 'This operation is unavailable in the command snapshot.' } }))
                         return
                     }
@@ -161,7 +196,7 @@ export async function createDesktopNativeWorker(ctx: RunContext): Promise<Deskto
                         params.env = { HOME: state, TMPDIR: state, PATH: '/usr/bin:/bin', TERM: 'dumb', LANG: 'en_US.UTF-8' }
                         params.arg0 = null
                     }
-                    child.stdin.write(JSON.stringify(message) + '\n')
+                    if (!closed) child.stdin.write(JSON.stringify(message) + '\n')
                 })
             })
             createInterface({ input: child.stdout }).on('line', text => enqueue(Buffer.byteLength(text), () => ws.send(text)))

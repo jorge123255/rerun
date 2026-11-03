@@ -23,13 +23,13 @@ if [ "${RERUN_DESKTOP_CODEX_WEB:-0}" = 1 ] && [ "${RERUN_CODEX_ACCOUNT_OP:-0}" !
 # Native commands must use the engine's credential-free worker. Without this env
 # Codex would execute locally even if the thread had an exec_server_url override.
 shell_feature=--disable
-exec_server_env=
+exec_server_env=CODEX_EXEC_SERVER_URL=none
 worker_url=${RERUN_NATIVE_EXEC_URL:-}
 if [ -n "$worker_url" ]; then
     [ "${RERUN_CODEX_ACCOUNT_OP:-0}" != 1 ] || exit 2
     /usr/bin/printf '%s\n' "$worker_url" | /usr/bin/grep -Eq '^ws://127\.0\.0\.1:[1-9][0-9]{0,4}/[A-Za-z0-9_-]{32,128}$' || exit 2
     exec_server_env="CODEX_EXEC_SERVER_URL=$worker_url"
-    shell_feature=--enable
+    if [ "${RERUN_NATIVE_SHELL:-0}" = 1 ]; then shell_feature=--enable; fi
 fi
 output=/dev/null
 # The exec adapter writes one explicitly requested response file under its own temporary directory.
@@ -43,7 +43,7 @@ for arg in "$@"; do
     fi
     previous=$arg
 done
-exec /usr/bin/env -i HOME="$mac_home" CODEX_HOME="$profile/state" TMPDIR="$profile/tmp" PATH=/usr/bin:/bin LANG=en_US.UTF-8 ${exec_server_env:+"$exec_server_env"} \
+exec /usr/bin/env -i HOME="$mac_home" CODEX_HOME="$profile/state" TMPDIR="$profile/tmp" PATH=/usr/bin:/bin LANG=en_US.UTF-8 "$exec_server_env" \
     /usr/bin/sandbox-exec -D "PROFILE=$profile" -D "BINARY=$bin_dir/codex" -D "OUTPUT=$output" \
     -D "HOST=$bin_dir/codex-code-mode-host" -D "HOST_ALLOWED=$code_host" -D "KEYCHAIN=$keychain" -D "KEYDIR=$keydir" -D "ACCOUNT=${RERUN_CODEX_ACCOUNT_OP:-0}" -f "$bin_dir/rerun-codex.sb" \
     "$bin_dir/codex" -c 'cli_auth_credentials_store="keyring"' -c 'sandbox_mode="read-only"' -c 'approval_policy="never"' \

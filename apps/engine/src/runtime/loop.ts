@@ -448,7 +448,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         }
         // A new worker has a new private directory and endpoint. Raw Code Mode observations
         // are also available only on thread/start. Replay saved history in both cases.
-        const freshToolThread = desktopApp() && (agent.config.tools.desktopCodexGrants?.shell || agent.config.tools.desktopCodexGrants?.codeMode)
+        const freshToolThread = desktopApp() && (agent.config.tools.desktopCodexGrants?.shell || agent.config.tools.desktopCodexGrants?.workspaceWrite || agent.config.tools.desktopCodexGrants?.codeMode)
         const resumeThreadId = provider === 'codex' && !savedUser && !freshToolThread ? codexThreadToResume(agent.id, sessionId, connection?.id ?? RERUN_CONNECTION_ID, await lastMessageId(agent.id, sessionId), codexToolAccess) : undefined
         const codexTurnOptions = resumeThreadId || effort ? {
             'codex-app-server': { ...(resumeThreadId ? { threadId: resumeThreadId } : {}), ...(effort ? { effort } : {}) },
@@ -477,7 +477,9 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
 
         spawnToken = claudeTokenOf(connection)
         controller.signal.throwIfAborted()
-        if (provider === 'codex' && desktopApp() && agent.config.tools.desktopCodexGrants?.shell) nativeWorker = await createDesktopNativeWorker(ctx)
+        if (provider === 'codex' && desktopApp() && (agent.config.tools.desktopCodexGrants?.shell || agent.config.tools.desktopCodexGrants?.workspaceWrite)) {
+            nativeWorker = await createDesktopNativeWorker(ctx)
+        }
         const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker)
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage

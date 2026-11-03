@@ -63,8 +63,8 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
 ]
 
 export const desktopCodexToolCatalog: DesktopToolCatalogEntry[] = [
-    supported('workspaceRead', 'Include workspace files', 'Copy bounded, visible text files into this coworker’s temporary command folder when Run shell commands is on.'),
-    pending('workspaceWrite', 'Save workspace edits', 'Save changes back to this coworker’s Files panel.', 'Requires a reviewed writeback and file-conflict flow.'),
+    supported('workspaceRead', 'Include workspace files', 'Copy bounded, visible workspace text files into this coworker’s temporary folder for native commands or edits.'),
+    supported('workspaceWrite', 'Edit temporary files', 'Use native Codex edits in this turn’s temporary folder. Changes are discarded. Original workspace files are preserved.', 'apply_patch'),
     supported('shell', 'Run shell commands', 'Run supported commands in a private temporary folder. Changes are discarded at the end of the turn. Include workspace files to read copies of this coworker’s text files.', 'exec_command'),
     supported('webSearch', 'Search the web', 'Use the Codex provider’s native web search.', 'web_search'),
     supported('codeMode', 'Code mode', 'Run JavaScript calculations in the bundled Codex host and call the Rerun tools granted to this coworker.', 'functions.exec'),
