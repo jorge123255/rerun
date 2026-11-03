@@ -44,3 +44,50 @@ test('a reopened workspace can replace a saved key and recover after a failed sa
         expect(container.querySelector<HTMLInputElement>('#openai-key')!.value).toBe('')
     } finally { await act(async () => { root.unmount() }) }
 })
+
+test('a board tile opens the saved conversation and New chat starts a separate session', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const agent = { id: 'researcher', name: 'Researcher', description: 'Finds answers', createdAt: '', updatedAt: '' }
+    const session = { id: 'previous', agentId: agent.id, title: 'First chat', createdAt: '', updatedAt: '' }
+    const sent: unknown[] = []
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/sessions')) return Response.json({ sessions: [session] })
+        if (url === '/api/desktop/sessions/previous/messages') return Response.json({ messages: [{ id: 'reply', role: 'assistant', parts: [{ type: 'text', text: 'Saved answer' }] }] })
+        if (url === '/api/desktop/chat') {
+            const body = JSON.parse(String(init?.body))
+            sent.push(body)
+            return new Response('data: {"type":"finish"}\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-session-id': body.sessionId ?? 'created' } })
+        }
+        if (url === '/api/desktop/sessions/created/messages') return Response.json({ messages: [] })
+        throw new Error(`Unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const button = (label: string) => [...container.querySelectorAll('button')].find(node => node.textContent?.trim() === label)!
+    const send = async (text: string) => {
+        const input = container.querySelector<HTMLTextAreaElement>('#desktop-message')!
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text)
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+            input.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        await act(async () => { input.form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
+    }
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], connections: [{ id: 'key', provider: 'openai', name: 'OpenAI' }] }} />) })
+        const tile = container.querySelector<HTMLElement>('[aria-label="Open chat with Researcher"]')!
+        await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+        expect(container.textContent).toContain('Saved answer')
+        await send('Continue')
+        await act(async () => { button('New chat').click() })
+        await send('Start fresh')
+        expect(sent).toEqual([{ agentId: 'researcher', sessionId: 'previous', text: 'Continue' }, { agentId: 'researcher', text: 'Start fresh' }])
+        await act(async () => { button('Team board').click() })
+        expect(container.querySelector('[aria-label="Open chat with Researcher"]')).not.toBeNull()
+        await act(async () => { button('Add coworker').click() })
+        expect(container.querySelector('#coworker-name')).not.toBeNull()
+        await act(async () => { button('Cancel').click() })
+        expect(container.querySelector('[aria-label="Open chat with Researcher"]')).not.toBeNull()
+    } finally { await act(async () => { root.unmount() }) }
+})

@@ -1,6 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { LayoutGrid } from 'lucide-react'
+import { DesktopBoard } from './DesktopBoard'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -27,9 +29,8 @@ async function json<T>(response: Response): Promise<T> {
 export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [connections, setConnections] = useState(initialData.connections)
     const [agents, setAgents] = useState(initialData.agents)
+    const [creating, setCreating] = useState(false)
     const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
-    const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
-    const [sessions, setSessions] = useState<DesktopSessionView[]>([])
     const [apiKey, setApiKey] = useState('')
     const [editingKey, setEditingKey] = useState(false)
     const [providerNotice, setProviderNotice] = useState<string | null>(null)
@@ -76,7 +77,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             setAgents(current => [...current, body.agent])
             setName('')
             setDescription('')
-            await selectCoworker(body.agent.id)
+            selectCoworker(body.agent.id)
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : 'Could not create coworker')
         } finally {
@@ -84,18 +85,16 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         }
     }
 
-    async function selectCoworker(agentId: string) {
-        setSelectedAgentId(agentId)
-        setSelectedSessionId(null)
-        setSessions([])
+    function showBoard(create = false) {
+        setCreating(create)
+        setSelectedAgentId(null)
         setError(null)
-        try {
-            const body = await json<{ sessions: DesktopSessionView[] }>(await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/sessions`))
-            setSessions(body.sessions)
-            setSelectedSessionId(body.sessions[0]?.id ?? null)
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : 'Could not load conversations')
-        }
+    }
+
+    function selectCoworker(agentId: string) {
+        setCreating(false)
+        setSelectedAgentId(agentId)
+        setError(null)
     }
 
     return (
@@ -109,6 +108,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-3">
+                    <button type="button" onClick={() => showBoard()} aria-current={!creating && !selectedAgent ? 'page' : undefined}
+                        className="mb-4 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium hover:bg-accent aria-[current=page]:bg-accent">
+                        <LayoutGrid aria-hidden className="size-4" /> Team board
+                    </button>
                     <div className="px-2 pb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Coworkers</div>
                     {agents.length === 0 && <div className="px-2 py-6 text-sm text-muted-foreground">No coworkers yet.</div>}
                     <div className="space-y-1">
@@ -128,7 +131,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 <div className="shrink-0 border-t p-4 text-xs text-muted-foreground">Chat history and app records stay on this Mac.</div>
             </aside>
 
-            <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
                 {(!connected || editingKey) && (
                     <div className="border-b bg-background p-4">
                         <Card className="mx-auto max-w-3xl shadow-none">
@@ -155,22 +158,12 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 {error && <div role="alert" className="border-b bg-destructive/10 px-5 py-2 text-sm text-destructive">{error}</div>}
 
                 {selectedAgent ? (
-                    <DesktopConversation
-                        key={selectedAgent.id}
-                        agent={selectedAgent}
-                        sessionId={selectedSessionId}
-                        sessions={sessions}
-                        onSelectSession={setSelectedSessionId}
-                        onSessionCreated={id => {
-                            setSelectedSessionId(id)
-                            void fetch(`/api/desktop/agents/${encodeURIComponent(selectedAgent.id)}/sessions`).then(response => json<{ sessions: DesktopSessionView[] }>(response)).then(body => setSessions(body.sessions)).catch(cause => setError(cause instanceof Error ? cause.message : 'Could not refresh conversations'))
-                        }}
-                    />
-                ) : (
+                    <CoworkerChat key={selectedAgent.id} agent={selectedAgent} />
+                ) : creating ? (
                     <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto p-6 md:items-center">
                         <Card className="w-full max-w-xl shadow-none">
                             <CardHeader>
-                                <CardTitle>{agents.length ? 'Select a coworker' : 'Create your first coworker'}</CardTitle>
+                                <CardTitle>{agents.length ? 'Add a coworker' : 'Create your first coworker'}</CardTitle>
                                 <CardDescription>{connected ? 'Give your coworker a name and a task, then start a local conversation.' : 'Connect OpenAI above, then create a coworker.'}</CardDescription>
                             </CardHeader>
                             <CardContent>
@@ -183,13 +176,58 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                         <label htmlFor="coworker-description" className="mb-1.5 block text-sm font-medium">What should they do?</label>
                                         <Textarea id="coworker-description" placeholder="Find clear answers and explain the result." maxLength={2000} rows={4} value={description} onChange={event => setDescription(event.target.value)} />
                                     </div>
-                                    <Button type="submit" disabled={!connected || !name.trim() || busy === 'agent'}>{busy === 'agent' ? 'Creating…' : 'Create coworker'}</Button>
+                                    <div className="flex gap-2">
+                                        <Button type="button" variant="outline" onClick={() => showBoard()}>Cancel</Button>
+                                        <Button type="submit" disabled={!connected || !name.trim() || busy === 'agent'}>{busy === 'agent' ? 'Creating…' : 'Create coworker'}</Button>
+                                    </div>
                                 </form>
                             </CardContent>
                         </Card>
                     </div>
+                ) : (
+                    <DesktopBoard agents={agents} workspaceName={initialData.workspace.name} onOpen={selectCoworker} onCreate={() => showBoard(true)} />
                 )}
             </section>
         </main>
+    )
+}
+
+function CoworkerChat({ agent }: { agent: DesktopAgentView }) {
+    const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
+    const [selectedId, setSelectedId] = useState<string | null>(null)
+    const [error, setError] = useState<string | null>(null)
+    const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/sessions`
+
+    useEffect(() => {
+        const controller = new AbortController()
+        void fetch(url, { signal: controller.signal }).then(response => json<{ sessions: DesktopSessionView[] }>(response)).then(body => {
+            if (controller.signal.aborted) return
+            setSessions(body.sessions)
+            setSelectedId(body.sessions[0]?.id ?? null)
+        }).catch(cause => {
+            if (!controller.signal.aborted) {
+                setSessions([])
+                setError(cause instanceof Error ? cause.message : 'Could not load conversations')
+            }
+        })
+        return () => controller.abort()
+    }, [url])
+
+    const refreshSession = useCallback(async (id: string) => {
+        setSelectedId(id)
+        try {
+            const body = await json<{ sessions: DesktopSessionView[] }>(await fetch(url))
+            setSessions(body.sessions)
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : 'Could not refresh conversations')
+        }
+    }, [url])
+
+    if (!sessions) return <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>
+    return (
+        <>
+            {error && <p role="alert" className="px-5 py-2 text-sm text-destructive">{error}</p>}
+            <DesktopConversation agent={agent} sessionId={selectedId} sessions={sessions} onSelectSession={setSelectedId} onChatSession={refreshSession} />
+        </>
     )
 }

@@ -16,27 +16,26 @@ async function historyFor(sessionId: string): Promise<UIMessage[]> {
     return body.messages as UIMessage[]
 }
 
-export function DesktopConversation({ agent, sessionId, sessions, onSelectSession, onSessionCreated }: {
+export function DesktopConversation({ agent, sessionId, sessions, onSelectSession, onChatSession }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
     onSelectSession: (id: string | null) => void
-    onSessionCreated: (id: string) => void
+    onChatSession: (id: string) => void
 }) {
     const [input, setInput] = useState('')
     const [historyError, setHistoryError] = useState<string | null>(null)
 
     const transport = useMemo(() => new DefaultChatTransport({
         api: '/api/desktop/chat',
-        body: { agentId: agent.id, sessionId },
         prepareSendMessagesRequest: ({ body, messages }) => ({ body: { ...body, text: lastUserText(messages) } }),
         fetch: async (url, init) => {
             const response = await fetch(url, init)
-            const created = response.headers.get('x-session-id')
-            if (created && created !== sessionId) onSessionCreated(created)
+            const id = response.headers.get('x-session-id')
+            if (response.ok && id) onChatSession(id)
             return response
         },
-    }), [agent.id, sessionId, onSessionCreated])
+    }), [onChatSession])
 
     const { messages, setMessages, sendMessage, status, error } = useChat({
         id: `desktop-${agent.id}`,
@@ -74,7 +73,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
         const text = input.trim()
         if (!text || busy) return
         setInput('')
-        void sendMessage({ text })
+        void sendMessage({ text }, { body: { agentId: agent.id, sessionId: sessionId ?? undefined } })
     }
 
     return (
@@ -87,6 +86,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                 <div className="flex w-full items-center gap-2 sm:w-auto">
                     {sessions.length > 0 && (
                         <select
+                            disabled={busy}
                             aria-label="Conversation history"
                             className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1.5 text-sm sm:max-w-56"
                             value={sessionId ?? ''}
@@ -96,7 +96,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             {sessions.map(session => <option key={session.id} value={session.id}>{session.title}</option>)}
                         </select>
                     )}
-                    <Button type="button" variant="outline" size="sm" onClick={() => onSelectSession(null)}>New chat</Button>
+                    <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => onSelectSession(null)}>New chat</Button>
                 </div>
             </header>
 

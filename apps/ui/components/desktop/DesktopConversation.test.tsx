@@ -11,7 +11,7 @@ describe('DesktopConversation', () => {
             sessionId="session-1"
             sessions={[{ id: 'session-1', agentId: agent.id, title: 'First conversation', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }]}
             onSelectSession={vi.fn()}
-            onSessionCreated={vi.fn()}
+            onChatSession={vi.fn()}
         />)
         expect(html).toContain('flex-wrap')
         expect(html).toContain('Conversation history')
