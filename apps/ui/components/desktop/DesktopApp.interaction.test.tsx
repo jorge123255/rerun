@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 
+import { ThemeProvider } from '@rerun/ui/theme'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -88,4 +89,27 @@ test('a board tile opens the saved conversation and New chat starts a separate s
         await act(async () => { button('Cancel').click() })
         expect(container.querySelector('[aria-label="Open chat with Researcher"]')).not.toBeNull()
     } finally { await act(async () => { root.unmount() }) }
+})
+
+test('applying a new appearance keeps the saved choice active', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const saved = vi.fn().mockResolvedValue(Response.json({ connections: [], default: null }))
+    vi.stubGlobal('fetch', saved)
+    const button = (label: string) => [...container.querySelectorAll('button')].find(b => b.textContent?.trim() === label)!
+    try {
+        await act(async () => { root.render(<ThemeProvider><DesktopApp initialData={{
+            theme: 'light', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' },
+            default: null, connections: [], agents: [],
+        }} /></ThemeProvider>) })
+        await act(async () => { button('Settings').click() })
+        await act(async () => { button('Workspace').click() })
+        await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Dark"]')!.click() })
+        expect(JSON.parse(saved.mock.calls[0][1].body)).toEqual({ action: 'appearance', theme: 'dark' })
+        expect(document.documentElement.classList.contains('dark')).toBe(true)
+    } finally {
+        await act(async () => { root.unmount() })
+        document.documentElement.classList.remove('dark', 'light')
+    }
 })

@@ -31,8 +31,11 @@ async function json<T>(response: Response): Promise<T> {
 }
 
 export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
-    const { setTheme } = useTheme()
-    useEffect(() => { setTheme(initialData.theme) }, [initialData.theme, setTheme])
+    const [preference, setPreference] = useState(initialData.theme)
+    const { theme, setTheme } = useTheme()
+    useEffect(() => {
+        if (theme !== preference) setTheme(preference)
+    }, [theme, preference, setTheme])
     const [providers, setProviders] = useState<ConnectionsList>({ connections: initialData.connections, default: initialData.default })
     const [workspaceName, setWorkspaceName] = useState(initialData.workspace.name)
     const [settings, setSettings] = useState(false)
@@ -60,7 +63,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             body: JSON.stringify(change),
         })
         setProviders(await json<ConnectionsList>(response))
-        if (change.action === 'appearance') setTheme(change.theme)
+        if (change.action === 'appearance') setPreference(change.theme)
         if (change.action === 'workspace') setWorkspaceName(change.name)
     }
 
