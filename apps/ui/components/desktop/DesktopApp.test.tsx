@@ -22,7 +22,8 @@ describe('DesktopApp', () => {
             agents: [{ id: 'local-agent-1', name: 'Researcher', description: 'Finds answers', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
         }} />)
         expect(html).toContain('Researcher')
-        expect(html).toContain('OpenAI connected')
+        expect(html).toContain('OpenAI key saved')
+        expect(html).toContain('Change API key')
         expect(html).toContain('Select a coworker')
     })
 

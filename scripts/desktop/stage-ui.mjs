@@ -1,11 +1,13 @@
 import { cp, mkdir, readdir, readlink, rm, symlink } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { buildId, existsSync, flag, pnpm, repoRoot, resourcesDir } from './lib.mjs'
+import { sourceStamp, stampMatches, writeStamp } from './provenance.mjs'
 
 const uiDir = join(repoRoot, 'apps', 'ui')
 const standalone = join(uiDir, '.next', 'standalone')
+const stamp = await sourceStamp()
 
-if (flag('--build') || !existsSync(standalone)) {
+if (flag('--build') || !existsSync(standalone) || !await stampMatches(join(uiDir, '.next'), stamp)) {
     const env = {
         ...process.env,
         RERUN_DESKTOP_STANDALONE: '1',
@@ -15,6 +17,7 @@ if (flag('--build') || !existsSync(standalone)) {
     }
     await pnpm(['--filter', '@rerun/contracts', 'build'])
     await pnpm(['--filter', 'rerun', 'build'], { env })
+    await writeStamp(join(uiDir, '.next'), stamp)
 }
 if (!existsSync(standalone)) throw new Error(`Next standalone output missing: ${standalone}`)
 
@@ -65,5 +68,6 @@ async function relinkEscaped(dir) {
     }
 }
 await relinkEscaped(uiRoot)
+await writeStamp(uiRoot, stamp)
 if (!existsSync(join(uiRoot, 'server.js'))) throw new Error('staged UI is missing server.js')
 console.log(`staged ui -> ${uiRoot}`)

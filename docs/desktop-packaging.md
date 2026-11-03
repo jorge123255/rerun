@@ -12,7 +12,7 @@ pnpm install                                   # workspace deps incl. electron +
 pnpm desktop:package                           # stage runtime + build unsigned .app (dir target)
 pnpm desktop:package -- --dmg                  # additionally produce an unsigned DMG
 pnpm desktop:stage                             # stage resources only, no electron-builder
-pnpm desktop:stage -- --build                  # force UI/engine rebuilds even if outputs exist
+pnpm desktop:stage                            # always rebuild UI/engine from committed source
 pnpm desktop:verify                            # re-run runtime checks only
 ```
 

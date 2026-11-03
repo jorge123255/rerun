@@ -1,11 +1,15 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { buildId, resourcesDir } from './lib.mjs'
+import { desktopDir, resourcesDir } from './lib.mjs'
+import { sourceStamp, requireStamp } from './provenance.mjs'
 
 await mkdir(resourcesDir, { recursive: true })
+const stamp = await sourceStamp()
+for (const directory of [join(desktopDir, 'dist', 'main'), join(resourcesDir, 'runtime', 'ui'), join(resourcesDir, 'runtime', 'engine')]) await requireStamp(directory, stamp)
 const manifest = {
     protocolVersion: 1,
-    buildId: await buildId(),
+    buildId: stamp.buildId,
+    sourceCommit: stamp.sourceCommit,
     nodePath: 'runtime/node/bin/node',
     uiRoot: 'runtime/ui',
     engineEntry: 'runtime/engine/dist/cli/bin.js',

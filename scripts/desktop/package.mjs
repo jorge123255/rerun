@@ -1,8 +1,9 @@
 import { join } from 'node:path'
 import { flag, repoRoot, run } from './lib.mjs'
+import { stageArguments } from './provenance.mjs'
 
 const scripts = file => join(repoRoot, 'scripts', 'desktop', file)
-const stage = async file => { console.log(`\n--- ${file}`); await run(process.execPath, [scripts(file)]) }
+const stage = async file => { console.log(`\n--- ${file}`); await run(process.execPath, [scripts(file), ...stageArguments()]) }
 
 await stage('stage-main.mjs')
 await stage('stage-node.mjs')

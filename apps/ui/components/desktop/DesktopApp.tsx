@@ -31,6 +31,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
     const [sessions, setSessions] = useState<DesktopSessionView[]>([])
     const [apiKey, setApiKey] = useState('')
+    const [editingKey, setEditingKey] = useState(false)
+    const [providerNotice, setProviderNotice] = useState<string | null>(null)
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
     const [busy, setBusy] = useState<string | null>(null)
@@ -51,6 +53,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             }))
             setConnections([body.connection])
             setApiKey('')
+            setEditingKey(false)
+            setProviderNotice('API key saved. Your next message will use it.')
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : 'Could not connect OpenAI')
         } finally {
@@ -125,24 +129,29 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             </aside>
 
             <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-                {!connected && (
+                {(!connected || editingKey) && (
                     <div className="border-b bg-background p-4">
                         <Card className="mx-auto max-w-3xl shadow-none">
                             <CardHeader>
-                                <CardTitle className="text-base">Connect OpenAI</CardTitle>
+                                <CardTitle className="text-base">{connected ? 'Change OpenAI API key' : 'Connect OpenAI'}</CardTitle>
                                 <CardDescription>Your key goes directly to the local engine. It is never stored in the app database or browser storage.</CardDescription>
                             </CardHeader>
                             <CardContent>
                                 <form onSubmit={connectProvider} className="flex flex-col gap-2 sm:flex-row">
                                     <label htmlFor="openai-key" className="sr-only">OpenAI API key</label>
                                     <Input id="openai-key" type="password" autoComplete="off" placeholder="OpenAI API key" value={apiKey} onChange={event => setApiKey(event.target.value)} />
-                                    <Button className="w-full sm:w-auto" type="submit" disabled={!apiKey.trim() || busy === 'provider'}>{busy === 'provider' ? 'Connecting…' : 'Connect'}</Button>
+                                    <Button className="w-full sm:w-auto" type="submit" disabled={!apiKey.trim() || busy === 'provider'}>{busy === 'provider' ? 'Saving…' : connected ? 'Save key' : 'Connect'}</Button>
+                                    {connected && <Button type="button" variant="outline" disabled={busy === 'provider'} onClick={() => { setApiKey(''); setEditingKey(false) }}>Cancel</Button>}
                                 </form>
                             </CardContent>
                         </Card>
                     </div>
                 )}
-                {connected && <div className="border-b px-5 py-2 text-xs text-muted-foreground">OpenAI connected · Local engine</div>}
+                {connected && <div className="flex flex-wrap items-center justify-between gap-2 border-b px-5 py-2 text-xs text-muted-foreground">
+                    <span>OpenAI key saved · Local engine</span>
+                    <Button type="button" variant="ghost" size="sm" aria-expanded={editingKey} onClick={() => { setEditingKey(true); setProviderNotice(null) }}>Change API key</Button>
+                </div>}
+                {providerNotice && <div role="status" className="border-b px-5 py-2 text-xs text-muted-foreground">{providerNotice}</div>}
                 {error && <div role="alert" className="border-b bg-destructive/10 px-5 py-2 text-sm text-destructive">{error}</div>}
 
                 {selectedAgent ? (
@@ -158,7 +167,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                         }}
                     />
                 ) : (
-                    <div className="flex flex-1 items-center justify-center p-6">
+                    <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto p-6 md:items-center">
                         <Card className="w-full max-w-xl shadow-none">
                             <CardHeader>
                                 <CardTitle>{agents.length ? 'Select a coworker' : 'Create your first coworker'}</CardTitle>
