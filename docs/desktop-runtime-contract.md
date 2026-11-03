@@ -1,6 +1,6 @@
 # Desktop preview runtime
 
-The preview uses an Electron main process, a production Next child, and a separate engine child. It supports one local workspace and chat through API providers or a ChatGPT subscription. Shell, MCP subprocesses, browser/computer tools, Claude subscription execution, schedules, reset/deletion and public publishing are unavailable in this slice.
+The preview uses an Electron main process, a production Next child, and a separate engine child. It supports one local workspace and chat through API providers or a ChatGPT subscription. Shell, MCP subprocesses, browser/computer tools, Claude subscription execution, schedules, workspace reset/deletion and public publishing are unavailable in this slice.
 
 ## Packaged resources
 
@@ -24,7 +24,7 @@ The bundled Node runtime must match native libSQL/sharp modules. No runtime exec
 
 The app uses `~/Library/Application Support/Rerun Desktop Preview`. `identity.encrypted` holds the install ID, engine API key and credential-encryption key encrypted with Electron safeStorage; it fails closed if Mac secure storage is unavailable. Workspace 1 has a dedicated `workspaces/1/engine` directory and owner marker. Existing `~/.rerun` data is not adopted.
 
-The **Memories** button in coworker chat lists that coworker’s saved Rerun memory notes. Opening or refreshing the list reads local storage without calling a model. The desktop engine exposes only the list operation for memories.
+The **Memories** button in coworker chat lists that coworker’s saved Rerun notes. **Add memory** saves the content, kind and tags locally. Each note has its own delete confirmation. Listing, adding and deleting these notes works without a model call. The desktop routes resolve the local coworker before reading or changing its memory store.
 
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
@@ -54,7 +54,7 @@ The engine validates the manifest, prepares its data directory, reconciles inter
 
 Main sends `{type:"stop"}` to the engine before stopping the UI, keeping callbacks alive while runs settle. Engine rejects new work, cancels and awaits active run cancellation, closes MCP and HTTP, acknowledges stop, then exits. Main has a bounded grace followed by forced termination of the owned PID. No arbitrary subprocess tools are enabled, and children react to parent IPC loss. Window close hides the app on macOS; explicit Quit stops services. No login item or hidden daemon is installed.
 
-The preview is not a general-distribution release. Native computer control, Claude subscription execution, general connectors, reset/deletion, migration from an existing install, telemetry consent, public publishing, signing/notarization and update hosting require their own validated integrations.
+The preview is not a general-distribution release. Native computer control, Claude subscription execution, general connectors, workspace reset/deletion, migration from an existing install, telemetry consent, public publishing, signing/notarization and update hosting require their own validated integrations.
 
 
 ## ChatGPT device-code sign-in

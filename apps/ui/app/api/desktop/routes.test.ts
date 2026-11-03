@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { Memory } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent } from '@/lib/desktop/server/store'
 import { PATCH as patchSettings } from './settings/route'
@@ -12,7 +13,8 @@ import { POST as connectProvider } from './providers/openai/route'
 import { GET as listAgents, POST as createAgent } from './agents/route'
 import { GET as listSessions } from './agents/[agentId]/sessions/route'
 import { GET as readCoworkerSettings, PATCH as editCoworkerSettings } from './agents/[agentId]/settings/route'
-import { GET as readMemories } from './agents/[agentId]/memories/route'
+import { GET as readMemories, POST as addMemory } from './agents/[agentId]/memories/route'
+import { DELETE as deleteMemory } from './agents/[agentId]/memories/[memoryId]/route'
 import { GET as getMessages } from './sessions/[sessionId]/messages/route'
 import { POST as postChat } from './chat/route'
 
@@ -25,17 +27,31 @@ beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-desktop-routes-'))
     const connections = connectionFixture()
     const coworkerSettings = new Map<string, { soul: string; verbosity: string }>()
+    const notes: Record<string, Memory[]> = {
+        'engine-agent-1': [{ id: 'first-note', kind: 'fact', tags: ['project'], createdAt: '2026-10-01', content: 'First coworker only', status: 'active', strength: 0.8 }],
+        'engine-agent-2': [],
+    }
     server = createServer(async (req, res) => {
         let text = ''
         for await (const chunk of req) text += chunk
         const body = text ? JSON.parse(text) : null
         if (connections(req, res, body)) return
-        if (req.method === 'GET' && /^\/agents\/engine-agent-[12]\/memories$/.test(req.url ?? '')) {
-            const memories = req.url?.includes('engine-agent-1') ? [{
-                id: 'first-note', kind: 'fact', tags: ['project'], createdAt: '2026-10-01', content: 'First coworker only', status: 'active', strength: 0.8,
-            }] : []
-            res.writeHead(200, { 'content-type': 'application/json' })
-            return res.end(JSON.stringify({ memories }))
+        const memoryPath = req.url?.match(/^\/agents\/(engine-agent-[12])\/memories(?:\/([a-zA-Z0-9_-]+))?$/)
+        if (memoryPath) {
+            const owner = memoryPath[1]!
+            const id = memoryPath[2]
+            const list = notes[owner]!
+            if (req.method === 'GET') return res.end(JSON.stringify({ memories: list }))
+            if (req.method === 'POST') {
+                const memoryId = body.requestId ?? 'created'
+                list.push({ id: memoryId, content: body.content, kind: body.kind ?? 'note', tags: body.tags ?? [], createdAt: '2026-10-02' })
+                return res.writeHead(201).end(JSON.stringify({ id: memoryId }))
+            }
+            if (req.method === 'DELETE') {
+                if (!list.some(note => note.id === id)) return res.writeHead(404).end()
+                notes[owner] = list.filter(note => note.id !== id)
+                return res.writeHead(204).end()
+            }
         }
         if (req.method === 'POST' && req.url === '/agents') {
             res.writeHead(201, { 'content-type': 'application/json' })
@@ -115,6 +131,38 @@ describe('desktop API routes', () => {
         expect(response.headers.get('cache-control')).toBe('no-store')
         expect(await response.json()).toMatchObject({ memories: [{ id: 'first-note', content: 'First coworker only', tags: ['project'], strength: 0.8 }] })
         expect(await (await read(second.id)).json()).toEqual({ memories: [] })
+    })
+
+    it('adds and deletes only the selected local coworker’s note through authenticated same-origin writes', async () => {
+        const db = await openDesktopDatabase(root)
+        const first = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'First' })
+        const second = await createDesktopAgent(db, { engineAgentId: 'engine-agent-2', name: 'Second' })
+        const url = (id: string) => `/api/desktop/agents/${id}/memories`
+        const ctx = (id: string) => ({ params: Promise.resolve({ agentId: id }) })
+        const key = crypto.randomUUID()
+        const body = { content: '  Other note  ', kind: 'task', tags: [' label '], requestId: key }
+        const post = (id: string, fields: unknown) => addMemory(request(url(id), { method: 'POST', body: fields }), ctx(id))
+        const list = async (id: string) => (await (await readMemories(request(url(id)), ctx(id))).json()).memories
+        const remove = (id: string, memoryId: string) => deleteMemory(request(url(id) + '/' + memoryId, { method: 'DELETE' }), { params: Promise.resolve({ agentId: id, memoryId }) })
+        const foreign = request(url(second.id), { method: 'POST', body })
+        foreign.headers.set('origin', 'https://example.invalid')
+        expect((await addMemory(foreign, ctx(second.id))).status).toBe(403)
+        const anonymous = request(url(second.id) + '/' + key, { method: 'DELETE' })
+        anonymous.headers.delete('cookie')
+        expect((await deleteMemory(anonymous, { params: Promise.resolve({ agentId: second.id, memoryId: key }) })).status).toBe(401)
+        expect((await post(second.id, { content: ' ' })).status).toBe(400)
+        expect((await post(second.id, { ...body, agentId: first.id })).status).toBe(400)
+        expect((await post('engine-agent-2', body)).status).toBe(404)
+        const created = await post(second.id, body)
+        expect(created.status).toBe(201)
+        expect(await created.json()).toEqual({ id: key })
+        expect(await list(second.id)).toMatchObject([{ id: key, content: 'Other note', kind: 'task', tags: ['label'] }])
+        expect((await remove(first.id, key)).status).toBe(404)
+        expect((await remove(second.id, '..')).status).toBe(400)
+        expect((await remove(second.id, 'recall')).status).toBe(400)
+        expect((await remove(second.id, key)).status).toBe(204)
+        expect(await list(second.id)).toEqual([])
+        expect(await list(first.id)).toMatchObject([{ id: 'first-note' }])
     })
 
     it('runs provider, coworker, chat, session, and history flows without exposing engine internals', async () => {

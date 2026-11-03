@@ -22,18 +22,16 @@ const vec = (embedding: number[]) => `[${embedding.join(',')}]`
 
 export async function indexMemory(row: MemoryIndexRow, embedding: number[] | null): Promise<void> {
     const { client } = await getSystemDb(row.agentId)
-    if (embedding) {
-        await client.execute({
+    const insert = embedding
+        ? {
             sql: 'INSERT INTO memories(id, agent_id, path, content, embedding, kind, created_at, last_accessed_at, access_count) VALUES (?, ?, ?, ?, vector32(?), ?, ?, ?, 0)',
             args: [row.id, row.agentId, row.path, row.content, vec(embedding), row.kind, row.createdAt, row.createdAt],
-        })
-    } else {
-        await client.execute({
+        }
+        : {
             sql: 'INSERT INTO memories(id, agent_id, path, content, kind, created_at, last_accessed_at, access_count) VALUES (?, ?, ?, ?, ?, ?, ?, 0)',
             args: [row.id, row.agentId, row.path, row.content, row.kind, row.createdAt, row.createdAt],
-        })
-    }
-    await client.execute({ sql: 'INSERT INTO memories_fts(content, memory_id) VALUES (?, ?)', args: [row.content, row.id] })
+        }
+    await client.batch([insert, { sql: 'INSERT INTO memories_fts(content, memory_id) VALUES (?, ?)', args: [row.content, row.id] }], 'write')
 }
 
 export async function reindexMemory(row: MemoryIndexRow, embedding: number[] | null): Promise<void> {
@@ -54,8 +52,10 @@ export async function reindexMemory(row: MemoryIndexRow, embedding: number[] | n
 
 export async function deleteMemory(agentId: string, id: string): Promise<void> {
     const { client } = await getSystemDb(agentId)
-    await client.execute({ sql: 'DELETE FROM memories WHERE id = ?', args: [id] })
-    await client.execute({ sql: 'DELETE FROM memories_fts WHERE memory_id = ?', args: [id] })
+    await client.batch([
+        { sql: 'DELETE FROM memories WHERE id = ? AND agent_id = ?', args: [id, agentId] },
+        { sql: 'DELETE FROM memories_fts WHERE memory_id = ?', args: [id] },
+    ], 'write')
 }
 
 // The embedding is left as is: a renamed mention barely moves the meaning, and re-embedding every

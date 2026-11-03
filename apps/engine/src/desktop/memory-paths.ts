@@ -23,9 +23,10 @@ export async function desktopMemoryPaths(id: string) {
     const hasMemory = await present(memory, true)
     const data = join(agent, 'data')
     const database = join(data, 'system.db')
-    const hasIndex = hasMemory && await present(data, true) && await present(database, false)
-    if (hasIndex) {
+    const hasData = await present(data, true)
+    const hasIndex = hasData && await present(database, false)
+    if (hasData) {
         for (const suffix of ['-wal', '-shm', '-journal']) await present(database + suffix, false)
     }
-    return { memory, hasIndex }
+    return { memory, hasMemory, hasIndex }
 }

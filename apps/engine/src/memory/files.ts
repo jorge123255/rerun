@@ -69,7 +69,7 @@ function parseMemoryFile(path: string, parsed: matter.GrayMatterFile<string>): M
     }
 }
 
-async function readDesktopMemoryFile(path: string): Promise<MemoryFile> {
+export async function readDesktopMemoryFile(path: string): Promise<MemoryFile> {
     // Darwin's O_NOFOLLOW_ANY extends O_NOFOLLOW to ancestors if one is swapped after listing.
     const noFollow = process.platform === 'darwin' ? 0x20000000 : constants.O_NOFOLLOW
     const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | noFollow)

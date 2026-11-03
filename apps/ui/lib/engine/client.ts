@@ -487,7 +487,7 @@ export async function listMemories(conn: EngineConnection, agentId: string): Pro
     return request(conn, `/agents/${encodeURIComponent(agentId)}/memories`, { method: 'GET' }, d => engineMemoriesListSchema.parse(d).memories)
 }
 
-export async function createMemory(conn: EngineConnection, agentId: string, params: { content: string; kind?: string; tags?: string[] }): Promise<{ id?: string }> {
+export async function createMemory(conn: EngineConnection, agentId: string, params: { content: string; kind?: string; tags?: string[]; requestId?: string }): Promise<{ id?: string }> {
     return request(conn, `/agents/${encodeURIComponent(agentId)}/memories`, { method: 'POST', body: JSON.stringify(params) }, d => d as { id?: string })
 }
 

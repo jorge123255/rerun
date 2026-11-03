@@ -1,25 +1,35 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { memoriesListSchema } from '@rerun/contracts'
 import { MemoryRow } from '@/components/agent/MemoryRow'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Input } from '@/components/ui/input'
 import { PanelList } from '@/components/ui/panel-list'
-import { BrainIcon } from '@/lib/icons'
+import { Textarea } from '@/components/ui/textarea'
+import { BrainIcon, PlusIcon } from '@/lib/icons'
 import type { EngineMemory } from '@/lib/engine/types'
 import type { DesktopAgentView } from './DesktopApp'
 
 type Result = { memories: EngineMemory[] } | { error: string }
+type Draft = { content: string; kind: string; tags: string }
 
-function MemoryList({ agentId, refresh }: { agentId: string; refresh: () => void }) {
+function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
+    const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/memories`
     const [result, setResult] = useState<Result | null>(null)
+    const [revision, setRevision] = useState(0)
+    const [draft, setDraft] = useState<Draft | null>(null)
+    const submission = useRef<{ payload: string; id: string } | null>(null)
+    const [writing, setWriting] = useState(false)
+    const [error, setError] = useState('')
+
     useEffect(() => {
         const controller = new AbortController()
         async function load() {
             try {
-                const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/memories`, { cache: 'no-store', signal: controller.signal })
+                const response = await fetch(url, { cache: 'no-store', signal: controller.signal })
                 if (!response.ok) throw new Error('Could not load coworker memories.')
                 const data = memoriesListSchema.parse(await response.json())
                 if (!controller.signal.aborted) setResult(data)
@@ -29,33 +39,88 @@ function MemoryList({ agentId, refresh }: { agentId: string; refresh: () => void
         }
         void load()
         return () => controller.abort()
-    }, [agentId])
+    }, [url, revision])
 
-    return <>
-        <div className="min-h-0 overflow-y-auto">
+    function refresh() {
+        setResult(null)
+        setRevision(current => current + 1)
+    }
+
+    async function changeMemory(target: string, options: RequestInit, message: string) {
+        setWriting(true)
+        setError('')
+        try {
+            const response = await fetch(target, options)
+            // A prior delete may already have succeeded before its response reached this window.
+            if (!response.ok && !(options.method === 'DELETE' && response.status === 404)) {
+                const body = await response.json().catch(() => null)
+                throw new Error(typeof body?.error === 'string' ? body.error : message)
+            }
+            refresh()
+            return true
+        } catch (cause) {
+            setError(cause instanceof Error && cause.name !== 'TypeError' ? cause.message : message)
+            return false
+        } finally {
+            setWriting(false)
+        }
+    }
+
+    async function create(event: FormEvent) {
+        event.preventDefault()
+        if (writing || !draft?.content.trim()) return
+        const tags = draft.tags.split(',').map(tag => tag.trim()).filter(Boolean)
+        const note = { content: draft.content.trim(), kind: draft.kind.trim() || undefined, tags: tags.length ? tags : undefined }
+        const payload = JSON.stringify(note)
+        if (submission.current?.payload !== payload) submission.current = { payload, id: crypto.randomUUID() }
+        const saved = await changeMemory(url, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ...note, requestId: submission.current.id }),
+        }, 'Could not save this memory. Try again.')
+        if (saved) { setDraft(null); submission.current = null }
+    }
+
+    return <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-xl" showCloseButton={!writing}
+        onEscapeKeyDown={event => { if (writing) event.preventDefault() }}
+        onInteractOutside={event => { if (writing) event.preventDefault() }}>
+        <DialogHeader>
+            <DialogTitle>Memories</DialogTitle>
+            <DialogDescription>Saved memories for {agent.name}.</DialogDescription>
+        </DialogHeader>
+        <fieldset disabled={writing} className="min-h-0 space-y-3 overflow-y-auto">
+            {draft ? <form onSubmit={create} className="space-y-3 rounded-lg border p-3">
+                <Textarea id="desktop-memory-content" label="Content" required value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })}
+                    placeholder="The user prefers concise answers." className="min-h-20" />
+                <div className="grid gap-2 sm:grid-cols-2">
+                    <Input id="desktop-memory-kind" label="Kind" hideRequired value={draft.kind} onChange={e => setDraft({ ...draft, kind: e.target.value })} placeholder="note" />
+                    <Input id="desktop-memory-tags" label="Tags" hideRequired value={draft.tags} onChange={e => setDraft({ ...draft, tags: e.target.value })} placeholder="Separate tags with commas" />
+                </div>
+                <div className="flex gap-2">
+                    <Button type="submit" size="sm" disabled={!draft.content.trim()}>Save memory</Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => { setDraft(null); setError('') }}>Cancel</Button>
+                </div>
+            </form> : <Button type="button" size="sm" variant="outline" onClick={() => { submission.current = null; setDraft({ content: '', kind: '', tags: '' }); setError('') }}>
+                <PlusIcon className="size-4" aria-hidden /> Add memory
+            </Button>}
+            {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             {!result ? <p role="status" className="text-sm text-muted-foreground">Loading memories…</p>
                 : 'error' in result ? <p role="alert" className="text-sm text-destructive">{result.error}</p>
-                : result.memories.length ? <PanelList>{result.memories.map(memory => <MemoryRow key={memory.id} memory={memory} />)}</PanelList>
+                : result.memories.length ? <PanelList>{result.memories.map(memory => <MemoryRow key={memory.id} memory={memory}
+                    confirmDescription={`This permanently deletes “${memory.content.length > 140 ? memory.content.slice(0, 140) + '…' : memory.content}” from ${agent.name}’s memories.`}
+                    onDelete={memory.id ? () => void changeMemory(`${url}/${encodeURIComponent(memory.id)}`, { method: 'DELETE' }, 'Could not delete this memory. Try again.') : undefined} />)}</PanelList>
                 : <EmptyState icon={BrainIcon} title="No memories yet" description="Saved memories for this coworker will appear here." />}
-        </div>
+        </fieldset>
         <DialogFooter>
-            {result && <Button type="button" variant="outline" onClick={refresh}>{'error' in result ? 'Retry' : 'Refresh'}</Button>}
-            <DialogClose asChild><Button type="button">Done</Button></DialogClose>
+            {result && <Button type="button" variant="outline" disabled={writing} onClick={refresh}>{'error' in result ? 'Retry' : 'Refresh'}</Button>}
+            <DialogClose asChild><Button type="button" disabled={writing}>Done</Button></DialogClose>
         </DialogFooter>
-    </>
+    </DialogContent>
 }
 
 export function DesktopCoworkerMemories({ agent }: { agent: DesktopAgentView }) {
     const [open, setOpen] = useState(false)
-    const [revision, setRevision] = useState(0)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Memories</Button></DialogTrigger>
-        <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-xl">
-            <DialogHeader>
-                <DialogTitle>Memories</DialogTitle>
-                <DialogDescription>Saved memories for {agent.name}.</DialogDescription>
-            </DialogHeader>
-            {open && <MemoryList key={`${agent.id}:${revision}`} agentId={agent.id} refresh={() => setRevision(value => value + 1)} />}
-        </DialogContent>
+        {open && <MemoryPanel key={agent.id} agent={agent} />}
     </Dialog>
 }

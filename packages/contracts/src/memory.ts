@@ -14,3 +14,11 @@ export const memorySchema = z.object({
 export type Memory = z.infer<typeof memorySchema>
 
 export const memoriesListSchema = z.object({ memories: z.array(memorySchema) })
+
+export const desktopMemoryCreateSchema = z.strictObject({
+    content: z.string().trim().min(1),
+    kind: z.string().trim().default('note').transform(value => value || 'note'),
+    tags: z.array(z.string().trim().min(1)).default([]),
+    requestId: z.uuid().optional(),
+})
+export type DesktopMemoryCreate = z.infer<typeof desktopMemoryCreateSchema>

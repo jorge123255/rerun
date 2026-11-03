@@ -1,23 +1,27 @@
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
-import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
-import { engineOf } from '@/lib/desktop/server/settings'
-import { findDesktopAgent } from '@/lib/desktop/server/store'
-import { EngineRequestError, listMemories } from '@/lib/engine/client'
+import { withCoworkerMemories } from '@/lib/desktop/server/memories'
+import { createMemory, listMemories } from '@/lib/engine/client'
+import { desktopMemoryCreateSchema } from '@rerun/contracts'
 
 export const dynamic = 'force-dynamic'
+type Context = { params: Promise<{ agentId: string }> }
 
-export function GET(request: Request, { params }: { params: Promise<{ agentId: string }> }) {
+export function GET(request: Request, { params }: Context) {
     return desktopRoute(request, async runtime => {
         const { agentId } = await params
-        const coworker = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), agentId)
-        if (!coworker) throw new DesktopHttpError(404, 'Coworker not found')
-        try {
-            const memories = await listMemories(engineOf(runtime), coworker.engineAgentId)
-            return Response.json({ memories }, { headers: { 'cache-control': 'no-store' } })
-        } catch (cause) {
-            if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Coworker not found')
-            throw new DesktopHttpError(502, 'Could not load this coworker’s memories.')
-        }
+        const memories = await withCoworkerMemories(runtime, agentId, listMemories)
+        return Response.json({ memories }, { headers: { 'cache-control': 'no-store' } })
+    })
+}
+
+export function POST(request: Request, { params }: Context) {
+    return desktopRoute(request, async runtime => {
+        const body = desktopMemoryCreateSchema.safeParse(await request.json().catch(() => null))
+        if (!body.success) throw new DesktopHttpError(400, 'Enter memory content and valid optional kind and tags.')
+        const { agentId } = await params
+        const created = await withCoworkerMemories(runtime, agentId, (engine, id) => createMemory(engine, id, body.data))
+        if (!created?.id) throw new DesktopHttpError(502, 'Could not confirm the memory was saved. Try again.')
+        return Response.json({ id: created.id }, { status: 201 })
     })
 }

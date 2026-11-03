@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { desktopMemoryCreateSchema } from '@rerun/contracts'
 import { z } from 'zod'
 import { getAgent } from '../../agents/registry.js'
 import { listMemoryFiles } from '../../memory/files.js'
@@ -6,16 +7,14 @@ import { recallMemory, writeMemory, deleteMemory, deleteAllMemories } from '../.
 import { computeStrength, memoryStatus } from '../../memory/decay.js'
 import { listMemories } from '../../db/repos/memories.js'
 import { desktopApp } from '../../desktop/policy.js'
-import { desktopMemoryPaths } from '../../desktop/memory-paths.js'
+import { addDesktopMemory, listDesktopMemory, removeDesktopMemory } from '../../desktop/memory-store.js'
 
 export const memoryRoutes = new Hono()
 
 memoryRoutes.get('/', async c => {
     const agentId = c.req.param('id')!
-    const desktop = desktopApp() ? await desktopMemoryPaths(agentId) : undefined
-    const [files, rows] = await Promise.all([
-        listMemoryFiles(agentId, desktop?.memory),
-        desktop && !desktop.hasIndex ? [] : listMemories(agentId).catch(() => []),
+    const [files, rows] = desktopApp() ? await listDesktopMemory(agentId) : await Promise.all([
+        listMemoryFiles(agentId), listMemories(agentId).catch(() => []),
     ])
     const statsById = new Map(rows.map(r => [r.id, r]))
     return c.json({
@@ -39,6 +38,10 @@ memoryRoutes.get('/', async c => {
 
 memoryRoutes.post('/', async c => {
     const agentId = c.req.param('id')!
+    if (desktopApp()) {
+        const body = desktopMemoryCreateSchema.parse(await c.req.json().catch(() => null))
+        return c.json({ id: await addDesktopMemory(agentId, body) }, 201)
+    }
     const agent = await getAgent(agentId)
     const body = z.object({ content: z.string().min(1), kind: z.string().default('note'), tags: z.array(z.string()).default([]) }).parse(await c.req.json())
     const id = await writeMemory(agent, body.content, body.kind, body.tags)
@@ -60,6 +63,10 @@ memoryRoutes.delete('/', async c => {
 })
 
 memoryRoutes.delete('/:memoryId', async c => {
+    if (desktopApp()) {
+        await removeDesktopMemory(c.req.param('id')!, c.req.param('memoryId')!)
+        return c.body(null, 204)
+    }
     const agent = await getAgent(c.req.param('id')!)
     await deleteMemory(agent, c.req.param('memoryId')!)
     return c.body(null, 204)

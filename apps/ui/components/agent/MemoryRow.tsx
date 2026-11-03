@@ -3,7 +3,7 @@ import { PanelRow } from '@/components/ui/panel-row'
 import type { EngineMemory } from '@/lib/engine/types'
 import { Badge } from '@rerun/ui/primitives'
 
-export function MemoryRow({ memory, onDelete }: { memory: EngineMemory; onDelete?: () => void }) {
+export function MemoryRow({ memory, onDelete, confirmDescription }: { memory: EngineMemory; onDelete?: () => void; confirmDescription?: string }) {
     return (
         <PanelRow
             className="items-start gap-2"
@@ -32,7 +32,7 @@ export function MemoryRow({ memory, onDelete }: { memory: EngineMemory; onDelete
                         size="icon-xs"
                         onClick={onDelete}
                         confirmTitle="Delete this memory?"
-                        confirmDescription="The coworker forgets it for good. This cannot be undone."
+                        confirmDescription={confirmDescription ?? 'The coworker forgets it for good. This cannot be undone.'}
                         className="opacity-0 transition-opacity group-hover:opacity-100"
                     />
                 )
