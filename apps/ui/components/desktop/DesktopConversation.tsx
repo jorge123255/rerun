@@ -10,6 +10,7 @@ import { lastUserText } from '@/lib/chat-payload'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
+import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 
 async function historyFor(sessionId: string): Promise<UIMessage[]> {
     const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`)
@@ -85,7 +86,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                     <h1 className="truncate text-base font-semibold">{agent.name}</h1>
                     <p className="truncate text-xs text-muted-foreground">{agent.description || 'Local coworker'}</p>
                 </div>
-                <div className="flex w-full items-center gap-2 sm:w-auto">
+                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                     {sessions.length > 0 && (
                         <select
                             disabled={busy}
@@ -98,6 +99,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             {sessions.map(session => <option key={session.id} value={session.id}>{session.title}</option>)}
                         </select>
                     )}
+                    <DesktopCoworkerSettings agent={agent} disabled={busy} />
                     <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => onSelectSession(null)}>New chat</Button>
                 </div>
             </header>

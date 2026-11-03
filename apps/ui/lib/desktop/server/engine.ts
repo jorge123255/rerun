@@ -1,5 +1,6 @@
 import 'server-only'
-import { chat, createAgent, getSessionMessages } from '@/lib/engine/client'
+import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
+import type { DesktopCoworkerSettings } from '../coworker-settings'
 import { transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
 import { sanitizeIdentifier } from '@/lib/utils'
 import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } from './settings'
@@ -37,6 +38,21 @@ export async function createDesktopCoworker(runtime: DesktopRuntime, input: { na
         },
     })
     return createDesktopAgent(db, { engineAgentId: created.id, name, description })
+}
+
+export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: string, patch?: Partial<Pick<DesktopCoworkerSettings, 'soul' | 'verbosity'>>): Promise<DesktopCoworkerSettings> {
+    const agent = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), id)
+    if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
+    // This registry contains only user-created local coworkers. Cloud template agents, whose
+    // system prompts can be sealed, cannot be resolved by their engine IDs through this route.
+    const engine = engineOf(runtime)
+    try {
+        const detail = patch ? await patchAgent(engine, agent.engineAgentId, patch) : await getAgent(engine, agent.engineAgentId)
+        return { soul: detail.soul, verbosity: detail.config.verbosity, soulEditable: true }
+    } catch (error) {
+        if (error instanceof EngineRequestError && error.status === 404) throw new DesktopHttpError(404, 'Coworker not found')
+        throw new DesktopHttpError(502, 'Could not reach this coworker’s settings. Try again.')
+    }
 }
 
 export async function startDesktopChat(runtime: DesktopRuntime, input: { agentId: string; sessionId?: string; text: string }): Promise<{ response: Response; sessionId: string }> {

@@ -241,6 +241,77 @@ test('reasoning effort uses the active model’s supported levels and the saved 
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('editing a coworker from the board preserves the chat and only saves changed fields', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const agent = { id: 'reviewer', name: 'Reviewer', description: '', createdAt: '', updatedAt: '' }
+    let settings = { soul: 'Check the facts.', verbosity: 'normal', soulEditable: true }
+    let reads = 0
+    const writes: Record<string, string>[] = []
+    mockDesktopFetch((url, init) => {
+        if (url === settingsUrl) return Response.json(disconnected)
+        if (url === '/api/desktop/agents/reviewer/sessions') return Response.json({ sessions: [{ id: 'review', agentId: agent.id, title: 'Earlier review', createdAt: '', updatedAt: '' }] })
+        if (url === '/api/desktop/sessions/review/messages') return Response.json({ messages: [{ id: 'a', role: 'assistant', parts: [{ type: 'text', text: 'Existing answer.' }] }] })
+        if (url === '/api/desktop/agents/reviewer/settings') {
+            if (init?.method !== 'PATCH') {
+                reads++
+                return reads === 1 ? Response.json({ error: 'Could not load settings.' }, { status: 503 }) : Response.json(settings)
+            }
+            const patch = JSON.parse(String(init.body))
+            writes.push(patch)
+            if (writes.length === 1) return Response.json({ error: 'Try saving again.' }, { status: 503 })
+            settings = { ...settings, ...patch }
+            return Response.json(settings)
+        }
+    })
+    const click = (text: string) => act(async () => {
+        const button = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === text)!
+        button.click()
+    })
+    const enter = (input: HTMLTextAreaElement, value: string) => act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, value)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    const instructions = () => document.querySelector<HTMLTextAreaElement>('[role="dialog"] textarea')!
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, theme: 'system', agents: [agent] }} />) })
+        await act(async () => { container.querySelector<HTMLElement>('[aria-label="Open chat with Reviewer"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+        const composer = container.querySelector<HTMLTextAreaElement>('#desktop-message')!
+        await enter(composer, 'My unsent question')
+        await click('Edit coworker')
+        expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe('Could not load settings.')
+        await click('Retry')
+        expect(instructions().value).toBe('Check the facts.')
+        expect(document.querySelector('[aria-label="Normal"]')?.getAttribute('aria-pressed')).toBe('true')
+        await enter(instructions(), 'Discard this draft')
+        await click('Cancel')
+        expect(writes).toEqual([])
+        await click('Edit coworker')
+        expect(instructions().value).toBe('Check the facts.')
+        await enter(instructions(), 'End with a verdict.')
+        await click('Concise')
+        await click('Save changes')
+        expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe('Try saving again.')
+        expect(instructions().value).toBe('End with a verdict.')
+        await click('Save changes')
+        expect(writes[1]).toEqual({ soul: 'End with a verdict.', verbosity: 'concise' })
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
+        expect(composer.value).toBe('My unsent question')
+        expect(container.querySelector('select[aria-label="Conversation history"]')).toHaveProperty('value', 'review')
+        expect(container.textContent).toContain('Existing answer.')
+        settings.soulEditable = false
+        await click('Edit coworker')
+        expect(instructions()).toBeNull()
+        expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('End with a verdict.')
+        expect(document.querySelector('[aria-label="Concise"]')?.getAttribute('aria-pressed')).toBe('true')
+        await click('Detailed')
+        await click('Save changes')
+        expect(writes[2]).toEqual({ verbosity: 'detailed' })
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('a board tile opens the saved conversation and New chat starts a separate session', async () => {
     const container = document.createElement('div')
     document.body.append(container)
