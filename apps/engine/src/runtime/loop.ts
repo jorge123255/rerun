@@ -1,5 +1,5 @@
 import { streamText, type LanguageModelUsage, type ModelMessage, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
-import { RERUN_CONNECTION_ID, contextTextPart, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
+import { RERUN_CONNECTION_ID, contextTextPart, workspaceAttachmentPart, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
 import { desktopCodexEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
 import { prepareRunHistory } from './compaction/compact.js'
@@ -438,7 +438,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         // replays is then byte for byte the prompt the provider already cached. Only the signature
         // stays out of the row, `signHistoryMessage` puts it back on a shared conversation.
         const suffix = [recall, userLanguageBlock(trigger.source === 'chat' ? trigger.userLanguage : undefined), nowBlock()].filter(Boolean).join('\n\n')
-        const context = suffix ? [contextTextPart(suffix)] : []
+        const attachment = trigger.source === 'chat' ? trigger.workspaceAttachment : undefined
+        const context = [...(attachment ? [workspaceAttachmentPart(attachment)] : []), ...(suffix ? [contextTextPart(suffix)] : [])]
         appendP = appendMessage(agent.id, sessionId, { role: 'user', content: [{ type: 'text', text: userText }, ...context] }, author)
         appendP.catch(err => logger.error({ err: String(err), agent: agent.id }, 'append user message failed'))
 

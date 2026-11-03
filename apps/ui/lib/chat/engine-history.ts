@@ -6,7 +6,7 @@ import { parseScheduledRun } from '@/lib/schedules/scheduled-run'
 import { encodePeaks } from '@/lib/voice/peaks'
 import { parseVoiceMessage } from '@/lib/voice/marker'
 import { hitlKindOf } from '@/lib/chat-hitl'
-import { isContextPart, visibleText, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
+import { isContextPart, visibleText, workspaceAttachmentPath, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
 type TextPart = { type: 'text'; text: string }
 type ToolInvocationPart = {
@@ -18,7 +18,7 @@ type ToolInvocationPart = {
     output?: unknown
 }
 type UIMessagePart = TextPart | ToolInvocationPart | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
-export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: { authorId?: string; createdAt?: string } }
+export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: { authorId?: string; createdAt?: string; attachmentPath?: string } }
 
 function safeParse(json: string | null | undefined): unknown {
     if (!json) return null
@@ -67,7 +67,8 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
         const content = safeParse(m.contentJson)
 
         if (m.role === 'user') {
-            result.push({ id: `engine-${m.id}`, role: 'user', parts: [{ type: 'text', text: extractText(content) }], metadata: { createdAt: m.createdAt, ...(m.authorId && { authorId: m.authorId }) } })
+            const attachmentPath = workspaceAttachmentPath(content)
+            result.push({ id: `engine-${m.id}`, role: 'user', parts: [{ type: 'text', text: extractText(content) }], metadata: { createdAt: m.createdAt, ...(m.authorId && { authorId: m.authorId }), ...(attachmentPath && { attachmentPath }) } })
             continue
         }
 

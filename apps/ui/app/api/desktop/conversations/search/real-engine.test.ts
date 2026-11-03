@@ -53,6 +53,9 @@ test.runIf(process.env.RERUN_FIND_CHAT_ACCEPTANCE === '1')('same-title chats pre
         const aliceChat = await send(coworkers[0].id, 'Shared plan', 1)
         const bobChat = await send(coworkers[1].id, 'Shared plan', 2)
         await send(coworkers[0].id, 'Newer note', 3)
+        await send(coworkers[1].id, 'Newer note', 4)
+        expect(JSON.stringify(fixture.providerMessages[0])).toContain('Shared plan')
+        expect(JSON.stringify(fixture.providerMessages[1])).toContain('Shared plan')
         const verify = async () => {
             const found = await search('Shared')
             expect(found.hits).toEqual([
@@ -66,6 +69,7 @@ test.runIf(process.env.RERUN_FIND_CHAT_ACCEPTANCE === '1')('same-title chats pre
             expect(bob).toContain('Bob saved reply.')
             expect(bob).not.toContain('Alice saved reply.')
             expect(await search('Missing match')).toEqual({ hits: [], hasMore: false })
+            expect(await search('Alice saved reply')).toEqual({ hits: [], hasMore: false })
         }
         await verify()
         await closeDesktopDatabase(root)

@@ -17,12 +17,14 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
     let child, runtime, releaseReply
     let notifyProvider
     const providerStarted = new Promise(resolve => { notifyProvider = resolve })
-    let providerRequests = 0
+    const providerMessages = []
     const waiting = []
     const provider = createServer(async (req, res) => {
         if (req.url !== '/v1/chat/completions' || req.method !== 'POST') return res.writeHead(404).end()
-        for await (const chunk of req) void chunk
-        const requestNumber = providerRequests + 1
+        const body = []
+        for await (const piece of req) body.push(piece)
+        providerMessages.push(JSON.parse(Buffer.concat(body)).messages)
+        const requestNumber = providerMessages.length
         res.writeHead(200, { 'content-type': 'text/event-stream' })
         const chunk = (delta, finishReason = null, usage) => res.write(`data: ${JSON.stringify({ id: 'local-completion', object: 'chat.completion.chunk', created: 1, model: 'qa-local', choices: [{ index: 0, delta, finish_reason: finishReason }], ...(usage && { usage }) })}\n\n`)
         chunk({ role: 'assistant', content: '' })
@@ -34,8 +36,7 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
             res.end('data: [DONE]\n\n')
         }
         notifyProvider()
-        providerRequests++
-        for (const item of waiting.filter(item => item.count <= providerRequests)) item.resolve()
+        for (const item of waiting.filter(item => item.count <= providerMessages.length)) item.resolve()
     })
     await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve))
     const providerOrigin = `http://127.0.0.1:${provider.address().port}/v1`
@@ -76,8 +77,8 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
             active.send({ type: 'stop' })
         })
     }
-    return { start, stop, providerOrigin, providerStarted,
-        waitForProviderRequest: count => providerRequests >= count ? Promise.resolve() : new Promise((resolve, reject) => {
+    return { start, stop, providerOrigin, providerStarted, providerMessages,
+        waitForProviderRequest: count => providerMessages.length >= count ? Promise.resolve() : new Promise((resolve, reject) => {
             const timer = setTimeout(() => reject(new Error(`Local provider request ${count} did not arrive`)), 10000)
             waiting.push({ count, resolve: () => { clearTimeout(timer); resolve() } })
         }),

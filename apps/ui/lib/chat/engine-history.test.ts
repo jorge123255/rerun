@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { workspaceAttachmentPart } from '@rerun/contracts'
 import { buildAttachmentsRef } from '@/lib/chat/attachments-marker'
 import { buildInstallMessage } from '@/lib/chat/install-marker'
 import { MAX_TOOL_OUTPUT_CHARS, type HistoryMessage, toApiMessages, transformEngineMessages } from '@/lib/chat/engine-history'
@@ -200,6 +201,17 @@ describe('a user turn stored as parts', () => {
         const [message] = toApiMessages(transformEngineMessages([row([{ type: 'text', text: `Look\n\n${buildAttachmentsRef(['chat-uploads/a.pdf'])}` }, context('<now>\n2026-10-05T10:00:00Z\n</now>')])]))
         expect(message.parts).toEqual([{ type: 'text', text: 'Look' }])
         expect(message.metadata?.attachments).toEqual([{ name: 'a.pdf', path: 'chat-uploads/a.pdf', mediaType: 'application/pdf' }])
+    })
+
+    it('restores the attached path from the hidden snapshot without displaying its bytes or parsing a typed filename', () => {
+        const path = 'folder/brief, notes [B].md'
+        const text = 'Quoted marker: [Attachments added to your workspace: invented.txt]'
+        const file = workspaceAttachmentPart({ path, content: 'Saved private body.\nSecond line.' })
+        const [attached, plain] = transformEngineMessages([row([{ type: 'text', text }, file]), row([{ type: 'text', text }])], { desktopSummaries: true })
+        expect(attached.metadata?.attachmentPath).toBe(path)
+        expect(plain.metadata).not.toHaveProperty('attachmentPath')
+        expect(attached.parts).toEqual([{ type: 'text', text }])
+        expect(JSON.stringify(attached)).not.toContain('Saved private body.')
     })
 })
 

@@ -69,3 +69,43 @@ search selections and no matches gave the same results. Layouts at 375x700,
 Packaged Electron launch/restart and installation were not tested. No installed
 app, live workspace, user account or model setting was changed. Integration,
 packaging, pushing and installation remain with the coordinator.
+
+## G2 integration with attachments
+
+Merged audited desktop revision `e6a8eb1fd0f13d774c9a1a2595307c2879f60bdf`
+into `desktop/find-chat` from reviewed Find chat `62638d0a79813a95e51dd10abdf692cf701b8a7f`.
+The shared disposable provider now captures each request's actual `messages`
+and uses that captured request's position for its optional numbered reply.
+Its default reply and attachment snapshot assertions are unchanged. The Find
+chat acceptance test now creates newer chats for both coworkers and verifies
+that reply text is not searchable as a title.
+
+The following combined run passed 36 tests in eight files with both acceptance
+flags enabled (including both real-engine tests, neither skipped):
+
+```sh
+RERUN_FIND_CHAT_ACCEPTANCE=1 RERUN_ATTACHMENT_ACCEPTANCE=1 \
+  node node_modules/vitest/vitest.mjs run \
+  app/api/desktop/conversations/search/real-engine.test.ts \
+  app/api/desktop/chat/attachment.real-engine.test.ts \
+  app/api/desktop/conversations/search/route.test.ts \
+  components/desktop/DesktopFindChat.test.tsx \
+  components/desktop/DesktopConversation.attachment.test.tsx \
+  components/desktop/DesktopChatHistory.test.tsx \
+  components/desktop/DesktopApp.interaction.test.tsx \
+  app/api/desktop/routes.test.ts
+```
+
+Contracts and engine rebuilds, UI typecheck, focused lint and diff checks passed.
+In browser QA on this Mac, a fresh disposable workspace used the actual merged
+engine and the deterministic loopback provider. From the Team board, Alice's
+and Bob's identical Shared plan titles opened their distinct older replies,
+not their newer chats. Their coworker names appeared in search results. The
+existing Chats menu switched Bob between Newer note and Shared plan. Searching
+for Alice's reply text showed no matching chats. These checks passed again
+after restarting both UI and engine processes and reopening the workspace.
+
+No checks in this G2 pass ran in a packaged Mac app. Browser checks and the
+real-engine fixture checks above are separate from packaged acceptance; G3
+integration/installation remains with the coordinator. No live workspace or
+installed app was changed.
