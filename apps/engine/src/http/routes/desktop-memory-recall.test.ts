@@ -1,3 +1,5 @@
+import type { LoadedAgent } from '../../agents/types.js'
+import { contextTextPart, TOOL_KEYS } from '@rerun/contracts'
 import { mkdtempSync } from 'node:fs'
 import { mkdir, readFile, readdir, rename, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,6 +9,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 process.env.RERUN_DATA_DIR = mkdtempSync(join(tmpdir(), 'rerun-mac-recall-'))
 const embedText = vi.hoisted(() => vi.fn(() => { throw Error('unexpected embedding call') }))
 vi.mock('../../memory/embed.js', () => ({ embedText }))
+const { recallMemories, recallSection, buildSystemPrompt, systemPromptText } = await import('../../agents/systemPrompt.js')
+const { recallDesktopMemory, updateDesktopMemory } = await import('../../desktop/memory-store.js')
 const { createServer } = await import('../server.js')
 const { agentConfigSchema } = await import('../../agents/types.js')
 const { agentDir } = await import('../../config/paths.js')
@@ -112,4 +116,78 @@ it('validates input, identifies a missing coworker and reports an unreadable ind
     await mkdir(join(agentDir(id), 'data'))
     await writeFile(join(agentDir(id), 'data', 'system.db'), 'invalid')
     expect((await recall(id, { query: 'visible' })).status).toBe(500)
+})
+
+it('injects just the matching local notes into chat, including file-only notes, and only touches indexed hits', async () => {
+    const a = 'automatic-owner', b = 'automatic-sibling'
+    await Promise.all([a, b].map(coworker))
+    const agent: LoadedAgent = {
+        id: a, config: agentConfigSchema.parse({ name: a, tools: Object.fromEntries(TOOL_KEYS.map(key => [key, key === 'memory'])) }),
+        install: '', soul: 'Answer briefly.', env: {}, resolved: { connection: null, model: 'test', provider: 'codex' },
+    }
+    const query = 'Where is the cabinet?'
+    const own = await remember(a, 'Cabinet key is behind the turquoise panel.')
+    const unrelated = await remember(a, 'Unrelated document is EXCLUDED-FROM-PROMPT.')
+    const legacy = await writeMemoryFile(a, 'Packing instructions.\nCabinet label is papier-mâché.')
+    await remember(b, 'Sibling cabinet label is PRIVATE-SIBLING.')
+    const { client } = await getSystemDb(a)
+    const previous = new Date(Date.now() - 3600000).toISOString()
+    await client.execute({ sql: 'UPDATE memories SET last_accessed_at = ?, access_count = 3 WHERE agent_id = ?', args: [previous, a] })
+    const prompt = systemPromptText(await buildSystemPrompt(agent))
+    expect(prompt).not.toContain('<memory_index>')
+    expect(prompt).not.toContain('EXCLUDED-FROM-PROMPT')
+    expect(prompt).not.toContain('call memory_recall')
+    const hits = await recallMemories(agent, query)
+    expect(new Set(hits.map(hit => hit.id))).toEqual(new Set([own, legacy.id]))
+    const block = recallSection(hits)
+    expect(block).toContain('Cabinet label is papier-mâché.')
+    expect(block).toContain('behind the turquoise panel')
+    expect(block).not.toContain('PRIVATE-SIBLING')
+    expect(recallSection(await recallMemories(agent, query), [{ role: 'user', content: [contextTextPart(block)] }])).toBe('')
+    expect(await recallMemories(agent, 'unmatchedword')).toEqual([])
+    const stats = await listMemories(a)
+    const used = stats.find(row => row.id === own)!
+    expect(used.accessCount).toBe(3)
+    expect(Date.parse(used.lastAccessedAt!)).toBeGreaterThan(Date.parse(previous))
+    expect(stats.find(row => row.id === unrelated)).toMatchObject({ accessCount: 3, lastAccessedAt: previous })
+    expect(stats.some(row => row.id === legacy.id)).toBe(false)
+    expect(await recallMemories({ ...agent, id: b }, 'papier-mâché')).toEqual([])
+    expect(await recallMemories({ ...agent, id: 'absent' }, query)).toEqual([])
+    const disabled = { ...agent, config: { ...agent.config, tools: { ...agent.config.tools, memory: false } } }
+    expect(await recallMemories(disabled, query)).toEqual([])
+    expect(await matches(a, { query })).toHaveLength(2)
+    expect(await listMemories(a)).toEqual(stats)
+})
+
+it('recovers a staged update from the committed index and rejects a stale note or redirected file', async () => {
+    const a = 'curation-owner', b = 'curation-sibling'
+    await Promise.all([a, b].map(coworker))
+    const original = 'Cabinet has a copper key.'
+    const id = await remember(a, original)
+    const other = await writeMemoryFile(b, 'Cabinet has a secret location.')
+    const canonical = join(agentDir(a), 'memory', id + '.md')
+    const marker = join(agentDir(a), 'memory', '.updating-' + id)
+    const before = await readFile(canonical, 'utf8')
+    const replacement = 'Cabinet has a silver key.'
+    await writeFile(join(agentDir(a), 'memory', '.writing-' + id), '---partial')
+    await writeFile(marker, before.replace(original, replacement))
+    await expect(updateDesktopMemory(a, id, 'another version', 'wrong')).rejects.toMatchObject({ status: 409 })
+    expect(await readFile(canonical, 'utf8')).toBe(before)
+    expect(await readdir(join(agentDir(a), 'memory'))).not.toContain('.writing-' + id)
+    await writeFile(marker, before)
+    await expect(updateDesktopMemory(a, id, 'another version', 'wrong')).rejects.toMatchObject({ status: 409 })
+    expect(await readdir(join(agentDir(a), 'memory'))).not.toContain('.updating-' + id)
+    await updateDesktopMemory(a, id, original, replacement)
+    const committed = await readFile(canonical, 'utf8')
+    // Simulate death after committing SQLite but before replacing the old Markdown.
+    await writeFile(marker, committed)
+    await writeFile(canonical, before)
+    expect((await recallDesktopMemory(a, 'silver', 5, { purpose: 'chat' })).map(note => note.id)).toEqual([id])
+    expect(await readFile(canonical, 'utf8')).toBe(committed)
+    expect(await readdir(join(agentDir(a), 'memory'))).not.toContain('.updating-' + id)
+    await rename(canonical, canonical + '.saved')
+    await symlink(other.path, canonical)
+    await expect(updateDesktopMemory(a, id, replacement, 'wrong')).rejects.toThrow()
+    expect(await recallDesktopMemory(a, 'cabinet', 5, { purpose: 'curation' })).toEqual([])
+    expect(await readFile(other.path, 'utf8')).toContain('Cabinet has a secret location.')
 })

@@ -380,8 +380,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     })
 
     try {
-        // The recall waits on the hub's embedding: it runs alongside the whole preparation rather
-        // than after it. It never rejects, a failed search only means no memories this turn.
+        // Prepare recall alongside the turn. A failed lookup simply contributes no context.
         const memoriesP = recallMemories(baseAgent, userText)
         // An override can name a different box connection than the agent's default, so the run works
         // off a view of the agent bound to the connection it will actually bill. The connection object

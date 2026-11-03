@@ -1,3 +1,4 @@
+import type { Client } from '@libsql/client'
 import { getSystemDb } from '../systemDb.js'
 import { nowIso } from '../../lib/ids.js'
 
@@ -83,9 +84,9 @@ export async function listMemories(agentId: string): Promise<MemoryIndexRow[]> {
     return res.rows.map(toRow)
 }
 
-export async function bumpMemoryAccess(agentId: string, ids: string[], mode: 'full' | 'touch'): Promise<void> {
+export async function bumpMemoryAccess(agentId: string, ids: string[], mode: 'full' | 'touch', existingClient?: Client): Promise<void> {
     if (ids.length === 0) return
-    const { client } = await getSystemDb(agentId)
+    const client = existingClient ?? (await getSystemDb(agentId)).client
     const placeholders = ids.map(() => '?').join(', ')
     const increment = mode === 'full' ? ', access_count = access_count + 1' : ''
     await client.execute({

@@ -28,6 +28,8 @@ The **Memories** button in coworker chat lists that coworker’s saved Rerun not
 
 **Recall memories** searches that coworker’s notes locally. Press Enter or choose **Search** to see up to five matches ranked by keyword relevance and memory strength. **Clear search** returns to the full list. Looking up a note in this panel does not increase its access count or strengthen it.
 
+When a coworker has memory enabled, a chat message uses the same local keyword search. Up to five relevant, active memories can accompany the message to the selected chat provider, including notes saved only as Markdown. A note already present in the conversation context is skipped. Chat can refresh the last-use time of an indexed match without increasing its access count. Rerun’s separate automatic learning setting still controls whether the coworker reviews a completed exchange for facts to save or correct.
+
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
 ```json

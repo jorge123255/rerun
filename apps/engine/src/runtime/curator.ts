@@ -1,3 +1,5 @@
+import { addDesktopMemory, recallDesktopMemory, removeDesktopMemory, updateDesktopMemory } from '../desktop/memory-store.js'
+import { desktopApp } from '../desktop/policy.js'
 import { z } from 'zod'
 import { modelFor, type ModelOverride } from '../agents/providers.js'
 import { ensureCliAuth } from '../connections/cli-auth.js'
@@ -36,13 +38,18 @@ export function curatorPrompt({ userText, assistantText, existing, skills }: { u
 
 export async function runCurator(agent: LoadedAgent, sessionId: string, userText: string, assistantText: string, override?: ModelOverride): Promise<void> {
     const cfg = agent.config.selfImprovement
-    if (!cfg.autoMemory) return
+    const desktop = desktopApp()
+    if (!cfg.autoMemory || (desktop && !agent.config.tools.memory)) return
 
+    const query = `${userText}\n\n${assistantText}`
+    const candidates = desktop
+        ? recallDesktopMemory(agent.id, query, 5, { purpose: 'curation', includeDormant: true })
+        : recallMemory(agent, query, 5, { reinforce: 'none', includeDormant: true })
     const [existing, skills] = await Promise.all([
-        recallMemory(agent, `${userText}\n\n${assistantText}`, 5, { reinforce: 'none', includeDormant: true }).catch(() => []),
+        candidates.catch(() => []),
         agent.config.tools.skills ? listSkillSummaries(agent.id).catch(() => []) : Promise.resolve([]),
     ])
-    const knownIds = new Set(existing.map(m => m.id))
+    const known = new Map(existing.map(memory => [memory.id, memory]))
 
     const release = await ensureCliAuth(agent.resolved.provider, agent.resolved.connection)
     const output = await generateStructured({
@@ -52,12 +59,21 @@ export async function runCurator(agent: LoadedAgent, sessionId: string, userText
         abortSignal: AbortSignal.timeout(CURATOR_TIMEOUT_MS),
     }).finally(release)
 
-    const updateId = output.memory?.updateId && knownIds.has(output.memory.updateId) ? output.memory.updateId : null
+    const update = output.memory?.updateId ? known.get(output.memory.updateId) : undefined
     for (const id of output.obsoleteIds) {
-        if (knownIds.has(id) && id !== updateId) await deleteMemory(agent, id).catch(e => logger.warn({ err: String(e) }, 'auto memory delete failed'))
+        const note = known.get(id)
+        if (!note || id === update?.id) continue
+        const deletion = desktop ? removeDesktopMemory(agent.id, id, note.content) : deleteMemory(agent, id)
+        await deletion.catch(e => logger.warn({ err: String(e) }, 'auto memory delete failed'))
     }
     if (output.memory) {
-        if (updateId) await updateMemory(agent, updateId, output.memory.content).catch(e => logger.warn({ err: String(e) }, 'auto memory update failed'))
-        else await writeMemory(agent, output.memory.content, 'learned').catch(e => logger.warn({ err: String(e) }, 'auto memory failed'))
+        const { content } = output.memory
+        if (update) {
+            const change = desktop ? updateDesktopMemory(agent.id, update.id, update.content, content) : updateMemory(agent, update.id, content)
+            await change.catch(e => logger.warn({ err: String(e) }, 'auto memory update failed'))
+        } else {
+            const addition = desktop ? addDesktopMemory(agent.id, { content: content.trim(), kind: 'learned', tags: [] }) : writeMemory(agent, content, 'learned')
+            await addition.catch(e => logger.warn({ err: String(e) }, 'auto memory failed'))
+        }
     }
 }

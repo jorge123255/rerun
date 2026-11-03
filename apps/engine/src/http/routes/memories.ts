@@ -55,7 +55,7 @@ memoryRoutes.post('/recall', async c => {
         ? memoryRecallQuerySchema.parse(await c.req.json().catch(() => null))
         : z.object({ query: z.string().min(1), limit: z.number().int().positive().max(20).default(5), includeDormant: z.boolean().default(false) }).parse(await c.req.json())
     const memories = desktop
-        ? await recallDesktopMemory(agentId, body.query, body.limit, body.includeDormant)
+        ? await recallDesktopMemory(agentId, body.query, body.limit, { includeDormant: body.includeDormant })
         : await recallMemory(await getAgent(agentId), body.query, body.limit, { includeDormant: body.includeDormant, reinforce: 'none' })
     return c.json({ memories: memories.map(m => ({ ...m, status: memoryStatus(m.strength) })) })
 })

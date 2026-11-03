@@ -1,12 +1,12 @@
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, readdir, rename, unlink, writeFile } from 'node:fs/promises'
-import { createClient } from '@libsql/client'
-import { dirname, join } from 'node:path'
+import { createClient, type Client } from '@libsql/client'
+import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import matter from 'gray-matter'
 import type { DesktopMemoryCreate } from '@rerun/contracts'
-import { deleteMemory, ftsExpression, indexMemory, keywordCoverage, listMemories, queryTerms } from '../db/repos/memories.js'
+import { bumpMemoryAccess, deleteMemory, ftsExpression, indexMemory, keywordCoverage, listMemories, queryTerms } from '../db/repos/memories.js'
 import { badRequest, HttpError, notFound } from '../lib/errors.js'
 import { newId, nowIso } from '../lib/ids.js'
 import { withKeyedLock } from '../lib/lock.js'
@@ -31,14 +31,20 @@ async function inDirectory<T>(path: string, action: (pinned: string) => Promise<
 // A hidden marker bridges each atomic SQLite batch with its Markdown rename. If the
 // process stopped between them, the committed index tells us whether to publish or roll back.
 async function recover(agentId: string, dir: string, hasIndex: boolean) {
-    const pending = (await readdir(dir, { withFileTypes: true })).filter(entry => /^\.(adding|deleting)-[A-Za-z0-9_-]+$/.test(entry.name))
+    const pending = (await readdir(dir, { withFileTypes: true })).filter(entry => /^\.(adding|deleting|writing|updating)-[A-Za-z0-9_-]+$/.test(entry.name))
     if (!pending.length) return
-    const indexed = new Set(hasIndex ? (await listMemories(agentId)).map(row => row.id) : [])
+    const indexed = new Map(hasIndex ? (await listMemories(agentId)).map(row => [row.id, row]) : [])
     for (const entry of pending) {
         if (!entry.isFile()) throw new HttpError(403, 'Unsafe coworker memory location.')
         const id = entry.name.slice(entry.name.indexOf('-') + 1)
         const marker = join(dir, entry.name)
-        if (indexed.has(id)) {
+        if (entry.name.startsWith('.writing-')) await unlink(marker)
+        else if (entry.name.startsWith('.updating-')) {
+            const pendingNote = await readDesktopMemoryFile(marker)
+            if (pendingNote.id !== id) throw new HttpError(409, 'Conflicting coworker memory files.')
+            if (indexed.get(id)?.content === pendingNote.content) await rename(marker, join(dir, id + '.md'))
+            else await unlink(marker)
+        } else if (indexed.has(id)) {
             const target = join(dir, id + '.md')
             const existing = await lstat(target).catch((cause: NodeJS.ErrnoException) => {
                 if (cause.code !== 'ENOENT') throw cause
@@ -53,7 +59,7 @@ async function recover(agentId: string, dir: string, hasIndex: boolean) {
 
 type Directory = { dir?: string; data?: string; memory: string; hasIndex: boolean }
 
-function withMemoryStore<T>(agentId: string, mode: 'list' | 'create' | 'delete' | 'recall', action: (store: Directory) => Promise<T>) {
+function withMemoryStore<T>(agentId: string, mode: 'list' | 'create' | 'update' | 'delete' | 'recall' | 'chat', action: (store: Directory) => Promise<T>) {
     return withKeyedLock('desktop-memories:' + agentId, async () => {
         const paths = await desktopMemoryPaths(agentId)
         if (!paths.hasMemory && mode !== 'create') return action(paths)
@@ -77,57 +83,64 @@ export function listDesktopMemory(agentId: string) {
 
 type RecallStats = { createdAt: string; lastAccessedAt: string | null; accessCount: number; rank: number | null }
 
-// Opening the regular engine client can migrate an old database. Use its same SQLite
-// library in read-only mode, reading only statistics and BM25 ranks, never indexed paths.
-async function readRecallStats(agentId: string, data: string, terms: string[]) {
+// Use an existing, pinned index without running migrations or creating a database for legacy notes.
+function withRecallIndex<T>(data: string, mode: 'ro' | 'rw', use: (client: Client) => Promise<T>) {
     return inDirectory(data, async pinned => {
         const location = pathToFileURL(join(pinned, 'system.db'))
-        location.searchParams.set('mode', 'ro')
-        // The outer libSQL client URL takes a path. Pass the SQLite URI as that encoded path
-        // so mode=ro reaches SQLite instead of being interpreted as a client query parameter.
-        const reader = createClient({ url: 'file:' + encodeURIComponent(location.href) })
-        try {
-            const stats = new Map<string, RecallStats>()
-            const info = await reader.execute('PRAGMA table_info(memories)')
-            const columns = new Set(info.rows.map(row => row.name))
-            if (!columns.size) return stats
-            const fts = await reader.execute("SELECT 1 FROM sqlite_schema WHERE name = 'memories_fts'")
-            const hasFts = fts.rows.length > 0
-            const result = await reader.execute({
-                sql: `SELECT m.id, m.created_at,
-                    ${columns.has('access_count') ? 'm.access_count' : '0'} AS access_count,
-                    ${columns.has('last_accessed_at') ? 'm.last_accessed_at' : 'NULL'} AS last_accessed_at,
-                    ${hasFts ? 'f.rank' : 'NULL'} AS rank FROM memories m
-                    ${hasFts ? 'LEFT JOIN (SELECT memory_id, rank FROM memories_fts WHERE memories_fts MATCH ?) f ON f.memory_id = m.id' : ''}
-                    WHERE m.agent_id = ?`,
-                args: hasFts ? [ftsExpression(terms), agentId] : [agentId],
-            })
-            for (const row of result.rows) {
-                const id = String(row.id)
-                stats.set(id, {
-                    createdAt: String(row.created_at),
-                    lastAccessedAt: row.last_accessed_at === null ? null : String(row.last_accessed_at),
-                    accessCount: Number(row.access_count),
-                    rank: row.rank === null ? null : Number(row.rank),
-                })
-            }
-            return stats
-        } finally { reader.close() }
+        location.searchParams.set('mode', mode)
+        // The outer libSQL URL takes a path. Pass the inner SQLite URI as that encoded path.
+        const client = createClient({ url: 'file:' + encodeURIComponent(location.href) })
+        try { return await use(client) }
+        finally { client.close() }
     })
 }
 
-export function recallDesktopMemory(agentId: string, query: string, limit: number, includeDormant: boolean): Promise<RecalledMemory[]> {
-    return withMemoryStore(agentId, 'recall', async ({ dir, data, hasIndex }) => {
+async function readRecallStats(reader: Client, agentId: string, terms: string[]) {
+    const stats = new Map<string, RecallStats>()
+    const info = await reader.execute('PRAGMA table_info(memories)')
+    const columns = new Set(info.rows.map(row => row.name))
+    if (!columns.size) return stats
+    const fts = await reader.execute("SELECT 1 FROM sqlite_schema WHERE name = 'memories_fts'")
+    const hasFts = fts.rows.length > 0
+    const result = await reader.execute({
+        sql: `SELECT m.id, m.created_at,
+            ${columns.has('access_count') ? 'm.access_count' : '0'} AS access_count,
+            ${columns.has('last_accessed_at') ? 'm.last_accessed_at' : 'NULL'} AS last_accessed_at,
+            ${hasFts ? 'f.rank' : 'NULL'} AS rank FROM memories m
+            ${hasFts ? 'LEFT JOIN (SELECT memory_id, rank FROM memories_fts WHERE memories_fts MATCH ?) f ON f.memory_id = m.id' : ''}
+            WHERE m.agent_id = ?`,
+        args: hasFts ? [ftsExpression(terms), agentId] : [agentId],
+    })
+    for (const row of result.rows) {
+        const id = String(row.id)
+        stats.set(id, {
+            createdAt: String(row.created_at),
+            lastAccessedAt: row.last_accessed_at === null ? null : String(row.last_accessed_at),
+            accessCount: Number(row.access_count),
+            rank: row.rank === null ? null : Number(row.rank),
+        })
+    }
+    return stats
+}
+
+type DesktopRecallOptions = { includeDormant?: boolean; purpose?: 'chat' | 'curation' }
+
+export function recallDesktopMemory(agentId: string, query: string, limit: number, { includeDormant, purpose }: DesktopRecallOptions): Promise<RecalledMemory[]> {
+    return withMemoryStore(agentId, purpose === 'chat' ? 'chat' : 'recall', async ({ dir, data, hasIndex }) => {
         const terms = queryTerms(query)
         if (!dir || !terms.length) return []
         const [files, stats] = await Promise.all([
             listMemoryFiles(agentId, dir),
-            hasIndex && data ? readRecallStats(agentId, data, terms) : new Map<string, RecallStats>(),
+            hasIndex && data ? withRecallIndex(data, 'ro', db => readRecallStats(db, agentId, terms)) : new Map<string, RecallStats>(),
         ])
         const hits = files.flatMap(file => {
             const coverage = keywordCoverage(terms, file.content)
             if (!coverage) return []
-            const row = stats.get(file.id)
+            const canonical = noteId.test(file.id) && basename(file.path) === file.id + '.md'
+            const row = canonical ? stats.get(file.id) : undefined
+            // The curator can change a note by ID. Only indexed files with that canonical filename
+            // were editable upstream; chat and the manual panel can also read file-only notes.
+            if (purpose === 'curation' && !row) return []
             return [{
                 ...file,
                 createdAt: row?.createdAt ?? file.createdAt,
@@ -139,7 +152,14 @@ export function recallDesktopMemory(agentId: string, query: string, limit: numbe
             }]
         })
         hits.sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id))
-        return rankRecallHits(hits, limit, { includeDormant }).map(({ id, content, kind, tags, createdAt, strength }) =>
+        const top = rankRecallHits(hits, limit, { includeDormant })
+        if (purpose === 'chat' && data) {
+            const indexedIds = top.filter(hit => stats.has(hit.id) && basename(hit.path) === hit.id + '.md').map(hit => hit.id)
+            if (indexedIds.length) {
+                await withRecallIndex(data, 'rw', db => bumpMemoryAccess(agentId, indexedIds, 'touch', db)).catch(() => {})
+            }
+        }
+        return top.map(({ id, content, kind, tags, createdAt, strength }) =>
             ({ id, content, kind, tags, createdAt, strength }))
     })
 }
@@ -173,10 +193,37 @@ export function addDesktopMemory(agentId: string, { content, kind, tags, request
     })
 }
 
-export function removeDesktopMemory(agentId: string, id: string) {
+// The curator may run concurrently with another chat. Only replace the exact note it read.
+export function updateDesktopMemory(agentId: string, id: string, expectedContent: string, content: string) {
+    if (!noteId.test(id) || id === 'recall') throw badRequest('Invalid memory ID')
+    return withMemoryStore(agentId, 'update', async ({ dir, data, hasIndex }) => {
+        const existing = dir ? await findNote(dir, id) : null
+        if (!dir || !hasIndex || !data || existing?.id !== id) throw notFound('memory')
+        if (existing.content !== expectedContent) throw new HttpError(409, 'The coworker memory changed.')
+        const updatedAt = nowIso()
+        const marker = join(dir, '.updating-' + id)
+        const next = content.trim()
+        const metadata = { id, kind: existing.kind, tags: existing.tags, createdAt: existing.createdAt, updatedAt }
+        const temporary = join(dir, '.writing-' + id)
+        await writeFile(temporary, matter.stringify(`\n${next}\n`, metadata), { flag: 'wx', mode: 0o600 })
+        await rename(temporary, marker)
+        await withRecallIndex(data, 'rw', async db => {
+            const results = await db.batch([
+                { sql: 'UPDATE memories SET content = ?, last_accessed_at = ?, embedding = NULL WHERE agent_id = ? AND id = ?', args: [next, updatedAt, agentId, id] },
+                { sql: 'UPDATE memories_fts SET content = ? WHERE memory_id IN (SELECT id FROM memories WHERE agent_id = ? AND id = ?)', args: [next, agentId, id] },
+            ], 'write')
+            if (!results[0].rowsAffected) throw notFound('memory')
+        })
+        await rename(marker, join(dir, id + '.md'))
+    })
+}
+
+export function removeDesktopMemory(agentId: string, id: string, expectedContent?: string) {
     if (!noteId.test(id) || id === 'recall') throw badRequest('Invalid memory ID')
     return withMemoryStore(agentId, 'delete', async ({ dir, hasIndex }) => {
-        if (!dir || (await findNote(dir, id))?.id !== id) throw notFound('memory')
+        const existing = dir ? await findNote(dir, id) : null
+        if (!dir || existing?.id !== id) throw notFound('memory')
+        if (expectedContent !== undefined && existing.content !== expectedContent) throw new HttpError(409, 'The coworker memory changed.')
         const marker = join(dir, '.deleting-' + id)
         await rename(join(dir, id + '.md'), marker)
         if (hasIndex) await deleteMemory(agentId, id)
