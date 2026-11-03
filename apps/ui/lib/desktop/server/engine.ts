@@ -5,6 +5,7 @@ import { transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-
 import { sanitizeIdentifier } from '@/lib/utils'
 import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } from './settings'
 import { DesktopHttpError } from './auth'
+import { readCoworkerFile } from './coworker-files'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession } from './store'
@@ -65,16 +66,18 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
     }
 }
 
-export async function startDesktopChat(runtime: DesktopRuntime, input: { agentId: string; sessionId?: string; text: string }): Promise<{ response: Response; sessionId: string }> {
+export async function startDesktopChat(runtime: DesktopRuntime, input: { agentId: string; sessionId?: string; text: string; attachmentPath?: string }): Promise<{ response: Response; sessionId: string }> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     const agent = await findDesktopAgent(db, input.agentId)
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     const existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
+    const file = input.attachmentPath === undefined ? undefined : await readCoworkerFile(runtime, agent.id, input.attachmentPath, 'attach')
     const { connection, model } = await desktopModel(runtime)
     const engineResponse = await chat(engineOf(runtime), agent.engineAgentId, {
         sessionId: existing?.engineSessionId,
         message: input.text,
+        workspaceAttachment: file && { path: file.path, content: file.content },
         connectionId: connection.id,
         model,
         source: 'dashboard',

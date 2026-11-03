@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type UIMessage } from 'ai'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
@@ -13,6 +13,7 @@ import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
+import { AttachmentChip, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
 
 async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMessage[]> {
     const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`, { signal })
@@ -34,6 +35,18 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     renderHistory?: (busy: boolean) => ReactNode
 }) {
     const [input, setInput] = useState('')
+    const [attachments, setAttachments] = useState<ReadonlyMap<string, string>>(() => new Map())
+    const draftKey = JSON.stringify([agent.id, sessionId])
+    const attachment = attachments.get(draftKey)
+    const pendingAttachment = useRef<{ key: string; input: string } | null>(null)
+    const setDraftAttachment = useCallback((key: string, path?: string) => {
+        setAttachments(current => {
+            const next = new Map(current)
+            if (path) next.set(key, path)
+            else next.delete(key)
+            return next
+        })
+    }, [])
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; error?: string }>({ id: null })
     const [attempt, setAttempt] = useState(0)
     // An engine run still generating for this conversation (e.g. after reopening it mid-reply).
@@ -42,21 +55,39 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     const [stopError, setStopError] = useState<string>()
     const [liveSessionId, setLiveSessionId] = useState<string | null>(null)
 
+    const sendToEngine = useCallback<typeof fetch>(async (url, init) => {
+        const pending = pendingAttachment.current
+        let response: Response
+        try {
+            response = await fetch(url, init)
+            if (pending && !response.ok) {
+                const body = await response.json().catch(() => null)
+                throw new Error(typeof body?.error === 'string' ? body.error : 'Could not send the message with this file. Try again.')
+            }
+        } finally {
+            pendingAttachment.current = null
+        }
+        const id = response.headers.get('x-session-id')
+        if (response.ok && id) {
+            if (pending) {
+                setInput(current => current === pending.input ? '' : current)
+                setDraftAttachment(pending.key)
+            }
+            // A new session gets its ID from the first response. Keep its live stream visible.
+            setLiveSessionId(id)
+            setHistory({ id })
+            onChatSession(id)
+        }
+        return response
+    }, [onChatSession, setDraftAttachment])
+
+    // The constructor saves the callback; only a submitted request reads the pending draft.
+    // eslint-disable-next-line react-hooks/refs
     const transport = useMemo(() => new DefaultChatTransport({
         api: '/api/desktop/chat',
         prepareSendMessagesRequest: ({ body, messages }) => ({ body: { ...body, text: lastUserText(messages) } }),
-        fetch: async (url, init) => {
-            const response = await fetch(url, init)
-            const id = response.headers.get('x-session-id')
-            if (response.ok && id) {
-                // A new session gets its ID from the first response. Keep its live stream visible.
-                setLiveSessionId(id)
-                setHistory({ id })
-                onChatSession(id)
-            }
-            return response
-        },
-    }), [onChatSession])
+        fetch: sendToEngine,
+    }), [sendToEngine])
 
     const { messages, setMessages, sendMessage, stop, status, error } = useChat({
         id: `desktop-${agent.id}`,
@@ -143,11 +174,14 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if (!text || generating || stopping || !ready) return
+        if (!text || generating || stopping || !ready || pendingAttachment.current) return
         // Wait for this send's engine-backed session ID before enabling Stop.
         setLiveSessionId(null)
-        setInput('')
-        void sendMessage({ text }, { body: { agentId: agent.id, sessionId: sessionId ?? undefined } })
+        // A file can change or disappear after selection. Keep both drafts until the server accepts it.
+        if (attachment) pendingAttachment.current = { key: draftKey, input }
+        else setInput('')
+        const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(attachment && { attachmentPath: attachment }) }
+        void sendMessage({ text, ...(attachment && { metadata: { attachmentPath: attachment } }) }, { body })
     }
 
     return (
@@ -189,6 +223,8 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                     {transcript.map((message, messageIndex) => (
                         <div key={message.id} className={cn('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}>
                             <div className={cn('max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6', message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
+                                {message.role === 'user' && message.metadata && typeof message.metadata === 'object' && 'attachmentPath' in message.metadata && typeof message.metadata.attachmentPath === 'string' ?
+                                    <div className="mb-1"><AttachmentChip path={message.metadata.attachmentPath} /></div> : null}
                                 {message.parts.map((part, index) => {
                                     if (part.type === 'text') return <span key={index}>{part.text}</span>
                                     if (message.role !== 'assistant' || part.type !== 'reasoning' || typeof part.text !== 'string' || !isDesktopSummaryMetadata(part.providerMetadata)) return null
@@ -211,12 +247,19 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
             </div>
 
             <div className="border-t p-4">
-                <form onSubmit={submit} className="mx-auto flex max-w-3xl items-end gap-2">
+                <form onSubmit={submit} className="mx-auto flex max-w-3xl flex-wrap items-end gap-2">
+                    <div className="flex w-full flex-wrap items-center gap-2">
+                        <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={generating || stopping || !ready}
+                            onSelect={path => setDraftAttachment(draftKey, path)} />
+                        {attachment && <AttachmentChip path={attachment} disabled={generating || stopping} onRemove={() => setDraftAttachment(draftKey)} />}
+                    </div>
                     <label htmlFor="desktop-message" className="sr-only">Message {agent.name}</label>
                     <Textarea
                         id="desktop-message"
                         rows={2}
+                        className="min-w-0 flex-1"
                         maxLength={20_000}
+                        readOnly={!!attachment && status === 'submitted'}
                         placeholder={`Message ${agent.name}…`}
                         value={input}
                         onChange={event => setInput(event.target.value)}

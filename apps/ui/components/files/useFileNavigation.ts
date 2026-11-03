@@ -15,6 +15,7 @@ export type FileNavigation<T> = {
     depth: number
     loading: boolean
     busy: boolean
+    error: string | null
     showHidden: boolean
     navigate: (path: string) => void
     enter: (name: string) => void
@@ -28,6 +29,7 @@ export function useFileNavigation<T>({ list, initialPath = '', initialShowHidden
     const [requestedPath, setRequestedPath] = useState(initialPath)
     const [directory, setDirectory] = useState<{ path: string; entries: T[] } | null>(null)
     const [pending, setPending] = useState(true)
+    const [error, setError] = useState<string | null>(null)
     const [showHidden, setShowHidden] = useState(initialShowHidden)
     const requestRef = useRef(0)
     const loadedRef = useRef(onDirectoryLoaded)
@@ -40,13 +42,15 @@ export function useFileNavigation<T>({ list, initialPath = '', initialShowHidden
         const request = ++requestRef.current
         setPending(true)
         let entries: T[] = []
+        let failure: string | null = null
         try {
             entries = await list(path, showHidden)
-        } catch {
-            entries = []
+        } catch (cause) {
+            failure = cause instanceof Error ? cause.message : 'Could not open this folder.'
         }
         if (request !== requestRef.current) return
         setDirectory({ path, entries })
+        setError(failure)
         setPending(false)
         loadedRef.current?.(path, entries)
     }, [list, showHidden])
@@ -84,6 +88,7 @@ export function useFileNavigation<T>({ list, initialPath = '', initialShowHidden
         depth: currentPath.split('/').filter(Boolean).length,
         loading: directory === null,
         busy: pending && directory !== null,
+        error,
         showHidden,
         navigate: setRequestedPath,
         enter,

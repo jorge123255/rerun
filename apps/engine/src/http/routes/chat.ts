@@ -1,5 +1,6 @@
-import { chatRequestSchema, type SessionSource } from '@rerun/contracts'
+import { chatRequestSchema, desktopWorkspaceAttachmentSchema, type SessionSource } from '@rerun/contracts'
 import { Hono } from 'hono'
+import { desktopApp } from '../../desktop/policy.js'
 import { resolveRunModel } from '../../agents/availability.js'
 import { getAgent } from '../../agents/registry.js'
 import { claimInstallSession } from '../../agents/setup.js'
@@ -13,6 +14,7 @@ import { mergeRunStream } from '../../runtime/run-stream-merge.js'
 import { toResumableStreamResponse } from '../../runtime/stream.js'
 
 export const chatRoutes = new Hono()
+const desktopChatRequest = chatRequestSchema.extend({ workspaceAttachment: desktopWorkspaceAttachmentSchema.optional() })
 
 async function resolveSession(agentId: string, sessionId: string | undefined, source: SessionSource) {
     if (sessionId) {
@@ -26,7 +28,8 @@ chatRoutes.post('/chat', async c => {
     const agentId = c.req.param('id')!
     const agent = await getAgent(agentId)
     if (!agent.config.enabled) throw agentDisabled()
-    const body = chatRequestSchema.parse(await c.req.json())
+    const input = await c.req.json()
+    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), workspaceAttachment: undefined }
     const runAgentView = agent.config.kind === 'foreman' && body.foreman ? { ...agent, brief: body.foreman } : agent
     const source = body.source ?? 'dashboard'
     const claim = body.install && !body.sessionId ? await claimInstallSession(agentId, () => createSession(agentId, undefined, undefined, source)) : null
@@ -52,7 +55,7 @@ chatRoutes.post('/chat', async c => {
     })
     const response = toResumableStreamResponse(run.id, async writer => {
         try {
-            const agentRun = await runAgent(runAgentView, session.id, body.message, override, writer, run.id, { source: 'chat', author: body.author, userLanguage: claim ? body.userLanguage : undefined })
+            const agentRun = await runAgent(runAgentView, session.id, body.message, override, writer, run.id, { source: 'chat', author: body.author, userLanguage: claim ? body.userLanguage : undefined, workspaceAttachment: body.workspaceAttachment })
             mergeRunStream(writer, agentRun, meta)
         } catch (err) {
             // runAgent registers the run's abort controller itself, and unregistering it is what

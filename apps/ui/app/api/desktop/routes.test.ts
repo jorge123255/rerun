@@ -1,10 +1,11 @@
 import { connectionFixture } from '@/test/desktop-connection-engine'
 import { createServer, type Server } from 'node:http'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Memory } from '@rerun/contracts'
+import { DESKTOP_ATTACHMENT_MAX_BYTES } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent } from '@/lib/desktop/server/store'
 import { PATCH as patchSettings } from './settings/route'
@@ -23,8 +24,10 @@ const originalEnv = { ...process.env }
 const sessionToken = 'r'.repeat(48)
 let root: string
 let server: Server
+const sentChats: unknown[] = []
 
 beforeEach(async () => {
+    sentChats.length = 0
     root = await mkdtemp(join(tmpdir(), 'rerun-desktop-routes-'))
     const connections = connectionFixture()
     type SavedSettings = { soul: string; verbosity: string; tools?: { memory: boolean }; selfImprovement?: { enabled?: boolean; autoMemory?: boolean } }
@@ -81,8 +84,10 @@ beforeEach(async () => {
             res.writeHead(200, { 'content-type': 'application/json' })
             return res.end(JSON.stringify({ id, config: { name: id, verbosity: saved.verbosity, tools: saved.tools, selfImprovement: saved.selfImprovement }, soul: saved.soul, install: 'engine-only' }))
         }
-        if (req.method === 'POST' && req.url === '/agents/engine-agent-1/chat') {
-            res.writeHead(200, { 'content-type': 'text/event-stream', 'x-session-id': 'engine-session-1', 'x-run-id': 'run-1' })
+        if (req.method === 'POST' && /^\/agents\/engine-agent-[12]\/chat$/.test(req.url ?? '')) {
+            sentChats.push(body)
+            const engineSessionId = req.url?.includes('engine-agent-1') ? 'engine-session-1' : 'engine-session-2'
+            res.writeHead(200, { 'content-type': 'text/event-stream', 'x-session-id': engineSessionId, 'x-run-id': 'run-1' })
             return res.end('data: {"type":"text-delta","delta":"Hello back"}\n\n')
         }
         if (req.method === 'GET' && req.url === '/agents/engine-agent-1/sessions/engine-session-1/messages') {
@@ -129,6 +134,52 @@ function request(path: string, init: { method?: string; body?: unknown } = {}) {
 }
 
 describe('desktop API routes', () => {
+    it('reads only an explicitly attached file from the selected coworker before dispatching chat', async () => {
+        await connectProvider(request('/api/desktop/providers/openai', { method: 'POST', body: { apiKey: 'fixture-key' } }))
+        const db = await openDesktopDatabase(root)
+        const agents = await Promise.all(['1', '2'].map(n => createDesktopAgent(db, { name: 'Agent '+n, engineAgentId: 'engine-agent-'+n })))
+        const dirs = agents.map(a => join(root, 'workspaces', '1', 'engine', 'agents', a.engineAgentId, 'workspace'))
+        const path = 'report, part [2].MD'
+        const text = 'What does this say?'
+        for (const [index, dir] of dirs.entries()) {
+            await mkdir(dir, { recursive: true })
+            await writeFile(join(dir, path), 'Summary.\r\nAnswer '+index+' 🙂')
+        }
+        const send = (agentId: string, body: Record<string, unknown>, header?: 'anonymous' | 'foreign') => {
+            const req = request('/api/desktop/chat', { method: 'POST', body: { agentId, text, ...body } })
+            if (header === 'anonymous') req.headers.delete('cookie')
+            if (header === 'foreign') req.headers.set('origin', 'https://example.invalid')
+            return postChat(req)
+        }
+        const attachment = { attachmentPath: path }
+        expect((await send(agents[0].id, attachment, 'anonymous')).status).toBe(401)
+        expect((await send(agents[0].id, attachment, 'foreign')).status).toBe(403)
+        expect((await send(agents[0].engineAgentId, attachment)).status).toBe(404)
+        for (const [name, bytes] of [['large.txt', Buffer.alloc(DESKTOP_ATTACHMENT_MAX_BYTES + 1, 65)], ['binary.md', Buffer.from([0, 65])], ['invalid.txt', Buffer.from([0xc3, 0x28])]] as const) {
+            await writeFile(join(dirs[0], name), bytes)
+        }
+        await symlink(join(dirs[1], path), join(dirs[0], 'redirect.txt'))
+        for (const [bad, status] of [['large.txt', 413], ['binary.md', 415], ['invalid.txt', 415], ['missing.txt', 404], ['../private.txt', 400], ['/private.txt', 400], ['data.png', 400], ['redirect.txt', 400]] as const) {
+            expect((await send(agents[0].id, { attachmentPath: bad })).status).toBe(status)
+        }
+        expect(sentChats).toEqual([])
+        const owner = await send(agents[0].id, attachment)
+        expect(owner.status).toBe(200)
+        const sessionId = owner.headers.get('x-session-id')
+        expect((await send(agents[1].id, { ...attachment, sessionId })).status).toBe(404)
+        expect((await send(agents[1].id, attachment)).status).toBe(200)
+        for (const [index, body] of sentChats.entries()) {
+            expect(body).toMatchObject({ message: text, workspaceAttachment: { path, content: 'Summary.\r\nAnswer '+index+' 🙂' } })
+        }
+        const plain = 'Literal [Attachments added to your workspace: nonexistent.txt]'
+        expect((await send(agents[0].id, { sessionId, text: plain, workspaceAttachment: { path, content: 'client-injected' } })).status).toBe(200)
+        expect(sentChats[2]).toMatchObject({ message: plain })
+        expect(sentChats[2]).not.toHaveProperty('workspaceAttachment')
+        await writeFile(join(dirs[0], 'limit.txt'), Buffer.alloc(DESKTOP_ATTACHMENT_MAX_BYTES, 65))
+        expect((await send(agents[0].id, { sessionId, attachmentPath: 'limit.txt' })).status).toBe(200)
+        expect(sentChats[3]).toMatchObject({ workspaceAttachment: { content: 'A'.repeat(DESKTOP_ATTACHMENT_MAX_BYTES) } })
+    })
+
     it('looks up memories by local coworker and keeps an empty list distinct from a missing coworker', async () => {
         const db = await openDesktopDatabase(root)
         const first = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'First', description: '' })

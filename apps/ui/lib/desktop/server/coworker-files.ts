@@ -1,4 +1,5 @@
 import 'server-only'
+import { DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath } from '@rerun/contracts'
 import { constants } from 'node:fs'
 import { lstat, open, readdir, realpath, type FileHandle } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -105,7 +106,8 @@ export async function listCoworkerFiles(runtime: DesktopRuntime, agentId: string
     return { path: rel, entries }
 }
 
-export async function readCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string): Promise<CoworkerFilePreview> {
+export async function readCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, mode: 'preview' | 'attach' = 'preview'): Promise<CoworkerFilePreview> {
+    if (mode === 'attach' && !isDesktopAttachmentPath(path)) throw new DesktopHttpError(400, 'Choose a .txt or .md file from this coworker’s workspace.')
     const { target, rel } = await containedPath(await coworkerWorkspace(runtime, agentId), path)
     if (!rel) throw new DesktopHttpError(400, 'Choose a file to preview.')
     if (!target) throw new DesktopHttpError(404, 'File not found')
@@ -113,11 +115,25 @@ export async function readCoworkerFile(runtime: DesktopRuntime, agentId: string,
     try {
         const info = await handle.stat()
         if (!info.isFile()) throw new DesktopHttpError(400, 'That path is not a file.')
+        if (mode === 'attach' && info.size > DESKTOP_ATTACHMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 32 KiB or smaller.')
         const buffer = Buffer.alloc(Math.min(info.size, PREVIEW_BYTES))
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
+        let bytesRead = 0
+        while (bytesRead < buffer.length) {
+            const read = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead)
+            if (!read.bytesRead) break
+            bytesRead += read.bytesRead
+        }
         const bytes = buffer.subarray(0, bytesRead)
-        if (bytes.includes(0)) throw new DesktopHttpError(415, 'Only text files can be previewed.')
-        return { path: rel, content: bytes.toString('utf8'), size: info.size, truncated: info.size > bytesRead }
+        if (bytes.includes(0)) throw new DesktopHttpError(415, mode === 'attach' ? 'Attachments must contain UTF-8 text.' : 'Only text files can be previewed.')
+        let content: string
+        if (mode === 'attach') {
+            const after = await handle.stat()
+            if (bytesRead !== info.size || info.size !== after.size || info.ctimeMs !== after.ctimeMs) throw new DesktopHttpError(409, 'This file changed while it was being read. Try sending again.')
+            try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
+            catch { throw new DesktopHttpError(415, 'Attachments must contain UTF-8 text.') }
+            if (bytes.some(byte => (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) || byte === 127)) throw new DesktopHttpError(415, 'Attachments must contain UTF-8 text.')
+        } else content = bytes.toString('utf8')
+        return { path: rel, content, size: info.size, truncated: info.size > bytesRead }
     } finally {
         await handle.close()
     }

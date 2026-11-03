@@ -84,6 +84,23 @@ beforeEach(() => {
 })
 
 describe('POST /agents/:id/chat', () => {
+    it('forwards validated attachment snapshots only on desktop', async () => {
+        const workspaceAttachment = { path: 'folder/brief.md', content: 'First line\nA durable second line.' }
+        const body = { message: 'What is the second line?', workspaceAttachment }
+        await (await chat(id, body)).text()
+        expect(state.calls[0].trigger).not.toHaveProperty('workspaceAttachment', workspaceAttachment)
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            expect((await chat(id, { ...body, workspaceAttachment: { ...workspaceAttachment, path: '../brief.md' } })).status).toBe(400)
+            expect((await chat(id, { ...body, workspaceAttachment: { ...workspaceAttachment, content: 'é'.repeat(17 * 1024) } })).status).toBe(400)
+            expect(state.calls).toHaveLength(1)
+            const res = await chat(id, body)
+            expect(res.status).toBe(200)
+            await res.text()
+            expect(state.calls[1]).toMatchObject({ message: body.message, trigger: { workspaceAttachment } })
+        } finally { vi.unstubAllEnvs() }
+    })
+
     it('404s on an unknown agent', async () => {
         const res = await chat('ghost', { message: 'hi' })
         expect(res.status).toBe(404)

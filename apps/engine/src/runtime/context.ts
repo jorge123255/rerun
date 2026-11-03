@@ -1,4 +1,4 @@
-import type { MessageAuthor, Provider } from '@rerun/contracts'
+import type { DesktopWorkspaceAttachment, MessageAuthor, Provider } from '@rerun/contracts'
 import type { UIMessageStreamWriter } from 'ai'
 import type { TurnOrder } from '../agents/turn-order.js'
 import type { LoadedAgent } from '../agents/types.js'
@@ -7,7 +7,7 @@ import type { Logger } from '../lib/logger.js'
 import type { HostBreaker } from '../tools/host-breaker.js'
 import type { ScreenshotStore } from './screenshots.js'
 
-export type RunTrigger = { source: 'chat'; author?: MessageAuthor; userLanguage?: string } | { source: 'schedule'; slug: string; name: string } | { source: 'trigger'; slug: string; name: string }
+export type RunTrigger = { source: 'chat'; author?: MessageAuthor; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment } | { source: 'schedule'; slug: string; name: string } | { source: 'trigger'; slug: string; name: string }
 
 export type PartialResult = { label: string; text: string }
 

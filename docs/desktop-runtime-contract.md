@@ -32,6 +32,8 @@ When a coworker has memory enabled, a chat message uses the same local keyword s
 
 In **Edit coworker**, **Use saved memories in chat** controls whether a new turn retrieves notes. **Learn from replies** controls whether a completed exchange can add, correct or remove a learned fact. You can use saved notes with learning off. Switching recall off pauses learning and preserves the learning preference for when recall is enabled again. Rerun also pauses learning for coworkers whose existing self-improvement setting is off. The **Memories** panel still lets you manage saved notes manually.
 
+**Attach from Files** in coworker chat selects one existing UTF-8 `.txt` or `.md` file of up to 32 KiB from that coworker’s workspace. The filename appears next to the draft, where you can remove it. When you send your question, the Mac app reads the file and sends that version to the selected provider as part of the message. The saved conversation shows the filename and uses the original text even if the workspace file later changes or is removed. A file that can no longer be read leaves the draft available to edit and retry.
+
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
 ```json
