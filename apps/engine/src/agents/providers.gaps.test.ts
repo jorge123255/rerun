@@ -323,6 +323,13 @@ describe('resolveModel on the codex subscription', () => {
                     expect(settings.configOverrides['mcp_servers.rerun.tools.fs_read.approval_mode']).toBe('approve')
                 }
             }
+            agent.config.tools.desktopCodexGrants = { shell: true }
+            expect(() => resolveModel(agent, undefined, tools)).toThrow('isolated Codex command worker')
+            const worker = { cwd: '/private/scratch', url: 'ws://127.0.0.1:54321/private-capability', close: async () => {} }
+            resolveModel(agent, undefined, tools, [], undefined, undefined, worker)
+            const scoped = codexAppServerCalls.at(-1)!.defaultSettings
+            expect(scoped).toMatchObject({ cwd: worker.cwd, sandboxPolicy: { type: 'externalSandbox', networkAccess: 'restricted' }, env: { RERUN_NATIVE_EXEC_URL: worker.url } })
+            expect(scoped.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(['mcp__rerun', 'functions'])
             agent.config.tools.desktopCodexGrants = { codeMode: true }
             resolveModel(agent, undefined, tools)
             const host = codexAppServerCalls.at(-1)!.defaultSettings

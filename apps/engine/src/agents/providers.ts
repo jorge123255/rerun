@@ -36,6 +36,7 @@ import { agentProcessEnv } from './process-env.js'
 import { BRIDGE_SERVER_NAME, CLI_PROVIDERS, type LoadedAgent } from './types.js'
 import { hubCallerHeaders } from '../runtime/hub.js'
 import { desktopCodexRuntime, signedInFlag } from '../desktop/codex-runtime.js'
+import type { DesktopNativeWorker } from '../desktop/native-worker.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
 import type { StoredScreenshot } from '../runtime/screenshots.js'
 
@@ -235,7 +236,7 @@ export function codexMcpConfig(tools?: ToolSet, mcpServers: McpServer[] = []): R
 // one-shot call (compaction, curator, vision) has none here and keeps passing its own to
 // generateText, where the provider folds it into the user turn. `claudeTools` reopens named Claude
 // built-ins for that call alone; a run has only CLAUDE_RUN_TOOLS.
-export type CliModelOptions = { system?: string; claudeTools?: readonly string[]; screenshots?: ScreenshotLookup }
+export type CliModelOptions = { system?: string; claudeTools?: readonly string[]; screenshots?: ScreenshotLookup; nativeWorker?: DesktopNativeWorker }
 
 // The subscription pays for the CLI's own web search, where Rerun's web_search would bill Brave to
 // Rerun. Its WebFetch stays closed: it hands back a summary of the page, web_fetch the page itself.
@@ -342,12 +343,23 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
     const localTools = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name]) => allowed.has(name))) : {}
     const names = Object.keys(localTools)
     const native = desktopCodexGrantsOf(agent.config.tools)
+    const worker = options.nativeWorker
+    if (desktop && native.shell && !worker) throw new Error('The isolated Codex command worker is unavailable.')
+    const directNamespaces = [...(names.length ? [`mcp__${BRIDGE_SERVER_NAME}`] : []), ...(worker ? ['functions'] : [])]
     return createCodexAppServer({
         defaultSettings: {
             ...shared,
-            ...(desktop && { env: { ...shared.env, RERUN_DESKTOP_CODEX_WEB: native.webSearch ? '1' : '0', RERUN_DESKTOP_CODEX_CODE_MODE: native.codeMode ? '1' : '0' } }),
+            ...(desktop && {
+                env: {
+                    ...shared.env,
+                    RERUN_DESKTOP_CODEX_WEB: native.webSearch ? '1' : '0',
+                    RERUN_DESKTOP_CODEX_CODE_MODE: native.codeMode ? '1' : '0',
+                    RERUN_NATIVE_EXEC_URL: worker?.url ?? '',
+                },
+            }),
+            ...(worker && { cwd: worker.cwd }),
             approvalPolicy: 'never',
-            sandboxPolicy: desktopApp() ? 'read-only' : 'danger-full-access',
+            sandboxPolicy: worker ? { type: 'externalSandbox', networkAccess: 'restricted' } : desktop ? 'read-only' : 'danger-full-access',
             autoApprove: !desktopApp(),
             // A thread written to disk, so the next message can resume it: the run passes its id
             // back (see `codexThreadToResume`), and Codex keys OpenAI's prompt cache on it.
@@ -368,11 +380,10 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
                     project_doc_max_bytes: 0,
                     web_search: native.webSearch ? 'live' : 'disabled',
                     'features.code_mode.enabled': native.codeMode,
-                    'features.code_mode.excluded_tool_namespaces': ['functions', 'collaboration', 'clock'],
+                    'features.code_mode.excluded_tool_namespaces': worker ? ['collaboration', 'clock'] : ['functions', 'collaboration', 'clock'],
+                    ...(!native.codeMode && directNamespaces.length > 0 && { 'features.code_mode.direct_only_tool_namespaces': directNamespaces }),
                     ...(names.length > 0 && {
                         prefix_mcp_tool_names: true,
-                        // Code-mode-only models can call this namespace directly with the Mac host disabled.
-                        ...(!native.codeMode && { 'features.code_mode.direct_only_tool_namespaces': [`mcp__${BRIDGE_SERVER_NAME}`] }),
                         [`mcp_servers.${BRIDGE_SERVER_NAME}.enabled_tools`]: names,
                         // Each registered action is separately granted and rechecked by its own handler.
                         ...Object.fromEntries(names.map(name => [`mcp_servers.${BRIDGE_SERVER_NAME}.tools.${name}.approval_mode`, 'approve'])),
@@ -445,7 +456,7 @@ export type ResolvedModel = { model: LanguageModel; close: () => Promise<void>; 
 
 const noClose = async (): Promise<void> => {}
 
-export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup): ResolvedModel {
+export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker): ResolvedModel {
     const { provider, model } = pairFor(agent, override)
     // `wrapLanguageModel` runs the list from the end: the guard sits nearest the model, so no other
     // middleware ever reads a fake tool call, the card tags go next, and the quick replies read the
@@ -454,7 +465,7 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     const cardTags = createCardTagGuard(agent.id, provider)
     const guard = createFakeToolCallGuard(agent.id)
     if (provider === 'codex') {
-        const codex = codexAppServerProvider(agent, tools, mcpServers, { system })
+        const codex = codexAppServerProvider(agent, tools, mcpServers, { system, nativeWorker })
         return { model: wrapLanguageModel({ model: codex(model), middleware: [codexMcpCompatibilityMiddleware, replies.middleware, cardTags, guard] }), close: () => codex.close(), quickReplies: replies.read }
     }
     if (provider === 'claude') {

@@ -1,6 +1,6 @@
 # Desktop preview runtime
 
-The preview uses an Electron main process, a production Next child, and a separate engine child. It supports one local workspace and chat through API providers or a ChatGPT subscription. Shell, MCP subprocesses, browser/computer tools, Claude subscription execution, schedules, workspace reset/deletion and public publishing are unavailable in this slice.
+The preview uses an Electron main process, a production Next child, and a separate engine child. It supports one local workspace and chat through API providers or a ChatGPT subscription. External MCP subprocesses, browser/computer tools, Claude subscription execution, schedules, workspace reset/deletion and public publishing are unavailable in this slice.
 
 ## Packaged resources
 
@@ -37,6 +37,8 @@ In **Edit coworker**, **Use saved memories in chat** controls whether a new turn
 On a coworker’s card, **Tools** separates Rerun actions from native Codex capabilities. Each switch belongs to the selected coworker and starts off. Existing file-read grants still apply. The engine can grant file reading, listing and searching individually, plus recall, writing and deletion of that coworker’s memories. File contents and tool results may reach the selected model. Files are limited to visible UTF-8 text in the coworker’s workspace. A read checks the grant again before returning up to 32 KiB. Memory changes require a current matching note. The expandable chat step and the run record preserve the actual tool outcome.
 
 Codex receives the Rerun tools granted for that run through its authenticated loopback bridge. Native **Search the web** enables Codex’s web search. **Code mode** starts the bundled JavaScript helper for that coworker. Its isolated scripts can calculate and call granted tools. Changing the toolset starts a new Codex thread with the existing chat history. A native grant change during an active Codex reply requires stopping that reply first. Rows with missing runtime or external service prerequisites explain why they are unavailable.
+
+**Run shell commands** uses a separate native Codex worker with a temporary folder and no account credentials or network access. **Include workspace files** populates that folder with bounded copies of visible, singly linked text files owned by the coworker. Commands can change their temporary files. Quitting, cancelling, or finishing the turn discards those changes. Saving back to the original workspace needs its own approval and conflict-handling flow. The worker rejects unauthorized clients, unrelated paths, raw file-write requests and unsupported commands.
 
 In **Files**, **Import file** copies a single local `.txt` or `.md` document of up to 1 MiB into the selected coworker’s current folder. The final filename appears only once the full document is written. An existing name is preserved, including when two imports race. **Find chat** on the Team board searches local conversation titles across coworkers. Each result shows the coworker and opens that exact saved chat.
 

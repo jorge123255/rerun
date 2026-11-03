@@ -36,5 +36,6 @@ if (relative(target, bin).startsWith('..')) throw new Error('Codex executable es
 await cp(join(repoRoot, 'scripts/desktop/codex-launcher.sh'), join(bin, 'rerun-codex'))
 await chmod(join(bin, 'rerun-codex'), 0o755)
 await cp(join(repoRoot, 'scripts/desktop/codex-launcher.sb'), join(bin, 'rerun-codex.sb'))
+await cp(join(repoRoot, 'scripts/desktop/native-worker.sb'), join(bin, 'rerun-native-worker.sb'))
 await writeStamp(target, stamp)
 console.log(`staged engine -> ${target}`)

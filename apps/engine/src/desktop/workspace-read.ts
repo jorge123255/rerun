@@ -1,8 +1,8 @@
 import { DESKTOP_ATTACHMENT_MAX_BYTES, type DesktopRerunGrantId } from '@rerun/contracts'
 import { tool, type ToolSet } from 'ai'
 import { constants } from 'node:fs'
-import { open, opendir, realpath, type FileHandle } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { mkdir, open, opendir, realpath, writeFile, type FileHandle } from 'node:fs/promises'
+import { dirname, join, relative } from 'node:path'
 import { z } from 'zod'
 import { hasDesktopToolGrant, requireDesktopToolGrant } from './tool-grants.js'
 import { dataDir, workspaceDir } from '../config/paths.js'
@@ -43,8 +43,11 @@ async function openWorkspacePath(path: string, directory = false): Promise<FileH
     }
 }
 
-async function readWorkspaceText(ctx: RunContext, path: string, grant: DesktopRerunGrantId): Promise<string> {
-    await requireDesktopToolGrant(ctx, grant)
+type Access = DesktopRerunGrantId | (() => Promise<void>)
+const check = (ctx: RunContext, access: Access) => typeof access === 'function' ? access() : requireDesktopToolGrant(ctx, access)
+
+async function readWorkspaceText(ctx: RunContext, path: string, grant: Access): Promise<string> {
+    await check(ctx, grant)
     if (!validPath(path)) throw new WorkspaceReadError('Use a visible relative file path inside this coworker’s workspace.')
     try {
         const target = await workspacePath(ctx.agent.id, path)
@@ -75,13 +78,13 @@ async function readWorkspaceText(ctx: RunContext, path: string, grant: DesktopRe
             let text: string
             try { text = new TextDecoder('utf-8', { fatal: true }).decode(data) }
             catch { throw new WorkspaceReadError('This file must contain UTF-8 text.') }
-            await requireDesktopToolGrant(ctx, grant)
+            await check(ctx, grant)
             return text
         } finally { await handle.close() }
     } catch (error) {
         ctx.abortSignal?.throwIfAborted()
         if (error instanceof WorkspaceReadError) throw error
-        await requireDesktopToolGrant(ctx, grant)
+        await check(ctx, grant)
         // Native filesystem errors contain absolute host paths.
         throw new WorkspaceReadError(unavailable)
     }
@@ -91,8 +94,8 @@ type WorkspaceEntry = { name: string; directory: boolean }
 
 // Enumerate the already-open directory. Reopening the requested path afterwards catches a
 // directory moved into a sibling workspace, without allowing a swapped symlink to redirect us.
-async function listDirectory(ctx: RunContext, path: string, grant: DesktopRerunGrantId) {
-    await requireDesktopToolGrant(ctx, grant)
+async function listDirectory(ctx: RunContext, path: string, grant: Access) {
+    await check(ctx, grant)
     if (path !== '.' && !validPath(path)) throw new WorkspaceReadError('Use a visible relative directory in this coworker’s workspace.')
     try {
         const target = await workspacePath(ctx.agent.id, path)
@@ -113,14 +116,41 @@ async function listDirectory(ctx: RunContext, path: string, grant: DesktopRerunG
                 const check = await current.stat({ bigint: true })
                 if (check.dev !== original.dev || check.ino !== original.ino || check.ctimeNs !== original.ctimeNs) throw new WorkspaceReadError(unavailable)
             } finally { await current.close() }
-            await requireDesktopToolGrant(ctx, grant)
+            await check(ctx, grant)
             return { entries: entries.sort((a, b) => a.name.localeCompare(b.name)), truncated }
         } finally { await handle.close() }
     } catch (error) {
         ctx.abortSignal?.throwIfAborted()
-        await requireDesktopToolGrant(ctx, grant)
+        await check(ctx, grant)
         if (error instanceof WorkspaceReadError) throw error
         throw new WorkspaceReadError(unavailable)
+    }
+}
+
+// Copy bytes from validated descriptors to new files. No links or inode sharing with the live workspace.
+export async function snapshotWorkspaceText(ctx: RunContext, destination: string, guard: () => Promise<void>): Promise<void> {
+    const dirs = ['.']
+    let bytes = 0, files = 0, inspected = 0
+    for (let i = 0; i < dirs.length && i < 32; i++) {
+        const parent = dirs[i]
+        const { entries } = await listDirectory(ctx, parent, guard)
+        for (const entry of entries) {
+            if (++inspected > 256 || files >= 64) return
+            const name = parent === '.' ? entry.name : `${parent}/${entry.name}`
+            if (entry.directory) {
+                if (dirs.length < 32 && name.split('/').length < 8) dirs.push(name)
+                continue
+            }
+            let text: string
+            try { text = await readWorkspaceText(ctx, name, guard) }
+            catch (err) { if (err instanceof WorkspaceReadError) continue; throw err }
+            bytes += Buffer.byteLength(text)
+            if (bytes > 1024 * 1024) return
+            const target = join(destination, name)
+            await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+            await writeFile(target, text, { mode: 0o600, flag: 'wx' })
+            files++
+        }
     }
 }
 

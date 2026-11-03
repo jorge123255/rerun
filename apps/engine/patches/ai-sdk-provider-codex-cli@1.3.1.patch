@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..b6b10226b359cd3d92610b88110a58ad151f02ac 100644
+index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..1d559050fe7552f213a19f3e513b251be569ce75 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -226,7 +226,7 @@ var appServerSettingsSchema = zod.z.object({
@@ -20,11 +20,29 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..b6b10226b359cd3d92610b88110a58ad
    summary: zod.z.enum(["auto", "concise", "detailed", "none"]).optional(),
    approvalPolicy: zod.z.union([zod.z.enum(["untrusted", "on-failure", "on-request", "never"]), approvalRejectSchema]).optional(),
    sandboxPolicy: sandboxPolicySchema.optional(),
-@@ -2349,9 +2349,11 @@ function mapTool(item) {
+@@ -2349,9 +2349,29 @@ function mapTool(item) {
    return void 0;
  }
  function createNotificationHandlers(context) {
 +  let usageBeforeTurn;
++  const codeModeCalls = new Map();
++  const handleCodeModeItem = (params) => {
++    if (!context.emitter.options.captureCodeMode || !context.isSameTurn(params)) return;
++    const item = params.item;
++    if (!item || typeof item.call_id !== "string" || !item.call_id) return;
++    const id = item.call_id;
++    if (item.type === "custom_tool_call" && item.namespace === "functions" && item.name === "exec" && typeof item.input === "string") {
++      if (codeModeCalls.has(id)) return;
++      codeModeCalls.set(id, "open");
++      context.emitter.emitToolCall(id, "functions.exec", JSON.stringify({ code: item.input }), true);
++    } else if (item.type === "custom_tool_call_output" && codeModeCalls.get(id) === "open") {
++      const output = typeof item.output === "string" ? item.output :
++        Array.isArray(item.output) ? item.output.filter(part => part?.type === "input_text" && typeof part.text === "string").map(part => part.text).join("\n") : undefined;
++      if (output === undefined) return;
++      codeModeCalls.set(id, "done");
++      context.emitter.emitToolResult(id, "functions.exec", output, true, item.status === "failed");
++    }
++  };
    const handleReasoningDelta = (isSummary) => (params) => {
      if (!context.isSameTurn(params) || typeof params.delta !== "string") return;
      const itemId = typeof params.itemId === "string" ? params.itemId : providerUtils.generateId();
@@ -32,7 +50,7 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..b6b10226b359cd3d92610b88110a58ad
      context.reasoningItemIdsWithDelta.add(itemId);
      context.emitter.emitReasoningDelta(params.delta, isSummary, itemId);
    };
-@@ -2372,13 +2374,14 @@ function createNotificationHandlers(context) {
+@@ -2372,13 +2392,14 @@ function createNotificationHandlers(context) {
        const itemId = typeof item.id === "string" ? item.id : providerUtils.generateId();
        if (!context.reasoningItemIdsWithDelta.has(itemId)) {
          const summary = item.summary;
@@ -48,7 +66,15 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..b6b10226b359cd3d92610b88110a58ad
          if (Array.isArray(content) && content.length > 0) {
            context.emitter.emitReasoningDelta(content.join("\n"), false, itemId);
          }
-@@ -2444,17 +2447,34 @@ function createNotificationHandlers(context) {
+@@ -2416,6 +2437,7 @@ function createNotificationHandlers(context) {
+     );
+   };
+   return {
++    "rawResponseItem/completed": handleCodeModeItem,
+     "item/agentMessage/delta": (params) => {
+       if (!context.isSameTurn(params) || typeof params.delta !== "string") return;
+       const itemId = typeof params.itemId === "string" ? params.itemId : providerUtils.generateId();
+@@ -2444,17 +2466,34 @@ function createNotificationHandlers(context) {
        const event = params;
        const last = event.tokenUsage?.last;
        if (!last) return;
@@ -88,7 +114,7 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..b6b10226b359cd3d92610b88110a58ad
          },
          raw: last ?? void 0
        });
-@@ -2645,6 +2665,11 @@ var AppServerStreamEmitter = class {
+@@ -2645,6 +2684,11 @@ var AppServerStreamEmitter = class {
    options;
    textId;
    reasoningId;
@@ -100,7 +126,7 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..b6b10226b359cd3d92610b88110a58ad
    jsonModeLastTextBlockOnly;
    bufferedCurrentJsonText = "";
    lastCompletedJsonTextId;
-@@ -2670,7 +2695,7 @@ var AppServerStreamEmitter = class {
+@@ -2670,7 +2714,7 @@ var AppServerStreamEmitter = class {
      });
    }
    emitRaw(method, params, id) {
@@ -109,7 +135,7 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..b6b10226b359cd3d92610b88110a58ad
      this.safeEnqueue({ type: "raw", rawValue: { method, params, id } });
    }
    emitTextDelta(delta, itemId) {
-@@ -2701,14 +2726,15 @@ var AppServerStreamEmitter = class {
+@@ -2701,14 +2745,15 @@ var AppServerStreamEmitter = class {
      this.safeEnqueue({ type: "text-delta", id: this.textId, delta });
    }
    emitReasoningDelta(delta, isSummary = false, itemId) {
@@ -127,7 +153,7 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..b6b10226b359cd3d92610b88110a58ad
      }
      this.safeEnqueue({
        type: "reasoning-delta",
-@@ -2720,7 +2746,8 @@ var AppServerStreamEmitter = class {
+@@ -2720,7 +2765,8 @@ var AppServerStreamEmitter = class {
              isSummary: true
            }
          }
@@ -137,7 +163,7 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..b6b10226b359cd3d92610b88110a58ad
      });
    }
    emitToolCall(toolCallId, toolName, input, dynamic) {
-@@ -2797,7 +2824,7 @@ var AppServerStreamEmitter = class {
+@@ -2797,7 +2843,7 @@ var AppServerStreamEmitter = class {
        this.safeEnqueue({ type: "text-end", id: this.textId });
      }
      if (this.reasoningId) {
@@ -146,6 +172,31 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..b6b10226b359cd3d92610b88110a58ad
      }
      this.safeEnqueue({
        type: "finish",
+@@ -2915,6 +2961,7 @@ var TurnStreamController = class {
+       modelId: this.options.modelId,
+       threadId: this.options.threadId,
+       includeRawChunks: this.options.includeRawChunks,
++      captureCodeMode: this.options.captureCodeMode,
+       jsonModeLastTextBlockOnly: this.options.jsonModeLastTextBlockOnly
+     });
+     this.emitter.emitStreamStart(this.options.warnings);
+@@ -3638,7 +3685,7 @@ var AppServerLanguageModel = class {
+         developerInstructions,
+         personality: settings.personality,
+         ephemeral,
+-        experimentalRawEvents: includeRawChunks,
++        experimentalRawEvents: includeRawChunks || (process.env.RERUN_DESKTOP_APP === "1" && settings.configOverrides?.["features.code_mode.enabled"] === true),
+         persistExtendedHistory: settings.persistExtendedHistory ?? false
+       });
+       return thread.thread.id;
+@@ -4060,6 +4107,7 @@ var AppServerLanguageModel = class {
+       threadId,
+       warnings,
+       includeRawChunks,
++      captureCodeMode: process.env.RERUN_DESKTOP_APP === "1" && settings.configOverrides?.["features.code_mode.enabled"] === true,
+       jsonModeLastTextBlockOnly: options.responseFormat?.type === "json",
+       turnStartParams,
+       requestHandlers: settings.serverRequests,
 diff --git a/dist/index.d.cts b/dist/index.d.cts
 index 14e99bfd22a6aed9be7e952f80d494a371490ecd..0fd67bcc169afc4eaa937f273865d0f244d4d9f3 100644
 --- a/dist/index.d.cts
@@ -209,7 +260,7 @@ index 14e99bfd22a6aed9be7e952f80d494a371490ecd..0fd67bcc169afc4eaa937f273865d0f2
      approvalPolicy?: AppServerApprovalPolicy;
      sandboxPolicy?: AppServerSandboxPolicy;
 diff --git a/dist/index.js b/dist/index.js
-index 0e2c370883354cd782ab878f645170a87081c8a2..ccb6a37b0354f46bfc3eb042d356f5443900eb0b 100644
+index 0e2c370883354cd782ab878f645170a87081c8a2..cfec32b65fe2d59c262714ed233094404ca64676 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -218,7 +218,7 @@ var appServerSettingsSchema = z.object({
@@ -230,11 +281,29 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..ccb6a37b0354f46bfc3eb042d356f544
    summary: z.enum(["auto", "concise", "detailed", "none"]).optional(),
    approvalPolicy: z.union([z.enum(["untrusted", "on-failure", "on-request", "never"]), approvalRejectSchema]).optional(),
    sandboxPolicy: sandboxPolicySchema.optional(),
-@@ -2341,9 +2341,11 @@ function mapTool(item) {
+@@ -2341,9 +2341,29 @@ function mapTool(item) {
    return void 0;
  }
  function createNotificationHandlers(context) {
 +  let usageBeforeTurn;
++  const codeModeCalls = new Map();
++  const handleCodeModeItem = (params) => {
++    if (!context.emitter.options.captureCodeMode || !context.isSameTurn(params)) return;
++    const item = params.item;
++    if (!item || typeof item.call_id !== "string" || !item.call_id) return;
++    const id = item.call_id;
++    if (item.type === "custom_tool_call" && item.namespace === "functions" && item.name === "exec" && typeof item.input === "string") {
++      if (codeModeCalls.has(id)) return;
++      codeModeCalls.set(id, "open");
++      context.emitter.emitToolCall(id, "functions.exec", JSON.stringify({ code: item.input }), true);
++    } else if (item.type === "custom_tool_call_output" && codeModeCalls.get(id) === "open") {
++      const output = typeof item.output === "string" ? item.output :
++        Array.isArray(item.output) ? item.output.filter(part => part?.type === "input_text" && typeof part.text === "string").map(part => part.text).join("\n") : undefined;
++      if (output === undefined) return;
++      codeModeCalls.set(id, "done");
++      context.emitter.emitToolResult(id, "functions.exec", output, true, item.status === "failed");
++    }
++  };
    const handleReasoningDelta = (isSummary) => (params) => {
      if (!context.isSameTurn(params) || typeof params.delta !== "string") return;
      const itemId = typeof params.itemId === "string" ? params.itemId : generateId();
@@ -242,7 +311,7 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..ccb6a37b0354f46bfc3eb042d356f544
      context.reasoningItemIdsWithDelta.add(itemId);
      context.emitter.emitReasoningDelta(params.delta, isSummary, itemId);
    };
-@@ -2364,13 +2366,14 @@ function createNotificationHandlers(context) {
+@@ -2364,13 +2384,14 @@ function createNotificationHandlers(context) {
        const itemId = typeof item.id === "string" ? item.id : generateId();
        if (!context.reasoningItemIdsWithDelta.has(itemId)) {
          const summary = item.summary;
@@ -258,7 +327,15 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..ccb6a37b0354f46bfc3eb042d356f544
          if (Array.isArray(content) && content.length > 0) {
            context.emitter.emitReasoningDelta(content.join("\n"), false, itemId);
          }
-@@ -2436,17 +2439,34 @@ function createNotificationHandlers(context) {
+@@ -2408,6 +2429,7 @@ function createNotificationHandlers(context) {
+     );
+   };
+   return {
++    "rawResponseItem/completed": handleCodeModeItem,
+     "item/agentMessage/delta": (params) => {
+       if (!context.isSameTurn(params) || typeof params.delta !== "string") return;
+       const itemId = typeof params.itemId === "string" ? params.itemId : generateId();
+@@ -2436,17 +2458,34 @@ function createNotificationHandlers(context) {
        const event = params;
        const last = event.tokenUsage?.last;
        if (!last) return;
@@ -298,7 +375,7 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..ccb6a37b0354f46bfc3eb042d356f544
          },
          raw: last ?? void 0
        });
-@@ -2637,6 +2657,11 @@ var AppServerStreamEmitter = class {
+@@ -2637,6 +2676,11 @@ var AppServerStreamEmitter = class {
    options;
    textId;
    reasoningId;
@@ -310,7 +387,7 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..ccb6a37b0354f46bfc3eb042d356f544
    jsonModeLastTextBlockOnly;
    bufferedCurrentJsonText = "";
    lastCompletedJsonTextId;
-@@ -2662,7 +2687,7 @@ var AppServerStreamEmitter = class {
+@@ -2662,7 +2706,7 @@ var AppServerStreamEmitter = class {
      });
    }
    emitRaw(method, params, id) {
@@ -319,7 +396,7 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..ccb6a37b0354f46bfc3eb042d356f544
      this.safeEnqueue({ type: "raw", rawValue: { method, params, id } });
    }
    emitTextDelta(delta, itemId) {
-@@ -2693,14 +2718,15 @@ var AppServerStreamEmitter = class {
+@@ -2693,14 +2737,15 @@ var AppServerStreamEmitter = class {
      this.safeEnqueue({ type: "text-delta", id: this.textId, delta });
    }
    emitReasoningDelta(delta, isSummary = false, itemId) {
@@ -337,7 +414,7 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..ccb6a37b0354f46bfc3eb042d356f544
      }
      this.safeEnqueue({
        type: "reasoning-delta",
-@@ -2712,7 +2738,8 @@ var AppServerStreamEmitter = class {
+@@ -2712,7 +2757,8 @@ var AppServerStreamEmitter = class {
              isSummary: true
            }
          }
@@ -347,7 +424,7 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..ccb6a37b0354f46bfc3eb042d356f544
      });
    }
    emitToolCall(toolCallId, toolName, input, dynamic) {
-@@ -2789,7 +2816,7 @@ var AppServerStreamEmitter = class {
+@@ -2789,7 +2835,7 @@ var AppServerStreamEmitter = class {
        this.safeEnqueue({ type: "text-end", id: this.textId });
      }
      if (this.reasoningId) {
@@ -356,3 +433,28 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..ccb6a37b0354f46bfc3eb042d356f544
      }
      this.safeEnqueue({
        type: "finish",
+@@ -2907,6 +2953,7 @@ var TurnStreamController = class {
+       modelId: this.options.modelId,
+       threadId: this.options.threadId,
+       includeRawChunks: this.options.includeRawChunks,
++      captureCodeMode: this.options.captureCodeMode,
+       jsonModeLastTextBlockOnly: this.options.jsonModeLastTextBlockOnly
+     });
+     this.emitter.emitStreamStart(this.options.warnings);
+@@ -3630,7 +3677,7 @@ var AppServerLanguageModel = class {
+         developerInstructions,
+         personality: settings.personality,
+         ephemeral,
+-        experimentalRawEvents: includeRawChunks,
++        experimentalRawEvents: includeRawChunks || (process.env.RERUN_DESKTOP_APP === "1" && settings.configOverrides?.["features.code_mode.enabled"] === true),
+         persistExtendedHistory: settings.persistExtendedHistory ?? false
+       });
+       return thread.thread.id;
+@@ -4052,6 +4099,7 @@ var AppServerLanguageModel = class {
+       threadId,
+       warnings,
+       includeRawChunks,
++      captureCodeMode: process.env.RERUN_DESKTOP_APP === "1" && settings.configOverrides?.["features.code_mode.enabled"] === true,
+       jsonModeLastTextBlockOnly: options.responseFormat?.type === "json",
+       turnStartParams,
+       requestHandlers: settings.serverRequests,

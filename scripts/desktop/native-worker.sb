@@ -1,0 +1,19 @@
+; Dedicated, credential-free codex exec-server and its commands. No network, no Keychain,
+; no native workspace path. Read/write grants cover only the fresh run snapshot and temp state.
+(version 1)
+(deny default)
+(allow sysctl-read)
+(allow process-info* (process-path (param "BINARY")))
+(allow file-read* (literal "/") (subpath "/System") (subpath "/usr/lib") (subpath "/usr/bin") (subpath "/bin") (literal "/private/etc/zshenv") (literal "/private/etc/zprofile") (literal "/dev/null") (literal "/dev/zero") (literal "/dev/urandom") (literal (param "BINARY")))
+(allow file-read* file-write* (subpath (param "SCRATCH")) (literal "/dev/null") (subpath "/dev/fd") (regex #"^/dev/(ttys|ptys)[0-9]+"))
+(allow file-read* file-write* (require-all (process-path (param "BINARY")) (subpath (param "STATE"))))
+(allow file-read-metadata (process-path (param "BINARY")))
+(allow mach-lookup (process-path (param "BINARY")))
+(allow process-fork signal (process-path (param "BINARY")))
+(allow process-exec (require-all (literal (param "BINARY")) (process-path "/usr/bin/sandbox-exec")))
+; A command can execute a selected system program. It cannot fork other jobs or start the broker.
+(allow process-exec (literal "/bin/sh") (literal "/bin/bash") (literal "/bin/zsh") (literal "/bin/cat")
+  (literal "/bin/ls") (literal "/bin/pwd") (literal "/bin/echo") (literal "/usr/bin/printf")
+  (literal "/usr/bin/grep") (literal "/usr/bin/head") (literal "/usr/bin/tail") (literal "/usr/bin/wc")
+  (literal "/usr/bin/sort") (literal "/bin/mkdir") (literal "/bin/rm") (literal "/bin/mv")
+  (literal "/bin/cp") (literal "/usr/bin/touch"))

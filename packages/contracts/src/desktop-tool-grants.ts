@@ -63,11 +63,14 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
 ]
 
 export const desktopCodexToolCatalog: DesktopToolCatalogEntry[] = [
-    pending('workspaceRead', 'Read files', 'Let the Codex runner inspect its coworker workspace.', 'Requires a verified per-coworker runner sandbox.'),
-    pending('workspaceWrite', 'Write files', 'Let the Codex runner edit its coworker workspace.', 'Requires a confined writable workspace.'),
-    pending('shell', 'Run shell commands', 'Use the Codex shell.', 'Requires an isolated command environment.'),
+    supported('workspaceRead', 'Include workspace files', 'Copy bounded, visible text files into this coworker’s temporary command folder when Run shell commands is on.'),
+    pending('workspaceWrite', 'Save workspace edits', 'Save changes back to this coworker’s Files panel.', 'Requires a reviewed writeback and file-conflict flow.'),
+    supported('shell', 'Run shell commands', 'Run supported commands in a private temporary folder. Changes are discarded at the end of the turn. Include workspace files to read copies of this coworker’s text files.', 'exec_command'),
     supported('webSearch', 'Search the web', 'Use the Codex provider’s native web search.', 'web_search'),
     supported('codeMode', 'Code mode', 'Run JavaScript calculations in the bundled Codex host and call the Rerun tools granted to this coworker.', 'functions.exec'),
     pending('browser', 'Browser and computer', 'Use a browser or desktop from Codex.', 'Requires an isolated browser or desktop and its permissions.'),
+    pending('images', 'Image generation and editing', 'Generate or edit an image in a Codex chat.', 'Requires a scoped image output store and preview.'),
+    pending('subagents', 'Delegate to subagents', 'Start or continue child agents.', 'Requires scoped child runs, cancellation and activity history.'),
+    pending('voice', 'Voice', 'Use the Codex voice input and output tools.', 'Requires a Mac microphone and playback flow.'),
     pending('connectors', 'External connectors', 'Connect external services and servers.', 'Requires configured accounts and scoped credentials.'),
 ]

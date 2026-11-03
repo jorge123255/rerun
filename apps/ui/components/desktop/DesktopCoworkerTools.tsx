@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Icon } from '@/components/ui/icon'
 import { PanelGrid, PanelScroller, PanelSection } from '@/components/ui/panel-list'
@@ -9,7 +10,7 @@ import { PANEL_CARD } from '@/components/ui/panel-row'
 import { Switch } from '@/components/ui/switch'
 import type { CoworkerTools, CoworkerToolPatch, CoworkerToolRow, DesktopToolGroup } from '@/lib/desktop/coworker-tools'
 import { getToolMeta } from '@/lib/tool-meta'
-import { FolderIcon, PencilIcon, TerminalIcon, GlobeIcon, WrenchIcon } from '@/lib/icons'
+import { ChevronDownIcon, FolderIcon, PencilIcon, TerminalIcon, GlobeIcon, WrenchIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from './DesktopApp'
 
@@ -43,6 +44,22 @@ function CapabilityCard({ group, row, saving, toggle }: { group: DesktopToolGrou
     </div>
 }
 
+function ToolSections({ tools, unavailable = false, saving, toggle }: {
+    tools: CoworkerTools; unavailable?: boolean; saving: boolean; toggle: (patch: CoworkerToolPatch) => void
+}) {
+    return (['rerun', 'codex'] as const).map(group => {
+        // A previously granted tool whose prerequisite changed stays visible so it can be revoked.
+        const rows = tools[group].filter(row => unavailable === (!row.available && !row.enabled))
+        if (!rows.length) return null
+        return <PanelSection key={group} label={group === 'rerun' ? 'Rerun tools' : 'Native Codex tools'}>
+            {group === 'codex' && !unavailable && <p className="text-xs text-muted-foreground">These permissions apply when this coworker uses ChatGPT (Codex).</p>}
+            <PanelGrid className="grid-cols-1 sm:grid-cols-2">
+                {rows.map(row => <CapabilityCard key={row.id} group={group} row={row} saving={saving} toggle={toggle} />)}
+            </PanelGrid>
+        </PanelSection>
+    })
+}
+
 function ToolsPanel({ agent, saving, setSaving }: { agent: DesktopAgentView; saving: boolean; setSaving: (value: boolean) => void }) {
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/tools`
     const [tools, setTools] = useState<CoworkerTools | null>(null)
@@ -72,13 +89,22 @@ function ToolsPanel({ agent, saving, setSaving }: { agent: DesktopAgentView; sav
         } finally { setSaving(false) }
     }
 
+    const unavailableCount = tools ? [...tools.rerun, ...tools.codex].filter(row => !row.available && !row.enabled).length : 0
     return <PanelScroller className="space-y-4 px-1">
-        {tools ? (['rerun', 'codex'] as const).map(group => <PanelSection key={group} label={group === 'rerun' ? 'Rerun tools' : 'Native Codex tools'}>
-            {group === 'codex' && <p className="text-xs text-muted-foreground">These permissions apply when this coworker uses ChatGPT (Codex).</p>}
-            <PanelGrid className="grid-cols-1 sm:grid-cols-2">
-                {tools[group].map(row => <CapabilityCard key={row.id} group={group} row={row} saving={saving} toggle={toggle} />)}
-            </PanelGrid>
-        </PanelSection>) : !error && <p role="status" className="text-sm text-muted-foreground">Loading tools…</p>}
+        {tools ? <>
+            <ToolSections tools={tools} saving={saving} toggle={toggle} />
+            {unavailableCount > 0 && <Collapsible>
+                <CollapsibleTrigger asChild>
+                    <Button type="button" variant="ghost" className="group w-full justify-between">
+                        Unavailable tools ({unavailableCount})
+                        <ChevronDownIcon aria-hidden className="size-4 transition-transform group-data-[state=open]:rotate-180" />
+                    </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-2 space-y-4">
+                    <ToolSections tools={tools} unavailable saving={saving} toggle={toggle} />
+                </CollapsibleContent>
+            </Collapsible>}
+        </> : !error && <p role="status" className="text-sm text-muted-foreground">Loading tools…</p>}
         {error && <div role="alert" className="space-y-2 text-sm text-destructive">{error}
             {!tools && <Button type="button" variant="outline" size="sm" onClick={() => { setError(''); setAttempt(n => n + 1) }}>Retry</Button>}
         </div>}

@@ -44,7 +44,37 @@ it('grants only the selected coworker, rolls back a failed revoke, and reloads t
         await click(button('Done')); await render('first'); await click(button('Tools'))
         expect(toggle().getAttribute('aria-checked')).toBe('true')
         expect(Array.from(permissions.keys())).toEqual(['/api/desktop/agents/first/tools/rerun/workspaceRead'])
+        const unavailable = button('Unavailable tools (1)')
+        expect(unavailable.getAttribute('aria-expanded')).toBe('false')
+        expect(document.querySelectorAll('[role="switch"]')).toHaveLength(1)
+        unavailable.focus()
+        await click(unavailable)
+        expect(unavailable.getAttribute('aria-expanded')).toBe('true')
         expect(document.querySelectorAll<HTMLButtonElement>('[role="switch"]')[1].disabled).toBe(true)
         expect(document.body.textContent).toContain('Workspace shell unavailable.')
+        await click(unavailable)
+        expect(unavailable.getAttribute('aria-expanded')).toBe('false')
+        expect(document.activeElement).toBe(unavailable)
+    } finally { await act(async () => root.unmount()) }
+})
+
+it('puts usable tools from both providers before the single disclosure and keeps a paused grant revocable', async () => {
+    const row = (id: string, available: boolean, enabled = false): CoworkerToolRow => ({
+        id, label: id, description: '', tools: [], available, enabled, ...(!available && { unavailableReason: 'Requires setup.' }),
+    })
+    const tools = { rerun: [row('shared', false), row('read', true), row('paused', false, true)], codex: [row('native-web', true), row('connectors', false)] }
+    vi.stubGlobal('fetch', async () => Response.json(tools))
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    try {
+        await act(async () => root.render(<DesktopCoworkerTools agent={{ id: 'owner', name: 'Owner' } as DesktopAgentView} />))
+        await act(async () => document.querySelector<HTMLButtonElement>('button')!.click())
+        const labels = () => Array.from(document.querySelectorAll('label'), el => el.textContent)
+        expect(labels()).toEqual(['read', 'paused', 'native-web'])
+        expect(document.querySelectorAll<HTMLButtonElement>('[role="switch"]')[1].disabled).toBe(false)
+        const disclosure = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'Unavailable tools (2)')!
+        expect(disclosure.type).toBe('button')
+        expect(disclosure.tabIndex).toBe(0)
+        await act(async () => disclosure.click())
+        expect(labels()).toEqual(['read', 'paused', 'native-web', 'shared', 'connectors'])
     } finally { await act(async () => root.unmount()) }
 })

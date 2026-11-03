@@ -34,6 +34,7 @@ import { withPooledRelays } from '../tools/mcp-relay.js'
 import { HostBreaker } from '../tools/host-breaker.js'
 import type { PartialResult, RunContext, RunTrigger, SkillProposalNotice } from './context.js'
 import { desktopSourceRows } from './desktop-source-rows.js'
+import { createDesktopNativeWorker, type DesktopNativeWorker } from '../desktop/native-worker.js'
 import { partialResultsNote } from './partial-results.js'
 import { beginDesktopCodexRun, endDesktopCodexRun } from '../desktop/native-grants.js'
 import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-control.js'
@@ -226,6 +227,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     let agent = baseAgent
     let { connection, provider, model } = baseAgent.resolved
     let closeTools = async (): Promise<void> => {}
+    let nativeWorker: DesktopNativeWorker | undefined
     let closeModel = async (): Promise<void> => {}
     let appendP: Promise<unknown> = Promise.resolve()
     let contextUsage: (() => ContextOccupancy | undefined) | undefined
@@ -243,10 +245,12 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     // first. Codex's own token refresh only lands in auth.json once it has exited, hence the sync
     // last. Every teardown path below funnels through this.
     const close = async (): Promise<void> => {
-        await closeModel().then(
-            () => endDesktopCodexRun(agent.id, run.id),
-            err => logger.warn({ err: String(err), agent: agent.id }, 'close model failed'),
-        )
+        try {
+            try { await closeModel() } finally { await nativeWorker?.close() }
+            endDesktopCodexRun(agent.id, run.id)
+        } catch (err) {
+            logger.warn({ err: String(err), agent: agent.id }, 'close model or command worker failed')
+        }
         await closeTools().catch(err => logger.warn({ err: String(err), agent: agent.id }, 'close tools failed'))
         if (provider === 'codex') {
             await syncCodexAuth(connection).catch(() => {})
@@ -442,7 +446,10 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             const native = Object.entries(agent.config.tools.desktopCodexGrants ?? {}).filter(([, enabled]) => enabled).map(([name]) => name).sort()
             codexToolAccess = JSON.stringify([Object.keys(tools).sort(), native])
         }
-        const resumeThreadId = provider === 'codex' && !savedUser ? codexThreadToResume(agent.id, sessionId, connection?.id ?? RERUN_CONNECTION_ID, await lastMessageId(agent.id, sessionId), codexToolAccess) : undefined
+        // A new worker has a new private directory and endpoint. Raw Code Mode observations
+        // are also available only on thread/start. Replay saved history in both cases.
+        const freshToolThread = desktopApp() && (agent.config.tools.desktopCodexGrants?.shell || agent.config.tools.desktopCodexGrants?.codeMode)
+        const resumeThreadId = provider === 'codex' && !savedUser && !freshToolThread ? codexThreadToResume(agent.id, sessionId, connection?.id ?? RERUN_CONNECTION_ID, await lastMessageId(agent.id, sessionId), codexToolAccess) : undefined
         const codexTurnOptions = resumeThreadId || effort ? {
             'codex-app-server': { ...(resumeThreadId ? { threadId: resumeThreadId } : {}), ...(effort ? { effort } : {}) },
         } : undefined
@@ -470,7 +477,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
 
         spawnToken = claudeTokenOf(connection)
         controller.signal.throwIfAborted()
-        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id))
+        if (provider === 'codex' && desktopApp() && agent.config.tools.desktopCodexGrants?.shell) nativeWorker = await createDesktopNativeWorker(ctx)
+        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker)
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage
         // Cut out of the text whoever wrote it; only a coworker that offers replies gets the buttons.
