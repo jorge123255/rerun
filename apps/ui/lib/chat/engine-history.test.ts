@@ -276,3 +276,21 @@ describe('message times', () => {
         expect(message).toEqual({ id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Hi' }], metadata: { createdAt: '2026-10-26T09:00:00Z' } })
     })
 })
+
+it('keeps reads on the original assistant row when a provider reuses call IDs', () => {
+    const call = { type: 'tool-call', toolName: 'fs_read', toolCallId: 'repeated', input: { path: 'plan.md' } }
+    const row = (id: string, role: 'assistant' | 'tool' | 'user', content: unknown) => ({
+        id, sessionId: 's', role, contentJson: JSON.stringify(content), createdAt: '2026-11-03', toolCallsJson: null,
+    })
+    const result = (type: 'text' | 'error-text', value: string) => [{ type: 'tool-result', toolCallId: 'repeated', toolName: 'fs_read', output: { type, value } }]
+    const history = transformEngineMessages([
+        row('a', 'assistant', [call]), row('result-a', 'tool', result('text', 'early contents')),
+        row('b', 'assistant', [call]), row('result-b', 'tool', result('error-text', 'Denied.')),
+        row('c', 'assistant', [call]), row('separator', 'user', 'Try again.'),
+        row('d', 'assistant', [call]), row('result-d', 'tool', result('text', 'later contents')),
+    ])
+    expect(history.filter(m => m.role === 'assistant').map(m => m.parts[0])).toMatchObject([
+        { state: 'output-available', output: { value: 'early contents' } }, { state: 'output-available', output: { type: 'error-text', value: 'Denied.' } },
+        { state: 'input-available' }, { state: 'output-available', output: { value: 'later contents' } },
+    ])
+})

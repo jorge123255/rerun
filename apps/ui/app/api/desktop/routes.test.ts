@@ -30,7 +30,7 @@ beforeEach(async () => {
     sentChats.length = 0
     root = await mkdtemp(join(tmpdir(), 'rerun-desktop-routes-'))
     const connections = connectionFixture()
-    type SavedSettings = { soul: string; verbosity: string; tools?: { memory: boolean }; selfImprovement?: { enabled?: boolean; autoMemory?: boolean } }
+    type SavedSettings = { soul: string; verbosity: string; tools?: { memory?: boolean; desktopWorkspaceRead?: boolean }; selfImprovement?: { enabled?: boolean; autoMemory?: boolean } }
     const coworkerSettings = new Map<string, SavedSettings>()
     coworkerSettings.set('engine-agent-2', { soul: 'Original instructions', verbosity: 'normal', selfImprovement: { enabled: false } })
     const notes: Record<string, Memory[]> = {
@@ -74,7 +74,7 @@ beforeEach(async () => {
             if (req.method === 'PATCH') {
                 const { tools, selfImprovement, ...textSettings } = body
                 if (Object.keys(textSettings).some(key => key !== 'soul' && key !== 'verbosity')) return res.writeHead(400).end()
-                if (tools && Object.keys(tools).some(key => key !== 'memory')) return res.writeHead(400).end()
+                if (tools && Object.keys(tools).some(key => key !== 'memory' && key !== 'desktopWorkspaceRead')) return res.writeHead(400).end()
                 if (selfImprovement && Object.keys(selfImprovement).some(key => key !== 'autoMemory')) return res.writeHead(400).end()
                 Object.assign(saved, textSettings)
                 if (tools) saved.tools = { ...saved.tools, ...tools }
@@ -400,11 +400,13 @@ describe('desktop API routes', () => {
         const patch = (body: unknown) => editCoworkerSettings(request(url(first.id), { method: 'PATCH', body }), ctx(first.id))
         const get = (id: string) => readCoworkerSettings(request(url(id)), ctx(id))
 
-        const defaults = { soul: 'Original instructions', verbosity: 'normal', soulEditable: true, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true }
+        const defaults = { soul: 'Original instructions', verbosity: 'normal', soulEditable: true, workspaceReadEnabled: false, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true }
         expect(await (await get(first.id)).json()).toEqual(defaults)
+        expect((await patch({ workspaceReadEnabled: true })).status).toBe(200)
+        expect(await (await get(first.id)).json()).toEqual({ ...defaults, workspaceReadEnabled: true })
         expect((await patch({ soul: '  End with a verdict.  ' })).status).toBe(200)
         expect((await patch({ verbosity: 'concise' })).status).toBe(200)
-        for (const body of [{ verbosity: 'other' }, { soul: '  ' }, {}, { model: 'other', verbosity: 'detailed' }, { autoMemory: 'false' }, { memoryEnabled: null }, { selfImprovementEnabled: true }]) {
+        for (const body of [{ verbosity: 'other' }, { soul: '  ' }, {}, { model: 'other', verbosity: 'detailed' }, { autoMemory: 'false' }, { workspaceReadEnabled: 'true' }, { tools: { filesystem: true } }, { memoryEnabled: null }, { selfImprovementEnabled: true }]) {
             expect((await patch(body)).status).toBe(400)
         }
         const foreign = request(url(first.id), { method: 'PATCH', body: { verbosity: 'detailed' } })
@@ -416,7 +418,7 @@ describe('desktop API routes', () => {
         expect((await get('engine-agent-1')).status).toBe(404)
         expect((await editCoworkerSettings(request(url('engine-agent-1'), { method: 'PATCH', body: { soul: 'Wrong ID' } }), ctx('engine-agent-1'))).status).toBe(404)
         await closeDesktopDatabase(root)
-        expect(await (await get(first.id)).json()).toEqual({ ...defaults, soul: 'End with a verdict.', verbosity: 'concise' })
+        expect(await (await get(first.id)).json()).toEqual({ ...defaults, workspaceReadEnabled: true, soul: 'End with a verdict.', verbosity: 'concise' })
         expect(await (await get(second.id)).json()).toEqual({ ...defaults, selfImprovementEnabled: false })
     })
 

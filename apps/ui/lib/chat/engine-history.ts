@@ -41,23 +41,32 @@ function extractText(content: unknown): string {
 // rerun-engine persists AI-SDK message content as JSON in `contentJson`
 // (and tool calls in `toolCallsJson`). Re-hydrate to UI message parts.
 export function transformEngineMessages(messages: EngineMessage[], options?: { desktopSummaries?: boolean; preserveSourceSteps?: boolean }): HistoryMessage[] {
-    const toolResults = new Map<string, unknown>()
-    const recordResult = (part: unknown) => {
-        const p = part as { type?: string; toolCallId?: string; output?: unknown; result?: unknown }
-        if (p?.toolCallId && (p.type === 'tool-result' || p.output !== undefined || p.result !== undefined)) {
-            toolResults.set(p.toolCallId, p.output ?? p.result ?? p)
+    // Match each result to the nearest preceding call. A provider may reuse a call ID on the
+    // next turn or step; an earlier reply must continue showing the file it actually read.
+    const pending = new Map<string, unknown>()
+    const rowResults = new Map<string, Map<string, unknown>>()
+    for (let index = messages.length - 1; index >= 0; index--) {
+        const m = messages[index]
+        if (m.role === 'user') { pending.clear(); continue }
+        const content = safeParse(m.contentJson)
+        const parts = Array.isArray(content) ? content : [content]
+        for (const part of parts) {
+            if (part?.toolCallId && (part.type === 'tool-result' || (m.role === 'tool' && (part.output !== undefined || part.result !== undefined)))) {
+                pending.set(part.toolCallId, part.output ?? part.result ?? part)
+            }
         }
-    }
-    for (const m of messages) {
-        const parsed = safeParse(m.contentJson)
-        const arr = Array.isArray(parsed) ? parsed : [parsed]
-        if (m.role === 'tool') {
-            for (const part of arr) recordResult(part)
-            continue
+        if (m.role !== 'assistant' || pending.size === 0) continue
+        const legacy = safeParse(m.toolCallsJson)
+        const results = new Map<string, unknown>()
+        for (const call of [...parts, ...(Array.isArray(legacy) ? legacy : [])]) {
+            if (!call || call.type === 'tool-result') continue
+            const id = call.toolCallId ?? call.id
+            if (pending.has(id)) {
+                results.set(id, pending.get(id))
+                pending.delete(id)
+            }
         }
-        for (const part of arr) {
-            if ((part as { type?: string })?.type === 'tool-result') recordResult(part)
-        }
+        if (results.size) rowResults.set(m.id, results)
     }
 
     const result: HistoryMessage[] = []
@@ -77,7 +86,7 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
         const parts: UIMessagePart[] = []
         const seen = new Set<string>()
         const pushCall = (call: unknown) => {
-            const part = toolPartOf(call, toolResults)
+            const part = toolPartOf(call, rowResults.get(m.id))
             if (seen.has(part.toolCallId)) return
             seen.add(part.toolCallId)
             parts.push(part)
@@ -126,13 +135,13 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
 
 type StoredToolCall = { toolCallId?: string; id?: string; toolName?: string; name?: string; function?: { name?: string }; input?: unknown; args?: unknown; arguments?: unknown }
 
-function toolPartOf(call: unknown, toolResults: Map<string, unknown>): ToolInvocationPart {
+function toolPartOf(call: unknown, toolResults?: Map<string, unknown>): ToolInvocationPart {
     const c = call as StoredToolCall
     const toolCallId = c.toolCallId ?? c.id ?? crypto.randomUUID()
     const toolName = c.toolName ?? c.name ?? c.function?.name ?? 'tool'
     const rawInput = c.input ?? c.args ?? c.arguments ?? {}
     const input = typeof rawInput === 'string' ? safeParse(rawInput) : rawInput
-    const output = toolResults.get(toolCallId)
+    const output = toolResults?.get(toolCallId)
     // An unresolved tool call (no matching tool-result) is still awaiting input, e.g. a paused
     // ask_user / request_approval. Keep it 'input-available' so the pinned block re-renders on reload.
     if (output !== undefined) return { type: `tool-${toolName}`, toolCallId, toolName, state: 'output-available', input, output }

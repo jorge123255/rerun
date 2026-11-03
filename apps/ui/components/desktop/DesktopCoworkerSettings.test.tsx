@@ -9,7 +9,7 @@ import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 
 const coworker = { id: 'archivist', name: 'Archivist', description: '', createdAt: '', updatedAt: '' }
 let root: Root
-const settings: Settings = { soul: 'Check facts.', verbosity: 'normal', soulEditable: true, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true }
+const settings: Settings = { soul: 'Check facts.', verbosity: 'normal', soulEditable: true, workspaceReadEnabled: false, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true }
 const button = (text: string) => [...document.querySelectorAll('button')].find(node => node.textContent?.trim() === text)!
 const toggle = (id: string) => document.querySelector<HTMLButtonElement>(`[role="switch"]#${id}`)!
 const click = (element: HTMLElement) => act(async () => { element.click() })

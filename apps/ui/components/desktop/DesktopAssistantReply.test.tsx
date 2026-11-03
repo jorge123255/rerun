@@ -195,3 +195,30 @@ test('different steps can reuse a source ID and each step gets its own source li
     const urls = Array.from(container.querySelectorAll<HTMLAnchorElement>('a[href]'), a => a.href)
     expect(urls).toEqual([...first.slice(0, 32), next].map(source => source.url))
 })
+
+test('shows a real read step on its reply, keeping literal file contents and errors separate from the answer', async () => {
+    const base = { type: 'dynamic-tool' as const, toolName: 'mcp__rerun__fs_read', toolCallId: 'read-1', input: { path: 'notes/plan.md' } }
+    const row = () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.includes('Read File'))!
+    await render([{ ...base, state: 'input-available' }], true)
+    expect(row().textContent).toContain('notes/plan.md')
+    await act(async () => row().click())
+    expect(row().getAttribute('aria-expanded')).toBe('true')
+    expect(container.textContent).toContain('Input')
+    expect(container.textContent).not.toContain('Output')
+    for (const output of ['<b>file result</b>', { type: 'text', value: '<b>file result</b>' }]) {
+        await render([{ ...base, state: 'output-available', output }, { type: 'text', text: 'My answer.' }])
+        expect(container.textContent).toContain('Output<b>file result</b>')
+        expect(container.querySelector('b')).toBeNull()
+        expect(container.textContent).toContain('My answer.')
+    }
+    await render([{ ...base, state: 'output-error', errorText: 'Access denied.' }])
+    expect(container.textContent).toContain('ErrorAccess denied.')
+    await render([{ ...base, state: 'output-available', output: { type: 'error-text', value: 'Access denied.' } }])
+    expect(container.textContent).toContain('ErrorAccess denied.')
+    expect(container.textContent).not.toContain('Output')
+    await render([{ ...base, state: 'output-available', output: { type: 'error-json', value: { message: 'Denied by host.' } } }])
+    expect(container.textContent).toContain('ErrorDenied by host.')
+    expect(container.textContent).not.toContain('Output')
+    await render([{ type: 'text', text: 'I could use fs_read to answer.' }])
+    expect(row()).toBeUndefined()
+})

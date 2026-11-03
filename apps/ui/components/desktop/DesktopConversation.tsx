@@ -18,6 +18,7 @@ import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
+import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { AttachmentChip, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { DesktopModelSelector } from './DesktopModelSelector'
@@ -304,6 +305,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 <p className="text-sm text-muted-foreground">{agent.description || 'Local coworker'}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                     <DesktopCoworkerFiles agent={agent} />
+                    <DesktopCoworkerTools agent={agent} />
                     <DesktopCoworkerMemories agent={agent} />
                     {renderRunHistory}
                     <DesktopCoworkerSettings agent={agent} disabled={busy} />
