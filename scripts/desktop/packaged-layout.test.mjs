@@ -20,6 +20,7 @@ async function fakeResources() {
     await writeFile(join(root, 'runtime', 'node', 'bin', 'node'), 'fake')
     await writeFile(join(root, 'runtime', 'engine', 'dist', 'cli', 'bin.js'), 'fake')
     await writeFile(join(root, 'main', 'ui-host.mjs'), 'fake')
+    await writeFile(join(root, 'runtime', 'rerun-codex'), 'fake')
     await writeFile(join(root, 'runtime-manifest.json'), JSON.stringify({
         protocolVersion: 1,
         buildId: 'layout-test-desktop-0.1.0',
@@ -28,6 +29,7 @@ async function fakeResources() {
         uiRoot: 'runtime/ui',
         engineEntry: 'runtime/engine/dist/cli/bin.js',
         uiHost: 'main/ui-host.mjs',
+        codexPath: 'runtime/rerun-codex',
     }))
     return root
 }
