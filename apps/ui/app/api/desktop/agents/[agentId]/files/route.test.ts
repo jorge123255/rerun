@@ -8,13 +8,17 @@ import { GET as list, POST as upload } from './route'
 import { GET as read } from './read/route'
 
 const race = vi.hoisted(() => ({
+    beforeMkdir: undefined as undefined | ((target: unknown) => Promise<void>),
     beforeOpen: undefined as undefined | ((target: unknown) => Promise<void>),
     // Wrap a handle opened for writing, e.g. to fail after a partial write.
     wrapWrite: undefined as undefined | ((target: string, handle: import('node:fs/promises').FileHandle) => import('node:fs/promises').FileHandle),
 }))
 vi.mock('node:fs/promises', async importOriginal => {
     const fs = await importOriginal<typeof import('node:fs/promises')>()
-    return { ...fs, open: async (...args: Parameters<typeof fs.open>) => {
+    return { ...fs, mkdir: async (...args: Parameters<typeof fs.mkdir>) => {
+        await race.beforeMkdir?.(args[0])
+        return fs.mkdir(...args)
+    }, open: async (...args: Parameters<typeof fs.open>) => {
         await race.beforeOpen?.(args[0])
         const handle = await fs.open(...args)
         const flags = Number(args[1] ?? 0)
@@ -45,6 +49,7 @@ beforeEach(async () => {
     await writeFile(join(root, 'outside.txt'), 'OUTSIDE')
 })
 afterEach(async () => {
+    race.beforeMkdir = undefined
     race.beforeOpen = undefined
     race.wrapWrite = undefined
     await closeDesktopDatabase(root)
@@ -183,7 +188,7 @@ test('a folder swapped for a sibling symlink after validation cannot redirect an
     const real = await realpath(docs)
     let swapped = false
     race.beforeOpen = async path => {
-        if (swapped || !(String(path).startsWith(join(real, '.swap.md.')) || (process.platform !== 'darwin' && String(path).endsWith('/docs')))) return
+        if (swapped || !(String(path).startsWith(join(real, '.rerun-import-')) || (process.platform !== 'darwin' && String(path).endsWith('/docs')))) return
         swapped = true
         await rename(docs, docs + '-original')
         await symlink(join(workspace('engine-bob'), 'docs'), docs, 'dir')
@@ -271,4 +276,32 @@ test('two complete imports racing for one name: exactly one wins and is never ov
         expect(await readFile(join(workspace('engine-alice'), 'docs', name), 'utf8')).toBe(a.status === 201 ? 'AAAA' : 'BBBB')
     }
     expect((await readdir(join(workspace('engine-alice'), 'docs'))).filter(n => n.startsWith('.'))).toEqual([])
+})
+
+test('a parent swapped after validation cannot create a sibling workspace on first import', async () => {
+    const agents = join(root, 'workspaces', '1', 'engine', 'agents')
+    const owner = join(agents, 'engine-new')
+    const sibling = join(agents, 'engine-empty')
+    const db = await openDesktopDatabase(root)
+    const actor = (await createDesktopAgent(db, { engineAgentId: 'engine-new', name: 'New' })).id
+    await createDesktopAgent(db, { engineAgentId: 'engine-empty', name: 'Empty' })
+    await mkdir(owner)
+    await mkdir(sibling)
+    let swapped = false
+    race.beforeMkdir = async target => {
+        if (swapped || !String(target).endsWith('/workspace')) return
+        swapped = true
+        await rename(owner, owner + '-before')
+        await symlink(sibling, owner, 'dir')
+    }
+    const res = await importFile(actor, '', 'note.txt', 'private')
+    expect(swapped).toBe(true)
+    expect(res.status).toBe(400)
+    expect(await readdir(sibling)).toEqual([])
+})
+test('a legal long filename is importable', async () => {
+    const name = 'n'.repeat(235) + '.txt'
+    const res = await importFile(alice, 'docs', name, 'complete')
+    expect(res.status).toBe(201)
+    expect(await readFile(join(workspace('engine-alice'), 'docs', name), 'utf8')).toBe('complete')
 })

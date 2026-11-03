@@ -3,7 +3,7 @@ import { DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath } from '@rerun/co
 import { constants } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { link, lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
@@ -174,7 +174,7 @@ export async function importCoworkerFile(runtime: DesktopRuntime, agentId: strin
     // Write a hidden temp file in the pinned folder, then publish it with link(2), which fails with
     // EEXIST rather than replacing a file. The final name only ever appears complete, a failed write
     // leaves it free, and a racing import that published first is never overwritten.
-    const tempName = `.${name}.${randomBytes(6).toString('hex')}.import`
+    const tempName = `.rerun-import-${randomBytes(12).toString('hex')}`
     const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
     let dir: FileHandle
     try {
@@ -234,8 +234,17 @@ async function createWorkspace(runtime: DesktopRuntime, workspace: string): Prom
         existing = dirname(existing)
     }
     for (const part of missingParts) {
-        await mkdir(part).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error })
-        const info = await lstat(part)
-        if (!info.isDirectory() || info.isSymbolicLink() || await realpath(part) !== part) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+        const parent = await openResolved(dirname(part), true)
+        try {
+            // Pin the parent for mkdir itself. Checking the absolute path afterwards is too late if
+            // an ancestor was exchanged for a sibling symlink between validation and creation.
+            const child = join(await pinnedDirectory(parent), basename(part))
+            await mkdir(child).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error })
+            const info = await lstat(child)
+            const actual = await realpath(part).catch(error => { if (missing(error)) return null; throw error })
+            if (!info.isDirectory() || actual !== part) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+        } finally {
+            await parent.close()
+        }
     }
 }

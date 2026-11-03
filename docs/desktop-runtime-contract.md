@@ -34,6 +34,8 @@ In **Edit coworker**, **Use saved memories in chat** controls whether a new turn
 
 **Attach from Files** in coworker chat selects one existing UTF-8 `.txt` or `.md` file of up to 32 KiB from that coworker’s workspace. The filename appears next to the draft, where you can remove it. When you send your question, the Mac app reads the file and sends that version to the selected provider as part of the message. The saved conversation shows the filename and uses the original text even if the workspace file later changes or is removed. A file that can no longer be read leaves the draft available to edit and retry.
 
+In **Files**, **Import file** copies a single local `.txt` or `.md` document of up to 1 MiB into the selected coworker’s current folder. The final filename appears only once the full document is written. An existing name is preserved, including when two imports race. **Find chat** on the Team board searches local conversation titles across coworkers. Each result shows the coworker and opens that exact saved chat.
+
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
 ```json
