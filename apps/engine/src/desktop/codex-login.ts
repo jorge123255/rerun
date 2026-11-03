@@ -48,7 +48,7 @@ async function accept(owner: CodexAuthClient) {
     const keys = { [signedInFlag]: '1' }
     if (await findConnection(DESKTOP_CODEX_ID)) {
         await patchConnection(DESKTOP_CODEX_ID, { models: available })
-        await updateConnectionKeys(DESKTOP_CODEX_ID, { set: keys })
+        await updateConnectionKeys(DESKTOP_CODEX_ID, { set: keys, remove: [] })
     } else {
         await createConnection({ name: 'ChatGPT (Codex)', provider: 'codex', models: available, extraModels: [], keys }, DESKTOP_CODEX_ID)
     }
@@ -92,7 +92,7 @@ export function codexLoginAction(action: 'start' | 'cancel' | 'logout') {
             await owner.initialize()
             if (action === 'logout') {
                 await owner.request('account/logout', {})
-                if (await findConnection(DESKTOP_CODEX_ID)) await updateConnectionKeys(DESKTOP_CODEX_ID, { remove: [signedInFlag] })
+                if (await findConnection(DESKTOP_CODEX_ID)) await updateConnectionKeys(DESKTOP_CODEX_ID, { set: {}, remove: [signedInFlag] })
                 if ((await readBoxDefault())?.connectionId === DESKTOP_CODEX_ID) await clearBoxDefault()
                 release()
                 return state = { phase: 'idle' }

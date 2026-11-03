@@ -18,6 +18,7 @@ export function DesktopCodexLogin({ onProviders }: { onProviders: (providers: Co
     const [error, setError] = useState('')
     const revision = useRef(0)
 
+    const shouldPoll = !status || status.phase === 'waiting'
     useEffect(() => {
         const controller = new AbortController()
         let timer: ReturnType<typeof setTimeout>
@@ -32,11 +33,11 @@ export function DesktopCodexLogin({ onProviders }: { onProviders: (providers: Co
             } catch {
                 if (!controller.signal.aborted && at === revision.current) setError('Cannot read ChatGPT sign-in status.')
             }
-            if (!controller.signal.aborted && at === revision.current && (!status || status.phase === 'waiting')) timer = setTimeout(poll, 1800)
+            if (!controller.signal.aborted && at === revision.current && shouldPoll) timer = setTimeout(poll, 1800)
         }
-        if (!busy && (!status || status.phase === 'waiting')) void poll()
+        if (!busy && shouldPoll) void poll()
         return () => { controller.abort(); clearTimeout(timer) }
-    }, [busy, status?.phase, onProviders]) // eslint-disable-line react-hooks/exhaustive-deps
+    }, [busy, shouldPoll, onProviders])
 
     async function act(action: Action) {
         revision.current++
