@@ -16,6 +16,8 @@ function mockDesktopFetch(reply: (url: string, init?: RequestInit) => Response |
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
         const response = reply(url, init)
         if (response) return response
+        // The Team board polls its own activity route; tests that do not exercise it see everyone idle.
+        if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
         const message = `${init?.method ?? 'GET'} ${url}`
         unexpectedRequests.push(message)
         throw new Error(`Unexpected request: ${message}`)
