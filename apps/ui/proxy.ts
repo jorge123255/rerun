@@ -43,6 +43,11 @@ function brandGate(request: NextRequest): NextResponse {
 }
 
 export async function proxy(request: NextRequest) {
+    const pathname = request.nextUrl.pathname
+    if (process.env.RERUN_DESKTOP_APP === '1' && (pathname === '/desktop' || pathname.startsWith('/desktop/') || pathname === '/api/desktop' || pathname.startsWith('/api/desktop/'))) {
+        return NextResponse.next()
+    }
+
     // A published page answers before anything reads or writes a session: rerun.site must never
     // hold a cookie, nor provision an anonymous user for every visitor of a shared link.
     const publishedSlug = extractPublishedSlug(request.headers.get('host'))

@@ -118,6 +118,23 @@ describe('proxy staging gate', () => {
     })
 })
 
+describe('desktop local mode', () => {
+    beforeEach(() => vi.stubEnv('RERUN_DESKTOP_APP', '1'))
+
+    it('bypasses Supabase session refresh for desktop pages and APIs', async () => {
+        await proxy(new NextRequest('http://127.0.0.1:3100/desktop'))
+        await proxy(new NextRequest('http://127.0.0.1:3100/api/desktop/health'))
+
+        expect(mocks.updateSession).not.toHaveBeenCalled()
+    })
+
+    it('retains the existing session middleware for ordinary web routes', async () => {
+        await proxy(new NextRequest('http://127.0.0.1:3100/board'))
+
+        expect(mocks.updateSession).toHaveBeenCalledTimes(1)
+    })
+})
+
 describe('proxy matcher', () => {
     it('runs on app pages', () => {
         expect(matches('/')).toBe(true)
