@@ -14,6 +14,8 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
     let child, runtime, releaseReply
     let notifyProvider
     const providerStarted = new Promise(resolve => { notifyProvider = resolve })
+    let providerRequests = 0
+    const waiting = []
     const provider = createServer(async (req, res) => {
         if (req.url !== '/v1/chat/completions' || req.method !== 'POST') return res.writeHead(404).end()
         for await (const chunk of req) void chunk
@@ -28,6 +30,8 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
             res.end('data: [DONE]\n\n')
         }
         notifyProvider()
+        providerRequests++
+        for (const item of waiting.filter(item => item.count <= providerRequests)) item.resolve()
     })
     await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve))
     const providerOrigin = `http://127.0.0.1:${provider.address().port}/v1`
@@ -68,7 +72,9 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
             active.send({ type: 'stop' })
         })
     }
-    return { start, stop, providerOrigin, providerStarted, finishReply: () => releaseReply?.(), get runtime() { return runtime },
+    return { start, stop, providerOrigin, providerStarted,
+        waitForProviderRequest: count => providerRequests >= count ? Promise.resolve() : new Promise(resolve => waiting.push({ count, resolve })),
+        finishReply: () => releaseReply?.(), get runtime() { return runtime },
         async close() {
             try { releaseReply?.(); await stop() }
             finally { provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve)) }

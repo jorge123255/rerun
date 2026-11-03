@@ -8,7 +8,7 @@ The read-only desktop route authenticates the local session, resolves the local 
 engine ID on the server, and calls the existing `listRuns` client once. It exposes list fields only;
 engine agent/session IDs, raw usage JSON, and engine error bodies stay server-side. A failed or
 malformed engine response returns 502 rather than an empty list. Mismatched coworker records fail
-closed. No run-detail, steps, tools, stream, or cancellation endpoint is added by this feature.
+closed. Expandable recorded steps and tool outcomes are described in [desktop-run-details.md](desktop-run-details.md).
 
 The UI uses Rerun's shared `RunStatusBadge`. Start and finish dates come from the run record; missing
 finish dates show In progress only for a running record. Missing usage is labeled Usage not recorded.

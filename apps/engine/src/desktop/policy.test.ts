@@ -18,6 +18,15 @@ test('desktop HTTP scope permits chat/history but denies filesystem, updater, MC
     expect(desktopRouteAllowed('DELETE', '/agents/a')).toBe(false)
 })
 
+test('run details permit only the existing authenticated step and tool reads', () => {
+    for (const path of ['/agents/a/runs/r/steps', '/agents/a/runs/r/tools']) {
+        expect(desktopRouteAllowed('GET', path)).toBe(true)
+        for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, path)).toBe(false)
+    }
+    for (const path of ['/agents/a/runs/r', '/agents/a/runs/r/output', '/agents/a/runs/r/tools/more', '/agents/a/runs/r/steps/1', '/agents/foreman/runs/r/tools', '/agents/a/runs/..%2fr/tools'])
+        expect(desktopRouteAllowed('GET', path)).toBe(false)
+})
+
 test('Codex requires the bundled runner and the dedicated desktop connection', () => {
     vi.stubEnv('RERUN_DESKTOP_APP', '1')
     vi.stubEnv('RERUN_DESKTOP_CODEX_RUNNER', '')

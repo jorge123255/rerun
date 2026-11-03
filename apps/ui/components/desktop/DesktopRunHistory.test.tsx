@@ -27,6 +27,7 @@ test('opens from a board coworker, updates a running entry, isolates coworkers, 
         if (url === '/api/desktop/board-activity') return Response.json({ agents: { alice: 'idle', bob: 'idle' } })
         if (url === '/api/desktop/agents/alice/runs') { reads++; return Response.json({ runs }) }
         if (url === '/api/desktop/agents/bob/runs') return Response.json({ runs: [] })
+        if (url.endsWith('/details')) return Response.json({ steps: [{ id: 'step', stepNumber: 1, finishReason: 'stop', totalTokens: 16, durationMs: 100 }], tools: [] })
         if (url.endsWith('/sessions')) return Response.json({ sessions: [{ id: 'saved', agentId: url.includes('/alice/') ? alice.id : bob.id, title: 'Saved chat', createdAt: '', updatedAt: '' }] })
         if (url.endsWith('/messages')) return Response.json({ messages: [{ id: 'answer', role: 'assistant', parts: [{ type: 'text', text: 'The saved answer.' }] }] })
         throw new Error(`Unexpected test request: ${url}`)
@@ -50,6 +51,9 @@ test('opens from a board coworker, updates a running entry, isolates coworkers, 
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Running')
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Usage not recorded')
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Finished In progress')
+        await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Recent runs"] button')!.click() })
+        expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Step 1')
+        expect(composer.value).toBe('Keep my unsent draft')
         runs = [{ ...running, status: 'done', finishedAt: '2026-11-03T12:00:03.000Z', stepCount: 1, totalTokens: 16 }]
         await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Done')
