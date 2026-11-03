@@ -4,12 +4,13 @@ import type { UIMessage } from 'ai'
 import { useMemo, type ReactNode } from 'react'
 import type { Components, CustomRendererProps, PluginConfig } from 'streamdown'
 import { toast } from 'sonner'
-import { MessageResponse } from '@/components/ai-elements/message'
+import { MessageAction, MessageResponse } from '@/components/ai-elements/message'
 import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
 import { Button } from '@/components/ui/button'
-import { CheckIcon, CopyIcon, RefreshCcwIcon } from '@/lib/icons'
+import type { MessageFeedbackRating } from '@rerun/contracts'
+import { CheckIcon, CopyIcon, RefreshCcwIcon, ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { useCopy } from '@/lib/use-copy'
 import { splitIntoBubbles } from '@/lib/chat/message-bubbles'
@@ -75,7 +76,23 @@ function DesktopAnswerBubbles({ text, streaming }: { text: string; streaming: bo
     </div>
 }
 
-export function DesktopAssistantReply({ message, streaming, onRegenerate }: { message: UIMessage; streaming: boolean; onRegenerate?: (id: string) => void }) {
+function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRating; current: MessageFeedbackRating | null; onRate: (rating: MessageFeedbackRating) => void }) {
+    const pressed = current === rating
+    const Glyph = rating === 'up' ? ThumbsUpIcon : ThumbsDownIcon
+    return (
+        <MessageAction tooltip={rating === 'up' ? 'Good response' : 'Bad response'} aria-pressed={pressed} className={cn(pressed ? 'bg-accent text-foreground' : 'text-muted-foreground')} onClick={() => onRate(rating)}>
+            <Glyph className="size-3.5" />
+        </MessageAction>
+    )
+}
+
+export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate }: {
+    message: UIMessage
+    streaming: boolean
+    onRegenerate?: (id: string) => void
+    feedbackRating?: MessageFeedbackRating | null
+    onRate?: (rating: MessageFeedbackRating) => void
+}) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const blocks: ReactNode[] = []
     let text = '', paragraph = ''
@@ -104,6 +121,10 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate }: { me
                 aria-description="Opens a new chat and keeps the original" onClick={() => onRegenerate(message.id)}>
                 <RefreshCcwIcon aria-hidden className="size-3.5" /> Regenerate reply
             </Button>}
+            {onRate && message.id.startsWith('engine-') && <div className={cn('flex items-center gap-1 transition-opacity group-hover:opacity-100 focus-within:opacity-100', feedbackRating == null && 'opacity-0')}>
+                <FeedbackThumb rating="up" current={feedbackRating} onRate={onRate} />
+                <FeedbackThumb rating="down" current={feedbackRating} onRate={onRate} />
+            </div>}
         </div>}
     </>
 }

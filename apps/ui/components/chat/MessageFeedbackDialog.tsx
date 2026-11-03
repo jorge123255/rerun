@@ -22,15 +22,18 @@ type FormValues = z.infer<typeof schema>
 
 export type MessageFeedbackDetails = { category: MessageFeedbackCategory | null; details: string }
 
+const SHARED_NOTICE = 'Submitting this report shares this conversation with the Rerun team so we can improve your coworkers.'
+
 type MessageFeedbackDialogProps = {
     open: boolean
     rating: MessageFeedbackRating
     onOpenChange: (open: boolean) => void
     // Resolves to whether the details were saved, which is what closes the dialog.
     onSubmit: (details: MessageFeedbackDetails) => Promise<boolean>
+    notice?: string
 }
 
-export function MessageFeedbackDialog({ open, rating, onOpenChange, onSubmit }: MessageFeedbackDialogProps) {
+export function MessageFeedbackDialog({ open, rating, onOpenChange, onSubmit, notice = SHARED_NOTICE }: MessageFeedbackDialogProps) {
     const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { category: undefined, details: '' } })
     const {
         formState: { isSubmitting },
@@ -95,7 +98,7 @@ export function MessageFeedbackDialog({ open, rating, onOpenChange, onSubmit }: 
                                 </FormItem>
                             )}
                         />
-                        <p className="text-xs text-muted-foreground">Submitting this report shares this conversation with the Rerun team so we can improve your coworkers.</p>
+                        <p className="text-xs text-muted-foreground">{notice}</p>
                         <DialogFooter>
                             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
                                 Cancel

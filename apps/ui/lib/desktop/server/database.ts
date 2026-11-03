@@ -77,6 +77,17 @@ async function initialize(dataRoot: string): Promise<Client> {
             ON desktop_regeneration_requests(source_session_id, message_id) WHERE pending = 1;
         CREATE UNIQUE INDEX IF NOT EXISTS desktop_regeneration_alternate
             ON desktop_regeneration_requests(alternate_session_id) WHERE alternate_session_id IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS desktop_message_feedback (
+            id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+            message_id TEXT NOT NULL,
+            rating TEXT NOT NULL CHECK (rating IN ('up', 'down')),
+            category TEXT,
+            details TEXT,
+            updated_at TEXT NOT NULL,
+            UNIQUE (session_id, message_id)
+        );
         PRAGMA user_version = 1;
     `)
     const columns = await client.execute('PRAGMA table_info(desktop_sessions)')

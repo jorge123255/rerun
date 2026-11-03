@@ -9,6 +9,8 @@ import { FloatingPill } from '@/components/agent/sheet/floating'
 import { Conversation, ConversationContent } from '@/components/ai-elements/conversation'
 import { USER_BUBBLE_INK, USER_BUBBLE_SHAPE } from '@/components/chat/bubble-styles'
 import { ArrowUpIcon, ChevronDownIcon, PlusIcon, SquareIcon, UserRoundIcon, XIcon } from '@/lib/icons'
+import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
+import { useDesktopReplyFeedback } from '@/lib/desktop/reply-feedback'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -156,6 +158,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const dirty = !!(input || attachment)
     useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty }) }, [tabUid, generating, dirty, onTabActivity])
     const canRegenerate = !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping
+    const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
     const historyError = history.id === sessionId ? history.error : undefined
     // The SDK throttles message updates. Show the verified snapshot immediately when switching,
@@ -336,6 +339,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                         <div className="mb-1"><AttachmentChip path={message.metadata.attachmentPath} /></div> : null}
                                     {message.role === 'assistant'
                                         ? <DesktopAssistantReply message={message} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
+                                            feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
+                                            onRate={message.id.startsWith('engine-') ? rating => feedback.rate(message.id, rating) : undefined}
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
                                         : message.parts.map((part, index) => part.type === 'text' ? <span key={index}>{part.text}</span> : null)}
                                 </MessageContent>
@@ -355,6 +360,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 </ConversationContent>
             </Conversation>
 
+            <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} notice="Feedback is stored on this Mac." onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
             <div className="shrink-0 border-t p-2.5">
                 <form onSubmit={submit} className="flex min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring">
                     {attachment && <div className="px-2.5 pt-2"><AttachmentChip path={attachment} disabled={generating || stopping} onRemove={() => setDraftAttachment(draftKey)} /></div>}
