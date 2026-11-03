@@ -3,11 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type UIMessage } from 'ai'
-import { ReasoningStep } from '@/components/chat/ReasoningBlock'
+import { DesktopAssistantReply } from './DesktopAssistantReply'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { lastUserText } from '@/lib/chat-payload'
-import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
@@ -222,15 +221,12 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                     )}
                     {transcript.map((message, messageIndex) => (
                         <div key={message.id} className={cn('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}>
-                            <div className={cn('max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6', message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
+                            <div className={cn('min-w-0 max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6', message.role === 'user' ? 'whitespace-pre-wrap bg-primary text-primary-foreground' : 'bg-muted')}>
                                 {message.role === 'user' && message.metadata && typeof message.metadata === 'object' && 'attachmentPath' in message.metadata && typeof message.metadata.attachmentPath === 'string' ?
                                     <div className="mb-1"><AttachmentChip path={message.metadata.attachmentPath} /></div> : null}
-                                {message.parts.map((part, index) => {
-                                    if (part.type === 'text') return <span key={index}>{part.text}</span>
-                                    if (message.role !== 'assistant' || part.type !== 'reasoning' || typeof part.text !== 'string' || !isDesktopSummaryMetadata(part.providerMetadata)) return null
-                                    const streaming = status === 'streaming' && messageIndex === transcript.length - 1 && index === message.parts.length - 1
-                                    return part.text || streaming ? <ReasoningStep key={index} text={part.text} isStreaming={streaming} /> : null
-                                })}
+                                {message.role === 'assistant'
+                                    ? <DesktopAssistantReply message={message} streaming={status === 'streaming' && messageIndex === transcript.length - 1} />
+                                    : message.parts.map((part, index) => part.type === 'text' ? <span key={index}>{part.text}</span> : null)}
                             </div>
                         </div>
                     ))}

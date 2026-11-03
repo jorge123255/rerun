@@ -1,0 +1,63 @@
+'use client'
+
+import type { UIMessage } from 'ai'
+import type { ReactNode } from 'react'
+import type { Components } from 'streamdown'
+import { toast } from 'sonner'
+import { MessageResponse } from '@/components/ai-elements/message'
+import { ReasoningStep } from '@/components/chat/ReasoningBlock'
+import { Button } from '@/components/ui/button'
+import { CheckIcon, CopyIcon } from '@/lib/icons'
+import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
+import { useCopy } from '@/lib/use-copy'
+
+const desktopComponents: Components = {
+    a: ({ href, children }) => {
+        // Links on the Mac open through the shell's HTTPS-only external navigation policy.
+        const url = href && URL.canParse(href) ? new URL(href) : null
+        return url?.protocol === 'https:' && !url.username && !url.password
+            ? <a data-streamdown="link" href={url.href} target="_blank" rel="noopener noreferrer">{children}</a>
+            : <span>{children}</span>
+    },
+    img: ({ alt }) => <span>{alt || 'Image'}</span>,
+}
+
+const noPlugins = {}
+const noRehypePlugins: [] = []
+const copyFailed = () => toast.error('Could not copy this reply. Try again.')
+
+function replyMarkdown(text: string, streaming = false) {
+    return <MessageResponse components={desktopComponents} plugins={noPlugins} rehypePlugins={noRehypePlugins}
+        controls={false} skipHtml mode={streaming ? 'streaming' : 'static'} isAnimating={streaming}
+        className="min-w-0 wrap-anywhere [&_pre]:overflow-x-auto">
+        {text}
+    </MessageResponse>
+}
+
+export function DesktopAssistantReply({ message, streaming }: { message: UIMessage; streaming: boolean }) {
+    const { copied, copy } = useCopy(copyFailed)
+    const blocks: ReactNode[] = []
+    let text = '', paragraph = ''
+    for (const [index, part] of message.parts.entries()) {
+        const live = streaming && index === message.parts.length - 1
+        if (part.type === 'text') {
+            text += part.text
+            paragraph += part.text
+            // A table or fenced block can span consecutive text parts from the model.
+            if (message.parts[index + 1]?.type !== 'text') {
+                blocks.push(<div key={index}>{replyMarkdown(paragraph, live)}</div>)
+                paragraph = ''
+            }
+        } else if (part.type === 'reasoning' && isDesktopSummaryMetadata(part.providerMetadata) && (part.text || live)) {
+            blocks.push(<ReasoningStep key={index} text={part.text} isStreaming={live} renderText={replyMarkdown} />)
+        }
+    }
+    return <>
+        {blocks}
+        {text && !streaming && <Button type="button" variant="ghost" size="sm" aria-label="Copy reply" className="mt-2"
+            onClick={() => copy(text)}>
+            {copied ? <CheckIcon aria-hidden className="size-3.5" /> : <CopyIcon aria-hidden className="size-3.5" />}
+            {copied ? 'Copied' : 'Copy'}
+        </Button>}
+    </>
+}

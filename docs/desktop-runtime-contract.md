@@ -36,6 +36,8 @@ In **Edit coworker**, **Use saved memories in chat** controls whether a new turn
 
 In **Files**, **Import file** copies a single local `.txt` or `.md` document of up to 1 MiB into the selected coworker’s current folder. The final filename appears only once the full document is written. An existing name is preserved, including when two imports race. **Find chat** on the Team board searches local conversation titles across coworkers. Each result shows the coworker and opens that exact saved chat.
 
+Assistant replies render Markdown in live and reopened chats, including headings, lists, tables and fenced code blocks. **Copy reply** copies the answer’s original Markdown. The user’s message stays literal text, including its attachment label. Markdown images display their alt text, and eligible HTTPS links open in the system browser when clicked.
+
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
 ```json

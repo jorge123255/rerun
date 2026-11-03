@@ -6,7 +6,7 @@ const CONFIRMATION_MS = 1200
 
 // Copy to the clipboard with the short "copied" confirmation the copy buttons share. The timer is
 // cleared on unmount: a dialog closed right after a copy would otherwise set state on a dead node.
-export function useCopy(): { copied: boolean; copy: (value: string) => void } {
+export function useCopy(onError?: () => void): { copied: boolean; copy: (value: string) => void } {
     const [copied, setCopied] = useState(false)
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -15,6 +15,10 @@ export function useCopy(): { copied: boolean; copy: (value: string) => void } {
     }, [])
 
     const copy = useCallback((value: string) => {
+        if (!navigator.clipboard) {
+            onError?.()
+            return
+        }
         navigator.clipboard
             .writeText(value)
             .then(() => {
@@ -22,8 +26,8 @@ export function useCopy(): { copied: boolean; copy: (value: string) => void } {
                 if (timer.current) clearTimeout(timer.current)
                 timer.current = setTimeout(() => setCopied(false), CONFIRMATION_MS)
             })
-            .catch(() => {})
-    }, [])
+            .catch(() => onError?.())
+    }, [onError])
 
     return { copied, copy }
 }
