@@ -35,6 +35,7 @@ try {
 const engineDir = join(resourcesDir, 'runtime', 'engine')
 const uiDir = join(resourcesDir, 'runtime', 'ui')
 check(existsSync(join(uiDir, 'server.js')), 'ui server.js staged')
+check(!['components', 'test'].some(dir => existsSync(join(uiDir, dir))), 'compiled UI ships without source components or test fixtures')
 check(existsSync(join(uiDir, '.next', 'static')), 'ui .next/static staged')
 check(existsSync(join(uiDir, 'public')), 'ui public staged')
 check(existsSync(join(engineDir, 'dist', 'cli', 'bin.js')), 'engine bin entry staged')

@@ -88,7 +88,8 @@ export async function listCoworkerFiles(runtime: DesktopRuntime, agentId: string
             if (!showHidden && name.startsWith('.')) continue
             let info = await lstat(join(pinned, name)).catch(() => null)
             if (info?.isSymbolicLink()) {
-                const real = await realpath(join(target, name)).catch(() => null)
+                // Coworker links are read from the running Mac's workspace, outside the build.
+                const real = await realpath(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ target, name)).catch(() => null)
                 if (!real || !inside(root, real)) continue
                 const linked = await openResolved(real).catch(() => null)
                 if (!linked) continue
