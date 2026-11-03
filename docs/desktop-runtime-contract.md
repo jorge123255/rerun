@@ -30,6 +30,8 @@ The **Memories** button in coworker chat lists that coworker’s saved Rerun not
 
 When a coworker has memory enabled, a chat message uses the same local keyword search. Up to five relevant, active memories can accompany the message to the selected chat provider, including notes saved only as Markdown. A note already present in the conversation context is skipped. Chat can refresh the last-use time of an indexed match without increasing its access count. Rerun’s separate automatic learning setting still controls whether the coworker reviews a completed exchange for facts to save or correct.
 
+In **Edit coworker**, **Use saved memories in chat** controls whether a new turn retrieves notes. **Learn from replies** controls whether a completed exchange can add, correct or remove a learned fact. You can use saved notes with learning off. Switching recall off pauses learning and preserves the learning preference for when recall is enabled again. Rerun also pauses learning for coworkers whose existing self-improvement setting is off. The **Memories** panel still lets you manage saved notes manually.
+
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
 ```json

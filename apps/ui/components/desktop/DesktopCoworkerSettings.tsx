@@ -5,12 +5,21 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Field } from '@/components/ui/field'
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea'
 import { Segmented } from '@/components/ui/segmented'
+import { Switch } from '@/components/ui/switch'
 import type { DesktopCoworkerSettings as Settings } from '@/lib/desktop/coworker-settings'
 import type { DesktopAgentView } from './DesktopApp'
 
 const replyLengths = VERBOSITY_LEVELS.map(value => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))
+const recallHelp = 'Include relevant saved notes when this coworker answers in chat.'
+
+function learningHelp(settings: Settings) {
+    if (!settings.selfImprovementEnabled) return 'Learning is paused because self-improvement is off for this coworker.'
+    if (!settings.memoryEnabled) return 'Turn on saved memories in chat to change this preference.'
+    return 'Save or update notes after a reply when this coworker learns something worth remembering.'
+}
 
 async function requestSettings(url: string, init: RequestInit): Promise<Settings> {
     const response = await fetch(url, init)
@@ -56,7 +65,10 @@ export function DesktopCoworkerSettings({ agent, disabled }: { agent: DesktopAge
 
     const instructionsChanged = settings?.soulEditable && draft?.soul.trim() !== settings.soul.trim()
     const lengthChanged = draft?.verbosity !== settings?.verbosity
-    const canSave = !!draft && (lengthChanged || instructionsChanged) && (!instructionsChanged || !!draft.soul.trim())
+    const memoryChanged = draft?.memoryEnabled !== settings?.memoryEnabled
+    const learningChanged = draft?.autoMemory !== settings?.autoMemory
+    const canSave = !!draft && (lengthChanged || instructionsChanged || memoryChanged || learningChanged) && (!instructionsChanged || !!draft.soul.trim())
+    const learningAvailable = !!draft?.memoryEnabled && draft.selfImprovementEnabled
 
     async function save(event: FormEvent) {
         event.preventDefault()
@@ -70,6 +82,8 @@ export function DesktopCoworkerSettings({ agent, disabled }: { agent: DesktopAge
                 body: JSON.stringify({
                     ...(instructionsChanged && { soul: draft.soul }),
                     ...(lengthChanged && { verbosity: draft.verbosity }),
+                    ...(memoryChanged && { memoryEnabled: draft.memoryEnabled }),
+                    ...(learningChanged && { autoMemory: draft.autoMemory }),
                 }),
             })
             setOpen(false)
@@ -96,6 +110,17 @@ export function DesktopCoworkerSettings({ agent, disabled }: { agent: DesktopAge
                     <fieldset className="min-w-0 space-y-2">
                         <legend className="text-sm font-medium">Reply length</legend>
                         <Segmented options={replyLengths} value={draft.verbosity} onChange={verbosity => setDraft({ ...draft, verbosity })} />
+                    </fieldset>
+                    <fieldset className="min-w-0 space-y-3">
+                        <legend className="text-sm font-medium">Memory</legend>
+                        <Field orientation="row" label="Use saved memories in chat" htmlFor="coworker-memory-enabled" helperText={recallHelp}>
+                            <Switch id="coworker-memory-enabled" checked={draft.memoryEnabled} aria-description={recallHelp}
+                                onCheckedChange={memoryEnabled => setDraft({ ...draft, memoryEnabled })} />
+                        </Field>
+                        <Field orientation="row" label="Learn from replies" htmlFor="coworker-auto-memory" helperText={learningHelp(draft)}>
+                            <Switch id="coworker-auto-memory" checked={learningAvailable && draft.autoMemory} disabled={!learningAvailable}
+                                aria-description={learningHelp(draft)} onCheckedChange={autoMemory => setDraft({ ...draft, autoMemory })} />
+                        </Field>
                     </fieldset>
                 </fieldset> : !error && <p role="status" className="text-sm text-muted-foreground">Loading coworker settings…</p>}
                 {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

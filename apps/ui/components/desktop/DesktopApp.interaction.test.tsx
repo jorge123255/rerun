@@ -250,7 +250,7 @@ test('editing a coworker from the board preserves the chat and only saves change
     document.body.append(container)
     const root = createRoot(container)
     const agent = { id: 'reviewer', name: 'Reviewer', description: '', createdAt: '', updatedAt: '' }
-    let settings = { soul: 'Check the facts.', verbosity: 'normal', soulEditable: true }
+    let settings = { soul: 'Check the facts.', verbosity: 'normal', soulEditable: true, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true }
     let reads = 0
     const writes: Record<string, string>[] = []
     mockDesktopFetch((url, init) => {

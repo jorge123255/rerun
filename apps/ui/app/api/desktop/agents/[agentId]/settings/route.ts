@@ -12,7 +12,7 @@ export function GET(request: Request, { params }: Context) {
 export function PATCH(request: Request, { params }: Context) {
     return desktopRoute(request, async runtime => {
         const patch = coworkerSettingsPatch.safeParse(await request.json().catch(() => null))
-        if (!patch.success) throw new DesktopHttpError(400, 'Enter instructions or choose a valid reply length.')
+        if (!patch.success) throw new DesktopHttpError(400, 'Choose a valid coworker setting to save.')
         return Response.json(await desktopCoworkerSettings(runtime, (await params).agentId, patch.data))
     })
 }
