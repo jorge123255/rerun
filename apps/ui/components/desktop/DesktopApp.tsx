@@ -73,6 +73,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [agents, setAgents] = useState(initialData.agents)
     const [creating, setCreating] = useState(false)
     const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+    const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null)
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
     const [busy, setBusy] = useState<string | null>(null)
@@ -120,13 +121,15 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setSettings(false)
         setCreating(create)
         setSelectedAgentId(null)
+        setRequestedSessionId(null)
         setError(null)
     }
 
-    function selectCoworker(agentId: string) {
+    function selectCoworker(agentId: string, sessionId: string | null = null) {
         setSettings(false)
         setCreating(false)
         setSelectedAgentId(agentId)
+        setRequestedSessionId(sessionId)
         setError(null)
     }
 
@@ -181,7 +184,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     {error && <div role="alert" className="border-b bg-destructive/10 px-5 py-2 text-sm text-destructive">{error}</div>}
 
                     {selectedAgent ? (
-                        <CoworkerChat key={selectedAgent.id} agent={selectedAgent} />
+                        <CoworkerChat key={`${selectedAgent.id}:${requestedSessionId ?? ''}`} agent={selectedAgent} initialSessionId={requestedSessionId} />
                     ) : creating ? (
                         <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto p-6 md:items-center">
                             <Card className="w-full max-w-xl shadow-none">
@@ -208,7 +211,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                             </Card>
                         </div>
                     ) : (
-                        <DesktopBoard agents={agents} workspaceName={workspaceName} onOpen={selectCoworker} onCreate={() => showBoard(true)} />
+                        <DesktopBoard agents={agents} workspaceName={workspaceName} onOpen={selectCoworker} onCreate={() => showBoard(true)} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
                     )}
                 </>}
             </section>
@@ -216,10 +219,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     )
 }
 
-function CoworkerChat({ agent }: { agent: DesktopAgentView }) {
+function CoworkerChat({ agent, initialSessionId }: { agent: DesktopAgentView; initialSessionId: string | null }) {
     const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
     const [selectedId, setSelectedId] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
+    const [missingSelection, setMissingSelection] = useState(false)
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/sessions`
     const sessionRead = useRef<AbortController | null>(null)
 
@@ -232,14 +236,21 @@ function CoworkerChat({ agent }: { agent: DesktopAgentView }) {
             if (controller.signal.aborted) return
             setSessions(body.sessions)
             setError(null)
-            if (openLatest) setSelectedId(body.sessions[0]?.id ?? null)
+            if (openLatest) {
+                const chosen = initialSessionId ? body.sessions.find(session => session.id === initialSessionId) : body.sessions[0]
+                const missing = !!initialSessionId && !chosen
+                setMissingSelection(missing)
+                if (missing) setError('This conversation is no longer available for this coworker.')
+                setSelectedId(chosen?.id ?? null)
+            }
         } catch (cause) {
             if (!controller.signal.aborted) {
                 setSessions(current => current ?? [])
+                if (openLatest && initialSessionId) setMissingSelection(true)
                 setError(cause instanceof Error ? cause.message : 'Could not load conversations')
             }
         }
-    }, [url])
+    }, [url, initialSessionId])
 
     useEffect(() => {
         // State changes in readSessions happen only after the asynchronous request.
@@ -257,10 +268,10 @@ function CoworkerChat({ agent }: { agent: DesktopAgentView }) {
     return (
         <>
             {error && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">{error}
-                <Button type="button" size="sm" variant="outline" onClick={() => void readSessions()}>Retry conversations</Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => void readSessions(missingSelection || (!!initialSessionId && !selectedId))}>Retry conversations</Button>
             </div>}
-            <DesktopConversation agent={agent} sessionId={selectedId} sessions={sessions} onSelectSession={setSelectedId} onChatSession={refreshSession}
-                renderHistory={busy => <><DesktopChatHistory sessions={sessions} selectedId={selectedId} busy={busy} onSelect={setSelectedId} /><DesktopRunHistory agent={agent} /></>} />
+            {!missingSelection && <DesktopConversation agent={agent} sessionId={selectedId} sessions={sessions} onSelectSession={setSelectedId} onChatSession={refreshSession}
+                renderHistory={busy => <><DesktopChatHistory sessions={sessions} selectedId={selectedId} busy={busy} onSelect={setSelectedId} /><DesktopRunHistory agent={agent} /></>} />}
         </>
     )
 }
