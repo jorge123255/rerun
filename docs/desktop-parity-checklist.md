@@ -1,15 +1,10 @@
 # What the Rerun Mac app is missing
 
-Use this list to port the user-facing capabilities in [original Rerun](https://github.com/jorge123255/rerun/tree/a6d63a4b542674ddd002e51b39ba0df6e0807bcc) that are absent or incomplete in the installed Mac app. Each unchecked row names the missing behavior, a way to recognize it working, and the upstream code to open first. The comparison is against Mac build `1646bb1` on November 3, 2026.
+Use this list to port the user-facing capabilities in [original Rerun](https://github.com/jorge123255/rerun/tree/a6d63a4b542674ddd002e51b39ba0df6e0807bcc) that are absent or incomplete in the installed Mac app. Each unchecked row names the missing behavior, a way to recognize it working, and the upstream code to open first. The comparison is against the installed Mac build `88cd2dd` on November 3, 2026. It includes single-document import and workspace chat-title search. There are 37 remaining feature groups.
 
-**Recommended order.** Finish A’s file import and B’s Find chat. Next, port formatted replies, per-chat model selection and file editing. Then build the first workflow where a coworker can actually act: enable one workspace-scoped tool, show its proposed action, let the user approve or decline it, and record the result. That gives skills, schedules and delegation something real to run.
+**Recommended order.** Port formatted replies, per-coworker and per-chat model selection, and file editing. Then enable one workspace-scoped tool, show its proposed action, let the user approve or decline it, and record the result. This gives skills, schedules and delegation a real operation to run.
 
 **How to check off an item.** Check it when you can do it from the installed Mac app. For saved items, reopen them after quitting. For private data or settings, try the same action with a second coworker. The IDs also identify these features in the earlier audit.
-
-## A and B already own these
-
-- [ ] **G1 · Import a file into a coworker’s folder.** Choose a local document from Files, import it into the open folder and preview it after restart. An interrupted import must be retryable without overwriting an existing file. [AgentPanelFiles](https://github.com/jorge123255/rerun/blob/a6d63a4b542674ddd002e51b39ba0df6e0807bcc/apps/ui/components/agent/AgentPanelFiles.tsx)
-- [ ] **G2 · Find a saved chat from the Team board.** Search titles across coworkers, see who owns each result and open the exact conversation. Two chats with the same title must reopen different transcripts. [useConversationSearch](https://github.com/jorge123255/rerun/blob/a6d63a4b542674ddd002e51b39ba0df6e0807bcc/apps/ui/components/control-center/useConversationSearch.ts)
 
 ## Next three ports for everyday Mac use
 

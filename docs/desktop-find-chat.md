@@ -1,5 +1,7 @@
 # Desktop Find chat
 
+**Combined Mac acceptance · November 3, 2026.** The installed preview at `88cd2dd` imports a file into a coworker’s workspace, attaches it to a conversation and opens the saved conversation from Team board → Find chat. A live signed-in Codex chat reopened with its original filename and answer after a full quit and restart. In disposable packaged workspaces the API and bundled Codex transports both opened the correct older chat for each of two coworkers with identical titles and different replies. The validation notes below describe the earlier branch checks.
+
 Base: `cc3c9362c721c6c4378791d18a582891fa56e4d2`.
 
 The Team board's Find chat dialog searches saved local titles across the workspace.
