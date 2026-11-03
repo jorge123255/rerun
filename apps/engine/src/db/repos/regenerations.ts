@@ -21,17 +21,16 @@ export async function getRegeneration(agentId: string, target: RegenerationTarge
 
 export async function forkReply(agentId: string, source: SessionRow, target: RegenerationTarget) {
     const { client } = await getSystemDb(agentId)
-    const messages = await listMessages(agentId, source.id)
-    const index = messages.findIndex(row => row.id === target.regenerateMessageId)
-    if (index === -1) throw notFound('reply')
-    const reply = messages[index]
+    const messages = await listMessages(agentId, source.id, target.regenerateMessageId)
+    const reply = messages.at(-1)
+    if (!reply || reply.id !== target.regenerateMessageId) throw notFound('reply')
     if (reply.role !== 'assistant' || !extractText(storedContent(reply.contentJson)).trim()) throw new HttpError(409, 'Choose a saved assistant reply with text.')
     const unsuccessful = await client.execute({
         sql: "SELECT id FROM runs WHERE session_id = ? AND status IN ('error', 'cancelled') AND started_at <= ? AND finished_at >= ? LIMIT 1",
         args: [source.id, reply.createdAt, reply.createdAt],
     })
     if (unsuccessful.rows.length) throw new HttpError(409, 'Choose a completed assistant reply.')
-    const turn = messages.slice(0, index).findLastIndex(row => row.role === 'user')
+    const turn = messages.findLastIndex(row => row.role === 'user')
     if (turn < 0) throw new HttpError(409, 'This reply has no preceding user message.')
     const sessionId = newId()
     const runId = newId()

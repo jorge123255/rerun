@@ -49,9 +49,11 @@ export async function setMessageToolCalls(agentId: string, messageId: string, ca
     await db.update(messages).set({ toolCallsJson: JSON.stringify(calls) }).where(eq(messages.id, messageId))
 }
 
-export async function listMessages(agentId: string, sessionId: string): Promise<MessageRow[]> {
+export async function listMessages(agentId: string, sessionId: string, throughMessageId?: string): Promise<MessageRow[]> {
     const { db } = await getSystemDb(agentId)
-    return db.select().from(messages).where(eq(messages.sessionId, sessionId)).orderBy(asc(messages.createdAt), asc(sql`rowid`))
+    const through = throughMessageId === undefined ? undefined
+        : sql`(created_at, rowid) <= (SELECT created_at, rowid FROM messages WHERE id = ${throughMessageId} AND session_id = ${sessionId})`
+    return db.select().from(messages).where(and(eq(messages.sessionId, sessionId), through)).orderBy(asc(messages.createdAt), asc(sql`rowid`))
 }
 
 // Two messages of one turn can share a millisecond, so the insertion order breaks the tie.
