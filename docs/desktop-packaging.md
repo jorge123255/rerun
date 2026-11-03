@@ -9,12 +9,29 @@ update hosting, and x64 builds are separate release work.
 
 ```bash
 pnpm install                                   # workspace deps incl. electron + electron-builder
-pnpm desktop:package                           # stage runtime + build unsigned .app (dir target)
+pnpm desktop:install                           # update ~/Applications/Rerun Desktop Preview.app
+pnpm desktop:install --commit FULL_SHA          # install only this checked-out commit
+pnpm desktop:package                           # build a separate release artifact for distribution
 pnpm desktop:package -- --dmg                  # additionally produce an unsigned DMG
-pnpm desktop:stage                             # stage resources only, no electron-builder
-pnpm desktop:stage                            # always rebuild UI/engine from committed source
+pnpm desktop:stage                             # rebuild runtime resources for QA without making an .app
 pnpm desktop:verify                            # re-run runtime checks only
 ```
+
+## Update the app on this Mac
+
+Quit Rerun Desktop Preview, then run `pnpm desktop:install` in a clean build worktree.
+The command builds its arm64 preview inside `~/Applications/.rerun-desktop-install.noindex`
+and installs it at `~/Applications/Rerun Desktop Preview.app`. Open that app after installation.
+Pass `--commit` with the full SHA to pin the build you reviewed.
+
+The installer checks the final bundle ID and the matching manifest, Electron shell, UI and engine
+build receipts. It checks again that the source is still clean and Rerun is closed before publishing.
+macOS swaps the verified bundle into place atomically. A failed build or exchange leaves the
+installed app intact. The installer clears its staging output on completion and recovers leftovers
+from an interrupted install on the next run. A kernel lock allows only one installer at a time.
+
+For agents reviewing code in separate worktrees, run `pnpm desktop:stage` for runtime QA.
+Use `pnpm desktop:package` or the DMG command when you explicitly need a separate release artifact.
 
 ## Staged layout
 

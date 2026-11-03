@@ -1,6 +1,10 @@
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { flag, repoRoot, run } from './lib.mjs'
 import { stageArguments } from './provenance.mjs'
+
+const outputFlag = process.argv.indexOf('--output-dir')
+const outputDir = outputFlag === -1 ? undefined : process.argv[outputFlag + 1]
+if (outputFlag !== -1 && !isAbsolute(outputDir ?? '')) throw new Error('--output-dir requires an absolute build directory.')
 
 const scripts = file => join(repoRoot, 'scripts', 'desktop', file)
 const stage = async file => { console.log(`\n--- ${file}`); await run(process.execPath, [scripts(file), ...stageArguments()]) }
@@ -18,6 +22,6 @@ if (flag('--stage-only')) {
 } else {
     const builderArgs = flag('--dmg') ? ['--mac', 'dmg'] : ['--mac', '--arm64']
     console.log(`\n--- electron-builder ${builderArgs.join(' ')}`)
-    await run('npx', ['--yes', 'electron-builder@26.18.1', ...builderArgs, '--config', 'electron-builder.yml'], { cwd: join(repoRoot, 'apps', 'desktop') })
-    console.log('\npackage complete: apps/desktop/release')
+    await run('npx', ['--yes', 'electron-builder@26.18.1', ...builderArgs, '--config', 'electron-builder.yml', ...(outputDir ? [`-c.directories.output=${outputDir}`] : [])], { cwd: join(repoRoot, 'apps', 'desktop') })
+    console.log(`\npackage complete: ${outputDir ?? 'apps/desktop/release'}`)
 }
