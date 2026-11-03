@@ -125,6 +125,29 @@ test('withholds draft copying until the closing fence arrives and excludes reaso
     expect(container.querySelector('[aria-label="Copy reply"]')).toBeNull()
 })
 
+test('rates a saved reply without changing whole-reply copy, and hides thumbs while a reply is still streaming', async () => {
+    const onRate = vi.fn()
+    await act(async () => root.render(<DesktopAssistantReply message={{ id: 'engine-saved', role: 'assistant', parts: [{ type: 'text', text: 'Shared answer' }] }} streaming onRate={onRate} />))
+    expect(container.textContent).not.toContain('Good response')
+    await act(async () => root.render(<DesktopAssistantReply message={{ id: 'live-reply', role: 'assistant', parts: [{ type: 'text', text: 'Shared answer' }] }} streaming={false} onRate={onRate} />))
+    expect(container.textContent).not.toContain('Good response')
+    await act(async () => root.render(<DesktopAssistantReply message={{ id: 'engine-saved', role: 'assistant', parts: [{ type: 'text', text: 'Shared answer' }] }} streaming={false} feedbackRating="up" onRate={onRate} />))
+    const copy = container.querySelector<HTMLButtonElement>('[aria-label="Copy reply"]')!
+    const up = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Good response'))!
+    const down = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Bad response'))!
+    expect(up.getAttribute('aria-pressed')).toBe('true')
+    expect(down.getAttribute('aria-pressed')).toBe('false')
+    expect(up.querySelector('svg')).not.toBeNull()
+    const { command } = mockClipboard()
+    vi.stubGlobal('navigator', { userActivation: { isActive: true } })
+    await act(async () => copy.click())
+    expect(command).toHaveBeenCalledWith('copy')
+    expect(onRate).not.toHaveBeenCalled()
+    await act(async () => down.click())
+    expect(onRate).toHaveBeenCalledExactlyOnceWith('down')
+    expect(container.textContent).not.toContain('Used')
+})
+
 test('file, credentialed and relative links, model HTML and image URLs cannot load content or navigate', async () => {
     const unsafe = [
         '![descriptive alt](https://outside.invalid/pixel.png)',

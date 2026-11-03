@@ -56,6 +56,8 @@ When a coworker puts an email, post or message in a `draft` fence, the answer sh
 
 **Regenerate reply** opens an alternate chat for the same coworker. Choose a completed answer and the model receives the conversation through the question that prompted it, including the saved attachment text and recalled notes from that turn. The original chat keeps all its answers and run history. The alternate has a separate run, can be stopped independently, and appears in Chats and Find chat with an **Alternate ·** title.
 
+A completed, saved assistant reply can be rated with **Good response** or **Bad response**. The vote is saved on the click. Optional details use Rerun’s issue categories and a 5,000-character note. Closing the details dialog keeps the vote. Choosing the same thumb again removes it, and choosing the other thumb clears the previous note. The dialog says the feedback is stored on this Mac. The Mac checks that the reply’s stable id is an assistant message in the selected coworker’s selected conversation before it writes. The same answer text in another chat, or the same chat opened for another coworker, keeps its own vote. A vote stays out of the model request and is not uploaded. The source list and **Copy reply** stay separate actions.
+
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
 ```json
