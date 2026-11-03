@@ -169,9 +169,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings} />
 
     return (
-        <main className="relative flex h-dvh w-full flex-col overflow-hidden bg-frame text-foreground md:p-2">
+        <main className="relative flex h-dvh w-full flex-col overflow-clip bg-frame text-foreground md:p-2">
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
-                className="relative isolate flex min-h-0 flex-1 overflow-hidden bg-background md:rounded-3xl md:border md:border-border md:shadow">
+                className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
                     onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
