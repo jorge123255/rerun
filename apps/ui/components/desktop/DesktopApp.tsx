@@ -141,7 +141,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             </aside>
 
             <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-                {settings ? <DesktopSettings providers={providers} workspaceName={workspaceName} onSave={saveSettings} /> : <>
+                {settings ? <DesktopSettings providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={setProviders} /> : <>
                     {!connected && <div className="flex items-center justify-between gap-3 border-b px-5 py-2 text-sm">
                         <span>Connect an AI provider to chat with your coworkers.</span>
                         <Button size="sm" onClick={() => setSettings(true)}>Set up provider</Button>

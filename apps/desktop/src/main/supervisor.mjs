@@ -80,7 +80,7 @@ export class RuntimeSupervisor extends EventEmitter {
                 const engine = this.spawnOwned([this.bundle.engineEntry, 'desktop-run'], {
                     ...shared, RERUN_HOST: '127.0.0.1', RERUN_PORT: String(enginePort), RERUN_API_KEY: this.identity.engineApiKey,
                     RERUN_DATA_DIR: engineRoot, RERUN_HUB_BASE_URL: runtime.app.origin, RERUN_DESKTOP: 'off',
-                    RERUN_DESKTOP_SECRET_KEY: this.identity.encryptionKey,
+                    RERUN_DESKTOP_SECRET_KEY: this.identity.encryptionKey, RERUN_DESKTOP_CODEX_RUNNER: this.bundle.codexPath,
                 })
                 const ready = await this.waitForEngine(engine, runtime)
                 if (!ready) throw new Error('The engine did not acknowledge its launch')

@@ -69,3 +69,5 @@ export * from './chat-context.js'
 export * from './llm-cache.js'
 export * from './onboarding-intake.js'
 export * from './notifications.js'
+
+export * from './desktop-codex.js'

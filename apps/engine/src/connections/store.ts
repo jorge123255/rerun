@@ -30,7 +30,7 @@ async function writeConfig(id: string, config: ConnectionConfig): Promise<void> 
 }
 
 export async function createConnection(input: CreateConnectionInput, id = newId()): Promise<LoadedConnection> {
-    assertDesktopProvider(input.provider)
+    assertDesktopProvider(input.provider, id)
     const config = connectionConfigSchema.parse({
         name: input.name,
         provider: input.provider,
@@ -54,7 +54,7 @@ export async function patchConnection(id: string, patch: UpdateConnectionInput):
     if (id === RERUN_CONNECTION_ID && patch.models && !patch.models.includes(RERUN_MODEL)) throw badRequest('Rerun Balanced cannot be switched off')
     return withConnectionLock(id, async () => {
         const current = await getConnection(id)
-        assertDesktopProvider(current.config.provider)
+        assertDesktopProvider(current.config.provider, id)
         const next = connectionConfigSchema.parse({ ...current.config, ...patch })
         await writeConfig(id, next)
         return reloadConnection(id)
@@ -62,7 +62,7 @@ export async function patchConnection(id: string, patch: UpdateConnectionInput):
 }
 
 export async function updateConnectionKeys(id: string, { set, remove }: UpdateConnectionKeysInput): Promise<string[]> {
-    assertDesktopProvider((await getConnection(id)).config.provider)
+    assertDesktopProvider((await getConnection(id)).config.provider, id)
     if (id === RERUN_CONNECTION_ID) throw badRequest('The Rerun connection is keyless')
     return withConnectionLock(id, async () => {
         const path = connectionEnvPath(id)

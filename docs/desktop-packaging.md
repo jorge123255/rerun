@@ -69,7 +69,7 @@ Resources, refuses symlinks escaping Resources, and runs no executable from PATH
 ## Boundaries
 
 - Not staged: Chromium/patchright browser runtime, computer-control tools
-  (`RERUN_DESKTOP=off` at launch), subscription provider CLIs (gated until verified),
+  (`RERUN_DESKTOP=off` at launch), the Claude subscription CLI,
   update feed, signing/notarization assets.
 - Children receive a scrubbed environment (`childEnvironment` in the shell);
   `.env`, git metadata, and key material are rejected by `verify-runtime.mjs`.
@@ -86,3 +86,6 @@ Resources, refuses symlinks escaping Resources, and runs no executable from PATH
   intended for local/internal use.
 - UI standalone tracing assumes the workspace `outputFileTracingRoot` at repo root;
   if `standalone/` emits an unexpected layout, `stage-ui.mjs` fails loudly.
+
+
+The engine stage resolves the pinned Codex native package from its installed dependencies, puts the Mac launcher and sandbox policy beside the executable, and records the launcher in the runtime manifest. Verification invokes the packaged launcher in a temporary profile and checks its version before building the app.

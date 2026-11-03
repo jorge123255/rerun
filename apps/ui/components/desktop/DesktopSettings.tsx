@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
+import { DesktopCodexLogin } from './DesktopCodexLogin'
 import { BaseUrlField } from '@/components/connections/BaseUrlField'
 import { CustomModelList } from '@/components/connections/CustomModelList'
 import { ModelBuckets } from '@/components/connections/ModelBuckets'
@@ -14,13 +15,14 @@ import { desktopProvider, type SettingsChange } from '@/lib/desktop/settings'
 type Props = {
     providers: ConnectionsList
     workspaceName: string
+    onProviders: (providers: ConnectionsList) => void
     onSave: (change: SettingsChange) => Promise<void>
 }
 
 const selectClass = 'w-full rounded-md border bg-background px-3 py-2 text-sm'
 const panels = ['AI providers', 'Workspace', 'Shortcuts'] as const
 
-export function DesktopSettings({ providers, workspaceName, onSave }: Props) {
+export function DesktopSettings({ providers, workspaceName, onSave, onProviders }: Props) {
     const [tab, setTab] = useState<typeof panels[number]>('AI providers')
     const [source, setSource] = useState(providers.connections.find(c => c.id === providers.default?.connectionId)?.id ?? providers.connections[0]?.id ?? 'add:openai')
     const [key, setKey] = useState('')
@@ -51,7 +53,7 @@ export function DesktopSettings({ providers, workspaceName, onSave }: Props) {
 
     function saveKey(event: FormEvent) {
         event.preventDefault()
-        if (key.trim()) void save({ action: 'key', provider, connectionId: current?.id, apiKey: key.trim() }, 'API key saved.')
+        if (key.trim() && provider !== 'codex') void save({ action: 'key', provider, connectionId: current?.id, apiKey: key.trim() }, 'API key saved.')
     }
 
     // A provider that was just added replaces its "add" option with the engine connection.
@@ -94,19 +96,19 @@ export function DesktopSettings({ providers, workspaceName, onSave }: Props) {
                                 setSource(e.target.value); setKey(''); setNotice(''); setError('')
                             }}>
                                 {providers.connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                {missing.map(p => <option key={p} value={'add:' + p}>Connect {PROVIDER_LABELS[p]}</option>)}
+                                {missing.map(p => <option key={p} value={'add:' + p}>Connect {p === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[p]}</option>)}
                             </select>
-                            <div className="flex items-center gap-2 text-sm"><ProviderIcon provider={provider} className="size-5" /><strong>{PROVIDER_LABELS[provider]}</strong>
-                                <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>
+                            <div className="flex items-center gap-2 text-sm"><ProviderIcon provider={provider} className="size-5" /><strong>{provider === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[provider]}</strong>
+                                {provider !== 'codex' && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
                             </div>
-                            <form onSubmit={saveKey} className="space-y-2">
+                            {provider === 'codex' ? <DesktopCodexLogin onProviders={onProviders} /> : <form onSubmit={saveKey} className="space-y-2">
                                 <label htmlFor="desktop-api-key" className="text-sm font-medium">{connection ? 'Replacement API key' : 'API key'}</label>
                                 <div className="flex gap-2">
                                     <Input id="desktop-api-key" type="password" autoComplete="off" placeholder={CONNECTION_TOKEN_KEY[provider]} value={key} onChange={e => setKey(e.target.value)} />
                                     <Button type="submit" disabled={busy || !key.trim()}>{connection ? 'Save key' : 'Connect'}</Button>
                                 </div>
-                            </form>
-                            {connection && <div inert={busy}>
+                            </form>}
+                            {provider !== 'codex' && connection && <div inert={busy}>
                                 <ModelBuckets connection={connection} defaultModel={providers.default?.connectionId === connection.id ? providers.default.model : null}
                                     onModelsChange={models => changeModels(models, connection.extraModels)} />
                                 {provider === 'openrouter' && <BaseUrlField key={connection.id + ':' + (connection.baseUrl ?? '')} baseUrl={connection.baseUrl ?? ''}
@@ -114,7 +116,7 @@ export function DesktopSettings({ providers, workspaceName, onSave }: Props) {
                                 {provider === 'openrouter' && <CustomModelList models={connection.extraModels} reserved={DEFAULT_CONNECTION_MODELS.openrouter} onChange={extras => changeModels(connection.models, extras)} />}
                             </div>}
                         </div>
-                        <p className="text-sm text-muted-foreground">This preview uses API keys. ChatGPT device-code sign-in and Claude subscription sign-in are unavailable on Mac.</p>
+                        <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) with your subscription, or use an API key for the other providers.</p>
                     </>}
                     {tab === 'Workspace' && <>
                         <form className="space-y-2 rounded-xl border p-4" onSubmit={e => {

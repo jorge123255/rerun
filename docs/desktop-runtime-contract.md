@@ -1,6 +1,6 @@
 # Desktop preview runtime
 
-The preview uses an Electron main process, a production Next child, and a separate engine child. It supports one local workspace and API-provider chat. Shell, MCP subprocesses, browser/computer tools, subscription CLIs, schedules, reset/deletion and public publishing are unavailable in this slice.
+The preview uses an Electron main process, a production Next child, and a separate engine child. It supports one local workspace and chat through API providers or a ChatGPT subscription. Shell, MCP subprocesses, browser/computer tools, Claude subscription execution, schedules, reset/deletion and public publishing are unavailable in this slice.
 
 ## Packaged resources
 
@@ -52,4 +52,11 @@ The engine validates the manifest, prepares its data directory, reconciles inter
 
 Main sends `{type:"stop"}` to the engine before stopping the UI, keeping callbacks alive while runs settle. Engine rejects new work, cancels and awaits active run cancellation, closes MCP and HTTP, acknowledges stop, then exits. Main has a bounded grace followed by forced termination of the owned PID. No arbitrary subprocess tools are enabled, and children react to parent IPC loss. Window close hides the app on macOS; explicit Quit stops services. No login item or hidden daemon is installed.
 
-The preview is not a general-distribution release. Native computer control, subscription-provider execution, general connectors, reset/deletion, migration from an existing install, telemetry consent, public publishing, signing/notarization and update hosting require their own validated integrations.
+The preview is not a general-distribution release. Native computer control, Claude subscription execution, general connectors, reset/deletion, migration from an existing install, telemetry consent, public publishing, signing/notarization and update hosting require their own validated integrations.
+
+
+## ChatGPT device-code sign-in
+
+Settings → AI providers → Connect ChatGPT (Codex) starts device authorization on the bundled Codex app-server. It returns a verification link and short code. Once OpenAI approves, the engine reads the ChatGPT account and runner model catalog, registers the connection, and selects its default model. The CLI owns refresh and stores credentials in the macOS Keychain scoped to a separate Rerun Codex home. Rerun stores connection metadata and a sign-in flag, not the OAuth tokens. Cancel or sign out in the same panel.
+
+Both streaming chats and one-shot model calls use the pinned arm64 runner via the verified resource manifest. Its launcher clears the environment, applies a macOS sandbox, and uses a private working directory. Rerun does not borrow a personal Codex login or launch the user's installed CLI.

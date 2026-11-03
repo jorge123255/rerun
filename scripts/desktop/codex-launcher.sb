@@ -1,0 +1,8 @@
+(version 1)
+; Keep native TLS and Keychain services available. Personal files and other executables are
+; outside the runner's scope even if a future Codex feature exposes a new built-in tool.
+(allow default)
+(deny file-read-data file-write* process-exec)
+(allow file-read-data (literal "/") (subpath "/System") (subpath "/usr") (subpath "/Library/Apple") (subpath "/Library/Keychains") (subpath "/private/etc") (subpath "/dev") (literal (param "BINARY")))
+(allow file-read-data file-write* (subpath (param "PROFILE")) (literal (param "OUTPUT")) (literal "/dev/null"))
+(allow process-exec (literal (param "BINARY")))

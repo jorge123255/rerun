@@ -10,7 +10,7 @@ import { defaultModelOf } from '../../agents/availability.js'
 import { refreshStaleCodexPlanLimits } from '../../connections/codex-plan-limits.js'
 import type { LoadedConnection } from '../../connections/types.js'
 import { sendNotification } from '../../runtime/notify.js'
-import { assertDesktopProvider, desktopApp } from '../../desktop/policy.js'
+import { assertDesktopProvider, desktopApp, desktopProviderAllowed } from '../../desktop/policy.js'
 
 export const connectionRoutes = new Hono()
 
@@ -23,7 +23,7 @@ function announceConnected(connection: LoadedConnection): void {
 
 connectionRoutes.get('/', async c => {
     const all = await listConnections()
-    const connections = desktopApp() ? all.filter(connection => ['openai', 'anthropic', 'google', 'openrouter'].includes(connection.config.provider)) : all
+    const connections = desktopApp() ? all.filter(connection => desktopProviderAllowed(connection.config.provider, connection.id)) : all
     refreshStaleCodexPlanLimits(connections)
     return c.json({ connections: connections.map(toSummary), default: await readBoxDefault() })
 })
@@ -34,7 +34,8 @@ connectionRoutes.put('/default', async c => {
     const { connectionId, model } = boxDefaultModelSchema.parse(await c.req.json())
     const connection = await findConnection(connectionId)
     if (!connection) return c.json({ error: 'connection not found' }, 404)
-    assertDesktopProvider(connection.config.provider)
+    assertDesktopProvider(connection.config.provider, connection.id)
+    if (desktopApp() && !isConnected(connection)) return c.json({ error: 'Connect this provider first.' }, 400)
     if (!servesModel(connection, model)) return c.json({ error: `This connection does not offer ${model}` }, 400)
     return c.json(await writeBoxDefault({ connectionId, model }))
 })
@@ -67,6 +68,7 @@ connectionRoutes.patch('/:id', async c => {
 connectionRoutes.patch('/:id/keys', async c => {
     const id = c.req.param('id')
     if (!connectionExists(id)) return c.json({ error: 'connection not found' }, 404)
+    if (desktopApp() && (await getConnection(id)).config.provider === 'codex') return c.json({ error: 'Use ChatGPT sign-in in Settings.' }, 400)
     const body = updateConnectionKeysSchema.parse(await c.req.json())
     const keys = await updateConnectionKeys(id, body)
     const connection = await getConnection(id)

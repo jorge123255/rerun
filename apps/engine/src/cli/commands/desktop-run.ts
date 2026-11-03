@@ -11,6 +11,8 @@ import { reconcileInterruptedRuns } from '../../runtime/reconcile.js'
 import { abortAllRuns } from '../../runtime/run-control.js'
 import { closeAllMcp } from '../../tools/mcp-pool.js'
 import { env } from '../../config/env.js'
+import { desktopCodexAction } from '@rerun/contracts'
+import { codexLoginAction, codexLoginStatus, stopCodexLogin } from '../../desktop/codex-login.js'
 import { desktopApp, desktopRouteAllowed } from '../../desktop/policy.js'
 
 const secret = z.string().regex(/^[a-f0-9]{64}$/)
@@ -45,6 +47,12 @@ export async function desktopRunCommand(): Promise<void> {
         return next()
     })
     const ready = { status: 'ready', protocolVersion: 1, launchNonce: runtime.launchNonce, buildId: runtime.buildId, workspaceId: 1 }
+    app.get('/desktop/codex-login', async c => c.json(await codexLoginStatus()))
+    app.post('/desktop/codex-login', async c => {
+        const parsed = desktopCodexAction.safeParse((await c.req.json().catch(() => null))?.action)
+        if (!parsed.success) return c.json({ error: 'Invalid sign-in action.' }, 400)
+        return c.json(await codexLoginAction(parsed.data))
+    })
     app.get('/health', c => c.json(ready))
     app.route('/', createServer())
     let server: Server
@@ -52,6 +60,7 @@ export async function desktopRunCommand(): Promise<void> {
         if (stopping) return
         stopping = true
         const closed = new Promise<void>(done => server.close(() => done()))
+        stopCodexLogin()
         await abortAllRuns()
         await closeAllMcp()
         server.closeAllConnections()

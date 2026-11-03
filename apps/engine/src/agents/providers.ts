@@ -35,7 +35,8 @@ import { openrouterStreamRetryMiddleware } from './openrouter-stream-retry.js'
 import { agentProcessEnv } from './process-env.js'
 import { BRIDGE_SERVER_NAME, CLI_PROVIDERS, type LoadedAgent } from './types.js'
 import { hubCallerHeaders } from '../runtime/hub.js'
-import { assertDesktopProvider } from '../desktop/policy.js'
+import { desktopCodexRuntime, signedInFlag } from '../desktop/codex-runtime.js'
+import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
 import type { StoredScreenshot } from '../runtime/screenshots.js'
 
 export { CLI_PROVIDERS }
@@ -302,6 +303,7 @@ function connectionEnv(agent: LoadedAgent): Record<string, string> {
 // run — there is no token setting to pass. `env` is merged over process.env by the provider. The
 // home is the connection's, so agents sharing a subscription share one auth.json.
 function codexShared(agent: LoadedAgent): CodexExecSettings & CodexAppServerSettings {
+    if (desktopApp()) return desktopCodexRuntime()
     const { RERUN_CODEX_PATH } = env()
     const { cwd, env: agentEnv } = agentProcessEnv(agent)
     return {
@@ -320,12 +322,12 @@ function codexExecProvider(agent: LoadedAgent) {
         defaultSettings: {
             ...codexShared(agent),
             approvalMode: 'never',
-            sandboxMode: 'danger-full-access',
+            sandboxMode: desktopApp() ? 'read-only' : 'danger-full-access',
             skipGitRepoCheck: true,
             // Codex's own prompt is a coding agent's, several thousand tokens on every call that no
             // cache ever holds. Each caller brings its own instructions in the user turn. `instructions`
             // was read back against 0.160; `base_instructions` is swallowed there.
-            configOverrides: { ...CODEX_HARNESS_OVERRIDES, instructions: CODEX_ONE_SHOT_INSTRUCTIONS },
+            configOverrides: { ...(desktopApp() ? {} : CODEX_HARNESS_OVERRIDES), instructions: CODEX_ONE_SHOT_INSTRUCTIONS },
         },
     })
 }
@@ -337,8 +339,8 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
         defaultSettings: {
             ...codexShared(agent),
             approvalPolicy: 'never',
-            sandboxPolicy: 'danger-full-access',
-            autoApprove: true,
+            sandboxPolicy: desktopApp() ? 'read-only' : 'danger-full-access',
+            autoApprove: !desktopApp(),
             // A thread written to disk, so the next message can resume it: the run passes its id
             // back (see `codexThreadToResume`), and Codex keys OpenAI's prompt cache on it.
             threadMode: 'persistent',
@@ -352,14 +354,14 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
             // `rerun__ask_user` on some versions and `mcp__rerun__ask_user` on others.
             // The reasoning summary is stated rather than left to whichever Codex build the box has
             // installed, so the chat shows the same thing everywhere.
-            configOverrides: {
+            configOverrides: desktopApp() ? { project_doc_max_bytes: 0, web_search: 'disabled' } : {
                 prefix_mcp_tool_names: true,
                 [`mcp_servers.${BRIDGE_SERVER_NAME}.tool_timeout_sec`]: BRIDGE_TOOL_TIMEOUT_SEC,
                 model_reasoning_summary: 'auto',
                 ...CODEX_HARNESS_OVERRIDES,
                 ...(agent.config.tools.web ? { web_search: 'live' } : {}),
             },
-            mcpServers: codexMcpConfig(tools, mcpServers),
+            mcpServers: desktopApp() ? {} : codexMcpConfig(tools, mcpServers),
         },
     })
 }
@@ -384,7 +386,7 @@ function registryFor(agent: LoadedAgent, tools?: ToolSet, mcpServers?: McpServer
         rerun: openaiChat(openrouterCompatibleOptions(agent, 'rerun')),
         anthropic: createAnthropic({ apiKey: e.ANTHROPIC_API_KEY }),
         claude: claudeProvider(agent, tools, mcpServers, undefined, options),
-        codex: codexExecProvider(agent),
+        ...(!desktopApp() || agent.resolved.provider === 'codex' ? { codex: codexExecProvider(agent) } : {}),
         openai: createOpenAI({ apiKey: e.OPENAI_API_KEY }),
         google: createGoogleGenerativeAI({ apiKey: e.GOOGLE_GENERATIVE_AI_API_KEY ?? e.GOOGLE_API_KEY }),
         openrouter: openaiChat(openrouterCompatibleOptions(agent, 'openrouter')),
@@ -399,7 +401,8 @@ export type ModelOverride = { connectionId?: string; provider?: Provider; model?
 // what a caller with no override of its own (compaction, curator, vision, memory reconcile) means.
 function pairFor(agent: LoadedAgent, override?: ModelOverride): { provider: Provider; model: string } {
     const provider = agent.resolved.provider
-    assertDesktopProvider(provider)
+    assertDesktopProvider(provider, agent.resolved.connection?.id)
+    if (desktopApp() && provider === 'codex' && agent.resolved.connection?.env[signedInFlag] !== '1') throw new Error('Sign in to ChatGPT in Settings.')
     return { provider, model: allowedModel(provider, override?.model ?? agent.resolved.model) }
 }
 
