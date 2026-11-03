@@ -15,6 +15,7 @@ import { GET as listSessions } from './agents/[agentId]/sessions/route'
 import { GET as readCoworkerSettings, PATCH as editCoworkerSettings } from './agents/[agentId]/settings/route'
 import { GET as readMemories, POST as addMemory } from './agents/[agentId]/memories/route'
 import { DELETE as deleteMemory } from './agents/[agentId]/memories/[memoryId]/route'
+import { POST as searchMemories } from './agents/[agentId]/memories/recall/route'
 import { GET as getMessages } from './sessions/[sessionId]/messages/route'
 import { POST as postChat } from './chat/route'
 
@@ -42,6 +43,11 @@ beforeEach(async () => {
             const id = memoryPath[2]
             const list = notes[owner]!
             if (req.method === 'GET') return res.end(JSON.stringify({ memories: list }))
+            if (req.method === 'POST' && id === 'recall') {
+                if (body.query === 'unavailable') return res.writeHead(503).end()
+                if (body.limit !== 5 || body.includeDormant !== false) return res.writeHead(400).end()
+                return res.end(JSON.stringify({ memories: list.filter(note => note.content.includes(body.query)) }))
+            }
             if (req.method === 'POST') {
                 const memoryId = body.requestId ?? 'created'
                 list.push({ id: memoryId, content: body.content, kind: body.kind ?? 'note', tags: body.tags ?? [], createdAt: '2026-10-02' })
@@ -131,6 +137,29 @@ describe('desktop API routes', () => {
         expect(response.headers.get('cache-control')).toBe('no-store')
         expect(await response.json()).toMatchObject({ memories: [{ id: 'first-note', content: 'First coworker only', tags: ['project'], strength: 0.8 }] })
         expect(await (await read(second.id)).json()).toEqual({ memories: [] })
+    })
+
+    it('recalls notes through the authenticated local coworker mapping and distinguishes no matches from a failed search', async () => {
+        const db = await openDesktopDatabase(root)
+        const first = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'First' })
+        const second = await createDesktopAgent(db, { engineAgentId: 'engine-agent-2', name: 'Second' })
+        const recall = (id: string, body: unknown, adjust?: (req: Request) => void) => {
+            const req = request(`/api/desktop/agents/${id}/memories/recall`, { method: 'POST', body })
+            adjust?.(req)
+            return searchMemories(req, { params: Promise.resolve({ agentId: id }) })
+        }
+        const query = { query: '  First coworker  ' }
+        expect((await recall(first.id, query, req => req.headers.delete('cookie'))).status).toBe(401)
+        expect((await recall(first.id, query, req => req.headers.set('origin', 'https://example.invalid'))).status).toBe(403)
+        expect((await recall('engine-agent-1', query)).status).toBe(404)
+        expect((await recall(first.id, { query: '   ' })).status).toBe(400)
+        expect((await recall(first.id, { ...query, limit: 21 })).status).toBe(400)
+        const match = await recall(first.id, query)
+        expect(match.status).toBe(200)
+        expect(match.headers.get('cache-control')).toBe('no-store')
+        expect(await match.json()).toMatchObject({ memories: [{ id: 'first-note', content: 'First coworker only' }] })
+        expect(await (await recall(second.id, query)).json()).toEqual({ memories: [] })
+        expect((await recall(first.id, { query: 'unavailable' })).status).toBe(502)
     })
 
     it('adds and deletes only the selected local coworker’s note through authenticated same-origin writes', async () => {

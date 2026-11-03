@@ -22,3 +22,9 @@ export const desktopMemoryCreateSchema = z.strictObject({
     requestId: z.uuid().optional(),
 })
 export type DesktopMemoryCreate = z.infer<typeof desktopMemoryCreateSchema>
+
+export const memoryRecallQuerySchema = z.strictObject({
+    query: z.string().trim().min(1),
+    limit: z.number().int().min(1).max(20).default(5),
+    includeDormant: z.boolean().default(false),
+})

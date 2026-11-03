@@ -26,6 +26,8 @@ The app uses `~/Library/Application Support/Rerun Desktop Preview`. `identity.en
 
 The **Memories** button in coworker chat lists that coworker’s saved Rerun notes. **Add memory** saves the content, kind and tags locally. Each note has its own delete confirmation. Listing, adding and deleting these notes works without a model call. The desktop routes resolve the local coworker before reading or changing its memory store.
 
+**Recall memories** searches that coworker’s notes locally. Press Enter or choose **Search** to see up to five matches ranked by keyword relevance and memory strength. **Clear search** returns to the full list. Looking up a note in this panel does not increase its access count or strengthen it.
+
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
 ```json

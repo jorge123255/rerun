@@ -30,13 +30,15 @@ test('Codex requires the bundled runner and the dedicated desktop connection', (
     expect(desktopRouteAllowed('DELETE', '/desktop/codex-login')).toBe(false)
 })
 
-test('desktop memories are scoped to listing, creating and deleting one note', () => {
+test('desktop memories are scoped to recall, listing, creating and deleting one note', () => {
     const list = '/agents/memory-agent/memories'
     expect(desktopRouteAllowed('GET', list)).toBe(true)
     expect(desktopRouteAllowed('POST', list)).toBe(true)
     expect(desktopRouteAllowed('DELETE', `${list}/memory-id`)).toBe(true)
     for (const method of ['PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, list)).toBe(false)
-    for (const path of [`${list}/recall`, '/agents/foreman/memories', '/agents/../memories', '/agents/a%2Fb/memories', `${list}/..%2fother`]) {
+    expect(desktopRouteAllowed('POST', `${list}/recall`)).toBe(true)
+    for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, `${list}/recall`)).toBe(false)
+    for (const path of ['/agents/foreman/memories/recall', '/agents/foreman/memories', '/agents/../memories', '/agents/a%2Fb/memories', `${list}/..%2fother`]) {
         for (const method of ['GET', 'POST', 'DELETE']) expect(desktopRouteAllowed(method, path)).toBe(false)
     }
 })

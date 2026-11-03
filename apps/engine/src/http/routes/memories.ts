@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { desktopMemoryCreateSchema } from '@rerun/contracts'
+import { desktopMemoryCreateSchema, memoryRecallQuerySchema } from '@rerun/contracts'
 import { z } from 'zod'
 import { getAgent } from '../../agents/registry.js'
 import { listMemoryFiles } from '../../memory/files.js'
@@ -7,7 +7,7 @@ import { recallMemory, writeMemory, deleteMemory, deleteAllMemories } from '../.
 import { computeStrength, memoryStatus } from '../../memory/decay.js'
 import { listMemories } from '../../db/repos/memories.js'
 import { desktopApp } from '../../desktop/policy.js'
-import { addDesktopMemory, listDesktopMemory, removeDesktopMemory } from '../../desktop/memory-store.js'
+import { addDesktopMemory, listDesktopMemory, recallDesktopMemory, removeDesktopMemory } from '../../desktop/memory-store.js'
 
 export const memoryRoutes = new Hono()
 
@@ -50,9 +50,13 @@ memoryRoutes.post('/', async c => {
 
 memoryRoutes.post('/recall', async c => {
     const agentId = c.req.param('id')!
-    const agent = await getAgent(agentId)
-    const body = z.object({ query: z.string().min(1), limit: z.number().int().positive().max(20).default(5), includeDormant: z.boolean().default(false) }).parse(await c.req.json())
-    const memories = await recallMemory(agent, body.query, body.limit, { includeDormant: body.includeDormant, reinforce: 'none' })
+    const desktop = desktopApp()
+    const body = desktop
+        ? memoryRecallQuerySchema.parse(await c.req.json().catch(() => null))
+        : z.object({ query: z.string().min(1), limit: z.number().int().positive().max(20).default(5), includeDormant: z.boolean().default(false) }).parse(await c.req.json())
+    const memories = desktop
+        ? await recallDesktopMemory(agentId, body.query, body.limit, body.includeDormant)
+        : await recallMemory(await getAgent(agentId), body.query, body.limit, { includeDormant: body.includeDormant, reinforce: 'none' })
     return c.json({ memories: memories.map(m => ({ ...m, status: memoryStatus(m.strength) })) })
 })
 

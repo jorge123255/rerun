@@ -491,7 +491,7 @@ export async function createMemory(conn: EngineConnection, agentId: string, para
     return request(conn, `/agents/${encodeURIComponent(agentId)}/memories`, { method: 'POST', body: JSON.stringify(params) }, d => d as { id?: string })
 }
 
-export async function recallMemories(conn: EngineConnection, agentId: string, params: { query: string; limit?: number }): Promise<EngineMemory[]> {
+export async function recallMemories(conn: EngineConnection, agentId: string, params: { query: string; limit?: number; includeDormant?: boolean }): Promise<EngineMemory[]> {
     return request(conn, `/agents/${encodeURIComponent(agentId)}/memories/recall`, { method: 'POST', body: JSON.stringify(params) }, d => engineMemoriesListSchema.parse(d).memories)
 }
 

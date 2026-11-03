@@ -90,6 +90,89 @@ async function enter(id: string, value: string) {
     })
 }
 
+test('recalls by submitted query, retries an error, and updates matching results after note changes', async () => {
+    const root = mount()
+    const url = '/api/desktop/agents/reviewer/memories'
+    const outside = note('outside', 'Vacation dates')
+    let notes = [outside]
+    const queries: string[] = []
+    vi.stubGlobal('fetch', async (target: string, init: RequestInit) => {
+        if (target === url + '/recall') {
+            expect(init.method).toBe('POST')
+            const { query } = JSON.parse(String(init.body))
+            queries.push(query)
+            if (queries.length === 1) return Response.json({}, { status: 502 })
+            return Response.json({ memories: notes.filter(n => n.content.includes(query)) })
+        }
+        if (init.method === 'POST') {
+            expect(target).toBe(url)
+            const { requestId, content } = JSON.parse(String(init.body))
+            notes.push(note(requestId, content))
+            return Response.json({ id: requestId }, { status: 201 })
+        }
+        if (init.method === 'DELETE') {
+            expect(target).toBe(url + '/' + notes[1].id)
+            notes = [outside]
+            return new Response(null, { status: 204 })
+        }
+        expect(target).toBe(url)
+        return Response.json({ memories: notes })
+    })
+    try {
+        await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
+        await click('Memories')
+        await click('Add memory')
+        await enter('desktop-memory-content', 'indigo test card')
+        await enter('desktop-memory-search', '  indigo  ')
+        await act(async () => { dialog()!.querySelector<HTMLFormElement>('form[role="search"]')!.requestSubmit() })
+        expect(dialog()?.textContent).toContain('Could not search memories.')
+        expect(dialog()?.textContent).not.toContain('No matches')
+        await click('Retry')
+        expect(dialog()?.textContent).toContain('No matches')
+        expect(dialog()?.textContent).toContain('0 recalled for “indigo”')
+        expect((document.getElementById('desktop-memory-content') as HTMLTextAreaElement).value).toBe('indigo test card')
+        await click('Save memory')
+        expect(dialog()?.textContent).toContain('1 recalled for “indigo”')
+        expect(dialog()?.textContent).toContain('indigo test card')
+        expect(dialog()?.textContent).not.toContain(outside.content)
+        await act(async () => { dialog()!.querySelector<HTMLButtonElement>('[aria-label="Delete memory"]')!.click() })
+        await click('Delete')
+        expect(dialog()?.textContent).toContain('No matches')
+        expect(queries).toEqual(['indigo', 'indigo', 'indigo', 'indigo'])
+        await click('Clear search')
+        expect(dialog()?.textContent).toContain(outside.content)
+        expect(dialog()?.textContent).not.toContain('recalled for')
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('late search results cannot replace a new query or the full list after clearing search', async () => {
+    const root = mount()
+    const reads: { signal: AbortSignal; finish: (r: Response) => void }[] = []
+    vi.stubGlobal('fetch', (url: string, init: RequestInit) => url.endsWith('/recall')
+        ? new Promise<Response>(finish => { reads.push({ signal: init.signal!, finish }) })
+        : Promise.resolve(Response.json({ memories: [note('full', 'Full list note')] })))
+    try {
+        await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
+        await click('Memories')
+        await enter('desktop-memory-search', 'old')
+        await click('Search')
+        expect(dialog()?.textContent).toContain('Searching memories…')
+        await enter('desktop-memory-search', 'current')
+        await click('Search')
+        expect(reads[0].signal.aborted).toBe(true)
+        await act(async () => { reads[1].finish(Response.json({ memories: [note('current', 'Current ranked match')] })) })
+        await act(async () => { reads[0].finish(Response.json({ memories: [note('old', 'Wrong result')] })) })
+        expect(dialog()?.textContent).toContain('Current ranked match')
+        expect(dialog()?.textContent).not.toContain('Wrong result')
+        await click('Refresh')
+        await click('Clear search')
+        expect(reads[2].signal.aborted).toBe(true)
+        await act(async () => { reads[2].finish(Response.json({ memories: [note('old', 'Wrong result')] })) })
+        expect(dialog()?.textContent).toContain('Full list note')
+        expect(dialog()?.textContent).not.toContain('Wrong result')
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('saves trimmed content and metadata, retaining drafts and request IDs across failed saves', async () => {
     const root = mount()
     const writes: { content: string; kind?: string; tags?: string[]; requestId: string }[] = []

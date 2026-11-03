@@ -20,6 +20,8 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/memories`
     const [result, setResult] = useState<Result | null>(null)
     const [revision, setRevision] = useState(0)
+    const [query, setQuery] = useState('')
+    const [activeQuery, setActiveQuery] = useState('')
     const [draft, setDraft] = useState<Draft | null>(null)
     const submission = useRef<{ payload: string; id: string } | null>(null)
     const [writing, setWriting] = useState(false)
@@ -29,21 +31,29 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
         const controller = new AbortController()
         async function load() {
             try {
-                const response = await fetch(url, { cache: 'no-store', signal: controller.signal })
+                const options: RequestInit = { cache: 'no-store', signal: controller.signal }
+                const response = activeQuery
+                    ? await fetch(`${url}/recall`, { ...options, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: activeQuery }) })
+                    : await fetch(url, options)
                 if (!response.ok) throw new Error('Could not load coworker memories.')
                 const data = memoriesListSchema.parse(await response.json())
                 if (!controller.signal.aborted) setResult(data)
             } catch {
-                if (!controller.signal.aborted) setResult({ error: 'Could not load coworker memories. Try again.' })
+                if (!controller.signal.aborted) setResult({ error: activeQuery ? 'Could not search memories. Try again.' : 'Could not load coworker memories. Try again.' })
             }
         }
         void load()
         return () => controller.abort()
-    }, [url, revision])
+    }, [url, revision, activeQuery])
 
     function refresh() {
         setResult(null)
         setRevision(current => current + 1)
+    }
+
+    function search(value: string) {
+        setActiveQuery(value.trim())
+        refresh()
     }
 
     async function changeMemory(target: string, options: RequestInit, message: string) {
@@ -88,6 +98,18 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
             <DialogDescription>Saved memories for {agent.name}.</DialogDescription>
         </DialogHeader>
         <fieldset disabled={writing} className="min-h-0 space-y-3 overflow-y-auto">
+            <form role="search" aria-label="Search coworker memories" className="flex flex-wrap items-end gap-2"
+                onSubmit={event => { event.preventDefault(); search(query) }}>
+                <div className="min-w-40 flex-1">
+                    <Input id="desktop-memory-search" label="Recall memories" hideRequired value={query}
+                        placeholder="Search saved notes…" onChange={event => {
+                            setQuery(event.target.value)
+                            if (!event.target.value.trim() && activeQuery) search('')
+                        }} />
+                </div>
+                <Button type="submit" size="sm" variant="outline" disabled={!query.trim()}>Search</Button>
+                {(activeQuery || query) && <Button type="button" size="sm" variant="ghost" onClick={() => { setQuery(''); search('') }}>Clear search</Button>}
+            </form>
             {draft ? <form onSubmit={create} className="space-y-3 rounded-lg border p-3">
                 <Textarea id="desktop-memory-content" label="Content" required value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })}
                     placeholder="The user prefers concise answers." className="min-h-20" />
@@ -103,11 +125,13 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
                 <PlusIcon className="size-4" aria-hidden /> Add memory
             </Button>}
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-            {!result ? <p role="status" className="text-sm text-muted-foreground">Loading memories…</p>
+            {activeQuery && result && 'memories' in result && <p role="status" className="text-sm text-muted-foreground">{result.memories.length} recalled for “{activeQuery}”</p>}
+            {!result ? <p role="status" className="text-sm text-muted-foreground">{activeQuery ? 'Searching memories…' : 'Loading memories…'}</p>
                 : 'error' in result ? <p role="alert" className="text-sm text-destructive">{result.error}</p>
                 : result.memories.length ? <PanelList>{result.memories.map(memory => <MemoryRow key={memory.id} memory={memory}
                     confirmDescription={`This permanently deletes “${memory.content.length > 140 ? memory.content.slice(0, 140) + '…' : memory.content}” from ${agent.name}’s memories.`}
                     onDelete={memory.id ? () => void changeMemory(`${url}/${encodeURIComponent(memory.id)}`, { method: 'DELETE' }, 'Could not delete this memory. Try again.') : undefined} />)}</PanelList>
+                : activeQuery ? <EmptyState icon={BrainIcon} title="No matches" description="Try another keyword or clear the search to see all saved notes." />
                 : <EmptyState icon={BrainIcon} title="No memories yet" description="Saved memories for this coworker will appear here." />}
         </fieldset>
         <DialogFooter>

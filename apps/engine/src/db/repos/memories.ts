@@ -134,8 +134,17 @@ function termsOf(text: string): string[] {
     return folded.match(/[\p{L}\p{N}]+/gu) ?? []
 }
 
-function queryTerms(query: string): string[] {
+export function queryTerms(query: string): string[] {
     return [...new Set(termsOf(query).filter(t => t.length > 1 && !STOPWORDS.has(t)))]
+}
+
+export function ftsExpression(terms: string[]): string {
+    return terms.map(term => `"${term}"`).join(' OR ')
+}
+
+export function keywordCoverage(terms: string[], content: string): number {
+    const found = new Set(termsOf(content))
+    return terms.length ? terms.filter(term => found.has(term)).length / terms.length : 0
 }
 
 export async function ftsRecall(agentId: string, query: string, k: number, embedding: number[] | null = null): Promise<MemoryHit[]> {
@@ -149,12 +158,11 @@ export async function ftsRecall(agentId: string, query: string, k: number, embed
               JOIN memories m ON m.id = f.memory_id
               WHERE memories_fts MATCH ? AND m.agent_id = ?
               ORDER BY f.rank ASC LIMIT ?`,
-        args: [...(embedding ? [vec(embedding)] : []), terms.map(t => `"${t}"`).join(' OR '), agentId, k],
+        args: [...(embedding ? [vec(embedding)] : []), ftsExpression(terms), agentId, k],
     })
     return res.rows.map(r => {
         const row = toRow(r)
-        const found = new Set(termsOf(row.content))
-        return { ...row, score: -Number(r.rank), similarity: r.similarity == null ? null : Number(r.similarity), coverage: terms.filter(t => found.has(t)).length / terms.length }
+        return { ...row, score: -Number(r.rank), similarity: r.similarity == null ? null : Number(r.similarity), coverage: keywordCoverage(terms, row.content) }
     })
 }
 

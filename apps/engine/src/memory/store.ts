@@ -1,6 +1,6 @@
 import { writeMemoryFile, updateMemoryFile, deleteMemoryFile, deleteAllMemoryFiles, readMemoryFile } from './files.js'
 import { embedText } from './embed.js'
-import { computeStrength, DORMANT_THRESHOLD } from './decay.js'
+import { computeStrength, DORMANT_THRESHOLD, type DecayInput } from './decay.js'
 import { ftsRecall, indexMemory, reindexMemory, deleteMemory as repoDeleteMemory, deleteMemoriesForAgent, vectorRecall, bumpMemoryAccess, type MemoryHit } from '../db/repos/memories.js'
 import type { LoadedAgent } from '../agents/types.js'
 
@@ -60,22 +60,28 @@ const KEYWORD_BONUS = 0.15
 function fuse(vectorHits: MemoryHit[], ftsHits: MemoryHit[]): MemoryHit[] {
     const fused = new Map<string, MemoryHit>(vectorHits.map(hit => [hit.id, hit]))
     for (const hit of ftsHits) fused.set(hit.id, { ...hit, similarity: fused.get(hit.id)?.similarity ?? hit.similarity })
-    return [...fused.values()].map(hit => ({ ...hit, score: (hit.similarity ?? AUTO_RECALL_MIN_SIMILARITY) + KEYWORD_BONUS * hit.coverage }))
+    return [...fused.values()]
+}
+
+export function rankRecallHits<T extends DecayInput & { similarity: number | null; coverage: number }>(hits: T[], k: number, opts: RecallOptions = {}) {
+    const floor = opts.minSimilarity
+    return hits
+        .filter(hit => floor === undefined || hit.similarity === null || hit.similarity >= floor)
+        .map(hit => {
+            const strength = computeStrength(hit)
+            const relevance = (hit.similarity ?? AUTO_RECALL_MIN_SIMILARITY) + KEYWORD_BONUS * hit.coverage
+            return { ...hit, strength, score: relevance * strength }
+        })
+        .filter(hit => opts.includeDormant || hit.strength >= DORMANT_THRESHOLD)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, k)
 }
 
 export async function recallMemory(agent: LoadedAgent, query: string, k = 5, opts: RecallOptions = {}): Promise<RecalledMemory[]> {
     const embedding = await embedText(query).catch(() => null)
     const vectorHits = embedding ? await vectorRecall(agent.id, embedding, k * 2).catch(() => []) : []
     const ftsHits = await ftsRecall(agent.id, query, k * 2, embedding).catch(() => [])
-    const floor = opts.minSimilarity
-
-    const scored = fuse(vectorHits, ftsHits)
-        .filter(hit => floor === undefined || hit.similarity === null || hit.similarity >= floor)
-        .map(hit => ({ ...hit, strength: computeStrength(hit) }))
-        .filter(hit => opts.includeDormant || hit.strength >= DORMANT_THRESHOLD)
-        .map(hit => ({ ...hit, score: hit.score * hit.strength }))
-
-    const top = scored.sort((a, b) => b.score - a.score).slice(0, k)
+    const top = rankRecallHits(fuse(vectorHits, ftsHits), k, opts)
 
     const reinforce = opts.reinforce ?? 'full'
     if (reinforce !== 'none' && top.length > 0) {
