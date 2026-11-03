@@ -13,10 +13,11 @@ import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 
-async function historyFor(sessionId: string): Promise<UIMessage[]> {
-    const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`)
+async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMessage[]> {
+    const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`, { signal })
     const body = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not load conversation history')
+    if (!Array.isArray(body.messages)) throw new Error('Could not load conversation history')
     return body.messages as UIMessage[]
 }
 
@@ -28,7 +29,8 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     onChatSession: (id: string) => void
 }) {
     const [input, setInput] = useState('')
-    const [historyError, setHistoryError] = useState<string | null>(null)
+    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; error?: string }>({ id: null })
+    const [attempt, setAttempt] = useState(0)
 
     const transport = useMemo(() => new DefaultChatTransport({
         api: '/api/desktop/chat',
@@ -36,7 +38,11 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
         fetch: async (url, init) => {
             const response = await fetch(url, init)
             const id = response.headers.get('x-session-id')
-            if (response.ok && id) onChatSession(id)
+            if (response.ok && id) {
+                // A new session gets its ID from the first response. Keep its live stream visible.
+                setHistory({ id })
+                onChatSession(id)
+            }
             return response
         },
     }), [onChatSession])
@@ -49,33 +55,30 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
 
     const busy = status === 'submitted' || status === 'streaming'
 
+    const ready = history.id === sessionId && !history.error
+    const historyError = history.id === sessionId ? history.error : undefined
+    // The SDK throttles message updates. Show the verified snapshot immediately when switching,
+    // even if its subscription still holds the previous chat's messages.
+    const transcript = busy ? messages : ready ? history.transcript ?? messages : []
+
     useEffect(() => {
-        let cancelled = false
         if (busy) return
-        if (!sessionId) {
-            void Promise.resolve().then(() => {
-                if (!cancelled) {
-                    setMessages([])
-                    setHistoryError(null)
-                }
-            })
-        } else {
-            void historyFor(sessionId).then(history => {
-                if (!cancelled) {
-                    setMessages(history)
-                    setHistoryError(null)
-                }
-            }).catch(cause => {
-                if (!cancelled) setHistoryError(cause instanceof Error ? cause.message : 'Could not load history')
-            })
-        }
-        return () => { cancelled = true }
-    }, [sessionId, setMessages, busy])
+        const controller = new AbortController()
+        const read = sessionId ? historyFor(sessionId, controller.signal) : Promise.resolve([])
+        void read.then(result => {
+            if (controller.signal.aborted) return
+            setMessages(result)
+            setHistory({ id: sessionId, transcript: result })
+        }).catch(cause => {
+            if (!controller.signal.aborted) setHistory({ id: sessionId, error: cause instanceof Error ? cause.message : 'Could not load history' })
+        })
+        return () => controller.abort()
+    }, [sessionId, setMessages, busy, attempt])
 
     function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if (!text || busy) return
+        if (!text || busy || !ready) return
         setInput('')
         void sendMessage({ text }, { body: { agentId: agent.id, sessionId: sessionId ?? undefined } })
     }
@@ -108,26 +111,33 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
 
             <div className="flex-1 overflow-y-auto px-5 py-6">
                 <div className="mx-auto max-w-3xl space-y-4">
-                    {messages.length === 0 && !busy && (
+                    {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">Loading conversation…</p>}
+                    {ready && transcript.length === 0 && !busy && (
                         <div className="py-16 text-center">
                             <div className="text-sm font-medium">Start a conversation with {agent.name}</div>
                             <div className="mt-1 text-sm text-muted-foreground">Messages stream from the local engine and remain available after restart.</div>
                         </div>
                     )}
-                    {messages.map((message, messageIndex) => (
+                    {transcript.map((message, messageIndex) => (
                         <div key={message.id} className={cn('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}>
                             <div className={cn('max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6', message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
                                 {message.parts.map((part, index) => {
                                     if (part.type === 'text') return <span key={index}>{part.text}</span>
                                     if (message.role !== 'assistant' || part.type !== 'reasoning' || typeof part.text !== 'string' || !isDesktopSummaryMetadata(part.providerMetadata)) return null
-                                    const streaming = status === 'streaming' && messageIndex === messages.length - 1 && index === message.parts.length - 1
+                                    const streaming = status === 'streaming' && messageIndex === transcript.length - 1 && index === message.parts.length - 1
                                     return part.text || streaming ? <ReasoningStep key={index} text={part.text} isStreaming={streaming} /> : null
                                 })}
                             </div>
                         </div>
                     ))}
                     {busy && <div className="text-sm text-muted-foreground">{agent.name} is working…</div>}
-                    {(error || historyError) && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{historyError || error?.message}</div>}
+                    {(error || historyError) && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+                        {historyError || error?.message}
+                        {historyError && <Button type="button" size="sm" variant="outline" className="ml-2" onClick={() => {
+                            setHistory({ id: undefined })
+                            setAttempt(n => n + 1)
+                        }}>Retry conversation</Button>}
+                    </div>}
                 </div>
             </div>
 
@@ -148,7 +158,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             }
                         }}
                     />
-                    <Button type="submit" disabled={!input.trim() || busy}>Send</Button>
+                    <Button type="submit" disabled={!input.trim() || busy || !ready}>Send</Button>
                 </form>
             </div>
         </div>

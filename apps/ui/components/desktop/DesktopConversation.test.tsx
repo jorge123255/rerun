@@ -23,7 +23,7 @@ describe('DesktopConversation', () => {
     })
 
     it('renders only marked Codex summaries as upstream running and settled reasoning steps', () => {
-        const render = () => renderToString(<DesktopConversation agent={agent} sessionId="s" sessions={[]} onChatSession={vi.fn()} onSelectSession={vi.fn()} />)
+        const render = () => renderToString(<DesktopConversation agent={agent} sessionId={null} sessions={[]} onChatSession={vi.fn()} onSelectSession={vi.fn()} />)
         chat.messages = [{ id: 'answer', role: 'assistant', parts: [
             { type: 'reasoning', text: 'Private trace' },
             { type: 'reasoning', text: 'Legacy mixed block', providerMetadata: { 'codex-app-server': { isSummary: true } } },
