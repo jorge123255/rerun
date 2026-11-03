@@ -1,6 +1,7 @@
 import 'server-only'
 import { desktopTheme } from '../settings'
-import type { Client, Row } from '@libsql/client'
+import { DesktopHttpError } from './auth'
+import type { Client, InStatement, Row } from '@libsql/client'
 
 export type DesktopAgent = {
     id: string
@@ -89,15 +90,43 @@ export async function findDesktopSession(db: Client, id: string): Promise<Deskto
     return result.rows[0] ? sessionOf(result.rows[0]) : null
 }
 
-export async function createDesktopSession(db: Client, input: { agentId: string; engineSessionId: string; title: string }): Promise<DesktopSession> {
+// Keep one engine request for a reply until its alternate is opened. Remember each browser UUID
+// too, so a late duplicate still resolves to the right request after a newer alternate is started.
+export async function regenerationRequestId(db: Client, source: string, message: string, request: string): Promise<string> {
+    const [, result] = await db.batch([{
+        sql: `WITH active AS (
+                  SELECT request_id FROM desktop_regeneration_requests WHERE source_session_id = :source AND message_id = :message AND pending = 1
+              )
+              INSERT INTO desktop_regeneration_requests (request_id, source_session_id, message_id, canonical_id, pending)
+              VALUES (:request, :source, :message, COALESCE((SELECT request_id FROM active), :request), NOT EXISTS (SELECT 1 FROM active))
+              ON CONFLICT(request_id) DO NOTHING`,
+        args: { source, message, request },
+    }, {
+        sql: 'SELECT source_session_id, message_id, canonical_id FROM desktop_regeneration_requests WHERE request_id = ?',
+        args: [request],
+    }], 'write')
+    const row = result.rows[0]
+    if (row.source_session_id !== source || row.message_id !== message) throw new DesktopHttpError(409, 'That retry belongs to a different reply.')
+    return String(row.canonical_id)
+}
+
+export async function createDesktopSession(db: Client, input: { agentId: string; engineSessionId: string; title: string; regenerationRequestId?: string }): Promise<DesktopSession> {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
-    await db.execute({
+    const statements: InStatement[] = [{
         sql: 'INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(engine_session_id) DO NOTHING',
         args: [id, input.agentId, input.engineSessionId, input.title.slice(0, 80) || 'New conversation', now, now],
+    }]
+    if (input.regenerationRequestId) statements.push({
+        sql: `UPDATE desktop_regeneration_requests SET alternate_session_id =
+                  (SELECT id FROM desktop_sessions WHERE engine_session_id = ? AND agent_id = ?)
+              WHERE request_id = ? AND alternate_session_id IS NULL`,
+        args: [input.engineSessionId, input.agentId, input.regenerationRequestId],
     })
     // A retry can recover an engine fork that was already registered before the response was lost.
-    const result = await db.execute({ sql: 'SELECT * FROM desktop_sessions WHERE engine_session_id = ? AND agent_id = ?', args: [input.engineSessionId, input.agentId] })
-    if (!result.rows[0]) throw new Error('Engine conversation belongs to another coworker')
-    return sessionOf(result.rows[0])
+    statements.push({ sql: 'SELECT * FROM desktop_sessions WHERE engine_session_id = ? AND agent_id = ?', args: [input.engineSessionId, input.agentId] })
+    const results = await db.batch(statements, 'write')
+    const row = results.at(-1)!.rows[0]
+    if (!row) throw new Error('Engine conversation belongs to another coworker')
+    return sessionOf(row)
 }

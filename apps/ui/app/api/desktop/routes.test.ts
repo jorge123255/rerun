@@ -90,7 +90,7 @@ beforeEach(async () => {
                 if (body.regenerateMessageId === 'missing') return res.writeHead(404).end()
                 if (body.regenerateMessageId === 'busy') return res.writeHead(409).end()
                 const replay = sentChats.filter(value => (value as { requestId?: string }).requestId === body.requestId).length > 1
-                res.writeHead(replay ? 204 : 200, { 'x-session-id': 'alternate-session', 'x-run-id': 'alternate-run' })
+                res.writeHead(replay ? 204 : 200, { 'x-session-id': 'alternate-' + body.requestId, 'x-run-id': 'alternate-run' })
                 return res.end(replay ? undefined : 'data: [DONE]\n\n')
             }
             const engineSessionId = req.url?.includes('engine-agent-1') ? 'engine-session-1' : 'engine-session-2'
@@ -100,6 +100,9 @@ beforeEach(async () => {
         if (req.method === 'GET' && req.url === '/agents/engine-agent-1/sessions/engine-session-1/messages') {
             res.writeHead(200, { 'content-type': 'application/json' })
             return res.end(JSON.stringify({ messages: [{ id: 'message-1', sessionId: 'engine-session-1', role: 'user', contentJson: JSON.stringify({ text: 'Hello' }), toolCallsJson: null, createdAt: '2026-01-01T00:00:00.000Z' }] }))
+        }
+        if (req.method === 'GET' && /^\/agents\/engine-agent-1\/sessions\/alternate-[\da-f-]+\/messages$/.test(req.url ?? '')) {
+            return res.end(JSON.stringify({ messages: [] }))
         }
         res.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'not found' }))
     })
@@ -154,8 +157,8 @@ describe('desktop API routes', () => {
             expect((await post(extra)).status).toBe(400)
         }
         expect(sentChats).toEqual([])
-        expect((await post({ regenerateMessageId: 'engine-missing' })).status).toBe(404)
-        expect((await post({ regenerateMessageId: 'engine-busy' })).status).toBe(409)
+        expect((await post({ regenerateMessageId: 'engine-missing', requestId: crypto.randomUUID() })).status).toBe(404)
+        expect((await post({ regenerateMessageId: 'engine-busy', requestId: crypto.randomUUID() })).status).toBe(409)
         expect(await listDesktopSessions(db, a.id)).toEqual([source])
         const replies = await Promise.all([post(), post()])
         const [first, replay] = replies
@@ -171,6 +174,45 @@ describe('desktop API routes', () => {
         expect(sentChats.at(-1)).not.toHaveProperty('workspaceAttachment')
         expect((await listDesktopSessions(db, a.id)).map(s => s.title)).toEqual(['Alternate · Original chat', 'Original chat'])
         expect(await listDesktopSessions(db, b.id)).toEqual([])
+    })
+
+    it('recovers an unseen alternate after relaunch and allows a fresh one only after its history opens', async () => {
+        await connectProvider(request('/api/desktop/providers/openai', { method: 'POST', body: { apiKey: 'fixture-key' } }))
+        const db = await openDesktopDatabase(root)
+        const agent = await createDesktopAgent(db, { name: 'First', engineAgentId: 'engine-agent-1' })
+        const source = await createDesktopSession(db, { agentId: agent.id, engineSessionId: 'engine-session-1', title: 'Source' })
+        const post = (requestId: string, regenerateMessageId = 'engine-first') => postChat(request('/api/desktop/chat', {
+            method: 'POST', body: { agentId: agent.id, sessionId: source.id, regenerateMessageId, requestId },
+        }))
+        const open = (sessionId: string) => getMessages(request('/api/desktop/sessions/' + sessionId + '/messages'), { params: Promise.resolve({ sessionId }) })
+        const originalId = crypto.randomUUID()
+        const response = await post(originalId)
+        const first = response.headers.get('x-session-id')!
+        expect(response.status).toBe(200)
+        await closeDesktopDatabase(root)
+        // The first response was lost; the new renderer opens the source and makes up a fresh UUID.
+        expect((await open(source.id)).status).toBe(200)
+        const retryId = crypto.randomUUID()
+        const retried = await post(retryId)
+        expect(retried.headers.get('x-session-id')).toBe(first)
+        expect(sentChats.at(-1)).toMatchObject({ requestId: originalId })
+        // Even a fresh alias cannot be used to select a different target with its own pending run.
+        const different = await post(crypto.randomUUID(), 'engine-other')
+        expect(different.status).toBe(200)
+        const count = sentChats.length
+        expect((await post(retryId, 'engine-other')).status).toBe(409)
+        expect(sentChats).toHaveLength(count)
+        expect((await open(first)).status).toBe(200)
+        const newId = crypto.randomUUID()
+        const next = await post(newId)
+        const second = next.headers.get('x-session-id')!
+        expect(next.status).toBe(200)
+        expect(second).not.toBe(first)
+        expect(sentChats.at(-1)).toMatchObject({ requestId: newId })
+        // A late retry of the old action and a read of its old alternate cannot consume the new attempt.
+        expect((await post(retryId)).headers.get('x-session-id')).toBe(first)
+        expect((await open(first)).status).toBe(200)
+        expect((await post(crypto.randomUUID())).headers.get('x-session-id')).toBe(second)
     })
 
     it('reads only an explicitly attached file from the selected coworker before dispatching chat', async () => {

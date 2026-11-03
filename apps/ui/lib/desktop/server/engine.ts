@@ -8,7 +8,7 @@ import { DesktopHttpError } from './auth'
 import { readCoworkerFile } from './coworker-files'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
-import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession } from './store'
+import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession, regenerationRequestId } from './store'
 
 // Compatibility endpoint for the original OpenAI setup form.
 export async function connectDesktopOpenAI(runtime: DesktopRuntime, apiKey: string) {
@@ -80,11 +80,12 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const regenerate = 'regenerateMessageId' in input
     const file = !regenerate && input.attachmentPath !== undefined ? await readCoworkerFile(runtime, agent.id, input.attachmentPath, 'attach') : undefined
     const { connection, model } = await desktopModel(runtime)
+    const requestId = regenerate ? await regenerationRequestId(db, input.sessionId, input.regenerateMessageId, input.requestId) : undefined
     const engineResponse = await chat(engineOf(runtime), agent.engineAgentId, {
         ...(regenerate ? {
             sessionId: existing!.engineSessionId,
             regenerateMessageId: input.regenerateMessageId.slice('engine-'.length),
-            requestId: input.requestId,
+            requestId: requestId!,
         } : {
             sessionId: existing?.engineSessionId, message: input.text,
             workspaceAttachment: file && { path: file.path, content: file.content },
@@ -105,7 +106,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (!engineSessionId) throw new DesktopHttpError(502, 'The engine did not return a conversation ID')
     if (regenerate && engineSessionId === existing!.engineSessionId) throw new DesktopHttpError(502, 'The engine did not return an alternate conversation.')
     const session = regenerate
-        ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, '') })
+        ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId })
         : existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: input.text.trim() })
     const headers = new Headers({
         'content-type': engineResponse.headers.get('content-type') ?? 'text/event-stream',
@@ -125,7 +126,11 @@ export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: str
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     try {
         const messages = await getSessionMessages(engineOf(runtime), agent.engineAgentId, session.engineSessionId, { requireSuccess: true })
-        return transformEngineMessages(messages, { desktopSummaries: true })
+        const history = transformEngineMessages(messages, { desktopSummaries: true })
+        // Only a read of this specific alternate acknowledges it. Opening the original, or an
+        // older alternate while a newer request is pending, leaves the pending attempt alone.
+        await db.execute({ sql: 'UPDATE desktop_regeneration_requests SET pending = 0 WHERE alternate_session_id = ? AND pending = 1', args: [session.id] })
+        return history
     } catch (cause) {
         if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Conversation not found')
         throw new DesktopHttpError(502, 'Could not load this conversation. Try again.')

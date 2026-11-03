@@ -47,6 +47,18 @@ async function initialize(dataRoot: string): Promise<Client> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS desktop_regeneration_requests (
+            request_id TEXT PRIMARY KEY,
+            source_session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+            message_id TEXT NOT NULL,
+            canonical_id TEXT NOT NULL,
+            pending INTEGER NOT NULL CHECK (pending IN (0, 1)),
+            alternate_session_id TEXT REFERENCES desktop_sessions(id) ON DELETE SET NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS desktop_regeneration_pending
+            ON desktop_regeneration_requests(source_session_id, message_id) WHERE pending = 1;
+        CREATE UNIQUE INDEX IF NOT EXISTS desktop_regeneration_alternate
+            ON desktop_regeneration_requests(alternate_session_id) WHERE alternate_session_id IS NOT NULL;
         PRAGMA user_version = 1;
     `)
     const now = new Date().toISOString()

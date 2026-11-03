@@ -54,6 +54,23 @@ export function withoutReasoning(message: ModelMessage): ModelMessage {
     return content.length === message.content.length ? message : ({ ...message, content } as ModelMessage)
 }
 
+// OpenAI Responses otherwise sends an item_reference instead of the saved answer or local
+// tool call. Copied items must replay on a fresh connection even if the source item expired.
+function portableForkContent(row: { contentJson: string; role: string; copiedForRegeneration: boolean }) {
+    const content = storedContent(row.contentJson)
+    if (row.copiedForRegeneration && (row.role === 'assistant' || row.role === 'tool') && Array.isArray(content)) {
+        for (const part of content) {
+            const { providerOptions, providerMetadata } = part as {
+                providerOptions?: { openai?: { itemId?: unknown } }
+                providerMetadata?: { openai?: { itemId?: unknown } }
+            }
+            if (providerOptions?.openai) delete providerOptions.openai.itemId
+            if (providerMetadata?.openai) delete providerMetadata.openai.itemId
+        }
+    }
+    return content
+}
+
 function serializeForSummary(messages: ModelMessage[]): string {
     return messages
         .map(message => {
@@ -98,7 +115,7 @@ export async function prepareRunHistory(ctx: RunContext, system: string, overrid
     const rows = savedUserId ? saved.filter(row => row.id !== savedUserId) : saved
     const priorSummary: ModelMessage | null = cp ? (JSON.parse(cp.summaryJson) as ModelMessage) : null
     const live: ModelMessage[] = rows.flatMap(r => {
-        const message = withoutQuickRepliesCalls(withoutReasoning({ role: r.role, content: storedContent(r.contentJson) } as ModelMessage))
+        const message = withoutQuickRepliesCalls(withoutReasoning({ role: r.role, content: portableForkContent(r) } as ModelMessage))
         if (!message) return []
         return [signSenders ? signHistoryMessage(message, r) : message]
     })

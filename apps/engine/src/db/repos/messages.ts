@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, isNotNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, getTableColumns, gt, gte, isNotNull, sql } from 'drizzle-orm'
 import type { ModelMessage } from 'ai'
 import { visibleText, type MessageAuthor } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
@@ -69,10 +69,17 @@ export async function listSessionAuthorIds(agentId: string, sessionId: string): 
     return rows.flatMap(row => (row.authorId ? [row.authorId] : []))
 }
 
-export async function listMessagesAfter(agentId: string, sessionId: string, after?: string): Promise<MessageRow[]> {
+export async function listMessagesAfter(agentId: string, sessionId: string, after?: string) {
     const { db } = await getSystemDb(agentId)
     const where = after ? and(eq(messages.sessionId, sessionId), gt(messages.createdAt, after)) : eq(messages.sessionId, sessionId)
-    return db.select().from(messages).where(where).orderBy(asc(messages.createdAt), asc(sql`rowid`))
+    // forkReply dates every copied row before the alternate run. Its own new replies keep using
+    // the provider's native history, including when a later turn reopens this conversation.
+    const copiedForRegeneration = sql`coalesce(${messages.createdAt} < (
+        SELECT runs.started_at FROM desktop_regenerations JOIN runs ON runs.id = desktop_regenerations.run_id
+        WHERE desktop_regenerations.session_id = ${sessionId}
+    ), 0)`.mapWith(Boolean)
+    return db.select({ ...getTableColumns(messages), copiedForRegeneration }).from(messages)
+        .where(where).orderBy(asc(messages.createdAt), asc(sql`rowid`))
 }
 
 export async function collectAssistantText(agentId: string, sessionId: string, from: string, to: string | null): Promise<string> {
