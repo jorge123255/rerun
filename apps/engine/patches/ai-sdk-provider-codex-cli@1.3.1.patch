@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..1d559050fe7552f213a19f3e513b251be569ce75 100644
+index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..325112795616d9e1674ea58305d464bf5233c7a7 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -226,7 +226,7 @@ var appServerSettingsSchema = zod.z.object({
@@ -31,7 +31,7 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..1d559050fe7552f213a19f3e513b251b
 +    const item = params.item;
 +    if (!item || typeof item.call_id !== "string" || !item.call_id) return;
 +    const id = item.call_id;
-+    if (item.type === "custom_tool_call" && item.namespace === "functions" && item.name === "exec" && typeof item.input === "string") {
++    if (item.type === "custom_tool_call" && (item.namespace === undefined || item.namespace === "functions") && item.name === "exec" && typeof item.input === "string") {
 +      if (codeModeCalls.has(id)) return;
 +      codeModeCalls.set(id, "open");
 +      context.emitter.emitToolCall(id, "functions.exec", JSON.stringify({ code: item.input }), true);
@@ -260,7 +260,7 @@ index 14e99bfd22a6aed9be7e952f80d494a371490ecd..0fd67bcc169afc4eaa937f273865d0f2
      approvalPolicy?: AppServerApprovalPolicy;
      sandboxPolicy?: AppServerSandboxPolicy;
 diff --git a/dist/index.js b/dist/index.js
-index 0e2c370883354cd782ab878f645170a87081c8a2..cfec32b65fe2d59c262714ed233094404ca64676 100644
+index 0e2c370883354cd782ab878f645170a87081c8a2..024bed81cdf1e4e6d1b994da3e417fb43cf7c7e9 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -218,7 +218,7 @@ var appServerSettingsSchema = z.object({
@@ -292,7 +292,7 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..cfec32b65fe2d59c262714ed23309440
 +    const item = params.item;
 +    if (!item || typeof item.call_id !== "string" || !item.call_id) return;
 +    const id = item.call_id;
-+    if (item.type === "custom_tool_call" && item.namespace === "functions" && item.name === "exec" && typeof item.input === "string") {
++    if (item.type === "custom_tool_call" && (item.namespace === undefined || item.namespace === "functions") && item.name === "exec" && typeof item.input === "string") {
 +      if (codeModeCalls.has(id)) return;
 +      codeModeCalls.set(id, "open");
 +      context.emitter.emitToolCall(id, "functions.exec", JSON.stringify({ code: item.input }), true);

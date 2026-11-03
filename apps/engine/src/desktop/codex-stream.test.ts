@@ -85,13 +85,19 @@ rl.on('line', line => {
     respond({ turn })
     const notify = (method, fields, target = turnId) => send({ method, params: { threadId, turnId: target, ...fields } })
     const raw = (item, target) => notify('rawResponseItem/completed', {item}, target)
-    const call = {type: 'custom_tool_call', id: 'native-item', call_id: 'call-1', namespace: 'functions', name: 'exec', input: 'text(6*7)'}
+    const call = {type: 'custom_tool_call', id: 'native-item', call_id: 'call-1', name: 'exec', input: 'text(6*7)'}
     const result = {type: 'custom_tool_call_output', id: 'native-result', call_id: 'call-1', output: [{type: 'input_text', text: '42'}]}
     raw({type: 'message', role: 'developer', content: 'synthetic private marker'})
     raw({...call, call_id:'other-turn'}, 'other-turn')
     raw({...result, call_id:'orphan'})
     raw({...call, name:'unrelated', call_id:'unrelated'})
+    raw({...call, namespace:'unrelated', call_id:'other-namespace'})
+    raw({...result, call_id:'other-namespace'})
+    // Sol omits namespace in the signed-in runner; some Responses backends send 'functions'.
     raw(call); raw(call); raw(result); raw(result); raw(call)
+    raw({...call, namespace:'functions', call_id:'call-2'})
+    raw({...result, call_id:'call-2'})
+    raw({...call, namespace:'functions', call_id:'call-1'})
     notify('item/completed', {item:{type:'agentMessage', id:'answer', phase:'final_answer', text:'Raw requested: '+rawRequested}})
     notify('turn/completed', {turn:{...turn, status:'completed'}})
 })
@@ -109,12 +115,10 @@ rl.on('line', line => {
             if (result.done) break
             parts.push(result.value)
         }
-        expect(parts.filter(p => p.type === 'tool-call')).toEqual(enabled ? [
-            expect.objectContaining({ toolName: 'functions.exec', toolCallId: 'call-1', input: '{"code":"text(6*7)"}', providerExecuted: true }),
-        ] : [])
-        expect(parts.filter(p => p.type === 'tool-result')).toEqual(enabled ? [
-            expect.objectContaining({ toolName: 'functions.exec', toolCallId: 'call-1', result: '42' }),
-        ] : [])
+        expect(parts.filter(p => p.type === 'tool-call')).toEqual(enabled ? ['call-1', 'call-2'].map(toolCallId =>
+            expect.objectContaining({ toolName: 'functions.exec', toolCallId, input: '{"code":"text(6*7)"}', providerExecuted: true })) : [])
+        expect(parts.filter(p => p.type === 'tool-result')).toEqual(enabled ? ['call-1', 'call-2'].map(toolCallId =>
+            expect.objectContaining({ toolName: 'functions.exec', toolCallId, result: '42' })) : [])
         expect(parts).toContainEqual(expect.objectContaining({ type: 'text-delta', delta: 'Raw requested: '+enabled }))
         expect(parts.some(p => p.type === 'raw')).toBe(false)
         expect(JSON.stringify(parts)).not.toContain('synthetic private marker')
