@@ -354,12 +354,14 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
             // `rerun__ask_user` on some versions and `mcp__rerun__ask_user` on others.
             // The reasoning summary is stated rather than left to whichever Codex build the box has
             // installed, so the chat shows the same thing everywhere.
-            configOverrides: desktopApp() ? { project_doc_max_bytes: 0, web_search: 'disabled' } : {
-                prefix_mcp_tool_names: true,
-                [`mcp_servers.${BRIDGE_SERVER_NAME}.tool_timeout_sec`]: BRIDGE_TOOL_TIMEOUT_SEC,
+            configOverrides: {
                 model_reasoning_summary: 'auto',
-                ...CODEX_HARNESS_OVERRIDES,
-                ...(agent.config.tools.web ? { web_search: 'live' } : {}),
+                ...(desktopApp() ? { project_doc_max_bytes: 0, web_search: 'disabled' } : {
+                    prefix_mcp_tool_names: true,
+                    [`mcp_servers.${BRIDGE_SERVER_NAME}.tool_timeout_sec`]: BRIDGE_TOOL_TIMEOUT_SEC,
+                    ...CODEX_HARNESS_OVERRIDES,
+                    ...(agent.config.tools.web ? { web_search: 'live' } : {}),
+                }),
             },
             mcpServers: desktopApp() ? {} : codexMcpConfig(tools, mcpServers),
         },

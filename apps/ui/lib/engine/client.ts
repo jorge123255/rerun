@@ -1,4 +1,5 @@
 import {
+    type BoxDefaultUpdate,
     ENGINE_CAPABILITY_DESKTOP,
     desktopStatusSchema,
     takeoverResultSchema,
@@ -50,7 +51,6 @@ import {
     type BoxConnection,
     type BoxConnectionsList,
     type BoxConnectionUsage,
-    type BoxDefault,
     type CreateBoxConnectionInput,
     type UpdateBoxConnectionInput,
     type EngineFileContent,
@@ -175,7 +175,7 @@ export async function listConnections(conn: EngineConnection, init: RequestInit 
 }
 
 // The pair every agent that picked no model of its own runs on. `null` clears it.
-export async function setBoxDefault(conn: EngineConnection, pick: BoxDefault | null): Promise<void> {
+export async function setBoxDefault(conn: EngineConnection, pick: BoxDefaultUpdate | null): Promise<void> {
     if (!pick) {
         await request(conn, '/connections/default', { method: 'DELETE' }, () => undefined)
         return

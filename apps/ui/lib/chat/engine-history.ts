@@ -1,4 +1,5 @@
 import type { EngineMessage } from '@/lib/engine/types'
+import { desktopSummaryMetadata, isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { attachmentDisplayName, parseAttachments } from '@/lib/chat/attachments-marker'
 import { parseInstallMessage } from '@/lib/chat/install-marker'
 import { parseScheduledRun } from '@/lib/schedules/scheduled-run'
@@ -16,7 +17,7 @@ type ToolInvocationPart = {
     input: unknown
     output?: unknown
 }
-type UIMessagePart = TextPart | ToolInvocationPart
+type UIMessagePart = TextPart | ToolInvocationPart | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
 export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: { authorId?: string; createdAt?: string } }
 
 function safeParse(json: string | null | undefined): unknown {
@@ -39,7 +40,7 @@ function extractText(content: unknown): string {
 
 // rerun-engine persists AI-SDK message content as JSON in `contentJson`
 // (and tool calls in `toolCallsJson`). Re-hydrate to UI message parts.
-export function transformEngineMessages(messages: EngineMessage[]): HistoryMessage[] {
+export function transformEngineMessages(messages: EngineMessage[], options?: { desktopSummaries?: boolean }): HistoryMessage[] {
     const toolResults = new Map<string, unknown>()
     const recordResult = (part: unknown) => {
         const p = part as { type?: string; toolCallId?: string; output?: unknown; result?: unknown }
@@ -80,12 +81,17 @@ export function transformEngineMessages(messages: EngineMessage[]): HistoryMessa
             seen.add(part.toolCallId)
             parts.push(part)
         }
-        if (Array.isArray(content)) {
-            for (const p of content) {
+        // A standalone typed part must pass the same desktop filter as a part in an array.
+        const contentParts = options?.desktopSummaries && content && typeof content === 'object' && 'type' in content ? [content] : content
+        if (Array.isArray(contentParts)) {
+            for (const p of contentParts) {
                 const t = (p as { type?: string })?.type
                 if (t === 'text' && !isContextPart(p)) {
                     const text = String((p as { text?: unknown }).text ?? '')
                     if (text) parts.push({ type: 'text', text })
+                } else if (options?.desktopSummaries && m.role === 'assistant' && t === 'reasoning' && !isContextPart(p) &&
+                    typeof p.text === 'string' && p.text && isDesktopSummaryMetadata(p.providerOptions)) {
+                    parts.push({ type: 'reasoning', text: p.text, providerMetadata: desktopSummaryMetadata })
                 } else if (typeof t === 'string' && t.includes('tool') && t !== 'tool-result') {
                     pushCall(p)
                 }
@@ -129,7 +135,7 @@ function toolPartOf(call: unknown, toolResults: Map<string, unknown>): ToolInvoc
 
 function endsOnHitlCall(message: HistoryMessage): boolean {
     const last = message.parts[message.parts.length - 1]
-    return message.role === 'assistant' && last?.type !== 'text' && !!hitlKindOf(last?.toolName)
+    return message.role === 'assistant' && !!last && 'toolName' in last && !!hitlKindOf(last.toolName)
 }
 
 // The engine has no pagination, so a long research session comes back whole. Past this size a tool
@@ -202,7 +208,7 @@ export function toApiMessages(messages: HistoryMessage[]): ConversationMessage[]
         return {
             id: message.id,
             role: 'assistant',
-            parts: message.parts.map(part => (part.type !== 'text' && part.output !== undefined ? { ...part, output: trimOutput(part.toolName, part.output) } : part)),
+            parts: message.parts.map(part => ('output' in part && part.output !== undefined ? { ...part, output: trimOutput(part.toolName, part.output) } : part)),
             ...(message.metadata?.createdAt && { metadata: { createdAt: message.metadata.createdAt } }),
         }
     })

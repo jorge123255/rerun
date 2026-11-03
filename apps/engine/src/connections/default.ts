@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { boxDefaultModelSchema, type BoxDefaultModel } from '@rerun/contracts'
 import { boxDefaultPath, connectionsDir } from '../config/paths.js'
 import { clearAgentCache } from '../agents/registry.js'
+import { withKeyedLock } from '../lib/lock.js'
 
 // Read once and held: the engine is a single process, and every write to the file goes through
 // this module, so there is no other writer to miss.
@@ -30,7 +31,7 @@ async function commit(next: BoxDefaultModel | null): Promise<void> {
     clearAgentCache()
 }
 
-export async function writeBoxDefault(next: BoxDefaultModel): Promise<BoxDefaultModel> {
+async function persistBoxDefault(next: BoxDefaultModel): Promise<BoxDefaultModel> {
     await mkdir(connectionsDir(), { recursive: true })
     const target = boxDefaultPath()
     const tmp = `${target}.tmp`
@@ -40,7 +41,27 @@ export async function writeBoxDefault(next: BoxDefaultModel): Promise<BoxDefault
     return next
 }
 
+export function writeBoxDefault(next: BoxDefaultModel): Promise<BoxDefaultModel> {
+    return withKeyedLock('box-default', () => persistBoxDefault(next))
+}
+
+export function updateBoxDefault(update: (current: BoxDefaultModel | null) => BoxDefaultModel): Promise<BoxDefaultModel> {
+    return withKeyedLock('box-default', async () => persistBoxDefault(update(await readBoxDefault())))
+}
+
+// A catalog refresh can retire a model while the user is choosing another one in Settings.
+export function replaceBoxDefaultIfCurrent(previous: BoxDefaultModel | null, next: BoxDefaultModel): Promise<void> {
+    return withKeyedLock('box-default', async () => {
+        const current = await readBoxDefault()
+        if (current?.connectionId === previous?.connectionId && current?.model === previous?.model && current?.reasoningEffort === previous?.reasoningEffort) {
+            await persistBoxDefault(next)
+        }
+    })
+}
+
 export async function clearBoxDefault(): Promise<void> {
-    await rm(boxDefaultPath(), { force: true })
-    await commit(null)
+    await withKeyedLock('box-default', async () => {
+        await rm(boxDefaultPath(), { force: true })
+        await commit(null)
+    })
 }

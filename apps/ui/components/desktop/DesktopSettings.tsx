@@ -21,6 +21,9 @@ type Props = {
 
 const selectClass = 'w-full rounded-md border bg-background px-3 py-2 text-sm'
 const panels = ['AI providers', 'Workspace', 'Shortcuts'] as const
+function effortLabel(effort: string) {
+    return effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)
+}
 
 export function DesktopSettings({ providers, workspaceName, onSave, onProviders }: Props) {
     const [tab, setTab] = useState<typeof panels[number]>('AI providers')
@@ -35,6 +38,9 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders 
     const missing = desktopProvider.options.filter(p => !providers.connections.some(c => c.provider === p))
     const picks = providers.connections.filter(c => c.connected).flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
     const selected = picks.findIndex(p => p.connectionId === providers.default?.connectionId && p.model === providers.default.model)
+    const active = providers.default
+    const codex = providers.connections.find(c => c.id === active?.connectionId && c.connected && c.provider === 'codex')
+    const reasoning = active && codex?.codexReasoning?.[active.model]
 
     async function save(change: SettingsChange, message: string) {
         setBusy(true)
@@ -89,6 +95,17 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders 
                                 {providers.connections.filter(c => c.connected).map(c => <optgroup key={c.id} label={c.name}>{picks.map((p, index) => p.connectionId === c.id &&
                                     <option key={p.model} value={index}>{modelName(c.id, p.model)}</option>)}</optgroup>)}
                             </select>
+                            {codex && active && <div className="space-y-2 pt-3">
+                                <label htmlFor="desktop-reasoning-effort" className="font-semibold">Reasoning effort</label>
+                                <p id="desktop-reasoning-hint" className="text-sm text-muted-foreground">How much reasoning Codex uses for the next message.</p>
+                                <select id="desktop-reasoning-effort" aria-describedby="desktop-reasoning-hint" className={selectClass}
+                                    disabled={!reasoning?.supported.length}
+                                    value={active.reasoningEffort && reasoning?.supported.includes(active.reasoningEffort) ? active.reasoningEffort : ''}
+                                    onChange={e => void save({ action: 'default', connectionId: codex.id, model: active.model, reasoningEffort: e.target.value || null }, 'Reasoning effort saved.')}>
+                                    <option value="">Model default{reasoning?.default ? ` (${effortLabel(reasoning.default)})` : ''}</option>
+                                    {reasoning?.supported.map(level => <option key={level} value={level}>{effortLabel(level)}</option>)}
+                                </select>
+                            </div>}
                         </div>
                         <div className="space-y-4 rounded-xl border p-4">
                             <label htmlFor="desktop-provider" className="font-semibold">Provider connection</label>
@@ -101,7 +118,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders 
                             <div className="flex items-center gap-2 text-sm"><ProviderIcon provider={provider} className="size-5" /><strong>{provider === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[provider]}</strong>
                                 {provider !== 'codex' && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
                             </div>
-                            {provider === 'codex' ? <DesktopCodexLogin onProviders={onProviders} /> : <form onSubmit={saveKey} className="space-y-2">
+                            {provider === 'codex' ? <DesktopCodexLogin connected={!!connection?.connected} modelCount={connection?.models.length ?? 0} onProviders={onProviders} /> : <form onSubmit={saveKey} className="space-y-2">
                                 <label htmlFor="desktop-api-key" className="text-sm font-medium">{connection ? 'Replacement API key' : 'API key'}</label>
                                 <div className="flex gap-2">
                                     <Input id="desktop-api-key" type="password" autoComplete="off" placeholder={CONNECTION_TOKEN_KEY[provider]} value={key} onChange={e => setKey(e.target.value)} />

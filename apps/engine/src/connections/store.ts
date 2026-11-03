@@ -29,12 +29,16 @@ async function writeConfig(id: string, config: ConnectionConfig): Promise<void> 
     await rename(tmp, target)
 }
 
-export async function createConnection(input: CreateConnectionInput, id = newId()): Promise<LoadedConnection> {
+// Only internal catalog discovery supplies Codex effort options. The HTTP mutation schemas omit them.
+type CodexCatalogFields = Pick<ConnectionConfig, 'codexReasoning'>
+
+export async function createConnection(input: CreateConnectionInput & CodexCatalogFields, id = newId()): Promise<LoadedConnection> {
     assertDesktopProvider(input.provider, id)
     const config = connectionConfigSchema.parse({
         name: input.name,
         provider: input.provider,
         models: input.models,
+        ...(input.codexReasoning && { codexReasoning: input.codexReasoning }),
         baseUrl: input.baseUrl,
         extraModels: input.extraModels,
         createdAt: nowIso(),
@@ -47,7 +51,7 @@ export async function createConnection(input: CreateConnectionInput, id = newId(
     return reloadConnection(id)
 }
 
-export async function patchConnection(id: string, patch: UpdateConnectionInput): Promise<LoadedConnection> {
+export async function patchConnection(id: string, patch: UpdateConnectionInput & CodexCatalogFields): Promise<LoadedConnection> {
     if (id === RERUN_CONNECTION_ID && patch.name !== undefined) throw badRequest('The Rerun connection cannot be renamed')
     // Rerun Balanced is the one model a box always has, so switching every model off can never
     // leave it with nothing to run on.

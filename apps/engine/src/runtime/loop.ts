@@ -1,7 +1,7 @@
 import { streamText, type LanguageModelUsage, type ModelMessage, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
 import { RERUN_CONNECTION_ID, contextTextPart, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
-import { mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
+import { desktopCodexEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
 import { prepareRunHistory } from './compaction/compact.js'
 import { repairToolPairs } from './compaction/repair.js'
 import { approvalSummary, canonicalHitlName, findPendingHitl, hitlStepLacksMessage, hitlTurnIsOver, isHitlToolName, secretSummary, takeoverSummary, type PendingHitl } from '../tools/builtin/hitl.js'
@@ -390,6 +390,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         agent = resolved === baseAgent.resolved ? baseAgent : { ...baseAgent, resolved }
         ;({ connection, provider, model } = resolved)
         assertDesktopProvider(provider, resolved.connection?.id)
+        const effort = await desktopCodexEffort(resolved)
         const t0 = Date.now()
         const order = turnOrder(provider, await answeringModel(provider, model))
         const ctx: RunContext = { agent, sessionId, logger, provider, model, turnOrder: order, author, writer, abortSignal: controller.signal, callTargets: [], hostBreaker: new HostBreaker(), partialResults, skillProposals }
@@ -430,6 +431,9 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         // Read before the turn is stored: a resumed thread only gets this turn, so the session must
         // hold nothing the thread has not seen.
         const resumeThreadId = provider === 'codex' ? codexThreadToResume(agent.id, sessionId, connection?.id ?? RERUN_CONNECTION_ID, await lastMessageId(agent.id, sessionId)) : undefined
+        const codexTurnOptions = resumeThreadId || effort ? {
+            'codex-app-server': { ...(resumeThreadId ? { threadId: resumeThreadId } : {}), ...(effort ? { effort } : {}) },
+        } : undefined
 
         // The turn is stored as it is sent, its context part included: the history the next turn
         // replays is then byte for byte the prompt the provider already cached. Only the signature
@@ -459,7 +463,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             model: languageModel,
             system: cached.system,
             messages: cached.messages,
-            providerOptions: mergeProviderOptions(mergeProviderOptions(cached.providerOptions, reasoningProviderOptions(provider)), resumeThreadId ? { 'codex-app-server': { threadId: resumeThreadId } } : undefined),
+            providerOptions: mergeProviderOptions(mergeProviderOptions(cached.providerOptions, reasoningProviderOptions(provider)), codexTurnOptions),
             tools,
             abortSignal: controller.signal,
             experimental_repairToolCall: repairToolCall,

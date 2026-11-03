@@ -3,7 +3,7 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { tmpdir, userInfo } from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, output, resourcesDir } from './lib.mjs'
+import { existsSync, output, repoRoot, resourcesDir } from './lib.mjs'
 
 const execFileAsync = promisify(execFile)
 const failures = []
@@ -26,8 +26,10 @@ check(nodeVersion === 'v22.23.4', `bundled node runs (${nodeVersion})`)
 const probeHome = await mkdtemp(join(tmpdir(), 'rerun-verify-codex-'))
 try {
     await Promise.all(['state', 'tmp'].map(name => mkdir(join(probeHome, name), { mode: 0o700 })))
+    const { pnpm } = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf8'))
+    const pinnedVersion = pnpm.overrides['ai-sdk-provider-codex-cli@1.3.1>@openai/codex']
     const version = await output(resolved.codexPath, ['--version'], { env: { RERUN_CODEX_PROFILE: probeHome, RERUN_MAC_HOME: userInfo().homedir }, timeout: 15000 }).catch(() => '')
-    check(version === 'codex-cli 0.144.6', 'isolated bundled Codex CLI matches the pinned version')
+    check(version === `codex-cli ${pinnedVersion}`, 'isolated bundled Codex CLI matches the pinned version')
 } finally { await rm(probeHome, { recursive: true, force: true }) }
 
 const engineDir = join(resourcesDir, 'runtime', 'engine')

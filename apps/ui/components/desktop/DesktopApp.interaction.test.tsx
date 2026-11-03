@@ -126,6 +126,121 @@ test('a reopened workspace can replace a saved key and recover after a failed sa
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('Codex Settings refreshes the account model list while keeping the selected Terra model', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const terra = 'gpt-5.6-terra'
+    const accountModel = 'test-account-model'
+    const connection = { id: 'mac-chatgpt', name: 'ChatGPT (Codex)', provider: 'codex' as const, models: [terra], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }
+    let providers: ConnectionsList = { connections: [connection], default: { connectionId: connection.id, model: terra } }
+    const actions: unknown[] = []
+    mockDesktopFetch((url, init) => {
+        if (url === settingsUrl && (init?.method ?? 'GET') === 'GET') return Response.json(providers)
+        if (url === '/api/desktop/codex-login' && init?.method === 'POST') {
+            actions.push(JSON.parse(String(init.body)))
+            const status = actions.length === 2 ? { phase: 'connected', catalogError: 'Catalog temporarily unavailable.' } : { phase: 'connected' }
+            const models = ['gpt-5.6-sol', terra, accountModel]
+            if (actions.length === 3) models.push('another-test-model')
+            providers = { ...providers, connections: [{ ...connection, models }] }
+            return Response.json({ status, providers })
+        }
+    })
+    const button = (label: string) => [...container.querySelectorAll('button')].find(item => item.textContent?.trim() === label)!
+    const assertChoices = (labels: string[]) => {
+        const select = container.querySelector<HTMLSelectElement>('#desktop-default')!
+        expect([...select.options].map(option => option.textContent).sort()).toEqual([...labels].sort())
+        expect(select.options[select.selectedIndex]?.textContent).toBe('GPT-5.6 Terra')
+    }
+    const refreshed = ['GPT-5.6 Sol', 'GPT-5.6 Terra', accountModel]
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        await act(async () => { button('Settings').click() })
+        expect(actions).toEqual([{ action: 'refresh' }])
+        assertChoices(refreshed)
+        await act(async () => { button('Refresh models').click() })
+        expect(container.querySelector('[role="alert"]')?.textContent).toBe('Catalog temporarily unavailable.')
+        assertChoices(refreshed)
+        await act(async () => { button('Refresh models').click() })
+        expect(actions).toEqual([{ action: 'refresh' }, { action: 'refresh' }, { action: 'refresh' }])
+        expect(container.querySelector('[role="alert"]')).toBeNull()
+        assertChoices([...refreshed, 'another-test-model'])
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('reasoning effort uses the active model’s supported levels and the saved workspace choice', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const terra = 'gpt-5.6-terra', sol = 'gpt-5.6-sol', luna = 'gpt-5.6-luna'
+    const codex = {
+        id: 'mac-chatgpt', name: 'ChatGPT (Codex)', provider: 'codex' as const, models: [terra, sol, luna],
+        extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '',
+        codexReasoning: {
+            [terra]: { supported: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], default: 'medium' },
+            [sol]: { supported: ['high', 'xhigh'], default: 'high' },
+            [luna]: { supported: ['low', 'medium'], default: 'low' },
+        },
+    }
+    const atModel = (model: string) => ({ connectionId: codex.id, model })
+    let providers: ConnectionsList = { connections: [codex], default: { ...atModel(terra), reasoningEffort: 'high' } }
+    const replies = [
+        { ...atModel(terra), reasoningEffort: 'xhigh' }, { ...atModel(sol), reasoningEffort: 'xhigh' },
+        atModel(luna), { ...atModel(luna), reasoningEffort: 'medium' }, atModel(luna),
+    ]
+    const writes: unknown[] = []
+    mockDesktopFetch((url, init) => {
+        if (url === settingsUrl && (init?.method ?? 'GET') === 'GET') return Response.json(providers)
+        if (url === '/api/desktop/codex-login' && init?.method === 'POST' && JSON.parse(String(init.body)).action === 'refresh')
+            return Response.json({ status: { phase: 'connected' }, providers })
+        if (url === settingsUrl && init?.method === 'PATCH' && writes.length < replies.length) {
+            providers = { ...providers, default: replies[writes.length] }
+            writes.push(JSON.parse(String(init.body)))
+            return Response.json(providers)
+        }
+    })
+    const open = (name: string) => act(async () => { [...container.querySelectorAll('button')].find(b => b.textContent?.trim() === name)!.click() })
+    const field = (id: string) => container.querySelector<HTMLSelectElement>(id)!
+    const change = (select: HTMLSelectElement, value: string) => act(async () => {
+        select.value = value
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    const chooseModel = (name: string) => {
+        const select = field('#desktop-default')
+        return change(select, [...select.options].find(o => o.textContent === name)!.value)
+    }
+    const effort = () => field('#desktop-reasoning-effort')
+    const levels = () => [...effort().options].map(o => o.value)
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        await open('Settings')
+        expect(levels()).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+        expect(effort().options[0].textContent).toBe('Model default (Medium)')
+        expect(effort().value).toBe('high')
+        await change(effort(), 'xhigh')
+        await open('Team board')
+        await open('Settings')
+        expect(effort().value).toBe('xhigh')
+        await chooseModel('GPT-5.6 Sol')
+        expect(levels()).toEqual(['', 'high', 'xhigh'])
+        expect(effort().value).toBe('xhigh')
+        await chooseModel('GPT-5.6 Luna')
+        expect(levels()).toEqual(['', 'low', 'medium'])
+        expect(effort().value).toBe('')
+        expect(effort().options[0].textContent).toBe('Model default (Low)')
+        await change(effort(), 'medium')
+        expect(effort().value).toBe('medium')
+        await change(effort(), '')
+        expect(effort().value).toBe('')
+        expect(writes).toEqual([
+            { action: 'default', ...atModel(terra), reasoningEffort: 'xhigh' },
+            { action: 'default', ...atModel(sol) }, { action: 'default', ...atModel(luna) },
+            { action: 'default', ...atModel(luna), reasoningEffort: 'medium' },
+            { action: 'default', ...atModel(luna), reasoningEffort: null },
+        ])
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('a board tile opens the saved conversation and New chat starts a separate session', async () => {
     const container = document.createElement('div')
     document.body.append(container)

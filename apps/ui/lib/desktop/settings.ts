@@ -8,7 +8,7 @@ export type DesktopProvider = z.infer<typeof desktopProvider>
 const id = z.string().trim().min(1).max(256)
 export const settingsChange = z.discriminatedUnion('action', [
     z.object({ action: z.literal('key'), provider: apiProvider, connectionId: id.optional(), apiKey: z.string().trim().min(1).max(4096) }),
-    z.object({ action: z.literal('default'), connectionId: id, model: id }),
+    z.object({ action: z.literal('default'), connectionId: id, model: id, reasoningEffort: id.nullable().optional() }),
     z.object({ action: z.literal('models'), connectionId: id, models: z.array(id).max(256), extraModels: z.array(id).max(256) }),
     z.object({ action: z.literal('endpoint'), connectionId: id, baseUrl: z.union([z.literal(''), z.url({ protocol: /^https?$/ })]) }),
     z.object({ action: z.literal('appearance'), theme: desktopTheme }),

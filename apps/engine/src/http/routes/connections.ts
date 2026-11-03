@@ -1,16 +1,19 @@
 import { Hono } from 'hono'
-import { RERUN_CONNECTION_ID, boxDefaultModelSchema, createConnectionSchema, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
+import { RERUN_CONNECTION_ID, boxDefaultUpdateSchema, createConnectionSchema, updateConnectionKeysSchema, updateConnectionSchema } from '@rerun/contracts'
 import { connectionExists, isConnected, toSummary } from '../../connections/loader.js'
 import { findConnection, getConnection, listConnections } from '../../connections/registry.js'
 import { assertConnectionDeletable, createConnection, deleteConnection, patchConnection, updateConnectionKeys } from '../../connections/store.js'
 import { connectionUsage, releaseConnection } from '../../connections/release.js'
-import { clearBoxDefault, readBoxDefault, writeBoxDefault } from '../../connections/default.js'
+import { clearBoxDefault, readBoxDefault, updateBoxDefault, writeBoxDefault } from '../../connections/default.js'
+import { withConnectionLock } from '../../connections/lock.js'
 import { servesModel } from '../../connections/resolve.js'
 import { defaultModelOf } from '../../agents/availability.js'
 import { refreshStaleCodexPlanLimits } from '../../connections/codex-plan-limits.js'
 import type { LoadedConnection } from '../../connections/types.js'
 import { sendNotification } from '../../runtime/notify.js'
 import { assertDesktopProvider, desktopApp, desktopProviderAllowed } from '../../desktop/policy.js'
+import { DESKTOP_CODEX_ID } from '../../desktop/codex-runtime.js'
+import { badRequest, HttpError } from '../../lib/errors.js'
 
 export const connectionRoutes = new Hono()
 
@@ -31,7 +34,25 @@ connectionRoutes.get('/', async c => {
 // Registered before `/:id`: Hono matches same-method routes in registration order, so `/default`
 // would otherwise be read as a connection id.
 connectionRoutes.put('/default', async c => {
-    const { connectionId, model } = boxDefaultModelSchema.parse(await c.req.json())
+    const { connectionId, model, reasoningEffort } = boxDefaultUpdateSchema.parse(await c.req.json())
+    if (desktopApp() && connectionId === DESKTOP_CODEX_ID) {
+        return withConnectionLock(connectionId, async () => {
+            const connection = await findConnection(connectionId)
+            if (!connection) return c.json({ error: 'connection not found' }, 404)
+            assertDesktopProvider(connection.config.provider, connectionId)
+            if (connection.config.provider !== 'codex' || !isConnected(connection) || !servesModel(connection, model)) return c.json({ error: 'Choose a model from the connected Codex account.' }, 400)
+            const supported = connection.config.codexReasoning?.[model]?.supported ?? []
+            return c.json(await updateBoxDefault(current => {
+                if (reasoningEffort !== undefined) {
+                    if (current?.connectionId !== connectionId || current.model !== model) throw new HttpError(409, 'The selected model has changed. Choose the effort for the current model.')
+                    if (reasoningEffort && !supported.includes(reasoningEffort)) throw badRequest('Choose a reasoning effort supported by this Codex model.')
+                }
+                const effort = reasoningEffort === undefined && current?.connectionId === connectionId ? current.reasoningEffort : reasoningEffort
+                return { connectionId, model, ...(effort && supported.includes(effort) && { reasoningEffort: effort }) }
+            }))
+        })
+    }
+    if (reasoningEffort !== undefined) return c.json({ error: 'Reasoning effort is only available for desktop Codex models.' }, 400)
     const connection = await findConnection(connectionId)
     if (!connection) return c.json({ error: 'connection not found' }, 404)
     assertDesktopProvider(connection.config.provider, connection.id)

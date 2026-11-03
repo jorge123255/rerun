@@ -106,6 +106,22 @@ describe('a card and the message written after it', () => {
     const toolRow = (id: string, toolCallId: string, n: number) => ({ id, sessionId: 's1', role: 'tool' as const, contentJson: JSON.stringify([{ type: 'tool-result', toolCallId, toolName: 'ask_user', output: { status: 'delivered' } }]), toolCallsJson: null, createdAt: at(n) })
     const askUser = (toolCallId: string) => ({ type: 'tool-call', toolCallId, toolName: 'ask_user', input: { questions: [{ question: 'Which product?' }] } })
 
+    it('restores only marked Codex summaries for desktop, without raw or encrypted provider fields', () => {
+        const rows = [assistant('a1', [
+            { type: 'reasoning', text: 'Raw' },
+            { type: 'reasoning', text: 'Legacy mixed content', providerOptions: { 'codex-app-server': { isSummary: true } } },
+            { type: 'reasoning', text: 'Comparing options.', providerOptions: { 'codex-app-server': { isPublicSummary: true, encrypted: 'Opaque bytes' } } },
+            { type: 'text', text: 'Reply' },
+        ], 1)]
+        expect(transformEngineMessages(rows, { desktopSummaries: true })[0].parts).toEqual([
+            { type: 'reasoning', text: 'Comparing options.', providerMetadata: { 'codex-app-server': { isPublicSummary: true } } },
+            { type: 'text', text: 'Reply' },
+        ])
+        expect(transformEngineMessages(rows)[0].parts).toEqual([{ type: 'text', text: 'Reply' }])
+        const legacyObject = { ...rows[0], contentJson: JSON.stringify({ type: 'reasoning', text: 'Hidden object' }) }
+        expect(transformEngineMessages([legacyObject], { desktopSummaries: true })).toEqual([])
+    })
+
     it('folds the message into the card message, after the call, as the live transcript holds it', () => {
         const messages = transformEngineMessages([assistant('a1', [askUser('c1')], 1), toolRow('t1', 'c1', 2), assistant('a2', [{ type: 'text', text: 'Here is why I ask.' }], 3)])
         expect(messages).toHaveLength(1)

@@ -59,4 +59,6 @@ The preview is not a general-distribution release. Native computer control, Clau
 
 Settings → AI providers → Connect ChatGPT (Codex) starts device authorization on the bundled Codex app-server. It returns a verification link and short code. Once OpenAI approves, the engine reads the ChatGPT account and runner model catalog, registers the connection, and selects its default model. The CLI owns refresh and stores credentials in the macOS Keychain scoped to a separate Rerun Codex home. Rerun stores connection metadata and a sign-in flag, not the OAuth tokens. Cancel or sign out in the same panel.
 
+Opening the connected Codex panel or choosing **Refresh models** reloads every page of models the runner offers for chat. Rerun keeps the selected model while it is available and retains the saved catalog if a refresh fails. The reasoning-effort picker uses the levels reported for that model. Its selection is stored with the workspace default and applied to the next coworker turn, including in an existing conversation. **Model default** uses the effort recommended by Codex.
+
 Both streaming chats and one-shot model calls use the pinned arm64 runner via the verified resource manifest. Its launcher clears the environment, applies a macOS sandbox, and uses a private working directory. Rerun does not borrow a personal Codex login or launch the user's installed CLI.

@@ -74,7 +74,13 @@ async function applyChange(runtime: DesktopRuntime, change: SettingsChange) {
     if (change.action === 'default') {
         if (!connection.connected || ![...connection.models, ...connection.extraModels].includes(change.model))
             throw new DesktopHttpError(400, 'Choose a model offered by a connected provider.')
-        await setBoxDefault(engine, { connectionId: connection.id, model: change.model })
+        if (change.reasoningEffort !== undefined) {
+            if (connection.provider !== 'codex' || list.default?.connectionId !== connection.id || list.default.model !== change.model)
+                throw new DesktopHttpError(400, 'Choose the current Codex model before changing reasoning effort.')
+            if (change.reasoningEffort !== null && !connection.codexReasoning?.[change.model]?.supported.includes(change.reasoningEffort))
+                throw new DesktopHttpError(400, 'Choose a reasoning effort offered by this Codex model.')
+        }
+        await setBoxDefault(engine, { connectionId: connection.id, model: change.model, reasoningEffort: change.reasoningEffort })
         return
     }
     if (change.action === 'endpoint') {

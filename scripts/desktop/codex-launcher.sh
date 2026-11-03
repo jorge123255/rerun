@@ -29,4 +29,6 @@ exec /usr/bin/env -i HOME="$mac_home" CODEX_HOME="$profile/state" TMPDIR="$profi
     "$bin_dir/codex" -c 'cli_auth_credentials_store="keyring"' -c 'sandbox_mode="read-only"' -c 'approval_policy="never"' \
     -c 'web_search="disabled"' -c 'project_doc_max_bytes=0' -c 'mcp_servers={}' -c 'skills.bundled.enabled=false' \
     --disable shell_tool --disable unified_exec --disable hooks --disable plugins --disable apps \
-    --disable image_generation --disable in_app_browser --disable multi_agent --disable multi_agent_v2 "$@"
+    --disable image_generation --disable in_app_browser --disable multi_agent --disable multi_agent_v2 \
+    --disable browser_use --disable computer_use --disable in_app_local_automation --disable in_app_voice \
+    --disable code_mode --disable code_mode_host --disable remote_plugin --disable daemon_auto_start "$@"

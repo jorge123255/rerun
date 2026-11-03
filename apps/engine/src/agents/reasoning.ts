@@ -1,5 +1,9 @@
 import type { streamText } from 'ai'
 import type { Provider } from '@rerun/contracts'
+import { readBoxDefault } from '../connections/default.js'
+import { DESKTOP_CODEX_ID } from '../desktop/codex-runtime.js'
+import { desktopApp } from '../desktop/policy.js'
+import type { RunModel } from './availability.js'
 
 type ProviderOptions = NonNullable<Parameters<typeof streamText>[0]['providerOptions']>
 
@@ -16,6 +20,18 @@ const REASONING_OPTIONS: Partial<Record<Provider, ProviderOptions>> = {
 
 export function reasoningProviderOptions(provider: Provider): ProviderOptions | undefined {
     return REASONING_OPTIONS[provider]
+}
+
+export async function desktopCodexEffort({ provider, connection, model }: RunModel): Promise<string | undefined> {
+    if (provider !== 'codex' || !desktopApp() || connection?.id !== DESKTOP_CODEX_ID) return
+    const options = connection.config.codexReasoning?.[model]
+    if (!options) return
+    const selected = await readBoxDefault()
+    if (selected?.connectionId === connection.id && selected.model === model &&
+        selected.reasoningEffort && options.supported.includes(selected.reasoningEffort)) return selected.reasoningEffort
+    // Native Codex carries effort across turns. Send the model's recommended value
+    // explicitly so switching back to Auto also resets an already-open conversation.
+    return options.default
 }
 
 // One level deep on purpose: `openai` already carries the `promptCacheKey` that applyCaching put

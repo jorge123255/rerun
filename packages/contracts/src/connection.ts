@@ -1,6 +1,14 @@
 import { z } from 'zod'
 import { RERUN_MODELS, providerSchema } from './agent.js'
 
+// Populated by the desktop Codex runner. Its catalog, not a fixed enum, defines the available levels.
+const reasoningLevel = z.string().min(1)
+const codexReasoningSchema = z.record(z.string(), z.object({
+    supported: z.array(reasoningLevel),
+    default: reasoningLevel.optional(),
+}))
+export type CodexModelReasoning = z.infer<typeof codexReasoningSchema>
+
 // A named credential held by the box rather than by an agent. Agents point at one through
 // `config.connectionId`, so plugging a subscription once is enough for every agent on the box, and
 // a single refresh lineage serves all of them instead of one per agent.
@@ -10,6 +18,7 @@ export const connectionConfigSchema = z.object({
     // The model ids this connection offers. Curation lives here rather than in the browser, so it
     // is shared by everyone on the box and survives a new device.
     models: z.array(z.string()).default([]),
+    codexReasoning: codexReasoningSchema.optional(),
     // OpenRouter-compatible router of the user's own. Empty falls back to openrouter.ai, and it has
     // to be a valid member of the type since a PATCH cannot clear a field by sending `undefined`.
     baseUrl: z.url().or(z.literal('')).optional(),
@@ -57,8 +66,11 @@ export type ConnectionSummary = z.infer<typeof connectionSummarySchema>
 // The pair a box runs when an agent names no model of its own. One record for the whole box rather
 // than a flag on each connection.json: "exactly one of them is true" is an invariant nothing can
 // hold across N independent writes, and the default is a pair anyway.
-export const boxDefaultModelSchema = z.object({ connectionId: z.string(), model: z.string() })
+export const boxDefaultModelSchema = z.object({ connectionId: z.string(), model: z.string(), reasoningEffort: reasoningLevel.optional() })
 export type BoxDefaultModel = z.infer<typeof boxDefaultModelSchema>
+// Leave effort out to switch models. Send null to restore the selected model's native default.
+export const boxDefaultUpdateSchema = boxDefaultModelSchema.extend({ reasoningEffort: reasoningLevel.nullish() })
+export type BoxDefaultUpdate = z.infer<typeof boxDefaultUpdateSchema>
 
 export const connectionsListSchema = z.object({
     connections: z.array(connectionSummarySchema),

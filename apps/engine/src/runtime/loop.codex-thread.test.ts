@@ -17,7 +17,10 @@ vi.mock('../connections/codex-auth.js', () => ({ syncCodexAuth: async () => {} }
 vi.mock('../connections/codex-plan-limits.js', () => ({ refreshCodexPlanLimits: async () => {} }))
 vi.mock('../agents/availability.js', async importOriginal => ({
     ...(await importOriginal<typeof import('../agents/availability.js')>()),
-    resolveRunModel: async () => ({ provider: 'codex', model: 'gpt-5.5', connection: { id: 'codex-cnx', provider: 'codex', env: {}, config: {} } }),
+    resolveRunModel: async () => ({
+        provider: 'codex', model: 'gpt-5.5',
+        connection: { id: 'mac-chatgpt', env: {}, config: { codexReasoning: { 'gpt-5.5': { supported: ['low', 'medium', 'high'], default: 'medium' } } } },
+    }),
 }))
 
 vi.mock('../agents/providers.js', async importOriginal => {
@@ -64,6 +67,7 @@ const { getAgent } = await import('../agents/registry.js')
 const { createSession } = await import('../db/repos/sessions.js')
 const { appendMessage } = await import('../db/repos/messages.js')
 const { forgetCodexThreadsOf } = await import('../agents/codex-threads.js')
+const { clearBoxDefault, writeBoxDefault } = await import('../connections/default.js')
 const { runAgent } = await import('./loop.js')
 
 const id = 'codexthreadagent'
@@ -84,7 +88,7 @@ describe('a Codex conversation keeps its thread', () => {
         calls.length = 0
         turn.threadId = 'thread-1'
         turn.fail = false
-        forgetCodexThreadsOf('codex-cnx')
+        forgetCodexThreadsOf('mac-chatgpt')
     })
 
     it('starts a thread on the first message and resumes it on the next', async () => {
@@ -92,6 +96,32 @@ describe('a Codex conversation keeps its thread', () => {
         await send(session.id, 'hello')
         await send(session.id, 'and then?')
         expect(calls).toEqual([undefined, { threadId: 'thread-1' }])
+    })
+
+    it('applies the desktop effort to each turn of an existing conversation', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.stubEnv('RERUN_DESKTOP_CODEX_RUNNER', '/test/codex')
+        const selected = { connectionId: 'mac-chatgpt', model: 'gpt-5.5' }
+        try {
+            const session = await createSession(id, 'effort')
+            await writeBoxDefault({ ...selected, reasoningEffort: 'low' })
+            await send(session.id, 'first')
+            await writeBoxDefault({ ...selected, reasoningEffort: 'high' })
+            await send(session.id, 'change effort')
+            await writeBoxDefault(selected)
+            await send(session.id, 'use the model default')
+            await writeBoxDefault({ ...selected, model: 'another-model', reasoningEffort: 'high' })
+            await send(session.id, 'keep this model’s own effort')
+            expect(calls).toEqual([
+                { effort: 'low' },
+                { threadId: 'thread-1', effort: 'high' },
+                { threadId: 'thread-1', effort: 'medium' },
+                { threadId: 'thread-1', effort: 'medium' },
+            ])
+        } finally {
+            vi.unstubAllEnvs()
+            await clearBoxDefault()
+        }
     })
 
     it('starts a new thread once a message the thread never saw lands in the session', async () => {
