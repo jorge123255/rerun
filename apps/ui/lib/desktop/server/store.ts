@@ -93,8 +93,11 @@ export async function createDesktopSession(db: Client, input: { agentId: string;
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
     await db.execute({
-        sql: 'INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        sql: 'INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(engine_session_id) DO NOTHING',
         args: [id, input.agentId, input.engineSessionId, input.title.slice(0, 80) || 'New conversation', now, now],
     })
-    return (await findDesktopSession(db, id))!
+    // A retry can recover an engine fork that was already registered before the response was lost.
+    const result = await db.execute({ sql: 'SELECT * FROM desktop_sessions WHERE engine_session_id = ? AND agent_id = ?', args: [input.engineSessionId, input.agentId] })
+    if (!result.rows[0]) throw new Error('Engine conversation belongs to another coworker')
+    return sessionOf(result.rows[0])
 }

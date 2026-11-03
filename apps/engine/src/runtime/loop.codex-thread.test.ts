@@ -5,8 +5,9 @@ import { vi } from 'vitest'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-codex-thread-'))
 
-const { calls, turn } = vi.hoisted(() => ({
+const { calls, prompts, turn } = vi.hoisted(() => ({
     calls: [] as Array<Record<string, unknown> | undefined>,
+    prompts: [] as unknown[],
     turn: { threadId: 'thread-1', fail: false },
 }))
 
@@ -30,8 +31,9 @@ vi.mock('../agents/providers.js', async importOriginal => {
         ...actual,
         resolveModel: () => ({
             model: new MockLanguageModelV3({
-                doStream: async (options: { providerOptions?: Record<string, Record<string, unknown>> }) => {
+                doStream: async (options: { prompt: unknown; providerOptions?: Record<string, Record<string, unknown>> }) => {
                     calls.push(options.providerOptions?.['codex-app-server'])
+                    prompts.push(options.prompt)
                     if (turn.fail) throw new Error('codex crashed')
                     return {
                         stream: new ReadableStream({
@@ -65,7 +67,9 @@ const { writeAgentConfig } = await import('../agents/config-write.js')
 const { agentDir } = await import('../config/paths.js')
 const { getAgent } = await import('../agents/registry.js')
 const { createSession } = await import('../db/repos/sessions.js')
-const { appendMessage } = await import('../db/repos/messages.js')
+const { appendMessage, listMessages } = await import('../db/repos/messages.js')
+const { forkReply } = await import('../db/repos/regenerations.js')
+const { getSystemDb } = await import('../db/systemDb.js')
 const { forgetCodexThreadsOf } = await import('../agents/codex-threads.js')
 const { clearBoxDefault, writeBoxDefault } = await import('../connections/default.js')
 const { runAgent } = await import('./loop.js')
@@ -86,6 +90,7 @@ describe('a Codex conversation keeps its thread', () => {
 
     beforeEach(() => {
         calls.length = 0
+        prompts.length = 0
         turn.threadId = 'thread-1'
         turn.fail = false
         forgetCodexThreadsOf('mac-chatgpt')
@@ -130,6 +135,38 @@ describe('a Codex conversation keeps its thread', () => {
         await appendMessage(id, session.id, { role: 'assistant', content: 'an answer from another provider' })
         await send(session.id, 'and then?')
         expect(calls).toEqual([undefined, undefined])
+    })
+
+    it('regenerates from the exact original user turn without later text or a resumed Codex thread', async () => {
+        const { contextTextPart, workspaceAttachmentPart } = await import('@rerun/contracts')
+        const source = await createSession(id, 'branch test')
+        const earlier = await appendMessage(id, source.id, { role: 'user', content: 'earlier question' })
+        await appendMessage(id, source.id, { role: 'assistant', content: 'earlier response' })
+        // Older desktop transcripts can contain a {text} envelope for a saved message.
+        const { client } = await getSystemDb(id)
+        await client.execute({ sql: 'UPDATE messages SET content_json = ? WHERE id = ?', args: ['{"text":"earlier question"}', earlier.id] })
+        const content = [
+            { type: 'text' as const, text: 'Which draft?' },
+            workspaceAttachmentPart({ path: 'draft.md', content: 'ORIGINAL FILE' }),
+            contextTextPart('ORIGINAL TURN CONTEXT'),
+        ]
+        await appendMessage(id, source.id, { role: 'user', content })
+        const target = await appendMessage(id, source.id, { role: 'assistant', content: 'DO NOT REPLAY OLD ANSWER' })
+        await appendMessage(id, source.id, { role: 'user', content: 'DO NOT REPLAY LATER USER' })
+        const old = await listMessages(id, source.id)
+        const fork = await forkReply(id, source, { sessionId: source.id, regenerateMessageId: target.id, requestId: crypto.randomUUID() })
+        const result = await runAgent(await getAgent(id), fork.sessionId, 'Which draft?', undefined, undefined, fork.runId, { source: 'chat', savedUser: fork.user! })
+        expect(await result.settled).toMatchObject({ kind: 'done' })
+        expect(calls).toEqual([undefined])
+        const prompt = JSON.stringify(prompts[0])
+        for (const phrase of ['earlier question', 'earlier response', 'Which draft?', 'ORIGINAL FILE', 'ORIGINAL TURN CONTEXT']) {
+            expect(prompt.split(phrase)).toHaveLength(2)
+        }
+        expect(prompt).not.toContain('DO NOT REPLAY')
+        expect(await listMessages(id, source.id)).toEqual(old)
+        const alternate = await listMessages(id, fork.sessionId)
+        expect(alternate.map(row => row.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
+        expect(alternate[2].contentJson).toBe(JSON.stringify(content))
     })
 
     it('starts a new thread after a turn that failed', async () => {

@@ -66,27 +66,47 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
     }
 }
 
-export async function startDesktopChat(runtime: DesktopRuntime, input: { agentId: string; sessionId?: string; text: string; attachmentPath?: string }): Promise<{ response: Response; sessionId: string }> {
+type DesktopChatInput = { agentId: string } & (
+    | { sessionId?: string; text: string; attachmentPath?: string }
+    | { sessionId: string; regenerateMessageId: string; requestId: string }
+)
+
+export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput): Promise<{ response: Response; sessionId: string }> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     const agent = await findDesktopAgent(db, input.agentId)
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     const existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
-    const file = input.attachmentPath === undefined ? undefined : await readCoworkerFile(runtime, agent.id, input.attachmentPath, 'attach')
+    const regenerate = 'regenerateMessageId' in input
+    const file = !regenerate && input.attachmentPath !== undefined ? await readCoworkerFile(runtime, agent.id, input.attachmentPath, 'attach') : undefined
     const { connection, model } = await desktopModel(runtime)
     const engineResponse = await chat(engineOf(runtime), agent.engineAgentId, {
-        sessionId: existing?.engineSessionId,
-        message: input.text,
-        workspaceAttachment: file && { path: file.path, content: file.content },
+        ...(regenerate ? {
+            sessionId: existing!.engineSessionId,
+            regenerateMessageId: input.regenerateMessageId.slice('engine-'.length),
+            requestId: input.requestId,
+        } : {
+            sessionId: existing?.engineSessionId, message: input.text,
+            workspaceAttachment: file && { path: file.path, content: file.content },
+        }),
         connectionId: connection.id,
         model,
         source: 'dashboard',
         author: { id: 'local-profile-1', name: 'Local User' },
     })
-    if (!engineResponse.ok || !engineResponse.body) throw new DesktopHttpError(502, 'The engine could not start this conversation')
+    if (regenerate && !engineResponse.ok) {
+        if (engineResponse.status === 404) throw new DesktopHttpError(404, 'This reply is no longer in the selected conversation.')
+        if (engineResponse.status === 409) throw new DesktopHttpError(409, 'This reply could not be regenerated. Check that the conversation is idle and the reply is complete.')
+    }
+    // A replay can recover the alternate even after the engine's stream has expired.
+    const completedReplay = regenerate && engineResponse.status === 204
+    if (!engineResponse.ok || (!engineResponse.body && !completedReplay)) throw new DesktopHttpError(502, 'The engine could not start this conversation')
     const engineSessionId = engineResponse.headers.get('x-session-id')
     if (!engineSessionId) throw new DesktopHttpError(502, 'The engine did not return a conversation ID')
-    const session = existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: input.text.trim().slice(0, 80) || 'New conversation' })
+    if (regenerate && engineSessionId === existing!.engineSessionId) throw new DesktopHttpError(502, 'The engine did not return an alternate conversation.')
+    const session = regenerate
+        ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, '') })
+        : existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: input.text.trim() })
     const headers = new Headers({
         'content-type': engineResponse.headers.get('content-type') ?? 'text/event-stream',
         'x-vercel-ai-ui-message-stream': engineResponse.headers.get('x-vercel-ai-ui-message-stream') ?? 'v1',
@@ -94,7 +114,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: { agentId
     })
     const runId = engineResponse.headers.get('x-run-id')
     if (runId) headers.set('x-run-id', runId)
-    return { response: new Response(engineResponse.body, { status: 200, headers }), sessionId: session.id }
+    return { response: new Response(completedReplay ? 'data: [DONE]\n\n' : engineResponse.body, { status: 200, headers }), sessionId: session.id }
 }
 
 export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: string): Promise<HistoryMessage[]> {

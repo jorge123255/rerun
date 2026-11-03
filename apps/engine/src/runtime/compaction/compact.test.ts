@@ -42,7 +42,8 @@ vi.mock('../../connections/cli-auth.js', () => ({
         return () => {}
     },
 }))
-vi.mock('../../db/repos/messages.js', () => ({
+vi.mock('../../db/repos/messages.js', async importOriginal => ({
+    ...(await importOriginal<typeof import('../../db/repos/messages.js')>()),
     listMessagesAfter: async (_agentId: string, _sessionId: string, after?: string) => {
         state.afterArgs.push(after)
         return state.rows

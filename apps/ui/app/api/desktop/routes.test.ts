@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Memory } from '@rerun/contracts'
 import { DESKTOP_ATTACHMENT_MAX_BYTES } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
-import { createDesktopAgent } from '@/lib/desktop/server/store'
+import { createDesktopAgent, createDesktopSession, listDesktopSessions } from '@/lib/desktop/server/store'
 import { PATCH as patchSettings } from './settings/route'
 import { GET as getBootstrap } from './bootstrap/route'
 import { POST as connectProvider } from './providers/openai/route'
@@ -86,6 +86,13 @@ beforeEach(async () => {
         }
         if (req.method === 'POST' && /^\/agents\/engine-agent-[12]\/chat$/.test(req.url ?? '')) {
             sentChats.push(body)
+            if (body.regenerateMessageId) {
+                if (body.regenerateMessageId === 'missing') return res.writeHead(404).end()
+                if (body.regenerateMessageId === 'busy') return res.writeHead(409).end()
+                const replay = sentChats.filter(value => (value as { requestId?: string }).requestId === body.requestId).length > 1
+                res.writeHead(replay ? 204 : 200, { 'x-session-id': 'alternate-session', 'x-run-id': 'alternate-run' })
+                return res.end(replay ? undefined : 'data: [DONE]\n\n')
+            }
             const engineSessionId = req.url?.includes('engine-agent-1') ? 'engine-session-1' : 'engine-session-2'
             res.writeHead(200, { 'content-type': 'text/event-stream', 'x-session-id': engineSessionId, 'x-run-id': 'run-1' })
             return res.end('data: {"type":"text-delta","delta":"Hello back"}\n\n')
@@ -134,6 +141,38 @@ function request(path: string, init: { method?: string; body?: unknown } = {}) {
 }
 
 describe('desktop API routes', () => {
+    it('registers an alternate once, maps durable message IDs and keeps its owner and source distinct', async () => {
+        await connectProvider(request('/api/desktop/providers/openai', { method: 'POST', body: { apiKey: 'fixture-key' } }))
+        const db = await openDesktopDatabase(root)
+        const a = await createDesktopAgent(db, { name: 'First', engineAgentId: 'engine-agent-1' })
+        const b = await createDesktopAgent(db, { name: 'Second', engineAgentId: 'engine-agent-2' })
+        const source = await createDesktopSession(db, { agentId: a.id, engineSessionId: 'source-session', title: 'Original chat' })
+        const body = { agentId: a.id, sessionId: source.id, regenerateMessageId: 'engine-saved-row', requestId: crypto.randomUUID() }
+        const post = (overrides = {}) => postChat(request('/api/desktop/chat', { method: 'POST', body: { ...body, ...overrides } }))
+        expect((await post({ agentId: b.id })).status).toBe(404)
+        for (const extra of [{ text: 'substitute question' }, { attachmentPath: 'substitute.txt' }, { requestId: 'invalid' }, { regenerateMessageId: 'transient' }]) {
+            expect((await post(extra)).status).toBe(400)
+        }
+        expect(sentChats).toEqual([])
+        expect((await post({ regenerateMessageId: 'engine-missing' })).status).toBe(404)
+        expect((await post({ regenerateMessageId: 'engine-busy' })).status).toBe(409)
+        expect(await listDesktopSessions(db, a.id)).toEqual([source])
+        const replies = await Promise.all([post(), post()])
+        const [first, replay] = replies
+        expect(first.headers.get('x-session-id')).toBe(replay.headers.get('x-session-id'))
+        expect(first.headers.get('x-session-id')).not.toBe(source.id)
+        for (const result of replies) {
+            expect(result.status).toBe(200)
+            expect(result.headers.get('x-run-id')).toBe('alternate-run')
+            expect(await result.text()).toBe('data: [DONE]\n\n')
+        }
+        expect(sentChats.at(-1)).toMatchObject({ sessionId: source.engineSessionId, regenerateMessageId: 'saved-row', requestId: body.requestId })
+        expect(sentChats.at(-1)).not.toHaveProperty('message')
+        expect(sentChats.at(-1)).not.toHaveProperty('workspaceAttachment')
+        expect((await listDesktopSessions(db, a.id)).map(s => s.title)).toEqual(['Alternate · Original chat', 'Original chat'])
+        expect(await listDesktopSessions(db, b.id)).toEqual([])
+    })
+
     it('reads only an explicitly attached file from the selected coworker before dispatching chat', async () => {
         await connectProvider(request('/api/desktop/providers/openai', { method: 'POST', body: { apiKey: 'fixture-key' } }))
         const db = await openDesktopDatabase(root)

@@ -33,11 +33,18 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     onChatSession: (id: string) => void
     renderHistory?: (busy: boolean) => ReactNode
 }) {
-    const [input, setInput] = useState('')
+    const [inputs, setInputs] = useState<ReadonlyMap<string, string>>(() => new Map())
     const [attachments, setAttachments] = useState<ReadonlyMap<string, string>>(() => new Map())
     const draftKey = JSON.stringify([agent.id, sessionId])
+    // Ordinary navigation carries the current composer. An alternate and its original keep independent drafts.
+    const inputKey = inputs.has(draftKey) ? draftKey : ''
+    const input = inputs.get(inputKey) ?? ''
+    const setInput = (value: string) => setInputs(current => new Map(current).set(inputKey, value))
     const attachment = attachments.get(draftKey)
-    const pendingAttachment = useRef<{ key: string; input: string } | null>(null)
+    const pendingAttachment = useRef<{ key: string; inputKey: string; input: string } | null>(null)
+    const regenerationIds = useRef(new Map<string, string>())
+    const regenerating = useRef<{ key: string; agentId: string; sessionId: string; draftKey: string } | null>(null)
+    const [regenerationSource, setRegenerationSource] = useState<string | null>(null)
     const setDraftAttachment = useCallback((key: string, path?: string) => {
         setAttachments(current => {
             const next = new Map(current)
@@ -56,21 +63,37 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
 
     const sendToEngine = useCallback<typeof fetch>(async (url, init) => {
         const pending = pendingAttachment.current
+        const alternate = regenerating.current
         let response: Response
         try {
             response = await fetch(url, init)
-            if (pending && !response.ok) {
+            if ((pending || alternate) && !response.ok) {
                 const body = await response.json().catch(() => null)
-                throw new Error(typeof body?.error === 'string' ? body.error : 'Could not send the message with this file. Try again.')
+                const fallback = alternate ? 'Could not regenerate this reply. Try again.' : 'Could not send the message with this file. Try again.'
+                throw new Error(typeof body?.error === 'string' ? body.error : fallback)
             }
         } finally {
             pendingAttachment.current = null
         }
         const id = response.headers.get('x-session-id')
+        if (alternate && (!id || id === alternate.sessionId)) throw new Error('Could not open the alternate chat. Try again.')
         if (response.ok && id) {
             if (pending) {
-                setInput(current => current === pending.input ? '' : current)
+                setInputs(current => current.get(pending.inputKey) === pending.input ? new Map(current).set(pending.inputKey, '') : current)
                 setDraftAttachment(pending.key)
+            }
+            if (alternate) {
+                regenerationIds.current.delete(alternate.key)
+                const alternateKey = JSON.stringify([alternate.agentId, id])
+                setInputs(current => {
+                    const next = new Map(current)
+                    if (!next.has(alternate.draftKey)) {
+                        next.set(alternate.draftKey, next.get('') ?? '')
+                        next.delete('')
+                    }
+                    if (!next.has(alternateKey)) next.set(alternateKey, '')
+                    return next
+                })
             }
             // A new session gets its ID from the first response. Keep its live stream visible.
             setLiveSessionId(id)
@@ -84,11 +107,13 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     // eslint-disable-next-line react-hooks/refs
     const transport = useMemo(() => new DefaultChatTransport({
         api: '/api/desktop/chat',
-        prepareSendMessagesRequest: ({ body, messages }) => ({ body: { ...body, text: lastUserText(messages) } }),
+        prepareSendMessagesRequest: ({ body, messages, trigger, messageId }) => ({
+            body: trigger === 'regenerate-message' ? { ...body, regenerateMessageId: messageId } : { ...body, text: lastUserText(messages) },
+        }),
         fetch: sendToEngine,
     }), [sendToEngine])
 
-    const { messages, setMessages, sendMessage, stop, status, error } = useChat({
+    const { messages, setMessages, sendMessage, regenerate, stop, status, error } = useChat({
         id: `desktop-${agent.id}`,
         transport,
         experimental_throttle: 60,
@@ -99,11 +124,13 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     const ready = history.id === sessionId && !history.error
     const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
     const generating = busy || runInFlight
+    const canRegenerate = !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
     const historyError = history.id === sessionId ? history.error : undefined
     // The SDK throttles message updates. Show the verified snapshot immediately when switching,
     // even if its subscription still holds the previous chat's messages.
-    const transcript = busy ? messages : ready ? history.transcript ?? messages : []
+    const showSaved = ready && (!busy || regenerationSource === sessionId && !!sessionId)
+    const transcript = showSaved ? history.transcript ?? messages : busy ? messages : []
 
     useEffect(() => {
         if (busy) return
@@ -173,14 +200,32 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if (!text || generating || stopping || !ready || pendingAttachment.current) return
+        if (!text || generating || stopping || !ready || pendingAttachment.current || regenerating.current) return
         // Wait for this send's engine-backed session ID before enabling Stop.
         setLiveSessionId(null)
         // A file can change or disappear after selection. Keep both drafts until the server accepts it.
-        if (attachment) pendingAttachment.current = { key: draftKey, input }
+        if (attachment) pendingAttachment.current = { key: draftKey, inputKey, input }
         else setInput('')
         const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(attachment && { attachmentPath: attachment }) }
         void sendMessage({ text, ...(attachment && { metadata: { attachmentPath: attachment } }) }, { body })
+    }
+
+    async function regenerateReply(messageId: string) {
+        if (!canRegenerate || !sessionId || !history.transcript || regenerating.current || pendingAttachment.current) return
+        const key = JSON.stringify([sessionId, messageId])
+        const requestId = regenerationIds.current.get(key) ?? crypto.randomUUID()
+        regenerationIds.current.set(key, requestId)
+        regenerating.current = { key, agentId: agent.id, sessionId, draftKey }
+        setRegenerationSource(sessionId)
+        setLiveSessionId(null)
+        try {
+            setMessages(history.transcript)
+            await regenerate({ messageId, body: { agentId: agent.id, sessionId, requestId } })
+        } finally {
+            regenerating.current = null
+            setRegenerationSource(null)
+            setAttempt(n => n + 1)
+        }
     }
 
     return (
@@ -225,7 +270,8 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                                 {message.role === 'user' && message.metadata && typeof message.metadata === 'object' && 'attachmentPath' in message.metadata && typeof message.metadata.attachmentPath === 'string' ?
                                     <div className="mb-1"><AttachmentChip path={message.metadata.attachmentPath} /></div> : null}
                                 {message.role === 'assistant'
-                                    ? <DesktopAssistantReply message={message} streaming={status === 'streaming' && messageIndex === transcript.length - 1} />
+                                    ? <DesktopAssistantReply message={message} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
+                                        onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
                                     : message.parts.map((part, index) => part.type === 'text' ? <span key={index}>{part.text}</span> : null)}
                             </div>
                         </div>

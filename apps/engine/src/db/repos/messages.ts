@@ -12,6 +12,18 @@ export function extractText(content: unknown): string {
     return visibleText(content, ' ')
 }
 
+// Older conversations can hold a raw string, an untyped {text} envelope or a single AI part.
+export function storedContent(json: string): ModelMessage['content'] {
+    let content
+    try { content = JSON.parse(json) } catch { return json }
+    if (typeof content === 'string' || Array.isArray(content)) return content
+    if (content && typeof content === 'object') {
+        if (typeof content.type === 'string') return [content]
+        if (typeof content.text === 'string') return content.text
+    }
+    return []
+}
+
 export async function appendMessage(agentId: string, sessionId: string, message: ModelMessage, author?: MessageAuthor): Promise<MessageRow> {
     const row: MessageRow = {
         id: newId(),
@@ -39,7 +51,7 @@ export async function setMessageToolCalls(agentId: string, messageId: string, ca
 
 export async function listMessages(agentId: string, sessionId: string): Promise<MessageRow[]> {
     const { db } = await getSystemDb(agentId)
-    return db.select().from(messages).where(eq(messages.sessionId, sessionId)).orderBy(asc(messages.createdAt))
+    return db.select().from(messages).where(eq(messages.sessionId, sessionId)).orderBy(asc(messages.createdAt), asc(sql`rowid`))
 }
 
 // Two messages of one turn can share a millisecond, so the insertion order breaks the tie.
@@ -58,7 +70,7 @@ export async function listSessionAuthorIds(agentId: string, sessionId: string): 
 export async function listMessagesAfter(agentId: string, sessionId: string, after?: string): Promise<MessageRow[]> {
     const { db } = await getSystemDb(agentId)
     const where = after ? and(eq(messages.sessionId, sessionId), gt(messages.createdAt, after)) : eq(messages.sessionId, sessionId)
-    return db.select().from(messages).where(where).orderBy(asc(messages.createdAt))
+    return db.select().from(messages).where(where).orderBy(asc(messages.createdAt), asc(sql`rowid`))
 }
 
 export async function collectAssistantText(agentId: string, sessionId: string, from: string, to: string | null): Promise<string> {
@@ -67,10 +79,10 @@ export async function collectAssistantText(agentId: string, sessionId: string, f
         .select()
         .from(messages)
         .where(and(eq(messages.sessionId, sessionId), gte(messages.createdAt, from)))
-        .orderBy(asc(messages.createdAt))
+        .orderBy(asc(messages.createdAt), asc(sql`rowid`))
     return rows
         .filter(r => r.role === 'assistant' && (!to || r.createdAt <= to))
-        .map(r => extractText(JSON.parse(r.contentJson)))
+        .map(r => extractText(storedContent(r.contentJson)))
         .filter(Boolean)
         .join('\n')
 }

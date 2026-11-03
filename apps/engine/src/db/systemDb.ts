@@ -219,6 +219,16 @@ export const SYSTEM_DB_MIGRATIONS: SqliteMigration[] = [
             await ensureColumns(client, 'run_steps', RUN_STEP_CACHE_COST_COLUMNS)
         },
     },
+    {
+        version: 4,
+        id: 'desktop-regenerated-conversations',
+        up: async client => {
+            await client.execute(`CREATE TABLE IF NOT EXISTS desktop_regenerations (
+                request_id TEXT PRIMARY KEY, source_session_id TEXT NOT NULL, source_message_id TEXT NOT NULL,
+                session_id TEXT NOT NULL UNIQUE, run_id TEXT NOT NULL UNIQUE
+            )`)
+        },
+    },
 ]
 
 export const SYSTEM_DB_VERSION = latestVersion(SYSTEM_DB_MIGRATIONS)

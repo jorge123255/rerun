@@ -8,7 +8,7 @@ import { MessageResponse } from '@/components/ai-elements/message'
 import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
 import { Button } from '@/components/ui/button'
-import { CheckIcon, CopyIcon } from '@/lib/icons'
+import { CheckIcon, CopyIcon, RefreshCcwIcon } from '@/lib/icons'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { useCopy } from '@/lib/use-copy'
 
@@ -61,7 +61,7 @@ function replyMarkdown(text: string, streaming = false, plugins: PluginConfig = 
     </MessageResponse>
 }
 
-export function DesktopAssistantReply({ message, streaming }: { message: UIMessage; streaming: boolean }) {
+export function DesktopAssistantReply({ message, streaming, onRegenerate }: { message: UIMessage; streaming: boolean; onRegenerate?: (id: string) => void }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const blocks: ReactNode[] = []
     let text = '', paragraph = ''
@@ -81,10 +81,15 @@ export function DesktopAssistantReply({ message, streaming }: { message: UIMessa
     }
     return <>
         {blocks}
-        {text && !streaming && <Button type="button" variant="ghost" size="sm" aria-label="Copy reply" className="mt-2"
-            onClick={() => copy(text)}>
-            {copied ? <CheckIcon aria-hidden className="size-3.5" /> : <CopyIcon aria-hidden className="size-3.5" />}
-            {copied ? 'Copied' : 'Copy'}
-        </Button>}
+        {text && !streaming && <div className="mt-2 flex flex-wrap items-center gap-1">
+            <Button type="button" variant="ghost" size="sm" aria-label="Copy reply" onClick={() => copy(text)}>
+                {copied ? <CheckIcon aria-hidden className="size-3.5" /> : <CopyIcon aria-hidden className="size-3.5" />}
+                {copied ? 'Copied' : 'Copy'}
+            </Button>
+            {onRegenerate && <Button type="button" variant="ghost" size="sm" title="Opens a new chat and keeps the original"
+                aria-description="Opens a new chat and keeps the original" onClick={() => onRegenerate(message.id)}>
+                <RefreshCcwIcon aria-hidden className="size-3.5" /> Regenerate reply
+            </Button>}
+        </div>}
     </>
 }

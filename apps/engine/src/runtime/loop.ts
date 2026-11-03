@@ -19,9 +19,9 @@ import type { LoadedAgent } from '../agents/types.js'
 import { turnOrder } from '../agents/turn-order.js'
 import { answeringModel } from '../agents/rerun-upstream.js'
 import { listAgentIndex, setAgentStatus } from '../db/repos/agents.js'
-import { appendMessage, lastMessageId, listSessionAuthorIds, setMessageToolCalls } from '../db/repos/messages.js'
+import { appendMessage, lastMessageId, listSessionAuthorIds, setMessageToolCalls, storedContent } from '../db/repos/messages.js'
 import type { MessageRow } from '../db/schema.js'
-import { isSharedConversation, signText } from './message-authors.js'
+import { isSharedConversation, signHistoryMessage, signText } from './message-authors.js'
 import { bumpRunStep, cancelRun, failRun, finishRun, setRunContext, startRun } from '../db/repos/runs.js'
 import { insertRunStep, insertToolCall } from '../db/repos/telemetry.js'
 import { touchSession } from '../db/repos/sessions.js'
@@ -219,6 +219,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     const run = runId ? { id: runId } : await startRun(baseAgent.id, sessionId)
     const controller = registerRunAbort(run.id)
     const author = trigger.source === 'chat' ? trigger.author : undefined
+    const savedUser = trigger.source === 'chat' ? trigger.savedUser : undefined
 
     let agent = baseAgent
     let { connection, provider, model } = baseAgent.resolved
@@ -381,7 +382,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
 
     try {
         // Prepare recall alongside the turn. A failed lookup simply contributes no context.
-        const memoriesP = recallMemories(baseAgent, userText)
+        const memoriesP = savedUser ? Promise.resolve([]) : recallMemories(baseAgent, userText)
         // An override can name a different box connection than the agent's default, so the run works
         // off a view of the agent bound to the connection it will actually bill. The connection object
         // itself stays the shared instance, so a token refreshed here is refreshed for everyone.
@@ -422,14 +423,14 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         const built = await toolsP
         closeTools = built.close
         const { tools } = built
-        const history = repairToolPairs(await prepareRunHistory(ctx, systemText, override, shared, toolPayloadChars(tools)))
+        const history = repairToolPairs(await prepareRunHistory(ctx, systemText, override, shared, toolPayloadChars(tools), savedUser?.id))
 
         const [memories, mcpServers] = await Promise.all([memoriesP, mcpServersP, cliAuthP])
         const recall = recallSection(memories, history)
 
         // Read before the turn is stored: a resumed thread only gets this turn, so the session must
         // hold nothing the thread has not seen.
-        const resumeThreadId = provider === 'codex' ? codexThreadToResume(agent.id, sessionId, connection?.id ?? RERUN_CONNECTION_ID, await lastMessageId(agent.id, sessionId)) : undefined
+        const resumeThreadId = provider === 'codex' && !savedUser ? codexThreadToResume(agent.id, sessionId, connection?.id ?? RERUN_CONNECTION_ID, await lastMessageId(agent.id, sessionId)) : undefined
         const codexTurnOptions = resumeThreadId || effort ? {
             'codex-app-server': { ...(resumeThreadId ? { threadId: resumeThreadId } : {}), ...(effort ? { effort } : {}) },
         } : undefined
@@ -437,14 +438,20 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         // The turn is stored as it is sent, its context part included: the history the next turn
         // replays is then byte for byte the prompt the provider already cached. Only the signature
         // stays out of the row, `signHistoryMessage` puts it back on a shared conversation.
-        const suffix = [recall, userLanguageBlock(trigger.source === 'chat' ? trigger.userLanguage : undefined), nowBlock()].filter(Boolean).join('\n\n')
-        const attachment = trigger.source === 'chat' ? trigger.workspaceAttachment : undefined
-        const context = [...(attachment ? [workspaceAttachmentPart(attachment)] : []), ...(suffix ? [contextTextPart(suffix)] : [])]
-        appendP = appendMessage(agent.id, sessionId, { role: 'user', content: [{ type: 'text', text: userText }, ...context] }, author)
-        appendP.catch(err => logger.error({ err: String(err), agent: agent.id }, 'append user message failed'))
-
-        const turnText = shared ? signText(userText, author) : userText
-        const turnMessages: ModelMessage[] = [...history, { role: 'user', content: [{ type: 'text', text: turnText }, ...context] }]
+        let turn: ModelMessage
+        if (savedUser) {
+            // The fork already contains this user row, including its original recall and file bytes.
+            turn = { role: 'user', content: storedContent(savedUser.contentJson) } as ModelMessage
+            if (shared) turn = signHistoryMessage(turn, savedUser)
+        } else {
+            const suffix = [recall, userLanguageBlock(trigger.source === 'chat' ? trigger.userLanguage : undefined), nowBlock()].filter(Boolean).join('\n\n')
+            const attachment = trigger.source === 'chat' ? trigger.workspaceAttachment : undefined
+            const context = [...(attachment ? [workspaceAttachmentPart(attachment)] : []), ...(suffix ? [contextTextPart(suffix)] : [])]
+            appendP = appendMessage(agent.id, sessionId, { role: 'user', content: [{ type: 'text', text: userText }, ...context] }, author)
+            appendP.catch(err => logger.error({ err: String(err), agent: agent.id }, 'append user message failed'))
+            turn = { role: 'user', content: [{ type: 'text', text: shared ? signText(userText, author) : userText }, ...context] }
+        }
+        const turnMessages = [...history, turn]
 
         const cached = applyCaching(provider, { system, messages: turnMessages, sessionId })
         logger.debug({ agent: agent.id, provider, prepMs: Date.now() - t0 }, 'run prep done')

@@ -40,6 +40,8 @@ Assistant replies render Markdown in live and reopened chats, including headings
 
 When a coworker puts an email, post or message in a `draft` fence, the answer shows a separate card. The fence title labels the card, or it reads **Draft** when the title is empty. **Copy draft** copies just the card’s plain text, preserving its spacing and literal Markdown. While the answer is streaming, the card can be copied as soon as its fence closes. Reopening the conversation renders the cards from the saved reply.
 
+**Regenerate reply** opens an alternate chat for the same coworker. Choose a completed answer and the model receives the conversation through the question that prompted it, including the saved attachment text and recalled notes from that turn. The original chat keeps all its answers and run history. The alternate has a separate run, can be stopped independently, and appears in Chats and Find chat with an **Alternate ·** title.
+
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
 ```json

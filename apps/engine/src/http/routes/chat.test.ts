@@ -207,3 +207,117 @@ describe('POST /agents/:id/chat', () => {
         expect(state.calls.map(call => call.trigger?.userLanguage)).toEqual(['French', undefined])
     })
 })
+
+describe('desktop Regenerate reply', () => {
+    const attachment = { path: 'agenda.md', content: 'Original file contents.' }
+
+    async function history() {
+        const { workspaceAttachmentPart, contextTextPart } = await import('@rerun/contracts')
+        const { appendMessage } = await import('../../db/repos/messages.js')
+        const session = await createSession(id)
+        const first = await appendMessage(id, session.id, { role: 'user', content: 'hello' })
+        await appendMessage(id, session.id, { role: 'assistant', content: 'first answer' })
+        const user = await appendMessage(id, session.id, { role: 'user', content: [
+            { type: 'text', text: 'Review the agenda' }, workspaceAttachmentPart(attachment), contextTextPart('original recall and time'),
+        ] }, { id: 'local', name: 'Local User' })
+        const answer = await appendMessage(id, session.id, { role: 'assistant', content: 'old draft' })
+        await appendMessage(id, session.id, { role: 'user', content: 'later question' })
+        await appendMessage(id, session.id, { role: 'assistant', content: 'later answer' })
+        return { first, user, answer, session, body: { sessionId: session.id, regenerateMessageId: answer.id, requestId: crypto.randomUUID(), source: 'dashboard' } }
+    }
+
+    it('branches an older saved answer exactly once, with an identical saved user payload and no later rows or copied run', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const { listMessages } = await import('../../db/repos/messages.js')
+            const { listRunsByAgent } = await import('../../db/repos/runs.js')
+            const { session, body, user, first } = await history()
+            const original = await listMessages(id, session.id)
+            const responses = await Promise.all([chat(id, body), chat(id, body)])
+            const fork = responses[0].headers.get('x-session-id')!
+            const runId = responses[0].headers.get('x-run-id')
+            expect(fork).toBeTruthy()
+            expect(fork).not.toBe(session.id)
+            for (const res of responses) {
+                expect([200, 204]).toContain(res.status)
+                expect(res.headers.get('x-session-id')).toBe(fork)
+                expect(res.headers.get('x-run-id')).toBe(runId)
+                await res.text()
+            }
+            expect(state.calls).toHaveLength(1)
+            const copied = await listMessages(id, fork)
+            expect(copied.map(row => row.contentJson)).toEqual(original.slice(0, 3).map(row => row.contentJson))
+            expect(copied.every(row => !original.some(source => source.id === row.id))).toBe(true)
+            expect(state.calls[0]).toMatchObject({ sessionId: fork, message: 'Review the agenda', trigger: { savedUser: { id: copied[2].id, contentJson: user.contentJson, authorId: 'local' } } })
+            expect(await listMessages(id, session.id)).toEqual(original)
+            expect(await listRunsByAgent(id, { sessionId: fork })).toHaveLength(1)
+            expect((await chat(id, { ...body, regenerateMessageId: first.id })).status).toBe(409)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('rejects unowned, non-assistant, forged, and busy targets before creating any session', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const { listSessions } = await import('../../db/repos/sessions.js')
+            const { body, session, first } = await history()
+            const before = await listSessions(id)
+            expect((await chat('boss', body)).status).toBe(404)
+            expect((await chat(id, { ...body, regenerateMessageId: 'foreign' })).status).toBe(404)
+            expect((await chat(id, { ...body, regenerateMessageId: first.id })).status).toBe(409)
+            expect((await chat(id, { ...body, workspaceAttachment: attachment })).status).toBe(400)
+            expect((await chat(id, { ...body, message: 'different question' })).status).toBe(400)
+            claimSession(session.id, 'busy')
+            try { expect((await chat(id, body)).status).toBe(409) } finally { releaseSession('busy') }
+            expect(await listSessions(id)).toEqual(before)
+            expect(state.calls).toHaveLength(0)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('rejects cancelled partial answers and hidden-only reasoning, but accepts a legacy {text} reply', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const { getSystemDb } = await import('../../db/systemDb.js')
+            const { session, body, answer, user } = await history()
+            const { client } = await getSystemDb(id)
+            await client.execute({
+                sql: 'INSERT INTO runs (id,agent_id,session_id,status,started_at,finished_at) VALUES (?,?,?,?,?,?)',
+                args: ['cancelled-partial', id, session.id, 'cancelled', answer.createdAt, answer.createdAt],
+            })
+            expect((await chat(id, body)).status).toBe(409)
+            await client.execute("DELETE FROM runs WHERE id = 'cancelled-partial'")
+            await client.execute({ sql: 'UPDATE messages SET content_json = ? WHERE id = ?', args: ['{"type":"reasoning","text":"private"}', answer.id] })
+            expect((await chat(id, body)).status).toBe(409)
+            await client.execute({ sql: 'UPDATE messages SET content_json = ? WHERE id = ?', args: ['{"text":"old answer"}', answer.id] })
+            await client.execute({ sql: 'UPDATE messages SET content_json = ? WHERE id = ?', args: ['{"text":"old question"}', user.id] })
+            const res = await chat(id, body)
+            expect(res.status).toBe(200)
+            await res.text()
+            expect(state.calls).toMatchObject([{ message: 'old question' }])
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('rolls back a failed prefix copy, retries cleanly and reopens an accepted request without a buffered stream', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const { getSystemDb } = await import('../../db/systemDb.js')
+            const { forkReply } = await import('../../db/repos/regenerations.js')
+            const { listSessions } = await import('../../db/repos/sessions.js')
+            const { listMessages } = await import('../../db/repos/messages.js')
+            const { session, body } = await history()
+            const rows = await listMessages(id, session.id)
+            const before = await listSessions(id)
+            const { client } = await getSystemDb(id)
+            await client.execute("CREATE TRIGGER fail_clone BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'injected write failure'); END")
+            try { await expect(forkReply(id, session, body)).rejects.toThrow('injected write failure') }
+            finally { await client.execute('DROP TRIGGER fail_clone') }
+            expect(await listSessions(id)).toEqual(before)
+            expect(await listMessages(id, session.id)).toEqual(rows)
+            const accepted = await forkReply(id, session, body)
+            const res = await chat(id, body)
+            expect(res.status).toBe(204)
+            expect(res.headers.get('x-session-id')).toBe(accepted.sessionId)
+            expect(res.headers.get('x-run-id')).toBe(accepted.runId)
+            expect(state.calls).toHaveLength(0)
+        } finally { vi.unstubAllEnvs() }
+    })
+})

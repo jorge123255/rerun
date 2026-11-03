@@ -4,7 +4,7 @@ import { modelFor, type ModelOverride } from '../../agents/providers.js'
 import { withoutQuickRepliesCalls } from '../../agents/quick-replies-stream.js'
 import { CLI_PROVIDERS } from '../../agents/types.js'
 import { ensureCliAuth } from '../../connections/cli-auth.js'
-import { listMessagesAfter } from '../../db/repos/messages.js'
+import { listMessagesAfter, storedContent } from '../../db/repos/messages.js'
 import { getLatestCheckpoint, saveCheckpoint } from '../../db/repos/checkpoints.js'
 import { newId } from '../../lib/ids.js'
 import { deadlineSignal, raceAbort } from '../../lib/abort.js'
@@ -91,13 +91,14 @@ export function compactionThreshold(contextWindow: number, provider: Provider): 
     return CLI_PROVIDERS.has(provider) ? ratio : Math.min(ratio, COMPACTION_MAX_TRIGGER_TOKENS)
 }
 
-export async function prepareRunHistory(ctx: RunContext, system: string, override?: ModelOverride, signSenders = false, toolChars = 0): Promise<ModelMessage[]> {
+export async function prepareRunHistory(ctx: RunContext, system: string, override?: ModelOverride, signSenders = false, toolChars = 0, savedUserId?: string): Promise<ModelMessage[]> {
     const agentId = ctx.agent.id
     const cp = await getLatestCheckpoint(agentId, ctx.sessionId)
-    const rows = await listMessagesAfter(agentId, ctx.sessionId, cp?.throughCreatedAt)
+    const saved = await listMessagesAfter(agentId, ctx.sessionId, cp?.throughCreatedAt)
+    const rows = savedUserId ? saved.filter(row => row.id !== savedUserId) : saved
     const priorSummary: ModelMessage | null = cp ? (JSON.parse(cp.summaryJson) as ModelMessage) : null
     const live: ModelMessage[] = rows.flatMap(r => {
-        const message = withoutQuickRepliesCalls(withoutReasoning({ role: r.role, content: JSON.parse(r.contentJson) } as ModelMessage))
+        const message = withoutQuickRepliesCalls(withoutReasoning({ role: r.role, content: storedContent(r.contentJson) } as ModelMessage))
         if (!message) return []
         return [signSenders ? signHistoryMessage(message, r) : message]
     })

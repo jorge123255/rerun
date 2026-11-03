@@ -97,6 +97,10 @@ describe('sqlite ladders', () => {
               3,
               "step-cache-cost",
             ],
+            [
+              4,
+              "desktop-regenerated-conversations",
+            ],
           ]
         `)
         expect(SHARED_DB_MIGRATIONS.map(s => [s.version, s.id])).toMatchInlineSnapshot(`
@@ -135,6 +139,16 @@ describe('sqlite ladders', () => {
         for (const row of tables.rows) schema[String(row.name)] = await columns(client, String(row.name))
         expect(schema).toMatchSnapshot()
     })
+})
+
+it('keeps an existing desktop conversation when upgrading its v3 database for regenerated replies', async () => {
+    const client = freshFile('v3-regeneration')
+    await migrateSqlite(client, SYSTEM_DB_MIGRATIONS.filter(step => step.version <= 3), 'v3.db')
+    await client.execute("INSERT INTO sessions (id,agent_id,title,created_at,updated_at) VALUES ('s','a','Draft','then','then')")
+    await client.execute(`INSERT INTO messages (id,session_id,role,content_json,created_at) VALUES ('m','s','assistant','"original"','then')`)
+    await migrateSystemDb(client, 'v3.db')
+    expect((await client.execute("SELECT content_json FROM messages WHERE id='m'")).rows[0].content_json).toBe('"original"')
+    expect((await client.execute('SELECT request_id FROM desktop_regenerations')).rows).toEqual([])
 })
 
 describe('system.db from before the ladder', () => {
