@@ -76,3 +76,43 @@ test('a refused path shows the server’s message instead of contents', async ()
     expect(document.querySelector('[data-testid="file-preview"]')).toBeNull()
     act(() => root.unmount())
 })
+
+test('Import file posts one file to the coworker’s current folder and reports a kept duplicate', async () => {
+    const posts: { agent: string; path: string; name: string }[] = []
+    const base = engineFor({ alice: '', bob: '' })
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+            const form = init.body as FormData
+            const file = form.get('file') as File
+            const agent = decodeURIComponent(String(input).split('/')[4])
+            posts.push({ agent, path: String(form.get('path')), name: file.name })
+            return agent === 'bob'
+                ? Response.json({ error: `This folder already has a file named “${file.name}”. The existing file was kept; rename yours and import it again.` }, { status: 409 })
+                : Response.json({ path: `docs/${file.name}`, name: file.name }, { status: 201 })
+        }
+        return base(input)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    for (const id of ['alice', 'bob']) {
+        await act(async () => { root.render(<DesktopConversation key={id} agent={coworker(id)} sessionId={null} sessions={[]} onSelectSession={() => {}} onChatSession={() => {}} />) })
+        await click('Files')
+        await flush()
+        await click('docs')
+        await flush()
+        const input = document.querySelector<HTMLInputElement>('[data-testid="import-file-input"]')!
+        expect(input.accept).toContain('.md')
+        expect(input.multiple).toBe(false)
+        Object.defineProperty(input, 'files', { configurable: true, value: [new File(['x'], 'brief.md')] })
+        await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })) })
+        await flush()
+        const notice = document.querySelector('[data-testid="import-notice"]')?.textContent
+        expect(notice).toBe(id === 'alice' ? 'Imported “brief.md” into docs.' : 'This folder already has a file named “brief.md”. The existing file was kept; rename yours and import it again.')
+        await click('Done')
+        await flush()
+    }
+    expect(posts).toEqual([{ agent: 'alice', path: 'docs', name: 'brief.md' }, { agent: 'bob', path: 'docs', name: 'brief.md' }])
+    await act(async () => root.unmount())
+})

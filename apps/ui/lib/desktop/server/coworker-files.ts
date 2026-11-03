@@ -1,6 +1,6 @@
 import 'server-only'
 import { constants } from 'node:fs'
-import { lstat, open, readdir, realpath, type FileHandle } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, realpath, type FileHandle } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
@@ -121,4 +121,54 @@ export async function readCoworkerFile(runtime: DesktopRuntime, agentId: string,
     } finally {
         await handle.close()
     }
+}
+
+export const IMPORT_BYTES = 1024 * 1024
+const IMPORTABLE = /\.(txt|md)$/i
+
+/**
+ * Copies one .txt/.md file into `folder` of the coworker's workspace. Never overwrites: an existing
+ * name (including a symlink) is reported as 409. The folder must resolve inside the workspace, and
+ * the create itself refuses symlinks in any component, so a swapped folder cannot redirect the write.
+ */
+export async function importCoworkerFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array): Promise<{ path: string; name: string }> {
+    if (!name || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.')) throw new DesktopHttpError(400, 'That file name can’t be imported.')
+    if (!IMPORTABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be imported.')
+    if (bytes.byteLength > IMPORT_BYTES) throw new DesktopHttpError(413, 'Files can be up to 1 MB.')
+    if (bytes.includes(0)) throw new DesktopHttpError(415, 'Only text files can be imported.')
+    const workspace = await coworkerWorkspace(runtime, agentId)
+    let resolved = await containedPath(workspace, folder)
+    if (!resolved.root && !resolved.rel) {
+        await mkdir(workspace, { recursive: true })
+        resolved = await containedPath(workspace, folder)
+    }
+    const { target, rel } = resolved
+    if (!target) throw new DesktopHttpError(404, 'Folder not found')
+    const path = rel ? `${rel}/${name}` : name
+    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+    let handle: FileHandle
+    let dir: FileHandle | null = null
+    try {
+        if (process.platform === 'darwin') {
+            // O_NOFOLLOW_ANY (Darwin) must not be combined with O_NOFOLLOW; it already covers every component.
+            handle = await open(join(target, name), flags | 0x20000000, 0o644)
+        } else {
+            dir = await openResolved(target, true)
+            handle = await open(`/proc/self/fd/${dir.fd}/${name}`, flags | constants.O_NOFOLLOW, 0o644)
+        }
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'EEXIST') throw new DesktopHttpError(409, `This folder already has a file named “${name}”. The existing file was kept; rename yours and import it again.`)
+        if (code === 'ELOOP' || code === 'ENOTDIR') throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace or is not a folder.')
+        if (code === 'ENOENT') throw new DesktopHttpError(404, 'Folder not found')
+        throw error
+    } finally {
+        await dir?.close()
+    }
+    try {
+        await handle.writeFile(bytes)
+    } finally {
+        await handle.close()
+    }
+    return { path, name }
 }

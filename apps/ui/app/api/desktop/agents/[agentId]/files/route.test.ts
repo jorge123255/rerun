@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent } from '@/lib/desktop/server/store'
-import { GET as list } from './route'
+import { GET as list, POST as upload } from './route'
 import { GET as read } from './read/route'
 
 const race = vi.hoisted(() => ({ beforeOpen: undefined as undefined | ((target: unknown) => Promise<void>) }))
@@ -121,4 +121,67 @@ test('a directory replaced with a sibling symlink after path validation cannot r
     }
     expect((await call(read, alice, 'path=docs/notes.md')).status).toBe(400)
     expect(swapped).toBe(true)
+})
+
+const importFile = (id: string, path: string, name: string, text: string | Uint8Array<ArrayBuffer>, origin = 'http://127.0.0.1:3190') => {
+    const form = new FormData()
+    form.set('path', path)
+    form.set('file', new File([text], name))
+    return upload(new Request(`http://127.0.0.1:3190/api/desktop/agents/${id}/files`, { method: 'POST', body: form,
+        headers: { host: '127.0.0.1:3190', origin, cookie: `rerun-desktop-session=${token}` } }), { params: Promise.resolve({ agentId: id }) })
+}
+
+test('imports same-named files into each coworker’s current folder', async () => {
+    const a = await importFile(alice, 'docs', 'brief.md', '# Alice brief')
+    expect(a.status).toBe(201)
+    expect(await a.json()).toEqual({ path: 'docs/brief.md', name: 'brief.md' })
+    expect((await importFile(bob, 'docs', 'brief.md', '# Bob brief')).status).toBe(201)
+    expect((await (await call(read, alice, 'path=docs/brief.md')).json()).content).toBe('# Alice brief')
+    expect((await (await call(read, bob, 'path=docs/brief.md')).json()).content).toBe('# Bob brief')
+    expect((await importFile(alice, '', 'top.txt', 'top')).status).toBe(201)
+    expect(await readFile(join(workspace('engine-alice'), 'top.txt'), 'utf8')).toBe('top')
+})
+
+test('an existing name is preserved and reported', async () => {
+    const response = await importFile(alice, 'docs', 'notes.md', 'REPLACED')
+    expect(response.status).toBe(409)
+    expect((await response.json()).error).toMatch(/already has a file named “notes\.md”/)
+    expect(await readFile(join(workspace('engine-alice'), 'docs', 'notes.md'), 'utf8')).toBe('# Alice notes')
+})
+
+test('only one text or Markdown file with a plain name', async () => {
+    expect((await importFile(alice, 'docs', 'run.sh', 'x')).status).toBe(415)
+    expect((await importFile(alice, 'docs', 'bin.txt', new Uint8Array([0, 1]))).status).toBe(415)
+    expect((await importFile(alice, 'docs', '.env.md', 'x')).status).toBe(400)
+    expect((await importFile(alice, 'docs', '../x.md', 'x')).status).toBe(400)
+    expect((await importFile(alice, 'docs', 'x.md', 'x', 'http://evil.test')).status).toBe(403)
+    expect((await importFile(alice, 'missing', 'x.md', 'x')).status).toBe(404)
+})
+
+test('a redirected folder cannot write into another coworker’s workspace', async () => {
+    const ws = workspace('engine-alice')
+    await symlink(join(workspace('engine-bob'), 'docs'), join(ws, 'bob-docs'), 'dir')
+    await symlink(join(root), join(ws, 'up'), 'dir')
+    expect((await importFile(alice, 'bob-docs', 'evil.md', 'EVIL')).status).toBe(400)
+    expect((await importFile(alice, 'up', 'evil.md', 'EVIL')).status).toBe(400)
+    expect((await importFile(alice, '../../engine-bob/workspace/docs', 'evil.md', 'EVIL')).status).toBe(400)
+    await symlink(join(workspace('engine-bob'), 'docs', 'target.md'), join(ws, 'docs', 'dangling.md'))
+    expect((await importFile(alice, 'docs', 'dangling.md', 'EVIL')).status).toBe(409)
+    await expect(readFile(join(workspace('engine-bob'), 'docs', 'evil.md'))).rejects.toThrow()
+    await expect(readFile(join(workspace('engine-bob'), 'docs', 'target.md'))).rejects.toThrow()
+})
+
+test('a folder swapped for a sibling symlink after validation cannot redirect an import', async () => {
+    const docs = join(workspace('engine-alice'), 'docs')
+    const real = await realpath(docs)
+    let swapped = false
+    race.beforeOpen = async path => {
+        if (swapped || !(String(path) === join(real, 'swap.md') || (process.platform !== 'darwin' && String(path).endsWith('/docs')))) return
+        swapped = true
+        await rename(docs, docs + '-original')
+        await symlink(join(workspace('engine-bob'), 'docs'), docs, 'dir')
+    }
+    expect((await importFile(alice, 'docs', 'swap.md', 'EVIL')).status).toBe(400)
+    expect(swapped).toBe(true)
+    await expect(readFile(join(workspace('engine-bob'), 'docs', 'swap.md'))).rejects.toThrow()
 })
