@@ -5,6 +5,7 @@ import { parseInstallMessage } from '@/lib/chat/install-marker'
 import { parseScheduledRun } from '@/lib/schedules/scheduled-run'
 import { encodePeaks } from '@/lib/voice/peaks'
 import { parseVoiceMessage } from '@/lib/voice/marker'
+import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
 import { hitlKindOf } from '@/lib/chat-hitl'
 import { desktopSourceParts, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPath, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
@@ -13,7 +14,9 @@ type ToolInvocationPart = {
     type: `tool-${string}`
     toolCallId: string
     toolName: string
-    state: 'input-available' | 'output-available'
+    state: 'input-available' | 'output-available' | 'output-error'
+    errorText?: string
+    desktopPreview?: true
     input: unknown
     output?: unknown
 }
@@ -146,6 +149,23 @@ function toolPartOf(call: unknown, toolResults?: Map<string, unknown>): ToolInvo
     // ask_user / request_approval. Keep it 'input-available' so the pinned block re-renders on reload.
     if (output !== undefined) return { type: `tool-${toolName}`, toolCallId, toolName, state: 'output-available', input, output }
     return { type: `tool-${toolName}`, toolCallId, toolName, state: 'input-available', input }
+}
+
+// Only presentation data leaves the engine-history adapter for a Mac chat. This is after
+// HITL folding. The stored ModelMessages and subsequent provider inputs remain untouched.
+export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage[] {
+    return messages.map(message => ({
+        ...message,
+        parts: message.parts.map(part => {
+            if (!('toolName' in part)) return part
+            const view = desktopToolPresentation(part.toolName, part.input, part.output)
+            return {
+                type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                state: view.errorText ? 'output-error' as const : part.state, input: view.input ?? {},
+                ...(view.output !== undefined && { output: view.output }), ...(view.errorText && { errorText: view.errorText }),
+            }
+        }),
+    }))
 }
 
 function endsOnHitlCall(message: HistoryMessage): boolean {

@@ -118,3 +118,80 @@ it('cancels before reading from an expired run', async () => {
     stop.abort()
     await expect(read('notes/brief.md')).rejects.toThrow(/abort/i)
 })
+
+it('merges individual grants including legacy writes, exposes independently scoped listing and search, and refuses unknown flags', async () => {
+    const id = 'workspace-grants', other = 'workspace-other'
+    for (const agent of [id, other]) {
+        await mkdir(join(workspaceDir(agent), 'docs'), { recursive: true })
+        await writeAgentConfig(agent, config(agent))
+        await writeFile(join(workspaceDir(agent), 'docs', 'brief.md'), `One\nReceipt from ${agent}\n`)
+    }
+    const patch = (tools: Record<string, unknown>) => app.request(`/agents/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tools }) })
+    expect((await patch({ desktopToolGrants: { workspaceList: true, workspaceSearch: true } })).status).toBe(200)
+    expect((await patch({ desktopToolGrants: { workspaceReed: true } })).status).toBe(400)
+    const list = (await registry(id)).fs_list!.execute!
+    const search = (await registry(id)).fs_search!.execute!
+    const options = { messages: [], toolCallId: 'fixture' }
+    await writeFile(join(workspaceDir(id), '.hidden'), 'receipt confidential')
+    await symlink(workspaceDir(other), join(workspaceDir(id), 'alias'))
+    expect(await list({ path: '.' }, options)).toBe('docs/')
+    expect(await search({ path: '.', pattern: 'receipt', maxResults: 10 }, options)).toBe('docs/brief.md:2: Receipt from workspace-grants')
+    await expect(search({ path: '../workspace-other', pattern: 'receipt', maxResults: 10 }, options)).rejects.toThrow('visible relative')
+    expect(Object.keys(await registry(other))).toEqual([])
+    await grant(id, true)
+    expect(Object.keys(await registry(id)).sort()).toEqual(['fs_list', 'fs_read', 'fs_search'])
+    await patch({ desktopToolGrants: { workspaceRead: false, workspaceList: false } })
+    expect((await readAgentConfig(id)).tools.desktopWorkspaceRead).toBe(false)
+    expect(Object.keys(await registry(id))).toEqual(['fs_search'])
+    await expect(list({ path: '.' }, options)).rejects.toThrow('turned off')
+})
+
+it('binds model note tools to one coworker, preserves retries, and refuses stale edits and deletes', async () => {
+    const id = 'notes-tools', other = 'notes-other'
+    for (const agent of [id, other]) {
+        await mkdir(workspaceDir(agent), { recursive: true })
+        await writeAgentConfig(agent, agentConfigSchema.parse({ name: agent, tools: {
+            desktopToolGrants: { memoryWrite: true, memoryRecall: true, memoryDelete: true },
+        } }))
+    }
+    const tools = await registry(id)
+    expect(Object.keys(tools).sort()).toEqual(['memory_delete', 'memory_recall', 'memory_write'])
+    const options = { messages: [], toolCallId: 'fixture' }
+    const write = (content: string, extra = {}) => tools.memory_write!.execute!({ content, kind: 'note', tags: [], ...extra }, options)
+    const result = String(await write('Brass archive'))
+    expect(await write('Brass archive')).toBe(result)
+    const memoryId = result.split(' ').at(-1)
+    const recall = (r: typeof tools) => r.memory_recall!.execute!({ query: 'brass', limit: 5, includeDormant: false }, options)
+    expect(await recall(await registry(other))).toBe('No relevant memories.')
+    expect(await recall(tools)).toContain(memoryId + '] (note) Brass archive')
+    await expect(write('Changed', { updateId: memoryId, expectedContent: 'Old' })).rejects.toThrow('changed')
+    expect(await write('Changed', { updateId: memoryId, expectedContent: 'Brass archive' })).toBe('Updated memory ' + memoryId)
+    await expect(tools.memory_delete!.execute!({ id: memoryId, expectedContent: 'Old' }, options)).rejects.toThrow('changed')
+    expect(await tools.memory_delete!.execute!({ id: memoryId, expectedContent: 'Changed' }, options)).toBe('Deleted memory ' + memoryId)
+    await app.request(`/agents/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tools: { memory: false }, selfImprovement: { autoMemory: false } }) })
+    expect(Object.keys(await registry(id))).toEqual(['memory_delete'])
+    await expect(recall(tools)).rejects.toThrow('turned off')
+    await expect(write('A new note')).rejects.toThrow('turned off')
+})
+
+it('freezes native grants until every active Codex process belonging to the coworker closes', async () => {
+    const { beginDesktopCodexRun, endDesktopCodexRun } = await import('./native-grants.js')
+    const id = 'native-owner', other = 'native-other'
+    for (const a of [id, other]) {
+        await mkdir(workspaceDir(a), { recursive: true })
+        await writeAgentConfig(a, config(a))
+    }
+    const patch = (agent: string, flags: object) => app.request(`/agents/${agent}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tools: { desktopCodexGrants: flags } }) })
+    const signal = new AbortController().signal
+    await Promise.all(['a','b'].map(runId => beginDesktopCodexRun(id, runId, signal)))
+    expect((await patch(id, { webSearch: false })).status).toBe(200)
+    expect((await patch(id, { webSearch: true })).status).toBe(409)
+    expect((await patch(other, { webSearch: true })).status).toBe(200)
+    endDesktopCodexRun(id, 'a')
+    expect((await patch(id, { webSearch: true })).status).toBe(409)
+    endDesktopCodexRun(id, 'b')
+    expect((await patch(id, { webSearch: true })).status).toBe(200)
+    expect((await beginDesktopCodexRun(id, 'fresh', signal)).tools.desktopCodexGrants).toEqual({ webSearch: true })
+    endDesktopCodexRun(id, 'fresh')
+    expect((await patch(id, { unverifiedExternalTool: true })).status).toBe(400)
+})

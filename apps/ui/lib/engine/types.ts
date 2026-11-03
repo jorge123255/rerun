@@ -142,7 +142,7 @@ export type EngineMcpServer = McpServer
 export type EngineMcpServerStatus = McpServerStatus
 export type EngineAgentConfig = AgentConfig
 export type EngineAgentConfigPatch = Partial<Omit<AgentConfig, 'tools' | 'selfImprovement' | 'setup'>> & {
-    tools?: Record<string, boolean>
+    tools?: Partial<AgentConfig['tools']>
     selfImprovement?: Partial<SelfImprovement>
     setup?: Partial<AgentSetup>
 }

@@ -50,7 +50,7 @@ test('reads scoped steps and tools through existing clients and projects only th
     expect(response.headers.get('cache-control')).toBe('no-store')
     const body = await response.json()
     expect(body.steps[0]).toMatchObject({ stepNumber: 1, finishReason: 'tool-calls', totalTokens: 16 })
-    expect(body.tools[0]).toMatchObject({ toolName: 'fixture_lookup', isError: 0, resultJson: tools[0].resultJson })
+    expect(body.tools[0]).toMatchObject({ toolName: 'fixture_lookup', isError: 0, resultJson: JSON.stringify('Tool completed.') })
     const text = JSON.stringify(body)
     expect(text).not.toMatch(/engine-alice|engine-session|private-input|call-1/)
     expect(seen.sort()).toEqual(['/agents/engine-alice/runs/run-1/steps', '/agents/engine-alice/runs/run-1/tools'])

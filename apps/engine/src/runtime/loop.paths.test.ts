@@ -49,7 +49,7 @@ vi.mock('../tools/registry.js', async importOriginal => {
     const hitl = () => tool({ description: 'hitl', inputSchema: z.record(z.string(), z.unknown()), execute: async () => ({ status: 'delivered' }) })
     return {
         buildTools: async (ctx: Parameters<typeof actual.buildTools>[0]) => {
-            if (ctx.agent.config.tools.desktopWorkspaceRead) return actual.buildTools(ctx)
+            if (ctx.agent.config.tools.desktopWorkspaceRead || ctx.agent.config.tools.desktopToolGrants) return actual.buildTools(ctx)
             prep.callTargets = (ctx.callTargets ?? []).map(a => a.id)
             if (prep.toolsGate) await prep.toolsGate
             if (prep.toolsError) throw prep.toolsError
@@ -215,6 +215,31 @@ describe('run loop paths', () => {
                 agentId: reader, sessionId: session.id, toolName: 'fs_read', isError: 0,
                 inputJson: '{"path":"brief.txt"}', resultJson: '"Cobalt skylight"',
             }])
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('lets the provider discover a filename and read it in one run, recording both genuine results', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const id = 'multi-tool-reader'
+        try {
+            await mkdir(workspaceDir(id), { recursive: true })
+            await writeAgentConfig(id, agentConfigSchema.parse({ name: id, tools: { desktopToolGrants: { workspaceList: true, workspaceRead: true } } }))
+            await writeFile(resolve(workspaceDir(id), 'opaque-name.md'), 'Auburn spacecraft')
+            const agent = await getAgent(id)
+            const session = await createSession(id, 'Inspect own files')
+            const resolved = { ...agent.resolved, provider: 'openai' as const, model: 'fixture' }
+            stream.turns = [toolTurn('fs_list', { path: '.' }, '', 'list'), toolTurn('fs_read', { path: 'opaque-name.md' }, '', 'read'), textTurn('Auburn spacecraft')]
+            const run = await runAgent({ ...agent, resolved }, session.id, 'Read the file in your workspace')
+            expect(await run.settled).toMatchObject({ kind: 'done' })
+            expect(JSON.stringify(stream.calls[0].prompt)).not.toContain('opaque-name.md')
+            expect(JSON.stringify(stream.calls[1].prompt)).toContain('opaque-name.md')
+            expect(JSON.stringify(stream.calls[1].prompt)).not.toContain('Auburn spacecraft')
+            expect(JSON.stringify(stream.calls[2].prompt)).toContain('Auburn spacecraft')
+            closeSystemDb(id)
+            expect(await listToolCalls(id, run.runId)).toMatchObject([
+                { toolName: 'fs_list', isError: 0, resultJson: '"opaque-name.md"' },
+                { toolName: 'fs_read', isError: 0, resultJson: '"Auburn spacecraft"' },
+            ])
         } finally { vi.unstubAllEnvs() }
     })
 

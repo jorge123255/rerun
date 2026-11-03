@@ -1,3 +1,4 @@
+import { GET as readTools, PATCH as editTool } from './agents/[agentId]/tools/route'
 import { connectionFixture } from '@/test/desktop-connection-engine'
 import { createServer, type Server } from 'node:http'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
@@ -30,7 +31,7 @@ beforeEach(async () => {
     sentChats.length = 0
     root = await mkdtemp(join(tmpdir(), 'rerun-desktop-routes-'))
     const connections = connectionFixture()
-    type SavedSettings = { soul: string; verbosity: string; tools?: { memory?: boolean; desktopWorkspaceRead?: boolean }; selfImprovement?: { enabled?: boolean; autoMemory?: boolean } }
+    type SavedSettings = { soul: string; verbosity: string; tools?: { memory?: boolean; desktopWorkspaceRead?: boolean; desktopToolGrants?: Record<string, boolean>; desktopCodexGrants?: Record<string, boolean> }; selfImprovement?: { enabled?: boolean; autoMemory?: boolean } }
     const coworkerSettings = new Map<string, SavedSettings>()
     coworkerSettings.set('engine-agent-2', { soul: 'Original instructions', verbosity: 'normal', selfImprovement: { enabled: false } })
     const notes: Record<string, Memory[]> = {
@@ -74,7 +75,7 @@ beforeEach(async () => {
             if (req.method === 'PATCH') {
                 const { tools, selfImprovement, ...textSettings } = body
                 if (Object.keys(textSettings).some(key => key !== 'soul' && key !== 'verbosity')) return res.writeHead(400).end()
-                if (tools && Object.keys(tools).some(key => key !== 'memory' && key !== 'desktopWorkspaceRead')) return res.writeHead(400).end()
+                if (tools && Object.keys(tools).some(key => key !== 'memory' && key !== 'desktopWorkspaceRead' && key !== 'desktopToolGrants' && key !== 'desktopCodexGrants')) return res.writeHead(400).end()
                 if (selfImprovement && Object.keys(selfImprovement).some(key => key !== 'autoMemory')) return res.writeHead(400).end()
                 Object.assign(saved, textSettings)
                 if (tools) saved.tools = { ...saved.tools, ...tools }
@@ -420,6 +421,26 @@ describe('desktop API routes', () => {
         await closeDesktopDatabase(root)
         expect(await (await get(first.id)).json()).toEqual({ ...defaults, workspaceReadEnabled: true, soul: 'End with a verdict.', verbosity: 'concise' })
         expect(await (await get(second.id)).json()).toEqual({ ...defaults, selfImprovementEnabled: false })
+    })
+
+    it('returns the available tool catalogs, keeps grants with their local owner, and rejects unknown or unavailable grants', async () => {
+        const db = await openDesktopDatabase(root)
+        const alice = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'Alice' })
+        const bob = await createDesktopAgent(db, { engineAgentId: 'engine-agent-2', name: 'Bob' })
+        const context = (agentId: string) => ({ params: Promise.resolve({ agentId }) })
+        const path = (id: string) => `/api/desktop/agents/${id}/tools`
+        const get = (id: string) => readTools(request(path(id)), context(id))
+        const patch = (id: string, body: object) => editTool(request(path(id), { method: 'PATCH', body }), context(id))
+        const grant = { group: 'rerun', id: 'workspaceRead', enabled: true }
+        const response = await (await patch(alice.id, grant)).json()
+        expect(response.rerun).toContainEqual(expect.objectContaining({ id: 'workspaceRead', enabled: true }))
+        expect(response.codex).toContainEqual(expect.objectContaining({ id: 'shell', enabled: false }))
+        expect((await (await get(bob.id)).json()).rerun).toContainEqual(expect.objectContaining({ id: 'workspaceRead', enabled: false }))
+        expect((await patch(alice.id, { ...grant, id: 'requestSecret' })).status).toBe(400)
+        expect((await patch(alice.id, { ...grant, id: 'unknown' })).status).toBe(400)
+        expect((await get('engine-agent-2')).status).toBe(404)
+        expect((await patch('engine-agent-2', grant)).status).toBe(404)
+        expect((await (await get(alice.id)).text())).not.toContain('engine-only')
     })
 
     it('persists independent memory preferences and leaves the self-improvement master and the other coworker alone', async () => {

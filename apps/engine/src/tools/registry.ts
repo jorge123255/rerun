@@ -30,11 +30,12 @@ import { pooledMcpTools } from './mcp-pool.js'
 import { CLI_PROVIDERS } from '../agents/providers.js'
 import { closeAgentDb } from '../db/agentDb.js'
 import type { RunContext } from '../runtime/context.js'
+import { desktopMemoryTools } from '../desktop/memory-tools.js'
 import { desktopWorkspaceReadTools } from '../desktop/workspace-read.js'
 import { desktopApp } from '../desktop/policy.js'
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
-    if (desktopApp()) return { tools: desktopWorkspaceReadTools(ctx), close: async () => {} }
+    if (desktopApp()) return { tools: { ...desktopWorkspaceReadTools(ctx), ...desktopMemoryTools(ctx) }, close: async () => {} }
     const cfg = ctx.agent.config.tools
     const tools: ToolSet = {}
     if (ctx.agent.config.kind === 'foreman') Object.assign(tools, foremanTools(ctx), agentFilesTools())

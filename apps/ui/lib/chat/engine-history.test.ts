@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { workspaceAttachmentPart } from '@rerun/contracts'
 import { buildAttachmentsRef } from '@/lib/chat/attachments-marker'
 import { buildInstallMessage } from '@/lib/chat/install-marker'
-import { MAX_TOOL_OUTPUT_CHARS, type HistoryMessage, toApiMessages, transformEngineMessages } from '@/lib/chat/engine-history'
+import { MAX_TOOL_OUTPUT_CHARS, type HistoryMessage, publicDesktopHistory, toApiMessages, transformEngineMessages } from '@/lib/chat/engine-history'
 import { PEAK_COUNT } from '@/lib/voice/peaks'
 
 function user(text: string): HistoryMessage {
@@ -293,4 +293,12 @@ it('keeps reads on the original assistant row when a provider reuses call IDs', 
         { state: 'output-available', output: { value: 'early contents' } }, { state: 'output-available', output: { type: 'error-text', value: 'Denied.' } },
         { state: 'input-available' }, { state: 'output-available', output: { value: 'later contents' } },
     ])
+})
+
+it('returns the public desktop tool outcome without exposing the stored protocol event', () => {
+    const row = toolCall('exec', { type: 'json', value: { type: 'commandExecution', status: 'completed', exitCode: 0, aggregatedOutput: 'ok', _meta: 'private metadata' } })
+    const [shown] = publicDesktopHistory([row])
+    expect(shown.parts[0]).toMatchObject({ type: 'tool-exec', toolCallId: 'c1', desktopPreview: true, state: 'output-available', output: 'Exit code 0\nok' })
+    expect(JSON.stringify(shown)).not.toContain('private metadata')
+    expect(JSON.stringify(row)).toContain('private metadata')
 })

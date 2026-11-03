@@ -1,3 +1,4 @@
+import { desktopCodexGrantsSchema, desktopRerunGrantsSchema } from './desktop-tool-grants.js'
 import { z } from 'zod'
 
 // Tools surface as "<server>_<tool>" and CLI providers key their config records by server name, so
@@ -19,7 +20,7 @@ export const mcpServerSchema = z.object({
 export type McpServer = z.infer<typeof mcpServerSchema>
 export const strictMcpServerSchema = mcpServerSchema.extend({ name: mcpServerNameSchema })
 
-export const toolsSchema = z.object({
+const toolSwitchesSchema = z.object({
     filesystem: z.boolean().default(true),
     // The Mac grants just fs_read. Older agents have no grant, even when filesystem defaults on.
     desktopWorkspaceRead: z.boolean().optional(),
@@ -48,13 +49,19 @@ export const toolsSchema = z.object({
     computer: z.boolean().default(true),
     paidData: z.boolean().default(true),
 })
+// Hosted callers such as Foreman build a boolean switch for every TOOL_KEY.
+// The nested Mac permission maps are not switches and must stay out of that list.
+export const toolsSchema = toolSwitchesSchema.extend({
+    desktopToolGrants: desktopRerunGrantsSchema.optional(),
+    desktopCodexGrants: desktopCodexGrantsSchema.optional(),
+})
 export type Tools = z.infer<typeof toolsSchema>
 
-export type ToolKey = keyof Tools
+export type ToolKey = keyof z.infer<typeof toolSwitchesSchema>
 
 // Derived from the schema rather than restated, so adding a capability in one place is
 // enough for every consumer (agent panel, template editor, template preview).
-export const TOOL_KEYS = Object.keys(toolsSchema.shape) as ToolKey[]
+export const TOOL_KEYS = Object.keys(toolSwitchesSchema.shape) as ToolKey[]
 
 export const selfImprovementSchema = z.object({
     enabled: z.boolean().default(true),

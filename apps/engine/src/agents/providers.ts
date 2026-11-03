@@ -13,7 +13,7 @@ import {
     type LocalTool,
 } from 'ai-sdk-provider-codex-cli'
 import type { ZodObject, ZodRawShape, ZodType } from 'zod'
-import type { ContextOccupancy, McpServer, Provider } from '@rerun/contracts'
+import { desktopCodexGrantsOf, desktopRerunGrantsOf, desktopRerunToolCatalog, type ContextOccupancy, type McpServer, type Provider } from '@rerun/contracts'
 import { env } from '../config/env.js'
 import { codexHomeDir } from '../config/paths.js'
 import { allowedModel } from '../connections/plan.js'
@@ -336,11 +336,16 @@ function codexExecProvider(agent: LoadedAgent) {
 // as a single chunk, which would leave the chat blank for the length of an agentic loop.
 function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers: McpServer[] = [], options: CliModelOptions = {}) {
     const desktop = desktopApp()
-    // The Mac grant is for this run's own read tool. Never forward other tools or user MCP servers.
-    const readTool = desktop && agent.config.tools.desktopWorkspaceRead && tools?.fs_read
+    const shared = codexShared(agent)
+    const grants = desktopRerunGrantsOf(agent.config.tools)
+    const allowed = new Set(desktopRerunToolCatalog.filter(entry => entry.available && grants[entry.id as keyof typeof grants]).flatMap(entry => entry.tools))
+    const localTools = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name]) => allowed.has(name))) : {}
+    const names = Object.keys(localTools)
+    const native = desktopCodexGrantsOf(agent.config.tools)
     return createCodexAppServer({
         defaultSettings: {
-            ...codexShared(agent),
+            ...shared,
+            ...(desktop && { env: { ...shared.env, RERUN_DESKTOP_CODEX_WEB: native.webSearch ? '1' : '0', RERUN_DESKTOP_CODEX_CODE_MODE: native.codeMode ? '1' : '0' } }),
             approvalPolicy: 'never',
             sandboxPolicy: desktopApp() ? 'read-only' : 'danger-full-access',
             autoApprove: !desktopApp(),
@@ -361,13 +366,16 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
                 model_reasoning_summary: 'auto',
                 ...(desktop ? {
                     project_doc_max_bytes: 0,
-                    web_search: 'disabled',
-                    ...(readTool && {
+                    web_search: native.webSearch ? 'live' : 'disabled',
+                    'features.code_mode.enabled': native.codeMode,
+                    'features.code_mode.excluded_tool_namespaces': ['functions', 'collaboration', 'clock'],
+                    ...(names.length > 0 && {
                         prefix_mcp_tool_names: true,
                         // Code-mode-only models can call this namespace directly with the Mac host disabled.
-                        'features.code_mode.direct_only_tool_namespaces': [`mcp__${BRIDGE_SERVER_NAME}`],
-                        [`mcp_servers.${BRIDGE_SERVER_NAME}.enabled_tools`]: ['fs_read'],
-                        [`mcp_servers.${BRIDGE_SERVER_NAME}.tools.fs_read.approval_mode`]: 'approve',
+                        ...(!native.codeMode && { 'features.code_mode.direct_only_tool_namespaces': [`mcp__${BRIDGE_SERVER_NAME}`] }),
+                        [`mcp_servers.${BRIDGE_SERVER_NAME}.enabled_tools`]: names,
+                        // Each registered action is separately granted and rechecked by its own handler.
+                        ...Object.fromEntries(names.map(name => [`mcp_servers.${BRIDGE_SERVER_NAME}.tools.${name}.approval_mode`, 'approve'])),
                     }),
                 } : {
                     prefix_mcp_tool_names: true,
@@ -376,7 +384,7 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
                     ...(agent.config.tools.web ? { web_search: 'live' } : {}),
                 }),
             },
-            mcpServers: desktop ? codexMcpConfig(readTool ? { fs_read: readTool } : undefined) : codexMcpConfig(tools, mcpServers),
+            mcpServers: desktop ? codexMcpConfig(localTools) : codexMcpConfig(tools, mcpServers),
         },
     })
 }

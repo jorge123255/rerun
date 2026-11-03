@@ -1,7 +1,7 @@
 'use client'
 
-import { getToolName, isToolUIPart, type UIMessage } from 'ai'
-import { desktopSourceParts, stripBridgePrefix } from '@rerun/contracts'
+import { isToolUIPart, type UIMessage } from 'ai'
+import { desktopSourceParts } from '@rerun/contracts'
 import { useMemo, type ReactNode } from 'react'
 import type { Components, CustomRendererProps, PluginConfig } from 'streamdown'
 import { toast } from 'sonner'
@@ -10,7 +10,7 @@ import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai
 import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
-import { DesktopReadToolStep } from './DesktopReadToolStep'
+import { DesktopToolStep } from './DesktopToolStep'
 import { Button } from '@/components/ui/button'
 import { CheckIcon, CopyIcon, RefreshCcwIcon } from '@/lib/icons'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
@@ -112,8 +112,8 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate }: { me
                 blocks.push(<DesktopAnswerBubbles key={index} text={paragraph} streaming={live} />)
                 paragraph = ''
             }
-        } else if (isToolUIPart(part) && stripBridgePrefix(getToolName(part)) === 'fs_read') {
-            blocks.push(<DesktopReadToolStep key={part.toolCallId} part={part} />)
+        } else if (isToolUIPart(part)) {
+            blocks.push(<DesktopToolStep key={part.toolCallId} part={part} restored={message.id.startsWith('engine-')} />)
         } else if (part.type === 'reasoning' && isDesktopSummaryMetadata(part.providerMetadata) && (part.text || live)) {
             blocks.push(<ReasoningStep key={index} text={part.text} isStreaming={live} renderText={replyMarkdown} />)
         }

@@ -1,3 +1,4 @@
+import { assertNativeChangeAllowed } from '../../desktop/native-grants.js'
 import { Hono } from 'hono'
 import { rm, writeFile, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -118,14 +119,23 @@ agentRoutes.patch('/:id', async c => {
     const patch = Object.fromEntries(Object.entries(validated).filter(([field]) => field in body))
     const agent = await withAgentLock(id, async () => {
         const current = agentConfigSchema.parse(JSON.parse(await readFile(configPath(id), 'utf8')))
+        const sent = body.tools as Partial<typeof current.tools> | undefined
+        const mergedTools = { ...current.tools, ...sent }
+        if (sent?.desktopToolGrants || sent?.desktopWorkspaceRead !== undefined) {
+            mergedTools.desktopToolGrants = { ...current.tools.desktopToolGrants,
+                ...(sent.desktopWorkspaceRead !== undefined && { workspaceRead: sent.desktopWorkspaceRead }), ...sent.desktopToolGrants }
+            if (mergedTools.desktopToolGrants.workspaceRead !== undefined) mergedTools.desktopWorkspaceRead = mergedTools.desktopToolGrants.workspaceRead
+        }
+        if (sent?.desktopCodexGrants) mergedTools.desktopCodexGrants = { ...current.tools.desktopCodexGrants, ...sent.desktopCodexGrants }
         const next = agentConfigSchema.parse({
             ...current,
             ...patch,
             mcpServers: current.mcpServers,
-            tools: { ...current.tools, ...(body.tools as object | undefined) },
+            tools: mergedTools,
             selfImprovement: { ...current.selfImprovement, ...(body.selfImprovement as object | undefined) },
             setup: { ...current.setup, ...(body.setup as object | undefined) },
         })
+        if (desktopApp()) assertNativeChangeAllowed(id, current, next)
         await writeAgentConfig(id, next)
         if (desktopApp()) noteLearningChange(id, current, next)
         if (next.name !== current.name) {

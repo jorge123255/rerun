@@ -35,6 +35,7 @@ import { HostBreaker } from '../tools/host-breaker.js'
 import type { PartialResult, RunContext, RunTrigger, SkillProposalNotice } from './context.js'
 import { desktopSourceRows } from './desktop-source-rows.js'
 import { partialResultsNote } from './partial-results.js'
+import { beginDesktopCodexRun, endDesktopCodexRun } from '../desktop/native-grants.js'
 import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-control.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
 import { runCurator } from './curator.js'
@@ -231,6 +232,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     let quickReplies: (() => QuickRepliesCapture | undefined) | undefined
     let cliAuthP: Promise<() => void> | undefined
     let spawnToken: string | undefined
+    let codexToolAccess: string | undefined
     let codexThreadId: string | undefined
     let steps = 0
     let sourceSteps: StepResult<ToolSet>[] = []
@@ -241,7 +243,10 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     // first. Codex's own token refresh only lands in auth.json once it has exited, hence the sync
     // last. Every teardown path below funnels through this.
     const close = async (): Promise<void> => {
-        await closeModel().catch(err => logger.warn({ err: String(err), agent: agent.id }, 'close model failed'))
+        await closeModel().then(
+            () => endDesktopCodexRun(agent.id, run.id),
+            err => logger.warn({ err: String(err), agent: agent.id }, 'close model failed'),
+        )
         await closeTools().catch(err => logger.warn({ err: String(err), agent: agent.id }, 'close tools failed'))
         if (provider === 'codex') {
             await syncCodexAuth(connection).catch(() => {})
@@ -371,7 +376,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     const keepCodexThread = async (): Promise<void> => {
         const throughMessageId = codexThreadId ? await lastMessageId(agent.id, sessionId) : undefined
         if (!codexThreadId || !throughMessageId) return forgetCodexThread(agent.id, sessionId)
-        rememberCodexThread(agent.id, sessionId, { threadId: codexThreadId, connectionId: connection?.id ?? RERUN_CONNECTION_ID, throughMessageId })
+        rememberCodexThread(agent.id, sessionId, { threadId: codexThreadId, connectionId: connection?.id ?? RERUN_CONNECTION_ID, throughMessageId, toolAccess: codexToolAccess })
     }
 
     // Stop has to be able to end a run the provider refuses to end: codex ignores the abort signal
@@ -390,6 +395,9 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         agent = resolved === baseAgent.resolved ? baseAgent : { ...baseAgent, resolved }
         ;({ connection, provider, model } = resolved)
         assertDesktopProvider(provider, resolved.connection?.id)
+        if (desktopApp() && provider === 'codex') {
+            agent = { ...agent, config: await beginDesktopCodexRun(agent.id, run.id, controller.signal) }
+        }
         const effort = await desktopCodexEffort(resolved)
         const t0 = Date.now()
         const order = turnOrder(provider, await answeringModel(provider, model))
@@ -430,7 +438,11 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
 
         // Read before the turn is stored: a resumed thread only gets this turn, so the session must
         // hold nothing the thread has not seen.
-        const resumeThreadId = provider === 'codex' && !savedUser ? codexThreadToResume(agent.id, sessionId, connection?.id ?? RERUN_CONNECTION_ID, await lastMessageId(agent.id, sessionId)) : undefined
+        if (provider === 'codex' && desktopApp()) {
+            const native = Object.entries(agent.config.tools.desktopCodexGrants ?? {}).filter(([, enabled]) => enabled).map(([name]) => name).sort()
+            codexToolAccess = JSON.stringify([Object.keys(tools).sort(), native])
+        }
+        const resumeThreadId = provider === 'codex' && !savedUser ? codexThreadToResume(agent.id, sessionId, connection?.id ?? RERUN_CONNECTION_ID, await lastMessageId(agent.id, sessionId), codexToolAccess) : undefined
         const codexTurnOptions = resumeThreadId || effort ? {
             'codex-app-server': { ...(resumeThreadId ? { threadId: resumeThreadId } : {}), ...(effort ? { effort } : {}) },
         } : undefined
@@ -457,6 +469,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         logger.debug({ agent: agent.id, provider, prepMs: Date.now() - t0 }, 'run prep done')
 
         spawnToken = claudeTokenOf(connection)
+        controller.signal.throwIfAborted()
         const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id))
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage

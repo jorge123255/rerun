@@ -299,27 +299,36 @@ describe('resolveModel on the codex subscription', () => {
         await expect(resolved.close()).resolves.toBeUndefined()
     })
 
-    it('only bridges the granted coworker read tool on the Mac', () => {
+    it('bridges exactly the granted registered Rerun tools and native web permission on the Mac', () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         vi.stubEnv('RERUN_DESKTOP_CODEX_RUNNER', '/private/fixture/codex')
         try {
             const agent = agentOn('codex', 'fixture', { RERUN_CHATGPT_CONNECTED: '1' })
             agent.resolved.connection.id = 'mac-chatgpt'
             const read = tool({ description: 'Read a file', inputSchema: z.object({ path: z.string() }), execute: async () => 'ok' })
-            const tools = { fs_read: read, fs_write: read }
+            const tools = { fs_read: read, fs_list: read, fs_write: read }
             const external = { name: 'third_party', command: 'unwanted', args: [], headers: {}, env: {} }
             for (const enabled of [false, true]) {
                 agent.config.tools.desktopWorkspaceRead = enabled
+                agent.config.tools.desktopToolGrants = { workspaceList: enabled }
+                agent.config.tools.desktopCodexGrants = { webSearch: enabled }
                 resolveModel(agent, undefined, tools, [external])
                 const settings = codexAppServerCalls.at(-1)!.defaultSettings
-                expect(settings).toMatchObject({ sandboxPolicy: 'read-only', autoApprove: false, approvalPolicy: 'never', configOverrides: { web_search: 'disabled' } })
+                expect(settings).toMatchObject({ sandboxPolicy: 'read-only', autoApprove: false, approvalPolicy: 'never', configOverrides: { web_search: enabled ? 'live' : 'disabled' } })
+                expect(settings.env.RERUN_DESKTOP_CODEX_WEB).toBe(enabled ? '1' : '0')
                 expect(Object.keys(settings.mcpServers)).toEqual(enabled ? ['rerun'] : [])
                 expect(settings.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(enabled ? ['mcp__rerun'] : undefined)
                 if (enabled) {
-                    expect(settings.mcpServers.rerun.tools.map((t: { name: string }) => t.name)).toEqual(['fs_read'])
+                    expect(settings.mcpServers.rerun.tools.map((t: { name: string }) => t.name)).toEqual(['fs_read', 'fs_list'])
                     expect(settings.configOverrides['mcp_servers.rerun.tools.fs_read.approval_mode']).toBe('approve')
                 }
             }
+            agent.config.tools.desktopCodexGrants = { codeMode: true }
+            resolveModel(agent, undefined, tools)
+            const host = codexAppServerCalls.at(-1)!.defaultSettings
+            expect(host.env).toMatchObject({ RERUN_DESKTOP_CODEX_WEB: '0', RERUN_DESKTOP_CODEX_CODE_MODE: '1' })
+            expect(host.configOverrides['features.code_mode.direct_only_tool_namespaces']).toBeUndefined()
+            expect(host.configOverrides['features.code_mode.excluded_tool_namespaces']).toEqual(['functions', 'collaboration', 'clock'])
         } finally {
             vi.unstubAllEnvs()
         }

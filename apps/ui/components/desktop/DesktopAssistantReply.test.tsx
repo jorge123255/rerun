@@ -222,3 +222,19 @@ test('shows a real read step on its reply, keeping literal file contents and err
     await render([{ type: 'text', text: 'I could use fs_read to answer.' }])
     expect(row()).toBeUndefined()
 })
+
+test('expands actual native steps with the same plain-text input and output across live and persisted parts', async () => {
+    const part = { type: 'dynamic-tool' as const, toolName: 'exec', toolCallId: 'native-run',
+        input: { type: 'commandExecution', command: 'printf test', cwd: '/private/profile' } }
+    const output = { type: 'commandExecution', status: 'completed', exitCode: 0, aggregatedOutput: '<b>sample</b>', _meta: 'engine-only' }
+    await render([{ ...part, state: 'input-available' }], true)
+    const button = Array.from(container.querySelectorAll('button')).find(el => el.textContent?.includes('Terminal'))!
+    await act(async () => button.click())
+    expect(container.textContent).toContain('printf test')
+    for (const value of [output, { type: 'json', value: output }]) {
+        await render([{ ...part, state: 'output-available', output: value }, { type: 'text', text: 'Final answer.' }])
+        expect(container.textContent).toContain('Exit code 0\n<b>sample</b>')
+        expect(container.textContent).not.toMatch(/engine-only|private\/profile/)
+        expect(container.querySelector('b')).toBeNull()
+    }
+})

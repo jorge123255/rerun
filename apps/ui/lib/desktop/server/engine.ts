@@ -1,7 +1,8 @@
 import 'server-only'
+import { desktopRerunGrantsOf } from '@rerun/contracts'
 import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
-import { transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
+import { publicDesktopHistory, transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
 import { sanitizeIdentifier } from '@/lib/utils'
 import { resolveDesktopChatModel, savedChoice } from './chat-model'
 import type { DesktopModelPick } from '../chat-model'
@@ -53,7 +54,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
     try {
         const { memoryEnabled, autoMemory, workspaceReadEnabled, ...textSettings } = patch ?? {}
         const tools = {
-            ...(workspaceReadEnabled !== undefined && { desktopWorkspaceRead: workspaceReadEnabled }),
+            ...(workspaceReadEnabled !== undefined && { desktopToolGrants: { workspaceRead: workspaceReadEnabled } }),
             ...(memoryEnabled !== undefined && { memory: memoryEnabled }),
         }
         const detail = patch ? await patchAgent(engine, agent.engineAgentId, {
@@ -63,7 +64,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
         }) : await getAgent(engine, agent.engineAgentId)
         return {
             soul: detail.soul, verbosity: detail.config.verbosity, soulEditable: true,
-            workspaceReadEnabled: detail.config.tools.desktopWorkspaceRead === true,
+            workspaceReadEnabled: desktopRerunGrantsOf(detail.config.tools).workspaceRead,
             memoryEnabled: detail.config.tools.memory,
             autoMemory: detail.config.selfImprovement.autoMemory,
             selfImprovementEnabled: detail.config.selfImprovement.enabled,
@@ -155,7 +156,7 @@ export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: str
         // Only a read of this specific alternate acknowledges it. Opening the original, or an
         // older alternate while a newer request is pending, leaves the pending attempt alone.
         await db.execute({ sql: 'UPDATE desktop_regeneration_requests SET pending = 0 WHERE alternate_session_id = ? AND pending = 1', args: [session.id] })
-        return history
+        return publicDesktopHistory(history)
     } catch (cause) {
         if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Conversation not found')
         throw new DesktopHttpError(502, 'Could not load this conversation. Try again.')

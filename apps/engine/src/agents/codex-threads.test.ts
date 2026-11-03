@@ -14,6 +14,12 @@ describe('codexThreadToResume', () => {
         expect(codexThreadToResume('agent', 'session', 'cnx-a', 'msg-2')).toBe('thread-1')
     })
 
+    it('starts a fresh thread when a coworker adds or revokes tool access', () => {
+        rememberCodexThread('agent', 'session', { ...thread, toolAccess: 'fs_read' })
+        expect(codexThreadToResume('agent', 'session', 'cnx-a', 'msg-2', 'fs_read')).toBe('thread-1')
+        expect(codexThreadToResume('agent', 'session', 'cnx-a', 'msg-2', '')).toBeUndefined()
+    })
+
     it('starts over once the session holds a message the thread never saw', () => {
         expect(codexThreadToResume('agent', 'session', 'cnx-a', 'msg-3')).toBeUndefined()
     })
