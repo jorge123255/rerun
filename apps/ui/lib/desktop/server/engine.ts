@@ -3,6 +3,8 @@ import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, pa
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
 import { transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
 import { sanitizeIdentifier } from '@/lib/utils'
+import { resolveDesktopChatModel, savedChoice } from './chat-model'
+import type { DesktopModelPick } from '../chat-model'
 import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } from './settings'
 import { DesktopHttpError } from './auth'
 import { readCoworkerFile } from './coworker-files'
@@ -67,7 +69,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; attachmentPath?: string }
+    | { sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -79,7 +81,9 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
     const regenerate = 'regenerateMessageId' in input
     const file = !regenerate && input.attachmentPath !== undefined ? await readCoworkerFile(runtime, agent.id, input.attachmentPath, 'attach') : undefined
-    const { connection, model } = await desktopModel(runtime)
+    // Existing chats resolve their own saved model. Only a first send can carry an unsaved choice.
+    const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
+    const { connectionId, model } = await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
     const requestId = regenerate ? await regenerationRequestId(db, input.sessionId, input.regenerateMessageId, input.requestId) : undefined
     const engineResponse = await chat(engineOf(runtime), agent.engineAgentId, {
         ...(regenerate ? {
@@ -90,7 +94,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             sessionId: existing?.engineSessionId, message: input.text,
             workspaceAttachment: file && { path: file.path, content: file.content },
         }),
-        connectionId: connection.id,
+        connectionId,
         model,
         source: 'dashboard',
         author: { id: 'local-profile-1', name: 'Local User' },
@@ -106,8 +110,8 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (!engineSessionId) throw new DesktopHttpError(502, 'The engine did not return a conversation ID')
     if (regenerate && engineSessionId === existing!.engineSessionId) throw new DesktopHttpError(502, 'The engine did not return an alternate conversation.')
     const session = regenerate
-        ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId })
-        : existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: input.text.trim() })
+        ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId, model: savedChoice(existing) })
+        : existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: input.text.trim(), model: firstChoice })
     const headers = new Headers({
         'content-type': engineResponse.headers.get('content-type') ?? 'text/event-stream',
         'x-vercel-ai-ui-message-stream': engineResponse.headers.get('x-vercel-ai-ui-message-stream') ?? 'v1',

@@ -30,6 +30,7 @@ test('opens from a board coworker, updates a running entry, isolates coworkers, 
         if (url.endsWith('/details')) return Response.json({ steps: [{ id: 'step', stepNumber: 1, finishReason: 'stop', totalTokens: 16, durationMs: 100 }], tools: [] })
         if (url.endsWith('/sessions')) return Response.json({ sessions: [{ id: 'saved', agentId: url.includes('/alice/') ? alice.id : bob.id, title: 'Saved chat', createdAt: '', updatedAt: '' }] })
         if (url.endsWith('/messages')) return Response.json({ messages: [{ id: 'answer', role: 'assistant', parts: [{ type: 'text', text: 'The saved answer.' }] }] })
+        if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         throw new Error(`Unexpected test request: ${url}`)
     })
     vi.stubGlobal('fetch', fetcher)

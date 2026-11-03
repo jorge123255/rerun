@@ -46,7 +46,10 @@ beforeEach(async () => {
         seen.push({ method: req.method!, url: req.url!, authorization: req.headers.authorization ?? null, body })
         if (connections(req, res, body)) return
         if (req.method === 'POST' && req.url === '/agents') {
-            return json(res, { id: 'engine-agent-1', config: { name: body.config.name }, soul: '' }, 201)
+            return json(res, { id: 'engine-agent-1', config: { name: body.config.name, model: null }, soul: '' }, 201)
+        }
+        if (req.method === 'GET' && req.url === '/agents/engine-agent-1') {
+            return json(res, { id: 'engine-agent-1', config: { name: 'coworker', model: null }, soul: '' })
         }
         if (req.method === 'POST' && req.url === '/agents/engine-agent-1/chat') {
             res.writeHead(200, {

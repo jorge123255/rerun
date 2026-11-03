@@ -1,3 +1,4 @@
+import { desktopModelPickSchema } from '@/lib/desktop/chat-model'
 import { z } from 'zod'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { startDesktopChat } from '@/lib/desktop/server/engine'
@@ -10,6 +11,7 @@ const sendInput = z.object({
     attachmentPath: z.string().min(1).max(4096).optional(),
     regenerateMessageId: z.never().optional(),
     requestId: z.never().optional(),
+    modelChoice: desktopModelPickSchema.optional(),
 })
 const regenerateInput = z.object({
     agentId: z.string().min(1),

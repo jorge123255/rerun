@@ -99,6 +99,7 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
                 finish = () => { controller.enqueue(encoder.encode('data: {"type":"finish"}\n\ndata: [DONE]\n\n')); controller.close() }
             } }), { headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id } })
         }
+        if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         throw new Error(`Unexpected test request: ${url}`)
     }))
     const container = document.createElement('div')
@@ -154,6 +155,7 @@ test('history read failure can be retried without turning it into an empty saved
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })
         if (url.endsWith('/sessions')) return ++reads === 1 ? Response.json({ error: 'History unavailable' }, { status: 503 }) : Response.json({ sessions: [session('saved', 'alice', 'Recovered')] })
+        if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         throw new Error(`Unexpected request: ${url}`)
     }))
     const container = document.createElement('div')

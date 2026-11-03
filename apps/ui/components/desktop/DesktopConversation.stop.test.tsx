@@ -38,6 +38,7 @@ beforeEach(() => {
         if (url.endsWith('/messages')) return saved.clone()
         if (url.endsWith('/stop') && init?.method === 'POST') { running = false; return stopResponse() }
         if (url.endsWith('/stop')) return statusUnavailable ? new Response(null, { status: 503 }) : Response.json({ running })
+        if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         throw new Error('Unexpected request: ' + url)
     }))
     container = document.createElement('div')

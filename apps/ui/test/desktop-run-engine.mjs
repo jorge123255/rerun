@@ -18,12 +18,15 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
     let notifyProvider
     const providerStarted = new Promise(resolve => { notifyProvider = resolve })
     const providerMessages = []
+    const providerModels = []
     const waiting = []
     const provider = createServer(async (req, res) => {
         if (req.url !== '/v1/chat/completions' || req.method !== 'POST') return res.writeHead(404).end()
         const body = []
         for await (const piece of req) body.push(piece)
-        providerMessages.push(JSON.parse(Buffer.concat(body)).messages)
+        const payload = JSON.parse(Buffer.concat(body))
+        providerMessages.push(payload.messages)
+        providerModels.push(payload.model ?? null)
         const requestNumber = providerMessages.length
         res.writeHead(200, { 'content-type': 'text/event-stream' })
         const chunk = (delta, finishReason = null, usage) => res.write(`data: ${JSON.stringify({ id: 'local-completion', object: 'chat.completion.chunk', created: 1, model: 'qa-local', choices: [{ index: 0, delta, finish_reason: finishReason }], ...(usage && { usage }) })}\n\n`)
@@ -77,7 +80,7 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
             active.send({ type: 'stop' })
         })
     }
-    return { start, stop, providerOrigin, providerStarted, providerMessages,
+    return { start, stop, providerOrigin, providerStarted, providerMessages, providerModels,
         waitForProviderRequest: count => providerMessages.length >= count ? Promise.resolve() : new Promise((resolve, reject) => {
             const timer = setTimeout(() => reject(new Error(`Local provider request ${count} did not arrive`)), 10000)
             waiting.push({ count, resolve: () => { clearTimeout(timer); resolve() } })

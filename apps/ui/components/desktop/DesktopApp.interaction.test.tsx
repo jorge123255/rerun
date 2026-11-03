@@ -21,6 +21,7 @@ function mockDesktopFetch(reply: (url: string, init?: RequestInit) => Response |
         if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
         // An open conversation checks whether an engine run is still generating (for Stop).
         if (/^\/api\/desktop\/sessions\/[^/]+\/stop$/.test(url) && !init?.method) return Response.json({ running: false })
+        if (/\/api\/desktop\/agents\/[^/]+\/model(?:\?|$)/.test(url)) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         const message = `${init?.method ?? 'GET'} ${url}`
         unexpectedRequests.push(message)
         throw new Error(`Unexpected request: ${message}`)

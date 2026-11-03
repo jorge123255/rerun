@@ -20,6 +20,8 @@ export type DesktopSession = {
     title: string
     createdAt: string
     updatedAt: string
+    modelConnectionId: string | null
+    model: string | null
 }
 
 function agentOf(row: Row): DesktopAgent {
@@ -35,6 +37,9 @@ function agentOf(row: Row): DesktopAgent {
 }
 
 function sessionOf(row: Row): DesktopSession {
+    const modelConnectionId = row.model_connection_id == null ? null : String(row.model_connection_id)
+    const model = row.model == null ? null : String(row.model)
+    const choice = modelConnectionId && model ? { modelConnectionId, model } : null
     return {
         id: String(row.id),
         agentId: String(row.agent_id),
@@ -42,6 +47,8 @@ function sessionOf(row: Row): DesktopSession {
         title: String(row.title),
         createdAt: String(row.created_at),
         updatedAt: String(row.updated_at),
+        modelConnectionId: choice?.modelConnectionId ?? null,
+        model: choice?.model ?? null,
     }
 }
 
@@ -110,12 +117,12 @@ export async function regenerationRequestId(db: Client, source: string, message:
     return String(row.canonical_id)
 }
 
-export async function createDesktopSession(db: Client, input: { agentId: string; engineSessionId: string; title: string; regenerationRequestId?: string }): Promise<DesktopSession> {
+export async function createDesktopSession(db: Client, input: { agentId: string; engineSessionId: string; title: string; regenerationRequestId?: string; model?: { connectionId: string; model: string } | null }): Promise<DesktopSession> {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
     const statements: InStatement[] = [{
-        sql: 'INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(engine_session_id) DO NOTHING',
-        args: [id, input.agentId, input.engineSessionId, input.title.slice(0, 80) || 'New conversation', now, now],
+        sql: 'INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at, model_connection_id, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(engine_session_id) DO NOTHING',
+        args: [id, input.agentId, input.engineSessionId, input.title.slice(0, 80) || 'New conversation', now, now, input.model?.connectionId ?? null, input.model?.model ?? null],
     }]
     if (input.regenerationRequestId) statements.push({
         sql: `UPDATE desktop_regeneration_requests SET alternate_session_id =
@@ -129,4 +136,11 @@ export async function createDesktopSession(db: Client, input: { agentId: string;
     const row = results.at(-1)!.rows[0]
     if (!row) throw new Error('Engine conversation belongs to another coworker')
     return sessionOf(row)
+}
+
+export async function setDesktopSessionModel(db: Client, id: string, pick: { connectionId: string; model: string } | null): Promise<void> {
+    await db.execute({
+        sql: 'UPDATE desktop_sessions SET model_connection_id = ?, model = ? WHERE id = ?',
+        args: [pick?.connectionId ?? null, pick?.model ?? null, id],
+    })
 }
