@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type UIMessage } from 'ai'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
@@ -21,12 +21,13 @@ async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMes
     return body.messages as UIMessage[]
 }
 
-export function DesktopConversation({ agent, sessionId, sessions, onSelectSession, onChatSession }: {
+export function DesktopConversation({ agent, sessionId, sessions, onSelectSession, onChatSession, renderHistory }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
     onSelectSession: (id: string | null) => void
     onChatSession: (id: string) => void
+    renderHistory?: (busy: boolean) => ReactNode
 }) {
     const [input, setInput] = useState('')
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; error?: string }>({ id: null })
@@ -91,7 +92,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                     <p className="truncate text-xs text-muted-foreground">{agent.description || 'Local coworker'}</p>
                 </div>
                 <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-                    {sessions.length > 0 && (
+                    {renderHistory ? renderHistory(busy) : sessions.length > 0 && (
                         <select
                             disabled={busy}
                             aria-label="Conversation history"

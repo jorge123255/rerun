@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { DesktopConversation } from './DesktopConversation'
+import { DesktopChatHistory } from './DesktopChatHistory'
 
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
@@ -219,37 +220,46 @@ function CoworkerChat({ agent }: { agent: DesktopAgentView }) {
     const [selectedId, setSelectedId] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/sessions`
+    const sessionRead = useRef<AbortController | null>(null)
 
-    useEffect(() => {
+    const readSessions = useCallback(async (openLatest = false) => {
+        sessionRead.current?.abort()
         const controller = new AbortController()
-        void fetch(url, { signal: controller.signal }).then(response => json<{ sessions: DesktopSessionView[] }>(response)).then(body => {
+        sessionRead.current = controller
+        try {
+            const body = await json<{ sessions: DesktopSessionView[] }>(await fetch(url, { signal: controller.signal, cache: 'no-store' }))
             if (controller.signal.aborted) return
             setSessions(body.sessions)
-            setSelectedId(body.sessions[0]?.id ?? null)
-        }).catch(cause => {
+            setError(null)
+            if (openLatest) setSelectedId(body.sessions[0]?.id ?? null)
+        } catch (cause) {
             if (!controller.signal.aborted) {
-                setSessions([])
+                setSessions(current => current ?? [])
                 setError(cause instanceof Error ? cause.message : 'Could not load conversations')
             }
-        })
-        return () => controller.abort()
+        }
     }, [url])
+
+    useEffect(() => {
+        // State changes in readSessions happen only after the asynchronous request.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        void readSessions(true)
+        return () => sessionRead.current?.abort()
+    }, [readSessions])
 
     const refreshSession = useCallback(async (id: string) => {
         setSelectedId(id)
-        try {
-            const body = await json<{ sessions: DesktopSessionView[] }>(await fetch(url))
-            setSessions(body.sessions)
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : 'Could not refresh conversations')
-        }
-    }, [url])
+        await readSessions()
+    }, [readSessions])
 
     if (!sessions) return <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>
     return (
         <>
-            {error && <p role="alert" className="px-5 py-2 text-sm text-destructive">{error}</p>}
-            <DesktopConversation agent={agent} sessionId={selectedId} sessions={sessions} onSelectSession={setSelectedId} onChatSession={refreshSession} />
+            {error && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">{error}
+                <Button type="button" size="sm" variant="outline" onClick={() => void readSessions()}>Retry conversations</Button>
+            </div>}
+            <DesktopConversation agent={agent} sessionId={selectedId} sessions={sessions} onSelectSession={setSelectedId} onChatSession={refreshSession}
+                renderHistory={busy => <DesktopChatHistory sessions={sessions} selectedId={selectedId} busy={busy} onSelect={setSelectedId} />} />
         </>
     )
 }

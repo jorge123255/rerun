@@ -301,7 +301,10 @@ test('editing a coworker from the board preserves the chat and only saves change
         expect(writes[1]).toEqual({ soul: 'End with a verdict.', verbosity: 'concise' })
         expect(document.querySelector('[role="dialog"]')).toBeNull()
         expect(composer.value).toBe('My unsent question')
-        expect(container.querySelector('select[aria-label="Conversation history"]')).toHaveProperty('value', 'review')
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)) })
+        await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Conversation history (1)"]')!.click() })
+        expect(document.querySelector('[aria-current="true"]')?.textContent).toContain('Earlier review')
+        await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Conversation history (1)"]')!.click() })
         expect(container.textContent).toContain('Existing answer.')
         settings.soulEditable = false
         await click('Edit coworker')
