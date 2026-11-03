@@ -1,0 +1,26 @@
+# Internal/development packaging for the Rerun desktop preview.
+# Deliberately unsigned: public distribution needs Developer ID signing,
+# hardened runtime, and notarization, which are a separate release step.
+appId: build.rerun.desktop.preview
+productName: Rerun Desktop Preview
+copyright: Rerun contributors
+directories:
+    app: .
+    output: release
+files:
+    - "dist/main/**/*"
+    - "package.json"
+extraResources:
+    - from: "resources/"
+      to: "."
+asar: true
+npmRebuild: false
+buildDependenciesFromSource: false
+mac:
+    category: public.app-category.productivity
+    artifactName: "${productName}-${version}-mac-${arch}.${ext}"
+    target:
+        - dir
+    identity: null
+    extendInfo:
+        NSLocalNetworkUsageDescription: "Rerun runs its AI coworkers on your Mac; they reach services on localhost and your local network that you connect."

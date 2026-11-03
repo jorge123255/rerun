@@ -1,4 +1,5 @@
 import { withPostHogConfig } from "@posthog/nextjs-config";
+import path from "path";
 import type { NextConfig } from "next";
 
 // Dokploy builds without .git, so a production build stamps itself. Written back to process.env so
@@ -6,6 +7,11 @@ import type { NextConfig } from "next";
 process.env.NEXT_PUBLIC_BUILD_SHA ??= process.env.NODE_ENV === "production" ? `build-${Date.now()}` : "dev";
 
 const nextConfig: NextConfig = {
+  // Desktop packaging builds a self-contained server.js with traced dependencies; web/Docker
+  // builds keep `next start` and emit nothing extra.
+  ...(process.env.RERUN_DESKTOP_STANDALONE === "1"
+    ? { output: "standalone" as const, outputFileTracingRoot: path.join(__dirname, "../../") }
+    : {}),
   // A phone on the same wifi opens the dev server by its LAN address, which Next refuses to serve
   // scripts to unless it is listed here. A Conductor cloud workspace serves it behind
   // *.conductor.show: without that origin the page arrives but never hydrates, so every click dies.

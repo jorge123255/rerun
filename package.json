@@ -20,7 +20,10 @@
         "db:start": "supabase start",
         "db:stop": "supabase stop",
         "db:reset": "supabase db reset",
-        "db:fresh:local": "supabase start && supabase db reset"
+        "db:fresh:local": "supabase start && supabase db reset",
+        "desktop:package": "node scripts/desktop/package.mjs",
+        "desktop:stage": "node scripts/desktop/package.mjs --stage-only",
+        "desktop:verify": "node scripts/desktop/verify-runtime.mjs"
     },
     "devDependencies": {
         "concurrently": "^10.0.4",

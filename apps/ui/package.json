@@ -30,6 +30,7 @@
         "@fal-ai/client": "^1.10.1",
         "@hookform/resolvers": "^5.4.0",
         "@lezer/highlight": "^1.2.3",
+        "@libsql/client": "^0.17.3",
         "@novnc/novnc": "1.5.0",
         "@number-flow/react": "^0.6.1",
         "@paper-design/shaders-react": "^0.0.81",
