@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { DesktopConversation } from './DesktopConversation'
 import { DesktopChatHistory } from './DesktopChatHistory'
+import { DesktopRunHistory } from './DesktopRunHistory'
 
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
@@ -259,7 +260,7 @@ function CoworkerChat({ agent }: { agent: DesktopAgentView }) {
                 <Button type="button" size="sm" variant="outline" onClick={() => void readSessions()}>Retry conversations</Button>
             </div>}
             <DesktopConversation agent={agent} sessionId={selectedId} sessions={sessions} onSelectSession={setSelectedId} onChatSession={refreshSession}
-                renderHistory={busy => <DesktopChatHistory sessions={sessions} selectedId={selectedId} busy={busy} onSelect={setSelectedId} />} />
+                renderHistory={busy => <><DesktopChatHistory sessions={sessions} selectedId={selectedId} busy={busy} onSelect={setSelectedId} /><DesktopRunHistory agent={agent} /></>} />
         </>
     )
 }
