@@ -4,7 +4,10 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.1:3189') {
+/** @type {(index: number) => string} */
+const defaultReply = () => 'A completed local run.'
+
+export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.1:3189', { replyForRequest = defaultReply } = {}) {
     const apiKey = randomBytes(32).toString('hex')
     const encryptionKey = randomBytes(32).toString('hex')
     const runtimeFile = resolve(dataRoot, 'runtime.json')
@@ -19,13 +22,14 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
     const provider = createServer(async (req, res) => {
         if (req.url !== '/v1/chat/completions' || req.method !== 'POST') return res.writeHead(404).end()
         for await (const chunk of req) void chunk
+        const requestNumber = providerRequests + 1
         res.writeHead(200, { 'content-type': 'text/event-stream' })
         const chunk = (delta, finishReason = null, usage) => res.write(`data: ${JSON.stringify({ id: 'local-completion', object: 'chat.completion.chunk', created: 1, model: 'qa-local', choices: [{ index: 0, delta, finish_reason: finishReason }], ...(usage && { usage }) })}\n\n`)
         chunk({ role: 'assistant', content: '' })
         releaseReply = () => {
             releaseReply = undefined
             if (res.destroyed || res.writableEnded) return
-            chunk({ content: 'A completed local run.' })
+            chunk({ content: replyForRequest(requestNumber) })
             chunk({}, 'stop', { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 })
             res.end('data: [DONE]\n\n')
         }
@@ -73,7 +77,10 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
         })
     }
     return { start, stop, providerOrigin, providerStarted,
-        waitForProviderRequest: count => providerRequests >= count ? Promise.resolve() : new Promise(resolve => waiting.push({ count, resolve })),
+        waitForProviderRequest: count => providerRequests >= count ? Promise.resolve() : new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error(`Local provider request ${count} did not arrive`)), 10000)
+            waiting.push({ count, resolve: () => { clearTimeout(timer); resolve() } })
+        }),
         finishReply: () => releaseReply?.(), get runtime() { return runtime },
         async close() {
             try { releaseReply?.(); await stop() }

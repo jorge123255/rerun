@@ -6,14 +6,17 @@ import { Button } from '@/components/ui/button'
 import type { DesktopAgentView } from './DesktopApp'
 import { useBoardActivity } from './useBoardActivity'
 import type { BoardActivityStatus } from '@/lib/desktop/board-activity'
+import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
+import { DesktopFindChat } from './DesktopFindChat'
 
 const ACTIVITY_LABEL: Record<BoardActivityStatus, string> = { working: 'Working', idle: 'Idle', unreachable: 'Activity unavailable', unknown: 'Checking activity' }
 
-export function DesktopBoard({ agents, workspaceName, onOpen, onCreate }: {
+export function DesktopBoard({ agents, workspaceName, onOpen, onCreate, onOpenConversation }: {
     agents: DesktopAgentView[]
     workspaceName: string
     onOpen: (id: string) => void
     onCreate: () => void
+    onOpenConversation?: (hit: DesktopConversationHit) => void
 }) {
     const activity = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]))
     const { tiles, box } = useMemo(() => {
@@ -43,7 +46,10 @@ export function DesktopBoard({ agents, workspaceName, onOpen, onCreate }: {
                         {agents.length ? 'Select a coworker to open their chat.' : 'Give your first coworker a name and a job.'}
                     </p>
                 </div>
-                <Button type="button" size="sm" onClick={onCreate}><Plus aria-hidden />Add coworker</Button>
+                <div className="flex flex-wrap gap-2">
+                    {onOpenConversation && <DesktopFindChat onSelect={onOpenConversation} />}
+                    <Button type="button" size="sm" onClick={onCreate}><Plus aria-hidden />Add coworker</Button>
+                </div>
             </header>
             <div className="relative min-h-48 flex-1">
                 <IsoGrid
