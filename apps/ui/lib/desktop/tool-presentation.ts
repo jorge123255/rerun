@@ -20,13 +20,24 @@ function text(value: unknown): string | undefined {
     return clean.length > LIMIT ? clean.slice(0, LIMIT) + '…' : clean
 }
 
+function editPath(value: unknown): string | undefined {
+    if (typeof value !== 'string' || /\p{Cc}/u.test(value)) return
+    const parts = value.replaceAll('\\', '/').split('/')
+    const filename = parts.at(-1)
+    if (!filename || filename === '.' || filename === '..') return
+    // FileChange events do not attest a run root. Keep unambiguous relative names and
+    // show only the basename for a host path, even one which resembles our scratch layout.
+    const relative = !/^(?:~|[a-z][a-z0-9+.-]*:)/i.test(value) && parts.every(part => part && part !== '.' && part !== '..')
+    return text(relative ? parts.join('/') : filename)
+}
+
 function changes(value: unknown): string | undefined {
     if (!Array.isArray(value)) return
     const paths = value.slice(0, 30).flatMap(change => {
         const info = record(change)
-        const path = text(info.path)
+        const path = editPath(info.path)
         const kind = typeof info.kind === 'string' ? info.kind : record(info.kind).type
-        return path ? [typeof kind === 'string' ? `${text(kind)} · ${path}` : path] : []
+        return path ? [typeof kind === 'string' && ['add', 'update', 'delete', 'move', 'rename', 'create', 'remove'].includes(kind) ? `${kind} · ${path}` : path] : []
     })
     return paths.length ? paths.join('\n') : undefined
 }
@@ -50,7 +61,8 @@ export function desktopToolPresentation(name: string, rawInput: unknown, rawOutp
         } catch { errorMessage = 'Tool failed.' }
     }
     const reportedError = errorMessage ?? (failed ? text(output) ?? text(item.message) ?? 'Tool failed.' : undefined)
-    let preview = text(input.path ?? input.query ?? input.pattern)
+    const fileChange = tool === 'patch' || tool === 'apply_patch'
+    let preview = fileChange ? changes(input.changes) : text(input.path ?? input.query ?? input.pattern)
     if (tool === 'fs_search' && typeof input.pattern === 'string') preview = text([input.path, input.pattern].filter(Boolean).join(' · '))
     if (tool === 'memory_write') preview = text(input.content)
     if (tool === 'memory_delete') preview = text(input.id)
@@ -68,9 +80,7 @@ export function desktopToolPresentation(name: string, rawInput: unknown, rawOutp
         const outcome = [exit, terminal].filter(value => value !== undefined).join('\n')
         if (outcome) result.output = outcome
         if (item.status === 'failed' || (typeof item.exitCode === 'number' && item.exitCode !== 0)) result.errorText = exit ?? 'Command failed.'
-    } else if (tool === 'patch' || tool === 'apply_patch') {
-        const inputPaths = changes(input.changes)
-        if (inputPaths) result.input = { preview: inputPaths }
+    } else if (fileChange) {
         const paths = changes(item.changes)
         if (paths) result.output = paths
         if (item.status === 'failed') result.errorText = 'File changes failed.'
@@ -87,7 +97,7 @@ export function desktopToolPresentation(name: string, rawInput: unknown, rawOutp
         if (chunks.length) result.output = text(chunks.join('\n'))
     }
     if (reportedError) {
-        result.errorText = text(reportedError)
+        result.errorText = fileChange ? 'File changes failed.' : text(reportedError)
         if (tool !== 'exec' && tool !== 'shell_exec') delete result.output
     }
     return result

@@ -27,6 +27,22 @@ describe('public tool activity', () => {
         expect(show('functions.exec', { code: '1 + 1', private: 'hidden' }, { type: 'text', value: '2' })).toEqual({ input: { preview: '1 + 1' }, output: '2' })
     })
 
+    it('shows workspace-relative edits or just filenames without disclosing native scratch or sibling directories', () => {
+        const base = '/Users/qa/Library/Application Support/Rerun/workspaces/1/engine/desktop-native-workers/run-21-secret/workspace'
+        const changes = [
+            { path: base + '/reports/proof.md', kind: { type: 'update' } },
+            { path: 'drafts/inside.txt', kind: 'add' },
+            { path: '../sibling/private/remove.txt', kind: 'delete' },
+            { path: '/another/coworker/fixture/elsewhere.txt', kind: '/private/runtime/metadata' },
+        ]
+        const item = { type: 'fileChange', changes, path: base, status: 'completed' }
+        const expected = 'update · proof.md\nadd · drafts/inside.txt\ndelete · remove.txt\nelsewhere.txt'
+        expect(show('patch', item, item)).toEqual({ input: { preview: expected }, output: expected })
+        expect(show('apply_patch', { path: base }, undefined, 'Denied in '+base)).toEqual({ errorText: 'File changes failed.' })
+        const tool = { id: 'change', stepNumber: 1, toolName: 'patch', isError: 0, durationMs: 9, resultJson: JSON.stringify(item) }
+        expect(JSON.parse(desktopRunDetailsView([], [tool]).tools[0].resultJson!)).toBe(expected)
+    })
+
     it('uses the same public result in owner-scoped Run Details', () => {
         const tool = { id: 't', toolName: 'exec', stepNumber: 1, isError: 0, durationMs: 5,
             resultJson: JSON.stringify({ type: 'commandExecution', aggregatedOutput: 'wrote sample', exitCode: 0, secret: 'private-value' }) }
