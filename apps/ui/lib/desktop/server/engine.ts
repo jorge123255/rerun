@@ -9,6 +9,7 @@ import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } f
 import { DesktopHttpError } from './auth'
 import { readCoworkerFile } from './coworker-files'
 import { openDesktopDatabase } from './database'
+import { discardTabStart, existingTabStart, recoverTabSession, reserveTabStart } from './tab-starts'
 import type { DesktopRuntime } from './runtime'
 import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession, regenerationRequestId } from './store'
 
@@ -69,7 +70,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick }
+    | { sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick; tabUid?: string }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -80,11 +81,20 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
     const regenerate = 'regenerateMessageId' in input
+    const uid = !regenerate && !existing ? input.tabUid : undefined
+    const previousStart = !regenerate && uid ? await existingTabStart(db, agent, uid, input) : null
+    if (previousStart) {
+        const id = await recoverTabSession(db, engineOf(runtime), agent, previousStart)
+        if (id) return { sessionId: id, response: new Response('data: [DONE]\n\n', { headers: {
+            'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id, 'x-run-id': String(previousStart.run_id),
+        } }) }
+    }
     const file = !regenerate && input.attachmentPath !== undefined ? await readCoworkerFile(runtime, agent.id, input.attachmentPath, 'attach') : undefined
     // Existing chats resolve their own saved model. Only a first send can carry an unsaved choice.
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
     const { connectionId, model } = await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
     const requestId = regenerate ? await regenerationRequestId(db, input.sessionId, input.regenerateMessageId, input.requestId) : undefined
+    const start = !regenerate && uid ? previousStart ?? await reserveTabStart(db, agent, uid, input, runtime.launchNonce) : null
     const engineResponse = await chat(engineOf(runtime), agent.engineAgentId, {
         ...(regenerate ? {
             sessionId: existing!.engineSessionId,
@@ -92,6 +102,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             requestId: requestId!,
         } : {
             sessionId: existing?.engineSessionId, message: input.text,
+            ...(start && { desktopFirstTurn: { sessionId: String(start.engine_session_id), runId: String(start.run_id) } }),
             workspaceAttachment: file && { path: file.path, content: file.content },
         }),
         connectionId,
@@ -103,11 +114,16 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         if (engineResponse.status === 404) throw new DesktopHttpError(404, 'This reply is no longer in the selected conversation.')
         if (engineResponse.status === 409) throw new DesktopHttpError(409, 'This reply could not be regenerated. Check that the conversation is idle and the reply is complete.')
     }
+    if (start && engineResponse.status >= 400 && engineResponse.status < 500) {
+        if (!await recoverTabSession(db, engineOf(runtime), agent, start)) await discardTabStart(db, start)
+        throw new DesktopHttpError(engineResponse.status, 'The engine could not start this first message. Check the coworker or model, then try again.')
+    }
     // A replay can recover the alternate even after the engine's stream has expired.
-    const completedReplay = regenerate && engineResponse.status === 204
+    const completedReplay = (regenerate || !!start) && engineResponse.status === 204
     if (!engineResponse.ok || (!engineResponse.body && !completedReplay)) throw new DesktopHttpError(502, 'The engine could not start this conversation')
     const engineSessionId = engineResponse.headers.get('x-session-id')
     if (!engineSessionId) throw new DesktopHttpError(502, 'The engine did not return a conversation ID')
+    if (start && (engineSessionId !== start.engine_session_id || engineResponse.headers.get('x-run-id') !== start.run_id)) throw new DesktopHttpError(502, 'The engine returned a different first turn.')
     if (regenerate && engineSessionId === existing!.engineSessionId) throw new DesktopHttpError(502, 'The engine did not return an alternate conversation.')
     const session = regenerate
         ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId, model: savedChoice(existing) })

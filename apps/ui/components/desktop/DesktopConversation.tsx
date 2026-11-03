@@ -19,6 +19,7 @@ import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { AttachmentChip, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
+import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { DesktopModelSelector } from './DesktopModelSelector'
 import type { DesktopModelPick } from '@/lib/desktop/chat-model'
 
@@ -33,12 +34,22 @@ async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMes
 const stopUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/stop`
 const RUN_POLL_MS = 3000
 
-export function DesktopConversation({ agent, sessionId, sessions, onSelectSession, onChatSession, renderHistory, renderRunHistory, onClosePanel, modelLabel, onOpenModelSettings }: {
+export type ComposerDraft = { text: string; attachment?: string }
+export type TabActivity = { busy: boolean; dirty: boolean }
+
+export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onClosePanel, modelLabel, onOpenModelSettings }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
     onSelectSession: (id: string | null) => void
-    onChatSession: (id: string) => void
+    onStartFork?: (uid: string) => boolean
+    onFinishFork?: (uid: string) => void
+    tabUid?: string
+    active?: boolean
+    tabStrip?: ReactNode
+    initialDraft?: ComposerDraft
+    onTabActivity?: (uid: string, state: TabActivity) => void
+    onChatSession: (id: string, sourceDraft?: ComposerDraft) => void
     renderHistory?: (busy: boolean) => ReactNode
     renderRunHistory?: ReactNode
     onClosePanel?: () => void
@@ -46,14 +57,16 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     onOpenModelSettings?: () => void
 }) {
     const [cardOpen, setCardOpen] = useState(false)
-    const [inputs, setInputs] = useState<ReadonlyMap<string, string>>(() => new Map())
-    const [attachments, setAttachments] = useState<ReadonlyMap<string, string>>(() => new Map())
     const draftKey = JSON.stringify([agent.id, sessionId])
+    const [inputs, setInputs] = useState<ReadonlyMap<string, string>>(() => new Map(initialDraft ? [[draftKey, initialDraft.text]] : []))
+    const [attachments, setAttachments] = useState<ReadonlyMap<string, string>>(() => new Map(initialDraft?.attachment ? [[draftKey, initialDraft.attachment]] : []))
     // Ordinary navigation carries the current composer. An alternate and its original keep independent drafts.
     const inputKey = inputs.has(draftKey) ? draftKey : ''
     const input = inputs.get(inputKey) ?? ''
     const setInput = (value: string) => setInputs(current => new Map(current).set(inputKey, value))
     const attachment = attachments.get(draftKey)
+    const composer = useRef<ComposerDraft>({ text: input, attachment })
+    useEffect(() => { composer.current = { text: input, attachment } }, [input, attachment])
     const pendingAttachment = useRef<{ key: string; inputKey: string; input: string } | null>(null)
     const regenerationIds = useRef(new Map<string, string>())
     const regenerating = useRef<{ key: string; agentId: string; sessionId: string; draftKey: string } | null>(null)
@@ -73,23 +86,19 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     const [stopping, setStopping] = useState(false)
     const [stopError, setStopError] = useState<string>()
     const [liveSessionId, setLiveSessionId] = useState<string | null>(null)
-    const conversationChoice = useRef<DesktopModelPick | undefined>(undefined)
-    const modelSession = useRef(sessionId)
-    if (modelSession.current !== sessionId) {
-        modelSession.current = sessionId
-        conversationChoice.current = undefined
-    }
-    const rememberModel = useCallback((choice: DesktopModelPick | undefined) => { conversationChoice.current = choice }, [])
+    const conversationChoice = useRef<{ session: string | null; pick?: DesktopModelPick } | null>(null)
+    const rememberModel = useCallback((pick: DesktopModelPick | undefined) => { conversationChoice.current = { session: sessionId, pick } }, [sessionId])
 
     const sendToEngine = useCallback<typeof fetch>(async (url, init) => {
         const pending = pendingAttachment.current
         const alternate = regenerating.current
         let response: Response
         try {
+            if (tabUid) await pendingTabWrite(agent.id)
             response = await fetch(url, init)
             if ((pending || alternate) && !response.ok) {
                 const body = await response.json().catch(() => null)
-                const fallback = alternate ? 'Could not regenerate this reply. Try again.' : 'Could not send the message with this file. Try again.'
+                const fallback = alternate ? 'Could not regenerate this reply. Try again.' : 'Could not send this message. Try again.'
                 throw new Error(typeof body?.error === 'string' ? body.error : fallback)
             }
         } finally {
@@ -118,10 +127,10 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
             // A new session gets its ID from the first response. Keep its live stream visible.
             setLiveSessionId(id)
             setHistory({ id })
-            onChatSession(id)
+            onChatSession(id, alternate ? composer.current : undefined)
         }
         return response
-    }, [onChatSession, setDraftAttachment])
+    }, [agent.id, tabUid, onChatSession, setDraftAttachment])
 
     // The constructor saves the callback; only a submitted request reads the pending draft.
     // eslint-disable-next-line react-hooks/refs
@@ -134,7 +143,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     }), [sendToEngine])
 
     const { messages, setMessages, sendMessage, regenerate, stop, status, error } = useChat({
-        id: `desktop-${agent.id}`,
+        id: tabUid ? `desktop-${agent.id}-${tabUid}` : `desktop-${agent.id}`,
         transport,
         experimental_throttle: 60,
     })
@@ -144,6 +153,8 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     const ready = history.id === sessionId && !history.error
     const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
     const generating = busy || runInFlight
+    const dirty = !!(input || attachment)
+    useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty }) }, [tabUid, generating, dirty, onTabActivity])
     const canRegenerate = !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
     const historyError = history.id === sessionId ? history.error : undefined
@@ -224,14 +235,16 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
         // Wait for this send's engine-backed session ID before enabling Stop.
         setLiveSessionId(null)
         // A file can change or disappear after selection. Keep both drafts until the server accepts it.
-        if (attachment) pendingAttachment.current = { key: draftKey, inputKey, input }
+        if (attachment || (tabUid && !sessionId)) pendingAttachment.current = { key: draftKey, inputKey, input }
         else setInput('')
-        const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(!sessionId && conversationChoice.current && { modelChoice: conversationChoice.current }), ...(attachment && { attachmentPath: attachment }) }
+        const pick = !sessionId && conversationChoice.current?.session === null ? conversationChoice.current.pick : undefined
+        const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(!sessionId && tabUid && { tabUid }), ...(pick && { modelChoice: pick }), ...(attachment && { attachmentPath: attachment }) }
         void sendMessage({ text, ...(attachment && { metadata: { attachmentPath: attachment } }) }, { body })
     }
 
     async function regenerateReply(messageId: string) {
         if (!canRegenerate || !sessionId || !history.transcript || regenerating.current || pendingAttachment.current) return
+        if (tabUid && onStartFork && !onStartFork(tabUid)) return
         const key = JSON.stringify([sessionId, messageId])
         const requestId = regenerationIds.current.get(key) ?? crypto.randomUUID()
         regenerationIds.current.set(key, requestId)
@@ -242,12 +255,14 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
             setMessages(history.transcript)
             await regenerate({ messageId, body: { agentId: agent.id, sessionId, requestId } })
         } finally {
+            if (tabUid) onFinishFork?.(tabUid)
             regenerating.current = null
             setRegenerationSource(null)
             setAttempt(n => n + 1)
         }
     }
 
+    const composerId = !active && tabUid ? `desktop-message-${tabUid}` : 'desktop-message'
     const currentTitle = sessions.find(session => session.id === sessionId)?.title ?? 'New conversation'
     return (
         <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background" onKeyDown={event => {
@@ -294,7 +309,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                     <DesktopCoworkerSettings agent={agent} disabled={busy} />
                 </div>
             </section>
-            <div className="flex shrink-0 items-center gap-1 px-3 pt-2 pb-1">
+            {tabStrip ?? <div className="flex shrink-0 items-center gap-1 px-3 pt-2 pb-1">
                 <div aria-label="Current conversation" className="flex h-7 min-w-0 items-center gap-1 rounded-md bg-muted pl-2.5 pr-1 text-xs text-foreground">
                     <span title={currentTitle} className="max-w-40 truncate">{currentTitle}</span>
                     {sessionId && <Button type="button" variant="ghost" size="icon-xs" aria-label="Close current conversation" disabled={busy} onClick={() => onSelectSession(null)}><XIcon className="size-3" /></Button>}
@@ -302,7 +317,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                 <Button type="button" variant="ghost" size="icon-sm" title="New chat" disabled={busy} onClick={() => onSelectSession(null)}>
                     <PlusIcon aria-hidden className="size-3.5" /><span className="sr-only">New chat</span>
                 </Button>
-            </div>
+            </div>}
 
             <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label="Chat messages">
                 <ConversationContent className="gap-4 px-3.5 py-4">
@@ -343,9 +358,9 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
             <div className="shrink-0 border-t p-2.5">
                 <form onSubmit={submit} className="flex min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring">
                     {attachment && <div className="px-2.5 pt-2"><AttachmentChip path={attachment} disabled={generating || stopping} onRemove={() => setDraftAttachment(draftKey)} /></div>}
-                    <label htmlFor="desktop-message" className="sr-only">Message {agent.name}</label>
+                    <label htmlFor={composerId} className="sr-only">Message {agent.name}</label>
                     <Textarea
-                        id="desktop-message"
+                        id={composerId}
                         rows={2}
                         className="min-h-12 w-full resize-none rounded-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
                         maxLength={20_000}
@@ -361,7 +376,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                         }}
                     />
                     <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
-                        <DesktopModelSelector agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
+                        <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
                             workspaceModel={modelLabel} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} />
                         <div className="flex shrink-0 items-center gap-1">
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={generating || stopping || !ready}

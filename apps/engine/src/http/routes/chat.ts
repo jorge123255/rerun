@@ -8,6 +8,7 @@ import { claimInstallSession } from '../../agents/setup.js'
 import { createSession, getSession } from '../../db/repos/sessions.js'
 import { extractText, storedContent } from '../../db/repos/messages.js'
 import { forkReply, getRegeneration } from '../../db/repos/regenerations.js'
+import { startDesktopTabRun } from '../../db/repos/desktop-tab-runs.js'
 import { startRun } from '../../db/repos/runs.js'
 import { agentDisabled, HttpError } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
@@ -19,7 +20,11 @@ import { mergeRunStream } from '../../runtime/run-stream-merge.js'
 import { resumeStreamResponse, toResumableStreamResponse } from '../../runtime/stream.js'
 
 export const chatRoutes = new Hono()
-const desktopChatRequest = chatRequestSchema.extend({ workspaceAttachment: desktopWorkspaceAttachmentSchema.optional() })
+const desktopFirstTurn = z.object({ sessionId: z.uuid(), runId: z.uuid() }).strict()
+const desktopChatRequest = chatRequestSchema.extend({
+    workspaceAttachment: desktopWorkspaceAttachmentSchema.optional(),
+    desktopFirstTurn: desktopFirstTurn.optional(),
+}).refine(body => !body.desktopFirstTurn || (!body.sessionId && !body.install && !body.foreman && (!body.source || body.source === 'dashboard')))
 
 const regenerateRequest = chatRequestSchema.pick({ provider: true, model: true, connectionId: true, author: true }).extend({
     sessionId: z.string().min(1),
@@ -77,9 +82,18 @@ chatRoutes.post('/chat', async c => {
     if (!agent.config.enabled) throw agentDisabled()
     const input = await c.req.json()
     if (desktopApp() && input && typeof input === 'object' && 'regenerateMessageId' in input) return regenerateChat(agent, regenerateRequest.parse(input))
-    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), workspaceAttachment: undefined }
+    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), workspaceAttachment: undefined, desktopFirstTurn: undefined }
     const runAgentView = agent.config.kind === 'foreman' && body.foreman ? { ...agent, brief: body.foreman } : agent
     const source = body.source ?? 'dashboard'
+    if (body.desktopFirstTurn) {
+        const { sessionId, runId } = body.desktopFirstTurn
+        const override = { connectionId: body.connectionId, provider: body.provider, model: body.model }
+        const { provider, model } = await resolveRunModel(agent, override)
+        const started = await startDesktopTabRun(agentId, sessionId, runId)
+        if (!started) return identified(resumeStreamResponse(runId), sessionId, runId)
+        claimSession(sessionId, runId, body.author?.id)
+        return streamChat(agent, sessionId, runId, body.message, override, { provider, model }, { source: 'chat', author: body.author, workspaceAttachment: body.workspaceAttachment })
+    }
     const claim = body.install && !body.sessionId ? await claimInstallSession(agentId, () => createSession(agentId, undefined, undefined, source)) : null
     if (claim && 'inFlight' in claim) return c.json({ error: 'the installation is already under way in another conversation', code: 'install_in_flight', sessionId: claim.inFlight }, 409)
     const session = claim ? claim.session : await resolveSession(agentId, body.sessionId, source)

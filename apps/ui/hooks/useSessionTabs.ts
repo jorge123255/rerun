@@ -1,39 +1,14 @@
 'use client'
 
 import { nanoid } from 'nanoid'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
-export type SessionTab = {
-    uid: string
-    id: string | null
-    title: string
-}
-
-export type SessionTabsState = {
-    tabs: SessionTab[]
-    activeIndex: number
-}
-
-// The conversations opened in this panel, most recent last, each one a tab. Past this many the
-// oldest are forgotten, and reopened from the coworker's chats list.
-export const MAX_REMEMBERED_TABS = 8
-
-// Keeps the newest tabs, and always the active one: a list saved under the old, higher ceiling can
-// hold it among the oldest.
-export function remember(state: SessionTabsState): SessionTabsState {
-    if (state.tabs.length <= MAX_REMEMBERED_TABS) return state
-    const active = state.tabs[state.activeIndex]
-    const newest = state.tabs.slice(-MAX_REMEMBERED_TABS)
-    const tabs = !active || newest.includes(active) ? newest : [active, ...newest.slice(1)]
-    return { tabs, activeIndex: Math.max(0, tabs.indexOf(active)) }
-}
+import { closeSessionTab, newSessionTab, openSessionTab, remember, type SessionTabsState } from '@/lib/chat/session-tabs'
+export { MAX_REMEMBERED_TABS, remember } from '@/lib/chat/session-tabs'
+export type { SessionTab, SessionTabsState } from '@/lib/chat/session-tabs'
 
 function getStorageKey(agentId: string) {
     return `session-tabs-${agentId}`
-}
-
-function newTab(): SessionTab {
-    return { uid: nanoid(), id: null, title: 'New conversation' }
 }
 
 function loadFromStorage(agentId: string): SessionTabsState | null {
@@ -62,15 +37,12 @@ function saveToStorage(agentId: string, state: SessionTabsState) {
 export function useSessionTabs(agentId: string) {
     const [state, setState] = useState<SessionTabsState>(() => {
         const stored = loadFromStorage(agentId)
-        return stored ?? { tabs: [newTab()], activeIndex: 0 }
+        return stored ?? { tabs: [newSessionTab()], activeIndex: 0 }
     })
-
-    const stateRef = useRef(state)
-    stateRef.current = state
 
     useEffect(() => {
         const stored = loadFromStorage(agentId)
-        setState(stored ?? { tabs: [newTab()], activeIndex: 0 })
+        setState(stored ?? { tabs: [newSessionTab()], activeIndex: 0 })
     }, [agentId])
 
     useEffect(() => {
@@ -81,11 +53,7 @@ export function useSessionTabs(agentId: string) {
 
     // A conversation nobody has spoken in yet is the new one: asking again lands on it.
     const createNew = useCallback(() => {
-        setState(prev => {
-            const blank = prev.tabs.findIndex(t => t.id === null)
-            if (blank !== -1) return { ...prev, activeIndex: blank }
-            return remember({ tabs: [...prev.tabs, newTab()], activeIndex: prev.tabs.length })
-        })
+        setState(prev => openSessionTab(prev, null, 'New conversation'))
     }, [])
 
     const selectTab = useCallback((index: number) => {
@@ -93,32 +61,11 @@ export function useSessionTabs(agentId: string) {
     }, [])
 
     const closeTab = useCallback((index: number) => {
-        setState(prev => {
-            if (prev.tabs.length <= 1) {
-                return { tabs: [newTab()], activeIndex: 0 }
-            }
-            const newTabs = prev.tabs.filter((_, i) => i !== index)
-            let newActive = prev.activeIndex
-            if (index === prev.activeIndex) {
-                newActive = Math.min(index, newTabs.length - 1)
-            } else if (index < prev.activeIndex) {
-                newActive = prev.activeIndex - 1
-            }
-            return { tabs: newTabs, activeIndex: newActive }
-        })
+        setState(prev => closeSessionTab(prev, index))
     }, [])
 
     const openTab = useCallback((sessionId: string, title: string) => {
-        setState(prev => {
-            const existing = prev.tabs.findIndex(t => t.id === sessionId)
-            if (existing !== -1) {
-                return { ...prev, activeIndex: existing }
-            }
-            return remember({
-                tabs: [...prev.tabs, { uid: nanoid(), id: sessionId, title }],
-                activeIndex: prev.tabs.length,
-            })
-        })
+        setState(prev => openSessionTab(prev, sessionId, title))
     }, [])
 
     const updateTabByUid = useCallback((uid: string, sessionId: string, title?: string) => {

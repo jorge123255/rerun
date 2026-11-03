@@ -12,7 +12,8 @@ const sendInput = z.object({
     regenerateMessageId: z.never().optional(),
     requestId: z.never().optional(),
     modelChoice: desktopModelPickSchema.optional(),
-})
+    tabUid: z.string().min(1).max(128).optional(),
+}).refine(input => !input.tabUid || !input.sessionId)
 const regenerateInput = z.object({
     agentId: z.string().min(1),
     sessionId: z.string().min(1),

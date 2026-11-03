@@ -463,7 +463,7 @@ export async function getSessionMessages(conn: EngineConnection, agentId: string
 // Returns the raw fetch Response so the caller can read the `x-session-id`
 // header and pipe the SSE body straight through to the browser.
 type ChatParams = { connectionId?: string; model?: string; source?: SessionSource; author?: MessageAuthor } & (
-    | { sessionId?: string; message: string; foreman?: ForemanBrief; install?: boolean; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment }
+    | { sessionId?: string; message: string; foreman?: ForemanBrief; install?: boolean; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; desktopFirstTurn?: { sessionId: string; runId: string } }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 

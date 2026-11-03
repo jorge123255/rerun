@@ -36,7 +36,7 @@ function agentOf(row: Row): DesktopAgent {
     }
 }
 
-function sessionOf(row: Row): DesktopSession {
+export function sessionOf(row: Row): DesktopSession {
     const modelConnectionId = row.model_connection_id == null ? null : String(row.model_connection_id)
     const model = row.model == null ? null : String(row.model)
     const choice = modelConnectionId && model ? { modelConnectionId, model } : null
@@ -87,8 +87,14 @@ export async function createDesktopAgent(db: Client, input: { engineAgentId: str
     return (await findDesktopAgent(db, id))!
 }
 
+export function desktopSessionsQuery(agentId: string) {
+    return { sql: `SELECT s.*, t.uid AS first_tab_uid FROM desktop_sessions s LEFT JOIN desktop_tab_starts t
+                   ON t.engine_session_id=s.engine_session_id AND t.agent_id=s.agent_id
+                   WHERE s.agent_id = ? ORDER BY s.updated_at DESC, s.rowid DESC`, args: [agentId] }
+}
+
 export async function listDesktopSessions(db: Client, agentId: string): Promise<DesktopSession[]> {
-    const result = await db.execute({ sql: 'SELECT * FROM desktop_sessions WHERE agent_id = ? ORDER BY updated_at DESC, rowid DESC', args: [agentId] })
+    const result = await db.execute(desktopSessionsQuery(agentId))
     return result.rows.map(sessionOf)
 }
 

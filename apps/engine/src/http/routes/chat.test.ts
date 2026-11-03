@@ -84,6 +84,25 @@ beforeEach(() => {
 })
 
 describe('POST /agents/:id/chat', () => {
+    it('dispatches one first turn for simultaneous retries of a desktop tab', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const first = { sessionId: crypto.randomUUID(), runId: crypto.randomUUID() }
+            const input = { message: 'Only once', desktopFirstTurn: first }
+            const responses = await Promise.all([chat(id, input), chat(id, input)])
+            for (const response of responses) {
+                expect([200, 204]).toContain(response.status)
+                expect(response.headers.get('x-session-id')).toBe(first.sessionId)
+                expect(response.headers.get('x-run-id')).toBe(first.runId)
+                await response.text()
+            }
+            expect(state.calls).toHaveLength(1)
+            expect(await getRun(id, first.runId)).toMatchObject({ sessionId: first.sessionId })
+            expect((await chat(id, { ...input, desktopFirstTurn: { ...first, runId: crypto.randomUUID() } })).status).toBe(409)
+            expect((await chat(id, { ...input, sessionId: first.sessionId })).status).toBe(400)
+            expect(state.calls).toHaveLength(1)
+        } finally { vi.unstubAllEnvs() }
+    })
     it('forwards validated attachment snapshots only on desktop', async () => {
         const workspaceAttachment = { path: 'folder/brief.md', content: 'First line\nA durable second line.' }
         const body = { message: 'What is the second line?', workspaceAttachment }

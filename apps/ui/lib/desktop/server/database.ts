@@ -49,6 +49,22 @@ async function initialize(dataRoot: string): Promise<Client> {
             model_connection_id TEXT,
             model TEXT
         );
+        CREATE TABLE IF NOT EXISTS desktop_agent_tabs (
+            agent_id TEXT PRIMARY KEY REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL,
+            layout TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS desktop_tab_starts (
+            agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            uid TEXT NOT NULL,
+            input_hash TEXT NOT NULL,
+            engine_session_id TEXT NOT NULL UNIQUE,
+            run_id TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            model_choice TEXT NOT NULL,
+            launch_nonce TEXT NOT NULL,
+            PRIMARY KEY(agent_id, uid)
+        );
         CREATE TABLE IF NOT EXISTS desktop_regeneration_requests (
             request_id TEXT PRIMARY KEY,
             source_session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,

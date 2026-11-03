@@ -16,9 +16,9 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { DesktopConversation } from './DesktopConversation'
-import { DesktopChatHistory } from './DesktopChatHistory'
-import { DesktopRunHistory } from './DesktopRunHistory'
+import { DesktopChatTabs } from './DesktopChatTabs'
+import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
+import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
@@ -79,7 +79,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [panelInsetRight, setPanelInsetRight] = useState(0)
     const boardFrame = useRef<HTMLDivElement>(null)
     const panelContent = useRef<HTMLElement>(null)
-    const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null)
+    const [requestedSession, setRequestedSession] = useState<{ id: string } | null>(null)
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
     const [busy, setBusy] = useState<string | null>(null)
@@ -92,7 +92,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
     useEffect(() => {
         if (panelOpen && !settings) panelContent.current?.focus({ preventScroll: true })
-    }, [panelOpen, selectedAgentId, requestedSessionId, settings])
+    }, [panelOpen, selectedAgentId, requestedSession, settings])
 
     useEffect(() => {
         const panel = panelContent.current?.closest<HTMLElement>('[data-side-panel]')
@@ -158,7 +158,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setCreating(false)
         setSelectedAgentId(agentId)
         setPanelOpen(true)
-        setRequestedSessionId(sessionId)
+        setRequestedSession(sessionId ? { id: sessionId } : null)
         setError(null)
     }
 
@@ -184,7 +184,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat key={`${selectedAgent.id}:${requestedSessionId ?? ''}`} agent={selectedAgent} initialSessionId={requestedSessionId}
+                            <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings}
                                 onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
                         </section>
                     </SidePanel>
@@ -223,44 +223,35 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     )
 }
 
-function CoworkerChat({ agent, initialSessionId, modelLabel, onOpenModelSettings, onClosePanel }: {
+function CoworkerChat({ agent, requested, selected, modelLabel, onOpenModelSettings, onClosePanel }: {
     agent: DesktopAgentView
-    initialSessionId: string | null
+    requested: { id: string } | null
+    selected: boolean
     modelLabel?: string
     onOpenModelSettings: () => void
     onClosePanel: () => void
 }) {
     const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
-    const [selectedId, setSelectedId] = useState<string | null>(null)
+    const [bootstrap, setBootstrap] = useState<{ layout: DesktopTabLayout | null } | null>(null)
     const [error, setError] = useState<string | null>(null)
-    const [missingSelection, setMissingSelection] = useState(false)
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/sessions`
     const sessionRead = useRef<AbortController | null>(null)
 
-    const readSessions = useCallback(async (openLatest = false) => {
+    const readSessions = useCallback(async (restoreTabs = false) => {
         sessionRead.current?.abort()
         const controller = new AbortController()
         sessionRead.current = controller
         try {
-            const body = await json<{ sessions: DesktopSessionView[] }>(await fetch(url, { signal: controller.signal, cache: 'no-store' }))
+            if (restoreTabs) await pendingTabWrite(agent.id)
+            const body = await json<{ sessions: DesktopSessionView[]; tabs?: DesktopTabLayout | null }>(await fetch(url, { signal: controller.signal, cache: 'no-store' }))
             if (controller.signal.aborted) return
             setSessions(body.sessions)
+            if (restoreTabs) setBootstrap({ layout: body.tabs ?? null })
             setError(null)
-            if (openLatest) {
-                const chosen = initialSessionId ? body.sessions.find(session => session.id === initialSessionId) : body.sessions[0]
-                const missing = !!initialSessionId && !chosen
-                setMissingSelection(missing)
-                if (missing) setError('This conversation is no longer available for this coworker.')
-                setSelectedId(chosen?.id ?? null)
-            }
         } catch (cause) {
-            if (!controller.signal.aborted) {
-                setSessions(current => current ?? [])
-                if (openLatest && initialSessionId) setMissingSelection(true)
-                setError(cause instanceof Error ? cause.message : 'Could not load conversations')
-            }
+            if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
         }
-    }, [url, initialSessionId])
+    }, [agent.id, url])
 
     useEffect(() => {
         // State changes in readSessions happen only after the asynchronous request.
@@ -269,23 +260,17 @@ function CoworkerChat({ agent, initialSessionId, modelLabel, onOpenModelSettings
         return () => sessionRead.current?.abort()
     }, [readSessions])
 
-    const refreshSession = useCallback(async (id: string) => {
-        setSelectedId(id)
-        await readSessions()
-    }, [readSessions])
-
-    const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label="Close panel" className="absolute right-3 top-3"
-        onClick={onClosePanel}><X /></Button>
-    if (!sessions) return <>{dismiss}<p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p></>
-    return (
-        <>
-            {error && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">{error}
-                <Button type="button" size="sm" variant="outline" onClick={() => void readSessions(missingSelection || (!!initialSessionId && !selectedId))}>Retry conversations</Button>
-            </div>}
-            {missingSelection && dismiss}
-            {!missingSelection && <DesktopConversation agent={agent} sessionId={selectedId} sessions={sessions} onSelectSession={setSelectedId} onChatSession={refreshSession}
-                modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
-                renderHistory={busy => <DesktopChatHistory sessions={sessions} selectedId={selectedId} busy={busy} onSelect={setSelectedId} />} renderRunHistory={<DesktopRunHistory agent={agent} />} />}
-        </>
-    )
+    const missing = !!requested && !!sessions && !sessions.some(s => s.id === requested.id)
+    const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label="Close panel" className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
+    const reload = () => { setBootstrap(null); void readSessions(true) }
+    return <>
+        {(error || missing) && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
+            {error ?? 'This conversation is no longer available for this coworker.'}
+            <Button type="button" size="sm" variant="outline" onClick={reload}>Retry conversations</Button>
+        </div>}
+        {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
+        {missing || !bootstrap || !sessions ? dismiss : <DesktopChatTabs
+            agent={agent} selected={selected} requested={requested} sessions={sessions} initialLayout={bootstrap.layout}
+            refreshSessions={readSessions} reload={reload} modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
+    </>
 }

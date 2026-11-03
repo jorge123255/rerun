@@ -17,6 +17,7 @@ function mockDesktopFetch(reply: (url: string, init?: RequestInit) => Response |
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
         const response = reply(url, init)
         if (response) return response
+        if (url.endsWith('/tabs') && init?.method === 'PUT') return Response.json({ tabs: { revision: JSON.parse(String(init.body)).baseRevision + 1 } })
         // The Team board polls its own activity route; tests that do not exercise it see everyone idle.
         if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
         // An open conversation checks whether an engine run is still generating (for Stop).
@@ -363,7 +364,7 @@ test('a board tile opens the saved conversation and New chat starts a separate s
         await send('Continue')
         await act(async () => { button('New chat').click() })
         await send('Start fresh')
-        expect(sent).toEqual([{ agentId: 'researcher', sessionId: 'previous', text: 'Continue' }, { agentId: 'researcher', text: 'Start fresh' }])
+        expect(sent).toEqual([{ agentId: 'researcher', sessionId: 'previous', text: 'Continue' }, { agentId: 'researcher', tabUid: expect.any(String), text: 'Start fresh' }])
         await act(async () => { button('Close panel').click() })
         expect(document.activeElement).toBe(tile)
         expect(container.querySelector('[data-side-panel]')?.closest('[inert]')).not.toBeNull()

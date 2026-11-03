@@ -38,6 +38,10 @@ In **Files**, **Import file** copies a single local `.txt` or `.md` document of 
 
 Selecting a tile or a Find chat result opens the coworker in Rerun’s shared side panel. At desktop widths it sits along the right edge of the isometric board. Narrow windows use the original bottom sheet. Closing the panel returns focus to the coworker’s tile and retains the board’s pan and zoom. The workspace menu provides access to Settings and coworkers.
 
+The coworker panel uses Rerun’s **open chat tabs**. Select **+** to start a chat, or choose a saved conversation from Chats or Find chat to open it in the strip. Each conversation has its own messages, model choice and running reply. The Mac database remembers up to eight open tabs and the active tab per coworker across launches. Closing a tab keeps its conversation in Chats.
+
+The composer’s model picker can follow the workspace model, star a coworker default, or choose a model for just one conversation. A new chat’s choice is saved on its first send. An alternate created with **Regenerate reply** inherits an explicit chat choice, while an alternate of a chat following defaults continues to follow them.
+
 Assistant replies render Markdown in live and reopened chats, including headings, lists, tables and fenced code blocks. **Copy reply** copies the answer’s original Markdown. The user’s message stays literal text, including its attachment label. Markdown images display their alt text, and eligible HTTPS links open in the system browser when clicked.
 
 When a coworker puts an email, post or message in a `draft` fence, the answer shows a separate card. The fence title labels the card, or it reads **Draft** when the title is empty. **Copy draft** copies just the card’s plain text, preserving its spacing and literal Markdown. While the answer is streaming, the card can be copied as soon as its fence closes. Reopening the conversation renders the cards from the saved reply.
