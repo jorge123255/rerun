@@ -36,6 +36,8 @@ In **Edit coworker**, **Use saved memories in chat** controls whether a new turn
 
 In **Files**, **Import file** copies a single local `.txt` or `.md` document of up to 1 MiB into the selected coworker’s current folder. The final filename appears only once the full document is written. An existing name is preserved, including when two imports race. **Find chat** on the Team board searches local conversation titles across coworkers. Each result shows the coworker and opens that exact saved chat.
 
+Selecting a tile or a Find chat result opens the coworker in Rerun’s shared side panel. At desktop widths it sits along the right edge of the isometric board. Narrow windows use the original bottom sheet. Closing the panel returns focus to the coworker’s tile and retains the board’s pan and zoom. The workspace menu provides access to Settings and coworkers.
+
 Assistant replies render Markdown in live and reopened chats, including headings, lists, tables and fenced code blocks. **Copy reply** copies the answer’s original Markdown. The user’s message stays literal text, including its attachment label. Markdown images display their alt text, and eligible HTTPS links open in the system browser when clicked.
 
 When a coworker puts an email, post or message in a `draft` fence, the answer shows a separate card. The fence title labels the card, or it reads **Draft** when the title is empty. **Copy draft** copies just the card’s plain text, preserving its spacing and literal Markdown. While the answer is streaming, the card can be copied as soon as its fence closes. Reopening the conversation renders the cards from the saved reply.

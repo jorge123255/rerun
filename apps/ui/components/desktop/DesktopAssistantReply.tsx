@@ -1,16 +1,19 @@
 'use client'
 
 import type { UIMessage } from 'ai'
-import type { ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import type { Components, CustomRendererProps, PluginConfig } from 'streamdown'
 import { toast } from 'sonner'
 import { MessageResponse } from '@/components/ai-elements/message'
 import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
+import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
 import { Button } from '@/components/ui/button'
 import { CheckIcon, CopyIcon, RefreshCcwIcon } from '@/lib/icons'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { useCopy } from '@/lib/use-copy'
+import { splitIntoBubbles } from '@/lib/chat/message-bubbles'
+import { cn } from '@/lib/utils'
 
 const desktopComponents: Components = {
     a: ({ href, children }) => {
@@ -61,6 +64,17 @@ function replyMarkdown(text: string, streaming = false, plugins: PluginConfig = 
     </MessageResponse>
 }
 
+function DesktopAnswerBubbles({ text, streaming }: { text: string; streaming: boolean }) {
+    const bubbles = useMemo(() => splitIntoBubbles(text), [text])
+    return <div className="flex w-full flex-col items-start gap-1.5">
+        {bubbles.map(({ frame, markdown }, index) => (
+            <div key={index} data-bubble-frame={frame} className={cn('min-w-0', frame === 'bare' ? 'w-full' : 'max-w-[88%]', frame === 'bubble' && [AGENT_BUBBLE_SURFACE, 'px-3.5 py-2'])}>
+                {replyMarkdown(markdown, streaming && index === bubbles.length - 1, answerPlugins)}
+            </div>
+        ))}
+    </div>
+}
+
 export function DesktopAssistantReply({ message, streaming, onRegenerate }: { message: UIMessage; streaming: boolean; onRegenerate?: (id: string) => void }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const blocks: ReactNode[] = []
@@ -72,7 +86,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate }: { me
             paragraph += part.text
             // A table or fenced block can span consecutive text parts from the model.
             if (message.parts[index + 1]?.type !== 'text') {
-                blocks.push(<div key={index}>{replyMarkdown(paragraph, live, answerPlugins)}</div>)
+                blocks.push(<DesktopAnswerBubbles key={index} text={paragraph} streaming={live} />)
                 paragraph = ''
             }
         } else if (part.type === 'reasoning' && isDesktopSummaryMetadata(part.providerMetadata) && (part.text || live)) {

@@ -60,7 +60,7 @@ function FolderPicker({ agent, onSelect }: { agent: DesktopAgentView; onSelect: 
 export function DesktopAttachmentPicker({ agent, disabled, onSelect }: { agent: DesktopAgentView; disabled: boolean; onSelect: (path: string) => void }) {
     const [open, setOpen] = useState(false)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
-        <DialogTrigger asChild><Button type="button" size="sm" variant="outline" disabled={disabled}><PaperclipIcon className="size-4" />Attach from Files</Button></DialogTrigger>
+        <DialogTrigger asChild><Button type="button" size="icon-sm" variant="ghost" title="Attach from Files" disabled={disabled}><PaperclipIcon aria-hidden className="size-4" /><span className="sr-only">Attach from Files</span></Button></DialogTrigger>
         {open && <DialogContent className="flex h-[65dvh] flex-col sm:max-w-lg">
             <DialogHeader>
                 <DialogTitle>Attach from Files</DialogTitle>

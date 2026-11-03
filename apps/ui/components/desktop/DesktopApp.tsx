@@ -7,13 +7,15 @@ import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList } from '@r
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import type { SettingsChange } from '@/lib/desktop/settings'
 import { DesktopSettings } from './DesktopSettings'
-import { LayoutGrid, Settings } from 'lucide-react'
+import { ArrowLeft, X } from 'lucide-react'
+import { SidePanel } from '@/components/layout/SidePanel'
+import { SIDE_PANEL_GAP } from '@/lib/side-panel-width'
+import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopBoard } from './DesktopBoard'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { cn } from '@/lib/utils'
 import { DesktopConversation } from './DesktopConversation'
 import { DesktopChatHistory } from './DesktopChatHistory'
 import { DesktopRunHistory } from './DesktopRunHistory'
@@ -73,6 +75,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [agents, setAgents] = useState(initialData.agents)
     const [creating, setCreating] = useState(false)
     const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+    const [panelOpen, setPanelOpen] = useState(false)
+    const [panelInsetRight, setPanelInsetRight] = useState(0)
+    const boardFrame = useRef<HTMLDivElement>(null)
+    const panelContent = useRef<HTMLElement>(null)
     const [requestedSessionId, setRequestedSessionId] = useState<string | null>(null)
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
@@ -83,6 +89,22 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const defaultProvider = available.find(c => c.id === providers.default?.connectionId)
     const sidebarProvider = defaultProvider ?? available[0]
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
+
+    useEffect(() => {
+        if (panelOpen && !settings) panelContent.current?.focus({ preventScroll: true })
+    }, [panelOpen, selectedAgentId, requestedSessionId, settings])
+
+    useEffect(() => {
+        const panel = panelContent.current?.closest<HTMLElement>('[data-side-panel]')
+        if (!panelOpen || !panel) return
+        const wide = window.matchMedia('(min-width: 768px)')
+        const measure = () => setPanelInsetRight(wide.matches ? panel.offsetWidth + SIDE_PANEL_GAP : 0)
+        const observer = new ResizeObserver(measure)
+        observer.observe(panel)
+        measure()
+        wide.addEventListener('change', measure)
+        return () => { observer.disconnect(); wide.removeEventListener('change', measure) }
+    }, [panelOpen])
 
     async function saveSettings(change: SettingsChange) {
         const response = await fetch('/api/desktop/settings', {
@@ -120,106 +142,94 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     function showBoard(create = false) {
         setSettings(false)
         setCreating(create)
-        setSelectedAgentId(null)
-        setRequestedSessionId(null)
+        setPanelOpen(false)
         setError(null)
+    }
+
+    function closePanel() {
+        setPanelOpen(false)
+        const tile = Array.from(boardFrame.current?.querySelectorAll<HTMLElement>('[data-tile-id]') ?? [])
+            .find(element => element.dataset.tileId === selectedAgentId)
+        tile?.focus({ preventScroll: true })
     }
 
     function selectCoworker(agentId: string, sessionId: string | null = null) {
         setSettings(false)
         setCreating(false)
         setSelectedAgentId(agentId)
+        setPanelOpen(true)
         setRequestedSessionId(sessionId)
         setError(null)
     }
 
+    const openSettings = () => setSettings(true)
+    const modelLabel = defaultProvider ? providers.default?.model : undefined
+    const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} profileName={initialData.profile.displayName}
+        agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
+        modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings} />
+
     return (
-        <main className="flex h-[100dvh] flex-col bg-background text-foreground md:flex-row">
-            <aside className="flex max-h-[38dvh] w-full shrink-0 flex-col border-b bg-muted/20 md:max-h-none md:w-80 md:border-b-0 md:border-r">
-                <div className="shrink-0 border-b px-5 py-5">
-                    <div className="text-lg font-semibold tracking-tight">Rerun Local</div>
-                    <div className="mt-1 text-sm text-muted-foreground">{workspaceName} · {initialData.profile.displayName}</div>
-                    <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-700 dark:text-emerald-400">
-                        <span className="size-1.5 rounded-full bg-emerald-500" /> Local data only
-                    </div>
+        <main className="relative flex h-dvh w-full flex-col overflow-hidden bg-frame text-foreground md:p-2">
+            <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
+                className="relative isolate flex min-h-0 flex-1 overflow-hidden bg-background md:rounded-3xl md:border md:border-border md:shadow">
+                <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu}
+                    selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
+                    onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
+                {selectedAgent && <div inert={!panelOpen} aria-hidden={!panelOpen || undefined}>
+                    <SidePanel isOpen={panelOpen} onDismiss={closePanel}>
+                        <section ref={panelContent} tabIndex={-1} aria-label="Coworker chat" className="flex h-full min-h-0 flex-col outline-none"
+                            onKeyDown={event => {
+                                if (event.key === 'Escape' && !event.defaultPrevented && event.currentTarget.contains(event.target as Node)) {
+                                    event.preventDefault()
+                                    closePanel()
+                                }
+                            }}>
+                            <CoworkerChat key={`${selectedAgent.id}:${requestedSessionId ?? ''}`} agent={selectedAgent} initialSessionId={requestedSessionId}
+                                onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
+                        </section>
+                    </SidePanel>
+                </div>}
+            </div>
+            {settings && <div className="absolute inset-0 z-50 flex flex-col bg-background md:m-2 md:overflow-hidden md:rounded-3xl md:border">
+                <div className="border-b px-4 py-2">
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setSettings(false)}><ArrowLeft />{panelOpen ? 'Back to chat' : 'Team board'}</Button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-3">
-                    <button type="button" onClick={() => showBoard()} aria-current={!settings && !creating && !selectedAgent ? 'page' : undefined}
-                        className="mb-4 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium hover:bg-accent aria-[current=page]:bg-accent">
-                        <LayoutGrid aria-hidden className="size-4" /> Team board
-                    </button>
-                    <div className="px-2 pb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Coworkers</div>
-                    {agents.length === 0 && <div className="px-2 py-6 text-sm text-muted-foreground">No coworkers yet.</div>}
-                    <div className="space-y-1">
-                        {agents.map(agent => (
-                            <button
-                                key={agent.id}
-                                type="button"
-                                onClick={() => void selectCoworker(agent.id)}
-                                className={cn('w-full rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent', selectedAgentId === agent.id && 'bg-accent')}
-                            >
-                                <div className="truncate text-sm font-medium">{agent.name}</div>
-                                {agent.description && <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{agent.description}</div>}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-                <div className="shrink-0 border-t px-5 py-2">
-                    {sidebarProvider ? <div role="status" className="text-sm">
-                        <div className="flex items-center gap-2 font-medium">
-                            <span aria-hidden className="size-2 rounded-full bg-emerald-500" />
-                            <span>{PROVIDER_LABELS[sidebarProvider.provider]} is connected</span>
+                <DesktopSettings providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} />
+            </div>}
+            <Dialog open={creating} onOpenChange={open => { if (!busy) setCreating(open) }} asSheet={false}>
+                {creating && <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{agents.length ? 'Add a coworker' : 'Create your first coworker'}</DialogTitle>
+                        <DialogDescription>{connected ? 'Give your coworker a name and a task, then start a local conversation.' : 'Connect an AI provider in Settings, then create a coworker.'}</DialogDescription>
+                    </DialogHeader>
+                    {error && <div role="alert" className="text-sm text-destructive">{error}</div>}
+                    <form onSubmit={createCoworker} className="space-y-3">
+                        <div>
+                            <label htmlFor="coworker-name" className="mb-1.5 block text-sm font-medium">Name</label>
+                            <Input id="coworker-name" placeholder="Researcher" maxLength={60} value={name} onChange={event => setName(event.target.value)} />
                         </div>
-                        <span className="block truncate pl-4 text-xs text-muted-foreground">{defaultProvider ? providers.default?.model : 'Choose a default model in Settings.'}</span>
-                    </div> : <Button size="sm" variant="outline" onClick={() => setSettings(true)}>Set up provider</Button>}
-                </div>
-                <button type="button" aria-keyshortcuts="Meta+," aria-current={settings ? 'page' : undefined} onClick={() => setSettings(true)}
-                    className="flex shrink-0 items-center gap-2 border-t px-5 py-3 text-sm font-medium hover:bg-accent aria-[current=page]:bg-accent">
-                    <Settings className="size-4" aria-hidden /> Settings
-                </button>
-            </aside>
-
-            <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-                {settings ? <DesktopSettings providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} /> : <>
-                    {error && <div role="alert" className="border-b bg-destructive/10 px-5 py-2 text-sm text-destructive">{error}</div>}
-
-                    {selectedAgent ? (
-                        <CoworkerChat key={`${selectedAgent.id}:${requestedSessionId ?? ''}`} agent={selectedAgent} initialSessionId={requestedSessionId} />
-                    ) : creating ? (
-                        <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto p-6 md:items-center">
-                            <Card className="w-full max-w-xl shadow-none">
-                                <CardHeader>
-                                    <CardTitle>{agents.length ? 'Add a coworker' : 'Create your first coworker'}</CardTitle>
-                                    <CardDescription>{connected ? 'Give your coworker a name and a task, then start a local conversation.' : 'Connect an AI provider in Settings, then create a coworker.'}</CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                    <form onSubmit={createCoworker} className="space-y-3">
-                                        <div>
-                                            <label htmlFor="coworker-name" className="mb-1.5 block text-sm font-medium">Name</label>
-                                            <Input id="coworker-name" placeholder="Researcher" maxLength={60} value={name} onChange={event => setName(event.target.value)} />
-                                        </div>
-                                        <div>
-                                            <label htmlFor="coworker-description" className="mb-1.5 block text-sm font-medium">What should they do?</label>
-                                            <Textarea id="coworker-description" placeholder="Find clear answers and explain the result." maxLength={2000} rows={4} value={description} onChange={event => setDescription(event.target.value)} />
-                                        </div>
-                                        <div className="flex gap-2">
-                                            <Button type="button" variant="outline" onClick={() => showBoard()}>Cancel</Button>
-                                            <Button type="submit" disabled={!connected || !name.trim() || busy === 'agent'}>{busy === 'agent' ? 'Creating…' : 'Create coworker'}</Button>
-                                        </div>
-                                    </form>
-                                </CardContent>
-                            </Card>
+                        <div>
+                            <label htmlFor="coworker-description" className="mb-1.5 block text-sm font-medium">What should they do?</label>
+                            <Textarea id="coworker-description" placeholder="Finds answers and drafts a summary." maxLength={2000} rows={4} value={description} onChange={event => setDescription(event.target.value)} />
                         </div>
-                    ) : (
-                        <DesktopBoard agents={agents} workspaceName={workspaceName} onOpen={selectCoworker} onCreate={() => showBoard(true)} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
-                    )}
-                </>}
-            </section>
+                        <div className="flex gap-2">
+                            <Button type="button" variant="outline" disabled={!!busy} onClick={() => setCreating(false)}>Cancel</Button>
+                            <Button type="submit" disabled={!connected || !name.trim() || busy === 'agent'}>{busy === 'agent' ? 'Creating…' : 'Create coworker'}</Button>
+                        </div>
+                    </form>
+                </DialogContent>}
+            </Dialog>
         </main>
     )
 }
 
-function CoworkerChat({ agent, initialSessionId }: { agent: DesktopAgentView; initialSessionId: string | null }) {
+function CoworkerChat({ agent, initialSessionId, modelLabel, onOpenModelSettings, onClosePanel }: {
+    agent: DesktopAgentView
+    initialSessionId: string | null
+    modelLabel?: string
+    onOpenModelSettings: () => void
+    onClosePanel: () => void
+}) {
     const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
     const [selectedId, setSelectedId] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
@@ -264,14 +274,18 @@ function CoworkerChat({ agent, initialSessionId }: { agent: DesktopAgentView; in
         await readSessions()
     }, [readSessions])
 
-    if (!sessions) return <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>
+    const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label="Close panel" className="absolute right-3 top-3"
+        onClick={onClosePanel}><X /></Button>
+    if (!sessions) return <>{dismiss}<p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p></>
     return (
         <>
             {error && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">{error}
                 <Button type="button" size="sm" variant="outline" onClick={() => void readSessions(missingSelection || (!!initialSessionId && !selectedId))}>Retry conversations</Button>
             </div>}
+            {missingSelection && dismiss}
             {!missingSelection && <DesktopConversation agent={agent} sessionId={selectedId} sessions={sessions} onSelectSession={setSelectedId} onChatSession={refreshSession}
-                renderHistory={busy => <><DesktopChatHistory sessions={sessions} selectedId={selectedId} busy={busy} onSelect={setSelectedId} /><DesktopRunHistory agent={agent} /></>} />}
+                modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
+                renderHistory={busy => <DesktopChatHistory sessions={sessions} selectedId={selectedId} busy={busy} onSelect={setSelectedId} />} renderRunHistory={<DesktopRunHistory agent={agent} />} />}
         </>
     )
 }

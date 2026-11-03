@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type UIMessage } from 'ai'
+import { AgentBuddy } from '@rerun/ui/iso-grid'
+import { Message, MessageContent } from '@rerun/ui/chat'
+import { FloatingPill } from '@/components/agent/sheet/floating'
+import { Conversation, ConversationContent } from '@/components/ai-elements/conversation'
+import { USER_BUBBLE_INK, USER_BUBBLE_SHAPE } from '@/components/chat/bubble-styles'
+import { ArrowUpIcon, ChevronDownIcon, PlusIcon, SquareIcon, UserRoundIcon, XIcon } from '@/lib/icons'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -25,14 +31,19 @@ async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMes
 const stopUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/stop`
 const RUN_POLL_MS = 3000
 
-export function DesktopConversation({ agent, sessionId, sessions, onSelectSession, onChatSession, renderHistory }: {
+export function DesktopConversation({ agent, sessionId, sessions, onSelectSession, onChatSession, renderHistory, renderRunHistory, onClosePanel, modelLabel, onOpenModelSettings }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
     onSelectSession: (id: string | null) => void
     onChatSession: (id: string) => void
     renderHistory?: (busy: boolean) => ReactNode
+    renderRunHistory?: ReactNode
+    onClosePanel?: () => void
+    modelLabel?: string
+    onOpenModelSettings?: () => void
 }) {
+    const [cardOpen, setCardOpen] = useState(false)
     const [inputs, setInputs] = useState<ReadonlyMap<string, string>>(() => new Map())
     const [attachments, setAttachments] = useState<ReadonlyMap<string, string>>(() => new Map())
     const draftKey = JSON.stringify([agent.id, sessionId])
@@ -228,14 +239,18 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
         }
     }
 
+    const currentTitle = sessions.find(session => session.id === sessionId)?.title ?? 'New conversation'
     return (
-        <div className="flex min-h-0 flex-1 flex-col">
-            <header className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-3 sm:px-5">
-                <div className="min-w-0">
-                    <h1 className="truncate text-base font-semibold">{agent.name}</h1>
-                    <p className="truncate text-xs text-muted-foreground">{agent.description || 'Local coworker'}</p>
-                </div>
-                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+        <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background" onKeyDown={event => {
+            if (cardOpen && event.key === 'Escape' && !event.defaultPrevented && !(event.target as HTMLElement).closest('[role="dialog"]')) {
+                event.preventDefault()
+                event.stopPropagation()
+                setCardOpen(false)
+                event.currentTarget.querySelector<HTMLButtonElement>('[aria-label="Coworker card"]')?.focus()
+            }
+        }}>
+            <header className="relative z-40 grid shrink-0 grid-cols-[minmax(2.5rem,1fr)_minmax(0,max-content)_minmax(2.5rem,1fr)] items-center gap-1 px-3 pt-3">
+                <div className="flex min-w-0 items-center justify-start">
                     {renderHistory ? renderHistory(busy) : sessions.length > 0 && (
                         <select
                             disabled={busy}
@@ -248,15 +263,40 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             {sessions.map(session => <option key={session.id} value={session.id}>{session.title}</option>)}
                         </select>
                     )}
+                </div>
+                <h1 aria-label={agent.name} className="min-w-0">
+                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => setCardOpen(open => !open)} className="max-w-full pl-1.5">
+                        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
+                            <AgentBuddy agentId={agent.id} mood={generating ? 'working' : 'idle'} size={20} facing="right" />
+                        </span>
+                        <span className="truncate font-medium">{agent.name}</span>
+                        <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    </FloatingPill>
+                </h1>
+                {onClosePanel && <Button type="button" aria-label="Close panel" variant="ghost" size="icon-sm" className="justify-self-end" onClick={onClosePanel}><XIcon className="size-4" /></Button>}
+            </header>
+            {cardOpen && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => setCardOpen(false)} />}
+            <section aria-label="Coworker details" hidden={!cardOpen} className="absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl">
+                <p className="text-sm text-muted-foreground">{agent.description || 'Local coworker'}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
                     <DesktopCoworkerFiles agent={agent} />
                     <DesktopCoworkerMemories agent={agent} />
+                    {renderRunHistory}
                     <DesktopCoworkerSettings agent={agent} disabled={busy} />
-                    <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => onSelectSession(null)}>New chat</Button>
                 </div>
-            </header>
+            </section>
+            <div className="flex shrink-0 items-center gap-1 px-3 pt-2 pb-1">
+                <div aria-label="Current conversation" className="flex h-7 min-w-0 items-center gap-1 rounded-md bg-muted pl-2.5 pr-1 text-xs text-foreground">
+                    <span title={currentTitle} className="max-w-40 truncate">{currentTitle}</span>
+                    {sessionId && <Button type="button" variant="ghost" size="icon-xs" aria-label="Close current conversation" disabled={busy} onClick={() => onSelectSession(null)}><XIcon className="size-3" /></Button>}
+                </div>
+                <Button type="button" variant="ghost" size="icon-sm" title="New chat" disabled={busy} onClick={() => onSelectSession(null)}>
+                    <PlusIcon aria-hidden className="size-3.5" /><span className="sr-only">New chat</span>
+                </Button>
+            </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-6">
-                <div className="mx-auto max-w-3xl space-y-4">
+            <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label="Chat messages">
+                <ConversationContent className="gap-4 px-3.5 py-4">
                     {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">Loading conversation…</p>}
                     {ready && transcript.length === 0 && !busy && (
                         <div className="py-16 text-center">
@@ -265,15 +305,18 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                         </div>
                     )}
                     {transcript.map((message, messageIndex) => (
-                        <div key={message.id} className={cn('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}>
-                            <div className={cn('min-w-0 max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6', message.role === 'user' ? 'whitespace-pre-wrap bg-primary text-primary-foreground' : 'bg-muted')}>
-                                {message.role === 'user' && message.metadata && typeof message.metadata === 'object' && 'attachmentPath' in message.metadata && typeof message.metadata.attachmentPath === 'string' ?
-                                    <div className="mb-1"><AttachmentChip path={message.metadata.attachmentPath} /></div> : null}
-                                {message.role === 'assistant'
-                                    ? <DesktopAssistantReply message={message} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
-                                        onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
-                                    : message.parts.map((part, index) => part.type === 'text' ? <span key={index}>{part.text}</span> : null)}
-                            </div>
+                        <div key={message.id} className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
+                            <Message from={message.role} className="min-w-0">
+                                <MessageContent className={cn(message.role === 'user' ? [USER_BUBBLE_SHAPE, USER_BUBBLE_INK, 'whitespace-pre-wrap wrap-anywhere'] : 'overflow-visible')}>
+                                    {message.role === 'user' && message.metadata && typeof message.metadata === 'object' && 'attachmentPath' in message.metadata && typeof message.metadata.attachmentPath === 'string' ?
+                                        <div className="mb-1"><AttachmentChip path={message.metadata.attachmentPath} /></div> : null}
+                                    {message.role === 'assistant'
+                                        ? <DesktopAssistantReply message={message} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
+                                            onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
+                                        : message.parts.map((part, index) => part.type === 'text' ? <span key={index}>{part.text}</span> : null)}
+                                </MessageContent>
+                            </Message>
+                            {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
                         </div>
                     ))}
                     {generating && <div className="text-sm text-muted-foreground">{agent.name} is working…</div>}
@@ -285,24 +328,20 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             setAttempt(n => n + 1)
                         }}>Retry conversation</Button>}
                     </div>}
-                </div>
-            </div>
+                </ConversationContent>
+            </Conversation>
 
-            <div className="border-t p-4">
-                <form onSubmit={submit} className="mx-auto flex max-w-3xl flex-wrap items-end gap-2">
-                    <div className="flex w-full flex-wrap items-center gap-2">
-                        <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={generating || stopping || !ready}
-                            onSelect={path => setDraftAttachment(draftKey, path)} />
-                        {attachment && <AttachmentChip path={attachment} disabled={generating || stopping} onRemove={() => setDraftAttachment(draftKey)} />}
-                    </div>
+            <div className="shrink-0 border-t p-2.5">
+                <form onSubmit={submit} className="flex min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring">
+                    {attachment && <div className="px-2.5 pt-2"><AttachmentChip path={attachment} disabled={generating || stopping} onRemove={() => setDraftAttachment(draftKey)} /></div>}
                     <label htmlFor="desktop-message" className="sr-only">Message {agent.name}</label>
                     <Textarea
                         id="desktop-message"
                         rows={2}
-                        className="min-w-0 flex-1"
+                        className="min-h-12 w-full resize-none rounded-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
                         maxLength={20_000}
                         readOnly={!!attachment && status === 'submitted'}
-                        placeholder={`Message ${agent.name}…`}
+                        placeholder="Send a message…"
                         value={input}
                         onChange={event => setInput(event.target.value)}
                         onKeyDown={event => {
@@ -312,8 +351,19 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             }
                         }}
                     />
-                    {generating && <Button type="button" variant="outline" disabled={stopping || !stopTarget} onClick={() => void handleStop()}>Stop</Button>}
-                    <Button type="submit" disabled={!input.trim() || generating || stopping || !ready}>Send</Button>
+                    <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
+                        {onOpenModelSettings ? <Button type="button" variant="ghost" size="sm" onClick={onOpenModelSettings} title="Open model settings" className="min-w-0 gap-1 text-xs">
+                            <span className="truncate">{modelLabel ? `Default · ${modelLabel}` : 'Set up provider'}</span><ChevronDownIcon className="size-3" />
+                        </Button> : <span className="min-w-0 truncate text-xs text-muted-foreground">{modelLabel}</span>}
+                        <div className="flex shrink-0 items-center gap-1">
+                            <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={generating || stopping || !ready}
+                                onSelect={path => setDraftAttachment(draftKey, path)} />
+                            {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
+                            <Button type="submit" size="icon-sm" className="rounded-full" disabled={!input.trim() || generating || stopping || !ready}>
+                                <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
+                            </Button>
+                        </div>
+                    </div>
                 </form>
             </div>
         </div>

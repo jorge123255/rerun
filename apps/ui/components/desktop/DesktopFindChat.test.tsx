@@ -12,7 +12,7 @@ const hits = [
     { id: 'bob-shared', agentId: 'bob', agentName: 'Bob', title: 'Shared plan' },
 ]
 const click = (label: string) => act(async () => {
-    const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === label)
+    const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.getAttribute('aria-label') === label || b.textContent?.trim() === label)
     expect(button, label).toBeTruthy(); button!.click()
 })
 const type = (text: string) => act(async () => {
@@ -58,16 +58,16 @@ test('same-title results open their exact older transcripts, preserve Chats sele
             await select(name)
             expect(container.textContent).toContain(`Reply for ${name.toLowerCase()}-shared`)
             expect(container.textContent).not.toContain(`Reply for ${name.toLowerCase()}-newest`)
-            await click('Team board')
+            await click('Close panel')
         }
         expect(reads).toEqual(['alice-shared', 'bob-shared'])
-        await click('Alice')
+        await act(async () => { container.querySelector<HTMLElement>('[aria-label="Open chat with Alice"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
         expect(container.textContent).toContain('Reply for alice-newest')
         const history = () => container.querySelector<HTMLButtonElement>('[aria-label="Conversation history (2)"]')!
         await act(async () => { history().click() })
         await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent?.includes('Shared plan'))!.click() })
         expect(container.textContent).toContain('Reply for alice-shared')
-        await click('Team board')
+        await click('Close panel')
         await click('Find chat'); await type('missing'); await settle()
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('No matching chats.')
         await act(async () => { root.unmount() })
@@ -76,7 +76,7 @@ test('same-title results open their exact older transcripts, preserve Chats sele
         for (const name of ['Alice', 'Bob']) {
             await search(); await select(name)
             expect(container.textContent).toContain(`Reply for ${name.toLowerCase()}-shared`)
-            await click('Team board')
+            await click('Close panel')
         }
     } finally { await act(async () => { root.unmount() }) }
 })

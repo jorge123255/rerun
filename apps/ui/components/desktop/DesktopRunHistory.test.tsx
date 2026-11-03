@@ -13,7 +13,7 @@ const bob = { ...alice, id: 'bob', name: 'Bob' }
 const running: DesktopRunView = { id: 'run-1', status: 'running', startedAt: '2026-11-03T12:00:00.000Z', finishedAt: null, stepCount: 0,
     provider: 'openrouter', model: 'local-test', inputTokens: null, outputTokens: null, totalTokens: null, cachedInputTokens: null, reasoningTokens: null, costMicros: null }
 const click = (label: string) => act(async () => {
-    const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === label)
+    const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === label || b.getAttribute('aria-label') === label)
     expect(button, label).toBeTruthy()
     button!.click()
 })
@@ -47,6 +47,7 @@ test('opens from a board coworker, updates a running entry, isolates coworkers, 
             composer.dispatchEvent(new Event('change', { bubbles: true }))
         })
         expect(reads).toBe(0)
+        await click('Coworker card')
         await click('Runs')
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Running')
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Usage not recorded')
@@ -66,7 +67,8 @@ test('opens from a board coworker, updates a running entry, isolates coworkers, 
         const readCount = reads
         await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
         expect(reads).toBe(readCount)
-        await click('Bob')
+        await act(async () => { container.querySelector<HTMLElement>('[aria-label="Open chat with Bob"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+        await click('Coworker card')
         await click('Runs')
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Latest 50 runs for Bob.')
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('No runs yet')

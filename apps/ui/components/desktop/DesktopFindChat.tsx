@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Search } from 'lucide-react'
+import { ChromeButton } from '@rerun/ui/chrome'
 import { Button } from '@/components/ui/button'
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -55,7 +56,7 @@ function FindChatPanel({ onSelect }: { onSelect: (hit: DesktopConversationHit) =
 export function DesktopFindChat({ onSelect }: { onSelect: (hit: DesktopConversationHit) => void }) {
     const [open, setOpen] = useState(false)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
-        <DialogTrigger asChild><Button type="button" variant="outline" size="sm"><Search aria-hidden className="size-4" />Find chat</Button></DialogTrigger>
+        <DialogTrigger asChild><ChromeButton icon={Search} label="Find chat" /></DialogTrigger>
         <DialogContent className="flex max-h-[85dvh] flex-col gap-3 overflow-hidden sm:max-w-xl">
             <DialogHeader className="shrink-0">
                 <DialogTitle>Find chat</DialogTitle>

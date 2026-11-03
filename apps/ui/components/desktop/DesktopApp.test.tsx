@@ -8,7 +8,7 @@ const workspace = { id: 1, name: 'My workspace' }
 describe('DesktopApp', () => {
     it('shows local-first provider setup on a fresh install', () => {
         const html = renderToString(<DesktopApp initialData={{ profile, workspace, agents: [], theme: 'system' as const, default: null, connections: [] }} />)
-        expect(html).toContain('Rerun Local')
+        expect(html).toContain('Workspace menu, My workspace')
         expect(html).toContain('My workspace')
         expect(html).toContain('Set up provider')
         expect(html).toContain('Create your first coworker')
@@ -23,14 +23,15 @@ describe('DesktopApp', () => {
         }} />)
         expect(html).toContain('Researcher')
         expect(html).not.toContain('Set up provider')
-        expect(html).toContain('Settings')
-        expect(html).toContain('Select a coworker')
+        expect(html).toContain('Open model settings')
+        expect(html).toContain('Open chat with Researcher')
     })
 
-    it('uses a stacked narrow layout with a bounded scrollable coworker area', () => {
+    it('renders the original workspace pill and board actions together before a coworker opens', () => {
         const html = renderToString(<DesktopApp initialData={{ profile, workspace, agents: [], theme: 'system' as const, default: null, connections: [] }} />)
-        expect(html).toContain('md:flex-row')
-        expect(html).toContain('md:w-80')
-        expect(html).toContain('max-h-[38dvh]')
+        expect(html).toContain('aria-label="Team board"')
+        expect(html).toContain('aria-label="Workspace"')
+        expect(html).toContain('Find chat')
+        expect(html).not.toContain('data-side-panel')
     })
 })

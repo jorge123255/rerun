@@ -132,6 +132,7 @@ export const TileBlock = memo(function TileBlock({ tile, selected, hovered, isDr
             role={interactive ? 'button' : undefined}
             tabIndex={interactive ? 0 : undefined}
             aria-label={interactive ? tile.ariaLabel : undefined}
+            data-tile-id={interactive ? tile.id : undefined}
             onKeyDown={
                 interactive
                     ? e => {

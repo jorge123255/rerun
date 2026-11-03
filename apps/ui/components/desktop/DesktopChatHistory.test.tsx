@@ -9,6 +9,9 @@ import { DesktopChatHistory, groupDesktopChats } from './DesktopChatHistory'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const createdAt = '2026-01-01T12:00:00.000Z'
+const openTile = (name: string) => act(async () => {
+    document.querySelector<HTMLElement>(`[aria-label="Open chat with ${name}"]`)!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+})
 const session = (id: string, agentId: string, title: string): DesktopSessionView => ({ id, agentId, title, createdAt, updatedAt: '2026-11-01T12:00:00.000Z' })
 const click = (label: string) => act(async () => {
     const button = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === label || b.getAttribute('aria-label') === label)
@@ -101,7 +104,7 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
     const container = document.createElement('div')
     document.body.append(container)
     let root = createRoot(container)
-    const openAlice = () => click('Alice')
+    const openAlice = () => openTile('Alice')
     const history = () => click(`Conversation history (${saved.filter(s => s.agentId === 'alice').length})`)
     const choose = (title: string) => click([...document.querySelectorAll('[role="dialog"] button')].find(b => b.textContent?.includes(title))!.textContent!)
     try {
@@ -128,7 +131,7 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
         expect(document.querySelector('[aria-current="true"]')?.textContent).toContain('Dates')
         await choose('Bananas')
         expect(container.textContent).toContain('Bananas answer')
-        await click('Bob')
+        await openTile('Bob')
         expect(container.textContent).toContain('Carrots answer')
         expect(container.textContent).not.toMatch(/Fresh answer|Bananas answer|Apples answer/)
         await click('Conversation history (1)')
@@ -159,7 +162,7 @@ test('history read failure can be retried without turning it into an empty saved
     try {
         await act(async () => { root.render(<DesktopApp initialData={{ theme: 'system', profile: { id: 1, displayName: 'Test' }, workspace: { id: 1, name: 'Test' }, connections: [], default: null,
             agents: [{ id: 'alice', name: 'Alice', description: '', createdAt, updatedAt: createdAt }] }} />) })
-        await click('Alice')
+        await openTile('Alice')
         expect(container.querySelector('[role="alert"]')?.textContent).toContain('History unavailable')
         await click('Retry conversations')
         expect(container.querySelector('[role="alert"]')).toBeNull()

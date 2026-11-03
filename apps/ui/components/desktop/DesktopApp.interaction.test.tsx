@@ -3,6 +3,7 @@
 import { ThemeProvider } from '@rerun/ui/theme'
 import type { ConnectionsList } from '@rerun/contracts'
 import { act } from 'react'
+import { MotionConfig } from 'motion/react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopApp } from './DesktopApp'
@@ -49,22 +50,22 @@ test('the open board follows sign-in, default provider changes, and sign-out', a
     const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(5000) })
     try {
         await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [coworker] }} />) })
-        const sidebar = container.querySelector('aside')!
+        const workspaceMenu = container.querySelector('nav[aria-label="Workspace"]')!
         const boardTile = container.querySelector('[aria-label="Open chat with Researcher"]')
         expect(boardTile).not.toBeNull()
-        expect(sidebar.textContent).toContain('Set up provider')
+        expect(workspaceMenu.textContent).toContain('Set up provider')
 
         providers = { connections: [openai, codex], default: { connectionId: codex.id, model: codex.models[0] } }
         await tick()
-        expect(sidebar.textContent).toContain('Codex is connected')
-        expect(sidebar.textContent).toContain(codex.models[0])
+        expect(workspaceMenu.textContent).toContain('Codex is connected')
+        expect(workspaceMenu.textContent).toContain(codex.models[0])
         expect(container.textContent).not.toContain('Set up provider')
 
         providers = { ...providers, default: { connectionId: openai.id, model: openai.models[0] } }
         await tick()
-        expect(sidebar.textContent).toContain('OpenAI is connected')
-        expect(sidebar.textContent).toContain(openai.models[0])
-        expect(sidebar.textContent).not.toContain('Codex is connected')
+        expect(workspaceMenu.textContent).toContain('OpenAI is connected')
+        expect(workspaceMenu.textContent).toContain(openai.models[0])
+        expect(workspaceMenu.textContent).not.toContain('Codex is connected')
 
         visibility.mockReturnValue('hidden')
         await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
@@ -74,8 +75,8 @@ test('the open board follows sign-in, default provider changes, and sign-out', a
         expect(fetcher).toHaveBeenCalledTimes(readCount)
         visibility.mockReturnValue('visible')
         await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
-        expect(sidebar.textContent).toContain('Set up provider')
-        expect(sidebar.textContent).not.toContain('OpenAI is connected')
+        expect(workspaceMenu.textContent).toContain('Set up provider')
+        expect(workspaceMenu.textContent).not.toContain('OpenAI is connected')
         expect(container.querySelector('[aria-label="Open chat with Researcher"]')).toBe(boardTile)
     } finally {
         await act(async () => { root.unmount() })
@@ -100,8 +101,7 @@ test('a reopened workspace can replace a saved key and recover after a failed sa
             return writes.length === 1 ? Response.json({ error: 'Synthetic save failure' }, { status: 500 }) : Response.json({ connections: initialData.connections, default: null })
         }
     })
-    const button = (text: string) => [...container.querySelectorAll('button')].find(item => item.textContent?.trim() === text)!
-    const enterKey = async () => {
+        const enterKey = async () => {
         const input = container.querySelector<HTMLInputElement>('#desktop-api-key')!
         await act(async () => {
             Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'example-replacement-key')
@@ -113,7 +113,7 @@ test('a reopened workspace can replace a saved key and recover after a failed sa
     try {
         await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
         expect(container.querySelector('#desktop-api-key')).toBeNull()
-        await act(async () => { button('Settings').click() })
+        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
         expect(container.querySelector<HTMLInputElement>('#desktop-api-key')!.type).toBe('password')
         await enterKey()
         await submit()
@@ -126,7 +126,7 @@ test('a reopened workspace can replace a saved key and recover after a failed sa
         expect(container.querySelector<HTMLInputElement>('#desktop-api-key')!.value).toBe('')
         expect(fetcher.mock.calls.some(([url, init]) => url === settingsUrl && (init?.method ?? 'GET') === 'GET')).toBe(true)
         await act(async () => { finishRead(Response.json(disconnected)) })
-        expect(container.querySelector('aside')?.textContent).toContain('OpenAI is connected')
+        expect(container.querySelector('nav[aria-label="Workspace"]')?.textContent).toContain('OpenAI is connected')
     } finally { await act(async () => { root.unmount() }) }
 })
 
@@ -159,7 +159,7 @@ test('Codex Settings refreshes the account model list while keeping the selected
     const refreshed = ['GPT-5.6 Sol', 'GPT-5.6 Terra', accountModel]
     try {
         await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
-        await act(async () => { button('Settings').click() })
+        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
         expect(actions).toEqual([{ action: 'refresh' }])
         assertChoices(refreshed)
         await act(async () => { button('Refresh models').click() })
@@ -217,13 +217,13 @@ test('reasoning effort uses the active model’s supported levels and the saved 
     const levels = () => [...effort().options].map(o => o.value)
     try {
         await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
-        await open('Settings')
+        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
         expect(levels()).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
         expect(effort().options[0].textContent).toBe('Model default (Medium)')
         expect(effort().value).toBe('high')
         await change(effort(), 'xhigh')
         await open('Team board')
-        await open('Settings')
+        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
         expect(effort().value).toBe('xhigh')
         await chooseModel('GPT-5.6 Sol')
         expect(levels()).toEqual(['', 'high', 'xhigh'])
@@ -270,7 +270,7 @@ test('editing a coworker from the board preserves the chat and only saves change
         }
     })
     const click = (text: string) => act(async () => {
-        const button = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === text)!
+        const button = [...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === text || b.textContent?.trim() === text)!
         button.click()
     })
     const enter = (input: HTMLTextAreaElement, value: string) => act(async () => {
@@ -280,10 +280,11 @@ test('editing a coworker from the board preserves the chat and only saves change
     })
     const instructions = () => document.querySelector<HTMLTextAreaElement>('[role="dialog"] textarea')!
     try {
-        await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, theme: 'system', agents: [agent] }} />) })
+        await act(async () => { root.render(<MotionConfig isStatic><DesktopApp initialData={{ ...disconnected, profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, theme: 'system', agents: [agent] }} /></MotionConfig>) })
         await act(async () => { container.querySelector<HTMLElement>('[aria-label="Open chat with Reviewer"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
         const composer = container.querySelector<HTMLTextAreaElement>('#desktop-message')!
         await enter(composer, 'My unsent question')
+        await click('Coworker card')
         await click('Edit coworker')
         expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe('Could not load settings.')
         await click('Retry')
@@ -303,12 +304,14 @@ test('editing a coworker from the board preserves the chat and only saves change
         expect(writes[1]).toEqual({ soul: 'End with a verdict.', verbosity: 'concise' })
         expect(document.querySelector('[role="dialog"]')).toBeNull()
         expect(composer.value).toBe('My unsent question')
+        await click('Coworker card')
         await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)) })
         await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Conversation history (1)"]')!.click() })
         expect(document.querySelector('[aria-current="true"]')?.textContent).toContain('Earlier review')
         await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Conversation history (1)"]')!.click() })
         expect(container.textContent).toContain('Existing answer.')
         settings.soulEditable = false
+        await click('Coworker card')
         await click('Edit coworker')
         expect(instructions()).toBeNull()
         expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('End with a verdict.')
@@ -338,7 +341,7 @@ test('a board tile opens the saved conversation and New chat starts a separate s
         }
         if (url === '/api/desktop/sessions/created/messages') return Response.json({ messages: [] })
     })
-    const button = (label: string) => [...container.querySelectorAll('button')].find(node => node.textContent?.trim() === label)!
+    const button = (label: string) => [...document.querySelectorAll('button')].find(node => node.getAttribute('aria-label') === label || node.textContent?.trim() === label)!
     const send = async (text: string) => {
         const input = container.querySelector<HTMLTextAreaElement>('#desktop-message')!
         await act(async () => {
@@ -351,18 +354,22 @@ test('a board tile opens the saved conversation and New chat starts a separate s
     try {
         await act(async () => { root.render(<DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], theme: 'system' as const, ...providers }} />) })
         const tile = container.querySelector<HTMLElement>('[aria-label="Open chat with Researcher"]')!
+        const board = container.querySelector('[aria-label="Team board"]')!
         await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
-        expect(container.textContent).toContain('Saved answer')
+        expect(container.querySelector('[aria-label="Team board"]')).toBe(board)
+        expect(container.querySelector('[aria-label="Open chat with Researcher"]')).toBe(tile)
+        expect(container.querySelector('[aria-label="Coworker chat"]')?.textContent).toContain('Saved answer')
         await send('Continue')
         await act(async () => { button('New chat').click() })
         await send('Start fresh')
         expect(sent).toEqual([{ agentId: 'researcher', sessionId: 'previous', text: 'Continue' }, { agentId: 'researcher', text: 'Start fresh' }])
-        await act(async () => { button('Team board').click() })
-        expect(container.querySelector('[aria-label="Open chat with Researcher"]')).not.toBeNull()
+        await act(async () => { button('Close panel').click() })
+        expect(document.activeElement).toBe(tile)
+        expect(container.querySelector('[data-side-panel]')?.closest('[inert]')).not.toBeNull()
         await act(async () => { button('Add coworker').click() })
-        expect(container.querySelector('#coworker-name')).not.toBeNull()
+        expect(document.querySelector('[role="dialog"] #coworker-name')).not.toBeNull()
         await act(async () => { button('Cancel').click() })
-        expect(container.querySelector('[aria-label="Open chat with Researcher"]')).not.toBeNull()
+        expect(container.querySelector('[aria-label="Open chat with Researcher"]')).toBe(tile)
     } finally { await act(async () => { root.unmount() }) }
 })
 
@@ -385,7 +392,7 @@ test('applying a new appearance keeps the saved choice active', async () => {
             theme: 'light', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' },
             default: null, connections: [], agents: [],
         }} /></ThemeProvider>) })
-        await act(async () => { button('Settings').click() })
+        await act(async () => { container.querySelector<HTMLButtonElement>('[title="Open model settings"]')!.click() })
         await act(async () => { button('Workspace').click() })
         await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Dark"]')!.click() })
         expect(writes).toEqual([{ action: 'appearance', theme: 'dark' }])

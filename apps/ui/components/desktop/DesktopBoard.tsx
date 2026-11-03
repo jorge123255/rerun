@@ -1,8 +1,8 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
+import { ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
 import type { TileStyle } from '@rerun/ui/iso-grid'
 import { IsoGrid, SPACE_COLOR, agentTileStyle, type Container, type Tile } from '@rerun/ui/iso-grid'
 import { Plus } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import type { DesktopAgentView } from './DesktopApp'
 import { useBoardActivity } from './useBoardActivity'
 import type { BoardActivityStatus } from '@/lib/desktop/board-activity'
@@ -11,11 +11,15 @@ import { DesktopFindChat } from './DesktopFindChat'
 
 const ACTIVITY_LABEL: Record<BoardActivityStatus, string> = { working: 'Working', idle: 'Idle', unreachable: 'Activity unavailable', unknown: 'Checking activity' }
 
-export function DesktopBoard({ agents, workspaceName, onOpen, onCreate, onOpenConversation }: {
+export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation }: {
     agents: DesktopAgentView[]
     workspaceName: string
+    workspaceMenu?: ReactNode
+    selectedAgentId?: string | null
+    panelInsetRight?: number
     onOpen: (id: string) => void
     onCreate: () => void
+    onDismiss?: () => void
     onOpenConversation?: (hit: DesktopConversationHit) => void
 }) {
     const activity = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]))
@@ -25,6 +29,8 @@ export function DesktopBoard({ agents, workspaceName, onOpen, onCreate, onOpenCo
         const tiles: Tile[] = agents.map((agent, index) => ({
             id: agent.id,
             position: { col: 3 + (index % columns) * 3, row: 3 + Math.floor(index / columns) * 3 },
+            span: 2,
+            containerId: 'team',
             style: tileStyle(activity[agent.id] ?? 'unknown', agent.name),
             ariaLabel: `Open chat with ${agent.name}`,
         }))
@@ -38,30 +44,31 @@ export function DesktopBoard({ agents, workspaceName, onOpen, onCreate, onOpenCo
     }, [agents, workspaceName, activity])
 
     return (
-        <section aria-label="Team board" className="flex min-h-64 flex-1 flex-col">
-            <header className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4">
-                <div>
-                    <h1 className="text-lg font-semibold tracking-tight">Team board</h1>
-                    <p className="mt-0.5 text-sm text-muted-foreground">
-                        {agents.length ? 'Select a coworker to open their chat.' : 'Give your first coworker a name and a job.'}
-                    </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                    {onOpenConversation && <DesktopFindChat onSelect={onOpenConversation} />}
-                    <Button type="button" size="sm" onClick={onCreate}><Plus aria-hidden />Add coworker</Button>
-                </div>
-            </header>
-            <div className="relative min-h-48 flex-1">
+        <section aria-label="Team board" className="relative isolate min-h-0 min-w-0 flex-1">
+            <h1 className="sr-only">Team board</h1>
+            <div className="absolute inset-0">
                 <IsoGrid
                     tiles={tiles}
                     containers={[box]}
+                    selectedTileId={selectedAgentId}
+                    frameInset={{ left: 0, right: panelInsetRight }}
                     fitToContent
                     canDraw={false}
                     showViewControls={tiles.length > 0}
-                    onTileSelect={id => { if (id) onOpen(id) }}
+                    viewControlsPlacement="top-right"
+                    viewControlsClassName={selectedAgentId ? 'md:top-auto md:right-auto md:bottom-16 md:left-4' : undefined}
+                    onTileSelect={id => {
+                        if (id) onOpen(id)
+                        else if (selectedAgentId) onDismiss?.()
+                    }}
                     onContainerSelect={tiles.length ? undefined : id => { if (id) onCreate() }}
                 />
             </div>
+            <div className="absolute top-4 left-4 z-40 flex items-start gap-2">{workspaceMenu}</div>
+            <ChromeBar className="absolute bottom-4 left-4 z-40" aria-label="Board actions" role="group">
+                {onOpenConversation && <><DesktopFindChat onSelect={onOpenConversation} /><ChromeDivider /></>}
+                <ChromeButton icon={Plus} label="Add coworker" onClick={onCreate} />
+            </ChromeBar>
             <ul aria-label="Coworker activity" className="sr-only" aria-live="polite">
                 {agents.map(agent => {
                     const status = activity[agent.id] ?? 'unknown'

@@ -15,11 +15,17 @@ describe('DesktopConversation', () => {
             sessions={[{ id: 'session-1', agentId: agent.id, title: 'First conversation', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }]}
             onSelectSession={vi.fn()}
             onChatSession={vi.fn()}
+            onClosePanel={vi.fn()}
+            modelLabel="test-model"
+            onOpenModelSettings={vi.fn()}
         />)
-        expect(html).toContain('flex-wrap')
+        expect(html).toContain('aria-label="Coworker card"')
+        expect(html).toContain('aria-label="Close panel"')
         expect(html).toContain('Conversation history')
+        expect(html).toContain('First conversation')
+        expect(html).toContain('Default · test-model')
         expect(html).toContain('desktop-message')
-        expect(html).toContain('sm:w-auto')
+        expect(html).toContain('Send a message…')
     })
 
     it('renders only marked Codex summaries as upstream running and settled reasoning steps', () => {

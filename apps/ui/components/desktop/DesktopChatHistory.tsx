@@ -36,8 +36,8 @@ export function DesktopChatHistory({ sessions, selectedId, busy, onSelect }: {
     return (
         <Popover open={open} onOpenChange={value => { setOpen(value); if (!value) setQuery('') }}>
             <PopoverTrigger asChild>
-                <Button type="button" size="sm" variant="outline" disabled={busy} aria-label={`Conversation history (${sessions.length})`}>
-                    <MessageCircle aria-hidden className="size-3.5" /> Chats <span className="tabular-nums text-muted-foreground">{sessions.length}</span>
+                <Button type="button" size="icon" variant="outline" className="size-10 rounded-full border-border/50 bg-background/85 shadow-sm" title="Chats" disabled={busy} aria-label={`Conversation history (${sessions.length})`}>
+                    <MessageCircle aria-hidden className="size-4 text-muted-foreground" /><span className="sr-only">Chats</span>
                 </Button>
             </PopoverTrigger>
             <PopoverContent align="end" collisionPadding={12} aria-labelledby={titleId} aria-describedby={descriptionId}
