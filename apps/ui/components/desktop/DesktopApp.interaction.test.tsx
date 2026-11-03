@@ -18,6 +18,8 @@ function mockDesktopFetch(reply: (url: string, init?: RequestInit) => Response |
         if (response) return response
         // The Team board polls its own activity route; tests that do not exercise it see everyone idle.
         if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
+        // An open conversation checks whether an engine run is still generating (for Stop).
+        if (/^\/api\/desktop\/sessions\/[^/]+\/stop$/.test(url) && !init?.method) return Response.json({ running: false })
         const message = `${init?.method ?? 'GET'} ${url}`
         unexpectedRequests.push(message)
         throw new Error(`Unexpected request: ${message}`)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type UIMessage } from 'ai'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
@@ -21,6 +21,9 @@ async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMes
     return body.messages as UIMessage[]
 }
 
+const stopUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/stop`
+const RUN_POLL_MS = 3000
+
 export function DesktopConversation({ agent, sessionId, sessions, onSelectSession, onChatSession, renderHistory }: {
     agent: DesktopAgentView
     sessionId: string | null
@@ -32,6 +35,11 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     const [input, setInput] = useState('')
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; error?: string }>({ id: null })
     const [attempt, setAttempt] = useState(0)
+    // An engine run still generating for this conversation (e.g. after reopening it mid-reply).
+    const [engineRunning, setEngineRunning] = useState<{ id: string | null; running: boolean }>({ id: null, running: false })
+    const [stopping, setStopping] = useState(false)
+    const [stopError, setStopError] = useState<string>()
+    const liveSession = useRef<string | null>(null)
 
     const transport = useMemo(() => new DefaultChatTransport({
         api: '/api/desktop/chat',
@@ -41,6 +49,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
             const id = response.headers.get('x-session-id')
             if (response.ok && id) {
                 // A new session gets its ID from the first response. Keep its live stream visible.
+                liveSession.current = id
                 setHistory({ id })
                 onChatSession(id)
             }
@@ -48,7 +57,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
         },
     }), [onChatSession])
 
-    const { messages, setMessages, sendMessage, status, error } = useChat({
+    const { messages, setMessages, sendMessage, stop, status, error } = useChat({
         id: `desktop-${agent.id}`,
         transport,
         experimental_throttle: 60,
@@ -57,6 +66,8 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     const busy = status === 'submitted' || status === 'streaming'
 
     const ready = history.id === sessionId && !history.error
+    const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
+    const generating = busy || runInFlight
     const historyError = history.id === sessionId ? history.error : undefined
     // The SDK throttles message updates. Show the verified snapshot immediately when switching,
     // even if its subscription still holds the previous chat's messages.
@@ -76,10 +87,55 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
         return () => controller.abort()
     }, [sessionId, setMessages, busy, attempt])
 
+    useEffect(() => {
+        setStopError(undefined)
+        if (busy || !sessionId || !ready) return
+        let cancelled = false
+        let timer: ReturnType<typeof setTimeout> | undefined
+        let wasRunning = false
+        const check = async () => {
+            try {
+                const response = await fetch(stopUrl(sessionId))
+                const body = await response.json().catch(() => ({}))
+                if (cancelled || !response.ok) return
+                const running = body.running === true
+                setEngineRunning({ id: sessionId, running })
+                if (running) {
+                    wasRunning = true
+                    timer = setTimeout(check, RUN_POLL_MS)
+                } else if (wasRunning) {
+                    setAttempt(n => n + 1) // The reply finished elsewhere: reload the saved transcript.
+                }
+            } catch { /* Status is best-effort; Send stays available. */ }
+        }
+        void check()
+        return () => { cancelled = true; clearTimeout(timer) }
+    }, [sessionId, busy, ready, attempt])
+
+    async function handleStop() {
+        const id = sessionId ?? liveSession.current
+        setStopError(undefined)
+        // Abort the renderer stream, then cancel the actual engine run (as upstream AgentChat.handleStop).
+        if (busy) stop()
+        if (!id) return
+        setStopping(true)
+        try {
+            const response = await fetch(stopUrl(id), { method: 'POST' })
+            const body = await response.json().catch(() => ({}))
+            if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not stop this reply. Try again.')
+            setEngineRunning({ id, running: false })
+            setAttempt(n => n + 1)
+        } catch (cause) {
+            setStopError(cause instanceof Error ? cause.message : 'Could not stop this reply. Try again.')
+        } finally {
+            setStopping(false)
+        }
+    }
+
     function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if (!text || busy || !ready) return
+        if (!text || generating || !ready) return
         setInput('')
         void sendMessage({ text }, { body: { agentId: agent.id, sessionId: sessionId ?? undefined } })
     }
@@ -131,7 +187,8 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             </div>
                         </div>
                     ))}
-                    {busy && <div className="text-sm text-muted-foreground">{agent.name} is working…</div>}
+                    {generating && <div className="text-sm text-muted-foreground">{agent.name} is working…</div>}
+                    {stopError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopError}</div>}
                     {(error || historyError) && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
                         {historyError || error?.message}
                         {historyError && <Button type="button" size="sm" variant="outline" className="ml-2" onClick={() => {
@@ -159,7 +216,8 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             }
                         }}
                     />
-                    <Button type="submit" disabled={!input.trim() || busy || !ready}>Send</Button>
+                    {generating && <Button type="button" variant="outline" disabled={stopping} onClick={() => void handleStop()}>Stop</Button>}
+                    <Button type="submit" disabled={!input.trim() || generating || !ready}>Send</Button>
                 </form>
             </div>
         </div>
