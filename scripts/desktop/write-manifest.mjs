@@ -13,6 +13,7 @@ const manifest = {
     nodePath: 'runtime/node/bin/node',
     uiRoot: 'runtime/ui',
     engineEntry: 'runtime/engine/dist/cli/bin.js',
+    uiHost: 'main/ui-host.mjs',
 }
 const file = join(resourcesDir, 'runtime-manifest.json')
 await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`)

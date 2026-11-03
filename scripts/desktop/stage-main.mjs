@@ -1,6 +1,6 @@
-import { cp } from 'node:fs/promises'
+import { cp, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { cleanDir, desktopDir, existsSync } from './lib.mjs'
+import { cleanDir, desktopDir, existsSync, resourcesDir } from './lib.mjs'
 import { sourceStamp, writeStamp } from './provenance.mjs'
 
 const required = [
@@ -16,5 +16,8 @@ await cp(src, dist, { recursive: true })
 for (const file of required) {
     if (!existsSync(join(dist, file))) throw new Error(`staged main is missing ${file}`)
 }
+const hostTarget = join(resourcesDir, 'main')
+await mkdir(hostTarget, { recursive: true })
+await cp(join(src, 'ui-host.mjs'), join(hostTarget, 'ui-host.mjs'))
 await writeStamp(dist, stamp)
 console.log(`staged desktop main -> ${dist}`)
