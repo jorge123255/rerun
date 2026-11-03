@@ -51,6 +51,8 @@ describe('GET /agents/:id/stats', () => {
         ['no dataset', 'metric=count'],
         ['an unknown dataset', 'dataset=widgets&metric=count'],
         ['a metric the dataset does not have', 'dataset=sessions&metric=cost'],
+        ['a coverage metric outside the runs dataset', 'dataset=toolCalls&metric=recordedTokenRuns'],
+        ['a cost coverage metric outside the runs dataset', 'dataset=sessions&metric=recordedCostRuns'],
         ['a grouping the dataset does not have', 'dataset=toolCalls&metric=count&groupBy=model'],
         ['an unknown range', 'dataset=runs&metric=count&range=1y'],
     ])('refuses %s', async (_, query) => {

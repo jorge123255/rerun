@@ -25,6 +25,9 @@ test('run details permit only the existing authenticated step and tool reads', (
     }
     for (const path of ['/agents/a/runs/r', '/agents/a/runs/r/output', '/agents/a/runs/r/tools/more', '/agents/a/runs/r/steps/1', '/agents/foreman/runs/r/tools', '/agents/a/runs/..%2fr/tools'])
         expect(desktopRouteAllowed('GET', path)).toBe(false)
+    expect(desktopRouteAllowed('GET', '/agents/a/stats')).toBe(true)
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, '/agents/a/stats')).toBe(false)
+    for (const path of ['/agents/foreman/stats', '/agents/a/stats/more']) expect(desktopRouteAllowed('GET', path)).toBe(false)
 })
 
 test('Codex requires the bundled runner and the dedicated desktop connection', () => {

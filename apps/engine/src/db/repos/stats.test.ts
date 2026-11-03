@@ -75,6 +75,19 @@ describe('aggregateStats on runs', () => {
         expect(rate['2026-09-02']).toBe(0)
     })
 
+    it('counts runs that recorded tokens or cost against all runs in the bucket', async () => {
+        const tokens = await aggregateStats(AGENT, query({ dataset: 'runs', metric: 'recordedTokenRuns' }))
+        expect(tokens.map(point => [point.bucket, Number(point.value), Number(point.count)])).toEqual([
+            ['2026-09-01', 2, 3],
+            ['2026-09-02', 1, 1],
+        ])
+        const cost = await aggregateStats(AGENT, query({ dataset: 'runs', metric: 'recordedCostRuns' }))
+        expect(cost.map(point => [point.bucket, Number(point.value), Number(point.count)])).toEqual([
+            ['2026-09-01', 2, 3],
+            ['2026-09-02', 0, 1],
+        ])
+    })
+
     it('averages the duration over finished runs only', async () => {
         const points = await aggregateStats(AGENT, query({ dataset: 'runs', metric: 'avgDurationMs' }))
         expect(points.map(point => [point.bucket, point.count])).toEqual([

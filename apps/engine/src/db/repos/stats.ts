@@ -31,6 +31,8 @@ const DATASETS: Record<StatsDataset, DatasetDef> = {
             avgDurationMs: runsDurationMs,
             errorCount: sql<number>`coalesce(sum(case when ${runs.status} = 'error' then 1 else 0 end), 0)`,
             errorRate: sql<number>`coalesce(avg(case when ${runs.status} = 'error' then 1.0 else 0.0 end), 0)`,
+            recordedTokenRuns: sql<number>`count(${runs.totalTokens})`,
+            recordedCostRuns: sql<number>`count(${runs.costMicros})`,
         },
         groups: {
             model: sql<string | null>`${runs.model}`,

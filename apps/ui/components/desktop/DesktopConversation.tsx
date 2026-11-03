@@ -21,6 +21,7 @@ import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
+import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
 import { AttachmentChip, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { DesktopModelSelector } from './DesktopModelSelector'
@@ -311,6 +312,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     <DesktopCoworkerTools agent={agent} />
                     <DesktopCoworkerMemories agent={agent} />
                     {renderRunHistory}
+                    <DesktopCoworkerMonitoring agent={agent} />
                     <DesktopCoworkerSettings agent={agent} disabled={busy} />
                 </div>
             </section>

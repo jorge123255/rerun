@@ -14,6 +14,8 @@ export const statsMetricSchema = z.enum([
     'avgDurationMs',
     'errorCount',
     'errorRate',
+    'recordedTokenRuns',
+    'recordedCostRuns',
 ])
 export type StatsMetric = z.infer<typeof statsMetricSchema>
 
@@ -66,6 +68,8 @@ export const STATS_METRIC_META: Record<StatsMetric, { label: string; unit: Stats
     avgDurationMs: { label: 'Avg duration', unit: 'ms', agg: 'avg' },
     errorCount: { label: 'Errors', unit: 'count', agg: 'sum' },
     errorRate: { label: 'Error rate', unit: 'ratio', agg: 'avg' },
+    recordedTokenRuns: { label: 'Runs with recorded tokens', unit: 'count', agg: 'sum' },
+    recordedCostRuns: { label: 'Runs with recorded cost', unit: 'count', agg: 'sum' },
 }
 
 export const STATS_TIME_RANGE_META: Record<StatsTimeRange, { label: string }> = {
@@ -87,7 +91,7 @@ export const STATS_DATASETS: Record<
 > = {
     runs: {
         label: 'Runs',
-        metrics: ['count', 'totalTokens', 'inputTokens', 'outputTokens', 'cachedInputTokens', 'reasoningTokens', 'cost', 'avgDurationMs', 'errorCount', 'errorRate'],
+        metrics: ['count', 'totalTokens', 'inputTokens', 'outputTokens', 'cachedInputTokens', 'reasoningTokens', 'cost', 'avgDurationMs', 'errorCount', 'errorRate', 'recordedTokenRuns', 'recordedCostRuns'],
         groupBys: ['model', 'status', 'triggerSource'],
         supportsStatusFilter: true,
     },
