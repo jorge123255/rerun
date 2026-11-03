@@ -11,7 +11,11 @@ const chat = vi.hoisted(() => ({
     messages: [] as UIMessage[], status: 'ready', error: undefined,
     stop: vi.fn(), setMessages: vi.fn(), sendMessage: vi.fn(),
 }))
-vi.mock('@ai-sdk/react', () => ({ useChat: () => chat }))
+let acceptResponse: (url: string) => Promise<Response>
+vi.mock('@ai-sdk/react', () => ({ useChat: ({ transport }: { transport: { fetch: typeof acceptResponse } }) => {
+    acceptResponse = transport.fetch
+    return chat
+} }))
 
 const agent = { id: 'agent', name: 'Researcher', description: '', createdAt: '', updatedAt: '' }
 const sessions = [{ id: 'session-1', agentId: 'agent', title: 'One', createdAt: '', updatedAt: '' }]
@@ -20,18 +24,20 @@ let container: HTMLDivElement
 let root: Root
 let stopResponse: () => Response
 let running: boolean
+let statusUnavailable: boolean
 const requests: string[] = []
 
 beforeEach(() => {
     chat.status = 'ready'; chat.stop.mockReset(); chat.sendMessage.mockReset()
     requests.length = 0
-    running = false
+    running = false; statusUnavailable = false
     stopResponse = () => Response.json({ canceled: 1, alreadyFinished: false })
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
         requests.push(`${init?.method ?? 'GET'} ${url}`)
+        if (url.startsWith('/reply/')) return new Response(null, { headers: { 'x-session-id': url.slice('/reply/'.length) } })
         if (url.endsWith('/messages')) return saved.clone()
         if (url.endsWith('/stop') && init?.method === 'POST') { running = false; return stopResponse() }
-        if (url.endsWith('/stop')) return Response.json({ running })
+        if (url.endsWith('/stop')) return statusUnavailable ? new Response(null, { status: 503 }) : Response.json({ running })
         throw new Error('Unexpected request: ' + url)
     }))
     container = document.createElement('div')
@@ -40,7 +46,7 @@ beforeEach(() => {
 })
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals() })
 
-const render = () => act(async () => { root.render(<DesktopConversation agent={agent} sessionId="session-1" sessions={sessions} onSelectSession={vi.fn()} onChatSession={vi.fn()} />) })
+const render = (sessionId: string | null = 'session-1') => act(async () => { root.render(<DesktopConversation agent={agent} sessionId={sessionId} sessions={sessions} onSelectSession={vi.fn()} onChatSession={vi.fn()} />) })
 const button = (name: string) => [...container.querySelectorAll('button')].find(b => b.textContent === name)
 async function type(text: string) {
     const composer = container.querySelector('textarea')!
@@ -53,6 +59,7 @@ async function type(text: string) {
 test('Stop while streaming aborts the stream and cancels the engine run, keeping the draft', async () => {
     await render()
     expect(button('Stop')).toBeUndefined()
+    await act(async () => { await acceptResponse('/reply/session-1') })
     chat.status = 'streaming'
     await render()
     await type('Unsent follow-up')
@@ -97,4 +104,43 @@ test('an already finished reply clears Stop quietly', async () => {
     await act(async () => { button('Stop')!.click() })
     expect(button('Stop')).toBeUndefined()
     expect(container.querySelector('[role="alert"]')).toBeNull()
+})
+
+test('Stop waits for the current send to get a session ID before enabling, including after New chat', async () => {
+    // The previous conversation returned headers; its ID cannot be reused for this new turn.
+    await render()
+    await act(async () => { await acceptResponse('/reply/session-1') })
+    await render(null)
+    await type('Question for the new chat')
+    await act(async () => { button('Send')!.click() })
+    chat.status = 'submitted'
+    await render(null)
+    await act(async () => { button('Stop')!.click() })
+    expect(requests).not.toContain('POST /api/desktop/sessions/session-1/stop')
+    expect(chat.stop).not.toHaveBeenCalled()
+    expect(button('Stop')!.disabled).toBe(true)
+    await act(async () => { await acceptResponse('/reply/session-2') })
+    await render('session-2')
+    expect(button('Stop')!.disabled).toBe(false)
+    await act(async () => { button('Stop')!.click() })
+    expect(requests).toContain('POST /api/desktop/sessions/session-2/stop')
+})
+
+
+test('a transient engine status error is retried for a reopened running conversation', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+        running = true; statusUnavailable = true
+        await render()
+        expect(button('Stop')).toBeUndefined()
+        statusUnavailable = false
+        await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+        expect(button('Stop')).toBeDefined()
+        statusUnavailable = true
+        await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+        expect(button('Stop')).toBeDefined()
+        statusUnavailable = false; running = false
+        await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+        expect(button('Stop')).toBeUndefined()
+    } finally { vi.useRealTimers() }
 })

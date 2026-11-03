@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type UIMessage } from 'ai'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
@@ -39,7 +39,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     const [engineRunning, setEngineRunning] = useState<{ id: string | null; running: boolean }>({ id: null, running: false })
     const [stopping, setStopping] = useState(false)
     const [stopError, setStopError] = useState<string>()
-    const liveSession = useRef<string | null>(null)
+    const [liveSessionId, setLiveSessionId] = useState<string | null>(null)
 
     const transport = useMemo(() => new DefaultChatTransport({
         api: '/api/desktop/chat',
@@ -49,7 +49,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
             const id = response.headers.get('x-session-id')
             if (response.ok && id) {
                 // A new session gets its ID from the first response. Keep its live stream visible.
-                liveSession.current = id
+                setLiveSessionId(id)
                 setHistory({ id })
                 onChatSession(id)
             }
@@ -68,6 +68,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     const ready = history.id === sessionId && !history.error
     const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
     const generating = busy || runInFlight
+    const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
     const historyError = history.id === sessionId ? history.error : undefined
     // The SDK throttles message updates. Show the verified snapshot immediately when switching,
     // even if its subscription still holds the previous chat's messages.
@@ -97,7 +98,8 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
             try {
                 const response = await fetch(stopUrl(sessionId))
                 const body = await response.json().catch(() => ({}))
-                if (cancelled || !response.ok) return
+                if (cancelled) return
+                if (!response.ok) throw new Error('Run status unavailable')
                 const running = body.running === true
                 setEngineRunning({ id: sessionId, running })
                 if (running) {
@@ -106,19 +108,24 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                 } else if (wasRunning) {
                     setAttempt(n => n + 1) // The reply finished elsewhere: reload the saved transcript.
                 }
-            } catch { /* Status is best-effort; Send stays available. */ }
+            } catch {
+                if (!cancelled) timer = setTimeout(check, RUN_POLL_MS)
+            }
         }
         void check()
         return () => { cancelled = true; clearTimeout(timer) }
     }, [sessionId, busy, ready, attempt])
 
     async function handleStop() {
-        const id = sessionId ?? liveSession.current
+        const id = stopTarget
+        if (!id || stopping) return
         setStopError(undefined)
         // Abort the renderer stream, then cancel the actual engine run (as upstream AgentChat.handleStop).
-        if (busy) stop()
-        if (!id) return
         setStopping(true)
+        if (busy) {
+            setEngineRunning({ id, running: true })
+            stop()
+        }
         try {
             const response = await fetch(stopUrl(id), { method: 'POST' })
             const body = await response.json().catch(() => ({}))
@@ -135,7 +142,9 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
     function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if (!text || generating || !ready) return
+        if (!text || generating || stopping || !ready) return
+        // Wait for this send's engine-backed session ID before enabling Stop.
+        setLiveSessionId(null)
         setInput('')
         void sendMessage({ text }, { body: { agentId: agent.id, sessionId: sessionId ?? undefined } })
     }
@@ -216,8 +225,8 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             }
                         }}
                     />
-                    {generating && <Button type="button" variant="outline" disabled={stopping} onClick={() => void handleStop()}>Stop</Button>}
-                    <Button type="submit" disabled={!input.trim() || generating || !ready}>Send</Button>
+                    {generating && <Button type="button" variant="outline" disabled={stopping || !stopTarget} onClick={() => void handleStop()}>Stop</Button>}
+                    <Button type="submit" disabled={!input.trim() || generating || stopping || !ready}>Send</Button>
                 </form>
             </div>
         </div>
