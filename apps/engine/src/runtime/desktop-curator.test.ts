@@ -22,6 +22,7 @@ const { bumpMemoryAccess, listMemories } = await import('../db/repos/memories.js
 const { addDesktopMemory, listDesktopMemory } = await import('../desktop/memory-store.js')
 const { writeMemoryFile } = await import('../memory/files.js')
 const { runCurator } = await import('./curator.js')
+const { agentRoutes } = await import('../http/routes/agents.js')
 
 async function coworker(id: string): Promise<LoadedAgent> {
     const config = agentConfigSchema.parse({ name: id, tools: { skills: false } })
@@ -31,7 +32,7 @@ async function coworker(id: string): Promise<LoadedAgent> {
 }
 
 afterAll(async () => {
-    for (const id of ['owner', 'sibling', 'optout', 'redirect', 'destination']) closeSystemDb(id)
+    for (const id of ['owner', 'sibling', 'optout', 'redirect', 'destination', 'pending-memory', 'pending-autoMemory', 'pending-enabled']) closeSystemDb(id)
     vi.unstubAllEnvs()
     await rm(root, { recursive: true, force: true })
 })
@@ -77,6 +78,45 @@ it('honors a Mac coworker’s memory and automatic learning switches', async () 
     await runCurator(agent, 'session', 'Oriole cabinet', 'Understood.')
     expect(generate).not.toHaveBeenCalled()
     expect((await listDesktopMemory(agent.id))[0]).toEqual([])
+})
+
+it.each(['memory', 'autoMemory', 'enabled'])('disabling %s discards a pending Mac review even after learning resumes', async key => {
+    const agent = await coworker('pending-' + key)
+    const original = 'The oriole cabinet is green.'
+    const note = await addDesktopMemory(agent.id, { content: original, kind: 'fact', tags: [] })
+    const started = Promise.withResolvers<void>()
+    const finish = Promise.withResolvers<void>()
+    generate.mockClear()
+    generate.mockImplementationOnce(async () => {
+        started.resolve()
+        await finish.promise
+        return { memory: { updateId: null, content: 'The oriole cabinet is blue.' }, obsoleteIds: [note] }
+    })
+    const patch = async (body: object) => {
+        const response = await agentRoutes.request('/' + agent.id, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+        expect(response.status).toBe(200)
+    }
+    const setting = (value: boolean) => key === 'memory' ? { tools: { memory: value } } : { selfImprovement: { [key]: value } }
+    const pending = runCurator(agent, 'earlier', 'Oriole cabinet', 'Understood.')
+    await started.promise
+    try {
+        const signal = generate.mock.calls[0][0].abortSignal
+        await patch({ verbosity: 'concise' })
+        expect(signal.aborted).toBe(false)
+        await patch(setting(false))
+        expect(signal.aborted).toBe(true)
+        // A different existing chat finishes after Save with the same stale LoadedAgent.
+        await runCurator(agent, 'late', 'Oriole cabinet', 'Understood.')
+        expect(generate).toHaveBeenCalledTimes(1)
+        await patch(setting(true))
+    } finally {
+        finish.resolve()
+        await pending
+    }
+    expect((await listDesktopMemory(agent.id))[0].map(row => row.content)).toEqual([original])
+    generate.mockResolvedValueOnce({ memory: { updateId: note, content: 'Updated in the new turn.' }, obsoleteIds: [] })
+    await runCurator(agent, 'new', 'Oriole cabinet', 'Understood.')
+    expect((await listDesktopMemory(agent.id))[0].map(row => row.content)).toEqual(['Updated in the new turn.'])
 })
 
 it('cannot read or create learned notes through a redirect to another coworker', async () => {

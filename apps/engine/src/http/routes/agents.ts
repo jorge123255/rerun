@@ -12,6 +12,8 @@ import { readAgentEnv, writeAgentEnv } from '../../agents/env.js'
 import { reloadAgent, unloadAgent } from '../../agents/registry.js'
 import { agentExists, loadAgentFromDisk, loadAgentView, readAgentConfig } from '../../agents/loader.js'
 import { withAgentLock } from '../../agents/lock.js'
+import { noteLearningChange } from '../../desktop/learning.js'
+import { desktopApp } from '../../desktop/policy.js'
 import { buildArchive, planArchive } from '../../agents/archive.js'
 import { importAgent } from '../../agents/import.js'
 import { duplicateAgent } from '../../agents/duplicate.js'
@@ -125,6 +127,7 @@ agentRoutes.patch('/:id', async c => {
             setup: { ...current.setup, ...(body.setup as object | undefined) },
         })
         await writeAgentConfig(id, next)
+        if (desktopApp()) noteLearningChange(id, current, next)
         if (next.name !== current.name) {
             await updateAgentIndex(id, next.name)
         }

@@ -1,5 +1,6 @@
 import { addDesktopMemory, recallDesktopMemory, removeDesktopMemory, updateDesktopMemory } from '../desktop/memory-store.js'
 import { desktopApp } from '../desktop/policy.js'
+import { applyDesktopLearning, withDesktopLearning } from '../desktop/learning.js'
 import { z } from 'zod'
 import { modelFor, type ModelOverride } from '../agents/providers.js'
 import { ensureCliAuth } from '../connections/cli-auth.js'
@@ -37,28 +38,40 @@ export function curatorPrompt({ userText, assistantText, existing, skills }: { u
 }
 
 export async function runCurator(agent: LoadedAgent, sessionId: string, userText: string, assistantText: string, override?: ModelOverride): Promise<void> {
-    const cfg = agent.config.selfImprovement
-    const desktop = desktopApp()
-    if (!cfg.autoMemory || (desktop && !agent.config.tools.memory)) return
+    if (!agent.config.selfImprovement.autoMemory) return
+    if (desktopApp()) {
+        if (!agent.config.tools.memory) return
+        return withDesktopLearning(agent.id, stop => reviewExchange(agent, userText, assistantText, override, stop))
+    }
+    return reviewExchange(agent, userText, assistantText, override)
+}
 
+async function reviewExchange(agent: LoadedAgent, userText: string, assistantText: string, override?: ModelOverride, stop?: AbortSignal) {
     const query = `${userText}\n\n${assistantText}`
-    const candidates = desktop
+    const candidates = stop
         ? recallDesktopMemory(agent.id, query, 5, { purpose: 'curation', includeDormant: true })
         : recallMemory(agent, query, 5, { reinforce: 'none', includeDormant: true })
     const [existing, skills] = await Promise.all([
         candidates.catch(() => []),
         agent.config.tools.skills ? listSkillSummaries(agent.id).catch(() => []) : Promise.resolve([]),
     ])
-    const known = new Map(existing.map(memory => [memory.id, memory]))
-
+    if (stop?.aborted) return
     const release = await ensureCliAuth(agent.resolved.provider, agent.resolved.connection)
+    if (stop?.aborted) { release(); return }
+    const timeout = AbortSignal.timeout(CURATOR_TIMEOUT_MS)
     const output = await generateStructured({
         model: modelFor(agent, override),
         schema: curationSchema,
         prompt: curatorPrompt({ userText, assistantText, existing, skills }),
-        abortSignal: AbortSignal.timeout(CURATOR_TIMEOUT_MS),
+        abortSignal: stop ? AbortSignal.any([stop, timeout]) : timeout,
     }).finally(release)
 
+    const known = new Map(existing.map(memory => [memory.id, memory]))
+    if (stop) return applyDesktopLearning(agent.id, stop, () => applyCuration(agent, known, output, true))
+    return applyCuration(agent, known, output, false)
+}
+
+async function applyCuration(agent: LoadedAgent, known: Map<string, RecalledMemory>, output: z.infer<typeof curationSchema>, desktop: boolean) {
     const update = output.memory?.updateId ? known.get(output.memory.updateId) : undefined
     for (const id of output.obsoleteIds) {
         const note = known.get(id)
