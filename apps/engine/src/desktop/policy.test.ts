@@ -29,3 +29,12 @@ test('Codex requires the bundled runner and the dedicated desktop connection', (
     expect(desktopRouteAllowed('GET', '/desktop/codex-login')).toBe(true)
     expect(desktopRouteAllowed('DELETE', '/desktop/codex-login')).toBe(false)
 })
+
+test('desktop memories are scoped to listing a single coworker', () => {
+    const list = '/agents/memory-agent/memories'
+    expect(desktopRouteAllowed('GET', list)).toBe(true)
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, list)).toBe(false)
+    for (const path of [`${list}/recall`, `${list}/memory-id`, '/agents/foreman/memories', '/agents/../memories', '/agents/a%2Fb/memories']) {
+        for (const method of ['GET', 'POST', 'DELETE']) expect(desktopRouteAllowed(method, path)).toBe(false)
+    }
+})

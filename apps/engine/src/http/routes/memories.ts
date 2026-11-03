@@ -5,12 +5,18 @@ import { listMemoryFiles } from '../../memory/files.js'
 import { recallMemory, writeMemory, deleteMemory, deleteAllMemories } from '../../memory/store.js'
 import { computeStrength, memoryStatus } from '../../memory/decay.js'
 import { listMemories } from '../../db/repos/memories.js'
+import { desktopApp } from '../../desktop/policy.js'
+import { desktopMemoryPaths } from '../../desktop/memory-paths.js'
 
 export const memoryRoutes = new Hono()
 
 memoryRoutes.get('/', async c => {
     const agentId = c.req.param('id')!
-    const [files, rows] = await Promise.all([listMemoryFiles(agentId), listMemories(agentId).catch(() => [])])
+    const desktop = desktopApp() ? await desktopMemoryPaths(agentId) : undefined
+    const [files, rows] = await Promise.all([
+        listMemoryFiles(agentId, desktop?.memory),
+        desktop && !desktop.hasIndex ? [] : listMemories(agentId).catch(() => []),
+    ])
     const statsById = new Map(rows.map(r => [r.id, r]))
     return c.json({
         memories: files.map(f => {

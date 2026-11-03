@@ -5,14 +5,63 @@ import { resolve } from 'node:path'
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-memories-'))
 process.env.RERUN_API_KEY = ''
 
-const { describe, expect, it, beforeAll } = await import('vitest')
-const { mkdir } = await import('node:fs/promises')
+const { describe, expect, it, beforeAll, vi } = await import('vitest')
+const { mkdir, symlink, writeFile } = await import('node:fs/promises')
 const { createServer } = await import('../server.js')
 const { agentConfigSchema } = await import('../../agents/types.js')
 const { writeAgentConfig } = await import('../../agents/config-write.js')
 const { agentDir } = await import('../../config/paths.js')
 const { writeMemoryFile } = await import('../../memory/files.js')
 const { getSystemDb } = await import('../../db/systemDb.js')
+
+describe('desktop read-only memory listing', () => {
+    async function makeAgent(agentId: string) {
+        await mkdir(agentDir(agentId), { recursive: true })
+        await writeAgentConfig(agentId, agentConfigSchema.parse({ name: agentId }))
+    }
+    async function getMemories(agentId: string) {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try { return await app.request(`/agents/${agentId}/memories`) }
+        finally { vi.unstubAllEnvs() }
+    }
+    it('reads only that coworker’s files, ignores linked files, and returns a genuine empty list', async () => {
+        const first = 'desktopempty', second = 'desktopother'
+        await makeAgent(first)
+        await makeAgent(second)
+        const other = await writeMemoryFile(second, 'Other coworker')
+        const empty = await getMemories(first)
+        expect(empty.status).toBe(200)
+        expect(await empty.json()).toEqual({ memories: [] })
+        const own = await writeMemoryFile(first, 'Own memory', 'fact', ['qa'])
+        await symlink(other.path, resolve(agentDir(first), 'memory', 'link.md'))
+        const res = await getMemories(first)
+        expect(res.status).toBe(200)
+        expect((await res.json()).memories).toEqual([expect.objectContaining({ id: own.id, content: 'Own memory', kind: 'fact', tags: ['qa'] })])
+        expect((await getMemories('desktopmissing')).status).toBe(404)
+    })
+    it('refuses a memory directory or coworker directory redirected to another coworker', async () => {
+        const first = 'desktopalias', second = 'desktoptarget'
+        await makeAgent(first)
+        await makeAgent(second)
+        await writeMemoryFile(second, 'Hidden sibling memory')
+        await symlink(agentDir(second), agentDir('desktopotheralias'), 'dir')
+        await symlink(resolve(agentDir(second), 'memory'), resolve(agentDir(first), 'memory'), 'dir')
+        for (const agentId of [first, 'desktopotheralias']) {
+            const res = await getMemories(agentId)
+            expect(res.status).toBe(403)
+            expect(await res.text()).not.toContain('Hidden sibling memory')
+        }
+    })
+    it('does not execute javascript front matter when a Mac user opens Memories', async () => {
+        const agentId = 'desktopmetadata'
+        await makeAgent(agentId)
+        const dir = resolve(agentDir(agentId), 'memory')
+        await mkdir(dir)
+        await writeFile(resolve(dir, 'bad.md'), '---js\n(process.env.RERUN_MEMORY_JS_EXECUTED="yes", {id:"bad"})\n---\nHello')
+        expect((await getMemories(agentId)).status).not.toBe(200)
+        expect(process.env.RERUN_MEMORY_JS_EXECUTED).toBeUndefined()
+    })
+})
 
 const id = 'memoryagent'
 const app = createServer()

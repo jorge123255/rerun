@@ -11,6 +11,7 @@ import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
+import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 
 async function historyFor(sessionId: string): Promise<UIMessage[]> {
     const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`)
@@ -99,6 +100,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             {sessions.map(session => <option key={session.id} value={session.id}>{session.title}</option>)}
                         </select>
                     )}
+                    <DesktopCoworkerMemories agent={agent} />
                     <DesktopCoworkerSettings agent={agent} disabled={busy} />
                     <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => onSelectSession(null)}>New chat</Button>
                 </div>

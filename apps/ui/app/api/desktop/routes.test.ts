@@ -12,6 +12,7 @@ import { POST as connectProvider } from './providers/openai/route'
 import { GET as listAgents, POST as createAgent } from './agents/route'
 import { GET as listSessions } from './agents/[agentId]/sessions/route'
 import { GET as readCoworkerSettings, PATCH as editCoworkerSettings } from './agents/[agentId]/settings/route'
+import { GET as readMemories } from './agents/[agentId]/memories/route'
 import { GET as getMessages } from './sessions/[sessionId]/messages/route'
 import { POST as postChat } from './chat/route'
 
@@ -29,6 +30,13 @@ beforeEach(async () => {
         for await (const chunk of req) text += chunk
         const body = text ? JSON.parse(text) : null
         if (connections(req, res, body)) return
+        if (req.method === 'GET' && /^\/agents\/engine-agent-[12]\/memories$/.test(req.url ?? '')) {
+            const memories = req.url?.includes('engine-agent-1') ? [{
+                id: 'first-note', kind: 'fact', tags: ['project'], createdAt: '2026-10-01', content: 'First coworker only', status: 'active', strength: 0.8,
+            }] : []
+            res.writeHead(200, { 'content-type': 'application/json' })
+            return res.end(JSON.stringify({ memories }))
+        }
         if (req.method === 'POST' && req.url === '/agents') {
             res.writeHead(201, { 'content-type': 'application/json' })
             return res.end(JSON.stringify({ id: 'engine-agent-1', config: { name: body.config.name }, soul: '' }))
@@ -92,6 +100,23 @@ function request(path: string, init: { method?: string; body?: unknown } = {}) {
 }
 
 describe('desktop API routes', () => {
+    it('looks up memories by local coworker and keeps an empty list distinct from a missing coworker', async () => {
+        const db = await openDesktopDatabase(root)
+        const first = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'First', description: '' })
+        const second = await createDesktopAgent(db, { engineAgentId: 'engine-agent-2', name: 'Second', description: '' })
+        const read = (id: string, anonymous = false) => {
+            const req = request(`/api/desktop/agents/${id}/memories`)
+            if (anonymous) req.headers.delete('cookie')
+            return readMemories(req, { params: Promise.resolve({ agentId: id }) })
+        }
+        expect((await read(first.id, true)).status).toBe(401)
+        expect((await read('engine-agent-1')).status).toBe(404)
+        const response = await read(first.id)
+        expect(response.headers.get('cache-control')).toBe('no-store')
+        expect(await response.json()).toMatchObject({ memories: [{ id: 'first-note', content: 'First coworker only', tags: ['project'], strength: 0.8 }] })
+        expect(await (await read(second.id)).json()).toEqual({ memories: [] })
+    })
+
     it('runs provider, coworker, chat, session, and history flows without exposing engine internals', async () => {
         const provider = await connectProvider(request('/api/desktop/providers/openai', { method: 'POST', body: { apiKey: 'provider-secret' } }))
         expect(provider.status).toBe(201)

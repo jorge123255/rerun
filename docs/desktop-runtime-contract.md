@@ -24,6 +24,8 @@ The bundled Node runtime must match native libSQL/sharp modules. No runtime exec
 
 The app uses `~/Library/Application Support/Rerun Desktop Preview`. `identity.encrypted` holds the install ID, engine API key and credential-encryption key encrypted with Electron safeStorage; it fails closed if Mac secure storage is unavailable. Workspace 1 has a dedicated `workspaces/1/engine` directory and owner marker. Existing `~/.rerun` data is not adopted.
 
+The **Memories** button in coworker chat lists that coworker’s saved Rerun memory notes. Opening or refreshing the list reads local storage without calling a model. The desktop engine exposes only the list operation for memories.
+
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
 ```json
