@@ -6,6 +6,7 @@ import { logger } from '../lib/logger.js'
 import { forgetCredentialRejected, recordCredentialRejected } from './credential-rejections.js'
 import { withConnectionLock } from './lock.js'
 import type { LoadedConnection } from './types.js'
+import { desktopApp } from '../desktop/policy.js'
 
 // The Codex CLI's own public OAuth client. Same trade-off as claude-token.ts: an undocumented flow
 // we mirror so a user can connect a ChatGPT subscription without a terminal. See the UI's
@@ -103,6 +104,7 @@ export function jwtExpiresAt(jwt: string): number | undefined {
 // CLI picks it up. Refreshing here rather than leaving it to the CLI keeps the .env authoritative
 // for as long as possible; syncCodexAuth reconciles whatever the CLI rotates mid-run.
 export async function ensureCodexAuth(connection: LoadedConnection | null): Promise<void> {
+    if (desktopApp()) return
     if (!connection) return
     if (!connection.env[TOKEN_KEY]) {
         logger.debug({ connection: connection.id }, 'codex auth: no token, skipping')
@@ -130,6 +132,7 @@ export async function ensureCodexAuth(connection: LoadedConnection | null): Prom
 // file back so the connection's .env keeps the live lineage — a stale refresh token would fail the
 // next run, and now for every agent sharing the subscription rather than just one.
 export async function syncCodexAuth(connection: LoadedConnection | null): Promise<void> {
+    if (desktopApp()) return
     if (!connection) return
     const raw = await readFile(codexAuthPath(connection.id), 'utf8').catch(() => null)
     if (!raw) return

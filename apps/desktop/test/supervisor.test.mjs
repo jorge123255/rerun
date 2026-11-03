@@ -75,3 +75,29 @@ test('a service crash stops its sibling instead of leaving a running hidden work
         assert.equal(sibling.exitCode, 0)
     } finally { await supervisor.stop(); await rm(root, { recursive: true, force: true }) }
 })
+
+test('UI death while the engine is starting rejects startup and cleans every attempted engine', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-startup-race-'))
+    const children = []
+    let ui
+    const supervisor = new RuntimeSupervisor({
+        root, identity: identity(), bundle: { nodePath: process.execPath, uiRoot: root, engineEntry: 'fixture', buildId: 'example-build' },
+        launch: (command, args, options) => {
+            const engine = args.includes('desktop-run')
+            if (engine) ui.kill('SIGKILL')
+            const child = spawn(command, [fixture], { ...options, env: { ...options.env, FIXTURE_KIND: engine ? 'engine' : 'ui' } })
+            children.push(child)
+            if (!engine) ui = child
+            return child
+        }, startupTimeout: 3000, stopTimeout: 1000,
+    })
+    const states = []
+    supervisor.on('status', status => states.push(status.state))
+    try {
+        await assert.rejects(supervisor.start(), /could not start/)
+        assert.equal(supervisor.status.state, 'error')
+        assert(!states.includes('ready'))
+        assert.equal(supervisor.children.size, 0)
+        assert(children.every(child => child.exitCode !== null || child.signalCode !== null))
+    } finally { await supervisor.stop(); await rm(root, { recursive: true, force: true }) }
+})

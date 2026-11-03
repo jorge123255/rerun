@@ -10,6 +10,7 @@ import { defaultModelOf } from '../../agents/availability.js'
 import { refreshStaleCodexPlanLimits } from '../../connections/codex-plan-limits.js'
 import type { LoadedConnection } from '../../connections/types.js'
 import { sendNotification } from '../../runtime/notify.js'
+import { assertDesktopProvider, desktopApp } from '../../desktop/policy.js'
 
 export const connectionRoutes = new Hono()
 
@@ -21,7 +22,8 @@ function announceConnected(connection: LoadedConnection): void {
 }
 
 connectionRoutes.get('/', async c => {
-    const connections = await listConnections()
+    const all = await listConnections()
+    const connections = desktopApp() ? all.filter(connection => ['openai', 'anthropic', 'google', 'openrouter'].includes(connection.config.provider)) : all
     refreshStaleCodexPlanLimits(connections)
     return c.json({ connections: connections.map(toSummary), default: await readBoxDefault() })
 })
@@ -32,6 +34,7 @@ connectionRoutes.put('/default', async c => {
     const { connectionId, model } = boxDefaultModelSchema.parse(await c.req.json())
     const connection = await findConnection(connectionId)
     if (!connection) return c.json({ error: 'connection not found' }, 404)
+    assertDesktopProvider(connection.config.provider)
     if (!servesModel(connection, model)) return c.json({ error: `This connection does not offer ${model}` }, 400)
     return c.json(await writeBoxDefault({ connectionId, model }))
 })

@@ -34,13 +34,15 @@ export class RuntimeSupervisor extends EventEmitter {
     }
 
     spawnOwned(args, env) {
+        const startup = this.startupAbort
         const child = this.launch(this.bundle.nodePath, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], detached: false })
         this.children.add(child)
         child.stdout?.resume()
         child.stderr?.resume()
-        child.on('error', () => { child.launchFailed = true })
+        child.on('error', () => { child.launchFailed = true; if (!this.cleaning && !this.stopping) startup?.abort() })
         child.once('exit', () => {
             this.children.delete(child)
+            if (!this.cleaning && !this.stopping && this.status.state === 'starting') startup?.abort()
             if (!this.stopping && this.status.state === 'ready') {
                 this.publish('error', 'A local service stopped. Retry to restart the app services.')
                 void this.stop({ preserveError: true })
@@ -61,6 +63,7 @@ export class RuntimeSupervisor extends EventEmitter {
         this.publish('starting', 'Starting your local workspace…')
         const engineRoot = await bindWorkspace(this.root, this.identity)
         for (let attempt = 0; attempt < 3; attempt++) {
+            this.startupAbort = new AbortController()
             try {
                 const uiPort = await this.port()
                 let enginePort = await this.port()
@@ -84,6 +87,8 @@ export class RuntimeSupervisor extends EventEmitter {
                 const ready = await this.waitForEngine(engine, runtime)
                 if (!ready) throw new Error('The engine did not acknowledge its launch')
                 await this.waitForHealth(engine, `${runtime.engine.origin}/health`, { Authorization: `Bearer ${runtime.engine.apiKey}` }, runtime)
+                await this.waitForHealth(ui, `${runtime.app.origin}/api/desktop/health`, { Cookie: `rerun-desktop-session=${runtime.app.sessionToken}` }, runtime)
+                if (this.startupAbort.signal.aborted || [ui, engine].some(child => child.exitCode !== null || child.signalCode !== null || child.launchFailed)) throw new Error('A service exited during startup')
                 this.runtime = runtime
                 this.publish('ready')
                 return runtime
@@ -100,10 +105,10 @@ export class RuntimeSupervisor extends EventEmitter {
 
     async waitForHealth(child, url, headers, runtime) {
         const deadline = Date.now() + this.startupTimeout
-        while (Date.now() < deadline && !this.stopping) {
+        while (Date.now() < deadline && !this.stopping && !this.startupAbort.signal.aborted) {
             if (child.exitCode !== null || child.signalCode !== null || child.launchFailed) throw new Error('Service exited during startup')
             try {
-                const response = await this.fetcher(url, { headers, signal: AbortSignal.timeout(1500), redirect: 'error' })
+                const response = await this.fetcher(url, { headers, signal: AbortSignal.any([AbortSignal.timeout(1500), this.startupAbort.signal]), redirect: 'error' })
                 const body = response.ok ? await response.json() : null
                 if (body?.status === 'ready' && body.protocolVersion === PROTOCOL_VERSION && body.launchNonce === runtime.launchNonce && body.buildId === runtime.buildId && body.workspaceId === 1) return
             } catch {}
@@ -114,7 +119,8 @@ export class RuntimeSupervisor extends EventEmitter {
 
     waitForEngine(child, runtime) {
         return new Promise((done, fail) => {
-            const cleanup = () => { clearTimeout(timer); child.off('message', message); child.off('exit', exited); child.off('error', exited) }
+            const signal = this.startupAbort.signal
+            const cleanup = () => { clearTimeout(timer); child.off('message', message); child.off('exit', exited); child.off('error', exited); signal.removeEventListener('abort', exited) }
             const message = value => {
                 if (value?.type === 'ready' && value.protocolVersion === PROTOCOL_VERSION && value.launchNonce === runtime.launchNonce && value.buildId === runtime.buildId) { cleanup(); done(true) }
             }
@@ -123,10 +129,13 @@ export class RuntimeSupervisor extends EventEmitter {
             child.on('message', message)
             child.once('exit', exited)
             child.once('error', exited)
+            signal.addEventListener('abort', exited, { once: true })
+            if (signal.aborted) exited()
         })
     }
 
     async stopChildren() {
+        this.cleaning = true
         const owned = [...this.children].reverse()
         for (const child of owned) {
             if (child.exitCode !== null || child.signalCode !== null) continue
@@ -142,10 +151,12 @@ export class RuntimeSupervisor extends EventEmitter {
             }
             this.children.delete(child)
         }
+        this.cleaning = false
     }
 
     async stop({ preserveError = false } = {}) {
         this.stopping = true
+        this.startupAbort?.abort()
         if (!preserveError) this.publish('stopping', 'Closing local services…')
         await this.stopChildren()
         await rm(resolve(this.root, 'runtime.json'), { force: true })

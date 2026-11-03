@@ -20,7 +20,7 @@ const nextConfig: NextConfig = {
   // ssh2 (the Incus hosts transport) loads an optional native crypto binding; bundled, Turbopack
   // cannot place the .node asset in an ESM chunk. Left external, Node requires it at runtime and
   // falls back to pure JS when the binding is missing.
-  serverExternalPackages: ["ssh2"],
+  serverExternalPackages: ["ssh2", "@libsql/client"],
   // Inlined into both bundles at build time, so a tab can compare the build it runs against the one
   // /api/version reports. Locally both read "dev" and the update prompt never fires.
   env: {

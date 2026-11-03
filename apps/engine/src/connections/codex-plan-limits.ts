@@ -9,6 +9,7 @@ import { logger } from '../lib/logger.js'
 import { ensureCodexAuth, syncCodexAuth } from './codex-auth.js'
 import { planLimitWindowsFromCodex, recordPlanLimits, type CodexRateLimits } from './plan-limits.js'
 import type { LoadedConnection } from './types.js'
+import { desktopApp } from '../desktop/policy.js'
 
 const READ_TIMEOUT_MS = 8000
 const STALE_AFTER_MS = 5 * 60_000
@@ -36,12 +37,13 @@ function codexCommand(): Command {
 // send a request of our own, so the reading takes a short app-server session: handshake, one
 // read, gone. Resolves to null on any failure — a missing gauge is never worth an error.
 export function readCodexRateLimits(connectionId: string): Promise<CodexRateLimits | null> {
+    if (desktopApp()) return Promise.resolve(null)
     return new Promise(resolve => {
         const { cmd, args } = codexCommand()
         const home = codexHomeDir(connectionId)
         const child = spawn(cmd, [...args, 'app-server', '--listen', 'stdio://'], {
             stdio: ['pipe', 'pipe', 'ignore'],
-            env: { ...process.env, CODEX_HOME: home, RUST_LOG: process.env.RUST_LOG || 'error' },
+            env: { PATH: process.env.PATH, HOME: process.env.HOME, USER: process.env.USER, TMPDIR: process.env.TMPDIR, LANG: process.env.LANG, CODEX_HOME: home, RUST_LOG: 'error' },
             cwd: home,
         })
         const lines = createInterface({ input: child.stdout, crlfDelay: Infinity })
@@ -87,6 +89,7 @@ const inFlight = new Map<string, Promise<void>>()
 const attemptedAt = new Map<string, number>()
 
 export function refreshCodexPlanLimits(connection: LoadedConnection | null): Promise<void> {
+    if (desktopApp()) return Promise.resolve()
     if (!connection || connection.config.provider !== 'codex' || !connection.env[CONNECTION_TOKEN_KEY.codex]) return Promise.resolve()
 
     const pending = inFlight.get(connection.id)
@@ -111,6 +114,7 @@ export function refreshCodexPlanLimits(connection: LoadedConnection | null): Pro
 // has, and the fresh one is there for the next ask. Paced on the last attempt rather than the last
 // reading, so a connection that cannot be read is not respawned on every list.
 export function refreshStaleCodexPlanLimits(connections: LoadedConnection[]): void {
+    if (desktopApp()) return
     for (const connection of connections) {
         if (Date.now() - (attemptedAt.get(connection.id) ?? 0) < STALE_AFTER_MS) continue
         void refreshCodexPlanLimits(connection)

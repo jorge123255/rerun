@@ -16,6 +16,7 @@ import { badRequest } from '../lib/errors.js'
 import { newId, nowIso } from '../lib/ids.js'
 import { forgetCredentialRejected } from './credential-rejections.js'
 import { connectionExists } from './loader.js'
+import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
 import { withConnectionLock } from './lock.js'
 import { forgetPlanLimits } from './plan-limits.js'
 import { getConnection, reloadConnection, unloadConnection } from './registry.js'
@@ -29,6 +30,7 @@ async function writeConfig(id: string, config: ConnectionConfig): Promise<void> 
 }
 
 export async function createConnection(input: CreateConnectionInput, id = newId()): Promise<LoadedConnection> {
+    assertDesktopProvider(input.provider)
     const config = connectionConfigSchema.parse({
         name: input.name,
         provider: input.provider,
@@ -52,6 +54,7 @@ export async function patchConnection(id: string, patch: UpdateConnectionInput):
     if (id === RERUN_CONNECTION_ID && patch.models && !patch.models.includes(RERUN_MODEL)) throw badRequest('Rerun Balanced cannot be switched off')
     return withConnectionLock(id, async () => {
         const current = await getConnection(id)
+        assertDesktopProvider(current.config.provider)
         const next = connectionConfigSchema.parse({ ...current.config, ...patch })
         await writeConfig(id, next)
         return reloadConnection(id)
@@ -59,6 +62,7 @@ export async function patchConnection(id: string, patch: UpdateConnectionInput):
 }
 
 export async function updateConnectionKeys(id: string, { set, remove }: UpdateConnectionKeysInput): Promise<string[]> {
+    assertDesktopProvider((await getConnection(id)).config.provider)
     if (id === RERUN_CONNECTION_ID) throw badRequest('The Rerun connection is keyless')
     return withConnectionLock(id, async () => {
         const path = connectionEnvPath(id)
@@ -91,6 +95,7 @@ export async function deleteConnection(id: string): Promise<void> {
 // The keyless connection every box carries. Provisioned on boot rather than special-cased at read
 // time, so it lists, patches and resolves through exactly the same paths as any other.
 export async function ensureRerunConnection(): Promise<void> {
+    if (desktopApp()) return
     await mkdir(connectionsDir(), { recursive: true })
     if (connectionExists(RERUN_CONNECTION_ID)) {
         // Boxes provisioned when Rerun had a single model, and those where it was switched off
