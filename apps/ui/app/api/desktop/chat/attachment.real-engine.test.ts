@@ -7,9 +7,11 @@ import { openDesktopDatabase, closeDesktopDatabase } from '@/lib/desktop/server/
 import { createDesktopAgent } from '@/lib/desktop/server/store'
 import { createAgent, createConnection, setBoxDefault } from '@/lib/engine/client'
 import { disposableRunEngine } from '@/test/desktop-run-engine.mjs'
+import { PUT as saveFile } from '@/app/api/desktop/agents/[agentId]/files/content/route'
+import { GET as readFile } from '@/app/api/desktop/agents/[agentId]/files/read/route'
 import { POST as chat } from './route'
 
-test.runIf(process.env.RERUN_ATTACHMENT_ACCEPTANCE === '1')('a workspace attachment follows its original chat after a file change and engine restart', async () => {
+test.runIf(process.env.RERUN_ATTACHMENT_ACCEPTANCE === '1')('a workspace attachment follows its original chat after the file is edited in Files and the app restarts', async () => {
     const originalEnv = { ...process.env }
     const root = await mkdtemp(join(tmpdir(), 'rerun-workspace-attachment-'))
     const engine = await disposableRunEngine(root)
@@ -65,7 +67,13 @@ test.runIf(process.env.RERUN_ATTACHMENT_ACCEPTANCE === '1')('a workspace attachm
         const first = await transcript(session)
         expect(first[0]).toMatchObject({ role: 'user', metadata: { attachmentPath }, parts: [{ type: 'text', text: question }] })
         expect(JSON.stringify(first)).not.toContain('jacinth-7825')
-        await writeFile(a.file, replacement)
+        // Edit through the Files editor's save route, with the hash the preview handed out.
+        const opened = await (await readFile(request('/api/desktop/agents/' + a.coworker.id + '/files/read?path=' + encodeURIComponent(attachmentPath)),
+            { params: Promise.resolve({ agentId: a.coworker.id }) })).json()
+        expect(opened.content).toBe(original)
+        const put = request('/api/desktop/agents/' + a.coworker.id + '/files/content', { path: attachmentPath, content: replacement, baseHash: opened.hash })
+        const saved = await saveFile(new Request(put, { method: 'PUT' }), { params: Promise.resolve({ agentId: a.coworker.id }) })
+        expect(saved.status).toBe(200)
         await closeDesktopDatabase(root)
         await engine.stop()
         await engine.start()
@@ -79,6 +87,13 @@ test.runIf(process.env.RERUN_ATTACHMENT_ACCEPTANCE === '1')('a workspace attachm
         const otherInput = JSON.stringify(engine.providerMessages[2])
         expect(otherInput).toContain('saffron-5914')
         expect(otherInput).not.toContain('jacinth-7825')
+        // A fresh attachment of the edited file uses the saved text.
+        const fresh = await send({ agentId: a.coworker.id, text: question, attachmentPath }, 4)
+        expect(fresh).not.toBe(session)
+        const freshInput = JSON.stringify(engine.providerMessages[3])
+        expect(freshInput).toContain('changed-4623')
+        expect(freshInput).not.toContain('jacinth-7825')
+        expect(freshInput).not.toContain('saffron-5914')
     } finally {
         await closeDesktopDatabase(root)
         await engine.close()

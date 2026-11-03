@@ -5,10 +5,11 @@ import { useFileNavigation } from '@/components/files/useFileNavigation'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, RefreshCwIcon } from '@/lib/icons'
+import { applyEol, splitEol } from '@/lib/files/editable'
 import type { DesktopAgentView } from './DesktopApp'
 
 type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
-type Preview = { path: string; content: string; truncated: boolean } | { path: string; error: string } | { path: string; loading: true }
+type Preview = { path: string; content: string; truncated: boolean; hash?: string } | { path: string; error: string } | { path: string; loading: true }
 
 async function errorOf(response: Response, fallback: string) {
     const body = await response.json().catch(() => null)
@@ -74,12 +75,25 @@ function FilesPanel({ agent }: { agent: DesktopAgentView }) {
 
     const breadcrumbs = currentPath.split('/').filter(Boolean)
 
+    // Keyed on the path (as FileDetail does), so opening another file leaves the editor by itself.
+    const [editingPath, setEditingPath] = useState<string | null>(null)
+    const editing = !!preview && editingPath === preview.path
+
+    if (preview && editing && 'hash' in preview && preview.hash) {
+        return <FileEditor base={base} path={preview.path} content={preview.content} hash={preview.hash}
+            onClose={() => setEditingPath(null)}
+            onSaved={(content, hash) => { setPreview({ path: preview.path, content, truncated: false, hash }); setEditingPath(null) }} />
+    }
+
     if (preview) {
         const name = preview.path.split('/').pop()
+        const editable = 'hash' in preview && !!preview.hash
         return <div className="flex min-h-0 flex-1 flex-col gap-2">
             <div className="flex items-center gap-2 text-sm">
                 <Button type="button" variant="ghost" size="sm" aria-label="Back to folder" onClick={() => setPreview(null)}><ArrowLeftIcon className="size-4" /></Button>
-                <span className="truncate font-medium" title={preview.path}>{name}</span>
+                <span className="min-w-0 flex-1 truncate font-medium" title={preview.path}>{name}</span>
+                {'content' in preview && <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!editable}
+                    title={editable ? undefined : 'Only UTF-8 .txt and .md files up to 256 KB can be edited here.'} onClick={() => setEditingPath(preview.path)}>Edit</Button>}
             </div>
             {'loading' in preview ? <p role="status" className="text-sm text-muted-foreground">Loading preview…</p>
                 : 'error' in preview ? <p role="alert" className="text-sm text-destructive">{preview.error}</p>
@@ -128,6 +142,94 @@ function FilesPanel({ agent }: { agent: DesktopAgentView }) {
     </div>
 }
 
+type SaveResponse = { path: string; hash: string } | { error: string; conflict?: true; current?: { content: string; hash: string } | null }
+
+/**
+ * Port of FileDetail's FileEditorDialog/useFileDraft. Cancel discards only after asking when there
+ * are edits. A stale save (the file changed since the editor opened) keeps both versions on screen:
+ * the user's draft stays in the editor and the newer disk text is shown beside it, with Reload
+ * (take the disk version, keeping the draft visible to copy) or Save mine anyway (retry against the
+ * version now shown, so a third change is still caught).
+ */
+function FileEditor({ base, path, content, hash, onClose, onSaved }: { base: string; path: string; content: string; hash: string; onClose: () => void; onSaved: (content: string, hash: string) => void }) {
+    const [opened, setOpened] = useState(() => ({ ...splitEol(content), hash }))
+    const [draft, setDraft] = useState(opened.text)
+    const [saving, setSaving] = useState(false)
+    const [error, setError] = useState('')
+    const [conflict, setConflict] = useState<{ content: string; hash: string } | null>(null)
+    const [setAside, setSetAside] = useState<string | null>(null)
+    const [confirmingDiscard, setConfirmingDiscard] = useState(false)
+    const dirty = draft !== opened.text
+    const name = path.split('/').pop()
+
+    useEffect(() => {
+        if (!dirty) return
+        const warn = (event: BeforeUnloadEvent) => event.preventDefault()
+        window.addEventListener('beforeunload', warn)
+        return () => window.removeEventListener('beforeunload', warn)
+    }, [dirty])
+
+    const save = async (baseHash: string) => {
+        setSaving(true)
+        setError('')
+        const next = applyEol(draft, opened.eol)
+        try {
+            const response = await fetch(`${base}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, content: next, baseHash }) })
+            const body = await response.json().catch(() => ({ error: 'Could not save this file.' })) as SaveResponse
+            if (response.ok && 'hash' in body) { onSaved(next, body.hash); return }
+            if ('conflict' in body && body.conflict && body.current) setConflict(body.current)
+            else setError('error' in body && body.error ? `${body.error} Your edits are still here; try again.` : 'Could not save this file. Your edits are still here; try again.')
+        } catch {
+            setError('Could not save this file. Your edits are still here; try again.')
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    const reload = () => {
+        if (!conflict) return
+        const fresh = { ...splitEol(conflict.content), hash: conflict.hash }
+        if (dirty) setSetAside(draft)
+        setOpened(fresh)
+        setDraft(fresh.text)
+        setConflict(null)
+    }
+
+    const requestClose = () => { if (saving) return; if (dirty) setConfirmingDiscard(true); else onClose() }
+
+    return <div className="flex min-h-0 flex-1 flex-col gap-2" data-testid="file-editor">
+        <div className="flex items-center gap-2 text-sm">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs" title={path}>Editing {name}</span>
+            {dirty && <span className="rounded bg-orange-500/15 px-1.5 py-0.5 text-[10px] text-orange-600">Unsaved</span>}
+        </div>
+        <textarea aria-label={`Edit ${name}`} value={draft} onChange={event => setDraft(event.target.value)} readOnly={saving} autoFocus spellCheck={false}
+            onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 's') { event.preventDefault(); if (dirty && !saving && !conflict) void save(opened.hash) } }}
+            className="min-h-0 flex-1 resize-none rounded-md border bg-background p-3 font-mono text-xs" />
+        {conflict && <div role="alert" data-testid="edit-conflict" className="space-y-2 rounded-md border border-orange-500/40 bg-orange-500/5 p-2 text-xs">
+            <p className="font-medium">{name} changed on disk after you opened it. Your edits are still in the editor; the newer version is below. Nothing was saved.</p>
+            <pre data-testid="conflict-disk" className="max-h-32 overflow-auto rounded border bg-muted/30 p-2 font-mono whitespace-pre-wrap break-words">{conflict.content}</pre>
+            <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={reload} disabled={saving}>Reload newer version</Button>
+                <Button type="button" size="sm" onClick={() => void save(conflict.hash)} disabled={saving}>Save mine anyway</Button>
+            </div>
+        </div>}
+        {setAside !== null && <div className="space-y-1 text-xs" data-testid="set-aside">
+            <p className="text-muted-foreground">Reloaded the newer version. Your previous edits, not saved:</p>
+            <textarea readOnly aria-label="Your previous edits" value={setAside} className="h-24 w-full resize-none rounded border bg-muted/30 p-2 font-mono text-xs" />
+            <div className="flex justify-end"><Button type="button" variant="ghost" size="sm" onClick={() => setSetAside(null)}>Dismiss</Button></div>
+        </div>}
+        {error && <p role="alert" data-testid="edit-error" className="text-xs text-destructive">{error}</p>}
+        {confirmingDiscard ? <div role="alertdialog" aria-label="Discard your changes?" className="flex items-center justify-end gap-2 text-xs">
+            <span className="flex-1">Discard your changes to {name}? The file on disk stays as it was.</span>
+            <Button type="button" variant="outline" size="sm" onClick={() => setConfirmingDiscard(false)}>Keep editing</Button>
+            <Button type="button" variant="destructive" size="sm" onClick={onClose}>Discard changes</Button>
+        </div> : <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={requestClose} disabled={saving}>Cancel</Button>
+            <Button type="button" size="sm" onClick={() => void save(opened.hash)} disabled={!dirty || saving || !!conflict}>{saving ? 'Saving…' : 'Save changes'}</Button>
+        </div>}
+    </div>
+}
+
 export function DesktopCoworkerFiles({ agent }: { agent: DesktopAgentView }) {
     const [open, setOpen] = useState(false)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
@@ -135,7 +237,7 @@ export function DesktopCoworkerFiles({ agent }: { agent: DesktopAgentView }) {
         {open && <DialogContent className="flex h-[75dvh] flex-col sm:max-w-2xl">
             <DialogHeader>
                 <DialogTitle>Files</DialogTitle>
-                <DialogDescription>{agent.name}’s workspace. Browse, preview, or import a .txt or .md file.</DialogDescription>
+                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, or import a .txt or .md file.</DialogDescription>
             </DialogHeader>
             <FilesPanel key={agent.id} agent={agent} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>

@@ -2,8 +2,9 @@ import 'server-only'
 import { DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath } from '@rerun/contracts'
 import { constants } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { link, lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readdir, realpath, rename, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { hashText, looksBinary } from '@/lib/files/editable'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
@@ -12,7 +13,8 @@ import { withRosterWrite } from './roster-writes'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 
 export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
-export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean }
+/** `hash` is set only when the whole file was read as valid UTF-8 .txt/.md, i.e. when it can be edited. */
+export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean; hash?: string }
 
 const PREVIEW_BYTES = 256 * 1024
 const SAFE_ENGINE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -136,7 +138,9 @@ export async function readCoworkerFile(runtime: DesktopRuntime, agentId: string,
             catch { throw new DesktopHttpError(415, 'Attachments must contain UTF-8 text.') }
             if (bytes.some(byte => (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) || byte === 127)) throw new DesktopHttpError(415, 'Attachments must contain UTF-8 text.')
         } else content = bytes.toString('utf8')
-        return { path: rel, content, size: info.size, truncated: info.size > bytesRead }
+        const truncated = info.size > bytesRead
+        const hash = mode === 'preview' && !truncated && EDITABLE.test(rel) ? editableText(bytes) : null
+        return { path: rel, content, size: info.size, truncated, ...(hash !== null ? { hash: hashText(hash) } : {}) }
     } finally {
         await handle.close()
     }
@@ -258,4 +262,104 @@ async function createWorkspace(runtime: DesktopRuntime, workspace: string): Prom
             await parent.close()
         }
     }
+}
+
+const EDITABLE = /\.(txt|md)$/i
+export const EDIT_BYTES = PREVIEW_BYTES
+
+/** The strict UTF-8 text of `bytes`, or null when saving it back as text would change it. */
+function editableText(bytes: Uint8Array): string | null {
+    if (bytes.includes(0)) return null
+    try {
+        const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+        return looksBinary(text) ? null : text
+    } catch { return null }
+}
+
+export type SaveCoworkerFileResult = { path: string; hash: string; size: number }
+/** Thrown when the file on disk is not what the editor opened; carries the newer text so neither version is lost. */
+export class CoworkerFileConflict extends Error {
+    constructor(readonly current: { content: string; hash: string } | null) { super('This file changed on disk since you opened it.') }
+}
+
+/**
+ * Port of FileDetail's writeFileAction/saveTextFile for the Mac: replaces one existing UTF-8 .txt/.md
+ * file in the coworker's workspace. `baseHash` is the hash the editor opened (null = overwrite on
+ * purpose after a conflict). Unlike the engine route upstream, the compare happens in the same
+ * pinned folder as the write: the new text goes to a hidden temp file, is synced, the disk copy is
+ * re-checked against `baseHash`, and only then is the temp renamed over the name. A failed or
+ * interrupted write therefore leaves the original untouched and never publishes a partial file.
+ */
+export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string | null): Promise<SaveCoworkerFileResult> {
+    const bytes = Buffer.from(content, 'utf8')
+    if (bytes.byteLength > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
+    if (content.includes('\0') || looksBinary(content)) throw new DesktopHttpError(415, 'Only text can be saved here.')
+    const { root, target, rel } = await containedPath(await coworkerWorkspace(runtime, agentId), path)
+    const name = rel.split('/').pop() ?? ''
+    if (!rel || name.startsWith('.') || !EDITABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be edited here.')
+    if (!root || !target) throw new DesktopHttpError(404, 'File not found')
+    const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+    // `target` is the canonical file; a link inside the workspace saves through to what it points at.
+    const folder = dirname(target)
+    const finalName = basename(target)
+    if (!inside(root, folder)) throw outside()
+    let dir: FileHandle
+    try { dir = await openResolved(folder, true) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new DesktopHttpError(404, 'File not found')
+        throw error
+    }
+    try {
+        const pinned = await pinnedDirectory(dir)
+        const readCurrent = async () => {
+            const info = await lstat(join(pinned, finalName)).catch(error => { if (missing(error)) return null; throw error })
+            if (!info) return null
+            if (!info.isFile()) throw outside()
+            if (info.size > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
+            const handle = await open(join(pinned, finalName), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+            try {
+                const text = editableText(await handle.readFile())
+                if (text === null) throw new DesktopHttpError(415, 'This file is not UTF-8 text, so it can’t be edited here.')
+                return { content: text, hash: hashText(text), mode: info.mode & 0o777 }
+            } finally { await handle.close() }
+        }
+        const check = async () => {
+            const current = await readCurrent()
+            if (!current) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+            if (baseHash !== null && current.hash !== baseHash) throw new CoworkerFileConflict({ content: current.content, hash: current.hash })
+            return current
+        }
+        const { mode } = await check()
+        const tempName = `.rerun-edit-${randomBytes(12).toString('hex')}`
+        const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+        let handle: FileHandle
+        try {
+            handle = process.platform === 'darwin'
+                ? await open(join(folder, tempName), flags | 0x20000000, mode)
+                : await open(`${pinned}/${tempName}`, flags | constants.O_NOFOLLOW, mode)
+        } catch (error) {
+            if (['ELOOP', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw outside()
+            throw error
+        }
+        const tempPath = join(pinned, tempName)
+        let published = false
+        try {
+            try {
+                const [opened, listed] = await Promise.all([handle.stat({ bigint: true }), lstat(tempPath, { bigint: true })])
+                if (opened.ino !== listed.ino || opened.dev !== listed.dev) throw outside()
+                await handle.writeFile(bytes)
+                await handle.sync()
+            } finally {
+                await handle.close()
+            }
+            // Re-read right before publishing so a write that landed while ours was in flight is not lost.
+            await check()
+            await rename(tempPath, join(pinned, finalName))
+            published = true
+        } finally {
+            if (!published) await unlink(tempPath).catch(() => {})
+        }
+    } finally {
+        await dir.close()
+    }
+    return { path: rel, hash: hashText(content), size: bytes.byteLength }
 }
