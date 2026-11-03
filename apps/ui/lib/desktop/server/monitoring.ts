@@ -16,8 +16,16 @@ const QUERIES: { key: 'runs' | 'errorRate' | 'runsByStatus' | 'runsByModel' | 't
     { key: 'recordedCostRuns', metric: 'recordedCostRuns', groupBy: 'none' },
 ]
 
-function fullyRecorded(points: StatsPoint[]): boolean {
-    return points.length > 0 && points.every(point => point.value === point.count)
+// The engine returns one point per bucket in chronological order. While a coworker is
+// running, separate stats reads can include different rows. Wait for a matching refresh.
+function measuredTotal(runs: StatsPoint[], values: StatsPoint[], coverage: StatsPoint[]): StatsPoint[] | null {
+    if (!runs.length || runs.length !== values.length || runs.length !== coverage.length) return null
+    const complete = runs.every(({ bucket, count }, i) => {
+        const recorded = coverage[i]
+        const total = values[i]
+        return recorded.bucket === bucket && total.bucket === bucket && recorded.value === count && recorded.count === count && total.count === count
+    })
+    return complete ? values : null
 }
 
 export async function readDesktopMonitoring(engine: EngineConnection, agent: DesktopAgent, range: MonitoringRange): Promise<DesktopMonitoring> {
@@ -32,7 +40,7 @@ export async function readDesktopMonitoring(engine: EngineConnection, agent: Des
         errorRate: stats.errorRate,
         runsByStatus: stats.runsByStatus,
         runsByModel: stats.runsByModel,
-        totalTokens: fullyRecorded(stats.recordedTokenRuns) ? stats.totalTokens : null,
-        cost: fullyRecorded(stats.recordedCostRuns) && stats.cost.reduce((sum, point) => sum + point.value, 0) > 0 ? stats.cost : null,
+        totalTokens: measuredTotal(stats.runs, stats.totalTokens, stats.recordedTokenRuns),
+        cost: measuredTotal(stats.runs, stats.cost, stats.recordedCostRuns),
     })
 }

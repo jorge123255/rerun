@@ -1,14 +1,15 @@
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-stats-'))
 process.env.RERUN_API_KEY = ''
 
-const { describe, expect, it, beforeAll } = await import('vitest')
+const { describe, expect, it, beforeAll, vi } = await import('vitest')
 const { createServer } = await import('../server.js')
 const { getSystemDb } = await import('../../db/systemDb.js')
 const { createSession } = await import('../../db/repos/sessions.js')
+const { agentDir, configPath } = await import('../../config/paths.js')
 
 const id = 'statsagent'
 const app = createServer()
@@ -47,6 +48,24 @@ beforeAll(async () => {
 })
 
 describe('GET /agents/:id/stats', () => {
+    it('returns an empty desktop window for an unused coworker and never creates a missing coworker', async () => {
+        const unused = 'unused-owner'
+        const missing = 'absent-owner'
+        mkdirSync(agentDir(unused), { recursive: true })
+        writeFileSync(configPath(unused), JSON.stringify({ name: unused }))
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const route = (owner: string) => app.request(`/agents/${owner}/stats?dataset=runs&metric=count`)
+            const empty = await route(unused)
+            expect(empty.status).toBe(200)
+            expect(await empty.json()).toEqual({ points: [] })
+            expect((await route(missing)).status).toBe(404)
+            expect(existsSync(agentDir(missing))).toBe(false)
+        } finally {
+            vi.unstubAllEnvs()
+        }
+    })
+
     it.each([
         ['no dataset', 'metric=count'],
         ['an unknown dataset', 'dataset=widgets&metric=count'],

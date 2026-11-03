@@ -123,16 +123,16 @@ export function StatsChart({ dataset, metric, groupBy = 'none', chartType = 'are
     }, [points, groups, agg])
 
     const stat = useMemo(() => {
-        const all = (points ?? []).map(p => ({ value: p.value, count: p.count }))
+        const all = points ?? []
         const total = combine(agg, all)
         const rowCount = all.reduce((s, e) => s + e.count, 0)
-        const buckets = [...new Set((points ?? []).map(p => p.bucket))].sort()
-        const sparkRows = buckets.map(b => ({ v: combine(agg, (points ?? []).filter(p => p.bucket === b)) }))
+        const buckets = [...new Set(all.map(p => p.bucket))].sort()
+        const sparkRows = buckets.map(b => ({ v: combine(agg, all.filter(p => p.bucket === b)) }))
         let delta: number | null = null
-        if (sparkRows.length >= 2) {
-            const mid = Math.floor(sparkRows.length / 2)
-            const first = combine(agg, sparkRows.slice(0, mid).map(r => ({ value: r.v, count: 1 })))
-            const second = combine(agg, sparkRows.slice(mid).map(r => ({ value: r.v, count: 1 })))
+        if (buckets.length >= 2) {
+            const midpoint = buckets[Math.floor(buckets.length / 2)]
+            const first = combine(agg, all.filter(p => p.bucket < midpoint))
+            const second = combine(agg, all.filter(p => p.bucket >= midpoint))
             if (first > 0) delta = ((second - first) / first) * 100
         }
         return { total, rowCount, sparkRows, delta }

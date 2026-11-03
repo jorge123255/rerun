@@ -112,22 +112,34 @@ test('keeps another coworker scoped to its own engine stats', async () => {
 })
 
 test('hides total tokens unless every run in the window recorded them', async () => {
+    replies['count:none'].push(point(3, 3, null, '2026-11-04'))
+    replies['totalTokens:none'].push(point(15, 3, null, '2026-11-04'))
     replies['recordedTokenRuns:none'] = [point(2, 2), point(1, 3, null, '2026-11-04')]
     const partial = await (await get(alice)).json()
     expect(partial.totalTokens).toBeNull()
     replies['recordedTokenRuns:none'] = [point(2, 2), point(3, 3, null, '2026-11-04')]
     const covered = await (await get(alice)).json()
-    expect(covered.totalTokens).toEqual(defaults()['totalTokens:none'])
+    expect(covered.totalTokens).toEqual(replies['totalTokens:none'])
 })
 
-test('hides cost unless fully recorded and above zero', async () => {
+test('shows measured zero cost and hides missing cost', async () => {
     replies['recordedCostRuns:none'] = [point(1, 2)]
     expect((await (await get(alice)).json()).cost).toBeNull()
     replies['recordedCostRuns:none'] = [point(2, 2)]
     replies['cost:none'] = [point(0, 2)]
-    expect((await (await get(alice)).json()).cost).toBeNull()
+    expect((await (await get(alice)).json()).cost).toEqual([point(0, 2)])
     replies['cost:none'] = [point(40, 2)]
     expect((await (await get(alice)).json()).cost).toEqual([point(40, 2)])
+})
+
+test('withholds a total when coverage and values were read across different run counts or dates', async () => {
+    replies['totalTokens:none'] = [point(320, 3)]
+    expect((await (await get(alice)).json()).totalTokens).toBeNull()
+    replies['recordedCostRuns:none'] = [point(2, 2, null, '2026-11-04')]
+    expect((await (await get(alice)).json()).cost).toBeNull()
+    replies['count:none'].push(point(1, 1, null, '2026-11-04'))
+    replies['totalTokens:none'] = [point(320, 2)]
+    expect((await (await get(alice)).json()).totalTokens).toBeNull()
 })
 
 test('maps engine failure and malformed replies to 502 without leaking engine text', async () => {

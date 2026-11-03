@@ -34,6 +34,10 @@ INSERT INTO tool_calls (id, run_id, agent_id, session_id, step_number, tool_name
     ('t3', 'r1', 'stats', 's', 0, 'read_file', 0, 20, '2026-09-01T10:15:01.600Z'),
     ('t4', 'r4', 'stats', 's', 0, 'read_file', 1, NULL, '2026-09-02T09:00:05.000Z');
 
+UPDATE runs SET step_count = 2 WHERE id = 'r1';
+UPDATE runs SET step_count = 1 WHERE id IN ('r2', 'r4');
+UPDATE run_steps SET cost_micros = 50 WHERE run_id = 'r1';
+
 INSERT INTO sessions (id, agent_id, title, status, source, created_at, updated_at) VALUES
     ('se1', 'stats', 't', 'open', 'dashboard', '2026-09-01T10:00:00.000Z', '2026-09-01T10:00:00.000Z'),
     ('se2', 'stats', 't', 'closed', 'schedule', '2026-09-01T12:00:00.000Z', '2026-09-01T12:00:00.000Z'),
@@ -78,14 +82,36 @@ describe('aggregateStats on runs', () => {
     it('counts runs that recorded tokens or cost against all runs in the bucket', async () => {
         const tokens = await aggregateStats(AGENT, query({ dataset: 'runs', metric: 'recordedTokenRuns' }))
         expect(tokens.map(point => [point.bucket, Number(point.value), Number(point.count)])).toEqual([
-            ['2026-09-01', 2, 3],
+            ['2026-09-01', 1, 3],
             ['2026-09-02', 1, 1],
         ])
         const cost = await aggregateStats(AGENT, query({ dataset: 'runs', metric: 'recordedCostRuns' }))
         expect(cost.map(point => [point.bucket, Number(point.value), Number(point.count)])).toEqual([
-            ['2026-09-01', 2, 3],
+            ['2026-09-01', 1, 3],
             ['2026-09-02', 0, 1],
         ])
+    })
+
+    it('requires complete step measurements, including genuinely free or zero-token runs', async () => {
+        const owner = 'coverage'
+        const { client } = await getSystemDb(owner)
+        await client.executeMultiple(`
+            INSERT INTO runs (id, agent_id, session_id, status, started_at, model, step_count, total_tokens, cost_micros) VALUES
+                ('free', 'coverage', 's', 'done', '2026-09-01', 'free', 1, 0, 0),
+                ('partial', 'coverage', 's', 'done', '2026-09-01', 'partial', 2, 5, 9),
+                ('foreign', 'coverage', 's', 'done', '2026-09-01', 'foreign', 1, 5, 9),
+                ('mismatch', 'coverage', 's', 'done', '2026-09-01', 'mismatch', 1, 20, 20);
+            INSERT INTO run_steps (id, run_id, agent_id, session_id, step_number, input_tokens, output_tokens, total_tokens, cost_micros, created_at) VALUES
+                ('s1', 'free', 'coverage', 's', 1, 0, 0, 0, 0, '2026-09-01'),
+                ('s2', 'partial', 'coverage', 's', 1, 3, 1, 4, 9, '2026-09-01'),
+                ('s3', 'partial', 'coverage', 's', 2, 1, NULL, 1, NULL, '2026-09-01'),
+                ('s4', 'foreign', 'another-owner', 's', 1, 3, 2, 5, 9, '2026-09-01'),
+                ('s5', 'mismatch', 'coverage', 's', 1, 3, 2, 5, 9, '2026-09-01');
+        `)
+        for (const metric of ['recordedTokenRuns', 'recordedCostRuns'] as const) {
+            const points = await aggregateStats(owner, query({ dataset: 'runs', metric, groupBy: 'model' }))
+            expect(Object.fromEntries(points.map(p => [p.group, p.value]))).toEqual({ free: 1, partial: 0, foreign: 0, mismatch: 0 })
+        }
     })
 
     it('averages the duration over finished runs only', async () => {

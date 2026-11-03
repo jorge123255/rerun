@@ -1,6 +1,9 @@
 import { Hono } from 'hono'
 import { isValidStatsCombo, statsQuerySchema } from '@rerun/contracts'
+import { agentExists } from '../../agents/loader.js'
 import { aggregateStats } from '../../db/repos/stats.js'
+import { desktopApp } from '../../desktop/policy.js'
+import { notFound } from '../../lib/errors.js'
 
 const RANGE_MS: Record<string, number> = {
     '24h': 24 * 60 * 60 * 1000,
@@ -13,6 +16,7 @@ export const statsRoutes = new Hono()
 
 statsRoutes.get('/', async c => {
     const agentId = c.req.param('id')!
+    if (desktopApp() && !agentExists(agentId)) throw notFound('agent')
     const parsed = statsQuerySchema.safeParse({
         dataset: c.req.query('dataset'),
         metric: c.req.query('metric'),

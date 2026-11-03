@@ -108,8 +108,8 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
                 <EmptyState
                     className="h-full"
                     icon={BarChart3Icon}
-                    title="No activity yet"
-                    description="Usage, cost and run analytics for this coworker will appear here once it starts working."
+                    title={`No runs in the ${STATS_TIME_RANGE_META[range].label.toLowerCase()}`}
+                    description="Choose a different time range to look for earlier runs."
                 />
             ) : (
                 <div className="min-h-0 flex-1 overflow-y-auto p-3">

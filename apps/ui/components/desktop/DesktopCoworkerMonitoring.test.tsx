@@ -63,13 +63,36 @@ test('shows the skeleton then the monitoring cards for the coworker', async () =
     } finally { await act(async () => { root.unmount() }) }
 })
 
-test('shows the empty state and hides cost and token cards when not recorded', async () => {
+test('weights both halves of the error-rate trend by the number of runs', async () => {
+    const errorRate = [
+        point(0.5, 2, null, '2026-10-31'),
+        point(0, 98, null, '2026-11-01'),
+        point(0.02, 100, null, '2026-11-02'),
+        point(0.02, 100, null, '2026-11-03'),
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(body('alice', '7d', {
+        errorRate, runs: errorRate.map(p => ({ ...p, value: p.count })),
+    }))))
+    const { root } = mount()
+    try {
+        await act(async () => { root.render(<DesktopCoworkerMonitoring agent={alice} />) })
+        await click('Monitoring')
+        const card = [...document.querySelectorAll('[data-slot="card"]')].find(el => el.textContent?.startsWith('Error rate'))
+        expect(card?.textContent).toContain('1.7%')
+        expect(card?.textContent).toContain('▲ 100%')
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('names the empty period and hides cost and token cards when not recorded', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(body('alice', '7d', { runs: [], errorRate: [], runsByStatus: [], runsByModel: [], totalTokens: null, cost: null }))))
     const { root } = mount()
     try {
         await act(async () => { root.render(<DesktopCoworkerMonitoring agent={alice} />) })
         await click('Monitoring')
-        expect(dialogText()).toContain('No activity yet')
+        expect(dialogText()).toContain('No runs in the last 7 days')
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json(body('alice', '24h', { runs: [], errorRate: [], runsByStatus: [], runsByModel: [], totalTokens: null, cost: null }))))
+        await click('24h')
+        expect(dialogText()).toContain('No runs in the last 24 hours')
         vi.stubGlobal('fetch', vi.fn(async () => Response.json(body('alice', '30d', { totalTokens: null, cost: null }))))
         await click('30d')
         expect(dialogText()).toContain('Runs')

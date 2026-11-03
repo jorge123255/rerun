@@ -15,6 +15,25 @@ type DatasetDef = {
 
 const runsDurationMs = sql<number>`coalesce(avg((julianday(${runs.finishedAt}) - julianday(${runs.startedAt})) * 86400000.0), 0)`
 
+// The SDK's run totals can sum only the steps that supplied usage. Count a run as
+// measured only when every recorded step supports the exact total on its run row.
+function recordedRuns(total: SQLiteColumn, stepValue: SQL): SQL<number> {
+    const measuredTotal = sql`(
+        select case when count(*) = ${runs.stepCount}
+            and count(distinct ${runSteps.stepNumber}) = count(*)
+            and max(${runSteps.stepNumber}) - min(${runSteps.stepNumber}) + 1 = count(*)
+            and min(${runSteps.stepNumber}) in (0, 1)
+            and count(${stepValue}) = count(*)
+            then sum(${stepValue}) end
+        from ${runSteps} where ${runSteps.runId} = ${runs.id} and ${runSteps.agentId} = ${runs.agentId}
+    )`
+    return sql<number>`sum(case when ${runs.stepCount} > 0 and ${total} = ${measuredTotal} then 1 else 0 end)`
+}
+
+const measuredStepTokens = sql`case when ${runSteps.inputTokens} >= 0 and ${runSteps.outputTokens} >= 0
+    and ${runSteps.totalTokens} = ${runSteps.inputTokens} + ${runSteps.outputTokens} then ${runSteps.totalTokens} end`
+const measuredStepCost = sql`case when ${runSteps.costMicros} >= 0 then ${runSteps.costMicros} end`
+
 const DATASETS: Record<StatsDataset, DatasetDef> = {
     runs: {
         table: runs,
@@ -31,8 +50,8 @@ const DATASETS: Record<StatsDataset, DatasetDef> = {
             avgDurationMs: runsDurationMs,
             errorCount: sql<number>`coalesce(sum(case when ${runs.status} = 'error' then 1 else 0 end), 0)`,
             errorRate: sql<number>`coalesce(avg(case when ${runs.status} = 'error' then 1.0 else 0.0 end), 0)`,
-            recordedTokenRuns: sql<number>`count(${runs.totalTokens})`,
-            recordedCostRuns: sql<number>`count(${runs.costMicros})`,
+            recordedTokenRuns: recordedRuns(runs.totalTokens, measuredStepTokens),
+            recordedCostRuns: recordedRuns(runs.costMicros, measuredStepCost),
         },
         groups: {
             model: sql<string | null>`${runs.model}`,
