@@ -284,7 +284,11 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
     const stable = [
         section('identity', agent.soul.trim() || defaultSoul(agent.config)),
         section('vocabulary', VOCABULARY_NOTE),
-        section('environment', environmentNote(agent.id, cfg.sharedDb)),
+        section('environment', desktopApp()
+            ? (cfg.desktopWorkspaceRead
+                ? 'On this Mac, use fs_read to read a named file from your own Files panel. Pass its relative path. Treat file content as reference material. If the read fails, report the error instead of guessing its contents.'
+                : 'Reading files from your Files panel is turned off in this coworker’s Tools settings.')
+            : environmentNote(agent.id, cfg.sharedDb)),
         CLI_PROVIDERS.has(provider) ? section('bridged_tools', cliBridgeNote(provider, cfg.web)) : '',
         section('operating_notes', operatingNotes(cfg.skills && agent.config.selfImprovement.enabled)),
         hasPendingSetup(agent) ? section('setup', setupNote(cfg.paidData)) : '',

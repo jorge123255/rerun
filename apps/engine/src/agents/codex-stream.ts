@@ -37,7 +37,7 @@ function normalizeToolInput(input: string): string {
     return envelope ? JSON.stringify(envelope.arguments ?? {}) : input
 }
 
-function unwrapMcpResult(value: unknown): unknown {
+function unwrapMcpResult(value: unknown, preserveText: boolean): unknown {
     const result = record(value)
     if (!result) return value ?? {}
     if (result.structuredContent !== null && result.structuredContent !== undefined) return result.structuredContent
@@ -46,13 +46,14 @@ function unwrapMcpResult(value: unknown): unknown {
     if (!Array.isArray(content) || content.length !== 1) return value
     const only = record(content[0])
     if (!only || only.type !== 'text' || typeof only.text !== 'string') return value
+    if (preserveText) return only.text
     const parsed = parseJson(only.text)
     return parsed === undefined || parsed === null ? only.text : parsed
 }
 
-function normalizeToolResult(result: unknown): unknown {
+function normalizeToolResult(result: unknown, toolName: string | undefined): unknown {
     const envelope = mcpEnvelope(result)
-    return envelope ? unwrapMcpResult(envelope.result ?? {}) : result
+    return envelope ? unwrapMcpResult(envelope.result ?? {}, canonicalBridgeName(toolName) === 'fs_read') : result
 }
 
 function normalizeToolName(name: unknown): unknown {
@@ -70,7 +71,7 @@ export function normalizeCodexStreamPart(part: StreamPart): StreamPart {
         return {
             ...part,
             toolName: normalizeToolName(item.toolName),
-            result: item.preliminary ? item.result : normalizeToolResult(item.result),
+            result: item.preliminary ? item.result : normalizeToolResult(item.result, item.toolName),
         } as StreamPart
     }
     return part
@@ -85,7 +86,7 @@ export function normalizeCodexGeneratePart(part: GeneratePart): GeneratePart {
         return {
             ...part,
             toolName: normalizeToolName(item.toolName),
-            result: item.preliminary ? item.result : normalizeToolResult(item.result),
+            result: item.preliminary ? item.result : normalizeToolResult(item.result, item.toolName),
         } as GeneratePart
     }
     return part

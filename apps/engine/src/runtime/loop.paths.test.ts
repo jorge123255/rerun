@@ -42,12 +42,14 @@ vi.mock('./curator.js', () => ({
     },
 }))
 
-vi.mock('../tools/registry.js', async () => {
+vi.mock('../tools/registry.js', async importOriginal => {
+    const actual = await importOriginal<typeof import('../tools/registry.js')>()
     const { tool } = await import('ai')
     const { z } = await import('zod')
     const hitl = () => tool({ description: 'hitl', inputSchema: z.record(z.string(), z.unknown()), execute: async () => ({ status: 'delivered' }) })
     return {
-        buildTools: async (ctx: { callTargets?: Array<{ id: string }> }) => {
+        buildTools: async (ctx: Parameters<typeof actual.buildTools>[0]) => {
+            if (ctx.agent.config.tools.desktopWorkspaceRead) return actual.buildTools(ctx)
             prep.callTargets = (ctx.callTargets ?? []).map(a => a.id)
             if (prep.toolsGate) await prep.toolsGate
             if (prep.toolsError) throw prep.toolsError
@@ -97,14 +99,14 @@ vi.mock('../agents/providers.js', async importOriginal => {
 })
 
 const { afterEach, beforeAll, describe, expect, it } = await import('vitest')
-const { mkdir } = await import('node:fs/promises')
+const { mkdir, writeFile } = await import('node:fs/promises')
 const { APICallError, createUIMessageStream } = await import('ai')
 const { mergeRunStream } = await import('./run-stream-merge.js')
 const { closeSystemDb } = await import('../db/systemDb.js')
 const { migrate } = await import('../db/migrate.js')
 const { agentConfigSchema } = await import('../agents/types.js')
 const { writeAgentConfig } = await import('../agents/config-write.js')
-const { agentDir } = await import('../config/paths.js')
+const { agentDir, workspaceDir } = await import('../config/paths.js')
 const { getAgent } = await import('../agents/registry.js')
 const { createSession } = await import('../db/repos/sessions.js')
 const { getRun, startRun } = await import('../db/repos/runs.js')
@@ -185,6 +187,35 @@ describe('run loop paths', () => {
         curator.calls = []
         recalls.length = 0
         clearBudgetLatch()
+    })
+
+    it('runs fs_read and saves the actual tool output with the requesting coworker’s run and chat', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const reader = 'workspace-reader'
+        try {
+            await mkdir(workspaceDir(reader), { recursive: true })
+            await writeAgentConfig(reader, agentConfigSchema.parse({ name: reader, tools: { desktopWorkspaceRead: true } }))
+            await writeFile(resolve(workspaceDir(reader), 'brief.txt'), 'Cobalt skylight')
+            const agent = await getAgent(reader)
+            const session = await createSession(reader, 'Read the brief')
+            const resolved = { ...agent.resolved, provider: 'openai' as const, model: 'fixture' }
+            stream.turns = [toolTurn('fs_read', { path: 'brief.txt' }, ''), textTurn('Cobalt skylight')]
+            const run = await runAgent({ ...agent, resolved }, session.id, 'What does brief.txt say?')
+            expect(await run.settled).toMatchObject({ kind: 'done' })
+            expect(stream.calls[0].tools).toMatchObject([{ name: 'fs_read' }])
+            expect(JSON.stringify(stream.calls[0].prompt)).not.toContain('Cobalt skylight')
+            expect(JSON.stringify(stream.calls[0].prompt)).toContain('use fs_read')
+            expect(JSON.stringify(stream.calls[0].prompt)).not.toContain(workspaceDir(reader))
+            expect(JSON.stringify(stream.calls[1].prompt)).toContain('Cobalt skylight')
+            closeSystemDb(reader)
+            const rows = await listMessages(reader, session.id)
+            expect(rows.map(row => row.role)).toEqual(['user', 'assistant', 'tool', 'assistant'])
+            expect(rows[2].contentJson).toContain('Cobalt skylight')
+            expect(await listToolCalls(reader, run.runId)).toMatchObject([{
+                agentId: reader, sessionId: session.id, toolName: 'fs_read', isError: 0,
+                inputJson: '{"path":"brief.txt"}', resultJson: '"Cobalt skylight"',
+            }])
+        } finally { vi.unstubAllEnvs() }
     })
 
     it('streams only public sources and restores each step on its own row after reopening', async () => {

@@ -28,6 +28,14 @@ describe('Codex MCP stream compatibility', () => {
         })
     })
 
+    it('keeps the exact text of a file even when it is valid JSON', () => {
+        const text = ' { "number" : 1234 }\n'
+        const result = envelope({ tool: 'fs_read', result: { content: [{ type: 'text', text }], structuredContent: null } })
+        const part = { type: 'tool-result', toolCallId: 'read-id', toolName: 'mcp__rerun__fs_read', result } as any
+        expect(normalizeCodexStreamPart(part)).toMatchObject({ result: text, toolName: 'fs_read' })
+        expect(normalizeCodexGeneratePart(part)).toMatchObject({ result: text, toolName: 'fs_read' })
+    })
+
     it('prefers structured content and otherwise parses a single JSON text result', () => {
         const structured = envelope({ result: { structuredContent: { results: [{ slug: 'notion' }] }, content: [] } })
         expect(normalizeCodexStreamPart({ type: 'tool-result', toolCallId: 'call-1', toolName: 'mcp__rerun__rerun_hub_service_search', result: structured } as any)).toMatchObject({

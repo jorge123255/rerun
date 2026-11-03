@@ -335,6 +335,9 @@ function codexExecProvider(agent: LoadedAgent) {
 // The chat/run transport. Only the app-server emits real text deltas — exec returns the whole turn
 // as a single chunk, which would leave the chat blank for the length of an agentic loop.
 function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers: McpServer[] = [], options: CliModelOptions = {}) {
+    const desktop = desktopApp()
+    // The Mac grant is for this run's own read tool. Never forward other tools or user MCP servers.
+    const readTool = desktop && agent.config.tools.desktopWorkspaceRead && tools?.fs_read
     return createCodexAppServer({
         defaultSettings: {
             ...codexShared(agent),
@@ -356,14 +359,22 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
             // installed, so the chat shows the same thing everywhere.
             configOverrides: {
                 model_reasoning_summary: 'auto',
-                ...(desktopApp() ? { project_doc_max_bytes: 0, web_search: 'disabled' } : {
+                ...(desktop ? {
+                    project_doc_max_bytes: 0,
+                    web_search: 'disabled',
+                    ...(readTool && {
+                        prefix_mcp_tool_names: true,
+                        [`mcp_servers.${BRIDGE_SERVER_NAME}.enabled_tools`]: ['fs_read'],
+                        [`mcp_servers.${BRIDGE_SERVER_NAME}.tools.fs_read.approval_mode`]: 'approve',
+                    }),
+                } : {
                     prefix_mcp_tool_names: true,
                     [`mcp_servers.${BRIDGE_SERVER_NAME}.tool_timeout_sec`]: BRIDGE_TOOL_TIMEOUT_SEC,
                     ...CODEX_HARNESS_OVERRIDES,
                     ...(agent.config.tools.web ? { web_search: 'live' } : {}),
                 }),
             },
-            mcpServers: desktopApp() ? {} : codexMcpConfig(tools, mcpServers),
+            mcpServers: desktop ? codexMcpConfig(readTool ? { fs_read: readTool } : undefined) : codexMcpConfig(tools, mcpServers),
         },
     })
 }

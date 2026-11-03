@@ -299,6 +299,31 @@ describe('resolveModel on the codex subscription', () => {
         await expect(resolved.close()).resolves.toBeUndefined()
     })
 
+    it('only bridges the granted coworker read tool on the Mac', () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.stubEnv('RERUN_DESKTOP_CODEX_RUNNER', '/private/fixture/codex')
+        try {
+            const agent = agentOn('codex', 'fixture', { RERUN_CHATGPT_CONNECTED: '1' })
+            agent.resolved.connection.id = 'mac-chatgpt'
+            const read = tool({ description: 'Read a file', inputSchema: z.object({ path: z.string() }), execute: async () => 'ok' })
+            const tools = { fs_read: read, fs_write: read }
+            const external = { name: 'third_party', command: 'unwanted', args: [], headers: {}, env: {} }
+            for (const enabled of [false, true]) {
+                agent.config.tools.desktopWorkspaceRead = enabled
+                resolveModel(agent, undefined, tools, [external])
+                const settings = codexAppServerCalls.at(-1)!.defaultSettings
+                expect(settings).toMatchObject({ sandboxPolicy: 'read-only', autoApprove: false, approvalPolicy: 'never', configOverrides: { web_search: 'disabled' } })
+                expect(Object.keys(settings.mcpServers)).toEqual(enabled ? ['rerun'] : [])
+                if (enabled) {
+                    expect(settings.mcpServers.rerun.tools.map((t: { name: string }) => t.name)).toEqual(['fs_read'])
+                    expect(settings.configOverrides['mcp_servers.rerun.tools.fs_read.approval_mode']).toBe('approve')
+                }
+            }
+        } finally {
+            vi.unstubAllEnvs()
+        }
+    })
+
     it('keeps the web search off for an agent without the web', () => {
         const agent = agentOn('codex', 'gpt-5.5', { CODEX_OAUTH_TOKEN: 't' })
         agent.config.tools.web = false

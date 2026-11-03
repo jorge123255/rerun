@@ -21,6 +21,8 @@ export const strictMcpServerSchema = mcpServerSchema.extend({ name: mcpServerNam
 
 export const toolsSchema = z.object({
     filesystem: z.boolean().default(true),
+    // The Mac grants just fs_read. Older agents have no grant, even when filesystem defaults on.
+    desktopWorkspaceRead: z.boolean().optional(),
     shared: z.boolean().default(true),
     shell: z.boolean().default(true),
     web: z.boolean().default(true),
