@@ -1,11 +1,20 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent } from '@/lib/desktop/server/store'
 import { GET as list } from './route'
 import { GET as read } from './read/route'
+
+const race = vi.hoisted(() => ({ beforeOpen: undefined as undefined | ((target: unknown) => Promise<void>) }))
+vi.mock('node:fs/promises', async importOriginal => {
+    const fs = await importOriginal<typeof import('node:fs/promises')>()
+    return { ...fs, open: async (...args: Parameters<typeof fs.open>) => {
+        await race.beforeOpen?.(args[0])
+        return fs.open(...args)
+    } }
+})
 
 const originalEnv = { ...process.env }
 let root: string, alice: string, bob: string
@@ -30,6 +39,7 @@ beforeEach(async () => {
     await writeFile(join(root, 'outside.txt'), 'OUTSIDE')
 })
 afterEach(async () => {
+    race.beforeOpen = undefined
     await closeDesktopDatabase(root)
     process.env = { ...originalEnv }
     await rm(root, { recursive: true, force: true })
@@ -88,4 +98,27 @@ test('a coworker without a workspace yet shows an empty folder; binary files are
     expect(await (await call(list, dave, 'path=')).json()).toEqual({ path: '', entries: [] })
     await writeFile(join(workspace('engine-alice'), 'blob.bin'), Buffer.from([0, 1, 2, 0]))
     expect((await call(read, alice, 'path=blob.bin')).status).toBe(415)
+})
+
+test('a symlink in the coworker workspace ancestry cannot redirect to a sibling', async () => {
+    const db = await openDesktopDatabase(root)
+    const carol = (await createDesktopAgent(db, { engineAgentId: 'engine-carol', name: 'Carol' })).id
+    const agents = join(root, 'workspaces', '1', 'engine', 'agents')
+    await symlink(join(agents, 'engine-bob'), join(agents, 'engine-carol'), 'dir')
+    expect((await call(read, carol, 'path=docs/notes.md')).status).toBe(400)
+    expect((await call(list, carol, 'path=docs')).status).toBe(400)
+})
+
+test('a directory replaced with a sibling symlink after path validation cannot redirect a preview', async () => {
+    const docs = join(workspace('engine-alice'), 'docs')
+    const target = await realpath(join(docs, 'notes.md'))
+    let swapped = false
+    race.beforeOpen = async path => {
+        if (swapped || (path !== target && !(process.platform !== 'darwin' && String(path).endsWith('/docs')))) return
+        swapped = true
+        await rename(docs, docs + '-original')
+        await symlink(join(workspace('engine-bob'), 'docs'), docs, 'dir')
+    }
+    expect((await call(read, alice, 'path=docs/notes.md')).status).toBe(400)
+    expect(swapped).toBe(true)
 })
