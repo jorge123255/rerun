@@ -1,6 +1,7 @@
-type RunHandle = { controller: AbortController; cancel?: () => void }
+type RunHandle = { controller: AbortController; cancel?: () => void | Promise<unknown> }
 
 const controllers = new Map<string, RunHandle>()
+const cancellations = new Set<Promise<unknown>>()
 
 // One live run per conversation. Two runs on the same session read the same history before
 // either has written its user message, so they answer past each other and interleave their
@@ -20,7 +21,7 @@ export function registerRunAbort(runId: string): AbortController {
 // The abort signal alone is not enough to stop a hung run: the codex provider ignores it until its
 // turn has actually started, which is exactly the case when an expired token wedges the handshake.
 // The run loop registers here what it takes to really close itself down.
-export function setRunCancel(runId: string, cancel: () => void): void {
+export function setRunCancel(runId: string, cancel: () => void | Promise<unknown>): void {
     const handle = controllers.get(runId)
     if (handle) handle.cancel = cancel
 }
@@ -65,6 +66,14 @@ export function abortRun(runId: string): boolean {
     handle.controller.abort()
     // Closes the run for good: writes its terminal row, tells the hub, and tears the provider
     // process down. Without it a provider that ignores the abort keeps the conversation "working".
-    handle.cancel?.()
+    let pending: Promise<unknown>
+    try { pending = Promise.resolve(handle.cancel?.()) } catch (error) { pending = Promise.reject(error) }
+    cancellations.add(pending)
+    void pending.finally(() => cancellations.delete(pending)).catch(() => {})
     return true
+}
+
+export async function abortAllRuns(): Promise<void> {
+    for (const id of [...controllers.keys()]) abortRun(id)
+    await Promise.allSettled([...cancellations])
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import '../lib/process-report.js'
 import { runCommand } from './commands/run.js'
+import { desktopRunCommand } from './commands/desktop-run.js'
 import { migrateCommand } from './commands/migrate.js'
 import { agentCommand } from './commands/agent.js'
 import { skillCommand } from './commands/skill.js'
@@ -41,6 +42,8 @@ Usage:
 async function main() {
     const [command, ...rest] = process.argv.slice(2)
     switch (command) {
+        case 'desktop-run':
+            return desktopRunCommand()
         case 'run':
             return runCommand()
         case 'migrate':

@@ -35,6 +35,7 @@ import { HostBreaker } from '../tools/host-breaker.js'
 import type { PartialResult, RunContext, RunTrigger, SkillProposalNotice } from './context.js'
 import { partialResultsNote } from './partial-results.js'
 import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-control.js'
+import { assertDesktopProvider } from '../desktop/policy.js'
 import { runCurator } from './curator.js'
 import { repairToolCall } from './tool-repair.js'
 import { stepWithScreenshots } from './screenshots.js'
@@ -375,7 +376,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     // Stop has to be able to end a run the provider refuses to end: codex ignores the abort signal
     // until its turn has started, which is exactly the state an expired token leaves it in.
     setRunCancel(run.id, () => {
-        void settle({ kind: 'cancelled' }).catch(err => logger.warn({ err: String(err), agent: agent.id, run: run.id }, 'run cancel failed'))
+        return settle({ kind: 'cancelled' }).catch(err => logger.warn({ err: String(err), agent: agent.id, run: run.id }, 'run cancel failed'))
     })
 
     try {
@@ -388,6 +389,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         const resolved = await resolveRunModel(baseAgent, override)
         agent = resolved === baseAgent.resolved ? baseAgent : { ...baseAgent, resolved }
         ;({ connection, provider, model } = resolved)
+        assertDesktopProvider(provider)
         const t0 = Date.now()
         const order = turnOrder(provider, await answeringModel(provider, model))
         const ctx: RunContext = { agent, sessionId, logger, provider, model, turnOrder: order, author, writer, abortSignal: controller.signal, callTargets: [], hostBreaker: new HostBreaker(), partialResults, skillProposals }

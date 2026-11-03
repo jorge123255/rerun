@@ -6,6 +6,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { parseEnv } from 'node:util'
 
 const FILE = '.env'
 const GENERATED = ['RERUN_ENGINE_API_KEY', 'FOREMAN_HUB_TOKEN_SECRET', 'BOARD_IMAGE_SECRET']
@@ -22,7 +23,7 @@ if (!existsSync(FILE)) {
 }
 
 let text = readFileSync(FILE, 'utf8')
-const valueOf = (key) => text.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1]?.trim() ?? ''
+const valueOf = (key) => parseEnv(text)[key]?.trim() ?? ''
 
 const generated = []
 for (const key of GENERATED) {
@@ -31,7 +32,7 @@ for (const key of GENERATED) {
     text = new RegExp(`^${key}=.*$`, 'm').test(text) ? text.replace(new RegExp(`^${key}=.*$`, 'm'), `${key}=${value}`) : `${text.trimEnd()}\n${key}=${value}\n`
     generated.push(key)
 }
-if (generated.length) writeFileSync(FILE, text)
+if (generated.length) writeFileSync(FILE, text, { mode: 0o600 })
 
 const problems = []
 for (const [key, where] of Object.entries(REQUIRED)) {
@@ -40,7 +41,14 @@ for (const [key, where] of Object.entries(REQUIRED)) {
 const appUrl = valueOf('NEXT_PUBLIC_APP_URL')
 if (appUrl && (!/^https?:\/\//.test(appUrl) || appUrl.endsWith('/'))) problems.push('NEXT_PUBLIC_APP_URL must start with http:// or https:// and end without a slash')
 const supabaseUrl = valueOf('NEXT_PUBLIC_SUPABASE_URL')
-if (supabaseUrl && /127\.0\.0\.1|localhost/.test(supabaseUrl) && !/:54421\b/.test(supabaseUrl)) problems.push('A local Supabase answers on port 54421 here: use http://localhost:54421')
+let localSupabase = false
+try {
+    const parsed = new URL(supabaseUrl)
+    localSupabase = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
+    if (localSupabase && parsed.port !== '54421') problems.push('A local Supabase answers on port 54421 here: use http://localhost:54421')
+} catch {
+    if (supabaseUrl) problems.push('NEXT_PUBLIC_SUPABASE_URL must be a valid URL')
+}
 if (!valueOf('OPENROUTER_API_KEY')) console.warn('! OPENROUTER_API_KEY is empty: the onboarding guide will not answer. Your coworkers still run on the AI you connect in the app.')
 
 if (generated.length) console.log(`Generated ${generated.join(', ')} in .env`)
@@ -51,5 +59,5 @@ if (problems.length) {
 
 console.log(`
 .env is ready. Next:
-  docker compose${/localhost:54421/.test(supabaseUrl) ? ' --profile local-supabase' : ''} up -d --build
+  docker compose${localSupabase ? ' --profile local-supabase' : ''} up -d --build
   open ${appUrl}`)

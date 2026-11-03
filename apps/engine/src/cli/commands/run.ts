@@ -17,6 +17,7 @@ import { settleLastUpdateOnBoot } from '../../runtime/last-update.js'
 
 export async function runCommand(): Promise<void> {
     loadPairingIdentity()
+    if (!env().RERUN_API_KEY?.trim()) throw new Error('An engine API key is required. Configure RERUN_API_KEY before starting the server.')
     await prepareDataDir()
     const lastUpdate = settleLastUpdateOnBoot()
     if (lastUpdate?.status === 'error') logger.warn({ error: lastUpdate.error, commit: lastUpdate.commit }, 'last update did not land')

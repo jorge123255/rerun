@@ -35,6 +35,7 @@ import { openrouterStreamRetryMiddleware } from './openrouter-stream-retry.js'
 import { agentProcessEnv } from './process-env.js'
 import { BRIDGE_SERVER_NAME, CLI_PROVIDERS, type LoadedAgent } from './types.js'
 import { hubCallerHeaders } from '../runtime/hub.js'
+import { assertDesktopProvider } from '../desktop/policy.js'
 import type { StoredScreenshot } from '../runtime/screenshots.js'
 
 export { CLI_PROVIDERS }
@@ -398,6 +399,7 @@ export type ModelOverride = { connectionId?: string; provider?: Provider; model?
 // what a caller with no override of its own (compaction, curator, vision, memory reconcile) means.
 function pairFor(agent: LoadedAgent, override?: ModelOverride): { provider: Provider; model: string } {
     const provider = agent.resolved.provider
+    assertDesktopProvider(provider)
     return { provider, model: allowedModel(provider, override?.model ?? agent.resolved.model) }
 }
 

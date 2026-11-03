@@ -94,10 +94,10 @@ export default function RootLayout({
             <Toaster />
             <CookieConsent />
             <AffiliateTracking />
-            <DeployUpdateWatcher />
+            {process.env.RERUN_DESKTOP_APP !== '1' && <DeployUpdateWatcher />}
           </TooltipProvider>
         </ThemeProvider>
-        <RegisterSW />
+        {process.env.RERUN_DESKTOP_APP !== '1' && <RegisterSW />}
       </body>
     </html>
   );
