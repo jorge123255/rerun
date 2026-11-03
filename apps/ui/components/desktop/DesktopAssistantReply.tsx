@@ -2,9 +2,10 @@
 
 import type { UIMessage } from 'ai'
 import type { ReactNode } from 'react'
-import type { Components } from 'streamdown'
+import type { Components, CustomRendererProps, PluginConfig } from 'streamdown'
 import { toast } from 'sonner'
 import { MessageResponse } from '@/components/ai-elements/message'
+import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
 import { Button } from '@/components/ui/button'
 import { CheckIcon, CopyIcon } from '@/lib/icons'
@@ -25,9 +26,10 @@ const desktopComponents: Components = {
 const noPlugins = {}
 const noRehypePlugins: [] = []
 const copyFailed = () => toast.error('Could not copy this reply. Try again.')
+const draftCopyFailed = () => toast.error('Could not copy this draft. Try again.')
 
 // Rerun denies asynchronous clipboard access. Use Chromium's ordinary, user-activated
-// Copy command so the Mac receives only this reply's plain text and no read permission.
+// Copy command so the Mac receives only the chosen plain text and no read permission.
 function copyReplyText(text: string) {
     if (window.top !== window || !navigator.userActivation?.isActive) throw Error('Copy requires an active user gesture')
     let written = false
@@ -45,8 +47,14 @@ function copyReplyText(text: string) {
     }
 }
 
-function replyMarkdown(text: string, streaming = false) {
-    return <MessageResponse components={desktopComponents} plugins={noPlugins} rehypePlugins={noRehypePlugins}
+function DesktopDraftBlock(props: CustomRendererProps) {
+    return <DraftBlock {...props} writeText={copyReplyText} onCopyError={draftCopyFailed} />
+}
+
+const answerPlugins: PluginConfig = { renderers: [{ language: DRAFT_LANGUAGE, component: DesktopDraftBlock }] }
+
+function replyMarkdown(text: string, streaming = false, plugins: PluginConfig = noPlugins) {
+    return <MessageResponse components={desktopComponents} plugins={plugins} rehypePlugins={noRehypePlugins}
         controls={false} skipHtml mode={streaming ? 'streaming' : 'static'} isAnimating={streaming}
         className="min-w-0 wrap-anywhere [&_pre]:overflow-x-auto">
         {text}
@@ -64,7 +72,7 @@ export function DesktopAssistantReply({ message, streaming }: { message: UIMessa
             paragraph += part.text
             // A table or fenced block can span consecutive text parts from the model.
             if (message.parts[index + 1]?.type !== 'text') {
-                blocks.push(<div key={index}>{replyMarkdown(paragraph, live)}</div>)
+                blocks.push(<div key={index}>{replyMarkdown(paragraph, live, answerPlugins)}</div>)
                 paragraph = ''
             }
         } else if (part.type === 'reasoning' && isDesktopSummaryMetadata(part.providerMetadata) && (part.text || live)) {

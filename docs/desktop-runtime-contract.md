@@ -38,6 +38,8 @@ In **Files**, **Import file** copies a single local `.txt` or `.md` document of 
 
 Assistant replies render Markdown in live and reopened chats, including headings, lists, tables and fenced code blocks. **Copy reply** copies the answer’s original Markdown. The user’s message stays literal text, including its attachment label. Markdown images display their alt text, and eligible HTTPS links open in the system browser when clicked.
 
+When a coworker puts an email, post or message in a `draft` fence, the answer shows a separate card. The fence title labels the card, or it reads **Draft** when the title is empty. **Copy draft** copies just the card’s plain text, preserving its spacing and literal Markdown. While the answer is streaming, the card can be copied as soon as its fence closes. Reopening the conversation renders the cards from the saved reply.
+
 At each launch, main atomically writes mode-0600 `runtime.json`:
 
 ```json
