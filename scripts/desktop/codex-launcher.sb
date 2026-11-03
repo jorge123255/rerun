@@ -6,3 +6,11 @@
 (allow file-read-data (literal "/") (subpath "/System") (subpath "/usr") (subpath "/Library/Apple") (subpath "/Library/Keychains") (subpath "/private/etc") (subpath "/dev") (literal (param "BINARY")))
 (allow file-read-data file-write* (subpath (param "PROFILE")) (literal (param "OUTPUT")) (literal "/dev/null"))
 (allow process-exec (literal (param "BINARY")))
+
+; Security.framework uses a lock and an atomic swap for the default Keychain. Only the
+; account RPC worker can perform that swap. Inference gets read-only Keychain access.
+(allow file-read-data (literal (param "KEYDIR")) (literal (param "KEYCHAIN")) (prefix (string-append (param "KEYDIR") "/.fl")))
+(if (equal? (param "ACCOUNT") "1")
+    (begin
+        (allow file-read-data file-write* (prefix (string-append (param "KEYCHAIN") ".sb-")) (prefix (string-append (param "KEYDIR") "/.fl")))
+        (allow file-write-create file-write-unlink (literal (param "KEYCHAIN")))))

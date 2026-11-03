@@ -1,6 +1,6 @@
 import { lstat, mkdir, mkdtemp, rm, readdir, readFile, realpath } from 'node:fs/promises'
 import { basename, join, relative, resolve, sep } from 'node:path'
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, output, resourcesDir } from './lib.mjs'
@@ -26,7 +26,7 @@ check(nodeVersion === 'v22.23.4', `bundled node runs (${nodeVersion})`)
 const probeHome = await mkdtemp(join(tmpdir(), 'rerun-verify-codex-'))
 try {
     await Promise.all(['state', 'tmp'].map(name => mkdir(join(probeHome, name), { mode: 0o700 })))
-    const version = await output(resolved.codexPath, ['--version'], { env: { RERUN_CODEX_PROFILE: probeHome }, timeout: 15000 }).catch(() => '')
+    const version = await output(resolved.codexPath, ['--version'], { env: { RERUN_CODEX_PROFILE: probeHome, RERUN_MAC_HOME: userInfo().homedir }, timeout: 15000 }).catch(() => '')
     check(version === 'codex-cli 0.144.6', 'isolated bundled Codex CLI matches the pinned version')
 } finally { await rm(probeHome, { recursive: true, force: true }) }
 

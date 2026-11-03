@@ -1,5 +1,7 @@
 import type { Provider } from '@rerun/contracts'
 import { acquireClaudeLease, ensureFreshClaudeToken } from './claude-token.js'
+import { desktopApp } from '../desktop/policy.js'
+import { prepareDesktopCodexChat } from '../desktop/codex-login.js'
 import { ensureCodexAuth } from './codex-auth.js'
 import type { LoadedConnection } from './types.js'
 
@@ -11,6 +13,9 @@ export async function ensureCliAuth(provider: Provider, connection: LoadedConnec
         await ensureFreshClaudeToken(connection)
         return acquireClaudeLease(connection)
     }
-    if (provider === 'codex') await ensureCodexAuth(connection)
+    if (provider === 'codex') {
+        if (desktopApp()) await prepareDesktopCodexChat()
+        else await ensureCodexAuth(connection)
+    }
     return () => {}
 }

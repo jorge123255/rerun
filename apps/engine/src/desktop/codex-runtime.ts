@@ -1,3 +1,4 @@
+import { userInfo } from 'node:os'
 import { mkdirSync } from 'node:fs'
 import { join, isAbsolute } from 'node:path'
 import { dataDir } from '../config/paths.js'
@@ -14,5 +15,5 @@ export function desktopCodexRuntime() {
     const profile = join(dataDir(), 'chatgpt')
     const cwd = join(profile, 'work')
     for (const dir of [profile, cwd, join(profile, 'state'), join(profile, 'tmp')]) mkdirSync(dir, { recursive: true, mode: 0o700 })
-    return { codexPath, cwd, env: { RERUN_CODEX_PROFILE: profile } }
+    return { codexPath, cwd, env: { RERUN_CODEX_PROFILE: profile, RERUN_MAC_HOME: userInfo().homedir } }
 }

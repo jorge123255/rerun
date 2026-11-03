@@ -13,7 +13,7 @@ export class CodexAuthClient {
         private exited: () => void,
     ) {
         const { codexPath, cwd, env } = desktopCodexRuntime()
-        this.child = spawn(codexPath, ['app-server', '--listen', 'stdio://'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+        this.child = spawn(codexPath, ['app-server', '--listen', 'stdio://'], { cwd, env: { ...env, RERUN_CODEX_ACCOUNT_OP: '1' }, stdio: ['pipe', 'pipe', 'pipe'] })
         this.child.stderr.resume()
         this.child.stdin.on('error', () => this.close())
         createInterface({ input: this.child.stdout }).on('line', line => {
