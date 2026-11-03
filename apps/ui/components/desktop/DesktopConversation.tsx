@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
+import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 
 async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMessage[]> {
     const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`, { signal })
@@ -169,6 +170,7 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
                             {sessions.map(session => <option key={session.id} value={session.id}>{session.title}</option>)}
                         </select>
                     )}
+                    <DesktopCoworkerFiles agent={agent} />
                     <DesktopCoworkerMemories agent={agent} />
                     <DesktopCoworkerSettings agent={agent} disabled={busy} />
                     <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => onSelectSession(null)}>New chat</Button>
