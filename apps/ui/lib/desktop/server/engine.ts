@@ -146,7 +146,7 @@ export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: str
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     try {
         const messages = await getSessionMessages(engineOf(runtime), agent.engineAgentId, session.engineSessionId, { requireSuccess: true })
-        const history = transformEngineMessages(messages, { desktopSummaries: true })
+        const history = transformEngineMessages(messages, { desktopSummaries: true, preserveSourceSteps: true })
         // Only a read of this specific alternate acknowledges it. Opening the original, or an
         // older alternate while a newer request is pending, leaves the pending attempt alone.
         await db.execute({ sql: 'UPDATE desktop_regeneration_requests SET pending = 0 WHERE alternate_session_id = ? AND pending = 1', args: [session.id] })

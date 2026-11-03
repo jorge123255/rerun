@@ -17,7 +17,7 @@ type ToolInvocationPart = {
     input: unknown
     output?: unknown
 }
-type UIMessagePart = TextPart | ToolInvocationPart | DesktopSourcePart | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
+type UIMessagePart = TextPart | ToolInvocationPart | DesktopSourcePart | { type: 'step-start' } | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
 export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: { authorId?: string; createdAt?: string; attachmentPath?: string } }
 
 function safeParse(json: string | null | undefined): unknown {
@@ -40,7 +40,7 @@ function extractText(content: unknown): string {
 
 // rerun-engine persists AI-SDK message content as JSON in `contentJson`
 // (and tool calls in `toolCallsJson`). Re-hydrate to UI message parts.
-export function transformEngineMessages(messages: EngineMessage[], options?: { desktopSummaries?: boolean }): HistoryMessage[] {
+export function transformEngineMessages(messages: EngineMessage[], options?: { desktopSummaries?: boolean; preserveSourceSteps?: boolean }): HistoryMessage[] {
     const toolResults = new Map<string, unknown>()
     const recordResult = (part: unknown) => {
         const p = part as { type?: string; toolCallId?: string; output?: unknown; result?: unknown }
@@ -104,7 +104,8 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
         const tcParsed = safeParse(m.toolCallsJson)
         if (Array.isArray(tcParsed)) for (const call of tcParsed) pushCall(call)
 
-        if (m.role === 'assistant' && m.sourcesJson) parts.push(...desktopSourceParts(safeParse(m.sourcesJson)))
+        const sources = m.role === 'assistant' && m.sourcesJson ? desktopSourceParts(safeParse(m.sourcesJson)) : []
+        parts.push(...sources)
 
         if (parts.length === 0) continue
         // The message written for a card that went out bare lands in its own row, after the tool
@@ -112,6 +113,8 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
         // the reply receipt look for the call in the last assistant message: fold it back in.
         const previous = result[result.length - 1]
         if (seen.size === 0 && previous && endsOnHitlCall(previous)) {
+            // Source IDs and limits are scoped to a provider step, including inside a folded card.
+            if (options?.preserveSourceSteps && sources.length) previous.parts.push({ type: 'step-start' })
             previous.parts.push(...parts)
             continue
         }
@@ -137,7 +140,7 @@ function toolPartOf(call: unknown, toolResults: Map<string, unknown>): ToolInvoc
 }
 
 function endsOnHitlCall(message: HistoryMessage): boolean {
-    const last = message.parts.findLast(part => part.type !== 'source-url' && part.type !== 'source-document')
+    const last = message.parts.findLast(part => part.type !== 'source-url' && part.type !== 'source-document' && part.type !== 'step-start')
     return message.role === 'assistant' && !!last && 'toolName' in last && !!hitlKindOf(last.toolName)
 }
 

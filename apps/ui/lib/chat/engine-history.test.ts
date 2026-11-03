@@ -145,6 +145,20 @@ describe('a card and the message written after it', () => {
         expect(messages[0].parts[1]).toEqual({ type: 'text', text: 'Here is why I ask.' })
     })
 
+    it('keeps a desktop step boundary when a folded card and its answer reuse a source ID', () => {
+        const first = { type: 'source-url', sourceId: '1', url: 'https://example.org/first' }
+        const next = { ...first, url: 'https://example.org/next' }
+        const rows = [
+            { ...assistant('a1', [askUser('c1')], 1), sourcesJson: JSON.stringify([first]) },
+            toolRow('t1', 'c1', 2),
+            { ...assistant('a2', [{ type: 'text', text: 'Explanation' }], 3), sourcesJson: JSON.stringify([next]) },
+        ]
+        const history = transformEngineMessages(rows, { preserveSourceSteps: true })
+        expect(history).toHaveLength(1)
+        expect(history[0].parts.slice(1)).toEqual([first, { type: 'step-start' }, { type: 'text', text: 'Explanation' }, next])
+        expect(toApiMessages(transformEngineMessages(rows))[0].parts).not.toContainEqual({ type: 'step-start' })
+    })
+
     it('keeps the time of the card message once the follow-up is folded in', () => {
         const messages = transformEngineMessages([assistant('a1', [askUser('c1')], 1), toolRow('t1', 'c1', 2), assistant('a2', [{ type: 'text', text: 'Here is why I ask.' }], 3)])
         expect(messages[0].metadata?.createdAt).toBe(at(1))
