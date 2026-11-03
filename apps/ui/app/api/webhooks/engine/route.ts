@@ -3,8 +3,11 @@ import { followAuthorOfCreatedTask } from '@/app/api/_services/notification-audi
 import { recordNotification } from '@/app/api/_services/notification.service'
 import { authenticateEngineToken } from '@/app/api/_services/workspace-engine.service'
 import { engineCreatedEventSchema, notificationPayloadSchema } from '@/lib/engine/types'
+import { handleDesktopEngineCallback } from '@/lib/desktop/server/engine-callback'
 
 export async function POST(req: Request) {
+    if (process.env.RERUN_DESKTOP_APP === '1') return handleDesktopEngineCallback(req)
+
     const header = req.headers.get('authorization') ?? ''
     const token = header.startsWith('Bearer ') ? header.slice(7) : ''
     if (!token) return Response.json({ error: 'Unauthorized' }, { status: 401 })

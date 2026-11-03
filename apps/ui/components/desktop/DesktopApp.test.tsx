@@ -25,4 +25,12 @@ describe('DesktopApp', () => {
         expect(html).toContain('OpenAI connected')
         expect(html).toContain('Select a coworker')
     })
+
+    it('uses a stacked narrow layout with a bounded scrollable coworker area', () => {
+        const html = renderToString(<DesktopApp initialData={{ profile, workspace, agents: [], connections: [] }} />)
+        expect(html).toContain('md:flex-row')
+        expect(html).toContain('md:w-80')
+        expect(html).toContain('max-h-[38dvh]')
+        expect(html).toContain('sm:flex-row')
+    })
 })

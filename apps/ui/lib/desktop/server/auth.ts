@@ -39,3 +39,12 @@ export async function authenticateDesktopRequest(request: Request): Promise<Desk
     }
     return runtime
 }
+
+export async function authenticateDesktopEngineRequest(request: Request): Promise<DesktopRuntime> {
+    const runtime = await readDesktopRuntime()
+    if (request.headers.get('host') !== new URL(runtime.app.origin).host) throw new DesktopHttpError(403, 'Forbidden')
+    const header = request.headers.get('authorization') ?? ''
+    const token = header.startsWith('Bearer ') ? header.slice(7) : ''
+    if (!token || !sameSecret(token, runtime.engine.apiKey)) throw new DesktopHttpError(401, 'Unauthorized')
+    return runtime
+}

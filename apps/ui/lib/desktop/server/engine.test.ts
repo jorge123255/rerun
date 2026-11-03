@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDesktopDatabase } from './database'
 import { connectDesktopOpenAI, createDesktopCoworker, readDesktopHistory, startDesktopChat } from './engine'
-import { listDesktopConnections } from './store'
+import { createDesktopAgent, listDesktopConnections } from './store'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 
@@ -109,6 +109,18 @@ describe('desktop engine workflows', () => {
         const chat = seen.find(request => request.url === '/agents/engine-agent-1/chat')
         expect(chat?.body).toMatchObject({ message: 'Hello', source: 'dashboard' })
         expect(chat?.body?.sessionId).toBeUndefined()
+    })
+
+    it('refuses to create a coworker without a local provider connection', async () => {
+        await expect(createDesktopCoworker(runtime, { name: 'Researcher' })).rejects.toMatchObject({ status: 400, message: 'Connect OpenAI before creating a coworker' })
+        expect(seen).toHaveLength(0)
+    })
+
+    it('refuses to start chat without a local provider connection', async () => {
+        const db = await openDesktopDatabase(root)
+        const agent = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'Researcher' })
+        await expect(startDesktopChat(runtime, { agentId: agent.id, text: 'Hello' })).rejects.toMatchObject({ status: 400, message: 'Connect OpenAI before starting a conversation' })
+        expect(seen).toHaveLength(0)
     })
 
     it('reopens engine history through a local session mapping', async () => {

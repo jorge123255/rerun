@@ -41,6 +41,7 @@ export async function createDesktopCoworker(runtime: DesktopRuntime, input: { na
     if (description.length > 2000) throw new DesktopHttpError(400, 'Description is too long')
     const db = await openDesktopDatabase(runtime.dataRoot)
     const connection = (await listDesktopConnections(db))[0]
+    if (!connection) throw new DesktopHttpError(400, 'Connect OpenAI before creating a coworker')
     const handle = `${sanitizeIdentifier(name).replace(/^_+|_+$/g, '') || 'coworker'}-${crypto.randomUUID().slice(0, 8)}`
     const created = await createAgent(engineOf(runtime), {
         config: {
@@ -63,6 +64,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: { agentId
     const existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
     const connection = (await listDesktopConnections(db))[0]
+    if (!connection) throw new DesktopHttpError(400, 'Connect OpenAI before starting a conversation')
     const engineResponse = await chat(engineOf(runtime), agent.engineAgentId, {
         sessionId: existing?.engineSessionId,
         message: input.text,

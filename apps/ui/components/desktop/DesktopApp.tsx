@@ -95,9 +95,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
 
     return (
-        <main className="flex h-[100dvh] bg-background text-foreground">
-            <aside className="flex w-80 shrink-0 flex-col border-r bg-muted/20">
-                <div className="border-b px-5 py-5">
+        <main className="flex h-[100dvh] flex-col bg-background text-foreground md:flex-row">
+            <aside className="flex max-h-[38dvh] w-full shrink-0 flex-col border-b bg-muted/20 md:max-h-none md:w-80 md:border-b-0 md:border-r">
+                <div className="shrink-0 border-b px-5 py-5">
                     <div className="text-lg font-semibold tracking-tight">Rerun Local</div>
                     <div className="mt-1 text-sm text-muted-foreground">{initialData.workspace.name} · {initialData.profile.displayName}</div>
                     <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-700 dark:text-emerald-400">
@@ -121,10 +121,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                         ))}
                     </div>
                 </div>
-                <div className="border-t p-4 text-xs text-muted-foreground">Chat history and app records stay on this Mac.</div>
+                <div className="shrink-0 border-t p-4 text-xs text-muted-foreground">Chat history and app records stay on this Mac.</div>
             </aside>
 
-            <section className="flex min-w-0 flex-1 flex-col">
+            <section className="flex min-h-0 min-w-0 flex-1 flex-col">
                 {!connected && (
                     <div className="border-b bg-background p-4">
                         <Card className="mx-auto max-w-3xl shadow-none">
@@ -133,10 +133,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                 <CardDescription>Your key goes directly to the local engine. It is never stored in the app database or browser storage.</CardDescription>
                             </CardHeader>
                             <CardContent>
-                                <form onSubmit={connectProvider} className="flex gap-2">
+                                <form onSubmit={connectProvider} className="flex flex-col gap-2 sm:flex-row">
                                     <label htmlFor="openai-key" className="sr-only">OpenAI API key</label>
                                     <Input id="openai-key" type="password" autoComplete="off" placeholder="OpenAI API key" value={apiKey} onChange={event => setApiKey(event.target.value)} />
-                                    <Button type="submit" disabled={!apiKey.trim() || busy === 'provider'}>{busy === 'provider' ? 'Connecting…' : 'Connect'}</Button>
+                                    <Button className="w-full sm:w-auto" type="submit" disabled={!apiKey.trim() || busy === 'provider'}>{busy === 'provider' ? 'Connecting…' : 'Connect'}</Button>
                                 </form>
                             </CardContent>
                         </Card>

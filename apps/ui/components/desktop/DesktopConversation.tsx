@@ -79,16 +79,16 @@ export function DesktopConversation({ agent, sessionId, sessions, onSelectSessio
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
-            <header className="flex items-center justify-between border-b px-5 py-3">
+            <header className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-3 sm:px-5">
                 <div className="min-w-0">
                     <h1 className="truncate text-base font-semibold">{agent.name}</h1>
                     <p className="truncate text-xs text-muted-foreground">{agent.description || 'Local coworker'}</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex w-full items-center gap-2 sm:w-auto">
                     {sessions.length > 0 && (
                         <select
                             aria-label="Conversation history"
-                            className="max-w-56 rounded-md border bg-background px-2 py-1.5 text-sm"
+                            className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1.5 text-sm sm:max-w-56"
                             value={sessionId ?? ''}
                             onChange={event => onSelectSession(event.target.value || null)}
                         >
