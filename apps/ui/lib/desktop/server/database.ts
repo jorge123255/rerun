@@ -26,6 +26,10 @@ async function initialize(dataRoot: string): Promise<Client> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS desktop_appearance (
+            workspace_id INTEGER PRIMARY KEY REFERENCES desktop_workspace(id),
+            theme TEXT NOT NULL CHECK (theme IN ('system', 'light', 'dark'))
+        );
         CREATE TABLE IF NOT EXISTS desktop_agents (
             id TEXT PRIMARY KEY,
             workspace_id INTEGER NOT NULL REFERENCES desktop_workspace(id),

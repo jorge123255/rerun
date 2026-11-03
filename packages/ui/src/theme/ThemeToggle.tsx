@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import { cn } from '../cn'
 import { Monitor, Moon, Sun, type LucideIcon } from '../icons'
 import { SegmentedControl, SegmentedControlItem } from '../primitives/segmented-control'
-import type { ThemePreference } from './theme-cookie'
+import { parseThemePreference, type ThemePreference } from './theme-cookie'
 
 const OPTIONS: { value: ThemePreference; label: string; icon: LucideIcon }[] = [
     { value: 'system', label: 'System', icon: Monitor },
@@ -14,7 +14,7 @@ const OPTIONS: { value: ThemePreference; label: string; icon: LucideIcon }[] = [
     { value: 'dark', label: 'Dark', icon: Moon },
 ]
 
-export function ThemeToggle({ className }: { className?: string }) {
+export function ThemeToggle({ className, onPreferenceChange }: { className?: string; onPreferenceChange?: (theme: ThemePreference) => void }) {
     const { theme, setTheme } = useTheme()
     const [mounted, setMounted] = useState(false)
 
@@ -25,7 +25,7 @@ export function ThemeToggle({ className }: { className?: string }) {
     return (
         <SegmentedControl
             value={mounted ? (theme ?? 'system') : ''}
-            onValueChange={setTheme}
+            onValueChange={value => onPreferenceChange ? onPreferenceChange(parseThemePreference(value)) : setTheme(value)}
             className={cn('gap-0.5 p-0.5', className)}
             role="radiogroup"
             aria-label="Theme"

@@ -13,7 +13,7 @@ test('a reopened workspace can replace a saved key and recover after a failed sa
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
-    const initialData = { profile: { id: 1, displayName: 'Local User' }, workspace: { id: 1, name: 'Workspace' }, agents: [], default: null, connections: [{ id: 'example-connection', name: 'OpenAI', provider: 'openai' as const, models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }] }
+    const initialData = { profile: { id: 1, displayName: 'Local User' }, workspace: { id: 1, name: 'Workspace' }, agents: [], theme: 'system' as const, default: null, connections: [{ id: 'example-connection', name: 'OpenAI', provider: 'openai' as const, models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }] }
     const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: 'Synthetic save failure' }, { status: 500 })).mockResolvedValueOnce(Response.json({ connections: initialData.connections, default: null }))
     vi.stubGlobal('fetch', fetcher)
     const button = (text: string) => [...container.querySelectorAll('button')].find(item => item.textContent?.trim() === text)!
@@ -73,7 +73,7 @@ test('a board tile opens the saved conversation and New chat starts a separate s
         await act(async () => { input.form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
     }
     try {
-        await act(async () => { root.render(<DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], default: null, connections: [{ id: 'key', name: 'OpenAI', provider: 'openai' as const, models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }] }} />) })
+        await act(async () => { root.render(<DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [agent], theme: 'system' as const, default: null, connections: [{ id: 'key', name: 'OpenAI', provider: 'openai' as const, models: ['gpt-6-sol'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }] }} />) })
         const tile = container.querySelector<HTMLElement>('[aria-label="Open chat with Researcher"]')!
         await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
         expect(container.textContent).toContain('Saved answer')

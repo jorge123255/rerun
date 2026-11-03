@@ -46,6 +46,14 @@ export function changeDesktopSettings(runtime: DesktopRuntime, change: SettingsC
 }
 
 async function applyChange(runtime: DesktopRuntime, change: SettingsChange) {
+    if (change.action === 'appearance') {
+        const db = await openDesktopDatabase(runtime.dataRoot)
+        await db.execute({
+            sql: 'INSERT INTO desktop_appearance (workspace_id, theme) VALUES (1, ?) ON CONFLICT(workspace_id) DO UPDATE SET theme = excluded.theme',
+            args: [change.theme],
+        })
+        return
+    }
     if (change.action === 'workspace') {
         const db = await openDesktopDatabase(runtime.dataRoot)
         await db.execute({ sql: 'UPDATE desktop_workspace SET name = ?, updated_at = ? WHERE id = 1', args: [change.name, new Date().toISOString()] })

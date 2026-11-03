@@ -1,4 +1,5 @@
 import 'server-only'
+import { desktopTheme } from '../settings'
 import type { Client, Row } from '@libsql/client'
 
 export type DesktopAgent = {
@@ -44,15 +45,17 @@ function sessionOf(row: Row): DesktopSession {
 }
 
 export async function readDesktopBootstrap(db: Client) {
-    const [profile, workspace, agents] = await Promise.all([
+    const [profile, workspace, agents, appearance] = await Promise.all([
         db.execute('SELECT id, display_name FROM desktop_profile WHERE id = 1'),
         db.execute('SELECT id, name FROM desktop_workspace WHERE id = 1'),
         listDesktopAgents(db),
+        db.execute('SELECT theme FROM desktop_appearance WHERE workspace_id = 1'),
     ])
     return {
         profile: { id: 1, displayName: String(profile.rows[0].display_name) },
         workspace: { id: 1, name: String(workspace.rows[0].name) },
         agents,
+        theme: desktopTheme.parse(appearance.rows[0]?.theme ?? 'system'),
     }
 }
 

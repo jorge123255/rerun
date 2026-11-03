@@ -136,6 +136,14 @@ describe('desktop API routes', () => {
         expect((await patchSettings(request('/api/desktop/settings', { method: 'PATCH', body: { action: 'default', connectionId: 'connection-1', model: 'not-offered' } }))).status).toBe(400)
     })
 
+    it('reopens the workspace appearance independently of the renderer origin', async () => {
+        const write = request('/api/desktop/settings', { method: 'PATCH', body: { action: 'appearance', theme: 'dark' } })
+        expect((await patchSettings(write)).status).toBe(200)
+        await closeDesktopDatabase(root)
+        const bootstrap = await getBootstrap(request('/api/desktop/bootstrap'))
+        expect((await bootstrap.json()).theme).toBe('dark')
+    })
+
     it('validates input before calling the engine', async () => {
         expect((await connectProvider(request('/api/desktop/providers/openai', { method: 'POST', body: { apiKey: '' } }))).status).toBe(400)
         expect((await createAgent(request('/api/desktop/agents', { method: 'POST', body: { name: '' } }))).status).toBe(400)

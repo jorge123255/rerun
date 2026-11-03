@@ -1,6 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useTheme } from 'next-themes'
+import type { ThemePreference } from '@rerun/ui/theme'
 import type { ConnectionsList } from '@rerun/contracts'
 import type { SettingsChange } from '@/lib/desktop/settings'
 import { DesktopSettings } from './DesktopSettings'
@@ -16,6 +18,7 @@ import { DesktopConversation } from './DesktopConversation'
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
 export type DesktopBootstrap = ConnectionsList & {
+    theme: ThemePreference
     profile: { id: number; displayName: string }
     workspace: { id: number; name: string }
     agents: DesktopAgentView[]
@@ -28,6 +31,8 @@ async function json<T>(response: Response): Promise<T> {
 }
 
 export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
+    const { setTheme } = useTheme()
+    useEffect(() => { setTheme(initialData.theme) }, [initialData.theme, setTheme])
     const [providers, setProviders] = useState<ConnectionsList>({ connections: initialData.connections, default: initialData.default })
     const [workspaceName, setWorkspaceName] = useState(initialData.workspace.name)
     const [settings, setSettings] = useState(false)
@@ -55,6 +60,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             body: JSON.stringify(change),
         })
         setProviders(await json<ConnectionsList>(response))
+        if (change.action === 'appearance') setTheme(change.theme)
         if (change.action === 'workspace') setWorkspaceName(change.name)
     }
 

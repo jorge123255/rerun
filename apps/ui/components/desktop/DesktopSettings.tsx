@@ -124,7 +124,7 @@ export function DesktopSettings({ providers, workspaceName, onSave }: Props) {
                             <Input id="workspace-name" maxLength={WORKSPACE_NAME_MAX} value={name} onChange={e => setName(e.target.value)} />
                             <Button disabled={!name.trim() || name.trim() === workspaceName} type="submit">Save name</Button>
                         </form>
-                        <div className="flex items-center justify-between rounded-xl border p-4"><strong>Appearance</strong><ThemeToggle /></div>
+                        <div className="flex items-center justify-between rounded-xl border p-4"><strong>Appearance</strong><ThemeToggle onPreferenceChange={theme => void save({ action: 'appearance', theme }, 'Appearance saved.')} /></div>
                     </>}
                     {tab === 'Shortcuts' && <dl className="grid grid-cols-[1fr_auto] gap-3 rounded-xl border p-4 text-sm">
                         <dt>Open Settings</dt><dd>⌘ ,</dd><dt>Send a chat message</dt><dd>Return</dd><dt>New line in chat</dt><dd>Shift Return</dd>
