@@ -1,9 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import type { ThemePreference } from '@rerun/ui/theme'
-import type { ConnectionsList } from '@rerun/contracts'
+import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
+import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import type { SettingsChange } from '@/lib/desktop/settings'
 import { DesktopSettings } from './DesktopSettings'
 import { LayoutGrid, Settings } from 'lucide-react'
@@ -37,6 +38,27 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         if (theme !== preference) setTheme(preference)
     }, [theme, preference, setTheme])
     const [providers, setProviders] = useState<ConnectionsList>({ connections: initialData.connections, default: initialData.default })
+    const providerRead = useRef<AbortController | null>(null)
+    const refreshProviders = useCallback(async () => {
+        if (providerRead.current && !providerRead.current.signal.aborted) return
+        const read = new AbortController()
+        providerRead.current = read
+        try {
+            const response = await fetch('/api/desktop/settings', { signal: read.signal, cache: 'no-store' })
+            if (!response.ok) return
+            const snapshot = connectionsListSchema.parse(await response.json())
+            if (!read.signal.aborted) setProviders(snapshot)
+        } finally {
+            if (providerRead.current === read) providerRead.current = null
+        }
+    }, [])
+    useVisibleInterval(refreshProviders, 5000)
+    useEffect(() => () => providerRead.current?.abort(), [])
+    const applyProviders = useCallback((snapshot: ConnectionsList) => {
+        // A read begun before a settings or sign-in change must not undo that change.
+        providerRead.current?.abort()
+        setProviders(snapshot)
+    }, [])
     const [workspaceName, setWorkspaceName] = useState(initialData.workspace.name)
     const [settings, setSettings] = useState(false)
     useEffect(() => {
@@ -54,6 +76,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [busy, setBusy] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
     const connected = providers.connections.some(c => c.connected)
+    const available = providers.connections.filter(c => c.connected && !c.credentialRejected)
+    const defaultProvider = available.find(c => c.id === providers.default?.connectionId)
+    const sidebarProvider = defaultProvider ?? available[0]
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
 
     async function saveSettings(change: SettingsChange) {
@@ -62,7 +87,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(change),
         })
-        setProviders(await json<ConnectionsList>(response))
+        applyProviders(await json<ConnectionsList>(response))
         if (change.action === 'appearance') setPreference(change.theme)
         if (change.action === 'workspace') setWorkspaceName(change.name)
     }
@@ -134,6 +159,15 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                         ))}
                     </div>
                 </div>
+                <div className="shrink-0 border-t px-5 py-2">
+                    {sidebarProvider ? <div role="status" className="text-sm">
+                        <div className="flex items-center gap-2 font-medium">
+                            <span aria-hidden className="size-2 rounded-full bg-emerald-500" />
+                            <span>{PROVIDER_LABELS[sidebarProvider.provider]} is connected</span>
+                        </div>
+                        <span className="block truncate pl-4 text-xs text-muted-foreground">{defaultProvider ? providers.default?.model : 'Choose a default model in Settings.'}</span>
+                    </div> : <Button size="sm" variant="outline" onClick={() => setSettings(true)}>Set up provider</Button>}
+                </div>
                 <button type="button" aria-keyshortcuts="Meta+," aria-current={settings ? 'page' : undefined} onClick={() => setSettings(true)}
                     className="flex shrink-0 items-center gap-2 border-t px-5 py-3 text-sm font-medium hover:bg-accent aria-[current=page]:bg-accent">
                     <Settings className="size-4" aria-hidden /> Settings
@@ -141,11 +175,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             </aside>
 
             <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-                {settings ? <DesktopSettings providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={setProviders} /> : <>
-                    {!connected && <div className="flex items-center justify-between gap-3 border-b px-5 py-2 text-sm">
-                        <span>Connect an AI provider to chat with your coworkers.</span>
-                        <Button size="sm" onClick={() => setSettings(true)}>Set up provider</Button>
-                    </div>}
+                {settings ? <DesktopSettings providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} /> : <>
                     {error && <div role="alert" className="border-b bg-destructive/10 px-5 py-2 text-sm text-destructive">{error}</div>}
 
                     {selectedAgent ? (
