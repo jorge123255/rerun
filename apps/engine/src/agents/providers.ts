@@ -364,6 +364,8 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
                     web_search: 'disabled',
                     ...(readTool && {
                         prefix_mcp_tool_names: true,
+                        // Code-mode-only models can call this namespace directly with the Mac host disabled.
+                        'features.code_mode.direct_only_tool_namespaces': [`mcp__${BRIDGE_SERVER_NAME}`],
                         [`mcp_servers.${BRIDGE_SERVER_NAME}.enabled_tools`]: ['fs_read'],
                         [`mcp_servers.${BRIDGE_SERVER_NAME}.tools.fs_read.approval_mode`]: 'approve',
                     }),

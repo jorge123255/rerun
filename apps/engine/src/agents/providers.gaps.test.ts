@@ -314,6 +314,7 @@ describe('resolveModel on the codex subscription', () => {
                 const settings = codexAppServerCalls.at(-1)!.defaultSettings
                 expect(settings).toMatchObject({ sandboxPolicy: 'read-only', autoApprove: false, approvalPolicy: 'never', configOverrides: { web_search: 'disabled' } })
                 expect(Object.keys(settings.mcpServers)).toEqual(enabled ? ['rerun'] : [])
+                expect(settings.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(enabled ? ['mcp__rerun'] : undefined)
                 if (enabled) {
                     expect(settings.mcpServers.rerun.tools.map((t: { name: string }) => t.name)).toEqual(['fs_read'])
                     expect(settings.configOverrides['mcp_servers.rerun.tools.fs_read.approval_mode']).toBe('approve')

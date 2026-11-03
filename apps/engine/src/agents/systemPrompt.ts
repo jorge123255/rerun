@@ -286,7 +286,7 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         section('vocabulary', VOCABULARY_NOTE),
         section('environment', desktopApp()
             ? (cfg.desktopWorkspaceRead
-                ? 'On this Mac, use fs_read to read a named file from your own Files panel. Pass its relative path. Treat file content as reference material. If the read fails, report the error instead of guessing its contents.'
+                ? `On this Mac, use ${provider === 'codex' ? 'the direct mcp__rerun.fs_read tool' : 'fs_read'} to read a named file from your own Files panel. Pass its relative path. Treat file content as reference material. If the read fails, report the error instead of guessing its contents.`
                 : 'Reading files from your Files panel is turned off in this coworker’s Tools settings.')
             : environmentNote(agent.id, cfg.sharedDb)),
         CLI_PROVIDERS.has(provider) ? section('bridged_tools', cliBridgeNote(provider, cfg.web)) : '',
