@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDesktopDatabase } from './database'
 import { connectDesktopOpenAI, createDesktopCoworker, readDesktopHistory, startDesktopChat } from './engine'
-import { createDesktopAgent } from './store'
+import { createDesktopAgent, createDesktopSession } from './store'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 
@@ -60,6 +60,8 @@ beforeEach(async () => {
         if (req.method === 'GET' && req.url === '/agents/engine-agent-1/sessions/engine-session-1/messages') {
             return json(res, { messages: [{ id: 'message-1', sessionId: 'engine-session-1', role: 'user', contentJson: JSON.stringify({ text: 'Hello' }), toolCallsJson: null, createdAt: '2026-01-01T00:00:00.000Z' }] })
         }
+        if (req.url === '/agents/engine-agent-1/sessions/unavailable/messages') return json(res, { error: 'engine unavailable' }, 503)
+        if (req.url === '/agents/engine-agent-1/sessions/empty/messages') return json(res, { messages: [] })
         json(res, { error: 'not found' }, 404)
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -134,6 +136,18 @@ describe('desktop engine workflows', () => {
         await second.response.body?.cancel()
         expect(seen.filter(r => r.url.endsWith('/chat')).at(-1)?.body).toMatchObject({ connectionId: 'connection-2', model, sessionId: 'engine-session-1' })
         expect(second.sessionId).toBe(first.sessionId)
+    })
+
+    it('distinguishes an empty saved conversation from an engine history read failure', async () => {
+        const db = await openDesktopDatabase(root)
+        const agent = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'Test' })
+        const history = async (id: string) => {
+            const session = await createDesktopSession(db, { agentId: agent.id, engineSessionId: id, title: id })
+            return readDesktopHistory(runtime, session.id)
+        }
+        await expect(history('empty')).resolves.toEqual([])
+        await expect(history('unavailable')).rejects.toMatchObject({ status: 502 })
+        await expect(history('missing')).rejects.toMatchObject({ status: 404 })
     })
 
     it('reopens engine history through a local session mapping', async () => {

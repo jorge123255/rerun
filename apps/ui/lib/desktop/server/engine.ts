@@ -90,5 +90,11 @@ export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: str
     if (!session) throw new DesktopHttpError(404, 'Conversation not found')
     const agent = await findDesktopAgent(db, session.agentId)
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
-    return transformEngineMessages(await getSessionMessages(engineOf(runtime), agent.engineAgentId, session.engineSessionId), { desktopSummaries: true })
+    try {
+        const messages = await getSessionMessages(engineOf(runtime), agent.engineAgentId, session.engineSessionId, { requireSuccess: true })
+        return transformEngineMessages(messages, { desktopSummaries: true })
+    } catch (cause) {
+        if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Conversation not found')
+        throw new DesktopHttpError(502, 'Could not load this conversation. Try again.')
+    }
 }

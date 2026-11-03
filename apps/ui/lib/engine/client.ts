@@ -447,10 +447,14 @@ export async function getSession(conn: EngineConnection, agentId: string, sessio
     return engineSessionSchema.parse(await res.json())
 }
 
-export async function getSessionMessages(conn: EngineConnection, agentId: string, sessionId: string): Promise<EngineMessage[]> {
-    const res = await fetch(`${conn.baseUrl}/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/messages`, { headers: buildHeaders(conn) })
-    if (!res.ok) return []
-    return engineMessagesListSchema.parse(await res.json()).messages
+export async function getSessionMessages(conn: EngineConnection, agentId: string, sessionId: string, options: { requireSuccess?: boolean } = {}): Promise<EngineMessage[]> {
+    const path = `/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/messages`
+    try {
+        return await request(conn, path, { method: 'GET' }, body => engineMessagesListSchema.parse(body).messages)
+    } catch (cause) {
+        if (cause instanceof EngineRequestError && !options.requireSuccess) return []
+        throw cause
+    }
 }
 
 // --- Chat (SSE, AI-SDK UI message stream protocol) ---
