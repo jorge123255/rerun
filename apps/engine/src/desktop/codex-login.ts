@@ -38,25 +38,39 @@ function fail(message: string) {
     return state
 }
 
-async function accept(owner: CodexAuthClient) {
-    const account = await owner.request('account/read', { refreshToken: false })
-    if (!z.object({ account: z.object({ type: z.literal('chatgpt') }) }).safeParse(account).success)
-        throw new Error('The runner has no ChatGPT account.')
-    const models = catalog.parse(await owner.request('model/list', { limit: 100 })).data.filter(m => !m.hidden)
-    const preferred = models.find(m => m.isDefault) ?? models[0]
-    if (!preferred) throw new Error('ChatGPT returned no available models.')
-    const available = [...new Set(models.map(m => m.model))]
-    const keys = { [signedInFlag]: '1' }
-    if (await findConnection(DESKTOP_CODEX_ID)) {
-        await patchConnection(DESKTOP_CODEX_ID, { models: available })
-        await updateConnectionKeys(DESKTOP_CODEX_ID, { set: keys, remove: [] })
-    } else {
-        await createConnection({ name: 'ChatGPT (Codex)', provider: 'codex', models: available, extraModels: [], keys }, DESKTOP_CODEX_ID)
+// The login notification can precede the original worker refreshing its account/model cache.
+// Read via a fresh worker, just as the next chat will, before publishing a Rerun connection.
+async function restoreAccount(): Promise<boolean> {
+    const reader = new CodexAuthClient(() => {}, () => {})
+    let stage = 'read the saved account from Keychain'
+    try {
+        await reader.initialize()
+        const account = await reader.request('account/read', { refreshToken: false })
+        if (!z.object({ account: z.object({ type: z.literal('chatgpt') }) }).safeParse(account).success) return false
+
+        stage = 'load the ChatGPT model list'
+        const models = catalog.parse(await reader.request('model/list', { limit: 100 })).data.filter(m => !m.hidden)
+        const preferred = models.find(m => m.isDefault) ?? models[0]
+        if (!preferred) throw new Error('No available models')
+        const available = [...new Set(models.map(m => m.model))]
+        const keys = { [signedInFlag]: '1' }
+        stage = 'save the ChatGPT connection in this workspace'
+        if (await findConnection(DESKTOP_CODEX_ID)) {
+            await patchConnection(DESKTOP_CODEX_ID, { models: available })
+            await updateConnectionKeys(DESKTOP_CODEX_ID, { set: keys, remove: [] })
+        } else {
+            await createConnection({ name: 'ChatGPT (Codex)', provider: 'codex', models: available, extraModels: [], keys }, DESKTOP_CODEX_ID)
+        }
+        stage = 'set the default ChatGPT model'
+        await writeBoxDefault({ connectionId: DESKTOP_CODEX_ID, model: preferred.model })
+        lastRefresh = Date.now()
+        state = { phase: 'connected' }
+        return true
+    } catch {
+        throw new Error(`Could not ${stage}. Retry setup to use the saved login.`)
+    } finally {
+        reader.close()
     }
-    await writeBoxDefault({ connectionId: DESKTOP_CODEX_ID, model: preferred.model })
-    lastRefresh = Date.now()
-    state = { phase: 'connected' }
-    release()
 }
 
 function newClient() {
@@ -71,7 +85,10 @@ function newClient() {
                     : 'Codex could not complete device sign-in. Request a new code to try again.')
                 return
             }
-            try { await accept(owner) } catch { fail('Could not finish ChatGPT sign-in. Check Keychain access and try again.') }
+            release()
+            try {
+                if (!await restoreAccount()) fail('The account is not ready yet. Retry setup to use the saved login.')
+            } catch (error) { fail((error as Error).message) }
         })
     }, () => {
         if (client === owner) fail('The Codex sign-in process stopped. Request a new code.')
@@ -94,6 +111,11 @@ export function codexLoginAction(action: 'start' | 'cancel' | 'logout') {
         }
         if (action === 'start' && state?.phase === 'waiting') return state
         release()
+        if (action === 'start') {
+            try {
+                if (await restoreAccount()) return { phase: 'connected' }
+            } catch (error) { return fail((error as Error).message) }
+        }
         try {
             const owner = newClient()
             await owner.initialize()

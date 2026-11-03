@@ -17,16 +17,17 @@ afterEach(async () => {
 test('device approval alone registers the runner catalog; cancel and logout clear their state', async () => {
     const cli = join(root, 'fixture-cli')
     await writeFile(cli, `#!${process.execPath}
-const rl=require('node:readline').createInterface({input:process.stdin})
+const fs=require('node:fs'),state=require('node:path').join(process.cwd(),'fixture-auth');const rl=require('node:readline').createInterface({input:process.stdin})
 const send=m=>console.log(JSON.stringify(m))
 rl.on('line', line=>{
  const m=JSON.parse(line); if(!m.id)return
  let result={}
  if(m.method==='account/login/start'){
   result={type:'chatgptDeviceCode',loginId:'owned',userCode:'TEST-CODE',verificationUrl:'https://auth.openai.com/codex/device'}
-  setTimeout(()=>send({method:'account/login/completed',params:{loginId:'owned',success:true}}),400)
+  setTimeout(()=>{fs.writeFileSync(state,'ok');send({method:'account/login/completed',params:{loginId:'owned',success:true}})},400)
  }
- if(m.method==='account/read')result={account:{type:'chatgpt'}}
+ if(m.method==='account/read')result={account:fs.existsSync(state)?{type:'chatgpt'}:null}
+ if(m.method==='account/logout')fs.rmSync(state,{force:true})
  if(m.method==='model/list')result={data:[{model:'test-model',hidden:false,isDefault:true},{model:'hidden',hidden:true,isDefault:false}]}
  send({id:m.id,result})
 })
