@@ -33,6 +33,8 @@ test('authenticated local history preserves two chats across service restart and
                 const model = DEFAULT_CONNECTION_MODELS.openai[0]
                 return json({ connections: [{ id: 'synthetic', name: 'Synthetic', provider: 'openai', models: [model], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '2026-01-01' }], default: { connectionId: 'synthetic', model } })
             }
+            const agent = req.url?.match(/^\/agents\/(engine-alice|engine-bob)$/)
+            if (req.method === 'GET' && agent) return json({ id: agent[1], config: { name: agent[1], connectionId: 'synthetic', model: null }, soul: '' })
             const chat = req.url?.match(/^\/agents\/([^/]+)\/chat$/)
             if (req.method === 'POST' && chat) {
                 let text = ''

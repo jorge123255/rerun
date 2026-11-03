@@ -84,17 +84,17 @@ export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: De
     // A missing workspace default still blocks chat, as it does today. A valid pin or chat
     // override then replaces it for this send without writing the workspace choice back.
     const workspace = await desktopModel(runtime)
-    const list = await readDesktopProviders(runtime)
+    const { connections } = workspace
     const conversation = requested ?? savedChoice(session)
     if (conversation) {
-        if (requested) offered(list.connections, requested)
-        else if (!usableConnection(list.connections, conversation)) throw new DesktopHttpError(409, 'This conversation’s model is no longer available. Choose another model or follow the coworker default.')
+        if (requested) offered(connections, requested)
+        else if (!usableConnection(connections, conversation)) throw new DesktopHttpError(409, 'This conversation’s model is no longer available. Choose another model or follow the coworker default.')
         return { ...conversation, source: 'conversation' }
     }
     const coworker = await engineCoworker(runtime, agent)
     if (coworker.model) {
         const pick = coworker.connectionId ? { connectionId: coworker.connectionId, model: coworker.model } : null
-        if (!usableConnection(list.connections, pick)) throw new DesktopHttpError(409, 'This coworker’s default model is no longer available. Choose another model or follow the workspace default.')
+        if (!usableConnection(connections, pick)) throw new DesktopHttpError(409, 'This coworker’s default model is no longer available. Choose another model or follow the workspace default.')
         return { connectionId: pick!.connectionId, model: coworker.model, source: 'coworker' }
     }
     if (!offeredModelIds(workspace.connection).includes(workspace.model)) throw new DesktopHttpError(400, WORKSPACE_REQUIRED)

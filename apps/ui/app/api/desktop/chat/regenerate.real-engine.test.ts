@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopHistory } from '@/lib/desktop/server/engine'
-import { createDesktopAgent, listDesktopSessions } from '@/lib/desktop/server/store'
+import { createDesktopAgent, findDesktopSession, listDesktopSessions, setDesktopSessionModel } from '@/lib/desktop/server/store'
 import { createAgent, createConnection, setBoxDefault } from '@/lib/engine/client'
 import { disposableRunEngine } from '@/test/desktop-run-engine.mjs'
 import { POST as chat } from './route'
@@ -32,7 +32,7 @@ test.runIf(process.env.RERUN_REGENERATE_ACCEPTANCE === '1')('an older attached q
         const runtime = await engine.start()
         Object.assign(process.env, { RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_DATA_DIR: root, RERUN_DESKTOP_RUNTIME_FILE: join(root, 'runtime.json') })
         const conn = { baseUrl: runtime.engine.origin, apiKey: runtime.engine.apiKey }
-        const provider = await createConnection(conn, { name: 'Test provider', provider: 'openrouter', models: ['qa-local'], extraModels: [], baseUrl: engine.providerOrigin, keys: { OPENROUTER_API_KEY: 'fixture-only' } })
+        const provider = await createConnection(conn, { name: 'Test provider', provider: 'openrouter', models: ['qa-local', 'qa-pinned'], extraModels: [], baseUrl: engine.providerOrigin, keys: { OPENROUTER_API_KEY: 'fixture-only' } })
         await setBoxDefault(conn, { connectionId: provider.id, model: 'qa-local' })
         const agent = await createAgent(conn, { config: { name: 'notebook', connectionId: provider.id, provider: 'openrouter', tools: { memory: false }, selfImprovement: { enabled: false } } })
         const { id: agentId } = await createDesktopAgent(await openDesktopDatabase(root), { name: 'Notebook', engineAgentId: agent.id })
@@ -40,14 +40,17 @@ test.runIf(process.env.RERUN_REGENERATE_ACCEPTANCE === '1')('an older attached q
         await mkdir(workspace, { recursive: true })
         const file = join(workspace, 'note.md')
         await writeFile(file, 'Agate 7219')
-        const source = await send({ agentId, text: 'What is the stone?', attachmentPath: 'note.md' }, 1)
-        await send({ agentId, sessionId: source, text: 'The later-only marker is orchid 3874.' }, 2)
+        const source = await send({ agentId, text: 'What is the stone?', attachmentPath: 'note.md', modelChoice: { connectionId: provider.id, model: 'qa-pinned' } }, 1)
+        // A stale renderer must not change a saved conversation's model by sending a message.
+        await send({ agentId, sessionId: source, text: 'The later-only marker is orchid 3874.', modelChoice: { connectionId: provider.id, model: 'qa-local' } }, 2)
         const original = await readDesktopHistory(runtime, source)
         expect(original.map(row => row.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
         await writeFile(file, 'Quartz 5361')
         const request = { agentId, sessionId: source, regenerateMessageId: original[1].id, requestId: crypto.randomUUID() }
         const alternate = await send(request, 3)
         expect(alternate).not.toBe(source)
+        expect(engine.providerModels).toEqual(['qa-pinned', 'qa-pinned', 'qa-pinned'])
+        expect(await findDesktopSession(await openDesktopDatabase(root), alternate)).toMatchObject({ model: 'qa-pinned', modelConnectionId: provider.id })
         const context = JSON.stringify(engine.providerMessages[2])
         expect(context.match(/Agate 7219/g)).toHaveLength(1)
         expect(context).not.toMatch(/orchid 3874|Quartz 5361|Reply number 1|Reply number 2/)
@@ -70,8 +73,13 @@ test.runIf(process.env.RERUN_REGENERATE_ACCEPTANCE === '1')('an older attached q
         expect(regenerated[1].parts).toContainEqual({ type: 'text', text: 'Reply number 3' })
         expect(await listDesktopSessions(await openDesktopDatabase(root), agentId)).toHaveLength(2)
         expect(engine.providerMessages).toHaveLength(3)
+        const db = await openDesktopDatabase(root)
+        await setDesktopSessionModel(db, source, null)
         const another = await send({ ...request, requestId: crypto.randomUUID() }, 4)
         expect(another).not.toBe(alternate)
+        expect(await findDesktopSession(db, another)).toMatchObject({ model: null, modelConnectionId: null })
+        await send({ agentId, sessionId: alternate, text: 'Continue the first alternate.' }, 5)
+        expect(engine.providerModels.slice(3)).toEqual(['qa-local', 'qa-pinned'])
     } finally {
         await closeDesktopDatabase(root)
         await engine.close()

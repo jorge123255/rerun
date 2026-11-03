@@ -33,7 +33,7 @@ export async function desktopModel(runtime: DesktopRuntime) {
     if (!pick || !connection?.connected || ![...connection.models, ...connection.extraModels].includes(pick.model)) {
         throw new DesktopHttpError(400, 'Connect a provider and choose a default model in Settings.')
     }
-    return { connection, model: pick.model }
+    return { connection, model: pick.model, connections: list.connections }
 }
 
 // Serialize settings writes inside the desktop UI server. Two rapid submissions should update

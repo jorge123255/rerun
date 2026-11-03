@@ -85,6 +85,36 @@ test('a click changes one chat, a star pins the coworker, and workspace default 
     expect(reported.at(-1)).toEqual({ connectionId: 'local', model: 'model-bob' })
 })
 
+test.each([true, false])('a late save result is isolated when switching chats (success=%s)', async success => {
+    coworker = null
+    reported.length = 0
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === 'PATCH') {
+            await held
+            return success ? Response.json(view({ connectionId: 'local', model: 'model-chat' }))
+                : Response.json({ error: 'Save failed for first chat' }, { status: 409 })
+        }
+        const second = new URL(url, 'http://local').searchParams.get('sessionId') === 'two'
+        return Response.json(view(second ? { connectionId: 'local', model: 'model-bob' } : null))
+    }))
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    const render = (sessionId: string) => act(async () => root.render(<DesktopModelSelector agentId="alice" sessionId={sessionId}
+        onConversationChoice={choice => { reported.push(choice) }} />))
+    await render('one')
+    await click('Local · model-workspace')
+    await click('model-chat')
+    await render('two')
+    expect(button('Local · model-bob')).toBeTruthy()
+    await act(async () => release())
+    expect(reported.at(-1)).toEqual({ connectionId: 'local', model: 'model-bob' })
+    expect(button('Local · model-bob')).toBeTruthy()
+    expect(document.body.textContent).not.toContain('Save failed for first chat')
+})
+
 test('shows an unavailable saved model instead of replacing it', async () => {
     coworker = { connectionId: 'local', provider: 'openrouter', model: 'model-coworker' }
     conversations = {}

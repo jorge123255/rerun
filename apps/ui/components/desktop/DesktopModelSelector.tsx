@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { Star } from 'lucide-react'
+import { ChevronDown, Star } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { desktopModelViewSchema, MODEL_SOURCE_LABEL, type DesktopModelPick, type DesktopModelView } from '@/lib/desktop/chat-model'
@@ -11,6 +11,9 @@ type Props = {
     agentId: string
     sessionId: string | null
     disabled?: boolean
+    active?: boolean
+    workspaceModel?: string
+    onOpenSettings?: () => void
     onConversationChoice?: (choice: DesktopModelPick | undefined) => void
 }
 
@@ -27,8 +30,12 @@ async function readState(response: Response): Promise<DesktopModelView> {
     return parsed.data
 }
 
-export function DesktopModelSelector({ agentId, sessionId, disabled, onConversationChoice }: Props) {
-    const sessionKey = `${agentId}\0${sessionId ?? ''}`
+export function DesktopModelSelector(props: Props) {
+    // A response for a chat that was closed or replaced must only settle its own picker.
+    return <ChatModelMenu key={JSON.stringify([props.agentId, props.sessionId])} {...props} />
+}
+
+function ChatModelMenu({ agentId, sessionId, disabled, active = true, workspaceModel, onOpenSettings, onConversationChoice }: Props) {
     const [open, setOpen] = useState(false)
     const [state, setState] = useState<DesktopModelView | null>(null)
     const [pending, setPending] = useState<DesktopModelPick | null>(null)
@@ -37,17 +44,8 @@ export function DesktopModelSelector({ agentId, sessionId, disabled, onConversat
     const titleId = useId()
     const descriptionId = useId()
     const reported = useRef<string | null>(null)
-    const [seenKey, setSeenKey] = useState(sessionKey)
-    // Drop the previous chat's loaded choice before paint, so a fast send cannot reuse it.
-    if (seenKey !== sessionKey) {
-        setSeenKey(sessionKey)
-        setPending(null)
-        setState(null)
-        setError(undefined)
-        reported.current = null
-    }
-    const shouldLoad = open || sessionId !== null
-    const current = seenKey === sessionKey ? state : null
+    const version = useRef(0)
+    const current = state
 
     const load = useCallback(async (signal?: AbortSignal) => {
         const response = await fetch(modelUrl(agentId, sessionId), { signal, cache: 'no-store' })
@@ -55,17 +53,18 @@ export function DesktopModelSelector({ agentId, sessionId, disabled, onConversat
     }, [agentId, sessionId])
 
     useEffect(() => {
-        if (!shouldLoad) return
+        if (!active) return
+        const started = version.current
         const controller = new AbortController()
         void load(controller.signal).then(next => {
-            if (controller.signal.aborted) return
+            if (controller.signal.aborted || started !== version.current) return
             setState(next)
             setError(undefined)
         }).catch(cause => {
-            if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load models')
+            if (!controller.signal.aborted && started === version.current) setError(cause instanceof Error ? cause.message : 'Could not load models')
         })
         return () => controller.abort()
-    }, [load, shouldLoad])
+    }, [load, active, open])
 
     const conversation = pending ?? (current?.conversation ? { connectionId: current.conversation.connectionId, model: current.conversation.model } : undefined)
     useEffect(() => {
@@ -77,11 +76,13 @@ export function DesktopModelSelector({ agentId, sessionId, disabled, onConversat
     }, [conversation, current, onConversationChoice, pending])
 
     async function save(body: Record<string, unknown>, nextPending: DesktopModelPick | null) {
+        version.current++
         setSaving(true)
         setError(undefined)
         try {
             const response = await fetch(modelUrl(agentId, sessionId), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
             const next = await readState(response)
+            version.current++
             setState(next)
             setPending(sessionId ? null : nextPending)
         } catch (cause) {
@@ -105,14 +106,14 @@ export function DesktopModelSelector({ agentId, sessionId, disabled, onConversat
         },
     } : current
     const effective = view?.effective
-    const label = !effective?.model ? 'Choose model' : effective.available ? `${effective.name ?? 'Model'} · ${effective.label}` : `Unavailable · ${effective.label}`
+    const label = !effective?.model ? (workspaceModel ? `Default · ${workspaceModel}` : 'Choose model') : effective.available ? `${effective.name ?? 'Model'} · ${effective.label}` : `Unavailable · ${effective.label}`
     const busy = disabled || saving
 
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-                <Button type="button" size="sm" variant="outline" disabled={busy && !open} aria-label={effective ? `Model for this chat: ${label}. ${MODEL_SOURCE_LABEL[effective.source]}.` : 'Choose a model for this chat'}>
-                    {label}
+                <Button type="button" size="sm" variant="ghost" className="min-w-0 gap-1 text-xs" disabled={busy && !open} aria-label={effective ? `Model for this chat: ${label}. ${MODEL_SOURCE_LABEL[effective.source]}.` : 'Choose a model for this chat'}>
+                    <span className="truncate">{label}</span><ChevronDown aria-hidden className="size-3" />
                 </Button>
             </PopoverTrigger>
             <PopoverContent align="start" collisionPadding={12} aria-labelledby={titleId} aria-describedby={descriptionId} className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] gap-2 overflow-hidden p-2">
@@ -165,6 +166,7 @@ export function DesktopModelSelector({ agentId, sessionId, disabled, onConversat
                     {view && effective?.model && !effective.available && <p className="px-2.5 py-2 text-xs text-muted-foreground">This saved model is no longer offered by a connected provider. Choose another, or follow the coworker or workspace default.</p>}
                     {view?.effective.reasoning && <p className="px-2.5 py-2 text-xs text-muted-foreground">{view.effective.reasoning.source === 'workspace' ? `Reasoning effort ${view.effective.reasoning.effort} from the workspace default.` : `Reasoning effort ${view.effective.reasoning.effort}, this model’s default.`}</p>}
                 </div>
+                {onOpenSettings && <Button type="button" size="sm" variant="ghost" className="justify-start" onClick={() => { setOpen(false); onOpenSettings() }}>Open model settings</Button>}
             </PopoverContent>
         </Popover>
     )
