@@ -15,7 +15,7 @@ if (flag('--build') || !existsSync(standalone) || !await stampMatches(join(uiDir
         NEXT_PUBLIC_BUILD_SHA: await buildId(),
         NEXT_PUBLIC_APP_URL: 'http://127.0.0.1',
     }
-    await pnpm(['--filter', '@rerun/contracts', 'build'])
+    await pnpm(['--filter', '@rerun/contracts', 'exec', 'tsc', '--build', '--force'])
     await pnpm(['--filter', 'rerun', 'build'], { env })
     await writeStamp(join(uiDir, '.next'), stamp)
 }

@@ -10,7 +10,7 @@ const dist = join(repoRoot, 'apps', 'engine', 'dist')
 const stamp = await sourceStamp()
 
 if (flag('--build') || !existsSync(join(dist, 'cli', 'bin.js')) || !await stampMatches(dist, stamp)) {
-    await pnpm(['--filter', '@rerun/contracts', 'build'])
+    await pnpm(['--filter', '@rerun/contracts', 'exec', 'tsc', '--build', '--force'])
     await pnpm(['--filter', 'rerun-engine', 'build'])
     await writeStamp(dist, stamp)
 }
