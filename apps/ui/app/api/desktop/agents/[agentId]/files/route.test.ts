@@ -1,18 +1,24 @@
-import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent } from '@/lib/desktop/server/store'
-import { GET as list } from './route'
+import { GET as list, POST as upload } from './route'
 import { GET as read } from './read/route'
 
-const race = vi.hoisted(() => ({ beforeOpen: undefined as undefined | ((target: unknown) => Promise<void>) }))
+const race = vi.hoisted(() => ({
+    beforeOpen: undefined as undefined | ((target: unknown) => Promise<void>),
+    // Wrap a handle opened for writing, e.g. to fail after a partial write.
+    wrapWrite: undefined as undefined | ((target: string, handle: import('node:fs/promises').FileHandle) => import('node:fs/promises').FileHandle),
+}))
 vi.mock('node:fs/promises', async importOriginal => {
     const fs = await importOriginal<typeof import('node:fs/promises')>()
     return { ...fs, open: async (...args: Parameters<typeof fs.open>) => {
         await race.beforeOpen?.(args[0])
-        return fs.open(...args)
+        const handle = await fs.open(...args)
+        const flags = Number(args[1] ?? 0)
+        return race.wrapWrite && (flags & 3) !== 0 ? race.wrapWrite(String(args[0]), handle) : handle
     } }
 })
 
@@ -40,6 +46,7 @@ beforeEach(async () => {
 })
 afterEach(async () => {
     race.beforeOpen = undefined
+    race.wrapWrite = undefined
     await closeDesktopDatabase(root)
     process.env = { ...originalEnv }
     await rm(root, { recursive: true, force: true })
@@ -121,4 +128,147 @@ test('a directory replaced with a sibling symlink after path validation cannot r
     }
     expect((await call(read, alice, 'path=docs/notes.md')).status).toBe(400)
     expect(swapped).toBe(true)
+})
+
+const importFile = (id: string, path: string, name: string, text: string | Uint8Array<ArrayBuffer>, origin = 'http://127.0.0.1:3190') => {
+    const form = new FormData()
+    form.set('path', path)
+    form.set('file', new File([text], name))
+    return upload(new Request(`http://127.0.0.1:3190/api/desktop/agents/${id}/files`, { method: 'POST', body: form,
+        headers: { host: '127.0.0.1:3190', origin, cookie: `rerun-desktop-session=${token}` } }), { params: Promise.resolve({ agentId: id }) })
+}
+
+test('imports same-named files into each coworker’s current folder', async () => {
+    const a = await importFile(alice, 'docs', 'brief.md', '# Alice brief')
+    expect(a.status).toBe(201)
+    expect(await a.json()).toEqual({ path: 'docs/brief.md', name: 'brief.md' })
+    expect((await importFile(bob, 'docs', 'brief.md', '# Bob brief')).status).toBe(201)
+    expect((await (await call(read, alice, 'path=docs/brief.md')).json()).content).toBe('# Alice brief')
+    expect((await (await call(read, bob, 'path=docs/brief.md')).json()).content).toBe('# Bob brief')
+    expect((await importFile(alice, '', 'top.txt', 'top')).status).toBe(201)
+    expect(await readFile(join(workspace('engine-alice'), 'top.txt'), 'utf8')).toBe('top')
+})
+
+test('an existing name is preserved and reported', async () => {
+    const response = await importFile(alice, 'docs', 'notes.md', 'REPLACED')
+    expect(response.status).toBe(409)
+    expect((await response.json()).error).toMatch(/already has a file named “notes\.md”/)
+    expect(await readFile(join(workspace('engine-alice'), 'docs', 'notes.md'), 'utf8')).toBe('# Alice notes')
+})
+
+test('only one text or Markdown file with a plain name', async () => {
+    expect((await importFile(alice, 'docs', 'run.sh', 'x')).status).toBe(415)
+    expect((await importFile(alice, 'docs', 'bin.txt', new Uint8Array([0, 1]))).status).toBe(415)
+    expect((await importFile(alice, 'docs', '.env.md', 'x')).status).toBe(400)
+    expect((await importFile(alice, 'docs', '../x.md', 'x')).status).toBe(400)
+    expect((await importFile(alice, 'docs', 'x.md', 'x', 'http://evil.test')).status).toBe(403)
+    expect((await importFile(alice, 'missing', 'x.md', 'x')).status).toBe(404)
+})
+
+test('a redirected folder cannot write into another coworker’s workspace', async () => {
+    const ws = workspace('engine-alice')
+    await symlink(join(workspace('engine-bob'), 'docs'), join(ws, 'bob-docs'), 'dir')
+    await symlink(join(root), join(ws, 'up'), 'dir')
+    expect((await importFile(alice, 'bob-docs', 'evil.md', 'EVIL')).status).toBe(400)
+    expect((await importFile(alice, 'up', 'evil.md', 'EVIL')).status).toBe(400)
+    expect((await importFile(alice, '../../engine-bob/workspace/docs', 'evil.md', 'EVIL')).status).toBe(400)
+    await symlink(join(workspace('engine-bob'), 'docs', 'target.md'), join(ws, 'docs', 'dangling.md'))
+    expect((await importFile(alice, 'docs', 'dangling.md', 'EVIL')).status).toBe(409)
+    await expect(readFile(join(workspace('engine-bob'), 'docs', 'evil.md'))).rejects.toThrow()
+    await expect(readFile(join(workspace('engine-bob'), 'docs', 'target.md'))).rejects.toThrow()
+})
+
+test('a folder swapped for a sibling symlink after validation cannot redirect an import', async () => {
+    const docs = join(workspace('engine-alice'), 'docs')
+    const real = await realpath(docs)
+    let swapped = false
+    race.beforeOpen = async path => {
+        if (swapped || !(String(path).startsWith(join(real, '.swap.md.')) || (process.platform !== 'darwin' && String(path).endsWith('/docs')))) return
+        swapped = true
+        await rename(docs, docs + '-original')
+        await symlink(join(workspace('engine-bob'), 'docs'), docs, 'dir')
+    }
+    expect((await importFile(alice, 'docs', 'swap.md', 'EVIL')).status).toBe(400)
+    expect(swapped).toBe(true)
+    await expect(readFile(join(workspace('engine-bob'), 'docs', 'swap.md'))).rejects.toThrow()
+})
+
+const exists = (path: string) => lstat(path).then(() => true, () => false)
+
+test('a coworker directory redirected to a sibling without a workspace is refused before anything is created', async () => {
+    const db = await openDesktopDatabase(root)
+    const erin = (await createDesktopAgent(db, { engineAgentId: 'engine-erin', name: 'Erin' })).id
+    await createDesktopAgent(db, { engineAgentId: 'engine-frank', name: 'Frank' })
+    const agents = join(root, 'workspaces', '1', 'engine', 'agents')
+    await mkdir(join(agents, 'engine-frank'))
+    await symlink(join(agents, 'engine-frank'), join(agents, 'engine-erin'), 'dir')
+    expect((await importFile(erin, '', 'brief.md', 'EVIL')).status).toBe(400)
+    expect(await readdir(join(agents, 'engine-frank'))).toEqual([])
+    expect(await exists(workspace('engine-frank'))).toBe(false)
+    // A dangling redirect to a sibling that does not exist at all creates nothing either.
+    const gail = (await createDesktopAgent(db, { engineAgentId: 'engine-gail', name: 'Gail' })).id
+    await symlink(join(agents, 'engine-hank'), join(agents, 'engine-gail'), 'dir')
+    expect((await importFile(gail, '', 'brief.md', 'EVIL')).status).toBe(400)
+    expect(await exists(join(agents, 'engine-hank'))).toBe(false)
+})
+
+test('a coworker without a workspace yet gets one on first import', async () => {
+    const db = await openDesktopDatabase(root)
+    const ivy = (await createDesktopAgent(db, { engineAgentId: 'engine-ivy', name: 'Ivy' })).id
+    expect((await importFile(ivy, '', 'first.md', '# Ivy')).status).toBe(201)
+    expect(await readFile(join(workspace('engine-ivy'), 'first.md'), 'utf8')).toBe('# Ivy')
+})
+
+const failAfterPartialWrite = (gate?: Promise<void>) => (_target: string, handle: import('node:fs/promises').FileHandle) => {
+    const partial = async (data: Uint8Array | string) => {
+        await handle.write(Buffer.from(data as Uint8Array).subarray(0, 3))
+        await gate
+        throw Object.assign(new Error('EIO: simulated disk failure'), { code: 'EIO' })
+    }
+    return new Proxy(handle, { get: (h, key) => {
+        if (key === 'writeFile' || key === 'write') return partial
+        const value = Reflect.get(h, key)
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(h) : value
+    } })
+}
+
+test('a write that fails part way leaves the name free for retry and no partial file', async () => {
+    race.wrapWrite = failAfterPartialWrite()
+    expect((await importFile(alice, 'docs', 'retry.md', '# Complete content')).status).toBe(500)
+    const docs = join(workspace('engine-alice'), 'docs')
+    expect(await exists(join(docs, 'retry.md'))).toBe(false)
+    expect((await readdir(docs)).sort()).toEqual(['notes.md'])
+    race.wrapWrite = undefined
+    expect((await importFile(alice, 'docs', 'retry.md', '# Complete content')).status).toBe(201)
+    expect(await readFile(join(docs, 'retry.md'), 'utf8')).toBe('# Complete content')
+})
+
+test('a failed write never touches an existing file with the same name', async () => {
+    race.wrapWrite = failAfterPartialWrite()
+    expect((await importFile(alice, 'docs', 'notes.md', 'REPLACED')).status).not.toBe(201)
+    expect(await readFile(join(workspace('engine-alice'), 'docs', 'notes.md'), 'utf8')).toBe('# Alice notes')
+})
+
+test('an import that is still writing does not claim the name; a racing complete import wins and is kept', async () => {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    let first = true
+    race.wrapWrite = (target, handle) => first ? (first = false, failAfterPartialWrite(gate)(target, handle)) : handle
+    const slow = importFile(alice, 'docs', 'race.md', 'SLOW-AND-FAILS')
+    await new Promise(r => setTimeout(r, 50))
+    const fast = await importFile(alice, 'docs', 'race.md', '# Winner')
+    release()
+    expect((await slow).status).toBe(500)
+    expect(fast.status).toBe(201)
+    expect(await readFile(join(workspace('engine-alice'), 'docs', 'race.md'), 'utf8')).toBe('# Winner')
+})
+
+test('two complete imports racing for one name: exactly one wins and is never overwritten', async () => {
+    for (let i = 0; i < 10; i++) {
+        const name = `both-${i}.md`
+        const [a, b] = await Promise.all([importFile(alice, 'docs', name, 'AAAA'), importFile(alice, 'docs', name, 'BBBB')])
+        expect([a.status, b.status].sort()).toEqual([201, 409])
+        expect(await readFile(join(workspace('engine-alice'), 'docs', name), 'utf8')).toBe(a.status === 201 ? 'AAAA' : 'BBBB')
+    }
+    expect((await readdir(join(workspace('engine-alice'), 'docs'))).filter(n => n.startsWith('.'))).toEqual([])
 })

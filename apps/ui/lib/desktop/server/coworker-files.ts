@@ -1,8 +1,9 @@
 import 'server-only'
 import { DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath } from '@rerun/contracts'
 import { constants } from 'node:fs'
-import { lstat, open, readdir, realpath, type FileHandle } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { randomBytes } from 'node:crypto'
+import { link, lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
@@ -136,5 +137,105 @@ export async function readCoworkerFile(runtime: DesktopRuntime, agentId: string,
         return { path: rel, content, size: info.size, truncated: info.size > bytesRead }
     } finally {
         await handle.close()
+    }
+}
+
+export const IMPORT_BYTES = 1024 * 1024
+const IMPORTABLE = /\.(txt|md)$/i
+
+/**
+ * Copies one .txt/.md file into `folder` of the coworker's workspace. Never overwrites: an existing
+ * name (including a symlink) is reported as 409. The folder must resolve inside the workspace, and
+ * the create itself refuses symlinks in any component, so a swapped folder cannot redirect the write.
+ */
+export async function importCoworkerFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array): Promise<{ path: string; name: string }> {
+    if (!name || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.')) throw new DesktopHttpError(400, 'That file name can’t be imported.')
+    if (!IMPORTABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be imported.')
+    if (bytes.byteLength > IMPORT_BYTES) throw new DesktopHttpError(413, 'Files can be up to 1 MB.')
+    if (bytes.includes(0)) throw new DesktopHttpError(415, 'Only text files can be imported.')
+    const workspace = await coworkerWorkspace(runtime, agentId)
+    let resolved = await containedPath(workspace, folder)
+    if (!resolved.root && !resolved.rel) {
+        await createWorkspace(runtime, workspace)
+        resolved = await containedPath(workspace, folder)
+    }
+    const { target, rel } = resolved
+    if (!target) throw new DesktopHttpError(404, 'Folder not found')
+    const path = rel ? `${rel}/${name}` : name
+    const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace or is not a folder.')
+    const exists = () => new DesktopHttpError(409, `This folder already has a file named “${name}”. The existing file was kept; rename yours and import it again.`)
+    const fsError = (error: unknown) => {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'EEXIST') return exists()
+        if (code === 'ELOOP' || code === 'ENOTDIR') return outside()
+        if (code === 'ENOENT') return new DesktopHttpError(404, 'Folder not found')
+        return error
+    }
+    // Write a hidden temp file in the pinned folder, then publish it with link(2), which fails with
+    // EEXIST rather than replacing a file. The final name only ever appears complete, a failed write
+    // leaves it free, and a racing import that published first is never overwritten.
+    const tempName = `.${name}.${randomBytes(6).toString('hex')}.import`
+    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+    let dir: FileHandle
+    try {
+        dir = await openResolved(target, true)
+    } catch (error) { throw fsError(error) }
+    try {
+        const pinned = await pinnedDirectory(dir)
+        if (await lstat(join(pinned, name)).then(() => true, () => false)) throw exists()
+        let handle: FileHandle
+        try {
+            // O_NOFOLLOW_ANY (Darwin) must not be combined with O_NOFOLLOW; it already covers every component.
+            handle = process.platform === 'darwin'
+                ? await open(join(target, tempName), flags | 0x20000000, 0o644)
+                : await open(`${pinned}/${tempName}`, flags | constants.O_NOFOLLOW, 0o644)
+        } catch (error) { throw fsError(error) }
+        let tempPath: string | null = join(pinned, tempName)
+        try {
+            try {
+                // The temp file must be the one in the pinned folder, not a swapped-in lookalike.
+                const [opened, listed] = await Promise.all([handle.stat({ bigint: true }), lstat(tempPath, { bigint: true })])
+                if (opened.ino !== listed.ino || opened.dev !== listed.dev) throw outside()
+                await handle.writeFile(bytes)
+                await handle.sync()
+            } finally {
+                await handle.close()
+            }
+            try {
+                await link(tempPath, join(pinned, name))
+            } catch (error) { throw fsError(error) }
+        } finally {
+            if (tempPath) await unlink(tempPath).catch(() => {})
+            tempPath = null
+        }
+    } finally {
+        await dir.close()
+    }
+    return { path, name }
+}
+
+/**
+ * Creates a missing workspace one folder at a time. Every existing ancestor must already be its own
+ * real path, so a coworker directory that is a symlink to a sibling (existing or not) is refused
+ * before any folder is made, and each folder we make is checked to be a real directory.
+ */
+async function createWorkspace(runtime: DesktopRuntime, workspace: string): Promise<void> {
+    const base = resolve(await realpath(runtime.dataRoot))
+    if (!inside(base, workspace)) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+    const missingParts: string[] = []
+    let existing = workspace
+    while (existing !== base) {
+        const info = await lstat(existing).catch(error => { if (missing(error)) return null; throw error })
+        if (info) {
+            if (!info.isDirectory() || await realpath(existing) !== existing) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+            break
+        }
+        missingParts.unshift(existing)
+        existing = dirname(existing)
+    }
+    for (const part of missingParts) {
+        await mkdir(part).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error })
+        const info = await lstat(part)
+        if (!info.isDirectory() || info.isSymbolicLink() || await realpath(part) !== part) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
     }
 }
