@@ -1,6 +1,7 @@
 import type { Usage } from '@rerun/contracts'
 import type { LanguageModelUsage, UIMessageChunk, UIMessageStreamWriter } from 'ai'
-import { QUICK_REPLIES_TOOL } from '@rerun/contracts'
+import { desktopSourcePart, MAX_DESKTOP_SOURCES, QUICK_REPLIES_TOOL } from '@rerun/contracts'
+import { desktopApp } from '../desktop/policy.js'
 import { canonicalHitlName, isHitlToolName } from '../tools/builtin/hitl.js'
 import type { QuickRepliesCapture } from '../agents/quick-replies-stream.js'
 import type { AgentRun, RunOutcome } from './loop.js'
@@ -22,10 +23,20 @@ const addUsage = (a: Usage | undefined, b: LanguageModelUsage): Usage => ({
     cachedInputTokens: sum(a?.cachedInputTokens, b.cachedInputTokens),
 })
 
-function normalizeHitlStream(stream: ReadableStream<UIMessageChunk>): ReadableStream<UIMessageChunk> {
+function normalizeRunStream(stream: ReadableStream<UIMessageChunk>): ReadableStream<UIMessageChunk> {
+    const seenSources = new Set<string>()
     return stream.pipeThrough(
         new TransformStream<UIMessageChunk, UIMessageChunk>({
             transform(chunk, controller) {
+                if (chunk.type === 'start-step') seenSources.clear()
+                if (chunk.type === 'source-url' || chunk.type === 'source-document') {
+                    const source = desktopSourcePart(chunk)
+                    if (source && !seenSources.has(source.sourceId) && seenSources.size < MAX_DESKTOP_SOURCES) {
+                        seenSources.add(source.sourceId)
+                        controller.enqueue(source)
+                    }
+                    return
+                }
                 const c = chunk as { type?: string; toolName?: string }
                 if ((c.type === 'tool-input-start' || c.type === 'tool-input-available') && isHitlToolName(c.toolName)) {
                     controller.enqueue({ ...chunk, toolName: canonicalHitlName(c.toolName) } as UIMessageChunk)
@@ -111,8 +122,9 @@ export function mergeRunStream(writer: UIMessageStreamWriter, run: AgentRun, met
     writer.merge(
         cutOffWhenSettled(
             withQuickReplies(
-                normalizeHitlStream(
+                normalizeRunStream(
                     run.result.toUIMessageStream({
+                        sendSources: desktopApp(),
                         messageMetadata: ({ part }) => {
                             if (part.type === 'finish-step') {
                                 const usage = addUsage(undefined, part.usage)

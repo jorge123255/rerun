@@ -44,7 +44,7 @@ export async function forkReply(agentId: string, source: SessionRow, target: Reg
     const beforeRun = new Date(Date.parse(now) - 1).toISOString()
     const prefix = messages.slice(0, turn + 1).map(row => ({ ...row, id: newId(), sessionId, createdAt: row.createdAt < now ? row.createdAt : beforeRun }))
     for (const row of prefix) {
-        statements.push({ sql: 'INSERT INTO messages (id, session_id, role, content_json, tool_calls_json, created_at, author_id, author_name) VALUES (?,?,?,?,?,?,?,?)', args: [row.id, sessionId, row.role, row.contentJson, row.toolCallsJson, row.createdAt, row.authorId, row.authorName] })
+        statements.push({ sql: 'INSERT INTO messages (id, session_id, role, content_json, tool_calls_json, sources_json, created_at, author_id, author_name) VALUES (?,?,?,?,?,?,?,?,?)', args: [row.id, sessionId, row.role, row.contentJson, row.toolCallsJson, row.sourcesJson, row.createdAt, row.authorId, row.authorName] })
         const text = extractText(storedContent(row.contentJson))
         if (text) statements.push({ sql: 'INSERT INTO messages_fts(content, message_id) VALUES (?,?)', args: [text, row.id] })
     }

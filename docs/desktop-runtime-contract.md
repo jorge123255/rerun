@@ -44,6 +44,8 @@ The composer’s model picker can follow the workspace model, star a coworker de
 
 Assistant replies render Markdown in live and reopened chats, including headings, lists, tables and fenced code blocks. **Copy reply** copies the answer’s original Markdown. The user’s message stays literal text, including its attachment label. Markdown images display their alt text, and eligible HTTPS links open in the system browser when clicked.
 
+When an assistant reply includes structured citations from its provider, **Used 1 source** or **Used N sources** expands beneath that reply. A cited HTTPS address opens in the system browser. A cited document without a public address appears by title or filename. Citations stay with their assistant message through tab changes and restart. A Markdown link by itself does not create a citation. The packaged Codex login provider currently sends no source events.
+
 When a coworker puts an email, post or message in a `draft` fence, the answer shows a separate card. The fence title labels the card, or it reads **Draft** when the title is empty. **Copy draft** copies just the card’s plain text, preserving its spacing and literal Markdown. While the answer is streaming, the card can be copied as soon as its fence closes. Reopening the conversation renders the cards from the saved reply.
 
 **Regenerate reply** opens an alternate chat for the same coworker. Choose a completed answer and the model receives the conversation through the question that prompted it, including the saved attachment text and recalled notes from that turn. The original chat keeps all its answers and run history. The alternate has a separate run, can be stopped independently, and appears in Chats and Find chat with an **Alternate ·** title.

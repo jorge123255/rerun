@@ -17,12 +17,13 @@ it('replays a copied prefix with the actual OpenAI Responses adapter even if the
     const scope = (sessionId: string) => ({ agent: { id: agent }, sessionId, model: 'fixture', provider: 'openai' } as RunContext)
     const source = await createSession(agent)
     await appendMessage(agent, source.id, { role: 'user', content: 'Find the sketch' })
+    const citation = { type: 'source-url' as const, sourceId: 'original-source', url: 'https://example.org/cited-sketch' }
     const oldId = { openai: { itemId: 'expired_source_item', phase: 'final_answer' } }
     await appendMessage(agent, source.id, { role: 'assistant', content: [
         { type: 'reasoning', text: 'hidden reasoning' },
         { type: 'text', text: 'Earlier visible response', providerOptions: oldId },
         { type: 'tool-call', toolCallId: 'local_call', toolName: 'lookup', input: { name: 'plan' }, providerOptions: oldId },
-    ] })
+    ] }, undefined, [citation])
     await appendMessage(agent, source.id, { role: 'tool', content: [
         { type: 'tool-result', toolCallId: 'local_call', toolName: 'lookup', output: { type: 'text', value: 'Orange' }, providerOptions: oldId },
     ] })
@@ -58,8 +59,11 @@ it('replays a copied prefix with the actual OpenAI Responses adapter even if the
     expect((await send(fork.sessionId)).text).toBe('ok')
     expect(requests[2]).toContainEqual({ type: 'item_reference', id: 'msg_current' })
     expect(JSON.stringify(requests[2])).toContain('Earlier visible response')
+    expect(JSON.stringify(requests)).not.toContain(citation.url)
     for (const id of [source.id, fork.sessionId]) {
-        const stored = (await listMessages(agent, id))[1].contentJson
+        const previous = (await listMessages(agent, id))[1]
+        expect(JSON.parse(previous.sourcesJson!)).toEqual([citation])
+        const stored = previous.contentJson
         expect(stored).toContain('expired_source_item')
         expect(stored).toContain('hidden reasoning')
     }

@@ -17,7 +17,7 @@ export const SourcesTrigger = ({ className, count, children, ...props }: Sources
     <CollapsibleTrigger className={cn('group flex items-center gap-2', className)} {...props}>
         {children ?? (
             <>
-                <p className="font-medium">Used {count} sources</p>
+                <span className="font-medium">Used {count} {count === 1 ? 'source' : 'sources'}</span>
                 <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]:rotate-180" />
             </>
         )}

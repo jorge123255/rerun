@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, getTableColumns, gt, gte, isNotNull, sql } from 'drizzle-orm'
 import type { ModelMessage } from 'ai'
-import { visibleText, type MessageAuthor } from '@rerun/contracts'
+import { visibleText, type DesktopSourcePart, type MessageAuthor } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
 import { messages, type MessageRow } from '../schema.js'
 import { newId, nowIso } from '../../lib/ids.js'
@@ -24,13 +24,14 @@ export function storedContent(json: string): ModelMessage['content'] {
     return []
 }
 
-export async function appendMessage(agentId: string, sessionId: string, message: ModelMessage, author?: MessageAuthor): Promise<MessageRow> {
+export async function appendMessage(agentId: string, sessionId: string, message: ModelMessage, author?: MessageAuthor, sources?: DesktopSourcePart[]): Promise<MessageRow> {
     const row: MessageRow = {
         id: newId(),
         sessionId,
         role: message.role,
         contentJson: JSON.stringify(message.content),
         toolCallsJson: null,
+        sourcesJson: message.role === 'assistant' && sources?.length ? JSON.stringify(sources) : null,
         createdAt: nowIso(),
         authorId: author?.id ?? null,
         authorName: author?.name ?? null,

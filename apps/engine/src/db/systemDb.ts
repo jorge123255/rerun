@@ -229,6 +229,11 @@ export const SYSTEM_DB_MIGRATIONS: SqliteMigration[] = [
             )`)
         },
     },
+    {
+        version: 5,
+        id: 'desktop-message-sources',
+        up: client => ensureColumns(client, 'messages', ['sources_json TEXT']),
+    },
 ]
 
 export const SYSTEM_DB_VERSION = latestVersion(SYSTEM_DB_MIGRATIONS)

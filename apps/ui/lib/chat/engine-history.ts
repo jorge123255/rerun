@@ -6,7 +6,7 @@ import { parseScheduledRun } from '@/lib/schedules/scheduled-run'
 import { encodePeaks } from '@/lib/voice/peaks'
 import { parseVoiceMessage } from '@/lib/voice/marker'
 import { hitlKindOf } from '@/lib/chat-hitl'
-import { isContextPart, visibleText, workspaceAttachmentPath, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
+import { desktopSourceParts, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPath, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
 type TextPart = { type: 'text'; text: string }
 type ToolInvocationPart = {
@@ -17,7 +17,7 @@ type ToolInvocationPart = {
     input: unknown
     output?: unknown
 }
-type UIMessagePart = TextPart | ToolInvocationPart | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
+type UIMessagePart = TextPart | ToolInvocationPart | DesktopSourcePart | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
 export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: { authorId?: string; createdAt?: string; attachmentPath?: string } }
 
 function safeParse(json: string | null | undefined): unknown {
@@ -104,6 +104,8 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
         const tcParsed = safeParse(m.toolCallsJson)
         if (Array.isArray(tcParsed)) for (const call of tcParsed) pushCall(call)
 
+        if (m.role === 'assistant' && m.sourcesJson) parts.push(...desktopSourceParts(safeParse(m.sourcesJson)))
+
         if (parts.length === 0) continue
         // The message written for a card that went out bare lands in its own row, after the tool
         // row. Live, the AI SDK keeps the whole turn in one message, and both the pinned card and
@@ -135,7 +137,7 @@ function toolPartOf(call: unknown, toolResults: Map<string, unknown>): ToolInvoc
 }
 
 function endsOnHitlCall(message: HistoryMessage): boolean {
-    const last = message.parts[message.parts.length - 1]
+    const last = message.parts.findLast(part => part.type !== 'source-url' && part.type !== 'source-document')
     return message.role === 'assistant' && !!last && 'toolName' in last && !!hitlKindOf(last.toolName)
 }
 

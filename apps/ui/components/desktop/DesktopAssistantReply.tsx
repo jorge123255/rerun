@@ -1,10 +1,12 @@
 'use client'
 
 import type { UIMessage } from 'ai'
+import { desktopSourceParts } from '@rerun/contracts'
 import { useMemo, type ReactNode } from 'react'
 import type { Components, CustomRendererProps, PluginConfig } from 'streamdown'
 import { toast } from 'sonner'
 import { MessageResponse } from '@/components/ai-elements/message'
+import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
 import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
@@ -75,6 +77,26 @@ function DesktopAnswerBubbles({ text, streaming }: { text: string; streaming: bo
     </div>
 }
 
+function DesktopReplySources({ parts }: Pick<UIMessage, 'parts'>) {
+    // The SDK streams all steps into one UIMessage. Saved assistant rows each hold one step.
+    const steps: UIMessage['parts'][] = [[]]
+    for (const part of parts) {
+        if (part.type === 'step-start') steps.push([])
+        else if (part.type === 'source-url' || part.type === 'source-document') steps[steps.length - 1].push(part)
+    }
+    const sources = steps.flatMap((parts, step) => desktopSourceParts(parts).map(source => ({ source, key: `${step}-${source.sourceId}` })))
+    return sources.length > 0 ? (
+        <Sources>
+            <SourcesTrigger count={sources.length} />
+            <SourcesContent>
+                {sources.map(({ source, key }) => source.type === 'source-url'
+                    ? <Source key={key} href={source.url} title={source.title ?? source.url} rel="noopener noreferrer" />
+                    : <Source key={key} title={source.title} target={undefined} className="flex items-center gap-2" />)}
+            </SourcesContent>
+        </Sources>
+    ) : null
+}
+
 export function DesktopAssistantReply({ message, streaming, onRegenerate }: { message: UIMessage; streaming: boolean; onRegenerate?: (id: string) => void }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const blocks: ReactNode[] = []
@@ -95,6 +117,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate }: { me
     }
     return <>
         {blocks}
+        <DesktopReplySources parts={message.parts} />
         {text && !streaming && <div className="mt-2 flex flex-wrap items-center gap-1">
             <Button type="button" variant="ghost" size="sm" aria-label="Copy reply" onClick={() => copy(text)}>
                 {copied ? <CheckIcon aria-hidden className="size-3.5" /> : <CopyIcon aria-hidden className="size-3.5" />}

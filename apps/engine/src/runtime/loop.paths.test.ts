@@ -52,7 +52,7 @@ vi.mock('../tools/registry.js', async () => {
             if (prep.toolsGate) await prep.toolsGate
             if (prep.toolsError) throw prep.toolsError
             return {
-                tools: { ask_user: hitl(), request_approval: hitl(), suggest_service: hitl(), request_secret: hitl(), mcp__rerun__ask_user: hitl() },
+                tools: { lookup: hitl(), ask_user: hitl(), request_approval: hitl(), suggest_service: hitl(), request_secret: hitl(), mcp__rerun__ask_user: hitl() },
                 close: async () => {},
             }
         },
@@ -98,7 +98,9 @@ vi.mock('../agents/providers.js', async importOriginal => {
 
 const { afterEach, beforeAll, describe, expect, it } = await import('vitest')
 const { mkdir } = await import('node:fs/promises')
-const { APICallError } = await import('ai')
+const { APICallError, createUIMessageStream } = await import('ai')
+const { mergeRunStream } = await import('./run-stream-merge.js')
+const { closeSystemDb } = await import('../db/systemDb.js')
 const { migrate } = await import('../db/migrate.js')
 const { agentConfigSchema } = await import('../agents/types.js')
 const { writeAgentConfig } = await import('../agents/config-write.js')
@@ -183,6 +185,69 @@ describe('run loop paths', () => {
         curator.calls = []
         recalls.length = 0
         clearBudgetLatch()
+    })
+
+    it('streams only public sources and restores each step on its own row after reopening', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const web = { type: 'source', sourceType: 'url', id: 'web', url: 'https://example.org/brief', providerMetadata: { fixture: { privateValue: 'hidden' } } }
+            const doc = { type: 'source', sourceType: 'document', id: 'doc', mediaType: 'text/plain', title: 'Brief', filename: 'brief.txt' }
+            const step1 = toolTurn('lookup', {}, 'First result')
+            const step2 = textTurn('Next result with an ordinary [link](https://example.org/plain)')
+            step1.splice(1, 0, web, web, { ...web, id: 'unsafe', url: 'file:///private/brief' })
+            step2.splice(1, 0, doc)
+            stream.turns = [step1, step2]
+            const session = await createSession(id, 'Sources')
+            const agent = await getAgent(id)
+            const resolved = { ...agent.resolved, provider: 'openai' as const, model: 'fixture' }
+            const started = await runAgent({ ...agent, resolved }, session.id, 'Check the brief')
+            const chunks = []
+            const ui = createUIMessageStream({ execute: ({ writer }) => mergeRunStream(writer, started, resolved) })
+            for await (const chunk of ui) if (chunk.type === 'source-url' || chunk.type === 'source-document') chunks.push(chunk)
+            expect(await started.settled).toMatchObject({ kind: 'done' })
+            expect(chunks).toEqual([
+                { type: 'source-url', sourceId: 'web', url: 'https://example.org/brief' },
+                { type: 'source-document', sourceId: 'doc', mediaType: 'text/plain', title: 'Brief', filename: 'brief.txt' },
+            ])
+            closeSystemDb(id)
+            const rows = await listMessages(id, session.id)
+            expect(rows.map(row => row.role)).toEqual(['user', 'assistant', 'tool', 'assistant'])
+            expect(rows.map(row => JSON.parse(row.sourcesJson ?? 'null'))).toEqual([null, [chunks[0]], null, [chunks[1]]])
+            expect(rows.map(row => row.contentJson).join('')).not.toContain('source-url')
+            expect(JSON.stringify(stream.calls[1])).not.toContain('https://example.org/brief')
+        } finally {
+            vi.unstubAllEnvs()
+        }
+    })
+
+    it.each(['stop', 'error'] as const)('reopens a source-only %s step without replaying an empty assistant message', async finishReason => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const source = { type: 'source', sourceType: 'url', id: 'citation-only', url: 'https://example.org/citation-only' }
+            const session = await createSession(id, 'Citation only')
+            const base = await getAgent(id)
+            const agent = { ...base, resolved: { ...base.resolved, provider: 'openai' as const, model: 'fixture' } }
+            stream.parts = [
+                { type: 'stream-start', warnings: [] }, source,
+                { type: 'finish', finishReason: { unified: finishReason, raw: finishReason }, usage },
+            ]
+            const first = await runAgent(agent, session.id, 'Provide the source')
+            expect((await first.settled).kind).toBe(finishReason === 'stop' ? 'done' : 'error')
+            closeSystemDb(id)
+            const rows = await listMessages(id, session.id)
+            expect(rows.map(row => row.role)).toEqual(['user', 'assistant'])
+            expect(rows[1].contentJson).toBe('[]')
+            expect(JSON.parse(rows[1].sourcesJson!)).toEqual([{ type: 'source-url', sourceId: source.id, url: source.url }])
+            stream.parts = textTurn('Next answer')
+            const next = await runAgent(agent, session.id, 'Next question')
+            expect((await next.settled).kind).toBe('done')
+            const prompt = stream.calls.at(-1)?.prompt as Array<{ role: string }>
+            expect(prompt.some(message => message.role === 'assistant')).toBe(false)
+            expect(JSON.stringify(prompt)).not.toContain(source.url)
+            expect((await listMessages(id, session.id)).at(-1)?.sourcesJson).toBeNull()
+        } finally {
+            vi.unstubAllEnvs()
+        }
     })
 
     describe('when preparation fails', () => {

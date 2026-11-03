@@ -27,6 +27,7 @@ export const messageSchema = z.object({
     role: messageRoleSchema,
     contentJson: z.string(),
     toolCallsJson: z.string().nullable(),
+    sourcesJson: z.string().nullish(),
     // Absent on an engine older than message attribution, null when nobody typed the message.
     authorId: z.string().nullish(),
     createdAt: z.string(),

@@ -138,3 +138,60 @@ test('file, credentialed and relative links, model HTML and image URLs cannot lo
     expect(container.textContent).toContain('password')
     expect(container.querySelector('img,iframe,script,object,embed,a')).toBeNull()
 })
+
+test('source parts use Rerun’s disclosure below the reply, with external URLs and inert document titles', async () => {
+    const link = { type: 'source-url', sourceId: 'link-1', url: 'https://example.org/report', title: 'Quarterly report' } as const
+    await render([{ type: 'text', text: 'Preliminary answer.' }, link], true)
+    const trigger = container.querySelector<HTMLButtonElement>('button[data-slot="collapsible-trigger"]')!
+    expect(trigger.textContent).toBe('Used 1 source')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('a[href]')).toBeNull()
+    trigger.focus()
+    expect(document.activeElement).toBe(trigger)
+    await act(async () => trigger.click())
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+
+    await render([
+        link, { type: 'text', text: 'Settled answer.' }, link,
+        { type: 'source-document', sourceId: 'doc-2', title: '', filename: 'notes.pdf', mediaType: 'application/pdf' },
+    ])
+    expect(trigger.textContent).toBe('Used 2 sources')
+    const content = container.querySelector('[data-slot="collapsible-content"]')!
+    const href = content.querySelector('a[href]')!
+    expect(href.textContent).toBe('Quarterly report')
+    expect(href.getAttribute('href')).toBe('https://example.org/report')
+    expect(href.getAttribute('target')).toBe('_blank')
+    expect(href.getAttribute('rel')).toBe('noopener noreferrer')
+    expect(content.querySelectorAll('[href]')).toHaveLength(1)
+    expect(content.textContent).toBe('Quarterly reportnotes.pdf')
+    const before = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(before(container.querySelector('[data-bubble-frame]')!, trigger)).toBe(true)
+    expect(before(content, container.querySelector('[aria-label="Copy reply"]')!)).toBe(true)
+    await act(async () => trigger.click())
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+})
+
+test('ordinary Markdown and unsafe source parts alone cannot produce a source disclosure', async () => {
+    const urls = ['file:///tmp/notes.pdf', 'data:text/html,hello', '/desktop/settings', 'http://example.org', 'https://user:secret@example.org/']
+    await render([
+        { type: 'text', text: 'See [ordinary reference](https://example.org/read).' },
+        ...urls.map((url, i) => ({ type: 'source-url' as const, sourceId: String(i), url, title: 'Unsafe source' })),
+    ])
+    expect(container.querySelector('[data-slot="collapsible-trigger"]')).toBeNull()
+    expect(container.querySelectorAll('a[href]')).toHaveLength(1)
+    expect(container.textContent).not.toContain('Unsafe source')
+    expect(container.querySelector('img,iframe,script,object,embed')).toBeNull()
+})
+
+test('different steps can reuse a source ID and each step gets its own source limit', async () => {
+    const first = Array.from({ length: 33 }, (_, index) => ({
+        type: 'source-url' as const, sourceId: String(index), url: `https://example.org/first/${index}`,
+    }))
+    const next = { ...first[0], url: 'https://example.org/second' }
+    await render([{ type: 'step-start' }, ...first, { type: 'step-start' }, next, next], true)
+    const trigger = container.querySelector<HTMLButtonElement>('button[data-slot="collapsible-trigger"]')!
+    expect(trigger.textContent).toBe('Used 33 sources')
+    await act(async () => trigger.click())
+    const urls = Array.from(container.querySelectorAll<HTMLAnchorElement>('a[href]'), a => a.href)
+    expect(urls).toEqual([...first.slice(0, 32), next].map(source => source.url))
+})

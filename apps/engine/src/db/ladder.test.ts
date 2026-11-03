@@ -101,6 +101,10 @@ describe('sqlite ladders', () => {
               4,
               "desktop-regenerated-conversations",
             ],
+            [
+              5,
+              "desktop-message-sources",
+            ],
           ]
         `)
         expect(SHARED_DB_MIGRATIONS.map(s => [s.version, s.id])).toMatchInlineSnapshot(`
@@ -147,7 +151,7 @@ it('keeps an existing desktop conversation when upgrading its v3 database for re
     await client.execute("INSERT INTO sessions (id,agent_id,title,created_at,updated_at) VALUES ('s','a','Draft','then','then')")
     await client.execute(`INSERT INTO messages (id,session_id,role,content_json,created_at) VALUES ('m','s','assistant','"original"','then')`)
     await migrateSystemDb(client, 'v3.db')
-    expect((await client.execute("SELECT content_json FROM messages WHERE id='m'")).rows[0].content_json).toBe('"original"')
+    expect((await client.execute("SELECT content_json, sources_json FROM messages WHERE id='m'")).rows[0]).toMatchObject({ content_json: '"original"', sources_json: null })
     expect((await client.execute('SELECT request_id FROM desktop_regenerations')).rows).toEqual([])
 })
 

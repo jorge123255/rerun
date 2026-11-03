@@ -1,4 +1,4 @@
-import { streamText, type LanguageModelUsage, type ModelMessage, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
+import { streamText, type LanguageModelUsage, type ModelMessage, type StepResult, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
 import { RERUN_CONNECTION_ID, contextTextPart, workspaceAttachmentPart, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
 import { desktopCodexEffort, mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
@@ -33,9 +33,10 @@ import { prepareMcpServer } from '../tools/mcp.js'
 import { withPooledRelays } from '../tools/mcp-relay.js'
 import { HostBreaker } from '../tools/host-breaker.js'
 import type { PartialResult, RunContext, RunTrigger, SkillProposalNotice } from './context.js'
+import { desktopSourceRows } from './desktop-source-rows.js'
 import { partialResultsNote } from './partial-results.js'
 import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-control.js'
-import { assertDesktopProvider } from '../desktop/policy.js'
+import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
 import { runCurator } from './curator.js'
 import { repairToolCall } from './tool-repair.js'
 import { stepWithScreenshots } from './screenshots.js'
@@ -232,6 +233,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     let spawnToken: string | undefined
     let codexThreadId: string | undefined
     let steps = 0
+    let sourceSteps: StepResult<ToolSet>[] = []
     const partialResults: PartialResult[] = []
     const skillProposals: SkillProposalNotice[] = []
 
@@ -281,13 +283,14 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         let usage: LanguageModelUsage | undefined
         let costMicros: number | null = null
 
+        const messages = canonicalizeHitlNames('messages' in settlement ? settlement.messages ?? [] : [])
+        let answerRow: MessageRow | undefined
+        for (const { message, sources } of desktopSourceRows(messages, sourceSteps)) {
+            const row = await appendMessage(agent.id, sessionId, message, undefined, sources).catch(() => undefined)
+            if (row?.role === 'assistant') answerRow = row
+        }
+
         if (settlement.kind === 'done') {
-            const messages = canonicalizeHitlNames(settlement.messages)
-            let answerRow: MessageRow | undefined
-            for (const message of messages) {
-                const row = await appendMessage(agent.id, sessionId, message).catch(() => undefined)
-                if (row?.role === 'assistant') answerRow = row
-            }
             pending = findPendingHitl(messages)
             // A turn that ends on a card ignores the replies: the card already says how to answer.
             const replies = quickReplies?.()
@@ -317,9 +320,6 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             // The token is still on file, so the connection would keep reading "Ready" while every
             // run on it fails. The keyless Rerun connection answers for the hub's key, not the user's.
             if (errorCode === RUN_ERROR_CODES.unauthorized && connection && connection.id !== RERUN_CONNECTION_ID) recordCredentialRejected(connection.id)
-            // A turn that failed mid-flight still said things worth keeping; without this the user
-            // loses everything the agent had already produced.
-            if (settlement.messages) for (const message of canonicalizeHitlNames(settlement.messages)) await appendMessage(agent.id, sessionId, message).catch(() => {})
             await failRun(agent.id, run.id, String(settlement.error)).catch(() => {})
             outcome = { kind: 'error', error: String(settlement.error), errorCode }
         }
@@ -510,11 +510,12 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             },
             // `totalUsage`, not `usage`: the latter is the last step alone, and a run that called
             // tools paid every step before it.
-            onFinish: async ({ response, totalUsage, text, providerMetadata, finishReason, rawFinishReason }) => {
+            onFinish: async ({ response, totalUsage, text, providerMetadata, finishReason, rawFinishReason, steps: completedSteps }) => {
                 if (controller.signal.aborted) {
                     await settle({ kind: 'cancelled' })
                     return
                 }
+                if (desktopApp()) sourceSteps = completedSteps
                 logger.info({ agent: agent.id, provider, cachedInputTokens: totalUsage.cachedInputTokens, costMicros: runCostMicros, anthropic: providerMetadata?.anthropic }, 'run usage')
                 const threadId = providerMetadata?.['codex-app-server']?.threadId
                 if (typeof threadId === 'string') codexThreadId = threadId

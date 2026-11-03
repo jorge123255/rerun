@@ -112,7 +112,8 @@ export async function prepareRunHistory(ctx: RunContext, system: string, overrid
     const agentId = ctx.agent.id
     const cp = await getLatestCheckpoint(agentId, ctx.sessionId)
     const saved = await listMessagesAfter(agentId, ctx.sessionId, cp?.throughCreatedAt)
-    const rows = savedUserId ? saved.filter(row => row.id !== savedUserId) : saved
+    // A source-only reply is visible in chat but neither the provider transcript nor a compaction checkpoint.
+    const rows = saved.filter(row => row.id !== savedUserId && !(row.role === 'assistant' && row.sourcesJson && row.contentJson === '[]'))
     const priorSummary: ModelMessage | null = cp ? (JSON.parse(cp.summaryJson) as ModelMessage) : null
     const live: ModelMessage[] = rows.flatMap(r => {
         const message = withoutQuickRepliesCalls(withoutReasoning({ role: r.role, content: portableForkContent(r) } as ModelMessage))

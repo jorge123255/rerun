@@ -26,6 +26,7 @@ export const messages = sqliteTable('messages', {
     role: text('role').notNull(),
     contentJson: text('content_json').notNull(),
     toolCallsJson: text('tool_calls_json'),
+    sourcesJson: text('sources_json'),
     createdAt: text('created_at').notNull(),
     authorId: text('author_id'),
     authorName: text('author_name'),

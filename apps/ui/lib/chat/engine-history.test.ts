@@ -123,6 +123,21 @@ describe('a card and the message written after it', () => {
         expect(transformEngineMessages([legacyObject], { desktopSummaries: true })).toEqual([])
     })
 
+    it('restores only validated source metadata from its own assistant row', () => {
+        const web = { type: 'source-url', sourceId: 'url', url: 'https://example.org/brief' }
+        const doc = { type: 'source-document', sourceId: 'doc', mediaType: 'application/pdf', filename: 'brief.pdf' }
+        const ordinary = assistant('plain', [{ type: 'text', text: '[link](https://example.org/ordinary)' }], 1)
+        const cited = { ...assistant('cited', [{ type: 'text', text: 'Brief.' }], 2), sourcesJson: JSON.stringify([
+            { ...web, providerMetadata: { privateValue: 'hidden' } }, web, { ...web, sourceId: 'bad', url: 'https://user:secret@example.org/' }, doc,
+        ]) }
+        const history = transformEngineMessages([ordinary, cited, { ...cited, id: 'broken', sourcesJson: '{' }])
+        expect(history.map(message => message.parts)).toEqual([
+            [{ type: 'text', text: '[link](https://example.org/ordinary)' }],
+            [{ type: 'text', text: 'Brief.' }, web, { ...doc, title: 'brief.pdf' }],
+            [{ type: 'text', text: 'Brief.' }],
+        ])
+    })
+
     it('folds the message into the card message, after the call, as the live transcript holds it', () => {
         const messages = transformEngineMessages([assistant('a1', [askUser('c1')], 1), toolRow('t1', 'c1', 2), assistant('a2', [{ type: 'text', text: 'Here is why I ask.' }], 3)])
         expect(messages).toHaveLength(1)
