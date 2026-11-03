@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
 import type { Client, Row } from '@libsql/client'
-import { EngineRequestError, getRun } from '@/lib/engine/client'
+import { listRuns } from '@/lib/engine/client'
 import type { EngineConnection } from '@/lib/engine/types'
 import type { DesktopModelPick } from '../chat-model'
 import { DesktopHttpError } from './auth'
@@ -59,13 +59,8 @@ export async function recoverTabSession(db: Client, conn: EngineConnection, agen
     // When the tab's first answer was accepted, a retry needs neither a file read nor a model call.
     const bound = await db.execute({ sql: 'SELECT id FROM desktop_sessions WHERE agent_id = ? AND engine_session_id = ?', args: [agent.id, engineSessionId] })
     if (bound.rows[0]) return String(bound.rows[0].id)
-    try {
-        const run = await getRun(conn, agent.engineAgentId, String(row.run_id))
-        if (run.sessionId !== engineSessionId) throw new DesktopHttpError(502, 'The engine returned a different first turn.')
-    } catch (error) {
-        if (error instanceof EngineRequestError && error.status === 404) return null
-        throw error
-    }
+    const runs = await listRuns(conn, agent.engineAgentId, { sessionId: engineSessionId, limit: 1 })
+    if (!runs.some(run => run.id === row.run_id && run.sessionId === engineSessionId)) return null
     const saved = await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: String(row.title), model: JSON.parse(String(row.model_choice)) })
     return saved.id
 }

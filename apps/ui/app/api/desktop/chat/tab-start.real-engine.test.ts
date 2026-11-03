@@ -7,7 +7,8 @@ import { PUT as putTabs } from '../agents/[agentId]/tabs/route'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopHistory } from '@/lib/desktop/server/engine'
 import { createDesktopAgent, createDesktopSession } from '@/lib/desktop/server/store'
-import { createAgent, createConnection, getRun, setBoxDefault } from '@/lib/engine/client'
+import { reserveTabStart } from '@/lib/desktop/server/tab-starts'
+import { createAgent, createConnection, listRuns, patchAgent, setBoxDefault } from '@/lib/engine/client'
 import { disposableRunEngine } from '@/test/desktop-run-engine.mjs'
 import { POST as chat } from './route'
 
@@ -30,7 +31,8 @@ test.runIf(process.env.RERUN_TAB_ACCEPTANCE === '1')('a tab recovers an accepted
         await setBoxDefault(conn, { connectionId: provider.id, model: 'qa-local' })
         const agent = await createAgent(conn, { config: { name: 'tabbed', connectionId: provider.id, provider: 'openrouter', tools: { memory: false }, selfImprovement: { enabled: false } } })
         const db = await openDesktopDatabase(root)
-        const { id: agentId } = await createDesktopAgent(db, { name: 'Tab worker', engineAgentId: agent.id })
+        const coworker = await createDesktopAgent(db, { name: 'Tab worker', engineAgentId: agent.id })
+        const agentId = coworker.id
         const sibling = await createDesktopAgent(db, { name: 'Other', engineAgentId: 'other' })
         const earlier = await createDesktopSession(db, { agentId, engineSessionId: 'earlier', title: 'Earlier chat' })
         const context = { params: Promise.resolve({ agentId }) }
@@ -52,8 +54,8 @@ test.runIf(process.env.RERUN_TAB_ACCEPTANCE === '1')('a tab recovers an accepted
         expect(attempts.map(response => response.status)).toEqual([500,500])
         await engine.waitForProviderRequest(1)
         engine.finishReply()
-        const first = (await db.execute({ sql: 'SELECT run_id FROM desktop_tab_starts WHERE agent_id=?', args: [agentId] })).rows[0]
-        await expect.poll(async () => (await getRun(conn, agent.id, String(first.run_id))).status).toBe('done')
+        const first = (await db.execute({ sql: 'SELECT engine_session_id FROM desktop_tab_starts WHERE agent_id=?', args: [agentId] })).rows[0]
+        await expect.poll(async () => (await listRuns(conn, agent.id, { sessionId: String(first.engine_session_id) }))[0]?.status).toBe('done')
         await db.execute('DROP TRIGGER reject_local_tab')
         await rm(file)
         await closeDesktopDatabase(root)
@@ -78,6 +80,27 @@ test.runIf(process.env.RERUN_TAB_ACCEPTANCE === '1')('a tab recovers an accepted
         expect((await (await getSessions(request(path+'/sessions'),context)).json()).tabs.tabs).toHaveLength(1)
         expect(JSON.stringify(engine.providerMessages[0])).toContain('Sepia 4598')
         expect(engine.providerMessages).toHaveLength(1)
+        const retryTab = { uid: 'retry-after-rejection', id: null }
+        expect((await putTabs(request(path+'/tabs','PUT',{ baseRevision: 2, tabs: [earlierTab,retryTab], activeIndex: 1 }),context)).status).toBe(200)
+        const newDb = await openDesktopDatabase(root)
+        const newConn = { baseUrl: restarted.engine.origin, apiKey: restarted.engine.apiKey }
+        const attempt = { agentId, tabUid: retryTab.uid, text: 'Not accepted' }
+        const receiptCount = async () => (await newDb.execute({ sql: 'SELECT uid FROM desktop_tab_starts WHERE uid=?', args: [retryTab.uid] })).rows.length
+        // A never-dispatched reservation from a dead launch disappears on the first reopen.
+        await reserveTabStart(newDb, coworker, retryTab.uid, attempt, 'previous-launch')
+        await getSessions(request(path+'/sessions'), context)
+        expect(await receiptCount()).toBe(0)
+        await patchAgent(newConn, agent.id, { enabled: false })
+        expect((await send(attempt)).status).toBe(403)
+        expect(await receiptCount()).toBe(0)
+        await patchAgent(newConn, agent.id, { enabled: true })
+        const corrected = await send({ ...attempt, text: 'Corrected first message' })
+        expect(corrected.status).toBe(200)
+        const stream = corrected.text()
+        await engine.waitForProviderRequest(2)
+        engine.finishReply()
+        await stream
+        expect(engine.providerMessages).toHaveLength(2)
     } finally {
         await closeDesktopDatabase(root)
         await engine.close()
