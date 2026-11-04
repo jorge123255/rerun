@@ -47,7 +47,9 @@ has no raw URL or download. The shared `AttachmentLightbox` is unchanged.
 
 ## Integration contract for root-owned wiring
 
-`DesktopConversation.tsx` must pass the trusted local coworker id to the reply:
+`@rerun/contracts` must be rebuilt first: the new `cardFile` grant id and catalog row live there,
+and both the engine and UI consume its `dist`. Then `DesktopConversation.tsx` must pass the trusted
+local coworker id to the reply:
 
 ```tsx
 <DesktopAssistantReply
