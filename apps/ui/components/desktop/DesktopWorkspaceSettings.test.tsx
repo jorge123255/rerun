@@ -71,13 +71,13 @@ function fixture(catalogId: string | null = null, initialUploadId?: string | nul
             if (!put) saved = { name: input.name, catalogId: null, uploadId }
             return savedResponse
         }
-        const body = JSON.parse(String(init.body)) as { name: string; catalogId?: string | null }
+        const body = JSON.parse(String(init?.body)) as { name: string; catalogId?: string | null }
         calls.push({ method, body })
         if (put) return put(body)
         // Mirrors the route: a committed catalog selection or reset replaces any uploaded icon.
         saved = {
             name: body.name,
-            catalogId: Object.hasOwn(body, 'catalogId') ? body.catalogId : saved.catalogId,
+            catalogId: Object.hasOwn(body, 'catalogId') ? body.catalogId ?? null : saved.catalogId,
             uploadId: Object.hasOwn(body, 'catalogId') ? null : saved.uploadId,
         }
         return Response.json(saved)
