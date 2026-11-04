@@ -16,7 +16,7 @@ import { assertCoworkerNotDeleting } from './coworker-delete'
 
 export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
 /** `hash` is set only when the whole file was read as valid UTF-8 .txt/.md, i.e. when it can be edited. */
-export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean; hash?: string }
+export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean; hash?: string; identity?: string }
 
 const PREVIEW_BYTES = 256 * 1024
 const SAFE_ENGINE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -150,7 +150,7 @@ async function readFileInWorkspace(runtime: DesktopRuntime, agentId: string, pat
             const current = await readResolvedFile(target, located.rel, mode)
             const prefix = located.rel.slice(0, -fileName.length)
             const recovery = { draft: prefix + interrupted.recovery.draft, external: prefix + interrupted.recovery.external }
-            throw new CoworkerFileConflict(current.hash ? { content: current.content, hash: current.hash } : null, recovery)
+            throw new CoworkerFileConflict(current.hash ? { content: current.content, hash: current.hash, ...(current.identity && { identity: current.identity }) } : null, recovery)
         }
         return readResolvedFile(target, located.rel, mode)
     })
@@ -180,8 +180,9 @@ async function readResolvedFile(target: string, rel: string, mode: 'preview' | '
             if (bytes.some(byte => (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) || byte === 127)) throw new DesktopHttpError(415, 'Attachments must contain UTF-8 text.')
         } else content = bytes.toString('utf8')
         const truncated = info.size > bytesRead
+        const identified = await handle.stat({ bigint: true })
         const hash = mode === 'preview' && !truncated && EDITABLE.test(rel) ? editableText(bytes) : null
-        return { path: rel, content, size: info.size, truncated, ...(hash !== null ? { hash: hashText(hash) } : {}) }
+        return { path: rel, content, size: info.size, truncated, identity: `${identified.dev}:${identified.ino}`, ...(hash !== null ? { hash: hashText(hash) } : {}) }
     } finally {
         await handle.close()
     }
@@ -322,12 +323,18 @@ export type SaveCoworkerFileResult = { path: string; hash: string; size: number 
 export type CoworkerFileRecovery = { draft: string; external: string }
 /** Thrown when the file on disk is not what the editor opened; carries the newer text so neither version is lost. */
 export class CoworkerFileConflict extends Error {
-    constructor(readonly current: { content: string; hash: string } | null, readonly recovery?: CoworkerFileRecovery) { super('This file changed on disk since you opened it.') }
+    constructor(
+        readonly current: { content: string; hash: string; identity?: string } | null,
+        readonly recovery?: CoworkerFileRecovery,
+        readonly stale = false,
+    ) { super(stale ? 'This file was renamed. The draft was not written.' : 'This file changed on disk since you opened it.') }
 }
 
 const EDIT_PREFIX = '.rerun-edit-'
 const BACKUP_PREFIX = '.rerun-backup-'
 const PUBLISH_PREFIX = '.rerun-publish-'
+const RENAME_PREFIX = '.rerun-rename-'
+const reservedName = (name: string) => name.startsWith(EDIT_PREFIX) || name.startsWith(BACKUP_PREFIX) || name.startsWith(PUBLISH_PREFIX) || name.startsWith(RENAME_PREFIX) || name.startsWith('.rerun-import-') || name.startsWith('.rerun-retire-')
 /** Crash steps for the publication interruption test. Unset in the app, so these never fire. */
 export const COWORKER_PUBLISH_CRASH_STEPS = ['temp', 'prepared', 'renamed', 'uncommitted', 'linked'] as const
 const activeNames = new Set<string>()
@@ -414,6 +421,41 @@ function parseJournal(raw: string): PublishJournal | null {
     } catch { return null }
 }
 
+type RenameHop = { v: 1; from: string; temp: string; to: string }
+
+function parseRenameHop(raw: string): RenameHop | null {
+    try {
+        const value = JSON.parse(raw) as Partial<RenameHop>
+        if (value.v !== 1 || !simpleName(value.from) || !simpleName(value.to) || !simpleName(value.temp)) return null
+        if (!value.temp.startsWith(RENAME_PREFIX) || value.temp.endsWith('.json') || value.from === value.to || reservedName(value.from) || reservedName(value.to)) return null
+        return { v: 1, from: value.from, temp: value.temp, to: value.to }
+    } catch { return null }
+}
+
+/** Finish a case-only hop that stopped between its two renames. Never replaces a name that is already there. */
+async function recoverRenameHops(directory: string, pinned: string, names: string[]) {
+    for (const name of names) {
+        if (!name.startsWith(RENAME_PREFIX) || !name.endsWith('.json') || claimed(directory, name)) continue
+        const raw = await readRecoveryText(join(pinned, name), 4096)
+        const hop = raw === null ? null : parseRenameHop(raw)
+        if (!hop || [hop.from, hop.temp, hop.to].some(entry => claimed(directory, entry))) continue
+        const tempPath = join(pinned, hop.temp)
+        const toPath = join(pinned, hop.to)
+        const fromPath = join(pinned, hop.from)
+        const readable = (info: Awaited<ReturnType<typeof fileStat>>) => !!info && !info.isSymbolicLink() && (info.isFile() || info.isDirectory())
+        const tempStat = await fileStat(tempPath)
+        const toStat = await fileStat(toPath)
+        if (tempStat?.isSymbolicLink() || toStat?.isSymbolicLink() || (await fileStat(fromPath))?.isSymbolicLink()) continue
+        if (readable(tempStat) && !toStat) {
+            try { await rename(tempPath, toPath) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+        }
+        const tempNow = await fileStat(tempPath)
+        const toNow = await fileStat(toPath)
+        if (tempNow && toNow && sameFile(tempNow, toNow) && tempNow.isFile()) await removeName(tempPath)
+        if (!await fileStat(tempPath) && (await fileStat(toPath) || await fileStat(fromPath))) await removeName(join(pinned, name))
+    }
+}
+
 async function readRecoveryText(path: string, limit: number): Promise<string | null> {
     const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
         .catch(error => { if (missing(error) || (error as NodeJS.ErrnoException).code === 'ELOOP') return null; throw error })
@@ -458,6 +500,8 @@ async function recoverInDirectory(directory: string, pinned: string, assertUnmov
     const recoveries: InterruptedCoworkerRecovery[] = []
     let names: string[]
     try { names = await readdir(pinned) } catch (error) { if (missing(error)) return recoveries; throw error }
+    await recoverRenameHops(directory, pinned, names)
+    await assertUnmoved()
     const journals = names.filter(name => name.startsWith(PUBLISH_PREFIX))
     const referenced = new Set<string>()
     for (const journalName of journals) {
@@ -545,11 +589,36 @@ async function withSaveLock<T>(key: string, run: () => Promise<T>): Promise<T> {
  * backup back, or keeps the name when the draft was already committed. A hidden draft is not a
  * second copy to edit.
  */
-export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string): Promise<SaveCoworkerFileResult> {
-    return withCoworkerFiles(runtime, agentId, () => saveFile(runtime, agentId, path, content, baseHash))
+/** Relative path of `identity` inside `root`, or null when that inode is gone. Skips symlinks, so a link cannot retarget another coworker. */
+async function locateIdentity(root: string, identity: string): Promise<string | null> {
+    const handle = await openResolved(root, true)
+    try {
+        const pinned = await pinnedDirectory(handle)
+        const seen = new Set<string>()
+        const walk = async (dir: string, rel: string): Promise<string | null> => {
+            const names = await readdir(dir)
+            for (const name of names) {
+                const info = await lstat(join(dir, name), { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
+                if (!info || info.isSymbolicLink()) continue
+                const id = `${info.dev}:${info.ino}`
+                const child = rel ? `${rel}/${name}` : name
+                if (info.isFile() && id === identity) return child
+                if (!info.isDirectory() || seen.has(id)) continue
+                seen.add(id)
+                const found = await walk(join(dir, name), child)
+                if (found) return found
+            }
+            return null
+        }
+        return await walk(pinned, '')
+    } finally { await handle.close() }
 }
 
-async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string): Promise<SaveCoworkerFileResult> {
+export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string, identity?: string): Promise<SaveCoworkerFileResult> {
+    return withCoworkerFiles(runtime, agentId, () => saveFile(runtime, agentId, path, content, baseHash, identity))
+}
+
+async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string, identity?: string): Promise<SaveCoworkerFileResult> {
     const bytes = Buffer.from(content, 'utf8')
     if (bytes.byteLength > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
     if (content.includes('\0') || looksBinary(content)) throw new DesktopHttpError(415, 'Only text can be saved here.')
@@ -557,6 +626,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
     const name = rel.split('/').pop() ?? ''
     if (!rel || name.startsWith('.') || !EDITABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be edited here.')
     if (!root || !target) throw new DesktopHttpError(404, 'File not found')
+    const workspaceRoot = root
     if (!baseHash) throw new DesktopHttpError(400, 'The opened file version is required for every save.')
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
     const folder = dirname(target)
@@ -606,7 +676,8 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                     if (!after.isFile() || after.size > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
                     const text = editableText(buffer.subarray(0, bytesRead))
                     if (text === null) throw new DesktopHttpError(415, 'This file is not UTF-8 text, so it can’t be edited here.')
-                    return { content: text, hash: hashText(text), mode: opened.mode & 0o777 }
+                    const identified = await handle.stat({ bigint: true })
+                    return { content: text, hash: hashText(text), mode: opened.mode & 0o777, identity: `${identified.dev}:${identified.ino}` }
                 } finally { await handle.close() }
             }
             // Folder identity is checked after the read. A moved directory is rejected with no file bytes.
@@ -614,7 +685,15 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                 const current = await readCurrent()
                 await assertFolderUnmoved()
                 if (!current) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
-                if (current.hash !== baseHash) throw new CoworkerFileConflict({ content: current.content, hash: current.hash }, interruptedRecovery)
+                // The opened inode still living under another name means this path was renamed away.
+                // Writing here would create the old name or replace a different file. A missing inode
+                // is a normal replacement of this path, which the hash check still accepts.
+                if (identity && current.identity !== identity) {
+                    const elsewhere = await locateIdentity(workspaceRoot, identity)
+                    await assertFolderUnmoved()
+                    if (elsewhere && elsewhere !== rel) throw new CoworkerFileConflict({ content: current.content, hash: current.hash, identity: current.identity }, interruptedRecovery, true)
+                }
+                if (current.hash !== baseHash) throw new CoworkerFileConflict({ content: current.content, hash: current.hash, identity: current.identity }, interruptedRecovery)
                 return current
             }
             const { mode } = await check()
@@ -797,4 +876,151 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
             unclaim(folder, finalName)
         }
     })
+}
+
+/**
+ * Rename one file or folder inside its current parent. The rename runs on the open folder's inode,
+ * not on a path that can be rebound to another coworker. A case-only change that the volume ignores
+ * hops through a hidden name in that same folder; recovery finishes the hop without replacing a
+ * name that is already taken.
+ */
+export async function renameCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, nextName: string): Promise<{ path: string; name: string }> {
+    return withCoworkerFiles(runtime, agentId, () => renameEntry(runtime, agentId, path, nextName))
+}
+
+async function renameEntry(runtime: DesktopRuntime, agentId: string, path: string, nextName: string): Promise<{ path: string; name: string }> {
+    if (!simpleName(nextName) || /[\r\n]/.test(nextName) || nextName.length > 255 || Buffer.byteLength(nextName) > 255) throw new DesktopHttpError(400, 'Choose a new name in this folder. A rename can’t include a path.')
+    if (reservedName(nextName)) throw new DesktopHttpError(400, 'That name can’t be changed.')
+    const workspace = await coworkerWorkspace(runtime, agentId)
+    const located = await containedPath(workspace, path)
+    if (!located.rel) throw new DesktopHttpError(400, 'Choose a file or folder to rename.')
+    const slash = located.rel.lastIndexOf('/')
+    const parentRel = slash === -1 ? '' : located.rel.slice(0, slash)
+    const sourceName = located.rel.slice(slash + 1)
+    if (!simpleName(sourceName) || reservedName(sourceName)) throw new DesktopHttpError(400, 'That name can’t be changed.')
+    const parent = await containedPath(workspace, parentRel)
+    if (!parent.root || !parent.target) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
+    const folder = parent.target
+    const root = parent.root
+    const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+    const kept = () => new DesktopHttpError(409, `This folder already has “${nextName}”. It was left unchanged.`)
+    await recoverInterruptedCoworkerEdits(folder)
+    const dir = await openResolved(folder, true).catch(error => {
+        if (missing(error)) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
+        throw error
+    })
+    try {
+        const pinned = await pinnedDirectory(dir)
+        const assertUnmoved = async () => {
+            const [opened, listed, actual] = await Promise.all([
+                dir.stat({ bigint: true }),
+                lstat(folder, { bigint: true }).catch(() => null),
+                realpath(folder).catch(() => null),
+            ])
+            if (!listed || !actual || actual !== folder || !inside(root, actual) || opened.dev !== listed.dev || opened.ino !== listed.ino) throw outside()
+        }
+        await assertUnmoved()
+        const sourceInfo = await lstat(join(pinned, sourceName), { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
+        if (!sourceInfo) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
+        if (sourceInfo.isSymbolicLink()) throw new DesktopHttpError(400, 'Symlinks can’t be renamed.')
+        if (!sourceInfo.isFile() && !sourceInfo.isDirectory()) throw new DesktopHttpError(400, 'That path is not a file or folder.')
+        if (claimed(folder, sourceName) || claimed(folder, nextName)) throw new DesktopHttpError(409, 'This file is being saved. Try the rename again once that finishes.')
+        const destInfo = sourceName === nextName ? sourceInfo : await lstat(join(pinned, nextName), { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
+        if (destInfo?.isSymbolicLink()) throw new DesktopHttpError(400, 'That name is already a symlink.')
+        if (destInfo && (destInfo.dev !== sourceInfo.dev || destInfo.ino !== sourceInfo.ino)) throw kept()
+        if (sourceName === nextName) return { path: located.rel, name: sourceName }
+        const identity = { dev: sourceInfo.dev, ino: sourceInfo.ino }
+        const acceptable = (name: string) => name === nextName || name === nextName.normalize('NFC') || name === nextName.normalize('NFD')
+        const catalogName = async () => {
+            let fallback: string | null = null
+            for (const name of await readdir(pinned)) {
+                const info = await lstat(join(pinned, name), { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
+                if (!info || info.isSymbolicLink() || info.dev !== identity.dev || info.ino !== identity.ino) continue
+                if (acceptable(name)) return name
+                if (name === sourceName || fallback === null) fallback = name
+            }
+            return fallback
+        }
+        const rollback = async () => {
+            const name = await catalogName()
+            if (!name || name === sourceName) return
+            // One rename back. A second hop here would hide the file if the process stopped.
+            await rename(join(pinned, name), join(pinned, sourceName)).catch(() => {})
+        }
+        claim(folder, sourceName)
+        claim(folder, nextName)
+        try {
+            try {
+                await rename(join(pinned, sourceName), join(pinned, nextName))
+            } catch (error) {
+                const code = (error as NodeJS.ErrnoException).code
+                const same = !!destInfo && destInfo.dev === identity.dev && destInfo.ino === identity.ino
+                if (code === 'EEXIST' && !same) throw kept()
+                if (code === 'EEXIST' && same) { /* the volume kept the old case; the hop below changes it */ }
+                else if (code === 'ENOENT') throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
+                else if (code === 'ELOOP' || code === 'ENOTDIR' || code === 'EXDEV') throw outside()
+                else throw error
+            }
+            let catalog = await catalogName()
+            if (!catalog || !acceptable(catalog)) {
+                const token = randomBytes(12).toString('hex')
+                const temp = `${RENAME_PREFIX}${token}`
+                const journalName = `${RENAME_PREFIX}${token}.json`
+                const journalPath = join(pinned, journalName)
+                const from = (await readdir(pinned)).includes(sourceName) ? sourceName : catalog
+                if (!from) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
+                claim(folder, temp)
+                claim(folder, journalName)
+                try {
+                    const journal = await open(journalPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+                    try {
+                        await journal.writeFile(JSON.stringify({ v: 1, from: sourceName, temp, to: nextName }))
+                        await journal.sync()
+                    } finally { await journal.close() }
+                    try {
+                        await rename(join(pinned, from), join(pinned, temp))
+                        try {
+                            await rename(join(pinned, temp), join(pinned, nextName))
+                        } catch (error) {
+                            await rename(join(pinned, temp), join(pinned, sourceName)).catch(() => {})
+                            throw error
+                        }
+                        catalog = await catalogName()
+                        if (!catalog || !acceptable(catalog)) throw new DesktopHttpError(409, 'Could not rename that file. It was left unchanged.')
+                    } catch (error) {
+                        await rollback()
+                        if (error instanceof DesktopHttpError) throw error
+                        const code = (error as NodeJS.ErrnoException).code
+                        if (code === 'EEXIST') throw kept()
+                        if (code === 'ENOENT') throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
+                        throw error
+                    }
+                } finally {
+                    if (!await fileStat(join(pinned, temp))) await removeName(journalPath)
+                    unclaim(folder, temp)
+                    unclaim(folder, journalName)
+                }
+            }
+            try { await assertUnmoved() } catch (error) {
+                await rollback()
+                throw error
+            }
+            catalog = await catalogName()
+            if (!catalog || !acceptable(catalog)) {
+                await rollback()
+                throw outside()
+            }
+            const after = await lstat(join(pinned, catalog), { bigint: true })
+            if (after.isSymbolicLink() || after.dev !== identity.dev || after.ino !== identity.ino || (sourceInfo.isFile() && after.size !== sourceInfo.size)) {
+                await rollback()
+                throw kept()
+            }
+            return { path: parentRel ? `${parentRel}/${catalog}` : catalog, name: catalog }
+        } finally {
+            unclaim(folder, sourceName)
+            unclaim(folder, nextName)
+        }
+    } finally {
+        await dir.close()
+    }
 }

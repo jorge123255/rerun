@@ -5,14 +5,42 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { FileTextEditor } from '@/components/files/FileTextEditor'
 import { useFileNavigation } from '@/components/files/useFileNavigation'
 import { Button } from '@/components/ui/button'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, RefreshCwIcon, XIcon } from '@/lib/icons'
+import { Input } from '@/components/ui/input'
+import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, XIcon } from '@/lib/icons'
 import { applyEol, splitEol } from '@/lib/files/editable'
 import { Badge } from '@rerun/ui/primitives'
 import type { DesktopAgentView } from './DesktopApp'
 
 type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
-type Preview = { path: string; content: string; truncated: boolean; hash?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
+type Preview = { path: string; content: string; truncated: boolean; hash?: string; identity?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
+
+/** FileList’s name field: the stem is selected, Enter saves, and Escape cancels. */
+function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (next: string) => void; onCancel: () => void }) {
+    const [value, setValue] = useState(name)
+    const ref = useRef<HTMLInputElement>(null)
+    useEffect(() => {
+        const input = ref.current
+        if (!input) return
+        input.focus()
+        const dot = name.lastIndexOf('.')
+        input.setSelectionRange(0, dot > 0 ? dot : name.length)
+    }, [name])
+    const submit = () => {
+        const next = value.trim()
+        if (next && next !== name) onSubmit(next)
+        else onCancel()
+    }
+    return <Input ref={ref} value={value} aria-label="New name" onChange={event => setValue(event.target.value)} onBlur={submit}
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event => {
+            event.stopPropagation()
+            if (event.key === 'Enter') { event.preventDefault(); submit() }
+            if (event.key === 'Escape') { event.preventDefault(); onCancel() }
+        }}
+        className="h-7 px-2 text-sm" />
+}
 type CloseGuard = (close: () => void) => void
 
 async function errorOf(response: Response, fallback: string) {
@@ -25,6 +53,9 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const base = `/api/desktop/agents/${encodeURIComponent(agent.id)}/files`
     const [error, setError] = useState('')
     const [preview, setPreview] = useState<Preview | null>(null)
+    const [renaming, setRenaming] = useState<string | null>(null)
+    const [menuName, setMenuName] = useState<string | null>(null)
+    const [selected, setSelected] = useState<string | null>(null)
 
     const list = useCallback(async (path: string, showHidden: boolean) => {
         const response = await fetch(`${base}?path=${encodeURIComponent(path)}${showHidden ? '&hidden=1' : ''}`, { cache: 'no-store' })
@@ -80,22 +111,47 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         }
     }
 
+    const [editingPath, setEditingPath] = useState<string | null>(null)
+    const childPath = (name: string) => currentPath ? `${currentPath}/${name}` : name
+    const parentOf = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+    const selectedHere = selected && parentOf(selected) === currentPath ? selected.slice(selected.lastIndexOf('/') + 1) : null
+    const retarget = (value: string, from: string, to: string, directory: boolean) => value === from || (directory && value.startsWith(`${from}/`)) ? `${to}${value.slice(from.length)}` : value
+    const renameEntry = async (name: string, next: string) => {
+        const from = childPath(name)
+        const directory = entries.some(entry => entry.name === name && entry.type === 'dir')
+        setNotice(null)
+        try {
+            const response = await fetch(`${base}/rename`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: from, name: next }) })
+            const body = await response.json().catch(() => null) as { path?: string; name?: string; error?: string } | null
+            if (!response.ok || !body?.path) {
+                setNotice({ ok: false, folder: currentPath, text: body?.error ?? `Could not rename “${name}”.` })
+                return
+            }
+            setSelected(body.path)
+            setPreview(prev => prev ? { ...prev, path: retarget(prev.path, from, body.path!, directory) } : prev)
+            setEditingPath(prev => prev ? retarget(prev, from, body.path!, directory) : prev)
+            await reload()
+        } catch {
+            setNotice({ ok: false, folder: currentPath, text: `Could not rename “${name}”.` })
+        }
+    }
+
     const breadcrumbs = currentPath.split('/').filter(Boolean)
+    const menuEntry = menuName ? entries.find(entry => entry.name === menuName) : undefined
 
     // Keyed on the path (as FileDetail does), so opening another file leaves the editor by itself.
-    const [editingPath, setEditingPath] = useState<string | null>(null)
     const editing = !!preview && editingPath === preview.path
 
     if (preview && 'conflict' in preview) {
-        return <FileEditor base={base} path={preview.path} content={preview.conflict.content} hash={preview.conflict.hash} initialConflict={preview.conflict} registerCloseGuard={registerCloseGuard}
+        return <FileEditor base={base} path={preview.path} content={preview.conflict.content} hash={preview.conflict.hash} identity={preview.conflict.identity} initialConflict={preview.conflict} registerCloseGuard={registerCloseGuard}
             onClose={() => setPreview(null)}
-            onSaved={(content, hash) => { setPreview({ path: preview.path, content, truncated: false, hash }); setEditingPath(null) }} />
+            onSaved={(content, hash) => { setPreview({ path: preview.path, content, truncated: false, hash, identity: preview.conflict.identity }); setEditingPath(null) }} />
     }
 
     if (preview && editing && 'hash' in preview && preview.hash) {
-        return <FileEditor base={base} path={preview.path} content={preview.content} hash={preview.hash} registerCloseGuard={registerCloseGuard}
+        return <FileEditor base={base} path={preview.path} content={preview.content} hash={preview.hash} identity={preview.identity} registerCloseGuard={registerCloseGuard}
             onClose={() => setEditingPath(null)}
-            onSaved={(content, hash) => { setPreview({ path: preview.path, content, truncated: false, hash }); setEditingPath(null) }} />
+            onSaved={(content, hash) => { setPreview({ path: preview.path, content, truncated: false, hash, identity: preview.identity }); setEditingPath(null) }} />
     }
 
     if (preview) {
@@ -140,31 +196,50 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         <div className={`min-h-0 flex-1 overflow-y-auto py-2 ${busy ? 'pointer-events-none opacity-60' : ''}`}>
             {loading ? <p role="status" className="text-sm text-muted-foreground">Loading files…</p>
                 : error ? <p role="alert" className="text-sm text-destructive">{error}</p>
-                : <ul className="space-y-0.5">
-                    {currentPath && <li><button type="button" onClick={goUp} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50"><FolderIcon className="size-4 text-muted-foreground" />..</button></li>}
-                    {entries.map(entry => <li key={entry.name}>
-                        <button type="button" onClick={() => entry.type === 'dir' ? enter(entry.name) : setPreview({ path: currentPath ? `${currentPath}/${entry.name}` : entry.name, loading: true })}
-                            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50">
-                            {entry.type === 'dir' ? <FolderIcon className="size-4 text-muted-foreground" /> : <FileTextIcon className="size-4 text-muted-foreground" />}
-                            <span className="truncate">{entry.name}</span>
-                        </button>
-                    </li>)}
-                    {entries.length === 0 && <li className="px-2 py-6 text-center text-sm text-muted-foreground">This is your coworker’s workspace. Files it downloads, creates or edits during its runs are stored here.</li>}
-                </ul>}
+                : <ContextMenu onOpenChange={open => { if (!open) setMenuName(null) }}>
+                    <ContextMenuTrigger asChild>
+                        <ul className="space-y-0.5">
+                            {currentPath && <li><button type="button" onContextMenu={event => { event.preventDefault(); setMenuName(null) }} onClick={goUp} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50"><FolderIcon className="size-4 text-muted-foreground" />..</button></li>}
+                            {entries.map(entry => {
+                                const path = childPath(entry.name)
+                                const glyph = entry.type === 'dir' ? <FolderIcon className="size-4 shrink-0 text-muted-foreground" /> : <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
+                                return <li key={entry.name}>
+                                    {renaming === entry.name ? <div className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm">
+                                        {glyph}
+                                        <RenameField name={entry.name} onSubmit={next => { setRenaming(null); void renameEntry(entry.name, next) }} onCancel={() => setRenaming(null)} />
+                                    </div> : <button type="button" aria-selected={selectedHere === entry.name} onContextMenu={() => setMenuName(entry.name)}
+                                        onClick={() => { setSelected(path); if (entry.type === 'dir') enter(entry.name); else setPreview({ path, loading: true }) }}
+                                        className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50 ${selectedHere === entry.name ? 'bg-accent/60' : ''}`}>
+                                        {glyph}
+                                        <span className="truncate">{entry.name}</span>
+                                    </button>}
+                                </li>
+                            })}
+                            {entries.length === 0 && <li className="px-2 py-6 text-center text-sm text-muted-foreground">This is your coworker’s workspace. Files it downloads, creates or edits during its runs are stored here.</li>}
+                        </ul>
+                    </ContextMenuTrigger>
+                    {menuEntry && <ContextMenuContent>
+                        <ContextMenuLabel className="max-w-56 truncate">{menuEntry.name}</ContextMenuLabel>
+                        <ContextMenuItem onSelect={() => setRenaming(menuEntry.name)}>
+                            <PencilIcon className="size-4" />
+                            Rename
+                        </ContextMenuItem>
+                    </ContextMenuContent>}
+                </ContextMenu>}
         </div>
     </div>
 }
 
-type FileConflict = { content: string; hash: string; recovery?: { draft: string; external: string } }
-type SaveResponse = { path: string; hash: string } | { error: string; conflict?: true; current?: { content: string; hash: string } | null; recovery?: { draft: string; external: string } }
+type FileConflict = { content: string; hash: string; identity?: string; stale?: boolean; recovery?: { draft: string; external: string } }
+type SaveResponse = { path: string; hash: string } | { error: string; conflict?: true; stale?: boolean; current?: { content: string; hash: string; identity?: string } | null; recovery?: { draft: string; external: string } }
 
 /**
  * Original FileEditorDialog layout and editor, with desktop conflict details. Every close path
  * guards the draft, including the Files dialog behind this modal. Overwrite retries against the
  * version shown, so another change still produces a conflict.
  */
-function FileEditor({ base, path, content, hash, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; initialConflict?: FileConflict | null; registerCloseGuard: (guard: CloseGuard | null) => void; onClose: () => void; onSaved: (content: string, hash: string) => void }) {
-    const [opened, setOpened] = useState(() => ({ ...splitEol(content), hash }))
+function FileEditor({ base, path, content, hash, identity, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; identity?: string; initialConflict?: FileConflict | null; registerCloseGuard: (guard: CloseGuard | null) => void; onClose: () => void; onSaved: (content: string, hash: string) => void }) {
+    const [opened, setOpened] = useState(() => ({ ...splitEol(content), hash, identity }))
     const [draft, setDraft] = useState(opened.text)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState('')
@@ -191,15 +266,15 @@ function FileEditor({ base, path, content, hash, initialConflict = null, registe
         return () => window.removeEventListener('beforeunload', warn)
     }, [dirty])
 
-    const save = async (baseHash: string) => {
+    const save = async (baseHash: string, fileIdentity = opened.identity) => {
         setSaving(true)
         setError('')
         const next = applyEol(draft, opened.eol)
         try {
-            const response = await fetch(`${base}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, content: next, baseHash }) })
+            const response = await fetch(`${base}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, content: next, baseHash, ...(fileIdentity && { identity: fileIdentity }) }) })
             const body = await response.json().catch(() => ({ error: 'Could not save this file.' })) as SaveResponse
             if (response.ok && 'hash' in body) { onSaved(next, body.hash); return }
-            if ('conflict' in body && body.conflict && body.current) setConflict({ ...body.current, ...(body.recovery && { recovery: body.recovery }) })
+            if ('conflict' in body && body.conflict && body.current) setConflict({ ...body.current, ...(body.recovery && { recovery: body.recovery }), ...(body.stale ? { stale: true } : {}) })
             else setError('error' in body && body.error ? `${body.error} Your edits are still here; try again.` : 'Could not save this file. Your edits are still here; try again.')
         } catch {
             setError('Could not save this file. Your edits are still here; try again.')
@@ -210,7 +285,7 @@ function FileEditor({ base, path, content, hash, initialConflict = null, registe
 
     const reload = () => {
         if (!conflict) return
-        const fresh = { ...splitEol(conflict.content), hash: conflict.hash }
+        const fresh = { ...splitEol(conflict.content), hash: conflict.hash, identity: conflict.identity ?? opened.identity }
         if (dirty) setSetAside(draft)
         setOpened(fresh)
         setDraft(fresh.text)
@@ -242,10 +317,12 @@ function FileEditor({ base, path, content, hash, initialConflict = null, registe
                 <Button type="button" size="sm" onClick={saveDraft} disabled={!dirty || saving || !!conflict}>{saving ? 'Saving…' : 'Save changes'}</Button>
             </div>
         </DialogContent>
-        {conflict && <ConfirmDialog open pending={saving} onOpenChange={open => { if (!open && !saving) reload() }}
-            title={`${name} changed on this Mac`}
+        {conflict && <ConfirmDialog open pending={saving} onOpenChange={open => { if (!open && !saving) { if (conflict.stale) setConflict(null); else reload() } }}
+            title={conflict.stale ? `${name} is no longer at this path` : `${name} changed on this Mac`}
             description={<span className="block space-y-2" data-testid="edit-conflict">
-                <span className="block">{initialConflict
+                <span className="block">{conflict.stale
+                    ? 'This file was renamed. The draft was not written, and the file now at the old path was left as it is.'
+                    : initialConflict
                     ? 'This file was recovered after an interrupted save. Your draft is in the named recovery copy; the external version is below.'
                     : 'Someone, or a coworker, wrote to this file after you opened it. Your edits are still in the editor. Overwrite replaces the version below with yours.'}</span>
                 <span data-testid="conflict-disk" className="block max-h-32 overflow-auto rounded border bg-muted/30 p-2 font-mono whitespace-pre-wrap break-words">{conflict.content}</span>
@@ -253,8 +330,9 @@ function FileEditor({ base, path, content, hash, initialConflict = null, registe
                     Recovery copies in Files: <code>{conflict.recovery.draft}</code> holds your draft; <code>{conflict.recovery.external}</code> holds the external version. The external version is also back at its original path.
                 </span>}
             </span>}
-            confirmLabel="Overwrite" cancelLabel="Keep theirs"
-            onConfirm={event => { event.preventDefault(); void save(conflict.hash) }} />}
+            confirmLabel={conflict.stale ? 'Keep my draft' : 'Overwrite'} cancelLabel={conflict.stale ? 'Close' : 'Keep theirs'}
+            confirmVariant={conflict.stale ? 'default' : 'destructive'}
+            onConfirm={event => { event.preventDefault(); if (conflict.stale) setConflict(null); else void save(conflict.hash, conflict.identity) }} />}
         {pendingClose && <ConfirmDialog open onOpenChange={open => { if (!open) setPendingClose(null) }}
             title="Discard your changes?" description={`Your edits to ${name} are not saved yet. Closing the editor throws them away.`}
             confirmLabel="Discard changes" cancelLabel="Keep editing"
@@ -275,7 +353,7 @@ export function DesktopCoworkerFiles({ agent }: { agent: DesktopAgentView }) {
         {open && <DialogContent className="flex h-[75dvh] flex-col sm:max-w-2xl">
             <DialogHeader>
                 <DialogTitle>Files</DialogTitle>
-                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, or import a .txt or .md file.</DialogDescription>
+                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, or import a .txt or .md file.</DialogDescription>
             </DialogHeader>
             <FilesPanel key={agent.id} agent={agent} registerCloseGuard={registerCloseGuard} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
