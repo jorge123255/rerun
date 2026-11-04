@@ -1,14 +1,14 @@
 'use client'
 
 import { WorkspacePill } from '@rerun/ui/chrome'
-import { LayoutGrid, Search, Settings } from 'lucide-react'
+import { Keyboard, LayoutGrid, Search, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
 import { useRef } from 'react'
 import { desktopWorkspaceIconUrl } from '@/lib/desktop/icon-catalog'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts }: {
     workspaceName: string
     iconCatalogId?: string | null
     profileName: string
@@ -21,6 +21,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, profileName
     onSettings: () => void
     onWorkspaceSettings?: () => void
     onControlCenter?: () => void
+    onShortcuts?: () => void
 }) {
     const openingControlCenter = useRef(false)
     return <nav aria-label="Workspace" className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -37,6 +38,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, profileName
                 {onControlCenter && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> Control center</DropdownMenuItem>}
                 <DropdownMenuItem onSelect={onSettings}><Settings /> Settings</DropdownMenuItem>
                 {onWorkspaceSettings && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onWorkspaceSettings() }}><Settings /> Workspace settings</DropdownMenuItem>}
+                {onShortcuts && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onShortcuts() }}><Keyboard /> Keyboard shortcuts</DropdownMenuItem>}
                 {agents.length > 0 && <><DropdownMenuSeparator /><DropdownMenuLabel>Coworkers</DropdownMenuLabel></>}
                 {agents.map(agent => <DropdownMenuItem key={agent.id} aria-current={selected === agent.id ? 'true' : undefined} onSelect={() => onCoworker(agent.id)}>
                     <span className="truncate">{agent.name}</span>

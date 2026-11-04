@@ -15,6 +15,7 @@ import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
 import { DesktopBoard } from './DesktopBoard'
 import { DesktopControlCenter } from './DesktopControlCenter'
+import { DesktopShortcutsDialog } from './DesktopShortcutsDialog'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { GridPosition } from '@rerun/ui/iso-grid'
 import { Button } from '@/components/ui/button'
@@ -51,6 +52,7 @@ async function json<T>(response: Response): Promise<T> {
 
 export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [controlCenterOpen, setControlCenterOpen] = useState(false)
+    const [shortcutsOpen, setShortcutsOpen] = useState(false)
     const [placingCopy, setPlacingCopy] = useState(false)
     const [quitting, setQuitting] = useState(false)
     useEffect(() => {
@@ -61,6 +63,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         const stop = bridge?.onBeforeQuit?.(async () => {
             setQuitting(true)
             setControlCenterOpen(false)
+            setShortcutsOpen(false)
             // Freeze chat admissions synchronously, then let best-effort navigation history
             // settle alongside the existing durable draft handshake.
             const [ready] = await Promise.all([flushDesktopDrafts(), flushDesktopRecentCoworkers()])
@@ -107,11 +110,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [settings, setSettings] = useState(false)
     useEffect(() => {
         const openSettings = (event: KeyboardEvent) => {
-            if (event.metaKey && event.key === ',' && !workspaceSettings && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
+            if (event.metaKey && event.key === ',' && !shortcutsOpen && !workspaceSettings && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
         }
         window.addEventListener('keydown', openSettings)
         return () => window.removeEventListener('keydown', openSettings)
-    }, [workspaceSettings])
+    }, [workspaceSettings, shortcutsOpen])
     const [agents, setAgents] = useState(initialData.agents)
     // Responses already in flight cannot reintroduce a coworker after its confirmed deletion.
     const deletedAgents = useRef(new Set<string>())
@@ -145,7 +148,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const controlCenterDisabled = settings || workspaceSettings || creating || !!busy || placingCopy || quitting || themeSaving
+    const controlCenterDisabled = settings || workspaceSettings || shortcutsOpen || creating || !!busy || placingCopy || quitting || themeSaving
 
     useEffect(() => {
         if (panelOpen && !settings && !requestedPanel) panelContent.current?.focus({ preventScroll: true })
@@ -320,11 +323,13 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
 
     const openSettings = () => { if (!themeSavingRef.current && !isDesktopQuitting()) setSettings(true) }
+    const openShortcuts = () => { if (!controlCenterDisabled && !isDesktopQuitting()) setShortcutsOpen(true) }
     const modelLabel = defaultProvider ? providers.default?.model : undefined
     const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} iconCatalogId={iconCatalogId} profileName={initialData.profile.displayName}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
         modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings}
         onWorkspaceSettings={() => { if (!isDesktopQuitting()) setWorkspaceSettings(true) }}
+        onShortcuts={openShortcuts}
         onControlCenter={() => {
             if (controlCenterDisabled) return
             boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')?.focus({ preventScroll: true })
@@ -336,7 +341,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
-                    visibleSessionId={panelOpen && !settings && !workspaceSettings && !creating && !controlCenterOpen && !busy && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
+                    visibleSessionId={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !creating && !controlCenterOpen && !busy && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
                     onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
@@ -349,7 +354,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings && !workspaceSettings}
+                            <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings && !workspaceSettings && !shortcutsOpen}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
@@ -388,6 +393,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             </Dialog>
             <DesktopWorkspaceSettings open={workspaceSettings} onOpenChange={setWorkspaceSettings} workspaceName={workspaceName}
                 onSaved={saved => { setWorkspaceName(saved.name); if (saved.iconCatalogId !== undefined) setIconCatalogId(saved.iconCatalogId) }} />
+            <DesktopShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} onCloseAutoFocus={event => {
+                const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
+                if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
+            }} />
             <DesktopControlCenter coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null} initialRecent={initialData.recentCoworkers}
                 open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
                 onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) selectCoworker(id) }}
@@ -398,6 +407,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 onRecenterBoard={() => { if (!isDesktopQuitting()) setRecenterSignal(signal => signal + 1) }}
                 darkTheme={resolvedTheme === 'dark'}
                 onToggleTheme={resolvedTheme === 'dark' || resolvedTheme === 'light' ? () => { void saveThemeFromControlCenter(resolvedTheme === 'dark' ? 'light' : 'dark') } : undefined}
+                onShortcuts={openShortcuts}
                 onModelSettings={openSettings} onBackToBoard={() => showBoard()} />
         </main>
     )

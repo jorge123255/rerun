@@ -1,4 +1,26 @@
-# Next desktop port round — audio, image cards, logos and own instructions
+# Next desktop port round — video, audio cards and pending inbox reads
+
+Prepared base: `c6744ef7178b2a59d26a5af3298942b2a6dfc293`. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+
+| Owner | Slice | Worktree / branch |
+| --- | --- | --- |
+| A | D5: existing own MP4 video previews using the original Files frame | `file-video-previews` / `desktop/file-video-previews` |
+| B | C8: existing own WAV/MP3 result cards and lightbox playback | `file-audio-cards` / `desktop/file-audio-cards` |
+| C | Continues B5 local workspace logo uploads from its existing base | `workspace-logo-upload` / `desktop/workspace-logo-upload` |
+| D | C7: exact pending-request inbox read receipts and original Mark all confirmation | `pending-inbox-read` / `desktop/pending-inbox-read` |
+| Root | B5: original Keyboard shortcuts panel through workspace menu and Control Center; all integration and testing | coding worktree `rerun-desktop` / `desktop/m1` |
+
+The three new worktrees are prepared under `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/`. C's existing active worktree is untouched and retains its original base `49a224e`. Prompts are supplied for user dispatch; this does not imply those new lanes have started or finished. Only root runs tests, lint/type checks, builds, packaging, installation, live model requests and native Mac/restart checks. Lanes may author regressions without executing them. No lane installs dependencies, changes the app, credentials or live workspace, pushes or merges.
+
+A owns Files/video preview and its separate authenticated reader with a 16 MiB bound; preserve text/image/audio readers and dirty-dialog guards. B owns card contracts, validation, audio result rendering and model-facing wording, reusing the installed audio reader unchanged. D owns an inbox-specific acknowledgment API/hook/receipt helper and exports an isolated schema initializer; root wires the central database/bootstrap. Root retains DesktopApp, DesktopBoard, DesktopConversation, draft/queue state and app-wide navigation. C continues to supply typed workspace-logo root wiring notes. All original lane worktrees remain preserved.
+
+The scope follows original code and design. A adds no recording, model video input, conversion, imports, PDF or other video formats. B adds no audio input, recording, transcription, generation or publication. D marks only captured, exact inbox request identities; it never answers, approves, declines or bypasses a pending chat. Shared attention and board Needs you remain intact. New arrivals are not included in an older bulk confirmation. The original inbox has no full archive/history view, so that is not a parity requirement. Root's shortcuts list omits unsupported Foreman voice, page-find and file-arrow commands.
+
+Root's shortcuts implementation is in progress. None of the three new lane slices is installed or accepted yet. D5/C8/C7/B5 remain partial.
+
+---
+
+# Previous desktop port round — audio, image cards, logos and own instructions
 
 Prepared base: `49a224e75c2d6b76f441b24f41d813d2b382ee99`. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 

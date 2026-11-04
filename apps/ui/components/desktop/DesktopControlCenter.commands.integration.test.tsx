@@ -92,6 +92,9 @@ afterEach(async () => {
 const composer = () => document.querySelector<HTMLTextAreaElement>('[data-desktop-tab-active="true"] #desktop-message')!
 const commandField = () => document.querySelector<HTMLInputElement>('[cmdk-input]')
 const workspaceDialog = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(dialog => dialog.querySelector('#workspace-settings-name'))
+const shortcutsDialog = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(dialog => dialog.querySelector('h2')?.textContent === 'Keyboard shortcuts')
+const workspacePill = () => document.querySelector<HTMLButtonElement>('[aria-label="Workspace menu, Command studio"]')!
+const openTabButtons = () => [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Open conversations"] button[aria-pressed]')]
 const settle = (ms = 0) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)) })
 async function until<T>(read: () => T | null | undefined): Promise<T> {
     for (let attempt = 0; attempt < 60; attempt++) {
@@ -124,6 +127,26 @@ async function openCommands() {
 async function runCommand(label: string) {
     const row = await until(() => [...document.querySelectorAll<HTMLElement>('[cmdk-item]')].find(item => item.textContent?.trim() === label))
     await act(async () => { row.click() })
+}
+
+async function openShortcutsFromMenu() {
+    await act(async () => {
+        workspacePill().focus()
+        workspacePill().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    })
+    const entry = await until(() => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === 'Keyboard shortcuts'))
+    await act(async () => { entry.click() })
+    return until(shortcutsDialog)
+}
+
+async function closeShortcutsWithEscape(dialog: HTMLElement) {
+    await act(async () => {
+        const target = dialog.querySelector<HTMLButtonElement>('button') ?? dialog
+        target.focus()
+        target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    await until(() => !shortcutsDialog())
+    await until(() => document.activeElement === workspacePill())
 }
 
 function fixture(initialTheme: ThemePreference = 'system') {
@@ -328,5 +351,111 @@ test('Recenter the board applies the existing canvas framing without replacing t
     expect(world.isConnected).toBe(true)
     view.unchanged()
     expect(app.reads).toEqual(readsBefore)
+    expect(app.writes).toEqual([])
+})
+
+test('the /hotkeys command opens the original help view with only the six supported Mac shortcuts', async () => {
+    const app = fixture()
+    const mounted = await app.mount()
+    const view = await openChat(mounted.container)
+    const readsBefore = [...app.reads]
+    const field = await openCommands()
+    await enter(field, '/hotkeys')
+    const matches = await until(() => {
+        const rows = [...document.querySelectorAll<HTMLElement>('[cmdk-item]')]
+        return rows.some(row => row.textContent?.trim() === 'Keyboard shortcuts') ? rows : null
+    })
+    expect(matches.map(row => row.textContent?.trim())).toEqual(['Keyboard shortcuts'])
+    await runCommand('Keyboard shortcuts')
+    const dialog = await until(shortcutsDialog)
+    expect(commandField()).toBeNull()
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    expect(dialog.textContent).toContain('Move faster around Rerun with these shortcuts.')
+    const shortcutRows = [...new Set([...dialog.querySelectorAll('kbd')].map(key => key.parentElement!.parentElement!))]
+    expect(shortcutRows.map(row => ({ action: row.firstElementChild?.textContent, keys: [...row.querySelectorAll('kbd')].map(key => key.textContent) }))).toEqual([
+        { action: 'Open the control center', keys: ['⌘', 'F'] },
+        { action: 'Open the control center, outside a chat or text field', keys: ['⌘', 'K'] },
+        { action: 'New conversation', keys: ['⌘', 'K'] },
+        { action: 'Close active tab, outside a text field', keys: ['⌘', '⌫'] },
+        { action: 'Send message', keys: ['Enter'] },
+        { action: 'New line', keys: ['Shift', 'Enter'] },
+    ])
+    expect(dialog.textContent).not.toMatch(/Ask Rerun|Hold to talk|Search in the page|Previous file|Next file|×2/)
+    view.unchanged(true)
+    await closeShortcutsWithEscape(dialog)
+    expect(commandField()).toBeNull()
+    view.unchanged()
+    expect(openTabButtons()).toHaveLength(1)
+    expect(app.reads).toEqual(readsBefore)
+    expect(app.writes).toEqual([])
+})
+
+test('workspace help blocks chat and settings shortcuts until Escape closes only the help', async () => {
+    const app = fixture()
+    const mounted = await app.mount()
+    const view = await openChat(mounted.container)
+    const readsBefore = [...app.reads]
+    const dialog = await openShortcutsFromMenu()
+    await until(() => !document.querySelector('[role="menu"]'))
+    expect(openTabButtons()).toHaveLength(1)
+    for (const key of ['k', 'f', ',']) {
+        await act(async () => {
+            const target = dialog.querySelector<HTMLButtonElement>('button') ?? dialog
+            target.focus()
+            target.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: true, bubbles: true, cancelable: true }))
+        })
+        await settle()
+        expect(shortcutsDialog()).toBe(dialog)
+        expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+        expect(commandField()).toBeNull()
+        expect(document.querySelector('#desktop-api-key')).toBeNull()
+        expect([...document.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Back to chat')).toBe(false)
+        expect(openTabButtons()).toHaveLength(1)
+        view.unchanged(true)
+    }
+    await closeShortcutsWithEscape(dialog)
+    view.unchanged()
+    expect(app.reads).toEqual(readsBefore)
+    await act(async () => {
+        view.input.focus()
+        view.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }))
+    })
+    await until(() => openTabButtons().length === 2)
+    expect(commandField()).toBeNull()
+    expect(shortcutsDialog()).toBeUndefined()
+    expect(composer()).not.toBe(view.input)
+    expect(composer().value).toBe('')
+    expect(view.input.value).toBe('Keep this command draft')
+    expect(view.chat.textContent).toContain('This coworker keeps its saved answer.')
+    await click('Saved review')
+    await until(() => composer() === view.input)
+    view.unchanged()
+    expect(app.writes).toEqual([])
+})
+
+test('help is transient on remount and reopens from the workspace menu beside the restored chat draft', async () => {
+    const app = fixture()
+    const first = await app.mount()
+    const view = await openChat(first.container)
+    await until(() => view.chat.textContent?.includes('Draft saved'))
+    await openShortcutsFromMenu()
+    view.unchanged(true)
+    await first.unmount()
+    const second = await app.mount()
+    expect(shortcutsDialog()).toBeUndefined()
+    expect(commandField()).toBeNull()
+    const tile = second.container.querySelector<HTMLElement>('[aria-label="Open chat with Reviewer"]')!
+    await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })) })
+    const restored = await until(() => composer()?.value === 'Keep this command draft' ? composer() : null)
+    const chat = restored.closest('[data-desktop-tab-active]')!
+    await until(() => chat.textContent?.includes('This coworker keeps its saved answer.'))
+    const dialog = await openShortcutsFromMenu()
+    expect(second.container.querySelector('textarea[id^="desktop-message"]')).toBe(restored)
+    expect(restored.value).toBe('Keep this command draft')
+    await closeShortcutsWithEscape(dialog)
+    expect(composer()).toBe(restored)
+    expect(document.activeElement).toBe(workspacePill())
+    expect(openTabButtons()).toHaveLength(1)
+    expect(chat.textContent).toContain('This coworker keeps its saved answer.')
     expect(app.writes).toEqual([])
 })

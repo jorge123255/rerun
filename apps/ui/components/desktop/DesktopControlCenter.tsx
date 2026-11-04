@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ComponentType } from 're
 import { ControlCenterView } from '@/components/control-center/ControlCenterView'
 import type { ControlRow, ControlSection } from '@/components/control-center/types'
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
-import { CirclePlusIcon, FocusCenterIcon, LayoutGridIcon, LockKeyholeIcon, MessageCircle, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
+import { CirclePlusIcon, FocusCenterIcon, KeyboardIcon, LayoutGridIcon, LockKeyholeIcon, MessageCircle, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
 import { parseQuery, searchItems } from '@/lib/control-center/search'
 import { buildDesktopControlCommands, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
@@ -31,6 +31,7 @@ const COMMAND_ICONS: Record<DesktopControlCommandId, ComponentType<{ className?:
     workspace_settings: SettingsIcon,
     recenter_board: FocusCenterIcon,
     toggle_theme: SunIcon,
+    shortcuts: KeyboardIcon,
 }
 
 function pageKey(page: Page): string {
@@ -52,6 +53,7 @@ export type DesktopControlCenterProps = {
     onAddCoworker: () => void
     onModelSettings: () => void
     onBackToBoard: () => void
+    onShortcuts?: () => void
     onWorkspaceSettings?: () => void
     onRecenterBoard?: () => void
     onToggleTheme?: () => void
@@ -59,7 +61,7 @@ export type DesktopControlCenterProps = {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -104,8 +106,8 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
     const chats = useDesktopControlCenterChats(pageCoworker?.id ?? null, showCoworkerChats, selectionScope)
     const [chatNotice, setChatNotice] = useState<{ scope: string; text: string } | null>(null)
     const selectingChat = useRef<{ scope: string } | null>(null)
-    const latest = useRef({ open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
-    latest.current = { open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
+    const latest = useRef({ open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
+    latest.current = { open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
     const available = () => latest.current.open && !latest.current.disabled && !isDesktopQuitting() && latest.current.selectionScope === selectionScope
 
     const close = () => {
@@ -239,7 +241,7 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
             const current = latest.current
             const action = {
                 add_coworker: current.onAddCoworker, team_board: current.onBackToBoard, model_settings: current.onModelSettings,
-                workspace_settings: current.onWorkspaceSettings, recenter_board: current.onRecenterBoard, toggle_theme: current.onToggleTheme,
+                shortcuts: current.onShortcuts, workspace_settings: current.onWorkspaceSettings, recenter_board: current.onRecenterBoard, toggle_theme: current.onToggleTheme,
             }[command.id]
             // A retained row cannot dismiss the center when its action was removed, or invoke
             // the opposite of the theme choice the user saw before the appearance changed.
@@ -274,7 +276,7 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
                 : conversationSection('coworker-conversations', 'Conversations', page.coworkerId))]
         }
 
-        const commands = buildDesktopControlCommands({ workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme })
+        const commands = buildDesktopControlCommands({ shortcuts: !!onShortcuts, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme })
         const commandSections: ControlSection[] = [
             { id: 'actions', heading: 'Actions', rows: searchItems(commands.filter(command => command.group === 'actions'), text).map(commandRow) },
             { id: 'settings', heading: 'Settings', rows: searchItems(commands.filter(command => command.group === 'settings'), text).map(commandRow) },

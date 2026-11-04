@@ -6,7 +6,7 @@ import { useModKeyLabel } from '@/hooks/useModKeyLabel'
 import { useShortcutsStore } from '@/stores/shortcuts.store'
 
 type Shortcut = { keys: string[]; action: string }
-type ShortcutGroup = { title: string; shortcuts: Shortcut[] }
+export type ShortcutGroup = { title: string; shortcuts: Shortcut[] }
 
 function buildGroups(mod: string): ShortcutGroup[] {
     return [
@@ -42,11 +42,19 @@ export function ShortcutsDialog() {
     const { open, setOpen } = useShortcutsStore()
     const mod = useModKeyLabel()
 
-    const groups = buildGroups(mod)
+    return <ShortcutsDialogView open={open} onOpenChange={setOpen} groups={buildGroups(mod)} />
+}
 
+// The desktop reuses the original view with only the shortcuts its local runtime supports.
+export function ShortcutsDialogView({ open, onOpenChange, groups, onCloseAutoFocus }: {
+    open: boolean
+    onOpenChange: (open: boolean) => void
+    groups: ShortcutGroup[]
+    onCloseAutoFocus?: (event: Event) => void
+}) {
     return (
-        <Dialog open={open} onOpenChange={setOpen}>
-            <DialogContent className="sm:max-w-md">
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="sm:max-w-md" onCloseAutoFocus={onCloseAutoFocus}>
                 <DialogHeader>
                     <DialogTitle>Keyboard shortcuts</DialogTitle>
                     <DialogDescription>Move faster around Rerun with these shortcuts.</DialogDescription>
