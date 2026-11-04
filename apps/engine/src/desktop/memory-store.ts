@@ -230,3 +230,22 @@ export function removeDesktopMemory(agentId: string, id: string, expectedContent
         await unlink(marker)
     })
 }
+
+// Clearing every note repeats the single-delete sequence per file inside one locked store: rename
+// under a marker, drop the note's rows in the engine transaction, then publish the removal. The
+// marker is named after the listed file, so a tampered frontmatter ID cannot redirect the rename,
+// and only this coworker's directory is touched: a sibling's notes and any learning or recall
+// preferences survive untouched.
+export function clearDesktopMemories(agentId: string) {
+    return withMemoryStore(agentId, 'delete', async ({ dir, hasIndex }) => {
+        if (!dir) return
+        for (const note of await listMemoryFiles(agentId, dir)) {
+            const stem = basename(note.path).replace(/\.md$/, '')
+            if (!noteId.test(stem)) continue
+            const marker = join(dir, '.deleting-' + stem)
+            await rename(note.path, marker)
+            if (hasIndex) await deleteMemory(agentId, stem)
+            await unlink(marker)
+        }
+    })
+}

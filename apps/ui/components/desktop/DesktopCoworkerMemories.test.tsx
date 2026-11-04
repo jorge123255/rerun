@@ -315,3 +315,130 @@ test('an already-deleted note is reconciled from the coworker list without disca
         expect((document.getElementById('desktop-memory-content') as HTMLTextAreaElement).value).toBe('Draft in progress')
     } finally { await act(async () => { root.unmount() }) }
 })
+
+test('cancel keeps every note and the search, and confirming clears all notes beyond the search', async () => {
+    const root = mount()
+    const url = '/api/desktop/agents/reviewer/memories'
+    const outside = note('outside', 'Vacation dates in July')
+    const apple = note('apples', 'Buys apples weekly')
+    const cider = note('cider', 'Presses cider from apples')
+    let stored = [outside, apple, cider]
+    const calls: string[] = []
+    vi.stubGlobal('fetch', async (target: string, init: RequestInit) => {
+        calls.push(`${init.method ?? 'GET'} ${target}`)
+        if (init.method === 'DELETE' && target === url) {
+            stored = []
+            return new Response(null, { status: 204 })
+        }
+        if (target === url + '/recall') {
+            const { query } = JSON.parse(String(init.body))
+            return Response.json({ memories: stored.filter(n => n.content.includes(query)) })
+        }
+        return Response.json({ memories: stored })
+    })
+    const trash = () => document.querySelector<HTMLButtonElement>('[aria-label="Clear all memories"]')
+    try {
+        await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
+        await click('Memories')
+        for (const label of ['Vacation dates in July', 'Buys apples weekly', 'Presses cider from apples']) expect(dialog()?.textContent).toContain(label)
+        expect(trash()).not.toBeNull()
+        await enter('desktop-memory-search', 'apples')
+        await act(async () => { dialog()!.querySelector<HTMLFormElement>('form[role="search"]')!.requestSubmit() })
+        expect(dialog()?.textContent).toContain('2 recalled for “apples”')
+        expect(dialog()?.textContent).not.toContain('Vacation dates in July')
+        await act(async () => { trash()!.click() })
+        const confirmation = document.querySelector('[role="alertdialog"]')
+        expect(confirmation?.textContent).toContain('Clear all memories?')
+        expect(confirmation?.textContent).toContain("This permanently deletes all of this coworker's memories. This cannot be undone.")
+        await click('Cancel')
+        expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+        expect(calls.filter(call => call.startsWith('DELETE'))).toEqual([])
+        expect(stored).toHaveLength(3)
+        expect(dialog()?.textContent).toContain('2 recalled for “apples”')
+        expect(dialog()?.textContent).toContain('Buys apples weekly')
+        expect((document.getElementById('desktop-memory-search') as HTMLInputElement).value).toBe('apples')
+        await act(async () => { trash()!.click() })
+        await click('Clear all')
+        expect(calls).toContain('DELETE /api/desktop/agents/reviewer/memories')
+        expect(calls.filter(call => call.startsWith('DELETE'))).toHaveLength(1)
+        expect(stored).toEqual([])
+        expect(dialog()?.textContent).toContain('No memories yet')
+        expect(dialog()?.textContent).not.toContain('recalled for')
+        expect((document.getElementById('desktop-memory-search') as HTMLInputElement).value).toBe('')
+        expect(document.querySelector('[aria-label="Clear all memories"]')).toBeNull()
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('a failed clear keeps every note and the search intact, and retrying the confirmation succeeds', async () => {
+    const root = mount()
+    const url = '/api/desktop/agents/reviewer/memories'
+    const outside = note('outside', 'Kept despite the failure')
+    const apple = note('apples', 'Buys apples weekly')
+    let stored = [outside, apple]
+    let clears = 0
+    const calls: string[] = []
+    vi.stubGlobal('fetch', async (target: string, init: RequestInit) => {
+        calls.push(`${init.method ?? 'GET'} ${target}`)
+        if (init.method === 'DELETE' && target === url) {
+            if (++clears === 1) return Response.json({ error: 'Engine unavailable' }, { status: 503 })
+            stored = []
+            return new Response(null, { status: 204 })
+        }
+        if (target === url + '/recall') {
+            const { query } = JSON.parse(String(init.body))
+            return Response.json({ memories: stored.filter(n => n.content.includes(query)) })
+        }
+        return Response.json({ memories: stored })
+    })
+    const trash = () => document.querySelector<HTMLButtonElement>('[aria-label="Clear all memories"]')
+    try {
+        await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
+        await click('Memories')
+        await enter('desktop-memory-search', 'apples')
+        await act(async () => { dialog()!.querySelector<HTMLFormElement>('form[role="search"]')!.requestSubmit() })
+        await act(async () => { trash()!.click() })
+        await click('Clear all')
+        expect(dialog()?.querySelector('[role="alert"]')?.textContent).toBe('Engine unavailable')
+        expect(stored.map(n => n.id)).toEqual(['outside', 'apples'])
+        expect(dialog()?.textContent).toContain('Buys apples weekly')
+        expect(dialog()?.textContent).toContain('1 recalled for “apples”')
+        expect((document.getElementById('desktop-memory-search') as HTMLInputElement).value).toBe('apples')
+        expect(trash()).not.toBeNull()
+        await act(async () => { trash()!.click() })
+        await click('Clear all')
+        expect(clears).toBe(2)
+        expect(stored).toEqual([])
+        expect(dialog()?.textContent).toContain('No memories yet')
+        expect(dialog()?.querySelector('[role="alert"]')).toBeNull()
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('a clear finishing after a coworker switch cannot empty the newly selected coworker’s notes', async () => {
+    const root = mount()
+    const url = (id: string) => `/api/desktop/agents/${id}/memories`
+    let finish!: (response: Response) => void
+    const calls: string[] = []
+    vi.stubGlobal('fetch', (target: string, init: RequestInit) => {
+        calls.push(`${init.method ?? 'GET'} ${target}`)
+        if (init.method === 'DELETE') {
+            expect(target).toBe(url('first'))
+            return new Promise<Response>(resolve => { finish = resolve })
+        }
+        return Promise.resolve(Response.json({ memories: target.includes('/second/') ? [note('kept', 'Second coworker note')] : [note('own', 'First coworker note')] }))
+    })
+    const show = (id: string) => act(async () => { root.render(<DesktopCoworkerMemories agent={coworker(id)} />) })
+    try {
+        await show('first')
+        await click('Memories')
+        expect(document.querySelector<HTMLButtonElement>('[aria-label="Clear all memories"]')).not.toBeNull()
+        await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Clear all memories"]')!.click() })
+        await click('Clear all')
+        await show('second')
+        expect(dialog()?.textContent).toContain('Second coworker note')
+        await act(async () => { finish(new Response(null, { status: 204 })) })
+        expect(dialog()?.textContent).toContain('Second coworker note')
+        expect(dialog()?.textContent).not.toContain('First coworker note')
+        expect((document.getElementById('desktop-memory-search') as HTMLInputElement)?.value ?? '').toBe('')
+        expect(calls).toEqual(['GET /api/desktop/agents/first/memories', 'DELETE /api/desktop/agents/first/memories', 'GET /api/desktop/agents/second/memories'])
+    } finally { await act(async () => { root.unmount() }) }
+})

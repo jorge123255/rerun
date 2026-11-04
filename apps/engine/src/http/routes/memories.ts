@@ -7,7 +7,7 @@ import { recallMemory, writeMemory, deleteMemory, deleteAllMemories } from '../.
 import { computeStrength, memoryStatus } from '../../memory/decay.js'
 import { listMemories } from '../../db/repos/memories.js'
 import { desktopApp } from '../../desktop/policy.js'
-import { addDesktopMemory, listDesktopMemory, recallDesktopMemory, removeDesktopMemory } from '../../desktop/memory-store.js'
+import { addDesktopMemory, clearDesktopMemories, listDesktopMemory, recallDesktopMemory, removeDesktopMemory } from '../../desktop/memory-store.js'
 
 export const memoryRoutes = new Hono()
 
@@ -61,6 +61,10 @@ memoryRoutes.post('/recall', async c => {
 })
 
 memoryRoutes.delete('/', async c => {
+    if (desktopApp()) {
+        await clearDesktopMemories(c.req.param('id')!)
+        return c.body(null, 204)
+    }
     const agent = await getAgent(c.req.param('id')!)
     await deleteAllMemories(agent)
     return c.body(null, 204)

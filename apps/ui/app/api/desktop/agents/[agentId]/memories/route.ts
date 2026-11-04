@@ -1,7 +1,7 @@
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { withCoworkerMemories } from '@/lib/desktop/server/memories'
-import { createMemory, listMemories } from '@/lib/engine/client'
+import { clearMemories, createMemory, listMemories } from '@/lib/engine/client'
 import { desktopMemoryCreateSchema } from '@rerun/contracts'
 
 export const dynamic = 'force-dynamic'
@@ -23,5 +23,13 @@ export function POST(request: Request, { params }: Context) {
         const created = await withCoworkerMemories(runtime, agentId, (engine, id) => createMemory(engine, id, body.data))
         if (!created?.id) throw new DesktopHttpError(502, 'Could not confirm the memory was saved. Try again.')
         return Response.json({ id: created.id }, { status: 201 })
+    })
+}
+
+export function DELETE(request: Request, { params }: Context) {
+    return desktopRoute(request, async runtime => {
+        const { agentId } = await params
+        await withCoworkerMemories(runtime, agentId, clearMemories)
+        return new Response(null, { status: 204 })
     })
 }

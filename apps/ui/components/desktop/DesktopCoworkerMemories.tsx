@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { memoriesListSchema } from '@rerun/contracts'
 import { MemoryRow } from '@/components/agent/MemoryRow'
+import { ClearMemoriesDialog } from '@/components/dialogs/ClearMemoriesDialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { PanelList } from '@/components/ui/panel-list'
 import { Textarea } from '@/components/ui/textarea'
-import { BrainIcon, PlusIcon } from '@/lib/icons'
+import { BrainIcon, PlusIcon, Trash2Icon } from '@/lib/icons'
 import type { EngineMemory } from '@/lib/engine/types'
 import type { DesktopAgentView } from './DesktopApp'
 
@@ -26,6 +27,7 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
     const submission = useRef<{ payload: string; id: string } | null>(null)
     const [writing, setWriting] = useState(false)
     const [error, setError] = useState('')
+    const [confirmClear, setConfirmClear] = useState(false)
 
     useEffect(() => {
         const controller = new AbortController()
@@ -61,8 +63,9 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
         setError('')
         try {
             const response = await fetch(target, options)
-            // A prior delete may already have succeeded before its response reached this window.
-            if (!response.ok && !(options.method === 'DELETE' && response.status === 404)) {
+            // A prior single-note delete may already have succeeded before its response reached
+            // this window; a missing coworker on a clear-all is a genuine failure instead.
+            if (!response.ok && !(options.method === 'DELETE' && target !== url && response.status === 404)) {
                 const body = await response.json().catch(() => null)
                 throw new Error(typeof body?.error === 'string' ? body.error : message)
             }
@@ -90,6 +93,14 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
         if (saved) { setDraft(null); submission.current = null }
     }
 
+    // The original panel retires the active recall search with the confirmed clear, so the refreshed
+    // list is what remains. A failure keeps every note and the search exactly as they were.
+    async function clearAll() {
+        setConfirmClear(false)
+        const cleared = await changeMemory(url, { method: 'DELETE' }, 'Could not clear these memories. Try again.')
+        if (cleared) { setQuery(''); setActiveQuery('') }
+    }
+
     return <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-xl" showCloseButton={!writing}
         onEscapeKeyDown={event => { if (writing) event.preventDefault() }}
         onInteractOutside={event => { if (writing) event.preventDefault() }}>
@@ -109,6 +120,11 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
                 </div>
                 <Button type="submit" size="sm" variant="outline" disabled={!query.trim()}>Search</Button>
                 {(activeQuery || query) && <Button type="button" size="sm" variant="ghost" onClick={() => { setQuery(''); search('') }}>Clear search</Button>}
+                {result && 'memories' in result && result.memories.length > 0 && (
+                    <Button type="button" size="icon-sm" variant="destructive" title="Clear all memories" aria-label="Clear all memories" onClick={() => setConfirmClear(true)}>
+                        <Trash2Icon />
+                    </Button>
+                )}
             </form>
             {draft ? <form onSubmit={create} className="space-y-3 rounded-lg border p-3">
                 <Textarea id="desktop-memory-content" label="Content" required value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })}
@@ -138,6 +154,7 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
             {result && <Button type="button" variant="outline" disabled={writing} onClick={refresh}>{'error' in result ? 'Retry' : 'Refresh'}</Button>}
             <DialogClose asChild><Button type="button" disabled={writing}>Done</Button></DialogClose>
         </DialogFooter>
+        <ClearMemoriesDialog open={confirmClear} onOpenChange={setConfirmClear} onConfirm={clearAll} />
     </DialogContent>
 }
 

@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs'
-import { mkdir, readFile, rename, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -12,7 +12,7 @@ const { agentDir } = await import('../../config/paths.js')
 const { writeAgentConfig } = await import('../../agents/config-write.js')
 const { closeSystemDb, getSystemDb } = await import('../../db/systemDb.js')
 const { ftsRecall } = await import('../../db/repos/memories.js')
-const { writeMemoryFile } = await import('../../memory/files.js')
+const { listMemoryFiles, writeMemoryFile } = await import('../../memory/files.js')
 const app = createServer()
 const makeAgent = async (id: string) => {
     await mkdir(agentDir(id), { recursive: true })
@@ -101,5 +101,60 @@ describe('desktop memory mutations', () => {
         expect((await send(agent, 'POST', { content: 'never committed' })).status).toBe(500)
         closeSystemDb(agent)
         expect((await (await send(agent, 'GET')).json()).memories).toEqual([expect.objectContaining({ id, content: 'Survives restart' })])
+    })
+
+    it('clears every note of one coworker in one pass, leaving the sibling’s notes and preferences untouched', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const network = vi.fn(() => { throw Error('unexpected network request') })
+        vi.stubGlobal('fetch', network)
+        const a = 'clear-owner', b = 'clear-sibling'
+        await Promise.all([a, b].map(makeAgent))
+        const handmade = await writeMemoryFile(a, 'Unindexed handmade note')
+        const first = (await (await send(a, 'POST', { content: 'Keeps apples in season' })).json()).id
+        const second = (await (await send(a, 'POST', { content: 'Prefers pears from the market' })).json()).id
+        const sibling = (await (await send(b, 'POST', { content: 'Sibling note survives' })).json()).id
+        const list = async (agent: string) => (await (await send(agent, 'GET')).json()).memories
+        expect(await list(a)).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: handmade.id, content: 'Unindexed handmade note' }),
+            expect.objectContaining({ id: first, content: 'Keeps apples in season' }),
+            expect.objectContaining({ id: second, content: 'Prefers pears from the market' }),
+        ]))
+        const config = await readFile(join(agentDir(a), 'config.json'), 'utf8')
+        closeSystemDb(a); closeSystemDb(b)
+        expect((await send(a, 'DELETE')).status).toBe(204)
+        closeSystemDb(a)
+        expect(await list(a)).toEqual([])
+        expect(await listMemoryFiles(a)).toEqual([])
+        expect(await ftsRecall(a, 'apples', 5)).toEqual([])
+        expect(await list(b)).toEqual([expect.objectContaining({ id: sibling, content: 'Sibling note survives' })])
+        expect(await readFile(join(agentDir(a), 'config.json'), 'utf8')).toBe(config)
+        expect((await send(a, 'DELETE')).status).toBe(204)
+        expect(network).not.toHaveBeenCalled()
+    })
+
+    it('refuses to clear through a redirected memory directory without touching any note', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const owner = 'clear-guarded', alias = 'clear-alias'
+        await Promise.all([owner, alias].map(makeAgent))
+        const note = await writeMemoryFile(owner, 'Guarded note')
+        await symlink(join(agentDir(owner), 'memory'), join(agentDir(alias), 'memory'), 'dir')
+        expect((await send(alias, 'DELETE')).status).toBe(403)
+        expect(await readFile(note.path, 'utf8')).toContain('Guarded note')
+        expect((await send(owner, 'DELETE')).status).toBe(204)
+        closeSystemDb(owner)
+        expect(await listMemoryFiles(owner)).toEqual([])
+    })
+
+    it('names the removal marker after the listed file, so a tampered frontmatter id cannot redirect the delete', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const owner = 'clear-tampered'
+        await makeAgent(owner)
+        await mkdir(join(agentDir(owner), 'memory'), { recursive: true })
+        await writeFile(join(agentDir(owner), 'memory', 'note.md'), `---\nid: '../../escape'\ncreatedAt: '2026-11-03T00:00:00Z'\n---\n\nHostile note\n`)
+        expect((await (await send(owner, 'GET')).json()).memories).toHaveLength(1)
+        expect((await send(owner, 'DELETE')).status).toBe(204)
+        expect(await readdir(join(agentDir(owner), 'memory'))).toEqual([])
+        expect(await readdir(agentDir(owner))).not.toContain('escape')
+        expect(await listMemoryFiles(owner)).toEqual([])
     })
 })

@@ -15,7 +15,7 @@ import { POST as connectProvider } from './providers/openai/route'
 import { GET as listAgents, POST as createAgent } from './agents/route'
 import { GET as listSessions } from './agents/[agentId]/sessions/route'
 import { GET as readCoworkerSettings, PATCH as editCoworkerSettings } from './agents/[agentId]/settings/route'
-import { GET as readMemories, POST as addMemory } from './agents/[agentId]/memories/route'
+import { GET as readMemories, POST as addMemory, DELETE as clearMemories } from './agents/[agentId]/memories/route'
 import { DELETE as deleteMemory } from './agents/[agentId]/memories/[memoryId]/route'
 import { POST as searchMemories } from './agents/[agentId]/memories/recall/route'
 import { GET as getMessages } from './sessions/[sessionId]/messages/route'
@@ -60,6 +60,11 @@ beforeEach(async () => {
                 return res.writeHead(201).end(JSON.stringify({ id: memoryId }))
             }
             if (req.method === 'DELETE') {
+                if (id === undefined) {
+                    if (list.some(note => note.content === 'unavailable')) return res.writeHead(503).end()
+                    notes[owner] = []
+                    return res.writeHead(204).end()
+                }
                 if (!list.some(note => note.id === id)) return res.writeHead(404).end()
                 notes[owner] = list.filter(note => note.id !== id)
                 return res.writeHead(204).end()
@@ -332,6 +337,32 @@ describe('desktop API routes', () => {
         expect((await remove(second.id, key)).status).toBe(204)
         expect(await list(second.id)).toEqual([])
         expect(await list(first.id)).toMatchObject([{ id: 'first-note' }])
+    })
+
+    it('clears one local coworker’s memories on confirmation, mapping an engine failure to a retryable 502', async () => {
+        const db = await openDesktopDatabase(root)
+        const first = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'First' })
+        const second = await createDesktopAgent(db, { engineAgentId: 'engine-agent-2', name: 'Second' })
+        const url = (id: string) => `/api/desktop/agents/${id}/memories`
+        const ctx = (id: string) => ({ params: Promise.resolve({ agentId: id }) })
+        const call = (id: string, req: Request) => clearMemories(req, ctx(id))
+        const clear = (id: string) => call(id, request(url(id), { method: 'DELETE' }))
+        const list = async (id: string) => (await (await readMemories(request(url(id)), ctx(id))).json()).memories
+        expect((await addMemory(request(url(second.id), { method: 'POST', body: { content: 'Sibling keeps this' } }), ctx(second.id))).status).toBe(201)
+        const anonymous = request(url(first.id), { method: 'DELETE' })
+        anonymous.headers.delete('cookie')
+        expect((await call(first.id, anonymous)).status).toBe(401)
+        const foreign = request(url(first.id), { method: 'DELETE' })
+        foreign.headers.set('origin', 'https://example.invalid')
+        expect((await call(first.id, foreign)).status).toBe(403)
+        expect((await call('engine-agent-1', request('/api/desktop/agents/engine-agent-1/memories', { method: 'DELETE' }))).status).toBe(404)
+        expect((await addMemory(request(url(first.id), { method: 'POST', body: { content: 'unavailable' } }), ctx(first.id))).status).toBe(201)
+        expect((await clear(first.id)).status).toBe(502)
+        expect(await list(first.id)).toMatchObject([{ id: 'first-note', content: 'First coworker only' }, { content: 'unavailable' }])
+        expect((await deleteMemory(request(url(first.id) + '/created', { method: 'DELETE' }), { params: Promise.resolve({ agentId: first.id, memoryId: 'created' }) })).status).toBe(204)
+        expect((await clear(first.id)).status).toBe(204)
+        expect(await list(first.id)).toEqual([])
+        expect(await list(second.id)).toMatchObject([{ content: 'Sibling keeps this' }])
     })
 
     it('runs provider, coworker, chat, session, and history flows without exposing engine internals', async () => {
