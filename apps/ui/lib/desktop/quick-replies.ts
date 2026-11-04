@@ -2,6 +2,8 @@ import { parseQuickReplies, quickRepliesOf } from '@rerun/contracts'
 
 export type DesktopQuickReplyMessage = Parameters<typeof quickRepliesOf>[0]
 export type DesktopQuickReplyInput = { replies: string[] }
+// Resolves true only when the server accepted the send. Resolving false or rejecting releases the latch.
+export type DesktopQuickReplySend = (text: string) => Promise<boolean>
 
 export function desktopQuickRepliesOf(message: DesktopQuickReplyMessage): string[] {
     return quickRepliesOf(message)
