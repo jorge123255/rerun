@@ -17,7 +17,7 @@ export async function loadBundle(resources) {
     if (manifest.protocolVersion !== PROTOCOL_VERSION || typeof manifest.buildId !== 'string' || !manifest.buildId) throw new Error('Unsupported desktop runtime manifest')
     const root = await realpath(resources)
     const paths = {}
-    for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'renameHelperPath']) {
+    for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'renameHelperPath', 'pdfHelperPath']) {
         const path = inside(root, manifest[field])
         const actual = await realpath(path)
         const rel = relative(root, actual)

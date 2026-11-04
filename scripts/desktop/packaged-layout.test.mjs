@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, mkdir, readFile, realpath, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, writeFile, rm, symlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -22,6 +22,7 @@ async function fakeResources() {
     await writeFile(join(root, 'main', 'ui-host.mjs'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-codex'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-rename-entry'), 'fake')
+    await writeFile(join(root, 'runtime', 'rerun-render-pdf'), 'fake')
     await writeFile(join(root, 'runtime-manifest.json'), JSON.stringify({
         protocolVersion: 1,
         buildId: 'layout-test-desktop-0.1.0',
@@ -32,6 +33,7 @@ async function fakeResources() {
         uiHost: 'main/ui-host.mjs',
         codexPath: 'runtime/rerun-codex',
         renameHelperPath: 'runtime/rerun-rename-entry',
+        pdfHelperPath: 'runtime/rerun-render-pdf',
     }))
     return root
 }
@@ -67,6 +69,7 @@ test('loadBundle resolves the packaged UI host from the manifest inside resource
         assert.equal(bundle.uiHost, await realpath(resolve(root, 'main', 'ui-host.mjs')))
         assert(existsSync(bundle.uiHost))
         assert(!bundle.uiHost.includes('.asar'))
+        assert.equal(bundle.pdfHelperPath, await realpath(resolve(root, 'runtime', 'rerun-render-pdf')))
     } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -116,6 +119,8 @@ test('the supervisor launches the UI child through the real resource path, never
         assert(existsSync(uiSpawn.args[0]))
         assert.equal(uiSpawn.command, bundle.nodePath)
         assert.equal(uiSpawn.env.RERUN_DESKTOP_RENAME_HELPER, bundle.renameHelperPath)
+        assert.equal(uiSpawn.env.RERUN_DESKTOP_PDF_HELPER, bundle.pdfHelperPath)
+        assert.equal(spawned[1].env.RERUN_DESKTOP_PDF_HELPER, undefined)
         assert.equal(spawned[1].args[0], bundle.engineEntry)
 
         await supervisor.stop()
@@ -125,4 +130,21 @@ test('the supervisor launches the UI child through the real resource path, never
         await rm(resources, { recursive: true, force: true })
         await rm(dataRoot, { recursive: true, force: true })
     }
+})
+
+test('loadBundle refuses a missing, traversing, or externally linked PDF helper', async () => {
+    const root = await fakeResources()
+    try {
+        const file = join(root, 'runtime-manifest.json')
+        const manifest = JSON.parse(await readFile(file, 'utf8'))
+        const missing = { ...manifest }; delete missing.pdfHelperPath
+        await writeFile(file, JSON.stringify(missing))
+        await assert.rejects(loadBundle(root), /Invalid bundled runtime path/)
+        await writeFile(file, JSON.stringify({ ...manifest, pdfHelperPath: '../outside-helper' }))
+        await assert.rejects(loadBundle(root), /escapes Resources/)
+        await rm(join(root, 'runtime', 'rerun-render-pdf'))
+        await symlink(process.execPath, join(root, 'runtime', 'rerun-render-pdf'))
+        await writeFile(file, JSON.stringify(manifest))
+        await assert.rejects(loadBundle(root), /symlink escapes Resources/)
+    } finally { await rm(root, { recursive: true, force: true }) }
 })

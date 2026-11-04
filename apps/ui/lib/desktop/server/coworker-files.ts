@@ -11,6 +11,7 @@ import { DesktopHttpError } from './auth'
 import { DESKTOP_AUDIO_MAX_BYTES, DesktopAudioBytesError, desktopAudioKind, inspectDesktopAudioBytes, type DesktopAudioContentType } from './audio-bytes'
 import { DESKTOP_VIDEO_MAX_BYTES, DesktopVideoBytesError, desktopVideoKind, inspectDesktopVideoBytes, type DesktopVideoContentType } from './video-bytes'
 import { DESKTOP_IMAGE_MAX_BYTES, DesktopImageBytesError, desktopRasterKind, inspectDesktopImageBytes, type DesktopImageContentType } from './image-bytes'
+import { bindCoworkerPdfFolder, readCoworkerPdf, type CoworkerPdfPreview } from './pdf-read'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { findDesktopAgent } from './store'
@@ -714,6 +715,14 @@ const claimKey = (directory: string, name: string) => `${directory}\0${name}`
 const claim = (directory: string, name: string) => activeNames.add(claimKey(directory, name))
 const unclaim = (directory: string, name: string) => activeNames.delete(claimKey(directory, name))
 const claimed = (directory: string, name: string) => activeNames.has(claimKey(directory, name))
+
+// PDF reads use this module's recovery and active claims, under the same roster queue.
+// Binding the closures here avoids a second journal implementation or claim registry.
+bindCoworkerPdfFolder({
+    recoverInterruptedEdits: (directory, workspaceRoot) => recoverInterruptedCoworkerEdits(directory, workspaceRoot),
+    claimed,
+})
+export { readCoworkerPdf, type CoworkerPdfPreview }
 
 function crashPublish(step: (typeof COWORKER_PUBLISH_CRASH_STEPS)[number]) {
     if (process.env.RERUN_FILE_PUBLISH_CRASH === step) process.kill(process.pid, 'SIGKILL')

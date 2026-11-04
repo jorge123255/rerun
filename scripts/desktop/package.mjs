@@ -11,6 +11,7 @@ const stage = async file => { console.log(`\n--- ${file}`); await run(process.ex
 
 await stage('stage-main.mjs')
 await stage('stage-file-helper.mjs')
+await stage('stage-pdf-helper.mjs')
 await stage('stage-node.mjs')
 await stage('stage-ui.mjs')
 await stage('stage-engine.mjs')

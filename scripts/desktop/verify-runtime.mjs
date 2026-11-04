@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, output, repoRoot, resourcesDir } from './lib.mjs'
 import { readUiSharpManifest } from './ui-sharp.mjs'
+import { verifyPdfHelper } from './pdf-helper-probe.mjs'
 
 const execFileAsync = promisify(execFile)
 const failures = []
@@ -14,7 +15,7 @@ const manifest = JSON.parse(await readFile(join(resourcesDir, 'runtime-manifest.
 check(manifest.protocolVersion === 1 && typeof manifest.buildId === 'string' && manifest.buildId.length > 0, 'manifest protocolVersion/buildId')
 
 const resolved = {}
-for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'renameHelperPath']) {
+for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'renameHelperPath', 'pdfHelperPath']) {
     const path = resolve(resourcesDir, manifest[field] ?? '')
     resolved[field] = path
     const rel = relative(resourcesDir, path)
@@ -23,6 +24,13 @@ for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath',
 
 const nodeVersion = await output(resolved.nodePath, ['--version']).catch(error => `error: ${error.message}`)
 check(nodeVersion === 'v22.23.4', `bundled node runs (${nodeVersion})`)
+
+try {
+    await verifyPdfHelper(resolved.pdfHelperPath)
+    check(true, 'native PDF helper renders a bounded PNG through the manifest path')
+} catch {
+    check(false, 'native PDF helper renders a bounded PNG through the manifest path')
+}
 
 const probeHome = await mkdtemp(join(tmpdir(), 'rerun-verify-codex-'))
 try {

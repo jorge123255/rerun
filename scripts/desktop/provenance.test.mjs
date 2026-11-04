@@ -17,10 +17,12 @@ test('the actual package entry forwards forced builds to all stages without laun
         await writeFile(loader, hook)
         execFileSync(process.execPath, ['--loader', loader, fileURLToPath(new URL('./package.mjs', import.meta.url)), '--stage-only', '--build'], { env: { ...process.env, PROVENANCE_TEST_REPORT: report }, stdio: ['ignore', 'pipe', 'pipe'] })
         const calls = (await readFile(report, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
-        assert.equal(calls.length, 8)
+        assert.equal(calls.length, 9)
         assert(calls.every(call => call.args.includes('--build')))
         assert(calls.some(call => call.args[0].endsWith('/stage-ui.mjs')))
         assert(calls.some(call => call.args[0].endsWith('/stage-file-helper.mjs')))
+        const pdfStage = calls.findIndex(call => call.args[0].endsWith('/stage-pdf-helper.mjs'))
+        assert(pdfStage >= 0 && pdfStage < calls.findIndex(call => call.args[0].endsWith('/write-manifest.mjs')))
         assert(calls.some(call => call.args[0].endsWith('/stage-engine.mjs')))
         assert(!calls.some(call => call.command === 'npx'))
     } finally { await rm(root, { recursive: true, force: true }) }
