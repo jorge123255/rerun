@@ -18,6 +18,7 @@ function mockDesktopFetch(reply: (url: string, init?: RequestInit) => Response |
         const response = reply(url, init)
         if (response) return response
         if (url.endsWith('/tabs') && init?.method === 'PUT') return Response.json({ tabs: { revision: JSON.parse(String(init.body)).baseRevision + 1 } })
+        if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url) && (init?.method ?? 'GET') === 'GET') return Response.json({ queued: null })
         // The Team board polls its own activity route; tests that do not exercise it see everyone idle.
         if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
         // An open conversation checks whether an engine run is still generating (for Stop).
