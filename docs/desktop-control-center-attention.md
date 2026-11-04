@@ -8,4 +8,4 @@ Selecting Needs you checks the current owner, enabled state, request kind/id and
 
 ## Acceptance
 
-Root owns execution of checks and native Mac restart acceptance. Source implementation and authored regressions are ready; native results will be recorded after the installed build is verified.
+Installed and accepted in `b3eee71`: 3,752 UI tests passed (20 existing skips), 3,078 engine tests passed, both type checks and packaging passed. Root verified live question/approval navigation, preserved separate drafts, exact restart restoration and single-request resolution in the Mac app. See `desktop-media-attention-acceptance.md` for evidence and limits.
