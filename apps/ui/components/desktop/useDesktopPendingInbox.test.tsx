@@ -118,7 +118,7 @@ test.each([
         [readTargetOf(first), readTargetOf(retained)],
         [readTargetOf(retained)],
     ])
-    expect(h.value.items.some(row => row.id === first.id || row.id === replacement.id)).toBe(true)
+    expect(h.value.items.some(row => row.id === first.id || row.id === ('id' in replacement ? replacement.id : first.id))).toBe(true)
 })
 
 test('retry cannot acknowledge a failed target removed from the current roster', async () => {

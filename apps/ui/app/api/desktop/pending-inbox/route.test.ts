@@ -171,9 +171,17 @@ test('an unreachable engine read stays in failedIds, never a complete success, a
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ marked: 1, failedIds: [a1] })
     expect(await seen()).toHaveLength(1)
-    // The unreachable row stayed visible next to the acknowledged one.
-    expect((await read()).items.map(item => item.sessionId)).toEqual([approval.id, bobChat.id])
+    // The shared projection cannot confirm the unreachable request. It reports that owner as
+    // unavailable rather than inventing a row or presenting a fully known empty inbox.
+    const partial = await read()
+    expect(partial.items.map(item => item.sessionId)).toEqual([bobChat.id])
+    expect(partial.unavailableAgentIds).toEqual([alice.id])
+    expect((await seen()).map(row => String(row.item_id))).toEqual([q1])
     failures.clear()
+    // No receipt was saved for the failed mark, so the request reappears once it can be read.
+    const recovered = await read()
+    expect(recovered.items.map(item => item.sessionId)).toEqual([approval.id, bobChat.id])
+    expect(recovered.unavailableAgentIds).toEqual([])
     expect(await (await mark([{ id: a1, kind: 'approval', agentId: alice.id, sessionId: approval.id }])).json()).toEqual({ marked: 1, failedIds: [] })
     expect((await read()).items.map(item => item.sessionId)).toEqual([bobChat.id])
 })

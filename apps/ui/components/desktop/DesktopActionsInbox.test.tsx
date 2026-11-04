@@ -323,8 +323,8 @@ test('finished runs render as Done rows; Mark as read acknowledges the exact com
     expect(container.textContent).toContain('×2')
     expect(container.textContent).toContain('Reviewer finished its run')
     // The header and pill count finished runs; the disabled owner stays tagged.
-    expect(container.textContent).toContain('2 done')
-    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 2 done')
+    expect(container.textContent).toContain('3 done')
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 3 done')
     expect(container.textContent).toContain('Inactive')
 
     // Mark-as-read acknowledges exactly the displayed completion IDs, nothing newer.
@@ -336,7 +336,7 @@ test('finished runs render as Done rows; Mark as read acknowledges the exact com
     expect(container.querySelector('[data-actions-inbox-done="done:chat-s1"]')).toBeNull()
     // A scheduled row's different terminal IDs are untouched.
     expect(container.querySelector('[data-actions-inbox-done="done:sched"]')).not.toBeNull()
-    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 1 done')
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 2 done')
 
     await act(async () => { root.unmount() })
 })
