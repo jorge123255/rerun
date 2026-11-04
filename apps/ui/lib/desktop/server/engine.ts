@@ -143,8 +143,8 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         throw new DesktopHttpError(engineResponse.status, 'The engine could not start this first message. Check the coworker or model, then try again.')
     }
     if (engineResponse.status === 403) throw new DesktopHttpError(403, disabledCoworkerMessage)
-    if (input.approval && engineResponse.status === 409) throw new DesktopHttpError(409, 'This approval request changed or the conversation is still working. Reload the conversation and retry the saved decisions.')
-    if (input.question && engineResponse.status === 409) throw new DesktopHttpError(409, 'This question changed or the conversation is still working. Reload the conversation and retry the saved answers.')
+    if (!regenerate && input.approval && engineResponse.status === 409) throw new DesktopHttpError(409, 'This approval request changed or the conversation is still working. Reload the conversation and retry the saved decisions.')
+    if (!regenerate && input.question && engineResponse.status === 409) throw new DesktopHttpError(409, 'This question changed or the conversation is still working. Reload the conversation and retry the saved answers.')
     if (queued && engineResponse.status === 409) throw new DesktopHttpError(409, 'This conversation is still working or the queued message changed. The queued message is kept; wait for the reply or use Send now.')
     // A replay can recover the alternate even after the engine's stream has expired.
     const completedReplay = (regenerate || !!start || !!queued) && engineResponse.status === 204
