@@ -1,8 +1,8 @@
 # Next Rerun Mac agent assignments
 
-Prepared base: `927c5e17da6b6db84657261695a98e0533b264de`. Original Rerun: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+Prepared agent base: `927c5e17da6b6db84657261695a98e0533b264de`. Installed root source: `220eeff3b7889f8481dc3a705d877ad68aad4cba`. Original Rerun: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
-The eight worktrees below are prepared. Prompts are ready for user dispatch; this does not claim the agents have started. Root alone runs all checks and acceptance.
+**B, G and H are reported complete by the user and are under root review; none is accepted yet.** B has a clean committed handoff at `c7db894fee5ae05553dde98006ec13e969bb9e57`. G has uncommitted source at the prepared base; H has committed source at `406f35aac90e123021202741cecd790f101e9b6d` plus additional uncommitted engine files. Root has requested G/H final handoffs to resolve the intended versions. A, D, E and F show source changes; C has no source activity visible at the latest inventory. All agent checks and Mac acceptance remain with root.
 
 | Owner | Task | Prompt |
 | --- | --- | --- |
@@ -14,9 +14,11 @@ The eight worktrees below are prepared. Prompts are ready for user dispatch; thi
 | F | E5 — Remote MCP connections and real tool use | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent F next prompt.md>) |
 | G | D7 — Private and shared data tables | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent G next prompt.md>) |
 | H | E2 — Read public web pages with web_fetch | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent H next prompt.md>) |
-| Root | B5 — original Control Center Box search/member drill, Move to another Box and New Box command; all integration and acceptance | Coding worktree desktop/m1 |
+| Root | B5 — original Control Center Box search/member drill, Move to another Box and New Box command; all integration and acceptance | Installed and accepted in `220eeff`; coding worktree `desktop/m1` |
 
-These are nine concrete tasks, currently 0 accepted. The scope catalog remains 29 unfinished capability groups until an entire group is accepted. Some tasks close slices only. Root will retain the current chat and drafts, then check navigation/moves/creation and saved state in the installed Mac app after a full restart.
+These are nine concrete tasks, with **1 of 9 accepted**: root’s Control Center Box slice. B, G and H are reported complete and awaiting root review/integration; no agent lane is accepted yet. The scope catalog remains **29 unfinished capability groups** because the broader B5 group still has website logos, contextual actions and unsupported panels outstanding.
+
+Root passed **3,909 UI tests (39 existing skips; 436 test files passed and 14 skipped)**, UI typecheck, packaging and runtime verification for installed source `220eeff3b7889f8481dc3a705d877ad68aad4cba`. Native Control Center Box search/member selection, first-open camera framing, correct source/destination membership counts, Move to another Box, and New Box Cancel/Save passed while preserving the selected chat and draft. A real Codex reply of **42** before restart and **43** afterward, plus exact saved-state comparison, passed full-restart acceptance. Engine source was unchanged; the earlier **3,080-test engine pass** remains the last engine run and was not rerun. After the verified recovery backup at `work/control-boxes-completed-recovery/verified-manifest.json`, root removed the disposable coworker through the authenticated app API and both empty QA Boxes through the original native Delete dialogs. A full quit/reopen then passed `work/control-boxes-clean-after-restart.log` and `work/control-boxes-original-final-after-restart.log`: original Box geometry/membership, workspace and provider defaults, identities and all **2 coworkers / 23 chats / 88 messages** were preserved exactly, with no fixtures remaining. The final native board showed only My workspace and the two original tiles, with Codex connected using `gpt-6.1-sol`. Evidence: [Control Center Boxes acceptance](desktop-control-center-boxes-acceptance.md).
 
 ---
 
@@ -24,7 +26,7 @@ These are nine concrete tasks, currently 0 accepted. The scope catalog remains 2
 
 Installed source: `414e325aad073f281aebfed273a785c410f54d03`; installed build ID: `414e325-desktop-0.1.0`. Prepared A/B base: `f8375b73191ad55ce88bf0ada19b83dfc4fab2ee`. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
-**Current delivery: 3 of 3 concrete tasks accepted.** Full B2 Boxes is complete, reducing the catalog from 30 to **29 unfinished capability groups**. MP4 result cards and Files previous/next are accepted slices; C8 and D5 retain their broader remaining scope. The matching A/C handoff `af0f050` is one task and was integrated once. Evidence: [Boxes, media and navigation acceptance](desktop-boxes-media-navigation-acceptance.md).
+**Previous delivery: 3 of 3 concrete tasks accepted.** Full B2 Boxes is complete, reducing the catalog from 30 to **29 unfinished capability groups**. MP4 result cards and Files previous/next are accepted slices; C8 and D5 retain their broader remaining scope. The matching A/C handoff `af0f050` is one task and was integrated once. Evidence: [Boxes, media and navigation acceptance](desktop-boxes-media-navigation-acceptance.md).
 
 Root passed **3,888 UI tests (39 existing skips)**, **3,080 engine tests**, type checks, packaging and installation. Native feature checks and full-restart persistence passed. Rapid cross-Box tile interaction and whole-Box dragging were rechecked in the Mac app; pointer-cancel behavior is covered by the automated regression. After a verified full app-quit recovery backup, fixture cleanup and the final full restart preserved the exact original Box geometry/membership, workspace and provider defaults, and **23 chats / 88 messages**. Temporary coworkers, folders and Boxes were removed, and foreign-key checks were clean. The final native board showed only My workspace and the two original coworkers, with Codex connected.
 

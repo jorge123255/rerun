@@ -1,12 +1,14 @@
 # Rerun Mac delivery checklist
 
-Updated November 4, 2026. Installed source: `414e325aad073f281aebfed273a785c410f54d03`; installed build ID: `414e325-desktop-0.1.0`.
+Updated November 4, 2026. Installed source: `220eeff3b7889f8481dc3a705d877ad68aad4cba`.
 
 The parity catalog now has **29 unfinished capability groups**, down from 30 because **B2 Boxes is complete**. This is a scope count, not the number of individual tasks left. Several groups contain working features and multiple missing features. Use the concrete tasks below for delivery updates; retain the catalog as the full scope reference. Do not remove unfinished work or close an area just to reduce the count.
 
-## Next delivery — 0 of 9 tasks accepted
+## Current delivery — 1 of 9 tasks accepted
 
-All eight lane worktrees start at `927c5e17da6b6db84657261695a98e0533b264de`. Prompts are prepared for user dispatch; source submission is not acceptance. Root owns integration and every check, build, installation, live model call and Mac/restart test.
+All eight lane worktrees were prepared from `927c5e17da6b6db84657261695a98e0533b264de`. Root owns integration and every check, build, installation, live model call and Mac/restart test.
+
+**B, G and H are reported complete by the user and are under root review; none is accepted yet.** B has a clean committed handoff at `c7db894fee5ae05553dde98006ec13e969bb9e57`. G has uncommitted source at the prepared base; H has committed source at `406f35aac90e123021202741cecd790f101e9b6d` plus additional uncommitted engine files. Root has requested G/H final handoffs to resolve the intended versions. A, D, E and F show source changes; C has no source activity visible at the latest inventory. All agent checks and Mac acceptance remain with root.
 
 - [ ] **A — D5:** existing own PDF previews using the original Files frame.
 - [ ] **B — C3:** multiple existing text attachments through drafts, queues, send and history.
@@ -16,11 +18,13 @@ All eight lane worktrees start at `927c5e17da6b6db84657261695a98e0533b264de`. Pr
 - [ ] **F — E5:** HTTPS Streamable HTTP MCP connections and real tools.
 - [ ] **G — D7:** private/shared data tables and original views.
 - [ ] **H — E2:** bounded public-page web_fetch.
-- [ ] **Root — B5:** original Control Center Box search/drill, Move to another Box and New Box. Implementation and root checks in progress.
+- [x] **Root — B5:** original Control Center Box search/member drill, Move to another Box and New Box. Installed and accepted in `220eeff`; the full B5 group remains partial.
+
+Root passed **3,909 UI tests (39 existing skips; 436 test files passed and 14 skipped)**, UI typecheck, packaging and runtime verification for installed source `220eeff3b7889f8481dc3a705d877ad68aad4cba`. Native Control Center Box search/member selection, first-open camera framing, correct source/destination membership counts, Move to another Box, and New Box Cancel/Save passed while preserving the selected chat and draft. A real Codex reply of **42** before restart and **43** afterward, plus exact saved-state comparison, passed full-restart acceptance. Engine source was unchanged; the earlier **3,080-test engine pass** remains the last engine run and was not rerun. After the verified recovery backup at `work/control-boxes-completed-recovery/verified-manifest.json`, root removed the disposable coworker through the authenticated app API and both empty QA Boxes through the original native Delete dialogs. A full quit/reopen then passed `work/control-boxes-clean-after-restart.log` and `work/control-boxes-original-final-after-restart.log`: original Box geometry/membership, workspace and provider defaults, identities and all **2 coworkers / 23 chats / 88 messages** were preserved exactly, with no fixtures remaining. The final native board showed only My workspace and the two original tiles, with Codex connected using `gpt-6.1-sol`. Evidence: [Control Center Boxes acceptance](desktop-control-center-boxes-acceptance.md).
 
 See `desktop-next-round.md` for the exact worktrees, prompts and shared-file boundaries. These tasks do not add nine new scope groups. The catalog remains 29 until a whole group is completed.
 
-## Current delivery — 3 of 3 tasks accepted
+## Previous delivery — 3 of 3 tasks accepted
 
 Evidence: [Boxes, media and navigation acceptance](desktop-boxes-media-navigation-acceptance.md).
 
@@ -32,7 +36,7 @@ Root passed **3,888 UI tests (39 existing skips)**, **3,080 engine tests**, type
 
 All three follow original Rerun at `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. Only root runs checks, builds, installation, live-model calls and Mac/restart tests. Source completion alone does not check a task off. The identical A/C handoff counts once; D5 and C8 remain partial despite these completed slices.
 
-## Previous delivery — 3 of 3 tasks accepted
+## Earlier delivery — 3 of 3 tasks accepted
 
 - [x] **D: pending Actions read receipts.** Mark one request read or confirm Mark all; preserve the unanswered request and remember acknowledgments after restart. Accepted in `c6fa087`.
 - [x] **Root: live collapsed Actions counts.** Keep pending and Done counts current while the inbox is closed; count actual completed runs. Accepted in `c6fa087`.
@@ -44,7 +48,7 @@ Evidence: `desktop-pending-inbox-acceptance.md` and `desktop-workspace-logo-acce
 
 | Area | Accepted work | Remaining work |
 | --- | --- | --- |
-| B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local logo upload | Website logos; remaining Control Center Box navigation/contextual commands and unsupported coworker-panel commands as their features land. Board Boxes are complete under B2 |
+| B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local logo upload; Box search/member drill, Move to another Box and New Box | Website logos; remaining contextual actions and unsupported coworker-panel commands as their features land. Board Boxes are complete under B2 |
 | C7: Actions and notifications | Pending and Done inbox; exact navigation; persistent individual/bulk read; live closed counts | Pending-request age/order from the request's timestamp; notifications; per-coworker notification preferences |
 | D5: Files | Text editing/conflicts; rename/Delete; static raster, WAV/MP3 and MP4 previews; previous/next navigation | PDF; additional media formats and animation |
 | C8: Conversation activity and results | File steps; suggested replies; live compaction; text/static-image/audio/MP4 result cards | Child runs; tables; additional formats and request presentations |
