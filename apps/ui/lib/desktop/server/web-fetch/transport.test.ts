@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({ request: vi.fn(), lookup: vi.fn() }))
 vi.mock('node:http', () => ({ request: mocks.request }))
 vi.mock('node:https', () => ({ request: mocks.request }))
 vi.mock('node:dns/promises', () => ({ lookup: mocks.lookup }))
-import { MAX_BYTES, readPublicPage } from './transport'
+import { abortable, MAX_BYTES, readPublicPage } from './transport'
 function reply(status: number, headers: Record<string, string>, chunks: Buffer[] = []) {
     mocks.request.mockImplementationOnce((options, callback) => {
         const req = new EventEmitter() as EventEmitter & { end: () => void }
@@ -18,14 +18,14 @@ function reply(status: number, headers: Record<string, string>, chunks: Buffer[]
 }
 const signal = () => new AbortController().signal
 beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     mocks.lookup.mockResolvedValue([{ address: '8.8.8.8', family: 4 }])
 })
 describe('bounded transport with mocked sockets, no network', () => {
     it('connects directly to checked IP with original TLS name and Host', async () => {
         reply(200, { 'content-type': 'text/plain' }, [Buffer.from('ok')])
         expect((await readPublicPage('https://example.com/', signal(), async () => {})).body).toBe('ok')
-        expect(mocks.request.mock.calls[0][0]).toMatchObject({ hostname: '8.8.8.8', servername: 'example.com', agent: false, headers: { Host: 'example.com', 'Accept-Encoding': 'identity' } })
+        expect(mocks.request.mock.calls[0][0]).toMatchObject({ hostname: '8.8.8.8', servername: 'example.com', rejectUnauthorized: true, checkServerIdentity: expect.any(Function), agent: false, headers: { Host: 'example.com', 'Accept-Encoding': 'identity' } })
         expect(mocks.lookup).toHaveBeenCalledTimes(1)
     })
     it('rejects private redirect destinations before connecting again', async () => {
@@ -57,4 +57,36 @@ describe('bounded transport with mocked sockets, no network', () => {
         await expect(readPublicPage('https://example.com/', controller.signal, async () => {})).rejects.toThrow()
         expect(mocks.request).not.toHaveBeenCalled()
     })
+    it('does not connect if permission is revoked after DNS', async () => {
+        const permission = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Permission revoked'))
+        await expect(readPublicPage('https://example.com/', signal(), permission)).rejects.toThrow('Permission revoked')
+        expect(mocks.request).not.toHaveBeenCalled()
+    })
+    it('stops DNS waits on cancellation without making a request', async () => {
+        const controller = new AbortController()
+        let entered!: () => void
+        const started = new Promise<void>(resolve => { entered = resolve })
+        mocks.lookup.mockImplementation(() => { entered(); return new Promise(() => {}) })
+        const result = readPublicPage('https://example.com/', controller.signal, async () => {})
+        const rejected = expect(result).rejects.toThrow('Stopped')
+        await started
+        controller.abort(new Error('Stopped'))
+        await rejected
+        expect(mocks.request).not.toHaveBeenCalled()
+    })
+    it('observes rejection of operations passed an already aborted signal', async () => {
+        const controller = new AbortController()
+        controller.abort(new Error('Stopped'))
+        await expect(abortable(Promise.reject(new Error('Late failure')), controller.signal)).rejects.toThrow('Stopped')
+    })
+
+    it('rechecks the same hostname on a redirect rather than reusing a DNS answer', async () => {
+        mocks.lookup.mockResolvedValueOnce([{ address: '8.8.8.8', family: 4 }])
+            .mockResolvedValueOnce([{ address: '127.0.0.1', family: 4 }])
+        reply(302, { location: '/next' })
+        await expect(readPublicPage('https://example.com/', signal(), async () => {})).rejects.toThrow('public addresses')
+        expect(mocks.lookup).toHaveBeenCalledTimes(2)
+        expect(mocks.request).toHaveBeenCalledTimes(1)
+    })
+
 })

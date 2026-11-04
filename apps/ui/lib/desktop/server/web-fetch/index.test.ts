@@ -1,11 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 vi.mock('./transport', async importOriginal => ({ ...await importOriginal<typeof import('./transport')>(), readPublicPage: vi.fn() }))
 import { executeWebFetch } from './index'
-import { readPublicPage } from './transport'
+import { DEADLINE_MS, PageReadError, readPublicPage } from './transport'
 const read = vi.mocked(readPublicPage)
 const context = () => ({ coworkerId: 'coworker-h', signal: new AbortController().signal, assertPermission: vi.fn(async () => {}) })
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => vi.resetAllMocks())
+afterEach(() => vi.useRealTimers())
 describe('web_fetch result boundary (offline)', () => {
     it('checks current grant before touching transport', async () => {
         const ctx = context()
@@ -33,4 +34,21 @@ describe('web_fetch result boundary (offline)', () => {
         expect(result.text).toContain('cancelled by run')
         expect(read).not.toHaveBeenCalled()
     })
+    it('preserves observed status when the response body is refused', async () => {
+        read.mockRejectedValue(new PageReadError('Unsupported content type: application/pdf', 403, 'https://example.com/denied'))
+        const result = await executeWebFetch({ url: 'https://example.com/denied' }, context())
+        expect(result).toMatchObject({ failed: true, status: 403, finalUrl: 'https://example.com/denied' })
+        expect(result.text).toContain('[403]')
+        expect(result.text).toContain('Unsupported content type')
+    })
+    it('applies a total deadline even while waiting for the current grant', async () => {
+        vi.useFakeTimers()
+        const ctx = context()
+        ctx.assertPermission.mockImplementation(() => new Promise(() => {}))
+        const pending = executeWebFetch({ url: 'https://example.com/' }, ctx)
+        await vi.advanceTimersByTimeAsync(DEADLINE_MS)
+        expect((await pending).text).toContain('timed out after 30 s')
+        expect(read).not.toHaveBeenCalled()
+    })
+
 })
