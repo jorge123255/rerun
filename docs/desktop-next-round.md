@@ -1,4 +1,26 @@
-# Next desktop port round — navigation, files and completed activity
+# Next desktop port round — audio, image cards, logos and own instructions
+
+Prepared base: `49a224e75c2d6b76f441b24f41d813d2b382ee99`. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+
+| Owner | New slice | Worktree / branch |
+| --- | --- | --- |
+| A | D5: existing own WAV/MP3 playback using original Files audio preview | `file-audio-previews` / `desktop/file-audio-previews` |
+| B | C8: original static image albums and paged preview from actual card_file results | `file-image-cards` / `desktop/file-image-cards` |
+| C | B5: original local logo upload in workspace settings, preserving atomic name/icon save | `workspace-logo-upload` / `desktop/workspace-logo-upload` |
+| D | E7: opt-in own instruction/reply-length self tools and original Improve itself controls | `self-instruction-controls` / `desktop/self-instruction-controls` |
+| Root | B5: original Control Center workspace settings, board recenter and durable theme commands; integration and all testing | coding worktree `rerun-desktop` / `desktop/m1` |
+
+All four external worktrees are prepared under `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/` at the exact base above. Prior lane worktrees are preserved. Prompts are prepared for user dispatch; this does not assert that agents have started. Only root runs tests, lint/type checks, builds, packaging, installation, live model requests and native Mac QA. Lanes may author regressions but do not execute them, install dependencies, touch the installed app, credentials or live workspace, push or merge.
+
+Ownership: A owns coworker Files/audio read and presentation; B owns card-specific engine validation and chat result rendering, reusing installed image reads without changing their limits; C owns workspace upload/picker/storage helpers and supplies typed root wiring notes; D owns own-instruction tools and narrow grant/config/Tools controls. Root retains DesktopApp, DesktopBoard, DesktopConversation, central bootstrap and the Control Center. B and C consume image-bytes.ts read-only. A preserves the accepted image reader and runtime path tracing annotations.
+
+Scope remains bounded: A adds no recording or model audio input; B adds no image chat inputs, generated-file publication or table cards; C adds no website fetch, SVG/GIF animation or hosted storage; D adds no package installation, MCP registration, credential flow or arbitrary command permissions. All four follow the pinned original components rather than inventing replacements. Full D5/C8/B5/E7 parity stays open until the remaining capabilities pass integration and Mac acceptance.
+
+The preceding round is accepted in installed source `6fdf5f0`: A static raster previews, B text-file result cards, C 50 workspace illustrations and D genuine Done items. Root passed 3,620 UI tests (20 existing skips); the unchanged engine passed 3,063 tests in that round. Board/live Codex/restart acceptance preserved the original 23 chats and 88 messages exactly. See `desktop-files-done-acceptance.md` and `desktop-workspace-icons-acceptance.md`.
+
+---
+
+# Previous desktop port round — navigation, files and completed activity
 
 Prepared base: `18b7e32fee452237ce1e7d5b79ea7cd5d0b18429`. The prior A/B/C/D ports are accepted below. Original Rerun reference remains `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 

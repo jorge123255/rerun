@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { desktopChatSearchSchema, type DesktopConversationHit } from './chat-search'
 import { isDesktopQuitting } from './draft-writes'
 
-export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'team_board', 'model_settings'] as const
+export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme'] as const
 
 export type DesktopControlCommandId = (typeof DESKTOP_CONTROL_COMMAND_IDS)[number]
 
@@ -19,12 +19,23 @@ export type DesktopControlCommand = {
     keywords: string[]
 }
 
-export function buildDesktopControlCommands(): DesktopControlCommand[] {
-    return [
+export type DesktopControlCommandOptions = {
+    workspaceSettings?: boolean
+    recenterBoard?: boolean
+    toggleTheme?: boolean
+    darkTheme?: boolean
+}
+
+export function buildDesktopControlCommands(options: DesktopControlCommandOptions = {}): DesktopControlCommand[] {
+    const commands: DesktopControlCommand[] = [
         { id: 'add_coworker', group: 'actions', label: 'Add coworker', keywords: ['create', 'add', 'new', 'hire'] },
         { id: 'team_board', group: 'actions', label: 'Team board', keywords: ['board', 'team', 'return', 'workspace'] },
         { id: 'model_settings', group: 'settings', label: 'Model settings', keywords: ['models', 'providers', 'claude', 'chatgpt', 'openai', 'anthropic', 'api key', 'subscription'] },
     ]
+    if (options.recenterBoard) commands.push({ id: 'recenter_board', group: 'actions', label: 'Recenter the board', keywords: ['camera', 'zoom', 'fit', 'reset view'] })
+    if (options.toggleTheme) commands.push({ id: 'toggle_theme', group: 'actions', label: options.darkTheme ? 'Switch to light theme' : 'Switch to dark theme', keywords: ['appearance', 'mode', 'dark', 'light'] })
+    if (options.workspaceSettings) commands.push({ id: 'workspace_settings', group: 'settings', label: 'Workspace settings', keywords: ['name', 'logo', 'rename'] })
+    return commands
 }
 
 const MAX_RECENT_COWORKERS = 5

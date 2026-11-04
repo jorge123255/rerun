@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
+import { toast } from 'sonner'
 import type { ThemePreference } from '@rerun/ui/theme'
 import { connectionsListSchema, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
@@ -23,7 +24,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { DesktopChatTabs } from './DesktopChatTabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
-import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts, isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { flushDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 import type { DesktopOpenChat } from '@/lib/desktop/control-center-chats'
@@ -68,7 +69,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         return () => { stop?.(); cancel?.() }
     }, [])
     const [preference, setPreference] = useState(initialData.theme)
-    const { theme, setTheme } = useTheme()
+    const { theme, resolvedTheme, setTheme } = useTheme()
+    const [themeSaving, setThemeSaving] = useState(false)
+    const themeSavingRef = useRef(false)
+    const themeErrorToast = useRef<string | number | undefined>(undefined)
+    const [recenterSignal, setRecenterSignal] = useState(0)
     useEffect(() => {
         if (theme !== preference) setTheme(preference)
     }, [theme, preference, setTheme])
@@ -100,7 +105,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [settings, setSettings] = useState(false)
     useEffect(() => {
         const openSettings = (event: KeyboardEvent) => {
-            if (event.metaKey && event.key === ',' && !workspaceSettings && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
+            if (event.metaKey && event.key === ',' && !workspaceSettings && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
         }
         window.addEventListener('keydown', openSettings)
         return () => window.removeEventListener('keydown', openSettings)
@@ -133,7 +138,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const controlCenterDisabled = settings || workspaceSettings || creating || !!busy || placingCopy || quitting
+    const controlCenterDisabled = settings || workspaceSettings || creating || !!busy || placingCopy || quitting || themeSaving
 
     useEffect(() => {
         if (panelOpen && !settings) panelContent.current?.focus({ preventScroll: true })
@@ -160,6 +165,28 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         applyProviders(await json<ConnectionsList>(response))
         if (change.action === 'appearance') setPreference(change.theme)
         if (change.action === 'workspace') setWorkspaceName(change.name)
+    }
+
+    async function saveThemeFromControlCenter(next: 'light' | 'dark') {
+        if (themeSavingRef.current || isDesktopQuitting()) return
+        themeSavingRef.current = true
+        setThemeSaving(true)
+        if (themeErrorToast.current !== undefined) toast.dismiss(themeErrorToast.current)
+        themeErrorToast.current = undefined
+        // The existing SQLite setting, not localhost storage, must survive app restarts. Keep
+        // the current appearance until persistence succeeds and include this write in Quit.
+        const release = holdDraftAdmission()
+        try { await saveSettings({ action: 'appearance', theme: next }) }
+        catch (cause) {
+            themeErrorToast.current = toast.error('Could not save theme.', {
+                description: cause instanceof Error ? cause.message : 'Try again.',
+                action: { label: 'Retry', onClick: () => { void saveThemeFromControlCenter(next) } },
+            })
+        } finally {
+            themeSavingRef.current = false
+            setThemeSaving(false)
+            release()
+        }
     }
 
     async function createCoworker(event: React.FormEvent) {
@@ -275,7 +302,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         if (currentAgents.current.some(agent => agent.id === hit.agentId)) selectCoworker(hit.agentId, hit.id)
     }
 
-    const openSettings = () => setSettings(true)
+    const openSettings = () => { if (!themeSavingRef.current && !isDesktopQuitting()) setSettings(true) }
     const modelLabel = defaultProvider ? providers.default?.model : undefined
     const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} iconCatalogId={iconCatalogId} profileName={initialData.profile.displayName}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
@@ -291,7 +318,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         <main className="relative flex h-dvh w-full flex-col overflow-clip bg-frame text-foreground md:p-2">
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
-                <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu}
+                <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
                     visibleSessionId={panelOpen && !settings && !workspaceSettings && !creating && !controlCenterOpen && !busy && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
                     onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
@@ -348,6 +375,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) selectCoworker(id) }}
                 onOpenChat={chat => { if (currentAgents.current.some(agent => agent.id === chat.agentId)) selectCoworker(chat.agentId, null, chat) }}
                 onOpenConversation={openSavedConversation} onAddCoworker={() => showBoard(true)}
+                onWorkspaceSettings={() => { if (!isDesktopQuitting()) setWorkspaceSettings(true) }}
+                onRecenterBoard={() => { if (!isDesktopQuitting()) setRecenterSignal(signal => signal + 1) }}
+                darkTheme={resolvedTheme === 'dark'}
+                onToggleTheme={resolvedTheme === 'dark' || resolvedTheme === 'light' ? () => { void saveThemeFromControlCenter(resolvedTheme === 'dark' ? 'light' : 'dark') } : undefined}
                 onModelSettings={openSettings} onBackToBoard={() => showBoard()} />
         </main>
     )

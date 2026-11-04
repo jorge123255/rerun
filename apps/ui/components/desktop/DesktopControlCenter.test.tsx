@@ -83,6 +83,10 @@ type Overrides = {
     onAddCoworker?: () => void
     onModelSettings?: () => void
     onBackToBoard?: () => void
+    onWorkspaceSettings?: () => void
+    onRecenterBoard?: () => void
+    onToggleTheme?: () => void
+    darkTheme?: boolean
 }
 
 const roots = new Set<Root>()
@@ -127,7 +131,11 @@ const render = (root: ReturnType<typeof createRoot>, overrides: Overrides = {}) 
         onOpenChat={overrides.onOpenChat}
         onAddCoworker={overrides.onAddCoworker ?? (() => {})}
         onModelSettings={overrides.onModelSettings ?? (() => {})}
-        onBackToBoard={overrides.onBackToBoard ?? (() => {})} />)
+        onBackToBoard={overrides.onBackToBoard ?? (() => {})}
+        onWorkspaceSettings={overrides.onWorkspaceSettings}
+        onRecenterBoard={overrides.onRecenterBoard}
+        onToggleTheme={overrides.onToggleTheme}
+        darkTheme={overrides.darkTheme} />)
 })
 
 test('⌘F opens and closes the center and claims nothing else, ⌘K toggles where nothing holds it, and Ctrl+F stays a caret key', async () => {
@@ -197,7 +205,7 @@ test('the root page remembers a selection as Recent and exposes only the three s
         expect(rows()[0]!.textContent).toContain('Ada')
         expect(dialog()!.textContent).toContain('Actions')
         expect(dialog()!.textContent).toContain('Settings')
-        for (const absent of ['Billing', 'Browse templates', 'Ask Rerun', 'Shared files', 'Contact Support', 'What’s new', 'Company Brain']) {
+        for (const absent of ['Billing', 'Browse templates', 'Ask Rerun', 'Shared files', 'Contact Support', 'What’s new', 'Company Brain', 'Workspace settings', 'Recenter the board', 'Switch to light theme', 'Switch to dark theme']) {
             expect(dialog()!.textContent).not.toContain(absent)
         }
         await clickRow('Add coworker')
@@ -212,6 +220,100 @@ test('the root page remembers a selection as Recent and exposes only the three s
         expect(actions.onBackToBoard).toHaveBeenCalledTimes(1)
         expect(dialog()).toBeNull()
     } finally { await act(async () => { root.unmount() }) }
+})
+
+test('supported workspace, recenter and appearance commands use original labels and keyword search', async () => {
+    const { root } = mount()
+    const actions = { onWorkspaceSettings: vi.fn(), onRecenterBoard: vi.fn(), onToggleTheme: vi.fn() }
+    await render(root, { ...actions, darkTheme: true })
+    await press('f', { metaKey: true })
+    await type('/logo')
+    expect(rows()).toHaveLength(1)
+    await clickRow('Workspace settings')
+    expect(actions.onWorkspaceSettings).toHaveBeenCalledTimes(1)
+    expect(dialog()).toBeNull()
+
+    await press('f', { metaKey: true })
+    await type('/reset view')
+    expect(rows()).toHaveLength(1)
+    await clickRow('Recenter the board')
+    expect(actions.onRecenterBoard).toHaveBeenCalledTimes(1)
+    expect(dialog()).toBeNull()
+
+    await press('f', { metaKey: true })
+    await type('/appearance')
+    expect(rows()).toHaveLength(1)
+    expect(rows()[0]!.textContent).toContain('Switch to light theme')
+    await clickRow('Switch to light theme')
+    expect(actions.onToggleTheme).toHaveBeenCalledTimes(1)
+    expect(dialog()).toBeNull()
+
+    await press('f', { metaKey: true })
+    await type('/delete')
+    expect(rows()).toHaveLength(0)
+    expect(actions.onWorkspaceSettings).toHaveBeenCalledTimes(1)
+})
+
+test('removed optional command callbacks disappear and retained rows cannot close the center', async () => {
+    const { root } = mount()
+    const onOpenChange = vi.fn()
+    const actions = { onWorkspaceSettings: vi.fn(), onRecenterBoard: vi.fn(), onToggleTheme: vi.fn() }
+    await render(root, { open: true, onOpenChange, ...actions })
+    const retained = rendered.view!.sections.flatMap(section => section.rows)
+        .filter(row => ['command-workspace_settings', 'command-recenter_board', 'command-toggle_theme'].includes(row.id))
+    expect(retained).toHaveLength(3)
+    await render(root, { open: true, onOpenChange })
+    const ids = rendered.view!.sections.flatMap(section => section.rows).map(row => row.id)
+    expect(ids).not.toContain('command-workspace_settings')
+    expect(ids).not.toContain('command-recenter_board')
+    expect(ids).not.toContain('command-toggle_theme')
+    await act(async () => { retained.forEach(row => row.onSelect()) })
+    expect(onOpenChange).not.toHaveBeenCalled()
+    for (const action of Object.values(actions)) expect(action).not.toHaveBeenCalled()
+    expect(dialog()).not.toBeNull()
+})
+
+test('theme command follows resolved appearance and rejects an old row with the opposite meaning', async () => {
+    const { root } = mount()
+    const onOpenChange = vi.fn()
+    const onToggleTheme = vi.fn()
+    await render(root, { open: true, onOpenChange, onToggleTheme, darkTheme: true })
+    const toLight = rendered.view!.sections.flatMap(section => section.rows).find(row => row.id === 'command-toggle_theme')!
+    expect(toLight.label).toBe('Switch to light theme')
+    await render(root, { open: true, onOpenChange, onToggleTheme, darkTheme: false })
+    expect(dialog()!.textContent).toContain('Switch to dark theme')
+    expect(dialog()!.textContent).not.toContain('Switch to light theme')
+    await act(async () => { toLight.onSelect() })
+    expect(onToggleTheme).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalled()
+    await clickRow('Switch to dark theme')
+    expect(onToggleTheme).toHaveBeenCalledTimes(1)
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false)
+})
+
+test('workspace navigation uses the latest callback and stale command search rows do nothing', async () => {
+    const { root } = mount()
+    const oldWorkspace = vi.fn()
+    const currentWorkspace = vi.fn()
+    const onRecenterBoard = vi.fn()
+    const onOpenChange = vi.fn()
+    await render(root, { open: true, onOpenChange, onWorkspaceSettings: oldWorkspace, onRecenterBoard })
+    const retained = rendered.view!.sections.flatMap(section => section.rows)
+    const recenter = retained.find(row => row.id === 'command-recenter_board')!
+    const workspace = retained.find(row => row.id === 'command-workspace_settings')!
+    await render(root, { open: true, onOpenChange, onWorkspaceSettings: currentWorkspace, onRecenterBoard })
+    await act(async () => { workspace.onSelect() })
+    expect(oldWorkspace).not.toHaveBeenCalled()
+    expect(currentWorkspace).toHaveBeenCalledTimes(1)
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false)
+    await render(root, { open: false, onOpenChange, onWorkspaceSettings: currentWorkspace, onRecenterBoard })
+    await render(root, { open: true, onOpenChange, onWorkspaceSettings: currentWorkspace, onRecenterBoard })
+    await type('/logo')
+    onOpenChange.mockClear()
+    await act(async () => { recenter.onSelect() })
+    expect(onRecenterBoard).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(dialog()).not.toBeNull()
 })
 
 test('searching ranks coworkers, keeps a disabled coworker’s Off badge, and narrows on @ and /', async () => {

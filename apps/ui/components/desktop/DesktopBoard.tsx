@@ -25,13 +25,14 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange }: {
+export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange }: {
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
     selectedAgentId?: string | null
     visibleSessionId?: string | null
     panelInsetRight?: number
+    recenterSignal?: number
     onOpen: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
     onDuplicate?: (sourceId: string, requestId: string, position: GridPosition) => Promise<'created' | 'occupied'>
@@ -134,6 +135,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
                     onConfirmPlacement={placement && !placement.position ? placeCopy : undefined}
                     selectedTileId={selectedAgentId}
                     frameInset={{ left: 0, right: panelInsetRight }}
+                    recenterSignal={recenterSignal}
                     fitToContent
                     canDraw={false}
                     showViewControls={tiles.length > 0}
