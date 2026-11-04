@@ -1,5 +1,9 @@
 # Desktop Actions inbox (pending questions + approvals)
 
+> Follow-up: finished runs now land in the same inbox as a "Done" section — see
+> `desktop-completed-actions-handoff.md`. The empty-state copy and "no completed history" notes
+> below predate that slice.
+
 Port of the original Rerun actions-inbox presentation into the Mac app, as a read-only
 projection of the shared attention endpoint. Reference commit `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`
 (`apps/ui/components/notifications/WorkspaceInbox.tsx`, `InboxDetailCard.tsx`, and

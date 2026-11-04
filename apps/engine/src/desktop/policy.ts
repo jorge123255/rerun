@@ -17,7 +17,7 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (path === '/desktop/codex-login') return (method === 'GET' || method === 'POST') && desktopCodexAvailable()
     if (/^\/agents\/(?:import|foreman|default)(?:\/|$)/.test(path)) return false
     const id = '[A-Za-z0-9_-]+'
-    if (method === 'GET') return new RegExp(`^/(?:health|agents|connections|agents/${id}(?:/memories|/sessions(?:/${id}(?:/messages)?)?|/runs(?:/${id}/(?:stream|steps|tools))?|/stats)?)$`).test(path)
+    if (method === 'GET') return new RegExp(`^/(?:health|agents|connections|agents/${id}(?:/memories|/sessions(?:/${id}(?:/messages)?)?|/runs(?:/completions|/${id}/(?:stream|steps|tools))?|/stats)?)$`).test(path)
     if (method === 'POST') return new RegExp(`^/(?:agents|connections|agents/${id}/(?:duplicate|chat|memories(?:/recall)?)|agents/${id}/runs/${id}/cancel)$`).test(path)
     if (method === 'DELETE') return new RegExp(`^/agents/${id}(?:/memories(?:/(?!recall$)${id})?)?$`).test(path)
     if (method === 'PATCH') return new RegExp(`^/(?:agents/${id}|connections/${id}(?:/keys)?)$`).test(path)

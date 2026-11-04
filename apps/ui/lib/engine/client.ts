@@ -856,6 +856,32 @@ export async function listRuns(conn: EngineConnection, agentId: string, { limit,
     return request(conn, `/agents/${encodeURIComponent(agentId)}/runs${qs}`, { method: 'GET', signal: options.signal }, d => engineRunsListSchema.parse(d).runs)
 }
 
+// The desktop completion store records genuine non-cancelled `done` terminal events, so this is
+// deliberately not `runs?status=done`: a run can be stored `done` while ending on a pending
+// question or approval, and cancelled terminals never become completion cards.
+export const engineRunCompletionSchema = z.object({
+    id: z.string().min(1),
+    agentId: z.string().min(1),
+    sessionId: z.string().min(1),
+    runId: z.string().nullable(),
+    source: z.enum(['chat', 'schedule', 'trigger']),
+    slug: z.string().nullable(),
+    completedAt: z.string(),
+    text: z.string().nullable(),
+    provider: z.string().nullable(),
+    model: z.string().nullable(),
+    costMicros: z.number().int().nullable(),
+    stepCount: z.number().int().nullable(),
+})
+export const engineRunCompletionsListSchema = z.object({ completions: z.array(engineRunCompletionSchema) })
+export type EngineRunCompletion = z.infer<typeof engineRunCompletionSchema>
+
+export async function listAgentCompletions(conn: EngineConnection, agentId: string, options: { limit: number; before?: string; signal?: AbortSignal } = {}): Promise<EngineRunCompletion[]> {
+    const params = new URLSearchParams({ limit: String(options.limit) })
+    if (options.before) params.set('before', options.before)
+    return request(conn, `/agents/${encodeURIComponent(agentId)}/runs/completions?${params}`, { method: 'GET', ...(options.signal ? { signal: options.signal } : {}) }, d => engineRunCompletionsListSchema.parse(d).completions)
+}
+
 export async function getRun(conn: EngineConnection, agentId: string, runId: string): Promise<EngineRunDetail> {
     return request(conn, `/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}`, { method: 'GET' }, d => engineRunDetailSchema.parse(d))
 }

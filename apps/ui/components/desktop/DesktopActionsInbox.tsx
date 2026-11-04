@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { ChromePill } from '@rerun/ui/chrome'
 import { AttentionBuddy, ATTENTION_STATUS_META } from '@rerun/ui/inbox'
 import { EmptyState } from '@rerun/ui/primitives'
@@ -8,11 +8,13 @@ import { shortRelativeTime } from '@rerun/ui/time'
 import { DISABLED_AGENT_LABEL } from '@rerun/ui/iso-grid'
 import { Button } from '@/components/ui/button'
 import type { DesktopAttentionItem } from '@/lib/desktop/attention'
+import type { DesktopCompletionItem } from '@/lib/desktop/completed-actions'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
-import { AlertCircleIcon, BellIcon, InboxIcon, Loader2Icon, RefreshCcwIcon, TriangleAlertIcon, XIcon } from '@/lib/icons'
+import { AlertCircleIcon, BellIcon, CheckCheckIcon, InboxIcon, Loader2Icon, RefreshCcwIcon, TriangleAlertIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from './DesktopApp'
 import { useDesktopAttention, type DesktopAttentionRead } from './useDesktopAttention'
+import { useDesktopCompletions } from './useDesktopCompletions'
 
 // The original inbox folds question and approval under one « Needs you » heading, keyed on the
 // status metadata labels Question (cyan) and Approval (yellow).
@@ -29,6 +31,11 @@ export type DesktopActionsInboxProps = {
     agents?: readonly Pick<DesktopAgentView, 'id' | 'name' | 'enabled'>[]
     /** Navigation only: opens the exact coworker/session, never answers, approves or marks handled. */
     onOpenConversation?: (hit: DesktopConversationHit) => void
+    /**
+     * The conversation currently on screen (root-supplied): a finished run in it is acknowledged
+     * as it lands, matching the original read-on-visible-conversation semantics.
+     */
+    visibleSessionId?: string | null
     /** Controlled open state. Without it the inbox manages its own fold. */
     open?: boolean
     onOpenChange?: (open: boolean) => void
@@ -73,9 +80,56 @@ function ActionRow({ item, onOpen }: { item: DesktopAttentionItem; onOpen: (item
     )
 }
 
-function PillContent({ status, items, unavailable, failed, open }: { status: DesktopAttentionRead; items: DesktopAttentionItem[]; unavailable: boolean; failed: boolean; open: boolean }) {
+// A finished-run row mirrors the original inbox's Done row: emerald dot and buddy, the final-answer
+// summary (or the scheduled task's name), « finished its run », a ×count when several runs are
+// folded, and an explicit Mark-as-read button. Marking covers exactly the displayed completion IDs.
+function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; onOpen: (item: DesktopCompletionItem) => void; onMarkRead: (item: DesktopCompletionItem) => void }) {
+    const meta = ATTENTION_STATUS_META.done
+    const activate = (event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        onOpen(item)
+    }
+    return (
+        <div
+            role="button"
+            tabIndex={0}
+            data-actions-inbox-done={item.id}
+            onClick={() => onOpen(item)}
+            onKeyDown={activate}
+            className="group flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+            <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full bg-current', meta.color)} />
+            <AttentionBuddy agentId={item.agentId} status="done" />
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="flex items-baseline justify-between gap-2">
+                    <span title={item.message ?? undefined} className="truncate text-sm font-medium text-foreground">{item.message ?? item.title}</span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{shortRelativeTime(item.completedAt)}</span>
+                </div>
+                <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="truncate">{item.message ? `${item.agentName} · ${item.title}` : `${item.agentName} finished its run`}</span>
+                    {item.agentEnabled === false && (
+                        <span className="shrink-0 rounded-full border border-border px-1.5 py-px text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{DISABLED_AGENT_LABEL}</span>
+                    )}
+                    {item.count > 1 && <span className="shrink-0 tabular-nums">×{item.count}</span>}
+                </span>
+            </div>
+            <span
+                role="presentation"
+                onClick={event => event.stopPropagation()}
+                onKeyDown={event => event.stopPropagation()}
+            >
+                <Button size="icon-sm" variant="ghost" aria-label="Mark as read" title="Mark as read" onClick={() => onMarkRead(item)}>
+                    <CheckCheckIcon className="size-3.5" />
+                </Button>
+            </span>
+        </div>
+    )
+}
+
+function PillContent({ status, items, doneCount, unavailable, failed, open }: { status: DesktopAttentionRead; items: DesktopAttentionItem[]; doneCount: number; unavailable: boolean; failed: boolean; open: boolean }) {
     const count = items.length
-    if (status === 'loading' && count === 0) {
+    if (status === 'loading' && count === 0 && doneCount === 0) {
         return (
             <>
                 {open ? <Loader2Icon className="size-4 animate-spin" /> : <BellIcon className="size-4" />}
@@ -83,33 +137,46 @@ function PillContent({ status, items, unavailable, failed, open }: { status: Des
             </>
         )
     }
-    if (failed && count === 0) {
+    // A total failure or partial read with nothing confirmed cannot claim an empty workspace; the
+    // done count, when a ready read already knows it, still shows next to the alert.
+    if ((failed || unavailable) && count === 0 && doneCount === 0) {
         return (
             <>
                 <TriangleAlertIcon className="size-4 text-red-400" />
-                <span className="text-red-400">Unavailable</span>
+                <span className="text-red-400">{failed ? 'Unavailable' : 'Partial'}</span>
             </>
         )
     }
-    // A partial read with no confirmed items cannot claim an empty workspace: some coworkers are
-    // missing, so their pending actions may be missing too.
-    if (unavailable && count === 0) {
-        return (
-            <>
-                <TriangleAlertIcon className="size-4 text-red-400" />
-                <span className="text-red-400">Partial</span>
-            </>
-        )
-    }
+    const parts: ReactNode[] = []
     if (count > 0) {
-        return (
-            <>
+        parts.push(
+            <span key="pending" className="flex items-center gap-1">
                 <span className="relative flex">
                     <BellIcon className="size-4" />
                     <span aria-hidden className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-red-500 ring-2 ring-card" />
                 </span>
                 <span className="font-semibold tabular-nums">{count}</span>
                 <span>pending</span>
+            </span>
+        )
+    }
+    if (doneCount > 0) {
+        parts.push(
+            <span key="done" className="flex items-center gap-1 text-emerald-500">
+                <span className="font-semibold tabular-nums">{doneCount}</span>
+                <span>done</span>
+            </span>
+        )
+    }
+    if (parts.length > 0) {
+        return (
+            <>
+                {parts.map((part, index) => (
+                    <Fragment key={index}>
+                        {index > 0 && <span aria-hidden className="text-muted-foreground">·</span>}
+                        {part}
+                    </Fragment>
+                ))}
             </>
         )
     }
@@ -123,11 +190,13 @@ function PillContent({ status, items, unavailable, failed, open }: { status: Des
 
 /**
  * The Actions inbox for the Mac app: pending questions and action approvals projected from the
- * shared read-only `/api/desktop/attention` endpoint, reusing the original inbox rows, labels and
+ * shared read-only `/api/desktop/attention` endpoint, plus finished runs from the desktop
+ * completion store (`/api/desktop/completions`). It reuses the original inbox rows, labels and
  * empty state. Opening a row only navigates to the coworker/session where the existing chat cards
- * answer, approve or decline.
+ * answer, approve or decline; a Done row is additionally acknowledged with the exact completion
+ * IDs it displayed.
  */
-export function DesktopActionsInbox({ agents, onOpenConversation, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
+export function DesktopActionsInbox({ agents, onOpenConversation, visibleSessionId, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const open = openProp ?? internalOpen
     const change = useCallback(
@@ -146,8 +215,18 @@ export function DesktopActionsInbox({ agents, onOpenConversation, open: openProp
         return agent ? [{ ...item, agentName: agent.name, agentEnabled: agent.enabled !== false }] : []
     }), [received, roster])
     const unavailableAgentIds = unavailable.filter(id => !roster || roster.has(id))
-    const latest = useRef({ items, onOpenConversation })
-    latest.current = { items, onOpenConversation }
+    // Finished runs: a separate bounded read that marks itself read through the explicit mutation.
+    // Root's visible conversation applies the original read-on-visible semantics.
+    const completions = useDesktopCompletions(open, agents?.map(agent => agent.id), visibleSessionId)
+    const doneItems = useMemo(() => completions.items.flatMap(item => {
+        if (!roster) return [item]
+        const agent = roster.get(item.agentId)
+        return agent ? [{ ...item, agentName: agent.name, agentEnabled: agent.enabled !== false }] : []
+    }), [completions.items, roster])
+    const doneUnavailable = completions.unavailableAgentIds.filter(id => !roster || roster.has(id))
+    const doneFailed = completions.status === 'failed'
+    const latest = useRef({ items, doneItems, onOpenConversation })
+    latest.current = { items, doneItems, onOpenConversation }
     const rootRef = useRef<HTMLDivElement>(null)
     const pillRef = useRef<HTMLButtonElement>(null)
     const cardId = useId()
@@ -164,6 +243,24 @@ export function DesktopActionsInbox({ agents, onOpenConversation, open: openProp
         },
         [change]
     )
+
+    const openDone = useCallback(
+        (item: DesktopCompletionItem) => {
+            const current = latest.current.doneItems.find(row => row.id === item.id && row.agentId === item.agentId)
+            if (!current) return
+            // Navigation only: no sending, no approving, no executing. The row is acknowledged with
+            // the exact displayed completion IDs, like the original openItem→markSeen.
+            change(false)
+            latest.current.onOpenConversation?.({ id: current.sessionId, agentId: current.agentId, agentName: current.agentName, title: current.title })
+            completions.markRead(current)
+        },
+        [change, completions.markRead]
+    )
+
+    // Mark-all covers exactly the done rows currently displayed, never a newer arrival.
+    const markAllDone = useCallback(() => {
+        completions.markAllRead()
+    }, [completions.markAllRead])
 
     // Only an explicit Close or Escape folds the card back onto the pill and takes the focus
     // there, like the original InboxSurface. Navigation and an outside pointer-down close the
@@ -199,11 +296,13 @@ export function DesktopActionsInbox({ agents, onOpenConversation, open: openProp
     }, [open, change, closeToPill])
 
     const failed = status === 'failed'
+    const doneCount = doneItems.length
     const pillLabel =
-        failed && items.length === 0 ? 'Actions: unavailable'
-        : status === 'loading' && items.length === 0 ? 'Actions: checking'
-        : partial && items.length === 0 ? 'Actions: partial — some coworkers unavailable'
-        : items.length > 0 ? `Actions: ${items.length} pending`
+        failed && items.length === 0 && doneCount === 0 ? 'Actions: unavailable'
+        : status === 'loading' && items.length === 0 && doneCount === 0 ? 'Actions: checking'
+        : partial && items.length === 0 && doneCount === 0 ? 'Actions: partial — some coworkers unavailable'
+        : items.length > 0 ? `Actions: ${items.length} pending${doneCount > 0 ? ` · ${doneCount} done` : ''}`
+        : doneCount > 0 ? `Actions: ${doneCount} done`
         : 'Actions: no pending'
 
     return (
@@ -214,10 +313,18 @@ export function DesktopActionsInbox({ agents, onOpenConversation, open: openProp
                         <div className="flex items-baseline gap-2">
                             <h2 className="text-base font-semibold text-foreground">Actions</h2>
                             {status === 'ready' && items.length > 0 && <span className="text-xs text-muted-foreground tabular-nums">{items.length} pending</span>}
+                            {doneCount > 0 && <span className="text-xs text-emerald-500 tabular-nums">· {doneCount} done</span>}
                         </div>
-                        <Button size="icon-sm" variant="ghost" aria-label="Close actions inbox" onClick={closeToPill}>
-                            <XIcon className="size-4" />
-                        </Button>
+                        <div className="flex items-center gap-1">
+                            {doneCount > 0 && (
+                                <Button size="icon-sm" variant="ghost" aria-label="Mark all as read" title="Mark all as read" onClick={markAllDone}>
+                                    <CheckCheckIcon className="size-4" />
+                                </Button>
+                            )}
+                            <Button size="icon-sm" variant="ghost" aria-label="Close actions inbox" onClick={closeToPill}>
+                                <XIcon className="size-4" />
+                            </Button>
+                        </div>
                     </div>
 
                     {partial && (
@@ -238,13 +345,31 @@ export function DesktopActionsInbox({ agents, onOpenConversation, open: openProp
                             </Button>
                         </div>
                     )}
+                    {doneUnavailable.length > 0 && (
+                        <div role="status" className="mx-3 mt-2 flex items-center gap-2 rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-400">
+                            <TriangleAlertIcon className="size-3.5 shrink-0" />
+                            <span className="min-w-0 flex-1">Some coworkers couldn't be reached, so the finished-runs list may be missing theirs.</span>
+                            <Button size="sm" variant="outline" onClick={completions.retry}>
+                                <RefreshCcwIcon className="size-3.5" /> Retry
+                            </Button>
+                        </div>
+                    )}
+                    {doneFailed && (
+                        <div role="alert" className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                            <AlertCircleIcon className="size-3.5 shrink-0 text-red-400" />
+                            <span className="min-w-0 flex-1 truncate">Couldn't refresh finished runs.</span>
+                            <Button size="sm" variant="outline" onClick={completions.retry}>
+                                <RefreshCcwIcon className="size-3.5" /> Retry
+                            </Button>
+                        </div>
+                    )}
 
                     <div className="max-h-[min(22rem,50dvh)] overflow-y-auto overscroll-contain px-2 py-2">
-                        {status === 'loading' && items.length === 0 ? (
+                        {status === 'loading' && items.length === 0 && doneItems.length === 0 ? (
                             <div role="status" className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
                                 <Loader2Icon className="size-4 animate-spin" /> Checking for pending actions…
                             </div>
-                        ) : failed && items.length === 0 ? (
+                        ) : failed && items.length === 0 && doneItems.length === 0 ? (
                             <div className="flex flex-col items-center gap-3 px-6 py-8 text-center">
                                 <AlertCircleIcon className="size-8 text-red-400" />
                                 <div className="space-y-1">
@@ -255,7 +380,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, open: openProp
                                     <RefreshCcwIcon className="size-3.5" /> Retry
                                 </Button>
                             </div>
-                        ) : partial && items.length === 0 ? (
+                        ) : partial && items.length === 0 && doneItems.length === 0 ? (
                             <div className="flex flex-col items-center gap-3 px-6 py-8 text-center">
                                 <TriangleAlertIcon className="size-8 text-red-400" />
                                 <div className="space-y-1">
@@ -266,15 +391,27 @@ export function DesktopActionsInbox({ agents, onOpenConversation, open: openProp
                                     <RefreshCcwIcon className="size-3.5" /> Retry
                                 </Button>
                             </div>
-                        ) : items.length === 0 ? (
-                            <EmptyState icon={InboxIcon} title="Nothing to handle" description="Pending questions and approvals will show up here." className="py-8" />
+                        ) : items.length === 0 && doneItems.length === 0 ? (
+                            <EmptyState icon={InboxIcon} title="Nothing to handle" description="When a coworker needs you or finishes a run, it lands here." className="py-8" />
                         ) : (
-                            <section aria-label="Needs you">
-                                <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Needs you</h3>
-                                {sorted.map(item => (
-                                    <ActionRow key={item.id} item={item} onOpen={openItem} />
-                                ))}
-                            </section>
+                            <>
+                                {items.length > 0 && (
+                                    <section aria-label="Needs you">
+                                        <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Needs you</h3>
+                                        {sorted.map(item => (
+                                            <ActionRow key={item.id} item={item} onOpen={openItem} />
+                                        ))}
+                                    </section>
+                                )}
+                                {doneItems.length > 0 && (
+                                    <section aria-label="Done" className={cn(items.length > 0 && 'mt-1 border-t border-border pt-1')}>
+                                        <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Done</h3>
+                                        {doneItems.map(item => (
+                                            <DoneRow key={item.id} item={item} onOpen={openDone} onMarkRead={completions.markRead} />
+                                        ))}
+                                    </section>
+                                )}
+                            </>
                         )}
                     </div>
                 </div>
@@ -288,7 +425,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, open: openProp
                 aria-label={pillLabel}
                 onClick={() => change(!open)}
             >
-                <PillContent status={status} items={items} unavailable={partial} failed={failed} open={open} />
+                <PillContent status={status} items={items} doneCount={doneCount} unavailable={partial} failed={failed} open={open} />
             </ChromePill>
         </div>
     )

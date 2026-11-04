@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { listRunCompletions } from '../../db/completed-runs.js'
 import { aggregateUsageByDay, cancelRun, getRun, listRunsByAgent } from '../../db/repos/runs.js'
 import { listRunSteps, listToolCalls } from '../../db/repos/telemetry.js'
 import { collectAssistantText } from '../../db/repos/messages.js'
@@ -79,6 +80,21 @@ runRoutes.get('/', async c => {
     const sessionId = c.req.query('session') || undefined
     const status = c.req.query('status') || undefined
     return c.json({ runs: await listRunsByAgent(agentId, { limit, sessionId, status }) })
+})
+
+// The desktop completion store reads through this bounded route: terminal identity and time order
+// the rows, and `before` is the same (completed_at, id) cursor the desktop pagination uses.
+runRoutes.get('/completions', async c => {
+    const agentId = c.req.param('id')!
+    const limitParam = Number(c.req.query('limit'))
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50
+    const beforeParam = c.req.query('before')
+    let before: { completedAt: string; id: string } | undefined
+    if (beforeParam) {
+        const sep = beforeParam.lastIndexOf('__')
+        if (sep > 0 && sep < beforeParam.length - 2) before = { completedAt: beforeParam.slice(0, sep), id: beforeParam.slice(sep + 2) }
+    }
+    return c.json({ completions: await listRunCompletions(agentId, { limit, before }) })
 })
 
 runRoutes.get('/:rid/steps', async c => {

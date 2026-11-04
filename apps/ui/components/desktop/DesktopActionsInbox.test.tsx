@@ -11,6 +11,18 @@ const checkedAt = '2026-11-04T12:00:00.000Z'
 const question = { id: 'q1', kind: 'question', agentId: 'researcher', agentName: 'Researcher', agentEnabled: true, sessionId: 's1', title: 'Filter before matching', summary: 'Should I filter by date before matching?', updatedAt: '2026-11-04T11:50:00.000Z' }
 const approval = { id: 'a1', kind: 'approval', agentId: 'reviewer', agentName: 'Reviewer', agentEnabled: false, sessionId: 's2', title: 'Approve final report', summary: 'Approve publishing the final report.', updatedAt: '2026-11-04T11:55:00.000Z' }
 
+// The inbox now reads two endpoints on the same tick: the attention projection (pending questions
+// and approvals) and the completion store (finished runs). The scaffolding below answers each URL
+// with a payload of its own shape, so the counts and content stay deterministic.
+const enabledAt = '2026-11-04T10:00:00.000Z'
+const completionsEmpty = () => Response.json({ items: [], unavailableAgentIds: [], enabledAt, nextCursor: null, checkedAt })
+const routedFetch = (attention: () => Response, completions: () => Response = completionsEmpty, read: () => Response = () => Response.json({ marked: 1 })) =>
+    vi.fn((url: string) => {
+        if (url === '/api/desktop/completions/read') return Promise.resolve(read())
+        if (url === '/api/desktop/completions') return Promise.resolve(completions())
+        return Promise.resolve(attention())
+    })
+
 afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.useRealTimers(); vi.restoreAllMocks() })
 
 const pillOf = (container: HTMLElement) => container.querySelector<HTMLElement>('button[aria-label^="Actions:"]')!
@@ -90,24 +102,25 @@ test('a partial read names unavailable coworkers and a hidden window does not po
     await act(async () => { root.unmount() })
 })
 
-test('rerendering never adds immediate reads — one read per interval tick', async () => {
+test('rerendering never adds immediate reads — one read per endpoint per interval tick', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-    const fetcher = vi.fn(async () => Response.json({ items: [], unavailableAgentIds: [], checkedAt }))
+    const fetcher = routedFetch(() => Response.json({ items: [], unavailableAgentIds: [], checkedAt }))
     vi.stubGlobal('fetch', fetcher)
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container)
     await act(async () => { root.render(<DesktopActionsInbox open className="a" />) })
-    expect(fetcher).toHaveBeenCalledTimes(1)
+    // One attention read and one completion read on mount.
+    expect(fetcher).toHaveBeenCalledTimes(2)
     // A re-render (a changing className here) must not restart the interval and fetch immediately.
     await act(async () => { root.render(<DesktopActionsInbox open className="b" />) })
-    expect(fetcher).toHaveBeenCalledTimes(1)
-    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
     expect(fetcher).toHaveBeenCalledTimes(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(fetcher).toHaveBeenCalledTimes(4)
     await act(async () => { root.render(<DesktopActionsInbox open className="c" />) })
-    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher).toHaveBeenCalledTimes(4)
     await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
-    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(fetcher).toHaveBeenCalledTimes(6)
     await act(async () => { root.unmount() })
 })
 
@@ -153,9 +166,11 @@ test('the loading label never claims no pending', async () => {
 test('closing cancels an in-flight read and reopening reads immediately', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-    const resolvers: ((response: Response) => void)[] = []
+    const pending = new Map<string, Array<(response: Response) => void>>()
     const fetcher = vi.fn((url: string, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
-        resolvers.push(resolve)
+        const list = pending.get(url) ?? []
+        list.push(resolve)
+        pending.set(url, list)
         init?.signal?.addEventListener('abort', () => {
             const error = new Error('Aborted'); error.name = 'AbortError'; reject(error)
         })
@@ -166,19 +181,21 @@ test('closing cancels an in-flight read and reopening reads immediately', async 
     let open = true
     const renderIt = () => root.render(<DesktopActionsInbox open={open} onOpenChange={next => { open = next }} />)
     await act(async () => { renderIt() })
-    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(fetcher).toHaveBeenCalledTimes(2)
 
     open = false
     await act(async () => { renderIt() })
-    await act(async () => { await Promise.resolve() }) // let the aborted read settle
+    await act(async () => { await Promise.resolve() }) // let the aborted reads settle
     await act(async () => { await vi.advanceTimersByTimeAsync(9000) })
-    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(fetcher).toHaveBeenCalledTimes(2)
 
     open = true
     await act(async () => { renderIt() })
-    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher).toHaveBeenCalledTimes(4)
 
-    await act(async () => { resolvers[1]?.(Response.json({ items: [], unavailableAgentIds: [], checkedAt })) })
+    // The reopened reads are the second request per endpoint: resolve them both.
+    await act(async () => { pending.get('/api/desktop/attention')?.[1]?.(Response.json({ items: [], unavailableAgentIds: [], checkedAt })) })
+    await act(async () => { pending.get('/api/desktop/completions')?.[1]?.(completionsEmpty()) })
     expect(container.textContent).toContain('No pending')
     await act(async () => { root.unmount() })
 })
@@ -236,15 +253,19 @@ test('current roster filters counts and unknown owners, and removed rows cannot 
 
 test('a late response from the old roster cannot restore a deleted request', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-    const pending: { resolve: (value: Response) => void; signal?: AbortSignal | null }[] = []
-    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise<Response>(resolve => pending.push({ resolve, signal: init?.signal }))))
+    const pending: { url: string; resolve: (value: Response) => void; signal?: AbortSignal | null }[] = []
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => new Promise<Response>(resolve => pending.push({ url, resolve, signal: init?.signal }))))
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container)
     await act(async () => { root.render(<DesktopActionsInbox open agents={[{ id: 'researcher', name: 'Researcher' }]} />) })
     await act(async () => { root.render(<DesktopActionsInbox open agents={[]} />) })
-    expect(pending).toHaveLength(2)
+    // One read per endpoint per render: the old roster's reads are cancelled when the scope changes.
+    expect(pending).toHaveLength(4)
     expect(pending[0].signal?.aborted).toBe(true)
-    await act(async () => { pending[1].resolve(Response.json({ items: [], unavailableAgentIds: [], checkedAt })) })
+    expect(pending[1].signal?.aborted).toBe(true)
+    // A late response for the new roster cannot bring back a request the roster has dropped.
+    const attention = pending.filter(entry => entry.url === '/api/desktop/attention')
+    await act(async () => { attention[1].resolve(Response.json({ items: [question], unavailableAgentIds: [], checkedAt })) })
     await act(async () => { pending[0].resolve(Response.json({ items: [question], unavailableAgentIds: [], checkedAt })) })
     expect(container.querySelector('[data-actions-inbox-item]')).toBeNull()
     expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: no pending')
@@ -255,8 +276,13 @@ test('a late response from the old roster cannot restore a deleted request', asy
 test('failure after a roster change does not relabel an old snapshot as current', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     let respond: (value: Response) => void = () => {}
-    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ items: [question], unavailableAgentIds: [], checkedAt }))
-        .mockImplementationOnce(() => new Promise<Response>(resolve => { respond = resolve }))
+    let attentionCalls = 0
+    const fetcher = vi.fn((url: string) => {
+        if (url === '/api/desktop/completions') return Promise.resolve(completionsEmpty())
+        attentionCalls += 1
+        if (attentionCalls === 1) return Promise.resolve(Response.json({ items: [question], unavailableAgentIds: [], checkedAt }))
+        return new Promise<Response>(resolve => { respond = resolve })
+    })
     vi.stubGlobal('fetch', fetcher)
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container)
@@ -268,5 +294,128 @@ test('failure after a roster change does not relabel an old snapshot as current'
     await act(async () => { respond(Response.json({ error: 'unavailable' }, { status: 503 })) })
     expect(container.querySelector('[data-actions-inbox-item]')).toBeNull()
     expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: unavailable')
+    await act(async () => { root.unmount() })
+})
+
+const doneChat = { id: 'done:chat-s1', agentId: 'researcher', agentName: 'Researcher', agentEnabled: true, sessionId: 's1', sessionIds: ['s1'], title: 'Filter before matching', message: 'Here is the filtered list.', source: 'chat', slug: null, count: 1, completedAt: '2026-11-04T11:58:00.000Z', completionIds: ['run-1'] }
+const doneScheduled = { id: 'done:sched', agentId: 'reviewer', agentName: 'Reviewer', agentEnabled: false, sessionId: 's3', sessionIds: ['s3', 's4'], title: 'nightly-sync', message: null, source: 'schedule', slug: 'nightly-sync', count: 2, completedAt: '2026-11-04T11:57:00.000Z', completionIds: ['run-2', 'run-3'] }
+const completionsWith = (items: unknown[]) => () => Response.json({ items, unavailableAgentIds: [], enabledAt, nextCursor: null, checkedAt })
+
+test('finished runs render as Done rows; Mark as read acknowledges the exact completion IDs', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const fetcher = routedFetch(
+        () => Response.json({ items: [], unavailableAgentIds: [], checkedAt }),
+        completionsWith([doneChat, doneScheduled])
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    await act(async () => { root.render(<DesktopActionsInbox open />) })
+
+    // A chat row shows the bounded final-answer summary; a scheduled run folds under its slug.
+    expect(container.textContent).toContain('Here is the filtered list.')
+    expect(container.textContent).toContain('nightly-sync')
+    expect(container.textContent).toContain('×2')
+    expect(container.textContent).toContain('Reviewer finished its run')
+    // The header and pill count finished runs; the disabled owner stays tagged.
+    expect(container.textContent).toContain('2 done')
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 2 done')
+    expect(container.textContent).toContain('Inactive')
+
+    // Mark-as-read acknowledges exactly the displayed completion IDs, nothing newer.
+    const readButton = Array.from(container.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === 'Mark as read')!
+    await act(async () => { readButton.click() })
+    const post = fetcher.mock.calls.find(([url]) => url === '/api/desktop/completions/read')
+    expect(post).toBeTruthy()
+    expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({ completionIds: ['run-1'] })
+    expect(container.querySelector('[data-actions-inbox-done="done:chat-s1"]')).toBeNull()
+    // A scheduled row's different terminal IDs are untouched.
+    expect(container.querySelector('[data-actions-inbox-done="done:sched"]')).not.toBeNull()
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 1 done')
+
+    await act(async () => { root.unmount() })
+})
+
+test('Mark all as read acknowledges exactly the displayed completion IDs', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const fetcher = routedFetch(
+        () => Response.json({ items: [], unavailableAgentIds: [], checkedAt }),
+        completionsWith([doneChat, doneScheduled])
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    await act(async () => { root.render(<DesktopActionsInbox open />) })
+
+    const markAll = Array.from(container.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === 'Mark all as read')!
+    await act(async () => { markAll.click() })
+    const post = fetcher.mock.calls.find(([url]) => url === '/api/desktop/completions/read')
+    expect(post).toBeTruthy()
+    expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({ completionIds: ['run-1', 'run-2', 'run-3'] })
+    expect(container.querySelector('[data-actions-inbox-done]')).toBeNull()
+
+    await act(async () => { root.unmount() })
+})
+
+test('opening a Done row navigates to the conversation and marks its group read', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const fetcher = routedFetch(
+        () => Response.json({ items: [], unavailableAgentIds: [], checkedAt }),
+        completionsWith([doneChat, doneScheduled])
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    const onOpen = vi.fn()
+    await act(async () => { root.render(<DesktopActionsInbox open onOpenConversation={onOpen} />) })
+
+    const row = container.querySelector<HTMLElement>('[data-actions-inbox-done="done:chat-s1"]')!
+    await act(async () => { row.click() })
+    expect(onOpen).toHaveBeenCalledWith({ id: 's1', agentId: 'researcher', agentName: 'Researcher', title: 'Filter before matching' })
+    // Opening acknowledges the folded group, like the original openItem→markSeen.
+    const post = fetcher.mock.calls.find(([url]) => url === '/api/desktop/completions/read')
+    expect(post).toBeTruthy()
+    expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({ completionIds: ['run-1'] })
+
+    await act(async () => { root.unmount() })
+})
+
+test('a finished run in the conversation on screen is acknowledged as it lands', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const fetcher = routedFetch(
+        () => Response.json({ items: [], unavailableAgentIds: [], checkedAt }),
+        completionsWith([doneChat])
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    await act(async () => { root.render(<DesktopActionsInbox open visibleSessionId="s1" />) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    const post = fetcher.mock.calls.find(([url]) => url === '/api/desktop/completions/read')
+    expect(post).toBeTruthy()
+    expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({ completionIds: ['run-1'] })
+
+    await act(async () => { root.unmount() })
+})
+
+test('a completion read failure shows its own Retry note and never a done count', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const fetcher = routedFetch(
+        () => Response.json({ items: [], unavailableAgentIds: [], checkedAt }),
+        () => Response.json({ error: 'down' }, { status: 500 })
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    await act(async () => { root.render(<DesktopActionsInbox open />) })
+    expect(container.textContent).toContain("Couldn't refresh finished runs.")
+    expect(container.querySelector('[data-actions-inbox-done]')).toBeNull()
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: no pending')
+
     await act(async () => { root.unmount() })
 })

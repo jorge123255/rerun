@@ -1,3 +1,5 @@
+import { recordRunCompletion } from '../db/completed-runs.js'
+import { desktopApp } from '../desktop/policy.js'
 import { sendNotification, type NotificationEvent, type NotificationKind } from './notify.js'
 import type { RunErrorCode } from './provider-errors.js'
 import type { RunTrigger } from './context.js'
@@ -85,4 +87,21 @@ export async function emitRunTerminal(terminal: RunTerminal): Promise<void> {
     // so an interactive run stays null.
     const source = trigger.source === 'chat' ? null : trigger.source
     await sendNotification({ event, kind: terminal.kind, agentId: terminal.agentId, sessionId: terminal.sessionId, runId: terminal.runId, message, source, metadata }).catch(() => {})
+    // Desktop-only completion store: a genuine non-cancelled `done` terminal is what a « finished
+    // run » card means. A turn that ends on a pending question or approval never reaches a terminal
+    // here (the loop sends a HITL event instead), and cancelled/error terminals never record a
+    // success. Best-effort, like the notification itself: a deletion in flight may refuse the write.
+    if (desktopApp() && terminal.kind === 'done' && !terminal.cancelled) {
+        void recordRunCompletion({
+            agentId: terminal.agentId,
+            sessionId: terminal.sessionId,
+            runId: terminal.runId,
+            trigger: terminal.trigger,
+            text: terminal.text,
+            provider: terminal.provider,
+            model: terminal.model,
+            costMicros: terminal.costMicros,
+            stepCount: terminal.stepCount,
+        }).catch(() => {})
+    }
 }
