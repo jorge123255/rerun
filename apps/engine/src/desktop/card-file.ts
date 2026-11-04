@@ -22,8 +22,8 @@ function assertScope(scope: 'agent' | 'shared' | undefined) {
     if (scope && scope !== 'agent') throw new CardFileError(shared)
 }
 
-// The model often copies an absolute path from a shell listing. Accept it only when it resolves
-// inside this coworker's workspace, and always store the relative path the Files route opens.
+// Accept an absolute persistent workspace path only when it stays inside this coworker's Files
+// workspace. Native Codex command/edit paths belong to a separate temporary folder, not this one.
 const inside = (rel: string) => !!rel && !rel.startsWith('..') && !isAbsolute(rel)
 
 async function cardRelativePath(ctx: RunContext, path: string): Promise<string> {
@@ -75,11 +75,11 @@ export function desktopCardFileTools(ctx: RunContext): ToolSet {
     return {
         card_file: tool({
             description:
-                'Show the user existing .txt or .md files from this coworker’s workspace as preview tiles in chat. Pass visible relative paths; up to 12 files and 32 KiB each. Use it when you produced or updated files they should look at, before asking them to review or choose. It only displays the files and does not read them back. Shared files, folders, links and other formats are unavailable.',
+                'Show existing .txt or .md files already saved in this coworker’s persistent Files workspace as preview tiles in chat. Pass visible paths relative to Files; up to 12 files and 32 KiB each. This does not save, import or publish a file. Native Codex commands and edits use a separate temporary folder whose changes are discarded: never use this tool to deliver those changes, because a matching relative path here would show the persistent original instead. Use it before asking the user to review or choose among existing Files documents. Opening a tile reads the current persistent file, not frozen bytes. The tool does not read content back to you. Shared files, folders, links and other formats are unavailable.',
             inputSchema: z.object({
                 files: jsonTolerantArray(
                     z.array(z.object({
-                        path: z.string().describe('Visible path relative to this coworker’s workspace'),
+                        path: z.string().describe('Visible path relative to this coworker’s persistent Files workspace, not the native command/edit folder'),
                         scope: z.enum(['agent', 'shared']).optional().describe("Only 'agent' is available in the Mac app"),
                     })).min(1).max(CARD_MAX_FILES)
                 ).describe('The files to show together, in the order the user should see them'),

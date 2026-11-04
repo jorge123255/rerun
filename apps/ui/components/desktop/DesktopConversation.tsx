@@ -67,7 +67,7 @@ const stopUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURICompone
 const RUN_POLL_MS = 3000
 
 export type ComposerDraft = { text: string; attachment?: string }
-export type TabActivity = { busy: boolean; dirty: boolean }
+export type TabActivity = { busy: boolean; dirty: boolean; readableSessionId?: string | null }
 
 export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onClosePanel, modelLabel, onOpenModelSettings }: {
     agent: DesktopAgentView
@@ -134,7 +134,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             draft.update({ text: composer.current.text, attachmentPath: path })
         }
     }, [draft.loaded, draft.error, draft.update, draftKey])
-    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; error?: string }>({ id: null, question: null, approval: null })
+    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
     const quickReplyIds = useRef(new Map<string, string>())
@@ -256,12 +256,21 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
 
     const busy = status === 'submitted' || status === 'streaming'
     const inactive = agent.enabled === false
+    // A matching session ID may still hold the snapshot from before a run or reload.
+    // Only a complete snapshot from this read generation can acknowledge a finished reply.
+    const historyReadKey = JSON.stringify([sessionId, busy, attempt])
+    const historyRead = useRef({ key: historyReadKey, generation: 0 })
+    if (historyRead.current.key !== historyReadKey) historyRead.current = { key: historyReadKey, generation: historyRead.current.generation + 1 }
+    const historyGeneration = historyRead.current.generation
 
     const ready = history.id === sessionId && !history.error
     const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
     const generating = busy || runInFlight
     const dirty = !draft.loaded || !!(input || attachment || queue.queued)
-    useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty }) }, [tabUid, generating, dirty, onTabActivity])
+    const readable = active && ready && !generating && history.loadedGeneration === historyGeneration
+        && !!history.transcript && history.question !== undefined && history.approval !== undefined
+        && engineRunning.id === sessionId
+    useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty, readableSessionId: readable ? sessionId : null }) }, [tabUid, generating, dirty, readable, sessionId, onTabActivity])
     const question = history.id === sessionId ? history.question : undefined
     const approval = history.id === sessionId ? history.approval : undefined
     const pendingRequest = question || approval
@@ -284,12 +293,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             if (controller.signal.aborted) return
             if (pending && approval) throw new Error('This conversation changed while loading. Reload it to see the current request.')
             setMessages(result)
-            setHistory({ id: sessionId, transcript: result, question: pending, approval })
+            setHistory({ id: sessionId, transcript: result, question: pending, approval, loadedGeneration: historyGeneration })
         }).catch(cause => {
             if (!controller.signal.aborted) setHistory({ id: sessionId, error: cause instanceof Error ? cause.message : 'Could not load history' })
         })
         return () => controller.abort()
-    }, [sessionId, setMessages, busy, attempt])
+    }, [sessionId, setMessages, busy, attempt, historyGeneration])
 
     useEffect(() => {
         setStopError(undefined)
@@ -653,7 +662,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                     {message.role === 'user' && message.metadata && typeof message.metadata === 'object' && 'attachmentPath' in message.metadata && typeof message.metadata.attachmentPath === 'string' ?
                                         <div className="mb-1"><AttachmentChip path={message.metadata.attachmentPath} /></div> : null}
                                     {message.role === 'assistant'
-                                        ? <DesktopAssistantReply message={message} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
+                                        ? <DesktopAssistantReply message={message} agentId={agent.id} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
                                             pendingRequestToolCallId={pendingRequest?.toolCallId}
                                             quickReplies={{ show: messageIndex === transcript.length - 1 && quickRepliesVisible, disabled: !canSendQuickReply,
                                                 pending: quickReplyBusy || queue.pending, onSend: text => sendQuickReply(message.id, text) }}

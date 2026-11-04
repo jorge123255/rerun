@@ -17,6 +17,50 @@ const widePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAIygAAAABCAAAAACWSFqZAAAAAEl
 const svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
 const html = '<!doctype html><script>alert(1)</script>'
 
+function pngChunk(type: string, payload: Buffer) {
+    const content = Buffer.concat([Buffer.from(type, 'ascii'), payload])
+    let crc = 0xffffffff
+    for (const byte of content) {
+        crc ^= byte
+        for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+    }
+    const header = Buffer.alloc(4), tail = Buffer.alloc(4)
+    header.writeUInt32BE(payload.length)
+    tail.writeUInt32BE((crc ^ 0xffffffff) >>> 0)
+    return Buffer.concat([header, content, tail])
+}
+
+function webpChunk(type: string, payload: Buffer) {
+    const header = Buffer.alloc(8)
+    header.write(type, 0, 'ascii')
+    header.writeUInt32LE(payload.length, 4)
+    return Buffer.concat([header, payload, payload.length % 2 ? Buffer.alloc(1) : Buffer.alloc(0)])
+}
+
+function webpFile(...chunks: Buffer[]) {
+    const content = Buffer.concat([Buffer.from('WEBP', 'ascii'), ...chunks])
+    const header = Buffer.alloc(8)
+    header.write('RIFF', 0, 'ascii')
+    header.writeUInt32LE(content.length, 4)
+    return Buffer.concat([header, content])
+}
+
+function vp8x(width = 1, height = 1, flags = 0) {
+    const header = Buffer.alloc(10)
+    header[0] = flags
+    header.writeUIntLE(width - 1, 4, 3)
+    header.writeUIntLE(height - 1, 7, 3)
+    return webpChunk('VP8X', header)
+}
+
+function vp8Frame(width: number, height: number) {
+    const header = Buffer.alloc(10)
+    header.set([0x9d, 0x01, 0x2a], 3)
+    header.writeUInt16LE(width, 6)
+    header.writeUInt16LE(height, 8)
+    return webpChunk('VP8 ', header)
+}
+
 const env = { ...process.env }
 const origin = 'http://127.0.0.1:3194'
 const token = 'e'.repeat(48)
@@ -181,4 +225,72 @@ test('text read and text import stay on their own contracts', async () => {
     }), { params: Promise.resolve({ agentId: alice }) })
     expect(text.status).toBe(201)
     expect(await readFile(join(workspace('engine-alice'), 'docs', 'brief.md'), 'utf8')).toBe('# note')
+})
+
+test('GIF validates the single frame against the canvas and rejects further frames before browser decoding', async () => {
+    const descriptor = gif.indexOf(0x2c, 19)
+    expect(descriptor).toBeGreaterThan(18)
+    const oversized = Buffer.from(gif)
+    oversized.writeUInt16LE(8193, descriptor + 5)
+    const outside = Buffer.from(gif)
+    outside.writeUInt16LE(1, descriptor + 1)
+    const animated = Buffer.concat([gif.subarray(0, gif.length - 1), gif.subarray(descriptor)])
+    for (const [name, bytes, status] of [
+        ['large-frame.gif', oversized, 413], ['outside-canvas.gif', outside, 415], ['animated.gif', animated, 415],
+    ] as const) {
+        await writeFile(join(workspace('engine-alice'), 'docs', name), bytes)
+        const response = await image(`docs/${name}`)
+        expect(response.status, name).toBe(status)
+        expect(response.headers.get('content-type')).toContain('application/json')
+    }
+    expect((await (await image('docs/animated.gif')).json()).error).toContain('Animated')
+    expect((await image('docs/shot.gif')).status).toBe(200)
+})
+
+test('WebP bounds inner VP8 and VP8L dimensions and requires a single static frame matching VP8X', async () => {
+    const losslessHeader = Buffer.alloc(5)
+    losslessHeader[0] = 0x2f
+    losslessHeader.writeUInt32LE(8192, 1) // Encodes an 8193-pixel frame behind a one-pixel canvas.
+    const cases = [
+        ['large-inner.webp', webpFile(vp8x(), vp8Frame(8193, 1)), 413],
+        ['large-lossless.webp', webpFile(vp8x(), webpChunk('VP8L', losslessHeader)), 413],
+        ['mismatched-canvas.webp', webpFile(vp8x(), vp8Frame(2, 1)), 415],
+        ['two-images.webp', webpFile(vp8x(), vp8Frame(1, 1), vp8Frame(1, 1)), 415],
+    ] as const
+    for (const [name, bytes, status] of cases) {
+        await writeFile(join(workspace('engine-alice'), 'docs', name), bytes)
+        const response = await image(`docs/${name}`)
+        expect(response.status, name).toBe(status)
+        expect(response.headers.get('content-type')).toContain('application/json')
+    }
+    // A valid extended static container still uses the original image payload unchanged.
+    await writeFile(join(workspace('engine-alice'), 'docs', 'extended.webp'), webpFile(vp8x(), webp.subarray(12)))
+    expect((await image('docs/extended.webp')).status).toBe(200)
+})
+
+test('APNG control and frame chunks are refused instead of using only the PNG canvas as the decode budget', async () => {
+    for (const type of ['acTL', 'fcTL', 'fdAT']) {
+        const payload = Buffer.alloc(type === 'acTL' ? 8 : type === 'fcTL' ? 26 : 4)
+        if (type === 'acTL') payload.writeUInt32BE(2)
+        const bytes = Buffer.concat([png.subarray(0, 33), pngChunk(type, payload), png.subarray(33)])
+        await writeFile(join(workspace('engine-alice'), 'docs', `${type}.png`), bytes)
+        const response = await image(`docs/${type}.png`)
+        expect(response.status, type).toBe(415)
+        expect((await response.json()).error).toContain('Animated')
+    }
+    expect((await image('docs/shot.png')).status).toBe(200)
+})
+
+test('WebP animation flags and animation chunks, including an empty ANMF, are never served as static image bytes', async () => {
+    const cases = [
+        ['animation-flag.webp', webpFile(vp8x(1, 1, 0x02), webp.subarray(12))],
+        ['animation-chunk.webp', webpFile(vp8x(), webpChunk('ANIM', Buffer.alloc(6)), webp.subarray(12))],
+        ['empty-frame.webp', webpFile(vp8x(), webpChunk('ANMF', Buffer.alloc(0)))],
+    ] as const
+    for (const [name, bytes] of cases) {
+        await writeFile(join(workspace('engine-alice'), 'docs', name), bytes)
+        const response = await image(`docs/${name}`)
+        expect(response.status, name).toBe(415)
+        expect((await response.json()).error).toContain('Animated')
+    }
 })

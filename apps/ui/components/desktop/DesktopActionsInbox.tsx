@@ -127,7 +127,7 @@ function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; on
     )
 }
 
-function PillContent({ status, items, doneCount, unavailable, failed, open }: { status: DesktopAttentionRead; items: DesktopAttentionItem[]; doneCount: number; unavailable: boolean; failed: boolean; open: boolean }) {
+function PillContent({ status, items, doneCount, unavailable, failed, open, hasMore }: { status: DesktopAttentionRead; items: DesktopAttentionItem[]; doneCount: number; unavailable: boolean; failed: boolean; open: boolean; hasMore: boolean }) {
     const count = items.length
     if (status === 'loading' && count === 0 && doneCount === 0) {
         return (
@@ -183,7 +183,7 @@ function PillContent({ status, items, doneCount, unavailable, failed, open }: { 
     return (
         <>
             <BellIcon className="size-4" />
-            <span className="text-muted-foreground">No pending</span>
+            <span className="text-muted-foreground">{hasMore ? 'More activity' : 'No pending'}</span>
         </>
     )
 }
@@ -225,6 +225,11 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     }), [completions.items, roster])
     const doneUnavailable = completions.unavailableAgentIds.filter(id => !roster || roster.has(id))
     const doneFailed = completions.status === 'failed'
+    const lifecycle = JSON.stringify([open, agents?.map(agent => agent.id).sort() ?? null, visibleSessionId ?? null])
+    const lifetime = useRef({ lifecycle, generation: 0, mounted: true })
+    if (lifetime.current.lifecycle !== lifecycle) lifetime.current = { lifecycle, generation: lifetime.current.generation + 1, mounted: true }
+    const generation = lifetime.current.generation
+    useEffect(() => { lifetime.current.mounted = true; return () => { lifetime.current.mounted = false } }, [])
     const latest = useRef({ items, doneItems, onOpenConversation })
     latest.current = { items, doneItems, onOpenConversation }
     const rootRef = useRef<HTMLDivElement>(null)
@@ -235,26 +240,28 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
 
     const openItem = useCallback(
         (item: DesktopAttentionItem) => {
+            if (!open || !lifetime.current.mounted || lifetime.current.generation !== generation) return
             const current = latest.current.items.find(row => row.id === item.id && row.agentId === item.agentId && row.sessionId === item.sessionId)
             if (!current) return
             // Navigation only. Retained handlers cannot revive a deleted owner or old request.
             change(false)
             latest.current.onOpenConversation?.({ id: current.sessionId, agentId: current.agentId, agentName: current.agentName, title: current.title })
         },
-        [change]
+        [change, generation, open]
     )
 
     const openDone = useCallback(
         (item: DesktopCompletionItem) => {
-            const current = latest.current.doneItems.find(row => row.id === item.id && row.agentId === item.agentId)
+            if (!open || !lifetime.current.mounted || lifetime.current.generation !== generation) return
+            const current = latest.current.doneItems.find(row => row.id === item.id && row.agentId === item.agentId && row.sessionId === item.sessionId)
             if (!current) return
             // Navigation only: no sending, no approving, no executing. The row is acknowledged with
             // the exact displayed completion IDs, like the original openItem→markSeen.
+            completions.markRead(item)
             change(false)
             latest.current.onOpenConversation?.({ id: current.sessionId, agentId: current.agentId, agentName: current.agentName, title: current.title })
-            completions.markRead(current)
         },
-        [change, completions.markRead]
+        [change, completions.markRead, generation, open]
     )
 
     // Mark-all covers exactly the done rows currently displayed, never a newer arrival.
@@ -297,12 +304,17 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
 
     const failed = status === 'failed'
     const doneCount = doneItems.length
+    const checking = status === 'loading' || completions.status === 'loading'
+    const anyFailed = failed || doneFailed || completions.readError
+    const anyPartial = partial || doneUnavailable.length > 0
+    const hasMore = !!completions.nextCursor || completions.windowFull
     const pillLabel =
-        failed && items.length === 0 && doneCount === 0 ? 'Actions: unavailable'
-        : status === 'loading' && items.length === 0 && doneCount === 0 ? 'Actions: checking'
-        : partial && items.length === 0 && doneCount === 0 ? 'Actions: partial — some coworkers unavailable'
+        anyFailed && items.length === 0 && doneCount === 0 ? 'Actions: unavailable'
+        : checking && items.length === 0 && doneCount === 0 ? 'Actions: checking'
+        : anyPartial && items.length === 0 && doneCount === 0 ? 'Actions: partial — some coworkers unavailable'
         : items.length > 0 ? `Actions: ${items.length} pending${doneCount > 0 ? ` · ${doneCount} done` : ''}`
         : doneCount > 0 ? `Actions: ${doneCount} done`
+        : hasMore ? 'Actions: more activity'
         : 'Actions: no pending'
 
     return (
@@ -363,9 +375,15 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                             </Button>
                         </div>
                     )}
+                    {completions.readError && (
+                        <div role="alert" className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                            <span className="min-w-0 flex-1">Couldn't mark finished runs as read. They are still here.</span>
+                            <Button size="sm" variant="outline" onClick={completions.retry}><RefreshCcwIcon className="size-3.5" /> Retry</Button>
+                        </div>
+                    )}
 
                     <div className="max-h-[min(22rem,50dvh)] overflow-y-auto overscroll-contain px-2 py-2">
-                        {status === 'loading' && items.length === 0 && doneItems.length === 0 ? (
+                        {checking && items.length === 0 && doneItems.length === 0 ? (
                             <div role="status" className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
                                 <Loader2Icon className="size-4 animate-spin" /> Checking for pending actions…
                             </div>
@@ -391,7 +409,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                                     <RefreshCcwIcon className="size-3.5" /> Retry
                                 </Button>
                             </div>
-                        ) : items.length === 0 && doneItems.length === 0 ? (
+                        ) : items.length === 0 && doneItems.length === 0 && !doneFailed && !anyPartial && !hasMore && !completions.loadingMore ? (
                             <EmptyState icon={InboxIcon} title="Nothing to handle" description="When a coworker needs you or finishes a run, it lands here." className="py-8" />
                         ) : (
                             <>
@@ -413,6 +431,19 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                                 )}
                             </>
                         )}
+                        {(completions.nextCursor || completions.loadingMore) && !completions.windowFull && (
+                            <div className="px-2 py-2">
+                                <Button size="sm" variant="outline" disabled={completions.loadingMore} onClick={completions.loadMore}>
+                                    {completions.loadingMore ? <><Loader2Icon className="size-3.5 animate-spin" /> Loading older runs…</> : 'Load older runs'}
+                                </Button>
+                            </div>
+                        )}
+                        {completions.windowFull && (
+                            <div role="status" className="space-y-2 px-2 py-2 text-xs text-muted-foreground">
+                                <p>This view has reached its limit. More unread runs remain saved.</p>
+                                <Button size="sm" variant="outline" onClick={completions.retry}>Refresh finished runs</Button>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -425,7 +456,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                 aria-label={pillLabel}
                 onClick={() => change(!open)}
             >
-                <PillContent status={status} items={items} doneCount={doneCount} unavailable={partial} failed={failed} open={open} />
+                <PillContent status={checking ? 'loading' : status} items={items} doneCount={doneCount} unavailable={anyPartial} failed={anyFailed} open={open} hasMore={hasMore} />
             </ChromePill>
         </div>
     )

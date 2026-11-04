@@ -17,7 +17,7 @@ const approval = { id: 'a1', kind: 'approval', agentId: 'reviewer', agentName: '
 const enabledAt = '2026-11-04T10:00:00.000Z'
 const completionsEmpty = () => Response.json({ items: [], unavailableAgentIds: [], enabledAt, nextCursor: null, checkedAt })
 const routedFetch = (attention: () => Response, completions: () => Response = completionsEmpty, read: () => Response = () => Response.json({ marked: 1 })) =>
-    vi.fn((url: string) => {
+    vi.fn((url: string, _init?: RequestInit) => {
         if (url === '/api/desktop/completions/read') return Promise.resolve(read())
         if (url === '/api/desktop/completions') return Promise.resolve(completions())
         return Promise.resolve(attention())
@@ -32,7 +32,7 @@ test('lists pending question and approval rows, opens a navigation hit, and stop
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     let reply: () => Response = () => Response.json({ items: [question, approval], unavailableAgentIds: [], checkedAt })
-    const fetcher = vi.fn(async () => reply())
+    const fetcher = routedFetch(() => reply())
     vi.stubGlobal('fetch', fetcher)
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container)
@@ -61,7 +61,7 @@ test('an empty read is Nothing to handle and a failed read is a distinct retry s
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     let reply: () => Response = () => Response.json({ items: [], unavailableAgentIds: [], checkedAt })
-    const fetcher = vi.fn(async () => reply())
+    const fetcher = routedFetch(() => reply())
     vi.stubGlobal('fetch', fetcher)
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container)
@@ -85,7 +85,7 @@ test('a partial read names unavailable coworkers and a hidden window does not po
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     let visible = false
     vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => (visible ? 'visible' : 'hidden'))
-    const fetcher = vi.fn(async () => Response.json({ items: [question], unavailableAgentIds: ['reviewer'], checkedAt }))
+    const fetcher = routedFetch(() => Response.json({ items: [question], unavailableAgentIds: ['reviewer'], checkedAt }))
     vi.stubGlobal('fetch', fetcher)
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container)
@@ -128,7 +128,7 @@ test('a partial empty read shows partial state with Retry, never zero, and Retry
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     let reply: () => Response = () => Response.json({ items: [], unavailableAgentIds: ['reviewer'], checkedAt })
-    const fetcher = vi.fn(async () => reply())
+    const fetcher = routedFetch(() => reply())
     vi.stubGlobal('fetch', fetcher)
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container)
@@ -203,7 +203,7 @@ test('closing cancels an in-flight read and reopening reads immediately', async 
 test('outside pointer-down close keeps focus; explicit close and Escape return it to the pill', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-    const fetcher = vi.fn(async () => Response.json({ items: [], unavailableAgentIds: [], checkedAt }))
+    const fetcher = routedFetch(() => Response.json({ items: [], unavailableAgentIds: [], checkedAt }))
     vi.stubGlobal('fetch', fetcher)
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container)
@@ -230,7 +230,7 @@ test('outside pointer-down close keeps focus; explicit close and Escape return i
 
 test('current roster filters counts and unknown owners, and removed rows cannot reopen a coworker', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ items: [question, approval], unavailableAgentIds: ['removed'], checkedAt })))
+    vi.stubGlobal('fetch', routedFetch(() => Response.json({ items: [question, approval], unavailableAgentIds: ['removed'], checkedAt })))
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container), onOpen = vi.fn()
     const researcher = { id: 'researcher', name: 'Renamed researcher', enabled: true }
@@ -266,6 +266,7 @@ test('a late response from the old roster cannot restore a deleted request', asy
     // A late response for the new roster cannot bring back a request the roster has dropped.
     const attention = pending.filter(entry => entry.url === '/api/desktop/attention')
     await act(async () => { attention[1].resolve(Response.json({ items: [question], unavailableAgentIds: [], checkedAt })) })
+    await act(async () => { pending.filter(entry => entry.url === '/api/desktop/completions')[1].resolve(completionsEmpty()) })
     await act(async () => { pending[0].resolve(Response.json({ items: [question], unavailableAgentIds: [], checkedAt })) })
     expect(container.querySelector('[data-actions-inbox-item]')).toBeNull()
     expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: no pending')
@@ -386,6 +387,7 @@ test('opening a Done row navigates to the conversation and marks its group read'
 test('a finished run in the conversation on screen is acknowledged as it lands', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     const fetcher = routedFetch(
         () => Response.json({ items: [], unavailableAgentIds: [], checkedAt }),
         completionsWith([doneChat])
@@ -415,7 +417,56 @@ test('a completion read failure shows its own Retry note and never a done count'
     await act(async () => { root.render(<DesktopActionsInbox open />) })
     expect(container.textContent).toContain("Couldn't refresh finished runs.")
     expect(container.querySelector('[data-actions-inbox-done]')).toBeNull()
-    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: no pending')
+    expect(container.textContent).not.toContain('Nothing to handle')
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: unavailable')
 
     await act(async () => { root.unmount() })
+})
+
+test('an empty completion page with a cursor offers older runs instead of a false empty inbox', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url === '/api/desktop/attention') return Response.json({ items: [], unavailableAgentIds: [], checkedAt })
+        if (url === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt, checkedAt, nextCursor: 'after seen' })
+        expect(url).toBe('/api/desktop/completions?before=after+seen')
+        return completionsWith([doneChat])()
+    }))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    try {
+        await act(async () => { root.render(<DesktopActionsInbox open />) })
+        expect(container.textContent).not.toContain('Nothing to handle')
+        expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: more activity')
+        const load = [...container.querySelectorAll('button')].find(button => button.textContent === 'Load older runs')!
+        expect(load).toBeTruthy()
+        await act(async () => { load.click() })
+        expect(container.querySelector('[data-actions-inbox-done="done:chat-s1"]')).not.toBeNull()
+        expect(container.textContent).not.toContain('Load older runs')
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('mark-read failure leaves a usable Done row and an explicit Retry without repeating POST', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    let fail = true
+    const fetcher = routedFetch(
+        () => Response.json({ items: [], unavailableAgentIds: [], checkedAt }),
+        completionsWith([doneChat]),
+        () => Response.json({}, { status: fail ? 503 : 200 }),
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    try {
+        await act(async () => { root.render(<DesktopActionsInbox open />) })
+        await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Mark as read"]')!.click() })
+        expect(container.textContent).toContain("Couldn't mark finished runs as read. They are still here.")
+        expect(container.querySelector('[data-actions-inbox-done="done:chat-s1"]')).not.toBeNull()
+        await act(async () => { await vi.advanceTimersByTimeAsync(9000) })
+        expect(fetcher.mock.calls.filter(([url]) => url === '/api/desktop/completions/read')).toHaveLength(1)
+        fail = false
+        await act(async () => { container.querySelector<HTMLElement>('[role="alert"] button')!.click() })
+        expect(fetcher.mock.calls.filter(([url]) => url === '/api/desktop/completions/read')).toHaveLength(2)
+        expect(container.querySelector('[data-actions-inbox-done]')).toBeNull()
+    } finally { await act(async () => { root.unmount() }) }
 })

@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { hashText } from '@/lib/files/editable'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
+import type { DesktopCompletionItem } from '@/lib/desktop/completed-actions'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { resetDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import { DesktopApp } from './DesktopApp'
@@ -49,6 +50,7 @@ beforeEach(() => {
     resetDesktopRecentCoworkers()
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)')
 })
 afterEach(async () => {
@@ -111,11 +113,12 @@ async function openCoworker(name = 'Alice') {
     await until(() => composer())
 }
 
-async function mount() {
+async function mount(completed: DesktopCompletionItem[] = []) {
     const drafts = createDesktopDraftFixture()
     const agents = [agent('alice', 'Alice'), agent('bob', 'Bob')]
     const layouts = new Map<string, DesktopTabLayout>()
     const reads: string[] = [], created: unknown[] = [], fileWrites: unknown[] = []
+    const marked: string[][] = [], seen = new Set<string>()
     let recent = { revision: 0, recentAgentIds: [] as string[] }
     for (const owner of agents) {
         const tabs = [{ uid: `${owner.id}-draft-tab`, id: `${owner.id}-draft`, title: 'Draft chat' }]
@@ -141,6 +144,13 @@ async function mount() {
         if (url.pathname === '/api/desktop/settings' && method === 'GET') return Response.json(providers)
         if (url.pathname === '/api/desktop/board-activity') return Response.json({ agents: Object.fromEntries(agents.map(owner => [owner.id, 'idle'])) })
         if (url.pathname === '/api/desktop/attention') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
+        if (url.pathname === '/api/desktop/completions') return Response.json({ items: completed.filter(item => !item.completionIds.every(id => seen.has(id))), unavailableAgentIds: [], enabledAt: date, checkedAt: date, nextCursor: null })
+        if (url.pathname === '/api/desktop/completions/read' && method === 'POST') {
+            const { completionIds } = JSON.parse(String(init?.body)) as { completionIds: string[] }
+            marked.push(completionIds)
+            completionIds.forEach(id => seen.add(id))
+            return Response.json({ marked: completionIds.length })
+        }
         if (url.pathname === '/api/desktop/conversations/search') return Response.json({ hits: url.searchParams.get('q') === 'shared' ? hits : [], hasMore: false })
         if (url.pathname === '/api/desktop/agents' && method === 'POST') {
             const body = JSON.parse(String(init?.body))
@@ -191,8 +201,36 @@ async function mount() {
     const root = createRoot(container)
     roots.push(root)
     await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Fixture workspace' }, agents: [...agents] }} />) })
-    return { container, layouts, reads, created, fileWrites, fetcher }
+    return { container, layouts, reads, created, fileWrites, fetcher, marked }
 }
+
+test('the actual visible saved tab acknowledges only its completions while the inbox is closed, and a Done row opens its own coworker', async () => {
+    const completion = (owner: string): DesktopCompletionItem => ({ id: `done:${owner}-draft`, agentId: owner, agentName: owner === 'alice' ? 'Alice' : 'Bob', agentEnabled: true,
+        sessionId: `${owner}-draft`, sessionIds: [`${owner}-draft`], title: 'Draft chat', message: `${owner} completed reply`, source: 'chat', slug: null, count: 1,
+        completedAt: date, completionIds: [`${owner}-terminal`] })
+    const app = await mount([completion('alice'), completion('bob')])
+    const board = app.container.querySelector('[aria-label="Team board"]')
+    await openCoworker('Alice')
+    await until(() => app.marked.some(ids => ids.includes('alice-terminal')))
+    expect(app.marked.flat()).toEqual(['alice-terminal'])
+    expect(document.querySelector('[aria-label="Actions inbox"]')).toBeNull()
+    await enterText(composer(), 'Keep Alice draft while opening Bob completion')
+    await shortcut('k', composer())
+    await enterText(composer(), 'Keep the separate blank draft too')
+    const actions = [...app.container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.getAttribute('aria-label')?.startsWith('Actions:'))!
+    await act(async () => { actions.click() })
+    const done = await until(() => document.querySelector<HTMLElement>('[data-actions-inbox-done="done:bob-draft"]'))
+    await act(async () => { done.click() })
+    await until(() => activeChat()?.textContent?.includes('Reply for bob-draft'))
+    expect(app.marked.flat()).toEqual(['alice-terminal', 'bob-terminal'])
+    expect(activeChat().textContent).not.toContain('Reply for alice-draft')
+    await openCoworker('Alice')
+    expect(composer().value).toBe('Keep the separate blank draft too')
+    await click('Draft chat', app.container.querySelector('[aria-label="Open conversations"]')!)
+    expect(composer().value).toBe('Keep Alice draft while opening Bob completion')
+    await click('Close panel')
+    expect(app.container.querySelector('[aria-label="Team board"]')).toBe(board)
+})
 
 test('workspace entry opens exact same-title chats without replacing another chat draft or remounting the board', async () => {
     const app = await mount()

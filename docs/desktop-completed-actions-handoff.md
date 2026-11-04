@@ -1,134 +1,121 @@
-# Desktop Actions inbox — Done section (finished runs / completions)
+# Desktop Actions inbox — Done section
 
-Follow-up slice to `desktop-actions-inbox-next-handoff.md`: ports the original Rerun *completed
-run* items into the Mac Actions inbox. A finished run becomes a genuine "Done" card at the
-terminal-event boundary — never derived from `runs.status` and never backfilled from history.
+This slice ports genuine completed-run items into the Mac Actions inbox. It does not infer a
+completion from `runs.status`, invent results from model prose, or backfill historical runs.
+Source and tests are described below; the root agent records exact build and native acceptance
+separately. This handoff is not an acceptance report.
 
-Reference commit `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`:
+## Original Rerun references
 
-- `apps/ui/components/notifications/WorkspaceInbox.tsx` — the Done section, `markSeen` on open,
-  `markAllSeen` for the Mark-all button, the "Message completed" fallback copy.
-- `apps/ui/lib/notifications/unseen-runs.ts` — the fold projection (scheduled runs under their
-  slug with a ×count, chat runs under their conversation) that `groupCompletions` mirrors.
-- `packages/ui/src/inbox/InboxSurface.tsx` — Done status "Finished" (emerald), `CheckCheckIcon`
-  Mark-all in the card header, the original empty state.
-- `apps/ui/app/api/_services/notification.service.ts` / `inbox.service.ts` — the done filter and
-  the cancelled-discard rule that this slice re-implements at the engine boundary.
+Reference commit: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
-## What was added
+- `apps/ui/components/notifications/WorkspaceInbox.tsx`: Done rows, mark-seen on opening a group,
+  explicit mark-read and Mark-all, and “Message completed” fallback.
+- `apps/ui/lib/notifications/unseen-runs.ts`: chat groups by conversation and scheduled groups
+  by owner/source/slug, newest summary and ×count.
+- `apps/ui/stores/unseen-runs.store.ts` and `components/chat/AgentChat.tsx`: opening a chat reads
+  its results, and a result arriving in the focused visible conversation is read as it lands,
+  independently of whether the inbox panel is open.
+- `packages/ui/src/inbox/InboxSurface.tsx`: emerald Finished status, buddy, relative time,
+  CheckCheck Mark-all icon and original empty-state design.
+- `apps/ui/app/api/_services/notification.service.ts`: genuine terminal completion and cancelled
+  discard semantics.
 
-### Engine (own: completion store + bounded route + terminal hook)
+## Engine capture and reads
 
-- `apps/engine/src/db/completed-runs.ts` (new)
-  Module-owned per-agent system-db table `run_completions` (runId as the stable PK identity) with
-  `RUN_COMPLETIONS_DDL`, idempotent `ensureRunCompletions`, `recordRunCompletion`, and
-  `listRunCompletions`. The final-answer text is bounded to 2000 characters. The table is lazily
-  ensured by the module; root can fold `RUN_COMPLETIONS_DDL` into the central `SYSTEM_DB_MIGRATIONS`
-  ladder (`apps/engine/src/db/systemDb.ts`) as a new `version: N` step calling
-  `ensureRunCompletions(client)` — until then the lazy ensure covers it.
+`apps/engine/src/db/completed-runs.ts` owns the per-agent `run_completions` table and idempotent
+`ensureRunCompletions`. `recordRunCompletion` stores terminal identity, owner/session, trigger,
+timestamp and a final-answer summary bounded to 2000 characters. The first record for a run ID
+wins. Run IDs are unique inside each coworker database, not assumed globally unique.
 
-- `apps/engine/src/runtime/run-events.ts`
-  `emitRunTerminal` now records a completion when `desktopApp() && kind === 'done' && !cancelled`.
-  This is the one genuine "finished run" boundary: a turn that ends on a pending question/approval
-  emits a HITL event, not a terminal, and cancelled/error terminals never record a success. The
-  write is best-effort (`.catch(() => {})`), like the notification it sits beside. The cancel route
-  re-emits terminals with `cancelled: true`, so Stop never becomes a Done card.
+`runtime/run-events.ts` captures only desktop `done` terminals without `cancelled`. Pending
+questions/approvals use the existing HITL event path; Stop and error terminals never become Done
+cards. The local completion write is awaited and retains an agent-work lease until SQLite
+finishes. Desktop settlement releases its session claim and waiters after terminal persistence.
+A failed write is logged and cannot strand Stop; a disk failure does not promise a Done card.
+Hosted settlement behavior is retained.
 
-- `apps/engine/src/http/routes/runs.ts` + `apps/engine/src/desktop/policy.ts`
-  New bounded read `GET /agents/:id/runs/completions?limit=&before=` (registered before the
-  `/:rid` catch-all). `before` is the `(completed_at, id)` cursor the desktop pagination returns;
-  ordering is `completed_at DESC, id DESC`. The desktop GET gate regex now allows `/runs/completions`.
+`GET /agents/:id/runs/completions` supports two bounded query modes:
 
-### UI client
+- `limit` and `before`: descending terminal time/ID. `before` is validated JSON containing
+  `completedAt`, `id` and optional `inclusiveId`, used to retain equal-ID ties across owners.
+- `ids`: a JSON array of at most 100 exact terminal IDs for acknowledgment validation. It cannot
+  be combined with `before`. Malformed filters return 400.
 
-- `apps/ui/lib/engine/client.ts`
-  `engineRunCompletionSchema` / `engineRunCompletionsListSchema` / `EngineRunCompletion` and
-  `listAgentCompletions(conn, agentId, { limit, before, signal })`. Deliberately a different read
-  than `runs?status=done` (see note in code).
+The desktop policy permits this existing completion route. `lib/engine/client.ts` exposes its
+typed schema and `listAgentCompletions(conn, agentId, { limit, before, ids, signal })`.
 
-### Desktop (own: contract, server module, routes, hook, component)
+## Desktop persistence and API
 
-- `apps/ui/lib/desktop/completed-actions.ts` (new)
-  The contract + pure projection: `CompletionRow`, `boundedMessage` (200-char cap, "Message
-  completed" fallback), `groupKeyOf`/`groupCompletions` (agent:source:slug for scheduled/trigger,
-  else sessionId; newest first; ×count), `cursorOf`/`parseCursor` (stable `(time, id)` cursor,
-  split at the last `__`), `desktopCompletionsSchema`, and `DESKTOP_COMPLETIONS_URL` /
-  `DESKTOP_COMPLETIONS_READ_URL`.
+`lib/desktop/server/completed-actions-db.ts` is a lightweight initializer with no database/route
+import cycle. `database.ts` calls `initializeDesktopCompletions(db)` during startup, before the
+first chat or Actions read. The one-time `desktop_completions_state.enabled_at` cutoff therefore
+does not hide results merely because Actions was opened for the first time later. Lazy ensure
+remains an idempotent safeguard. Historical `done` rows are never backfilled.
 
-- `apps/ui/lib/desktop/server/completed-actions.ts` (new)
-  Module-owned desktop schema (`desktop_completions_seen` for seen state, one-row
-  `desktop_completions_state(enabled_at)` for the first-enable cutoff) ensured by
-  `initializeDesktopCompletions(db)` — root may call it beside the other CREATE TABLE statements in
-  `apps/ui/lib/desktop/server/database.ts`; the module also ensures it lazily. `readDesktopCompletions`
-  fetches up to 100 completions per current local coworker (4-way concurrency, 2.5 s deadline,
-  in-flight dedupe), drops rows before the cutoff and rows whose engine session no longer maps to a
-  current local session, filters out previously seen completion IDs, folds, and slices the page.
-  `markDesktopCompletionsRead` writes exactly the posted completion IDs (explicit authenticated
-  mark-read; a newer arrival's different terminal ID is never cleared).
+`desktop_completions_seen` stores opaque completion identities with local owner/session foreign
+keys, so deleting a chat or coworker removes its acknowledgment records. Each identity binds the
+local owner, engine owner, engine session and terminal ID. Equal run IDs in two coworkers do not
+share acknowledgment state.
 
-- `apps/ui/app/api/desktop/completions/route.ts` (GET, bounded + `nextCursor`) and
-  `apps/ui/app/api/desktop/completions/read/route.ts` (POST, exact completion IDs).
+`GET /api/desktop/completions` returns
+`{items, unavailableAgentIds, enabledAt, nextCursor, checkedAt}`. The default page consumes 20 raw
+terminal rows, with a maximum of 50. Filtering and grouping happen **after** that raw boundary.
+Acknowledged, unmapped or pre-cutoff rows still advance the cursor. A page can therefore contain
+no displayed rows and a non-null `nextCursor`; older unread rows remain reachable even behind
+more than 100 acknowledged rows. Interleaved groups cannot advance past an unreturned chat.
 
-- `apps/ui/components/desktop/useDesktopCompletions.ts` (new)
-  Polls the completion read while the panel is open and the window is visible (same
-  `useVisibleInterval` + one-in-flight + abort-on-close pattern as `useDesktopAttention`).
-  `markRead(item)` posts the item's exact completion IDs and hides it locally; `markAllRead` posts
-  exactly the completion IDs currently displayed. `visibleSessionId` applies the original
-  read-on-visible-conversation semantics: a finished run in the conversation on screen is
-  acknowledged as it lands (while open + visible). A failed read is never shown as an empty list.
+The opaque versioned cursor includes terminal time, terminal ID and local owner. IDs containing
+underscores round-trip without delimiter splitting. Each owner contributes at most page-size
+plus one engine rows, using four concurrent reads and one 2.5-second deadline. Final ownership,
+engine binding, deletion state and exact local session mapping are read in one database snapshot.
+Failures name unavailable owners rather than inventing an empty workspace.
 
-- `apps/ui/components/desktop/DesktopActionsInbox.tsx`
-  New `visibleSessionId` prop; a "Done" section under "Needs you" rendered from the completion
-  read. `DoneRow` mirrors the original Done row (emerald `ATTENTION_STATUS_META.done` dot, buddy,
-  final-answer summary or scheduled slug, "… finished its run", ×count, `shortRelativeTime`,
-  explicit Mark-as-read). Opening a done row navigates (`onOpenConversation`) and marks its group
-  read (original `openItem → markSeen`). Header shows `· N done`, a Mark-all (`CheckCheckIcon`)
-  covers exactly the displayed completion IDs, the pill shows `N pending · M done`, and the empty
-  state now reads "When a coworker needs you or finishes a run, it lands here." Completions
-  failure/partial reads get their own Retry banners.
+`POST /api/desktop/completions/read` accepts only `{completionIds: string[]}` (maximum 500).
+Every identity is checked against genuine engine completion rows through bounded exact-ID
+lookups. A final write transaction rechecks local ownership, engine/session binding and deletion
+state. Only those validated IDs are acknowledged; retries are idempotent and a newer arrival in
+the same chat remains unread. Arbitrary, future, foreign or stale identities cannot create seen
+receipts. Both endpoints use the existing desktop authentication/origin checks.
 
-- Tests (authored, not run): `apps/ui/lib/desktop/completed-actions.test.ts` (pure fold/bound/
-  cursor) and additions to `apps/ui/components/desktop/DesktopActionsInbox.test.tsx` (Done rows,
-  per-row and Mark-all mark-read payloads, open→mark, visible-conversation auto-mark, completion
-  failure note; existing call-count tests updated for the second endpoint).
+## UI and integration
 
-## Mounting / integration contract (root)
+`lib/desktop/completed-actions.ts` contains the shared projection, schema, owner-bound identities
+and cursor helpers. `DesktopActionsInbox` reuses the original Done row styling under Needs you:
+emerald status/buddy, bounded final-answer summary, relative time, grouped count and explicit
+mark-read. Opening a Done row navigates to its exact coworker/chat and acknowledges the displayed
+group. Pending questions and approvals still require their existing chat cards.
 
-The widget is already mounted; root now supplies the on-screen conversation so completions read
-themselves as they land:
+`useDesktopCompletions` polls while the inbox is open **or** a readable conversation is visible.
+Load more explicitly traverses older raw pages, including empty visible pages with a cursor.
+Groups merge by stable group ID and exact completion IDs; counts/session IDs are deduplicated and
+the newest summary/target wins. The client bounds retained results to 200 terminal identities
+and ten pages, with an explicit window-limit state. Counts describe the loaded window.
 
-```tsx
-<DesktopActionsInbox
-    agents={...}                          // optional roster, unchanged
-    onOpenConversation={hit => ...}       // unchanged
-    visibleSessionId={selectedSessionId}  // NEW: the conversation currently on screen
-/>
-```
+`markRead` and `markAllRead` submit only displayed identities. Acknowledgment failure stays
+visible with explicit retry instead of immediately reposting in a loop. A stale read cannot
+reintroduce IDs already acknowledged locally. Read and partial-failure states remain explicit.
 
-- `visibleSessionId` is optional. When set, finished runs of that conversation are acknowledged
-  while the panel is open and the window is visible; a closed panel or hidden window is
-  side-effect-free.
-- Root may call `initializeDesktopCompletions(db)` from the central desktop database
-  initializer; until then the module ensures its two tables lazily on first read/write.
-- Engine root may fold `RUN_COMPLETIONS_DDL` into `SYSTEM_DB_MIGRATIONS` as a new step;
-  until then `ensureRunCompletions` covers the per-agent system DB lazily.
-- No edits to `DesktopApp.tsx` / `DesktopBoard.tsx` / `DesktopConversation.tsx` were made or needed.
+The actual readable saved conversation flows through
+`DesktopConversation → DesktopChatTabs → DesktopApp → DesktopBoard → DesktopActionsInbox` as
+`visibleSessionId`. Requested navigation IDs are not treated as proof that a transcript rendered.
+Loading, generating, hidden tabs, settings, dialogs and quit flow do not establish readable chat
+visibility. Automatic acknowledgment additionally requires a visible, focused app and no covering
+dialog. It works with the inbox closed. A mixed-session group remains for explicit acknowledgment
+instead of clearing unseen members when only one member is on screen.
 
-## Semantics & limits (deliberate)
+With neither surface active, the pill retains the last known count. No native notifications,
+background delivery, schedules or connectors are introduced.
 
-- **First-enable cutoff.** `desktop_completions_state.enabled_at` is written once, at first
-  initialization. The list covers completions recorded after it; historical `done` rows are never
-  backfilled. A new install starts the cutoff at its own first enable.
-- **No status/receipt derivation.** Completions come only from the `emitRunTerminal` hook
-  (`done` + not cancelled). A stored `status = done` that ended on a pending question/approval
-  never becomes a card; Stop/error/HITL never do either.
-- **Seen state survives restarts.** It lives in `desktop_completions_seen` (desktop DB), not in
-  memory; an acknowledged card never reappears after a relaunch.
-- **Mark-read is exact.** The client posts the displayed completion IDs; newer arrivals in the
-  same conversation or scheduled task (different terminal identities) are not cleared. A failed
-  mark-read rolls back locally and the next read re-shows the row.
-- **Bounded reads.** Per-agent window of 100, page ≤ 50 groups, cursor-paginated on terminal
-  identity/time; deletion/partial reads are surfaced honestly (`unavailableAgentIds`), and
-  completions whose engine session no longer maps to a current local conversation are dropped.
-- **Polling only while open + visible.** A closed pill's done count is the last known one until
-  reopened. No macOS notifications, no background delivery, no schedules/connectors.
+## Authored regression coverage
+
+- Pure fold, summary bounds, opaque identity isolation and cursor round-trip.
+- Desktop API default limits, interleaved raw pagination, more than 100 seen rows, same terminal
+  IDs across owners, restart/idempotent acknowledgment, auth, forged IDs, deletion/rebinding,
+  disabled owners, cleanup, partial failures and shared deadline/concurrency limits.
+- Actual engine DB persistence/reopen, first-write idempotency, metadata, ownership, bounded text,
+  strict/inclusive tied cursors and exact-ID lookup; engine HTTP filter validation.
+- Awaited terminal write, surfaced persistence failure, skipped Stop/error/hosted capture.
+- Hook/component rows, exact mark-read, paging, visibility/lifecycle and failure behavior.
+
+All execution, full-suite validation, packaging and native Mac acceptance remain root-owned.

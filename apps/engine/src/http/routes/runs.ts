@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { z } from 'zod'
 import { listRunCompletions } from '../../db/completed-runs.js'
 import { aggregateUsageByDay, cancelRun, getRun, listRunsByAgent } from '../../db/repos/runs.js'
 import { listRunSteps, listToolCalls } from '../../db/repos/telemetry.js'
@@ -87,14 +88,17 @@ runRoutes.get('/', async c => {
 runRoutes.get('/completions', async c => {
     const agentId = c.req.param('id')!
     const limitParam = Number(c.req.query('limit'))
-    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(Math.floor(limitParam), 200) : 50
     const beforeParam = c.req.query('before')
-    let before: { completedAt: string; id: string } | undefined
-    if (beforeParam) {
-        const sep = beforeParam.lastIndexOf('__')
-        if (sep > 0 && sep < beforeParam.length - 2) before = { completedAt: beforeParam.slice(0, sep), id: beforeParam.slice(sep + 2) }
-    }
-    return c.json({ completions: await listRunCompletions(agentId, { limit, before }) })
+    const idsParam = c.req.query('ids')
+    let before: { completedAt: string; id: string; inclusiveId?: boolean } | undefined
+    let ids: string[] | undefined
+    try {
+        if (beforeParam) before = z.object({ completedAt: z.string().datetime(), id: z.string().min(1).max(200), inclusiveId: z.boolean().optional() }).strict().parse(JSON.parse(beforeParam))
+        if (idsParam) ids = z.array(z.string().min(1).max(200)).min(1).max(100).parse(JSON.parse(idsParam))
+        if (before && ids) throw new Error('Choose one completion filter')
+    } catch { return c.json({ error: 'Invalid completion cursor or IDs' }, 400) }
+    return c.json({ completions: await listRunCompletions(agentId, { limit: ids?.length ?? limit, before, ids }) })
 })
 
 runRoutes.get('/:rid/steps', async c => {

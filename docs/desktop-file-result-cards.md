@@ -92,8 +92,12 @@ catalog and now shows **Show result files** for the selected coworker.
   downloads are not supported by this slice.
 - A card is not an attachment snapshot. Its path and name are recorded at card time; opening may
   show current content, or the preview’s `This file could not be read` state after a rename/delete.
+- Native Codex commands and edits use a separate temporary folder. A card does not publish that
+  folder’s output: it only addresses the existing persistent Files workspace. Tool and system
+  guidance explicitly distinguish temporary edits from a same-named persistent original.
 - The card tool accepts up to 32 KiB per file. The existing Files preview route may show a larger
-  text file truncated; the card itself still only points at the file.
+  text file truncated; the preview displays the existing Files notice, `Preview shows the first
+  256 KB.` The card itself still only points at the file.
 - Revoking the grant stops new cards. An already-saved card remains a saved historical result and
   can still be opened through the Files preview.
 - Table cards remain unavailable until desktop can expose saved table views.

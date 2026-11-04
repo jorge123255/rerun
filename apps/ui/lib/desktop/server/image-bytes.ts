@@ -1,4 +1,4 @@
-/** Structural checks for a desktop Files image. PNG, JPEG, WebP, and GIF only.
+/** Structural checks for a desktop Files image. Static PNG, JPEG, WebP, and GIF only.
  * The bytes are not a hosted URL, an SVG, or HTML. Pixel decode stays in the browser. */
 
 export const DESKTOP_IMAGE_MAX_BYTES = 8 * 1024 * 1024
@@ -13,8 +13,8 @@ const CONTENT_TYPE: Record<DesktopRasterKind, DesktopImageContentType> = {
 }
 
 export class DesktopImageBytesError extends Error {
-    readonly reason: 'mismatch' | 'corrupt' | 'dimensions'
-    constructor(reason: 'mismatch' | 'corrupt' | 'dimensions') {
+    readonly reason: 'mismatch' | 'corrupt' | 'dimensions' | 'animation'
+    constructor(reason: 'mismatch' | 'corrupt' | 'dimensions' | 'animation') {
         super(reason)
         this.name = 'DesktopImageBytesError'
         this.reason = reason
@@ -33,11 +33,19 @@ export function desktopRasterKind(name: string): DesktopRasterKind | null {
 export function inspectDesktopImageBytes(kind: DesktopRasterKind, bytes: Uint8Array): { width: number; height: number; contentType: DesktopImageContentType } {
     if (bytes.byteLength > DESKTOP_IMAGE_MAX_BYTES) throw new DesktopImageBytesError('dimensions')
     const size = kind === 'png' ? readPng(bytes) : kind === 'jpeg' ? readJpeg(bytes) : kind === 'gif' ? readGif(bytes) : readWebp(bytes)
-    if (size.width < 1 || size.height < 1 || size.width > DESKTOP_IMAGE_MAX_EDGE || size.height > DESKTOP_IMAGE_MAX_EDGE
-        || BigInt(size.width) * BigInt(size.height) > BigInt(DESKTOP_IMAGE_MAX_PIXELS)) {
+    assertDimensions(size.width, size.height)
+    return { ...size, contentType: CONTENT_TYPE[kind] }
+}
+
+function assertDimensions(width: number, height: number): void {
+    if (width < 1 || height < 1 || width > DESKTOP_IMAGE_MAX_EDGE || height > DESKTOP_IMAGE_MAX_EDGE
+        || BigInt(width) * BigInt(height) > BigInt(DESKTOP_IMAGE_MAX_PIXELS)) {
         throw new DesktopImageBytesError('dimensions')
     }
-    return { ...size, contentType: CONTENT_TYPE[kind] }
+}
+
+function animated(): never {
+    throw new DesktopImageBytesError('animation')
 }
 
 const CRC_TABLE = new Uint32Array(256)
@@ -100,6 +108,8 @@ function readPng(bytes: Uint8Array): { width: number; height: number } {
         const dataStart = offset + 8
         const crcAt = dataStart + length
         if (crc32(bytes.subarray(typeStart, crcAt)) !== u32be(bytes, crcAt)) corrupt()
+        // APNG's additional images must not bypass the single-frame decoded-pixel budget.
+        if (type === 'acTL' || type === 'fcTL' || type === 'fdAT') animated()
         const critical = type[0]! >= 'A' && type[0]! <= 'Z'
         if (critical && type !== 'IHDR' && type !== 'PLTE' && type !== 'IDAT' && type !== 'IEND') corrupt()
         if (!sawHeader && type !== 'IHDR') corrupt()
@@ -111,10 +121,7 @@ function readPng(bytes: Uint8Array): { width: number; height: number } {
             if (!validPngHeader(bytes[dataStart + 8]!, bytes[dataStart + 9]!, bytes[dataStart + 10]!, bytes[dataStart + 11]!, bytes[dataStart + 12]!)) corrupt()
             colorType = bytes[dataStart + 9]!
             sawHeader = true
-            if (width < 1 || height < 1 || width > DESKTOP_IMAGE_MAX_EDGE || height > DESKTOP_IMAGE_MAX_EDGE
-                || BigInt(width) * BigInt(height) > BigInt(DESKTOP_IMAGE_MAX_PIXELS)) {
-                throw new DesktopImageBytesError('dimensions')
-            }
+            assertDimensions(width, height)
         } else if (type === 'PLTE') {
             if (sawData || length % 3 !== 0 || length < 3 || length > 256 * 3) corrupt()
             sawPalette = true
@@ -197,6 +204,7 @@ function readGif(bytes: Uint8Array): { width: number; height: number } {
     const width = u16le(bytes, 6)
     const height = u16le(bytes, 8)
     if (width < 1 || height < 1) corrupt()
+    assertDimensions(width, height)
     const packed = bytes[10]!
     const table = packed & 0x80 ? 3 * (2 << (packed & 7)) : 0
     let offset = 13 + table
@@ -214,10 +222,15 @@ function readGif(bytes: Uint8Array): { width: number; height: number } {
             continue
         }
         if (block !== 0x2c || offset + 9 > bytes.length) corrupt()
+        if (frames !== 0) animated()
+        const left = u16le(bytes, offset)
+        const top = u16le(bytes, offset + 2)
         const frameWidth = u16le(bytes, offset + 4)
         const frameHeight = u16le(bytes, offset + 6)
         const framePacked = bytes[offset + 8]!
         if (frameWidth < 1 || frameHeight < 1) corrupt()
+        assertDimensions(frameWidth, frameHeight)
+        if (left + frameWidth > width || top + frameHeight > height) corrupt()
         offset += 9
         if (framePacked & 0x80) {
             const local = 3 * (2 << (framePacked & 7))
@@ -258,19 +271,24 @@ function readWebp(bytes: Uint8Array): { width: number; height: number } {
         const padded = chunkSize + (chunkSize & 1)
         if (chunkSize > bytes.length - dataAt || dataAt + padded > bytes.length) corrupt()
         const payload = bytes.subarray(dataAt, dataAt + chunkSize)
+        // Animated containers and nested frame payloads are outside this static preview slice.
+        // Reject even malformed/empty animation chunks rather than treating them as image data.
+        if (id === 'ANIM' || id === 'ANMF') animated()
         if (!size && id !== 'VP8 ' && id !== 'VP8L' && id !== 'VP8X') corrupt()
         if (id === 'VP8X') {
             if (size) corrupt()
             size = readVp8x(payload)
         } else if (id === 'VP8 ') {
             const frame = readVp8(payload)
+            if (image || (size && (size.width !== frame.width || size.height !== frame.height))) corrupt()
             if (!size) size = frame
             image = true
         } else if (id === 'VP8L') {
             const frame = readVp8l(payload)
+            if (image || (size && (size.width !== frame.width || size.height !== frame.height))) corrupt()
             if (!size) size = frame
             image = true
-        } else if (id === 'ANMF') image = true
+        }
         offset = dataAt + padded
     }
     if (!size || !image || offset !== bytes.length) corrupt()
@@ -283,6 +301,7 @@ function readVp8(payload: Uint8Array): { width: number; height: number } {
     const width = (payload[6]! | (payload[7]! << 8)) & 0x3fff
     const height = (payload[8]! | (payload[9]! << 8)) & 0x3fff
     if (width < 1 || height < 1) corrupt()
+    assertDimensions(width, height)
     return { width, height }
 }
 
@@ -292,13 +311,16 @@ function readVp8l(payload: Uint8Array): { width: number; height: number } {
     if ((bits >>> 29) !== 0) corrupt()
     const width = (bits & 0x3fff) + 1
     const height = ((bits >>> 14) & 0x3fff) + 1
+    assertDimensions(width, height)
     return { width, height }
 }
 
 function readVp8x(payload: Uint8Array): { width: number; height: number } {
-    if (payload.length < 10 || payload[1] !== 0 || payload[2] !== 0 || payload[3] !== 0) corrupt()
+    if (payload.length !== 10 || payload[1] !== 0 || payload[2] !== 0 || payload[3] !== 0 || (payload[0]! & 0xc1) !== 0) corrupt()
+    if ((payload[0]! & 0x02) !== 0) animated()
     const width = 1 + (payload[4]! | (payload[5]! << 8) | (payload[6]! << 16))
     const height = 1 + (payload[7]! | (payload[8]! << 8) | (payload[9]! << 16))
     if (width < 1 || height < 1) corrupt()
+    assertDimensions(width, height)
     return { width, height }
 }

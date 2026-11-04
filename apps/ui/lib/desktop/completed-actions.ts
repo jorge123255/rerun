@@ -93,19 +93,36 @@ export function groupCompletions(rows: CompletionRow[]): CompletionGroup[] {
     return [...groups.values()].sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime() || a.key.localeCompare(b.key))
 }
 
-// Stable bounded pagination on terminal identity and time: the cursor is the (completed_at, id)
-// pair of the oldest completion a page consumed.
-const CURSOR_SEPARATOR = '__'
+const identityPart = z.string().min(1).max(200)
+const cursorSchema = z.tuple([z.literal(1), z.string().datetime(), identityPart, identityPart])
+export type DesktopCompletionCursor = { completedAt: string; id: string; agentId: string }
 
-export function cursorOf(row: Pick<CompletionRow, 'completedAt' | 'id'>): string {
-    return `${row.completedAt}${CURSOR_SEPARATOR}${row.id}`
+// Page raw terminal rows before folding. Owner is part of the order because separate coworker
+// databases may legitimately contain the same caller-supplied run UUID at the same instant.
+export function cursorOf(row: DesktopCompletionCursor): string {
+    return encodeURIComponent(JSON.stringify([1, row.completedAt, row.id, row.agentId]))
 }
 
-export function parseCursor(value: string | null | undefined): { completedAt: string; id: string } | null {
-    if (!value) return null
-    const sep = value.lastIndexOf(CURSOR_SEPARATOR)
-    if (sep <= 0 || sep >= value.length - CURSOR_SEPARATOR.length) return null
-    return { completedAt: value.slice(0, sep), id: value.slice(sep + CURSOR_SEPARATOR.length) }
+export function parseCursor(value: string | null | undefined): DesktopCompletionCursor | null {
+    if (!value || value.length > 4096) return null
+    try {
+        const [, completedAt, id, agentId] = cursorSchema.parse(JSON.parse(decodeURIComponent(value)))
+        return { completedAt, id, agentId }
+    } catch { return null }
+}
+
+export type DesktopCompletionIdentity = { agentId: string; engineAgentId: string; engineSessionId: string; terminalId: string }
+const identitySchema = z.tuple([z.literal(1), identityPart, identityPart, identityPart, identityPart])
+export function completionIdentityOf(value: DesktopCompletionIdentity): string {
+    return encodeURIComponent(JSON.stringify([1, value.agentId, value.engineAgentId, value.engineSessionId, value.terminalId]))
+}
+export function parseCompletionIdentity(value: string): DesktopCompletionIdentity | null {
+    if (value.length > 8192) return null
+    try {
+        const [, agentId, engineAgentId, engineSessionId, terminalId] = identitySchema.parse(JSON.parse(decodeURIComponent(value)))
+        const parsed = { agentId, engineAgentId, engineSessionId, terminalId }
+        return completionIdentityOf(parsed) === value ? parsed : null
+    } catch { return null }
 }
 
 export const desktopCompletionItemSchema = z.object({

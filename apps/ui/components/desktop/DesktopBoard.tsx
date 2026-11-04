@@ -25,11 +25,12 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange }: {
+export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange }: {
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
     selectedAgentId?: string | null
+    visibleSessionId?: string | null
     panelInsetRight?: number
     onOpen: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
@@ -147,7 +148,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
             }</DesktopBoardMenu>
             <div className="absolute top-4 left-4 z-40 flex items-start gap-2">{workspaceMenu}</div>
             <div className="absolute bottom-4 left-4 z-40 flex max-w-[calc(100%-2rem)] flex-wrap items-end gap-2">
-            {!placement && onOpenConversation && <DesktopActionsInbox agents={agents} onOpenConversation={onOpenConversation} />}
+            {!placement && onOpenConversation && <DesktopActionsInbox agents={agents} onOpenConversation={onOpenConversation} visibleSessionId={visibleSessionId} />}
             <ChromeBar aria-label="Board actions" role="group">
                 {placement ? <div className="flex min-w-0 items-center gap-2 pl-3">
                     <div className="min-w-0" role="status">

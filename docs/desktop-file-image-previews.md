@@ -10,7 +10,7 @@ Reused from `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`, without hosted file URLs
 - `apps/ui/components/files/FilePreview.tsx`: loading skeleton widths, and the image frame `flex h-full items-center justify-center overflow-auto bg-muted p-3` with `img` classes `max-h-full max-w-full object-contain`.
 - `apps/ui/lib/files/content-type.ts`: PNG, JPEG, GIF, and WebP are the inline raster types. SVG stays out. Responses use `nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`.
 
-`apps/ui/lib/files/preview.ts` was not used for the allowlist. Its image set also includes SVG, AVIF, ICO, and BMP. The Mac route allows only PNG, JPEG, WebP, and GIF.
+`apps/ui/lib/files/preview.ts` was not used for the allowlist. Its image set also includes SVG, AVIF, ICO, and BMP. The Mac route allows only static PNG, JPEG, WebP, and single-frame GIF. APNG, animated WebP, and multi-frame GIF are explicitly unavailable in this slice.
 
 `FileDetailActions` download, publish, and delete were not copied. The Mac list still does not add Download, Move, or New folder. Delete and Rename stay on the list.
 
@@ -68,6 +68,7 @@ Magic and structure must match the extension. Outcomes:
 - not a PNG, JPEG, WebP, or GIF name: 415 `Only PNG, JPEG, WebP, and GIF files can be previewed.`
 - wrong magic: 415 `This file is not a supported image.`
 - damaged structure: 415 `This image is damaged and can’t be previewed.`
+- animation: 415 `Animated images can’t be previewed yet. Choose a static image.`
 - over 8 MB: 413 `Images can be up to 8 MB.`
 - edge over 8192, or more than 16,777,216 pixels: 413 `This image is too large to preview.`
 - symlink: 400 `Choose an image file, not a symlink.`
@@ -78,8 +79,10 @@ A direct navigation to the route still gets an image content type, `nosniff`, an
 
 ## Limits
 
-- PNG chunks and CRCs are checked. JPEG markers, GIF blocks, and WebP chunks are checked. Pixel payloads are not fully decoded; a file that passes structure and then fails in the browser shows the damaged message.
-- JPEG is 8-bit with 1 or 3 components (baseline, extended, or progressive). GIF87a and GIF89a are accepted, including animation whose blocks fit. WebP is VP8, VP8L, or VP8X with a following image chunk.
+- PNG chunks and CRCs are checked; APNG control and frame chunks are rejected. JPEG markers, GIF blocks, and WebP chunks are checked. Pixel payloads are not fully decoded; a file that passes structure and then fails in the browser shows the damaged message.
+- The preview accepts one image frame, with at most 16,777,216 decoded pixels and 8192 pixels on either edge. GIF frame dimensions and offsets must fit its bounded canvas. WebP's inner VP8/VP8L dimensions are independently bounded and must match the VP8X canvas; multiple image payloads, animation flags, ANIM, and ANMF chunks are rejected, including malformed empty animation frames.
+- JPEG is 8-bit with 1 or 3 components (baseline, extended, or progressive). Single-frame GIF87a and GIF89a are accepted. Static WebP is VP8, VP8L, or VP8X with exactly one matching image payload. Animation support requires a separately bounded frame-decoding path.
+- Authored route regressions cover oversized GIF frames behind small canvases, GIF frame offsets and a second frame, oversized inner VP8/VP8L frames, mismatched WebP canvases and repeated payloads, APNG chunks, and animated/malformed WebP frames. The integration owner runs them.
 - An SVG or HTML file is not sent to this route. If it is UTF-8, the existing text preview can still show its source in `<pre>`. That path was left unchanged. Scripts do not run there.
 - List rows are not image thumbnails. Image import, model vision, chat attachments, shared files, PDF, and media playback are out of this slice.
 - A backslash in a name is refused, matching rename and delete.

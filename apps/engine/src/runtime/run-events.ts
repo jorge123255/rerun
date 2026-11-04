@@ -90,9 +90,10 @@ export async function emitRunTerminal(terminal: RunTerminal): Promise<void> {
     // Desktop-only completion store: a genuine non-cancelled `done` terminal is what a « finished
     // run » card means. A turn that ends on a pending question or approval never reaches a terminal
     // here (the loop sends a HITL event instead), and cancelled/error terminals never record a
-    // success. Best-effort, like the notification itself: a deletion in flight may refuse the write.
+    // success. Await local persistence before the caller releases its run/work lease. Failure
+    // propagates to settlement's logger instead of silently discarding an untracked background write.
     if (desktopApp() && terminal.kind === 'done' && !terminal.cancelled) {
-        void recordRunCompletion({
+        await recordRunCompletion({
             agentId: terminal.agentId,
             sessionId: terminal.sessionId,
             runId: terminal.runId,
@@ -102,6 +103,6 @@ export async function emitRunTerminal(terminal: RunTerminal): Promise<void> {
             model: terminal.model,
             costMicros: terminal.costMicros,
             stepCount: terminal.stepCount,
-        }).catch(() => {})
+        })
     }
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import type { RunTrigger } from '../runtime/context.js'
 import { getSystemDb } from './systemDb.js'
+import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
 
 // Desktop-only completion store: genuine non-cancelled `done` terminal events, recorded at the
 // original terminal-event boundary (`emitRunTerminal`). It is never derived from `runs.status` — a
@@ -69,6 +70,11 @@ export type RecordRunCompletionInput = {
 const TEXT_MAX = 2000
 
 export async function recordRunCompletion(input: RecordRunCompletionInput): Promise<void> {
+    const release = beginDesktopAgentWork(input.agentId)
+    try { await writeRunCompletion(input) } finally { release() }
+}
+
+async function writeRunCompletion(input: RecordRunCompletionInput): Promise<void> {
     const { client } = await getSystemDb(input.agentId)
     await ensureRunCompletions(client)
     // The run id is the stable terminal identity: re-emitting the same terminal is a no-op. Only a
@@ -88,7 +94,8 @@ export async function recordRunCompletion(input: RecordRunCompletionInput): Prom
 
 export type ListRunCompletionsOptions = {
     limit: number
-    before?: { completedAt: string; id: string }
+    before?: { completedAt: string; id: string; inclusiveId?: boolean }
+    ids?: string[]
 }
 
 function rowOf(row: Record<string, unknown>): RunCompletionRow {
@@ -115,14 +122,19 @@ export async function listRunCompletions(agentId: string, options: ListRunComple
     await ensureRunCompletions(client)
     const where = ['agent_id = ?']
     const args: (string | number)[] = [agentId]
+    if (options.ids) {
+        if (!options.ids.length) return []
+        where.push(`id IN (${options.ids.map(() => '?').join(',')})`)
+        args.push(...options.ids)
+    }
     if (options.before) {
-        where.push('(completed_at < ? OR (completed_at = ? AND id < ?))')
+        where.push(`(completed_at < ? OR (completed_at = ? AND id ${options.before.inclusiveId ? '<=' : '<'} ?))`)
         args.push(options.before.completedAt, options.before.completedAt, options.before.id)
     }
     const result = await client.execute({
         sql: `SELECT id, agent_id, session_id, run_id, source, slug, completed_at, text, provider, model, cost_micros, step_count
               FROM run_completions WHERE ${where.join(' AND ')} ORDER BY completed_at DESC, id DESC LIMIT ?`,
-        args: [...args, options.limit],
+        args: [...args, Math.min(200, Math.max(1, Math.floor(options.limit)))],
     })
     return result.rows.map(rowOf)
 }

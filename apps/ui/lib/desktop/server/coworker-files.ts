@@ -283,6 +283,7 @@ async function readImage(runtime: DesktopRuntime, agentId: string, path: string,
             catch (error) {
                 if (error instanceof DesktopImageBytesError && error.reason === 'dimensions') throw new DesktopHttpError(413, 'This image is too large to preview.')
                 if (error instanceof DesktopImageBytesError && error.reason === 'mismatch') throw new DesktopHttpError(415, 'This file is not a supported image.')
+                if (error instanceof DesktopImageBytesError && error.reason === 'animation') throw new DesktopHttpError(415, 'Animated images can’t be previewed yet. Choose a static image.')
                 throw new DesktopHttpError(415, 'This image is damaged and can’t be previewed.')
             }
             return { path: rel, name, bytes: new Uint8Array(buffer.subarray(0, got)), contentType: inspected.contentType, identity: `${listed.dev}:${listed.ino}`, width: inspected.width, height: inspected.height }

@@ -8,10 +8,10 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request): Promise<Response> {
     return desktopRoute(request, async runtime => {
         const url = new URL(request.url)
-        const limit = Number(url.searchParams.get('limit'))
+        const limit = url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined
         const before = url.searchParams.get('before') ?? undefined
         const result = await readDesktopCompletions(runtime, {
-            ...(Number.isFinite(limit) ? { limit } : {}),
+            ...(limit !== undefined && Number.isFinite(limit) ? { limit } : {}),
             ...(before ? { before } : {}),
         })
         return Response.json(result, { headers: { 'cache-control': 'no-store' } })

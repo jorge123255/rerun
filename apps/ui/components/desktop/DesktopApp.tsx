@@ -109,6 +109,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgentRef = useRef(selectedAgentId)
     selectedAgentRef.current = selectedAgentId
     const [panelOpen, setPanelOpen] = useState(false)
+    const [visibleSession, setVisibleSession] = useState<{ agentId: string; sessionId: string | null } | null>(null)
+    const reportVisibleSession = useCallback((agentId: string, sessionId: string | null) => {
+        if (selectedAgentRef.current !== agentId) return
+        setVisibleSession(previous => previous?.agentId === agentId && previous.sessionId === sessionId ? previous : { agentId, sessionId })
+    }, [])
     const [panelInsetRight, setPanelInsetRight] = useState(0)
     const boardFrame = useRef<HTMLDivElement>(null)
     const panelContent = useRef<HTMLElement>(null)
@@ -282,6 +287,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu}
+                    visibleSessionId={panelOpen && !settings && !creating && !controlCenterOpen && !busy && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
                     onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
@@ -295,6 +301,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                 }
                             }}>
                             <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings}
+                                onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
                         </section>
                     </SidePanel>
@@ -339,10 +346,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     )
 }
 
-function CoworkerChat({ agent, requested, selected, modelLabel, onOpenModelSettings, onClosePanel }: {
+function CoworkerChat({ agent, requested, selected, modelLabel, onOpenModelSettings, onClosePanel, onVisibleSession }: {
     agent: DesktopAgentView
     requested: DesktopChatRequest | null
     selected: boolean
+    onVisibleSession?: (agentId: string, sessionId: string | null) => void
     modelLabel?: string
     onOpenModelSettings: () => void
     onClosePanel: () => void
@@ -387,6 +395,7 @@ function CoworkerChat({ agent, requested, selected, modelLabel, onOpenModelSetti
         {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
         {missing || !bootstrap || !sessions ? dismiss : <DesktopChatTabs
             agent={agent} selected={selected} requested={requested} sessions={sessions} initialLayout={bootstrap.layout}
+            onVisibleSession={onVisibleSession}
             refreshSessions={readSessions} reload={reload} modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
     </>
 }

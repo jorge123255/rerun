@@ -20,6 +20,7 @@ type Props = {
     initialLayout: DesktopTabLayout | null
     requested: DesktopChatRequest | null
     selected: boolean
+    onVisibleSession?: (agentId: string, sessionId: string | null) => void
     refreshSessions: () => Promise<void>
     reload: () => void
     onClosePanel: () => void
@@ -38,7 +39,7 @@ function initialTabs(layout: DesktopTabLayout | null, sessions: DesktopSessionVi
     return id && session?.id === id ? openSessionTab(initial, id, session.title) : initial
 }
 
-export function DesktopChatTabs({ agent, sessions, initialLayout, requested, selected, refreshSessions, reload, onClosePanel, modelLabel, onOpenModelSettings }: Props) {
+export function DesktopChatTabs({ agent, sessions, initialLayout, requested, selected, onVisibleSession, refreshSessions, reload, onClosePanel, modelLabel, onOpenModelSettings }: Props) {
     const [layout, setLayout] = useState(() => initialTabs(initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() =>
         requested && 'tabUid' in requested && !initialLayout?.tabs.some(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null)
@@ -134,10 +135,16 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
 
     const report = useCallback((uid: string, info: TabActivity) => {
         const old = activityRef.current[uid]
-        if (old?.busy === info.busy && old?.dirty === info.dirty) return
+        if (old?.busy === info.busy && old?.dirty === info.dirty && old?.readableSessionId === info.readableSessionId) return
         activityRef.current = { ...activityRef.current, [uid]: info }
         setActivity(activityRef.current)
     }, [])
+
+    const readableSession = selected && canMountChats && !rejectedRequest && active.id && activity[active.uid]?.readableSessionId === active.id ? active.id : null
+    useEffect(() => {
+        onVisibleSession?.(agent.id, readableSession)
+        return () => onVisibleSession?.(agent.id, null)
+    }, [agent.id, readableSession, onVisibleSession])
 
     // As in AgentPanelChat, keep recent tabs mounted and always keep a tab that owns a stream
     // or an unsent draft. Evicted idle tabs fetch their own saved transcript on next selection.

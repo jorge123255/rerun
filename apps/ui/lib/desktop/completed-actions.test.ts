@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { boundedMessage, cursorOf, groupCompletions, groupKeyOf, parseCursor, type CompletionRow } from './completed-actions'
+import { boundedMessage, completionIdentityOf, cursorOf, groupCompletions, groupKeyOf, parseCompletionIdentity, parseCursor, type CompletionRow } from './completed-actions'
 
 const row = (overrides: Partial<CompletionRow> = {}): CompletionRow => ({
     id: 'run-1',
@@ -79,14 +79,23 @@ it('sorts groups newest first with a stable tie-break on the key', () => {
 it('round-trips the stable (time, id) cursor, including ids that contain the separator', () => {
     const completedAt = '2026-11-04T12:00:00.000Z'
     const id = 'run_a__b-1'
-    const cursor = cursorOf({ completedAt, id })
-    expect(cursor).toBe(`${completedAt}__${id}`)
-    expect(parseCursor(cursor)).toEqual({ completedAt, id })
-    // The id keeps its own underscores: the split happens at the last separator.
-    expect(parseCursor(`${completedAt}__${id}`)?.id).toBe(id)
+    const cursor = cursorOf({ completedAt, id, agentId: 'owner' })
+    expect(parseCursor(cursor)).toEqual({ completedAt, id, agentId: 'owner' })
     expect(parseCursor(null)).toBeNull()
     expect(parseCursor(undefined)).toBeNull()
     expect(parseCursor('')).toBeNull()
     expect(parseCursor('no-separator')).toBeNull()
     expect(parseCursor('__missing-time')).toBeNull()
+    expect(parseCursor(encodeURIComponent(JSON.stringify([1, 'invalid', id, 'owner'])))).toBeNull()
+})
+
+it('binds a completion identity to its exact local owner, engine owner and session', () => {
+    const target = { agentId: 'alice', engineAgentId: 'engine-a', engineSessionId: 'chat', terminalId: 'same__run' }
+    const id = completionIdentityOf(target)
+    expect(parseCompletionIdentity(id)).toEqual(target)
+    expect(completionIdentityOf({ ...target, agentId: 'bob' })).not.toBe(id)
+    expect(completionIdentityOf({ ...target, engineAgentId: 'replacement' })).not.toBe(id)
+    expect(completionIdentityOf({ ...target, engineSessionId: 'other' })).not.toBe(id)
+    expect(parseCompletionIdentity('same__run')).toBeNull()
+    expect(parseCompletionIdentity(decodeURIComponent(id))).toBeNull()
 })

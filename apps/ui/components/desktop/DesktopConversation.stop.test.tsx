@@ -3,7 +3,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { UIMessage } from 'ai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { DesktopConversation } from './DesktopConversation'
+import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
+import { DesktopConversation, type TabActivity } from './DesktopConversation'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -169,5 +170,64 @@ test('a transient engine status error is retried for a reopened running conversa
         statusUnavailable = false; running = false
         await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
         expect(button('Stop')).toBeUndefined()
+    } finally { vi.useRealTimers() }
+})
+
+test('a reopened run is not readable until its final history and both pending-request reads finish', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+        const originalFetch = globalThis.fetch
+        const drafts = createDesktopDraftFixture()
+        const onTabActivity = vi.fn<(uid: string, state: TabActivity) => void>()
+        let delayFinalSnapshot = false
+        let resolveMessages!: (response: Response) => void
+        let resolveQuestion!: (response: Response) => void
+        let resolveApproval!: (response: Response) => void
+        const messagesRead = new Promise<Response>(resolve => { resolveMessages = resolve })
+        const questionRead = new Promise<Response>(resolve => { resolveQuestion = resolve })
+        const approvalRead = new Promise<Response>(resolve => { resolveApproval = resolve })
+        const pendingReads: string[] = []
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const draftResponse = drafts.handle(input, init)
+            if (draftResponse) return draftResponse
+            const url = String(input)
+            if (url.endsWith('/feedback')) return Response.json({ votes: [] })
+            if (delayFinalSnapshot) {
+                if (url.endsWith('/messages')) { pendingReads.push('messages'); return messagesRead }
+                if (url.endsWith('/questions')) { pendingReads.push('question'); return questionRead }
+                if (url.endsWith('/approvals')) { pendingReads.push('approval'); return approvalRead }
+            }
+            return originalFetch(input, init)
+        }))
+        running = true
+        await act(async () => {
+            root.render(<DesktopConversation agent={agent} sessionId="session-1" sessions={sessions}
+                tabUid="reopened-readable-tab" active onTabActivity={onTabActivity}
+                onSelectSession={vi.fn()} onChatSession={vi.fn()} />)
+        })
+        expect(container.textContent).toContain('Saved question')
+        expect(button('Stop')).toBeDefined()
+        const readableCalls = () => onTabActivity.mock.calls.filter(([, state]) => state.readableSessionId === 'session-1')
+        expect(readableCalls()).toHaveLength(0)
+
+        // The engine has finished, but the on-screen snapshot is still the one from before
+        // its reply. A completion poll arriving now must not acknowledge that unseen reply.
+        delayFinalSnapshot = true
+        running = false
+        await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+        expect(pendingReads.sort()).toEqual(['approval', 'messages', 'question'])
+        expect(button('Stop')).toBeUndefined()
+        expect(container.textContent).not.toContain('Finished while the chat was reopened')
+        expect(readableCalls()).toHaveLength(0)
+
+        await act(async () => {
+            resolveMessages(Response.json({ messages: [{ id: 'final-reply', role: 'assistant', parts: [{ type: 'text', text: 'Finished while the chat was reopened' }] }] }))
+        })
+        expect(readableCalls()).toHaveLength(0)
+        await act(async () => { resolveQuestion(Response.json({ question: null })) })
+        expect(readableCalls()).toHaveLength(0)
+        await act(async () => { resolveApproval(Response.json({ approval: null })) })
+        expect(container.textContent).toContain('Finished while the chat was reopened')
+        expect(readableCalls()).toEqual([['reopened-readable-tab', expect.objectContaining({ busy: false, readableSessionId: 'session-1' })]])
     } finally { vi.useRealTimers() }
 })

@@ -1,215 +1,160 @@
 import 'server-only'
 import { resolve } from 'node:path'
-import type { Client } from '@libsql/client'
+import type { Client, Row } from '@libsql/client'
 import { z } from 'zod'
-import {
-    cursorOf, groupCompletions, parseCursor,
-    type CompletionGroup, type CompletionRow, type DesktopCompletionItem, type DesktopCompletions,
-} from '../completed-actions'
+import { completionIdentityOf, cursorOf, groupCompletions, parseCompletionIdentity, parseCursor,
+    type CompletionRow, type DesktopCompletionIdentity, type DesktopCompletionItem, type DesktopCompletions } from '../completed-actions'
 import { listAgentCompletions, type EngineRunCompletion } from '@/lib/engine/client'
-import { assertCoworkerNotDeleting } from './coworker-delete'
+import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
+import { initializeDesktopCompletions } from './completed-actions-db'
 import type { DesktopRuntime } from './runtime'
 import { engineOf } from './settings'
-import { findDesktopSession, listDesktopAgents, listDesktopSessions, type DesktopAgent, type DesktopSession } from './store'
+export { initializeDesktopCompletions, DESKTOP_COMPLETIONS_SCHEMA } from './completed-actions-db'
 
 export const DESKTOP_COMPLETIONS_CONCURRENCY = 4
 export const DESKTOP_COMPLETIONS_DEADLINE_MS = 2_500
-const DESKTOP_COMPLETIONS_DEFAULT_LIMIT = 20
-const DESKTOP_COMPLETIONS_MAX_LIMIT = 50
-// The bounded per-agent fetch window: larger than the page so scheduled folding stays meaningful,
-// never a full history scan.
-const DESKTOP_COMPLETIONS_WINDOW = 100
+const DEFAULT_LIMIT = 20, MAX_LIMIT = 50
+type Owner = { id: string; engineId: string; name: string; enabled: boolean; deleting: boolean }
+type Raw = { row: EngineRunCompletion; owner: Owner }
+const ownerSql = `SELECT a.id,a.engine_agent_id,a.name,a.enabled,d.agent_id AS deleting FROM desktop_agents a
+    LEFT JOIN desktop_deletions d ON d.agent_id=a.id WHERE a.workspace_id=1`
+const ownersOf = (rows: Row[]) => new Map(rows.map(row => [String(row.id), { id: String(row.id), engineId: String(row.engine_agent_id), name: String(row.name), enabled: Number(row.enabled) !== 0, deleting: row.deleting !== null } satisfies Owner]))
+const compare = (a: string, b: string) => a === b ? 0 : a < b ? -1 : 1
+const rawOrder = (a: Raw, b: Raw) => compare(b.row.completedAt, a.row.completedAt) || compare(b.row.id, a.row.id) || compare(b.owner.id, a.owner.id)
+const identity = ({ row, owner }: Raw) => completionIdentityOf({ agentId: owner.id, engineAgentId: owner.engineId, engineSessionId: row.sessionId, terminalId: row.id })
 
-// Module-owned desktop schema. Root integrates it into the central `initialize` by calling
-// `initializeDesktopCompletions(db)` beside the other CREATE TABLE statements; the module also
-// ensures it lazily, so the slice works standalone.
-export const DESKTOP_COMPLETIONS_SCHEMA = `
-CREATE TABLE IF NOT EXISTS desktop_completions_seen (
-    completion_id TEXT PRIMARY KEY,
-    seen_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS desktop_completions_state (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    enabled_at TEXT NOT NULL
-);
-`
-
-// First-enable cutoff: the list covers completions recorded after the desktop feature was first
-// initialized. Written once; historical `done` rows are never backfilled into the list.
-export async function initializeDesktopCompletions(db: Client): Promise<void> {
-    await db.executeMultiple(DESKTOP_COMPLETIONS_SCHEMA)
-    await db.execute({ sql: 'INSERT OR IGNORE INTO desktop_completions_state (id, enabled_at) VALUES (1, ?)', args: [new Date().toISOString()] })
-}
-
-async function enabledAtOf(db: Client): Promise<string> {
-    const result = await db.execute('SELECT enabled_at FROM desktop_completions_state WHERE id = 1')
-    const value = result.rows[0]?.enabled_at
-    return typeof value === 'string' ? value : new Date().toISOString()
-}
-
-async function seenIdsOf(db: Client): Promise<Set<string>> {
-    const result = await db.execute('SELECT completion_id FROM desktop_completions_seen')
-    return new Set(result.rows.map(row => String(row.completion_id)))
-}
-
-const time = (value: string) => { const parsed = Date.parse(value); return Number.isFinite(parsed) ? parsed : 0 }
-
-function clampLimit(value: number | undefined): number {
-    if (value === undefined || !Number.isFinite(value)) return DESKTOP_COMPLETIONS_DEFAULT_LIMIT
-    return Math.max(1, Math.min(Math.floor(value), DESKTOP_COMPLETIONS_MAX_LIMIT))
+async function workers<T>(tasks: T[], signal: AbortSignal, work: (task: T) => Promise<void>, skipped: (task: T) => void) {
+    let next = 0
+    await Promise.all(Array.from({ length: Math.min(DESKTOP_COMPLETIONS_CONCURRENCY, tasks.length) }, async () => {
+        while (!signal.aborted) {
+            const index = next++
+            if (index >= tasks.length) return
+            await work(tasks[index])
+        }
+    }))
+    tasks.slice(next).forEach(skipped)
 }
 
 async function collect(runtime: DesktopRuntime, options: { limit: number; before?: string }): Promise<DesktopCompletions> {
     const signal = AbortSignal.timeout(DESKTOP_COMPLETIONS_DEADLINE_MS)
     const db = await openDesktopDatabase(runtime.dataRoot)
     await initializeDesktopCompletions(db)
-    const enabledAt = await enabledAtOf(db)
-    const cutoff = time(enabledAt)
+    const cutoff = (await db.execute('SELECT enabled_at FROM desktop_completions_state WHERE id=1')).rows[0]
+    const enabledAt = String(cutoff.enabled_at)
     const cursor = parseCursor(options.before)
-    const agents = (await listDesktopAgents(db)).filter(agent => agent.workspaceId === 1)
-    const unavailable = new Set<string>()
-    const engine = engineOf(runtime)
-
-    // Engine reads stay inside the same whole-scan bound as the attention projection: four active
-    // fetches and a shared deadline. Owners not reached by the workers stay explicitly unknown.
-    const engineRows: Array<{ row: EngineRunCompletion; agent: DesktopAgent }> = []
-    let next = 0
-    await Promise.all(Array.from({ length: Math.min(DESKTOP_COMPLETIONS_CONCURRENCY, agents.length) }, async () => {
-        for (;;) {
-            if (signal.aborted) return
-            const agent = agents[next++]
-            if (!agent) return
-            try {
-                const rows = await listAgentCompletions(engine, agent.engineAgentId, {
-                    limit: DESKTOP_COMPLETIONS_WINDOW,
-                    ...(cursor ? { before: cursorOf(cursor) } : {}),
-                    signal,
-                })
-                if (rows.some(row => row.agentId !== agent.engineAgentId)) { unavailable.add(agent.id); continue }
-                for (const row of rows) engineRows.push({ row, agent })
-            } catch { unavailable.add(agent.id) }
-        }
-    }))
-    for (const agent of agents.slice(next)) unavailable.add(agent.id)
-
-    // Join only current locally owned coworkers and exact local sessions: a completion whose engine
-    // session no longer maps to a local conversation (deleted or moved) is honestly dropped — it
-    // can no longer be opened.
-    const sessionByEngine = new Map<string, DesktopSession>()
-    for (const agent of agents) {
+    if (options.before && !cursor) throw new DesktopHttpError(400, 'Invalid finished-runs cursor.')
+    const owners = [...ownersOf((await db.execute(ownerSql)).rows).values()]
+    const unavailable = new Set<string>(), raw: Raw[] = []
+    let hasUnfetched = false
+    await workers(owners, signal, async owner => {
+        if (owner.deleting) { unavailable.add(owner.id); return }
         try {
-            for (const session of await listDesktopSessions(db, agent.id)) {
-                if (session.agentId !== agent.id) continue
-                sessionByEngine.set(`${agent.engineAgentId}\0${session.engineSessionId}`, session)
-            }
-        } catch { unavailable.add(agent.id) }
-    }
+            const rows = await listAgentCompletions(engineOf(runtime), owner.engineId, {
+                limit: options.limit + 1, signal,
+                ...(cursor ? { before: { completedAt: cursor.completedAt, id: cursor.id, inclusiveId: owner.id < cursor.agentId } } : {}),
+            })
+            if (rows.some(row => row.agentId !== owner.engineId || !Number.isFinite(Date.parse(row.completedAt)))) throw new Error('Invalid completion owner or timestamp')
+            if (rows.length > options.limit) hasUnfetched = true
+            const seen = new Set<string>()
+            for (const row of rows) if (!seen.has(row.id)) { seen.add(row.id); raw.push({ owner, row }) }
+        } catch { unavailable.add(owner.id) }
+    }, owner => unavailable.add(owner.id))
+
+    // Consume raw rows, including acknowledged/deleted-session rows, before folding. An old
+    // member of one group must never advance the cursor past an unreturned conversation.
+    raw.sort(rawOrder)
+    const page = raw.slice(0, options.limit)
+    const last = page.at(-1)
+    const nextCursor = last && (raw.length > page.length || hasUnfetched)
+        ? cursorOf({ completedAt: last.row.completedAt, id: last.row.id, agentId: last.owner.id }) : null
+    const ids = page.map(identity)
+    const [ownerRows, sessionRows, seenRows] = await db.batch([
+        ownerSql,
+        { sql: `SELECT s.id,s.agent_id,s.engine_session_id,s.title FROM desktop_sessions s JOIN desktop_agents a ON a.id=s.agent_id
+            WHERE a.workspace_id=1 AND (${page.map(() => '(s.agent_id=? AND s.engine_session_id=?)').join(' OR ') || '0'})`,
+            args: page.flatMap(item => [item.owner.id, item.row.sessionId]) },
+        { sql: `SELECT completion_id FROM desktop_completions_seen WHERE completion_id IN (${ids.map(() => '?').join(',') || 'NULL'})`, args: ids },
+    ], 'read')
+    const currentOwners = ownersOf(ownerRows.rows)
+    const sessions = new Map(sessionRows.rows.map(row => [`${row.agent_id}\0${row.engine_session_id}`, row]))
+    const seen = new Set(seenRows.rows.map(row => String(row.completion_id)))
     const owned: CompletionRow[] = []
-    for (const { row, agent } of engineRows) {
-        if (time(row.completedAt) < cutoff) continue
-        const session = sessionByEngine.get(`${agent.engineAgentId}\0${row.sessionId}`)
-        if (!session) continue
-        owned.push({ id: row.id, agentId: agent.id, sessionId: session.id, runId: row.runId, source: row.source,
-            slug: row.slug, completedAt: row.completedAt, text: row.text, provider: row.provider, model: row.model,
-            costMicros: row.costMicros, stepCount: row.stepCount, title: session.title })
+    for (const item of page) {
+        const owner = currentOwners.get(item.owner.id)
+        if (!owner) continue
+        if (owner.deleting || owner.engineId !== item.owner.engineId) { unavailable.add(owner.id); continue }
+        if (item.row.completedAt < enabledAt) continue
+        const session = sessions.get(`${owner.id}\0${item.row.sessionId}`), id = identity(item)
+        if (!session || seen.has(id)) continue
+        owned.push({ ...item.row, id, agentId: owner.id, sessionId: String(session.id), title: String(session.title) })
     }
-
-    // A completion acknowledged earlier (this session or a previous run of the app) never comes
-    // back: seen state lives in the desktop database and survives restarts.
-    const seen = await seenIdsOf(db)
-    const visible = owned
-        .filter(row => !seen.has(row.id))
-        .sort((a, b) => time(b.completedAt) - time(a.completedAt) || b.id.localeCompare(a.id))
-    const groups = groupCompletions(visible)
-    const page = groups.slice(0, options.limit)
-
-    // Stable cursor: the (time, id) of the oldest completion the page consumed. Anything strictly
-    // older still in the fetched window pages next; nothing on this page is ever re-shown.
-    let nextCursor: string | null = null
-    if (page.length > 0) {
-        const lastIndex = Math.max(...page.flatMap(group => group.completionIds).map(id => visible.findIndex(row => row.id === id)))
-        if (lastIndex >= 0 && lastIndex < visible.length - 1) nextCursor = cursorOf(visible[lastIndex])
-    }
-
-    // Revalidate the current roster and the exact session before publishing, like the attention
-    // read: deletion or reassignment during the scan must not surface a stale navigation target.
-    const currentAgents = new Map((await listDesktopAgents(db)).filter(agent => agent.workspaceId === 1).map(agent => [agent.id, agent]))
-    const items: DesktopCompletionItem[] = []
-    for (const group of page) {
-        const agent = currentAgents.get(group.agentId)
-        if (!agent) continue
-        try {
-            const current = await findDesktopSession(db, group.sessionId)
-            if (!current || current.agentId !== agent.id) continue
-            await assertCoworkerNotDeleting(db, agent.id)
-            items.push(itemOf(group, agent, current))
-        } catch { unavailable.add(agent.id) }
-    }
-    items.sort((a, b) => time(b.completedAt) - time(a.completedAt) || a.id.localeCompare(b.id))
-
-    return {
-        items,
-        unavailableAgentIds: [...unavailable].filter(id => currentAgents.has(id)).sort(),
-        enabledAt,
-        nextCursor,
-        checkedAt: new Date().toISOString(),
-    }
+    const items: DesktopCompletionItem[] = groupCompletions(owned).map(group => {
+        const owner = currentOwners.get(group.agentId)!
+        return { id: `done:${group.key}`, agentId: owner.id, agentName: owner.name, agentEnabled: owner.enabled,
+            sessionId: group.sessionId, sessionIds: [...new Set(group.sessionIds)], title: group.title, message: group.message,
+            source: group.source, slug: group.slug, count: group.count, completedAt: group.completedAt, completionIds: group.completionIds }
+    })
+    return { items, unavailableAgentIds: [...unavailable].filter(id => currentOwners.has(id)).sort(), enabledAt, nextCursor, checkedAt: new Date().toISOString() }
 }
 
-function itemOf(group: CompletionGroup, agent: DesktopAgent, session: DesktopSession): DesktopCompletionItem {
-    return {
-        id: `done:${group.key}`,
-        agentId: agent.id,
-        agentName: agent.name,
-        agentEnabled: agent.enabled,
-        sessionId: session.id,
-        sessionIds: group.sessionIds,
-        title: group.source === 'chat' ? session.title : group.title,
-        message: group.message,
-        source: group.source,
-        slug: group.slug,
-        count: group.count,
-        completedAt: group.completedAt,
-        completionIds: group.completionIds,
-    }
-}
-
-// Route bundles share this process-global in-flight read, keyed by pagination inputs. Seen writes
-// are never bundled: mark-read goes through its own mutation. This is a read snapshot, not an
-// admission decision; the opened chat revalidates the card.
 const shared = globalThis as typeof globalThis & { desktopCompletionReads?: Map<string, Promise<DesktopCompletions>> }
-
 export function readDesktopCompletions(runtime: DesktopRuntime, options: { limit?: number; before?: string } = {}): Promise<DesktopCompletions> {
-    const limit = clampLimit(options.limit)
-    const before = options.before ?? ''
-    const key = JSON.stringify([resolve(runtime.dataRoot), runtime.launchNonce, runtime.engine.origin, limit, before])
-    const reads = shared.desktopCompletionReads ??= new Map()
-    const pending = reads.get(key)
+    const limit = options.limit === undefined || !Number.isFinite(options.limit) ? DEFAULT_LIMIT : Math.max(1, Math.min(MAX_LIMIT, Math.floor(options.limit)))
+    const key = JSON.stringify([resolve(runtime.dataRoot), runtime.launchNonce, runtime.engine.origin, limit, options.before ?? ''])
+    const reads = shared.desktopCompletionReads ??= new Map(), pending = reads.get(key)
     if (pending) return pending
-    const work = collect(runtime, { limit, ...(before ? { before } : {}) })
+    const work = collect(runtime, { limit, before: options.before })
     reads.set(key, work)
     const release = () => { if (reads.get(key) === work) reads.delete(key) }
     void work.then(release, release)
     return work
 }
 
-// Explicit authenticated mark-read. The client sends exactly the completion IDs it displayed, so
-// a newer arrival in the same conversation or scheduled task (a different terminal identity) is
-// never accidentally cleared.
-export const desktopCompletionReadSchema = z.object({
-    completionIds: z.array(z.string().min(1)).max(500),
-}).strict()
-
+export const desktopCompletionReadSchema = z.object({ completionIds: z.array(z.string().min(1).max(8192)).max(500) }).strict()
 export async function markDesktopCompletionsRead(runtime: DesktopRuntime, input: { completionIds: string[] }): Promise<{ marked: number }> {
-    const db = await openDesktopDatabase(runtime.dataRoot)
+    const db: Client = await openDesktopDatabase(runtime.dataRoot)
     await initializeDesktopCompletions(db)
     const ids = [...new Set(input.completionIds)]
-    if (ids.length === 0) return { marked: 0 }
-    const seenAt = new Date().toISOString()
-    await db.batch(ids.map(id => ({
-        sql: 'INSERT INTO desktop_completions_seen (completion_id, seen_at) VALUES (?, ?) ON CONFLICT(completion_id) DO NOTHING',
-        args: [id, seenAt],
-    })), 'write')
-    return { marked: ids.length }
+    if (!ids.length) return { marked: 0 }
+    const parsed = ids.map(id => ({ id, value: parseCompletionIdentity(id) }))
+    if (parsed.some(item => !item.value)) throw new DesktopHttpError(400, 'Choose the exact finished-run items to mark as read.')
+    const targets = parsed as Array<{ id: string; value: DesktopCompletionIdentity }>
+    const owners = ownersOf((await db.execute(ownerSql)).rows)
+    const batches = new Map<string, typeof targets>()
+    for (const item of targets) {
+        const owner = owners.get(item.value.agentId)
+        if (!owner || owner.engineId !== item.value.engineAgentId) throw new DesktopHttpError(404, 'Finished run not found.')
+        if (owner.deleting) throw new DesktopHttpError(503, 'This coworker is being removed. Try again once that finishes.')
+        batches.set(owner.id, [...(batches.get(owner.id) ?? []), item])
+    }
+    const tasks = [...batches.values()].flatMap(items => Array.from({ length: Math.ceil(items.length / 100) }, (_, index) => items.slice(index * 100, (index + 1) * 100)))
+    const signal = AbortSignal.timeout(DESKTOP_COMPLETIONS_DEADLINE_MS)
+    let unavailable = false
+    const confirmed = new Set<string>()
+    await workers(tasks, signal, async items => {
+        try {
+            const rows = await listAgentCompletions(engineOf(runtime), items[0].value.engineAgentId, { ids: items.map(item => item.value.terminalId), signal })
+            for (const item of items) if (rows.some(row => row.id === item.value.terminalId && row.agentId === item.value.engineAgentId && row.sessionId === item.value.engineSessionId)) confirmed.add(item.id)
+        } catch { unavailable = true }
+    }, () => { unavailable = true })
+    if (unavailable) throw new DesktopHttpError(503, 'Could not confirm these finished runs. Try again.')
+    if (confirmed.size !== targets.length) throw new DesktopHttpError(404, 'Finished run not found.')
+    // Revalidate after the network inside one write transaction so a stale action cannot
+    // acknowledge a different owner/session after deletion or engine rebinding.
+    const transaction = await db.transaction('write')
+    try {
+        const current = ownersOf((await transaction.execute(ownerSql)).rows)
+        const seenAt = new Date().toISOString()
+        for (const { id, value } of targets) {
+            const owner = current.get(value.agentId)
+            if (!owner || owner.engineId !== value.engineAgentId) throw new DesktopHttpError(404, 'Finished run not found.')
+            if (owner.deleting) throw new DesktopHttpError(503, 'This coworker is being removed. Try again once that finishes.')
+            const session = (await transaction.execute({ sql: 'SELECT id FROM desktop_sessions WHERE agent_id=? AND engine_session_id=?', args: [value.agentId, value.engineSessionId] })).rows[0]
+            if (!session) throw new DesktopHttpError(404, 'Conversation not found.')
+            await transaction.execute({ sql: 'INSERT INTO desktop_completions_seen (completion_id,agent_id,session_id,seen_at) VALUES (?,?,?,?) ON CONFLICT(completion_id) DO NOTHING', args: [id, value.agentId, String(session.id), seenAt] })
+        }
+        await transaction.commit()
+    } finally { transaction.close() }
+    return { marked: targets.length }
 }

@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import {
     type BoxDefaultUpdate,
     ENGINE_CAPABILITY_DESKTOP,
@@ -876,9 +877,10 @@ export const engineRunCompletionSchema = z.object({
 export const engineRunCompletionsListSchema = z.object({ completions: z.array(engineRunCompletionSchema) })
 export type EngineRunCompletion = z.infer<typeof engineRunCompletionSchema>
 
-export async function listAgentCompletions(conn: EngineConnection, agentId: string, options: { limit: number; before?: string; signal?: AbortSignal } = {}): Promise<EngineRunCompletion[]> {
-    const params = new URLSearchParams({ limit: String(options.limit) })
-    if (options.before) params.set('before', options.before)
+export async function listAgentCompletions(conn: EngineConnection, agentId: string, options: { limit?: number; before?: { completedAt: string; id: string; inclusiveId?: boolean }; ids?: string[]; signal?: AbortSignal } = {}): Promise<EngineRunCompletion[]> {
+    const params = new URLSearchParams({ limit: String(options.limit ?? 50) })
+    if (options.before) params.set('before', JSON.stringify(options.before))
+    if (options.ids) params.set('ids', JSON.stringify(options.ids))
     return request(conn, `/agents/${encodeURIComponent(agentId)}/runs/completions?${params}`, { method: 'GET', ...(options.signal ? { signal: options.signal } : {}) }, d => engineRunCompletionsListSchema.parse(d).completions)
 }
 

@@ -342,31 +342,45 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         void cliAuthP?.then(release => release(), () => {})
         // Last, not first: freeing the session claim before the transcript is written and before
         // the provider is down let a second send in on a history missing this turn.
-        unregisterRunAbort(run.id)
-        resolveSettled(outcome)
+        if (!desktopApp()) {
+            unregisterRunAbort(run.id)
+            resolveSettled(outcome)
+        }
 
-        if (pending) {
-            // A run waiting on a human stays "awaiting" only because no terminal event is sent.
-            await emitHitlEvent(agent, sessionId, run.id, pending, author)
-        } else {
-            await emitRunTerminal({
-                agentId: agent.id,
-                sessionId,
-                runId: run.id,
-                trigger,
-                kind: outcome.kind === 'error' ? 'error' : 'done',
-                cancelled: outcome.kind === 'cancelled',
-                text,
-                error: outcome.error,
-                errorCode: outcome.errorCode,
-                usage,
-                stepCount: steps,
-                provider,
-                model,
-                costMicros,
-            })
-            const proposed = skillProposals.at(-1)
-            if (outcome.kind === 'done' && proposed) await emitSkillProposalEvent(agent, sessionId, run.id, proposed, author)
+        try {
+            if (pending) {
+                // A run waiting on a human stays "awaiting" only because no terminal event is sent.
+                await emitHitlEvent(agent, sessionId, run.id, pending, author)
+            } else {
+                await emitRunTerminal({
+                    agentId: agent.id,
+                    sessionId,
+                    runId: run.id,
+                    trigger,
+                    kind: outcome.kind === 'error' ? 'error' : 'done',
+                    cancelled: outcome.kind === 'cancelled',
+                    text,
+                    error: outcome.error,
+                    errorCode: outcome.errorCode,
+                    usage,
+                    stepCount: steps,
+                    provider,
+                    model,
+                    costMicros,
+                })
+                const proposed = skillProposals.at(-1)
+                if (outcome.kind === 'done' && proposed) await emitSkillProposalEvent(agent, sessionId, run.id, proposed, author)
+            }
+        } catch (error) {
+            if (!desktopApp()) throw error
+            logger.error({ err: String(error), agent: agent.id, run: run.id }, 'run completion event could not be persisted or delivered')
+        } finally {
+            // Desktop completion records are durable before callers observe settlement or Delete
+            // can acquire the owner. A failed write is logged without stranding Stop's waiters.
+            if (desktopApp()) {
+                unregisterRunAbort(run.id)
+                resolveSettled(outcome)
+            }
         }
 
         if (outcome.kind === 'done' && !pending && agent.config.selfImprovement.enabled && userText) {

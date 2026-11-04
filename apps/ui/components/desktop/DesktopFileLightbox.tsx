@@ -25,7 +25,7 @@ export function DesktopFileLightbox({ paths, names, index, readFile, onIndexChan
     const path = paths[index]
     const name = names[index] ?? path.split('/').pop() ?? path
     const read = useCallback<ReadDesktopCardFile>(filePath => readFile(filePath), [readFile])
-    const { content, loading, error } = useFileContent({ path, name, read })
+    const { content, loading, error, truncated } = useFileContent({ path, name, read })
 
     return (
         <Dialog open onOpenChange={open => !open && onClose()}>
@@ -46,8 +46,11 @@ export function DesktopFileLightbox({ paths, names, index, readFile, onIndexChan
                         </>
                     )}
                 </div>
-                <div className="min-h-0 flex-1 overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
-                    {error ? <p className="p-3 text-xs text-destructive">{error}</p> : <FilePreview fileName={name} content={content} rawUrl="" loading={loading} />}
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
+                    {truncated && <p role="status" className="shrink-0 px-3 pt-3 text-xs text-muted-foreground">Preview shows the first 256 KB.</p>}
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                        {error ? <p className="p-3 text-xs text-destructive">{error}</p> : <FilePreview fileName={name} content={content} rawUrl="" loading={loading} />}
+                    </div>
                 </div>
             </DialogContent>
         </Dialog>

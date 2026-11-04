@@ -2,6 +2,7 @@ import 'server-only'
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
+import { initializeDesktopCompletions } from './completed-actions-db'
 
 const opening = new Map<string, Promise<Client>>()
 
@@ -194,6 +195,7 @@ async function initialize(dataRoot: string): Promise<Client> {
         { sql: 'INSERT OR IGNORE INTO desktop_profile (id, display_name, created_at, updated_at) VALUES (1, ?, ?, ?)', args: ['Local User', now, now] },
         { sql: 'INSERT OR IGNORE INTO desktop_workspace (id, profile_id, name, created_at, updated_at) VALUES (1, 1, ?, ?, ?)', args: ['My workspace', now, now] },
     ], 'write')
+    await initializeDesktopCompletions(client)
     return client
 }
 
