@@ -47,6 +47,26 @@ has no raw URL or download. The shared `AttachmentLightbox` is unchanged.
   `GET /api/desktop/agents/:agentId/files/read?path=…` when a tile is opened. A deleted, renamed or
   unreadable file shows the preview’s unavailable state; no bytes are cached in the card.
 
+## Changed files
+
+- `packages/contracts/src/desktop-tool-grants.ts` — `cardFile` grant and catalog row; table-card
+  pending row corrected.
+- `apps/engine/src/desktop/card-file.ts` — the opt-in `card_file` tool and its confinement checks.
+- `apps/engine/src/tools/registry.ts` — adds the desktop card tool to the existing toolset.
+- `apps/engine/src/desktop/workspace-read.ts` — exports the shared workspace root/path helpers.
+- `apps/engine/src/desktop/question-tool.ts` — mentions card_file only when its grant is on.
+- `apps/engine/src/agents/systemPrompt.ts` — desktop card guidance without hosted table-cards text.
+- `apps/ui/lib/desktop/file-card.ts` — card output parser and authenticated read helper.
+- `apps/ui/components/desktop/DesktopFileCard.tsx` — tile grid wrapper.
+- `apps/ui/components/desktop/DesktopFileLightbox.tsx` — text-only original preview dialog.
+- `apps/ui/components/desktop/DesktopAssistantReply.tsx` — card branch, `agentId` prop and fallback.
+- `apps/ui/components/chat/AttachmentTile.tsx` — optional `openable` text tile (default unchanged).
+- `apps/ui/lib/chat/engine-history.ts` — preserves validated saved cards in desktop history.
+- Tests: `apps/engine/src/desktop/card-file.test.ts`, `apps/ui/lib/desktop/file-card.test.ts`,
+  `apps/ui/components/desktop/DesktopFileCard.test.tsx`,
+  `apps/ui/components/desktop/DesktopAssistantReply.test.tsx`,
+  `apps/ui/lib/chat/engine-history.test.ts`.
+
 ## Integration contract for root-owned wiring
 
 `@rerun/contracts` must be rebuilt first: the new `cardFile` grant id and catalog row live there,
