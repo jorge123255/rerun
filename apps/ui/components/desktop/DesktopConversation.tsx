@@ -265,7 +265,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     async function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if (inactive || !text || stopping || !ready || queue.pending || regenerating.current) return
+        if (inactive || !text || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current) return
         if (generating || (queue.queued && draftQueues.current.has(queue.queued.id))) {
             if (!queue.loaded || queue.error) return
             try {
@@ -532,7 +532,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={inactive || stopping || !ready || queue.pending}
                                 onSelect={path => setDraftAttachment(draftKey, path)} />
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
-                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={inactive || !input.trim() || stopping || !ready || queue.pending || (generating && (!queue.loaded || !!queue.error))}>
+                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={inactive || !input.trim() || stopping || !ready || !queue.loaded || queue.pending || !!queue.error}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
                             </Button>
                         </div>
