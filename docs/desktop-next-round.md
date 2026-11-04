@@ -2,7 +2,7 @@
 
 Prepared agent base: `927c5e17da6b6db84657261695a98e0533b264de`. Installed root source: `220eeff3b7889f8481dc3a705d877ad68aad4cba`. Original Rerun: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
-**B, G and H are reported complete by the user and are under root review; none is accepted yet.** B has a clean committed handoff at `c7db894fee5ae05553dde98006ec13e969bb9e57`. G has uncommitted source at the prepared base; H has committed source at `406f35aac90e123021202741cecd790f101e9b6d` plus additional uncommitted engine files. Root has requested G/H final handoffs to resolve the intended versions. A, D, E and F show source changes; C has no source activity visible at the latest inventory. All agent checks and Mac acceptance remain with root.
+**B, G and H have reviewed committed handoffs and are integrated into the coding branch, pending final root checks and Mac acceptance.** B: `c7db894fee5ae05553dde98006ec13e969bb9e57`; G: `925dead9ac7e30c41cd0f01bfb723f0b570cb69b`; H: `181d467cefcc2adfac0b5f6a40ce80bc3fd81e1a` and `406f35aac90e123021202741cecd790f101e9b6d`. Uncommitted alternate implementations remain excluded. Root has also reviewed A `6d2e177a9c6e4377935bf87479822873683c10c7`, E `7e67ce1907ede7e43acda346027835b1923a6a0b`, and F `7c69dd4e53ca0174b75be77553a2858109fcfacb`; these are not integrated or accepted. E needs the rest of its assigned schedule slice, and F needs lifecycle/credential corrections. The installed accepted build remains `220eeff`. Root alone runs all checks and Mac acceptance.
 
 | Owner | Task | Prompt |
 | --- | --- | --- |

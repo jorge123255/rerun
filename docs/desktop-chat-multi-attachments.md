@@ -161,3 +161,9 @@ Other root wiring:
   Mac/restart check was run by this lane. The regression tests above are authored only.
 - `DesktopCoworkerFiles` and the PDF preview files were not edited. Other worktrees were not
   touched.
+
+## Root integration corrections
+
+Root integrated `c7db894fee5ae05553dde98006ec13e969bb9e57` and added the central draft migration. Regenerate/fork draft transfer now moves and clears both legacy and ordered attachment columns and compares the full ordered set for collisions. Picker reopening resolves metadata for selected files across folders before accepting the total, and allows removal of unavailable selections.
+
+Draft validation returns a typed rejection only after reconciling accepted receipts and revision ownership. The client can then correct the rejected selection while retaining text. Unknown failures retain the request identity; a concurrent accepted write cannot be misreported as rejected or cleared by a late validation error. Focused root regressions cover those cases. Packaging and native/restart acceptance are tracked separately from this source handoff.

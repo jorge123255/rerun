@@ -2,6 +2,8 @@ import { createClient } from '@libsql/client'
 import { pathToFileURL } from 'node:url'
 import { DATA_INPUT_BYTES, DATA_OUTPUT_BYTES, dataOperationSchema, verifyDesktopDataFile, type DataFilePin, type DataResult } from './data-executor.js'
 import { desktopExecute, desktopQuery, desktopSchema } from './data-store.js'
+import { SHARED_DB_MIGRATIONS } from '../db/sharedDb.js'
+import { migrateSqlite } from '../db/ladder.js'
 
 // No SQL, path, credential, env override, or executable comes from command-line arguments.
 // The one parent-owned IPC channel supplies a validated operation and pinned existing file.
@@ -15,27 +17,32 @@ const send = (message: unknown) => new Promise<void>((resolve, reject) => {
 })
 process.on('disconnect', () => process.exit(1))
 process.on('message', (message: unknown) => {
-    const msg = message as { type?: unknown; pin?: DataFilePin; operation?: unknown }
+    const msg = message as { type?: unknown; pin?: DataFilePin; operation?: unknown; databaseKind?: unknown }
     if (msg?.type === 'commit' && waitingCommit && authorize) {
         waitingCommit = false
         authorize()
         authorize = undefined
         return
     }
-    if (started || msg?.type !== 'start' || !msg.pin || Buffer.byteLength(JSON.stringify(msg)) > DATA_INPUT_BYTES + 10_000) {
+    if (started || msg?.type !== 'start' || !msg.pin || !['private', 'shared'].includes(String(msg.databaseKind)) || Buffer.byteLength(JSON.stringify(msg)) > DATA_INPUT_BYTES + 10_000) {
         process.exit(1)
     }
     started = true
-    void run(msg.pin, msg.operation)
+    void run(msg.pin, msg.operation, msg.databaseKind === 'shared')
 })
 
-async function run(pin: DataFilePin, raw: unknown) {
+async function run(pin: DataFilePin, raw: unknown, shared: boolean) {
     let db: ReturnType<typeof createClient> | undefined
     try {
         const operation = dataOperationSchema.parse(raw)
         await verifyDesktopDataFile(pin)
         db = createClient({ url: pathToFileURL(pin.file).href })
         await db.execute('PRAGMA busy_timeout = 1000')
+        // Same on-disk store and initialization as sqlStore/getSharedDb, entirely under the
+        // parent's killable deadline. No uncached native initializer runs on the engine loop.
+        await db.execute('PRAGMA journal_mode = WAL')
+        await db.execute('PRAGMA synchronous = NORMAL')
+        if (shared) await migrateSqlite(db, SHARED_DB_MIGRATIONS, pin.file)
         await verifyDesktopDataFile(pin)
         await send({ type: 'executing' })
         let result: DataResult

@@ -1,6 +1,6 @@
 import { fork } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { lstat, realpath } from 'node:fs/promises'
+import { constants, existsSync } from 'node:fs'
+import { lstat, mkdir, open, realpath } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -34,24 +34,63 @@ export type DataFilePin = { file: string; parent: Identity; identity: Identity }
 const identity = (stat: { dev: bigint; ino: bigint }): Identity => ({ dev: String(stat.dev), ino: String(stat.ino) })
 const same = (a: Identity, b: Identity) => a.dev === b.dev && a.ino === b.ino
 
-/** Called only after the existing parent getAgentDb/getSharedDb initialization. No model input
- * chooses a path. Refuse aliases into another database, including symlinked WAL/SHM files. */
-export async function pinDesktopDataFile(root: string, file: string): Promise<DataFilePin> {
+async function safeDataDirectory(root: string, file: string, create: boolean): Promise<string> {
     const rootPath = resolve(root)
     const rel = relative(rootPath, resolve(file))
     if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Database is outside its data root.')
+    const rootStat = await lstat(rootPath)
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Unsafe database root.')
     const canonicalRoot = await realpath(rootPath)
     let current = canonicalRoot
     const parts = rel.split(sep)
     for (const part of parts.slice(0, -1)) {
         current = resolve(current, part)
+        if (create) await mkdir(current, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'EEXIST') throw error
+        })
         const stat = await lstat(current)
         if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Unsafe database directory.')
     }
-    const canonicalFile = resolve(current, parts.at(-1)!)
+    if (await realpath(current) !== current) throw new Error('Unsafe database directory.')
+    return resolve(current, parts.at(-1)!)
+}
+
+async function verifyDataJournals(file: string): Promise<void> {
+    for (const suffix of ['-wal', '-shm', '-journal']) {
+        const sidecar = await lstat(file + suffix, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return null
+            throw error
+        })
+        if (sidecar && (!sidecar.isFile() || sidecar.isSymbolicLink() || sidecar.nlink !== 1n)) throw new Error('Unsafe database journal.')
+    }
+}
+
+/** Filesystem-only preflight, before ANY SQLite initializer. Human route getClient callbacks
+ * must call this before getAgentDb/getSharedDb. Model tools call it through executeDesktopData,
+ * then initialize SQLite only inside the killable child. Existing paths/schema are unchanged. */
+export async function prepareDesktopDataFile(root: string, file: string): Promise<DataFilePin> {
+    const canonicalFile = await safeDataDirectory(root, file, true)
+    // A dangling/malicious journal must not cause even an empty database to be created first.
+    await verifyDataJournals(canonicalFile)
+    const existing = await lstat(canonicalFile, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null
+        throw error
+    })
+    if (existing && (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1n)) throw new Error('Unsafe database file.')
+    if (!existing) {
+        const handle = await open(canonicalFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+            .catch((error: NodeJS.ErrnoException) => { if (error.code === 'EEXIST') return null; throw error })
+        await handle?.close()
+    }
+    return pinDesktopDataFile(root, file)
+}
+
+/** Pin an already existing safe file without opening SQLite or following an alias. */
+export async function pinDesktopDataFile(root: string, file: string): Promise<DataFilePin> {
+    const canonicalFile = await safeDataDirectory(root, file, false)
     const stat = await lstat(canonicalFile, { bigint: true })
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n) throw new Error('Unsafe database file.')
-    const pin = { file: canonicalFile, parent: identity(await lstat(current, { bigint: true })), identity: identity(stat) }
+    const pin = { file: canonicalFile, parent: identity(await lstat(dirname(canonicalFile), { bigint: true })), identity: identity(stat) }
     await verifyDesktopDataFile(pin)
     return pin
 }
@@ -62,13 +101,7 @@ export async function verifyDesktopDataFile(pin: DataFilePin): Promise<void> {
     if (!parent.isDirectory() || parent.isSymbolicLink() || !same(identity(parent), pin.parent) ||
         !file.isFile() || file.isSymbolicLink() || file.nlink !== 1n || !same(identity(file), pin.identity) ||
         await realpath(pin.file) !== pin.file) throw new Error('The database file changed. Try again.')
-    for (const suffix of ['-wal', '-shm', '-journal']) {
-        const sidecar = await lstat(pin.file + suffix, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
-            if (error.code === 'ENOENT') return null
-            throw error
-        })
-        if (sidecar && (!sidecar.isFile() || sidecar.isSymbolicLink() || sidecar.nlink !== 1n)) throw new Error('Unsafe database journal.')
-    }
+    await verifyDataJournals(pin.file)
 }
 
 export function desktopDataWorkerLaunch() {
@@ -85,6 +118,7 @@ export function desktopDataWorkerLaunch() {
 type Options = {
     signal?: AbortSignal
     beforeCommit?: () => Promise<void>
+    databaseKind?: 'private' | 'shared'
     /** Shorter budgets and an execution observer support real child-process regressions. */
     timeoutMs?: number
     onExecuting?: () => void
@@ -96,7 +130,7 @@ export async function executeDesktopData(root: string, file: string, raw: DataOp
     options.signal?.throwIfAborted()
     const operation = dataOperationSchema.parse(raw)
     if (Buffer.byteLength(JSON.stringify(operation)) > DATA_INPUT_BYTES) throw new Error('Database input exceeds 1 MB. Use a smaller batch.')
-    const pin = await pinDesktopDataFile(root, file)
+    const pin = await prepareDesktopDataFile(root, file)
     options.signal?.throwIfAborted()
     const launch = desktopDataWorkerLaunch()
     return new Promise((resolveResult, reject) => {
@@ -169,6 +203,6 @@ export async function executeDesktopData(root: string, file: string, raw: DataOp
             }
             stop('Invalid database worker message.')
         })
-        child.send({ type: 'start', pin, operation }, error => { if (error) stop('Could not start database operation.') })
+        child.send({ type: 'start', pin, operation, databaseKind: options.databaseKind ?? 'private' }, error => { if (error) stop('Could not start database operation.') })
     })
 }

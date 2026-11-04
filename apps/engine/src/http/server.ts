@@ -12,6 +12,7 @@ import { sessionRoutes } from './routes/sessions.js'
 import { memoryRoutes } from './routes/memories.js'
 import { createDataRouter } from './routes/data.js'
 import { createDesktopDataRouter } from '../desktop/data-router.js'
+import { prepareDesktopDataFile, verifyDesktopDataFile } from '../desktop/data-executor.js'
 import { createSkillFilesRouter, skillRoutes } from './routes/skills.js'
 import { skillProposalRoutes } from './routes/skill-proposals.js'
 import { scheduleRoutes } from './routes/schedules.js'
@@ -27,7 +28,7 @@ import { brainRoutes } from './routes/brain.js'
 import { agentDesktopRoutes, desktopRoutes } from './routes/desktop.js'
 import { HttpError, notFound } from '../lib/errors.js'
 import { agentExists } from '../agents/loader.js'
-import { workspaceDir, sharedDir } from '../config/paths.js'
+import { workspaceDir, sharedDir, dataDir, agentDataDbPath, sharedDbPath } from '../config/paths.js'
 import { AGENT_HIDDEN_TABLES, getAgentDb } from '../db/agentDb.js'
 import { getSharedDb, SHARED_HIDDEN_TABLES } from '../db/sharedDb.js'
 import { logger } from '../lib/logger.js'
@@ -67,10 +68,13 @@ export function createServer(): Hono {
     api.route('/agents/:id/memories', memoryRoutes)
     api.route(
         '/agents/:id/data',
-        desktopApp() ? createDesktopDataRouter(c => {
+        desktopApp() ? createDesktopDataRouter(async c => {
             const id = c.req.param('id')!
             if (!agentExists(id)) throw notFound('agent')
-            return getAgentDb(id)
+            const pin = await prepareDesktopDataFile(dataDir(), agentDataDbPath(id))
+            const client = await getAgentDb(id)
+            await verifyDesktopDataFile(pin)
+            return client
         }) : createDataRouter(c => {
             const id = c.req.param('id')!
             if (!agentExists(id)) throw notFound('agent')
@@ -95,7 +99,12 @@ export function createServer(): Hono {
         })
     )
     api.route('/shared/files', createFilesRouter(() => sharedDir()))
-    api.route('/shared/data', desktopApp() ? createDesktopDataRouter(() => getSharedDb()) : createDataRouter(() => getSharedDb(), SHARED_HIDDEN_TABLES))
+    api.route('/shared/data', desktopApp() ? createDesktopDataRouter(async () => {
+        const pin = await prepareDesktopDataFile(dataDir(), sharedDbPath())
+        const client = await getSharedDb()
+        await verifyDesktopDataFile(pin)
+        return client
+    }) : createDataRouter(() => getSharedDb(), SHARED_HIDDEN_TABLES))
     api.route('/brain', brainRoutes)
     api.route('/desktop', desktopRoutes)
     api.route('/agents/:id/desktop', agentDesktopRoutes)
