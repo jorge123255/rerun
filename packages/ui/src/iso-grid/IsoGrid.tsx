@@ -174,6 +174,8 @@ function layoutBox(container: HTMLElement) {
 
 type Cell = { col: number; row: number }
 type CellRange = ReturnType<typeof containerCellRange>
+type TileDrag = { tileId: string; startPos: Cell; span: number; containerId: string | null }
+type BoxDrag = { containerId: string; grab: Cell; delta: Cell }
 
 const INVALID_DROP_COLOR = '#ef4444'
 // Le temps que le container et ses tiles finissent de glisser après un drop, refusé ou non.
@@ -299,8 +301,18 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
     const [isPanning, setIsPanning] = useState(false)
     const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 })
 
-    const [dragState, setDragState] = useState<{ tileId: string; startPos: { col: number; row: number }; span: number; containerId: string | null } | null>(null)
+    const [dragState, setDragState] = useState<TileDrag | null>(null)
     const [dragGhostCell, setDragGhostCell] = useState<{ col: number; row: number } | null>(null)
+    // Continuous pointer moves may not render before release. Refs own the current gesture;
+    // state only paints it, so a quick move/up cannot leave an uncommitted ghost behind.
+    const tileDragRef = useRef<TileDrag | null>(null)
+    const dragGhostRef = useRef<Cell | null>(null)
+    const setTileDrag = (next: TileDrag | null, anchor: Cell | null) => {
+        tileDragRef.current = next
+        dragGhostRef.current = anchor
+        setDragState(next)
+        setDragGhostCell(anchor)
+    }
 
     // Appui sur une tile déplaçable, pas encore tranché entre clic et drag. La sélection attend le
     // relâchement : la sélectionner à l'appui ouvrirait la fiche de l'agent qu'on veut juste déplacer.
@@ -308,7 +320,12 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
 
     // Container en main. `grab` est la cellule prise sous le pointeur, pour que le container ne saute
     // pas sous la main.
-    const [boxDrag, setBoxDrag] = useState<{ containerId: string; grab: Cell; delta: Cell } | null>(null)
+    const [boxDrag, setBoxDrag] = useState<BoxDrag | null>(null)
+    const boxDragRef = useRef<BoxDrag | null>(null)
+    const setActiveBoxDrag = useCallback((next: BoxDrag | null) => {
+        boxDragRef.current = next
+        setBoxDrag(next)
+    }, [])
     // Même attente que pendingDragRef : un clic sur la prise sélectionne, seul un geste déplace.
     const pendingBoxDragRef = useRef<{ containerId: string; grab: Cell; origin: { x: number; y: number } } | null>(null)
     const touchGrabRef = useRef<{ containerId: string; grab: Cell } | null>(null)
@@ -501,10 +518,6 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
         [containers, tiles]
     )
     const boxDrop = useMemo(() => (boxDrag ? dropFor(boxDrag.containerId, boxDrag.delta) : null), [boxDrag, dropFor])
-    const boxDragRef = useRef(boxDrag)
-    boxDragRef.current = boxDrag
-    const boxDropRef = useRef(boxDrop)
-    boxDropRef.current = boxDrop
 
     const settle = (containerId: string) => {
         setSettlingContainerId(containerId)
@@ -515,8 +528,9 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
 
     // Fin d'un déplacement à la main. Refusé ou annulé, le container revient en glissant.
     const finishBoxDrag = (commit: boolean) => {
-        const drop = boxDropRef.current
-        setBoxDrag(null)
+        const held = boxDragRef.current
+        const drop = held ? dropFor(held.containerId, held.delta) : null
+        setActiveBoxDrag(null)
         if (!drop) return
         settle(drop.source.id)
         if (commit && drop.valid && drop.moved) onContainerMove?.(drop.source.id, drop.rect)
@@ -558,6 +572,18 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
         const c = containerId ? containers.find(ct => ct.id === containerId) : null
         if (!c) return anchor
         return clampAnchorToRange(containerCellRange(c), span, anchor)
+    }
+
+    const tileDragAt = (drag: TileDrag, clientX: number, clientY: number) => {
+        const anchor = getTileAnchorFromClient(clientX, clientY, drag.span)
+        if (!anchor) return null
+        const cell = getGridCoordsFromClient(clientX, clientY)
+        // The pointer chooses a Box, not the footprint. In the gap retain the last Box,
+        // matching the preview, including the first move and the final release position.
+        const hovered = drag.containerId && cell ? containers.find(c => containerContainsCell(c, cell)) : undefined
+        const containerId = hovered?.id ?? drag.containerId
+        return { drag: containerId === drag.containerId ? drag : { ...drag, containerId },
+            anchor: clampAnchorToContainer(containerId, drag.span, anchor) }
     }
 
     // Le container d'arrivée s'annonce pendant le drag, et seulement quand ce n'est pas celui d'où
@@ -866,9 +892,9 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
             if (Math.hypot(e.clientX - pending.origin.x, e.clientY - pending.origin.y) < DRAG_THRESHOLD_PX) return
             pendingDragRef.current = null
             const { tileId, startPos, span, containerId } = pending
-            const anchor = getTileAnchorFromClient(e.clientX, e.clientY, span)
-            setDragState({ tileId, startPos, span, containerId })
-            setDragGhostCell(anchor ? clampAnchorToContainer(containerId, span, anchor) : startPos)
+            const drag = { tileId, startPos, span, containerId }
+            const next = tileDragAt(drag, e.clientX, e.clientY)
+            setTileDrag(next?.drag ?? drag, next?.anchor ?? startPos)
             return
         }
 
@@ -879,17 +905,20 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
             setHoverCell(null)
             setHoverHandle(null)
             setHoverContainerId(null)
-            setBoxDrag({ containerId: pendingBox.containerId, grab: pendingBox.grab, delta: { col: 0, row: 0 } })
+            const at = getGridCoords(e)
+            setActiveBoxDrag({ containerId: pendingBox.containerId, grab: pendingBox.grab,
+                delta: at ? { col: at.col - pendingBox.grab.col, row: at.row - pendingBox.grab.row } : { col: 0, row: 0 } })
             return
         }
 
         onPointerWorldMove?.(getWorldCoords(e.clientX, e.clientY))
 
-        if (boxDrag) {
+        const heldBox = boxDragRef.current
+        if (heldBox) {
             const at = getGridCoords(e)
             if (!at) return
-            const delta = { col: at.col - boxDrag.grab.col, row: at.row - boxDrag.grab.row }
-            if (delta.col !== boxDrag.delta.col || delta.row !== boxDrag.delta.row) setBoxDrag({ ...boxDrag, delta })
+            const delta = { col: at.col - heldBox.grab.col, row: at.row - heldBox.grab.row }
+            if (delta.col !== heldBox.delta.col || delta.row !== heldBox.delta.row) setActiveBoxDrag({ ...heldBox, delta })
             return
         }
 
@@ -926,17 +955,10 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
             return
         }
 
-        if (dragState) {
-            const dragAnchor = getTileAnchorFromClient(e.clientX, e.clientY, dragState.span)
-            if (!dragAnchor) return
-            // C'est la cellule sous le pointeur qui désigne un container, comme partout ailleurs
-            // ici, et non le footprint, qui chevauche deux containers dès qu'on approche d'un bord.
-            // À défaut, on garde le dernier survolé : repasser par le vide qui sépare deux Box
-            // renverrait sinon le fantôme se coller à celle d'où il vient, le temps d'une cellule.
-            const hovered = dragState.containerId && cell ? containers.find(c => containerContainsCell(c, cell)) : undefined
-            const containerId = hovered?.id ?? dragState.containerId
-            if (containerId !== dragState.containerId) setDragState({ ...dragState, containerId })
-            setDragGhostCell(clampAnchorToContainer(containerId, dragState.span, dragAnchor))
+        const heldTile = tileDragRef.current
+        if (heldTile) {
+            const next = tileDragAt(heldTile, e.clientX, e.clientY)
+            if (next) setTileDrag(next.drag, next.anchor)
             return
         }
 
@@ -978,8 +1000,12 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
             return
         }
 
-        if (boxDrag) {
-            finishBoxDrag(e.type !== 'pointercancel')
+        const heldBox = boxDragRef.current
+        if (heldBox) {
+            const commit = e.type !== 'pointercancel'
+            const at = commit ? getGridCoords(e) : null
+            if (at) setActiveBoxDrag({ ...heldBox, delta: { col: at.col - heldBox.grab.col, row: at.row - heldBox.grab.row } })
+            finishBoxDrag(commit)
             return
         }
 
@@ -1006,21 +1032,27 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
             return
         }
 
-        if (dragState && dragGhostCell) {
-            const didMove = dragGhostCell.col !== dragState.startPos.col || dragGhostCell.row !== dragState.startPos.row
+        const heldTile = tileDragRef.current
+        if (heldTile) {
+            const commit = e.type !== 'pointercancel'
+            const next = commit ? tileDragAt(heldTile, e.clientX, e.clientY) : null
+            const drag = next?.drag ?? heldTile
+            const anchor = next?.anchor ?? dragGhostRef.current
+            // Clear before notifying the host; it may synchronously replace board props.
+            setTileDrag(null, null)
+            if (!commit || !anchor) return
+            const didMove = anchor.col !== drag.startPos.col || anchor.row !== drag.startPos.row
             if (didMove && onTileMove) {
-                const tile = tiles.find(t => t.id === dragState.tileId)
+                const tile = tiles.find(t => t.id === drag.tileId)
                 // A tile can be dropped in any container, not only the one it came from: the host
                 // is told which one it landed in and decides what that means.
-                const target = tile?.containerId ? containers.find(ct => containerContainsTile(ct, dragGhostCell, dragState.span)) : undefined
+                const target = tile?.containerId ? containers.find(ct => containerContainsTile(ct, anchor, drag.span)) : undefined
                 const landed = tile?.containerId ? !!target : true
-                const occupied = tiles.some(t => t.id !== dragState.tileId && isPlaced(t.position) && tilesOverlap(dragGhostCell, t.position, dragState.span, spanOf(t)))
+                const occupied = tiles.some(t => t.id !== drag.tileId && isPlaced(t.position) && tilesOverlap(anchor, t.position, drag.span, spanOf(t)))
                 if (!occupied && landed) {
-                    onTileMove(dragState.tileId, dragGhostCell, target?.id)
+                    onTileMove(drag.tileId, anchor, target?.id)
                 }
             }
-            setDragState(null)
-            setDragGhostCell(null)
         }
     }
 
@@ -1086,12 +1118,12 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
             onGrabStart() {
                 setHoldPoint(null)
                 const grabbed = touchGrabRef.current
-                if (grabbed) setBoxDrag({ ...grabbed, delta: { col: 0, row: 0 } })
+                if (grabbed) setActiveBoxDrag({ ...grabbed, delta: { col: 0, row: 0 } })
             },
             onGrabMove(clientX: number, clientY: number) {
                 const held = boxDragRef.current
                 const cell = getGridCoordsFromClient(clientX, clientY)
-                if (held && cell) setBoxDrag({ ...held, delta: { col: cell.col - held.grab.col, row: cell.row - held.grab.row } })
+                if (held && cell) setActiveBoxDrag({ ...held, delta: { col: cell.col - held.grab.col, row: cell.row - held.grab.row } })
             },
             onGrabEnd(committed: boolean) {
                 setHoldPoint(null)
@@ -1099,7 +1131,7 @@ export const IsoGrid = memo(function IsoGrid(props: IsoGridProps) {
                 if (boxDragRef.current) finishBoxDragRef.current(committed)
             },
         }),
-        [placementActive, onConfirmPlacement, resolvePlacementAtClientPoint, getGridCoordsFromClient, getTileFromClient, getWorldCoords, onTileSelect, onContainerSelect, clampPan, beginGesture]
+        [placementActive, onConfirmPlacement, resolvePlacementAtClientPoint, getGridCoordsFromClient, getTileFromClient, getWorldCoords, onTileSelect, onContainerSelect, clampPan, beginGesture, setActiveBoxDrag]
     )
 
     useTouchGestures(containerRef, touchCallbacks, gestures)
