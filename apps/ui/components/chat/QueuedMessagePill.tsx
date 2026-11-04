@@ -35,7 +35,8 @@ export function QueuedMessagePill({ text, busy, pending, onSendNow, onDiscard }:
 
     return (
         <TooltipProvider>
-            <div className={cn('grid transition-[grid-template-rows] duration-300 ease-out', text !== null ? '-mb-px grid-rows-[1fr]' : 'grid-rows-[0fr]')}>
+            <div inert={text === null} aria-hidden={text === null || undefined}
+                className={cn('grid transition-[grid-template-rows] duration-300 ease-out', text !== null ? '-mb-px grid-rows-[1fr]' : 'grid-rows-[0fr]')}>
                 <div className="overflow-hidden">
                     <div className="relative mx-2 flex items-center gap-2 rounded-t-lg border-x border-t border-input bg-input/30 px-2 pt-1 pb-1.5">
                         <Stripes className="rounded-t-lg" />
@@ -52,13 +53,13 @@ export function QueuedMessagePill({ text, busy, pending, onSendNow, onDiscard }:
                             </span>
                         )}
                         <TooltipDisabledReason reason={waiting} className="relative shrink-0">
-                            <PromptInputButton className="relative" tooltip={waiting ? undefined : busy ? 'Send now, stops the current run' : 'Send now'} aria-label="Send queued message now" disabled={pending} onClick={onSendNow}>
+                            <PromptInputButton className="relative" tooltip={waiting ? undefined : busy ? 'Send now, stops the current run' : 'Send now'} aria-label="Send queued message now" disabled={text === null || pending} onClick={onSendNow}>
                                 {/* The composer's own send glyph: same action, so the same arrow. */}
                                 <CornerDownLeftIcon className="size-4 rotate-90" />
                             </PromptInputButton>
                         </TooltipDisabledReason>
                         <TooltipDisabledReason reason={waiting} className="relative shrink-0">
-                            <PromptInputButton className="relative" tooltip={waiting ? undefined : 'Remove'} aria-label="Remove queued message" disabled={pending} onClick={onDiscard}>
+                            <PromptInputButton className="relative" tooltip={waiting ? undefined : 'Remove'} aria-label="Remove queued message" disabled={text === null || pending} onClick={onDiscard}>
                                 <XIcon className="size-4" />
                             </PromptInputButton>
                         </TooltipDisabledReason>
