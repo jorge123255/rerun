@@ -1,11 +1,49 @@
-// @vitest-environment jsdom
-import { useState, type ReactNode } from 'react'
+// @vitest-environment happy-dom
+import { act, useState, type ReactNode } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import type { Table } from '@tanstack/react-table'
 import type { TableView } from '@rerun/contracts'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DataSource } from '@/lib/data/source'
 import type { DbRow } from './DataBrowserTable'
+
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+const mounts = new Map<Root, HTMLDivElement>()
+async function render(node: ReactNode) {
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container); mounts.set(root, container)
+    await act(async () => root.render(node))
+    return {
+        rerender: (next: ReactNode) => act(async () => root.render(next)),
+        unmount: async () => { await act(async () => root.unmount()); container.remove(); mounts.delete(root) },
+    }
+}
+async function cleanup() {
+    for (const [root, container] of mounts) { await act(async () => root.unmount()); container.remove() }
+    mounts.clear()
+}
+async function click(node: HTMLElement) { await act(async () => node.click()) }
+async function waitFor<T>(read: () => T): Promise<T> {
+    let error: unknown
+    for (let attempt = 0; attempt < 100; attempt++) {
+        try { return read() } catch (caught) { error = caught }
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    }
+    throw error
+}
+const textOf = (node: Element) => node.textContent?.trim()
+const queryByText = (value: string) => [...document.querySelectorAll<HTMLElement>('body *')].find(node => textOf(node) === value && ![...node.children].some(child => textOf(child) === value)) ?? null
+const screen = {
+    queryByText,
+    getByText: (value: string) => { const node = queryByText(value); expect(node, value).not.toBeNull(); return node! },
+    findByText: (value: string) => waitFor(() => screen.getByText(value)),
+    getByLabelText: (value: string) => { const node = [...document.querySelectorAll<HTMLElement>('[aria-label]')].find(node => node.getAttribute('aria-label') === value); expect(node, value).toBeDefined(); return node! },
+    getByRole: (role: string, { name }: { name: string }) => {
+        const nodes = role === 'button' ? document.querySelectorAll<HTMLElement>('button') : document.querySelectorAll<HTMLElement>('[role]')
+        const node = [...nodes].find(node => (role === 'button' || node.getAttribute('role') === role) && (node.getAttribute('aria-label') ?? textOf(node)) === name)
+        expect(node, `${role}: ${name}`).toBeDefined(); return node!
+    },
+}
 
 // Keep the actual browser and React Table state; only remove unrelated popover/layout shells.
 vi.mock('@/components/ui/dropdown-menu', () => ({
@@ -82,20 +120,20 @@ function fixture(owner = 'Owner') {
     return { source, rows, views }
 }
 const switchTable = async (name: 'Alpha' | 'Beta', body: string) => {
-    fireEvent.click(screen.getByRole('button', { name }))
+    await click(screen.getByRole('button', { name }))
     await screen.findByText(body)
 }
 
 beforeEach(() => { localStorage.clear() })
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+afterEach(async () => { await cleanup(); vi.clearAllMocks() })
 
 describe('DataBrowser mutation ownership', () => {
     it('does not apply a delayed alpha row to beta with the same rowid, and reads the successful save on return', async () => {
         const f = fixture(), pending = deferred<Awaited<ReturnType<DataSource['updateRow']>>>()
         vi.mocked(f.source.updateRow).mockImplementation(() => pending.promise)
-        render(<DataBrowser source={f.source} />)
+        await render(<DataBrowser source={f.source} />)
         await screen.findByText('Owner alpha')
-        fireEvent.click(screen.getByRole('button', { name: 'Save row' }))
+        await click(screen.getByRole('button', { name: 'Save row' }))
         await switchTable('Beta', 'Owner beta')
         await act(async () => { f.rows.alpha = { __rowid: 1, body: 'Saved alpha' }; pending.resolve({ success: true, row: f.rows.alpha }) })
         expect(screen.getByText('Owner beta')).toBeTruthy()
@@ -107,9 +145,9 @@ describe('DataBrowser mutation ownership', () => {
     it('refreshes alpha if it was revisited before the earlier save completed', async () => {
         const f = fixture(), pending = deferred<Awaited<ReturnType<DataSource['updateRow']>>>()
         vi.mocked(f.source.updateRow).mockImplementation(() => pending.promise)
-        render(<DataBrowser source={f.source} />)
+        await render(<DataBrowser source={f.source} />)
         await screen.findByText('Owner alpha')
-        fireEvent.click(screen.getByRole('button', { name: 'Save row' }))
+        await click(screen.getByRole('button', { name: 'Save row' }))
         await switchTable('Beta', 'Owner beta')
         await switchTable('Alpha', 'Owner alpha')
         await act(async () => { f.rows.alpha = { __rowid: 1, body: 'Saved alpha' }; pending.resolve({ success: true, row: f.rows.alpha }) })
@@ -120,19 +158,19 @@ describe('DataBrowser mutation ownership', () => {
     it('does not publish old-source rows or a late table listing after a database change', async () => {
         const a = fixture('First'), b = fixture('Second'), pending = deferred<Awaited<ReturnType<DataSource['updateRow']>>>()
         vi.mocked(a.source.updateRow).mockImplementation(() => pending.promise)
-        const mounted = render(<DataBrowser source={a.source} />)
+        const mounted = await render(<DataBrowser source={a.source} />)
         await screen.findByText('First alpha')
-        fireEvent.click(screen.getByRole('button', { name: 'Save row' }))
-        mounted.rerender(<DataBrowser source={b.source} />)
+        await click(screen.getByRole('button', { name: 'Save row' }))
+        await mounted.rerender(<DataBrowser source={b.source} />)
         await screen.findByText('Second alpha')
         await act(async () => { pending.resolve({ success: true, row: { __rowid: 1, body: 'First late' } }) })
         expect(screen.getByText('Second alpha')).toBeTruthy()
         expect(screen.queryByText('First late')).toBeNull()
-        mounted.unmount()
+        await mounted.unmount()
         const listing = deferred<Awaited<ReturnType<DataSource['listTables']>>>()
         vi.mocked(a.source.listTables).mockImplementation(() => listing.promise)
-        const next = render(<DataBrowser source={a.source} />)
-        next.rerender(<DataBrowser source={b.source} />)
+        const next = await render(<DataBrowser source={a.source} />)
+        await next.rerender(<DataBrowser source={b.source} />)
         await screen.findByText('Second alpha')
         await act(async () => { listing.resolve([{ name: 'obsolete', columns: [] }]) })
         expect(screen.getByText('Second alpha')).toBeTruthy()
@@ -146,9 +184,9 @@ describe('DataBrowser mutation ownership', () => {
         const deleting = deferred<Awaited<ReturnType<DataSource['deleteView']>>>()
         vi.mocked(f.source.saveView).mockImplementation(() => saving.promise)
         vi.mocked(f.source.deleteView).mockImplementation(() => deleting.promise)
-        render(<DataBrowser source={f.source} />)
+        await render(<DataBrowser source={f.source} />)
         await screen.findByText('Owner alpha')
-        fireEvent.click(screen.getByRole('button', { name: action === 'add' ? 'Add table view' : 'Delete alpha view' }))
+        await click(screen.getByRole('button', { name: action === 'add' ? 'Add table view' : 'Delete alpha view' }))
         await switchTable('Beta', 'Owner beta')
         expect(screen.getByLabelText('Active view').textContent).toBe('beta-view')
         // Return before the mutation resolves, so the old owner must be reloaded on success.
@@ -169,13 +207,13 @@ describe('DataBrowser mutation ownership', () => {
     it('does not let a cancelled settings save close the replacement editor or select its stale result', async () => {
         const f = fixture(), pending = deferred<Awaited<ReturnType<DataSource['saveView']>>>()
         vi.mocked(f.source.saveView).mockImplementation(() => pending.promise)
-        render(<DataBrowser source={f.source} />)
+        await render(<DataBrowser source={f.source} />)
         await screen.findByText('Owner alpha')
-        fireEvent.click(screen.getByRole('button', { name: 'Edit alpha view' }))
-        fireEvent.click(screen.getByRole('button', { name: 'Save settings' }))
-        fireEvent.click(screen.getByRole('button', { name: 'Cancel settings' }))
-        fireEvent.click(screen.getByRole('button', { name: 'All rows' }))
-        fireEvent.click(screen.getByRole('button', { name: 'Edit alpha view' }))
+        await click(screen.getByRole('button', { name: 'Edit alpha view' }))
+        await click(screen.getByRole('button', { name: 'Save settings' }))
+        await click(screen.getByRole('button', { name: 'Cancel settings' }))
+        await click(screen.getByRole('button', { name: 'All rows' }))
+        await click(screen.getByRole('button', { name: 'Edit alpha view' }))
         await act(async () => { pending.resolve({ success: true, view: view('alpha', 'Saved settings') }) })
         expect(screen.getByRole('dialog', { name: 'View settings' })).toBeTruthy()
         expect(screen.getByLabelText('Active view').textContent).toBe('__all')
@@ -185,12 +223,12 @@ describe('DataBrowser mutation ownership', () => {
     it('does not show a cancelled settings failure in the replacement editor', async () => {
         const f = fixture(), pending = deferred<Awaited<ReturnType<DataSource['saveView']>>>()
         vi.mocked(f.source.saveView).mockImplementation(() => pending.promise)
-        render(<DataBrowser source={f.source} />)
+        await render(<DataBrowser source={f.source} />)
         await screen.findByText('Owner alpha')
-        fireEvent.click(screen.getByRole('button', { name: 'Edit alpha view' }))
-        fireEvent.click(screen.getByRole('button', { name: 'Save settings' }))
-        fireEvent.click(screen.getByRole('button', { name: 'Cancel settings' }))
-        fireEvent.click(screen.getByRole('button', { name: 'Edit alpha view' }))
+        await click(screen.getByRole('button', { name: 'Edit alpha view' }))
+        await click(screen.getByRole('button', { name: 'Save settings' }))
+        await click(screen.getByRole('button', { name: 'Cancel settings' }))
+        await click(screen.getByRole('button', { name: 'Edit alpha view' }))
         await act(async () => { pending.resolve({ success: false, error: 'Old editor failure' }) })
         expect(screen.getByRole('dialog', { name: 'View settings' })).toBeTruthy()
         expect(screen.queryByText('Old editor failure')).toBeNull()
@@ -199,10 +237,10 @@ describe('DataBrowser mutation ownership', () => {
     it('does not publish a saved view from the previous database', async () => {
         const a = fixture('First'), b = fixture('Second'), pending = deferred<Awaited<ReturnType<DataSource['saveView']>>>()
         vi.mocked(a.source.saveView).mockImplementation(() => pending.promise)
-        const mounted = render(<DataBrowser source={a.source} />)
+        const mounted = await render(<DataBrowser source={a.source} />)
         await screen.findByText('First alpha')
-        fireEvent.click(screen.getByRole('button', { name: 'Add table view' }))
-        mounted.rerender(<DataBrowser source={b.source} />)
+        await click(screen.getByRole('button', { name: 'Add table view' }))
+        await mounted.rerender(<DataBrowser source={b.source} />)
         await screen.findByText('Second alpha')
         await act(async () => { pending.resolve({ success: true, view: { ...view('alpha', 'First private view'), id: 'first-private' } }) })
         expect(screen.queryByText('First private view')).toBeNull()
@@ -214,14 +252,14 @@ describe('DataBrowser mutation ownership', () => {
         const f = fixture(), pending = deferred<Awaited<ReturnType<DataSource['purgeTable']>>>()
         vi.mocked(f.source.purgeTable).mockImplementation(() => pending.promise)
         vi.mocked(f.source.deleteRows).mockImplementation(() => pending.promise)
-        render(<DataBrowser source={f.source} />)
+        await render(<DataBrowser source={f.source} />)
         await screen.findByText('Owner alpha')
         if (action === 'purge') {
-            fireEvent.click(screen.getByRole('button', { name: 'Purge table' }))
-            fireEvent.click(screen.getByRole('button', { name: 'Confirm purge' }))
+            await click(screen.getByRole('button', { name: 'Purge table' }))
+            await click(screen.getByRole('button', { name: 'Confirm purge' }))
         } else {
-            fireEvent.click(screen.getByRole('button', { name: 'Select row' }))
-            fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+            await click(screen.getByRole('button', { name: 'Select row' }))
+            await click(screen.getByRole('button', { name: 'Delete selected' }))
         }
         await switchTable('Beta', 'Owner beta')
         expect((screen.getByRole('button', { name: 'Purge table' }) as HTMLButtonElement).disabled).toBe(false)
@@ -234,12 +272,12 @@ describe('DataBrowser mutation ownership', () => {
         const a = fixture('First'), b = fixture('Second'), pending = deferred<Awaited<ReturnType<DataSource['dropTable']>>>()
         vi.mocked(a.source.dropTable).mockImplementation(() => pending.promise)
         const onTableDropped = vi.fn()
-        const mounted = render(<DataBrowser source={a.source} onTableDropped={onTableDropped} />)
+        const mounted = await render(<DataBrowser source={a.source} onTableDropped={onTableDropped} />)
         await screen.findByText('First alpha')
-        fireEvent.click(screen.getByRole('button', { name: 'Drop table' }))
-        fireEvent.click(screen.getByRole('button', { name: 'Confirm drop' }))
+        await click(screen.getByRole('button', { name: 'Drop table' }))
+        await click(screen.getByRole('button', { name: 'Confirm drop' }))
         if (destination === 'table') await switchTable('Beta', 'First beta')
-        else { mounted.rerender(<DataBrowser source={b.source} onTableDropped={onTableDropped} />); await screen.findByText('Second alpha') }
+        else { await mounted.rerender(<DataBrowser source={b.source} onTableDropped={onTableDropped} />); await screen.findByText('Second alpha') }
         const reads = vi.mocked(a.source.listTables).mock.calls.length
         await act(async () => {
             vi.mocked(a.source.listTables).mockResolvedValue([{ name: 'beta', columns: [{ name: 'body', type: 'TEXT', pk: false, notnull: false }] }])
