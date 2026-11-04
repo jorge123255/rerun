@@ -9,7 +9,7 @@ import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 
 const coworker = { id: 'archivist', name: 'Archivist', description: '', createdAt: '', updatedAt: '' }
 let root: Root
-const settings: Settings = { soul: 'Check facts.', verbosity: 'normal', soulEditable: true, workspaceReadEnabled: false, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true }
+const settings: Settings = { soul: 'Check facts.', verbosity: 'normal', soulEditable: true, suggestedReplies: true, workspaceReadEnabled: false, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true }
 const button = (text: string) => [...document.querySelectorAll('button')].find(node => node.textContent?.trim() === text)!
 const toggle = (id: string) => document.querySelector<HTMLButtonElement>(`[role="switch"]#${id}`)!
 const click = (element: HTMLElement) => act(async () => { element.click() })
@@ -89,4 +89,15 @@ test('disabled self-improvement shows learning as unavailable without changing t
     await click(toggle('coworker-memory-enabled'))
     await click(button('Save changes'))
     expect(patches).toEqual([{ memoryEnabled: false }])
+})
+
+
+test('suggested replies save independently and survive reopening the settings form', async () => {
+    const patches = await mount(settings)
+    await click(toggle('coworker-suggested-replies'))
+    await click(button('Save changes'))
+    expect(patches).toEqual([{ suggestedReplies: false }])
+    await click(button('Edit coworker'))
+    expect(toggle('coworker-suggested-replies').getAttribute('aria-checked')).toBe('false')
+    expect(toggle('coworker-memory-enabled').getAttribute('aria-checked')).toBe('true')
 })

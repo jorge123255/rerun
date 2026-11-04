@@ -1,7 +1,7 @@
 'use client'
 
-import { isToolUIPart, type UIMessage } from 'ai'
-import { desktopSourceParts, type MessageFeedbackRating } from '@rerun/contracts'
+import { getToolName, isToolUIPart, type UIMessage } from 'ai'
+import { desktopSourceParts, QUICK_REPLIES_TOOL, stripBridgePrefix, type MessageFeedbackRating } from '@rerun/contracts'
 import { useMemo, type ReactNode } from 'react'
 import type { Components, CustomRendererProps, PluginConfig } from 'streamdown'
 import { toast } from 'sonner'
@@ -11,6 +11,8 @@ import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
 import { DesktopToolStep } from './DesktopToolStep'
+import { DesktopQuickReplies } from './DesktopQuickReplies'
+import type { DesktopQuickReplySend } from '@/lib/desktop/quick-replies'
 import { Button } from '@/components/ui/button'
 import { CheckIcon, CopyIcon, RefreshCcwIcon, ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
@@ -108,13 +110,14 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId }: {
+export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies }: {
     message: UIMessage
     streaming: boolean
     onRegenerate?: (id: string) => void
     feedbackRating?: MessageFeedbackRating | null
     onRate?: (rating: MessageFeedbackRating) => void
     pendingRequestToolCallId?: string
+    quickReplies?: { show: boolean; disabled: boolean; pending: boolean; onSend: DesktopQuickReplySend }
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const blocks: ReactNode[] = []
@@ -130,7 +133,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
                 paragraph = ''
             }
         } else if (isToolUIPart(part)) {
-            if (part.toolCallId === pendingRequestToolCallId) continue
+            if (part.toolCallId === pendingRequestToolCallId || stripBridgePrefix(getToolName(part)) === QUICK_REPLIES_TOOL) continue
             blocks.push(<DesktopToolStep key={part.toolCallId} part={part} restored={message.id.startsWith('engine-')} />)
         } else if (part.type === 'reasoning' && isDesktopSummaryMetadata(part.providerMetadata) && (part.text || live)) {
             blocks.push(<ReasoningStep key={index} text={part.text} isStreaming={live} renderText={replyMarkdown} />)
@@ -139,6 +142,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
     return <>
         {blocks}
         <DesktopReplySources parts={message.parts} />
+        {quickReplies && <DesktopQuickReplies message={message} {...quickReplies} />}
         {text && !streaming && <div className="mt-2 flex flex-wrap items-center gap-1">
             <Button type="button" variant="ghost" size="sm" aria-label="Copy reply" onClick={() => copy(text)}>
                 {copied ? <CheckIcon aria-hidden className="size-3.5" /> : <CopyIcon aria-hidden className="size-3.5" />}

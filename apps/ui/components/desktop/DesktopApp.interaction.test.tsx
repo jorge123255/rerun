@@ -256,11 +256,12 @@ test('editing a coworker from the board preserves the chat and only saves change
     document.body.append(container)
     const root = createRoot(container)
     const agent = { id: 'reviewer', name: 'Reviewer', description: '', createdAt: '', updatedAt: '' }
-    let settings = { soul: 'Check the facts.', verbosity: 'normal', soulEditable: true, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true }
+    let settings = { soul: 'Check the facts.', verbosity: 'normal', soulEditable: true, suggestedReplies: true, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true }
     let reads = 0
     const writes: Record<string, string>[] = []
     mockDesktopFetch((url, init) => {
         if (url === settingsUrl) return Response.json(disconnected)
+        if (url === '/api/desktop/agents/reviewer/chat-history') return Response.json({ conversations: [{ id: 'review', agentId: agent.id, engineSessionId: 'engine-review', title: 'Earlier review', createdAt: '', updatedAt: '', source: 'dashboard', needsYou: false, pendingQuestion: null }], enrichment: 'ok', questions: 'ok' })
         if (url === '/api/desktop/agents/reviewer/sessions') return Response.json({ sessions: [{ id: 'review', agentId: agent.id, title: 'Earlier review', createdAt: '', updatedAt: '' }] })
         if (url === '/api/desktop/sessions/review/messages') return Response.json({ messages: [{ id: 'a', role: 'assistant', parts: [{ type: 'text', text: 'Existing answer.' }] }] })
         if (url === '/api/desktop/agents/reviewer/settings') {

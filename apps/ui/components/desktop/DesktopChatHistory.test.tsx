@@ -4,7 +4,8 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopApp, type DesktopBootstrap, type DesktopSessionView } from './DesktopApp'
-import { DesktopChatHistory, groupDesktopChats } from './DesktopChatHistory'
+import { DesktopChatHistory } from './DesktopChatHistory'
+import { groupDesktopChats, type DesktopChatHistoryConversation } from '@/lib/desktop/chat-history'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -13,6 +14,8 @@ const openTile = (name: string) => act(async () => {
     document.querySelector<HTMLElement>(`[aria-label="Open chat with ${name}"]`)!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
 })
 const session = (id: string, agentId: string, title: string): DesktopSessionView => ({ id, agentId, title, createdAt, updatedAt: '2026-11-01T12:00:00.000Z' })
+const conversation = (value: DesktopSessionView): DesktopChatHistoryConversation => ({ ...value, engineSessionId: `engine-${value.id}`, source: 'dashboard', needsYou: false, pendingQuestion: null })
+const historyOf = (values: DesktopSessionView[]) => ({ conversations: values.map(conversation), enrichment: 'ok', questions: 'ok' })
 const click = (label: string) => act(async () => {
     const button = [...document.querySelectorAll('button')].find(b => !b.closest('[hidden]') && (b.textContent?.trim() === label || b.getAttribute('aria-label') === label))
     expect(button, `button ${label}`).toBeTruthy()
@@ -28,14 +31,14 @@ const enter = (input: HTMLInputElement | HTMLTextAreaElement, value: string) => 
 
 afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals() })
 
-test('groups by creation date without presenting the unused update timestamp as activity', () => {
-    const older = session('old', 'a', 'Older')
-    const newer = { ...session('new', 'a', 'Newer'), createdAt: '2026-01-02T12:00:00.000Z' }
-    const invalid = { ...session('unknown', 'a', 'Unknown'), createdAt: '' }
+test('groups by engine-enriched activity date while leaving its input unchanged', () => {
+    const older = { ...conversation(session('old', 'a', 'Older')), updatedAt: createdAt }
+    const newer = { ...conversation(session('new', 'a', 'Newer')), updatedAt: '2026-01-02T12:00:00.000Z' }
+    const invalid = { ...conversation(session('unknown', 'a', 'Unknown')), updatedAt: '' }
     const input = [older, invalid, newer]
     const groups = groupDesktopChats(input, new Date('2026-01-02T23:00:00.000Z'))
     expect(groups.map(group => group.day)).toEqual(['Today', 'Yesterday', 'Date unavailable'])
-    expect(groups.flatMap(group => group.sessions.map(entry => entry.id))).toEqual(['new', 'old', 'unknown'])
+    expect(groups.flatMap(group => group.entries.map(entry => entry.id))).toEqual(['new', 'old', 'unknown'])
     expect(input).toEqual([older, invalid, newer])
 })
 
@@ -45,15 +48,18 @@ test('browses, searches, marks the active conversation, and disables switching w
     const root = createRoot(container)
     const select = vi.fn()
     const sessions = [session('a', 'agent', 'Apple research'), session('b', 'agent', 'Banana research')]
+    let listed = sessions
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(historyOf(listed))))
     const render = (busy: boolean, entries = sessions) => act(async () => {
-        root.render(<DesktopChatHistory sessions={entries} selectedId="a" busy={busy} onSelect={select} />)
+        listed = entries
+        root.render(<DesktopChatHistory agentId="agent" count={entries.length} selectedId="a" busy={busy} onSelect={select} />)
     })
     try {
         await render(false)
         await click('Conversation history (2)')
-        expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Dates show when chats were created.')
+        expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Dates show when chats were last updated.')
         expect(document.querySelector('[aria-current="true"]')?.textContent).toContain('Apple research')
-        expect(document.querySelector('time')?.getAttribute('datetime')).toBe(createdAt)
+        expect(document.querySelector('time')?.getAttribute('datetime')).toBe(sessions[0].updatedAt)
         await enter(document.querySelector<HTMLInputElement>('input[type="search"]')!, 'Banana')
         expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('Apple research')
         await enter(document.querySelector<HTMLInputElement>('input[type="search"]')!, 'Missing title')
@@ -66,11 +72,95 @@ test('browses, searches, marks the active conversation, and disables switching w
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Apple research')
         await render(true)
         expect(container.querySelector('button')?.disabled).toBe(true)
-        expect([...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].every(button => button.disabled)).toBe(true)
+        expect(document.querySelector<HTMLButtonElement>('[aria-current="true"]')?.disabled).toBe(true)
         await render(false, [])
         await click('Conversation history (0)')
         await click('Conversation history (0)')
-        expect(document.querySelector('[role="dialog"]')?.textContent).toContain('No saved conversations yet.')
+        expect(document.querySelector('[role="dialog"]')?.textContent).toContain('No conversation yet.')
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('combines the original filters with search and opens the local question or approval conversation', async () => {
+    const rows: DesktopChatHistoryConversation[] = [
+        { ...conversation(session('question', 'alice', 'Color question')), needsYou: true, pendingQuestion: 'Which color?' },
+        { ...conversation(session('approval', 'alice', 'Orange routine')), source: 'schedule', needsYou: true, pendingQuestion: 'Use the orange heading' },
+        { ...conversation(session('trigger', 'alice', 'Green routine')), source: 'trigger' },
+        conversation(session('ordinary', 'alice', 'Ordinary chat')),
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ conversations: rows, enrichment: 'ok', questions: 'ok' })))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container), select = vi.fn()
+    const dialog = () => document.querySelector('[role="dialog"]')!
+    const needs = () => [...dialog().querySelectorAll('button')].find(button => button.textContent?.startsWith('Needs you'))!
+    try {
+        await act(async () => { root.render(<DesktopChatHistory agentId="alice" count={4} selectedId="question" busy={false} onSelect={select} />) })
+        await click('Conversation history (4)')
+        await click('Automations')
+        expect(dialog().textContent).toContain('Orange routine')
+        expect(dialog().textContent).toContain('Green routine')
+        expect(dialog().textContent).not.toContain('Ordinary chat')
+        await enter(dialog().querySelector<HTMLInputElement>('input')!, 'Green')
+        expect(dialog().textContent).not.toContain('Orange routine')
+        await click(needs().textContent!)
+        expect(dialog().textContent).toContain('No matching conversations.')
+        await enter(dialog().querySelector<HTMLInputElement>('input')!, '')
+        expect(dialog().textContent).toContain('Which color?')
+        expect(dialog().textContent).toContain('Use the orange heading')
+        expect(dialog().textContent).not.toContain('Green routine')
+        const approvalRow = [...dialog().querySelectorAll('button')].find(button => button.textContent?.includes('Orange routine'))!
+        await click(approvalRow.textContent!)
+        expect(select).toHaveBeenCalledExactlyOnceWith('approval')
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('shows retry states instead of empty filters when classification or pending requests are unavailable', async () => {
+    const known = { ...conversation(session('saved', 'alice', 'Saved routine')), source: 'schedule' as const, needsYou: true, pendingQuestion: 'Approve the title' }
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+        reads++
+        return Response.json(reads === 1
+            ? { conversations: [{ ...known, source: null, needsYou: false, pendingQuestion: null }], enrichment: 'unavailable', questions: 'ok' }
+            : reads === 2 ? { conversations: [known], enrichment: 'ok', questions: 'unavailable' }
+                : { conversations: [known], enrichment: 'ok', questions: 'ok' })
+    }))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    const dialog = () => document.querySelector('[role="dialog"]')!
+    try {
+        await act(async () => { root.render(<DesktopChatHistory agentId="alice" count={1} selectedId="saved" busy={false} onSelect={() => {}} />) })
+        await click('Conversation history (1)')
+        expect(dialog().textContent).toContain('Saved routine')
+        await click('Automations')
+        expect(dialog().textContent).toContain('Conversation types could not be loaded.')
+        expect(dialog().textContent).not.toContain('No automated run yet.')
+        await click('Retry')
+        expect(dialog().textContent).toContain('Saved routine')
+        const needs = [...dialog().querySelectorAll('button')].find(button => button.textContent?.startsWith('Needs you'))!
+        await click(needs.textContent!)
+        expect(dialog().textContent).toContain('Pending requests could not be loaded.')
+        expect(dialog().textContent).not.toContain('Nothing waits on you.')
+        await click('Retry')
+        expect(dialog().textContent).not.toContain('Pending requests could not be loaded.')
+        expect(dialog().textContent).toContain('Approve the title')
+        expect(reads).toBe(3)
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('a delayed old coworker response cannot replace the newly selected coworker’s history', async () => {
+    let finishAlice!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('/alice/')
+        ? new Promise<Response>(resolve => { finishAlice = resolve })
+        : Response.json(historyOf([session('bob-chat', 'bob', 'Bob only')]))))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    const render = (agentId: string) => act(async () => { root.render(<DesktopChatHistory agentId={agentId} count={1} selectedId={null} busy={false} onSelect={() => {}} />) })
+    try {
+        await render('alice')
+        await click('Conversation history (1)')
+        await render('bob')
+        await act(async () => { finishAlice(Response.json(historyOf([session('alice-chat', 'alice', 'Alice only')]))); await new Promise(resolve => setTimeout(resolve, 20)) })
+        expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Bob only')
+        expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('Alice only')
     } finally { await act(async () => { root.unmount() }) }
 })
 
@@ -94,6 +184,8 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
             return Response.json({ tabs: layout })
         }
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })
+        const history = url.match(/^\/api\/desktop\/agents\/([^/]+)\/chat-history$/)
+        if (history) return Response.json(historyOf(saved.filter(s => s.agentId === history[1])))
         const list = url.match(/^\/api\/desktop\/agents\/([^/]+)\/sessions$/)
         if (list) return Response.json({ sessions: saved.filter(s => s.agentId === list[1]), tabs: layouts.get(list[1]) ?? null })
         const messages = url.match(/^\/api\/desktop\/sessions\/([^/]+)\/messages$/)
@@ -179,6 +271,7 @@ test('history read failure can be retried without turning it into an empty saved
         if (url.endsWith('/saved/messages')) return Response.json({ messages: [] })
         if (url.endsWith('/saved/stop')) return Response.json({ running: false })
         if (url.endsWith('/sessions')) return ++reads === 1 ? Response.json({ error: 'History unavailable' }, { status: 503 }) : Response.json({ sessions: [session('saved', 'alice', 'Recovered')] })
+        if (url.endsWith('/chat-history')) return Response.json(historyOf([session('saved', 'alice', 'Recovered')]))
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         throw new Error(`Unexpected request: ${url}`)
     }))

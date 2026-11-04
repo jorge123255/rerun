@@ -55,7 +55,7 @@ function ChatHistoryRow({ conversation, active, busy, onOpen }: {
 function NeedsFilterNote({ onRetry }: { onRetry: () => void }) {
     return (
         <div role="status" className="flex flex-col items-center gap-2 px-3 py-5 text-center text-xs text-muted-foreground">
-            <span>Pending questions could not be loaded.</span>
+            <span>Pending requests could not be loaded.</span>
             <Button type="button" size="sm" variant="outline" onClick={onRetry}>Retry</Button>
         </div>
     )

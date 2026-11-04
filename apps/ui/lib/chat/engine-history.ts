@@ -1,3 +1,4 @@
+import { desktopQuickReplyInputOf } from '@/lib/desktop/quick-replies'
 import type { EngineMessage } from '@/lib/engine/types'
 import { desktopSummaryMetadata, isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { attachmentDisplayName, parseAttachments } from '@/lib/chat/attachments-marker'
@@ -7,7 +8,7 @@ import { encodePeaks } from '@/lib/voice/peaks'
 import { parseVoiceMessage } from '@/lib/voice/marker'
 import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
 import { hitlKindOf } from '@/lib/chat-hitl'
-import { desktopApprovalInput, desktopQuestionInput, desktopSourceParts, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPath, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
+import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPath, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
 type TextPart = { type: 'text'; text: string }
 type ToolInvocationPart = {
@@ -158,6 +159,10 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
         ...message,
         parts: message.parts.map(part => {
             if (!('toolName' in part)) return part
+            if (stripBridgePrefix(part.toolName) === QUICK_REPLIES_TOOL) return {
+                type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                state: part.state, input: desktopQuickReplyInputOf(part) ?? {},
+            }
             const view = desktopToolPresentation(part.toolName, part.input, part.output)
             const toolName = stripBridgePrefix(part.toolName)
             const formInput = toolName === 'ask_user' ? desktopQuestionInput(part.input)

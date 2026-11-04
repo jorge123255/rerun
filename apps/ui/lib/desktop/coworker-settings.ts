@@ -6,6 +6,7 @@ export type DesktopCoworkerSettings = {
     verbosity: Verbosity
     soulEditable: boolean
     workspaceReadEnabled: boolean
+    suggestedReplies: boolean
     memoryEnabled: boolean
     autoMemory: boolean
     selfImprovementEnabled: boolean
@@ -15,6 +16,7 @@ export const coworkerSettingsPatch = z.strictObject({
     soul: z.string().trim().min(1).optional(),
     verbosity: verbositySchema.optional(),
     workspaceReadEnabled: z.boolean().optional(),
+    suggestedReplies: z.boolean().optional(),
     memoryEnabled: z.boolean().optional(),
     autoMemory: z.boolean().optional(),
 }).refine(change => Object.values(change).some(value => value !== undefined))

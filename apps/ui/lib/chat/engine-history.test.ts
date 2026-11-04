@@ -326,3 +326,12 @@ it('preserves bounded approval actions and details without forwarding unrelated 
     const [invalid] = publicDesktopHistory([{ id: 'engine-invalid-approval', role: 'assistant', parts: [{ ...part, input: { approvals: [{ action: '', detail: 'Do not substitute an actionable placeholder' }] } }] }])
     expect(invalid.parts[0]).toMatchObject({ input: {} })
 })
+it('keeps only validated suggested reply labels in saved desktop history', () => {
+    const part = { type: 'tool-suggest_replies' as const, toolName: 'mcp__rerun__suggest_replies', toolCallId: 'suggestions-1', state: 'input-available' as const,
+        input: { replies: ['Show details', '  Show details ', 'Compare options'], token: 'private-value' }, output: { secret: 'private-output' } }
+    const [result] = publicDesktopHistory([{ id: 'engine-suggestions', role: 'assistant', parts: [part] }])
+    expect(result.parts[0]).toEqual({ type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true,
+        state: 'input-available', input: { replies: ['Show details', 'Compare options'] } })
+    const [invalid] = publicDesktopHistory([{ id: 'engine-invalid', role: 'assistant', parts: [{ ...part, input: { replies: ['x'.repeat(41)] } }] }])
+    expect(invalid.parts[0]).toMatchObject({ input: {} })
+})

@@ -65,9 +65,10 @@ export function DesktopCoworkerSettings({ agent, disabled }: { agent: DesktopAge
 
     const instructionsChanged = settings?.soulEditable && draft?.soul.trim() !== settings.soul.trim()
     const lengthChanged = draft?.verbosity !== settings?.verbosity
+    const suggestionsChanged = draft?.suggestedReplies !== settings?.suggestedReplies
     const memoryChanged = draft?.memoryEnabled !== settings?.memoryEnabled
     const learningChanged = draft?.autoMemory !== settings?.autoMemory
-    const canSave = !!draft && (lengthChanged || instructionsChanged || memoryChanged || learningChanged) && (!instructionsChanged || !!draft.soul.trim())
+    const canSave = !!draft && (lengthChanged || instructionsChanged || memoryChanged || learningChanged || suggestionsChanged) && (!instructionsChanged || !!draft.soul.trim())
     const learningAvailable = !!draft?.memoryEnabled && draft.selfImprovementEnabled
 
     async function save(event: FormEvent) {
@@ -84,6 +85,7 @@ export function DesktopCoworkerSettings({ agent, disabled }: { agent: DesktopAge
                     ...(lengthChanged && { verbosity: draft.verbosity }),
                     ...(memoryChanged && { memoryEnabled: draft.memoryEnabled }),
                     ...(learningChanged && { autoMemory: draft.autoMemory }),
+                    ...(suggestionsChanged && { suggestedReplies: draft.suggestedReplies }),
                 }),
             })
             setOpen(false)
@@ -111,6 +113,9 @@ export function DesktopCoworkerSettings({ agent, disabled }: { agent: DesktopAge
                         <legend className="text-sm font-medium">Reply length</legend>
                         <Segmented options={replyLengths} value={draft.verbosity} onChange={verbosity => setDraft({ ...draft, verbosity })} />
                     </fieldset>
+                    <Field orientation="row" label="Suggested replies" htmlFor="coworker-suggested-replies" helperText="Offer useful follow-up messages below replies.">
+                        <Switch id="coworker-suggested-replies" checked={draft.suggestedReplies} onCheckedChange={suggestedReplies => setDraft({ ...draft, suggestedReplies })} />
+                    </Field>
                     <fieldset className="min-w-0 space-y-3">
                         <legend className="text-sm font-medium">Memory</legend>
                         <Field orientation="row" label="Use saved memories in chat" htmlFor="coworker-memory-enabled" helperText={recallHelp}>

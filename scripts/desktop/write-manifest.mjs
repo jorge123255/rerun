@@ -6,7 +6,7 @@ import { sourceStamp, requireStamp } from './provenance.mjs'
 
 await mkdir(resourcesDir, { recursive: true })
 const stamp = await sourceStamp()
-for (const directory of [join(desktopDir, 'dist', 'main'), join(resourcesDir, 'runtime', 'ui'), join(resourcesDir, 'runtime', 'engine')]) await requireStamp(directory, stamp)
+for (const directory of [join(desktopDir, 'dist', 'main'), join(resourcesDir, 'runtime', 'ui'), join(resourcesDir, 'runtime', 'engine'), join(resourcesDir, 'runtime', 'helpers')]) await requireStamp(directory, stamp)
 const engineRequire = createRequire(join(resourcesDir, 'runtime/engine/package.json'))
 const adapter = createRequire(engineRequire.resolve('ai-sdk-provider-codex-cli'))
 const cli = createRequire(adapter.resolve('@openai/codex/package.json'))
@@ -20,6 +20,7 @@ const manifest = {
     uiRoot: 'runtime/ui',
     engineEntry: 'runtime/engine/dist/cli/bin.js',
     uiHost: 'main/ui-host.mjs',
+    renameHelperPath: 'runtime/helpers/rerun-rename-entry',
 }
 const file = join(resourcesDir, 'runtime-manifest.json')
 await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`)

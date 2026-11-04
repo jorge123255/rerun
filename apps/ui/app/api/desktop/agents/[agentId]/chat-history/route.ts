@@ -1,16 +1,14 @@
 import { listSessions } from '@/lib/engine/client'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
-import { readDesktopChatHistory, type DesktopChatHistory, type DesktopChatHistoryDependencies } from '@/lib/desktop/server/chat-history'
+import { readDesktopChatHistory, type DesktopChatHistory } from '@/lib/desktop/server/chat-history'
+import { readDesktopApproval } from '@/lib/desktop/server/approvals'
+import { readDesktopQuestion } from '@/lib/desktop/server/questions'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { engineOf } from '@/lib/desktop/server/settings'
 import { findDesktopAgent, listDesktopSessions } from '@/lib/desktop/server/store'
 
 export const dynamic = 'force-dynamic'
-
-// C5 supplies the read-only pending-question resolver at integration. Until then no conversation is
-// marked as needing the user: an engine status or an assistant message is not a pending request.
-const pendingQuestionFor: DesktopChatHistoryDependencies['pendingQuestionFor'] = async () => null
 
 export async function GET(request: Request, { params }: { params: Promise<{ agentId: string }> }): Promise<Response> {
     return desktopRoute(request, async runtime => {
@@ -24,7 +22,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ agen
             history = await readDesktopChatHistory({
                 listLocalSessions: id => listDesktopSessions(db, id),
                 listEngineSessions: id => listSessions(engine, id),
-                pendingQuestionFor,
+                pendingQuestionFor: async id => {
+                    // These resolvers also account for accepted receipts. Read sequentially so
+                    // the adapter's four workers remain the bound on active engine reads.
+                    const { question } = await readDesktopQuestion(runtime, id)
+                    if (question) return question.questions[0].question.slice(0, 200)
+                    const { approval } = await readDesktopApproval(runtime, id)
+                    return approval ? approval.approvals[0].action.slice(0, 200) : null
+                },
             }, agent)
         } catch {
             throw new DesktopHttpError(503, 'Could not read conversations')

@@ -37,13 +37,12 @@ export function DesktopQuickReplies({ message, show = true, disabled = false, pe
         const settle = (accepted: boolean) => {
             if (activating.current !== activation) return
             activating.current = null
-            if (!accepted) setLatched(current => current === activation ? null : current)
+            if (accepted !== true) setLatched(current => current === activation ? null : current)
         }
         try {
             void Promise.resolve(onSend(text)).then(settle, () => settle(false))
-        } catch (error) {
+        } catch {
             settle(false)
-            throw error
         }
     }
 

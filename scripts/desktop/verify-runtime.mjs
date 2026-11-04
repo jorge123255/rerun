@@ -13,7 +13,7 @@ const manifest = JSON.parse(await readFile(join(resourcesDir, 'runtime-manifest.
 check(manifest.protocolVersion === 1 && typeof manifest.buildId === 'string' && manifest.buildId.length > 0, 'manifest protocolVersion/buildId')
 
 const resolved = {}
-for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath']) {
+for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'renameHelperPath']) {
     const path = resolve(resourcesDir, manifest[field] ?? '')
     resolved[field] = path
     const rel = relative(resourcesDir, path)

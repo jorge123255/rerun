@@ -21,6 +21,7 @@ async function fakeResources() {
     await writeFile(join(root, 'runtime', 'engine', 'dist', 'cli', 'bin.js'), 'fake')
     await writeFile(join(root, 'main', 'ui-host.mjs'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-codex'), 'fake')
+    await writeFile(join(root, 'runtime', 'rerun-rename-entry'), 'fake')
     await writeFile(join(root, 'runtime-manifest.json'), JSON.stringify({
         protocolVersion: 1,
         buildId: 'layout-test-desktop-0.1.0',
@@ -30,6 +31,7 @@ async function fakeResources() {
         engineEntry: 'runtime/engine/dist/cli/bin.js',
         uiHost: 'main/ui-host.mjs',
         codexPath: 'runtime/rerun-codex',
+        renameHelperPath: 'runtime/rerun-rename-entry',
     }))
     return root
 }
@@ -113,6 +115,7 @@ test('the supervisor launches the UI child through the real resource path, never
         assert(!uiSpawn.args[0].includes('app.asar'))
         assert(existsSync(uiSpawn.args[0]))
         assert.equal(uiSpawn.command, bundle.nodePath)
+        assert.equal(uiSpawn.env.RERUN_DESKTOP_RENAME_HELPER, bundle.renameHelperPath)
         assert.equal(spawned[1].args[0], bundle.engineEntry)
 
         await supervisor.stop()

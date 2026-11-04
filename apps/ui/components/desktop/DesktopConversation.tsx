@@ -35,6 +35,7 @@ import { desktopQuestionViewSchema, type DesktopPendingQuestion, type DesktopQue
 import { DesktopQuestionCard } from './DesktopQuestionCard'
 import { desktopApprovalViewSchema, type DesktopPendingApproval, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
 import { DesktopApprovalCard } from './DesktopApprovalCard'
+import { desktopQuickRepliesOf } from '@/lib/desktop/quick-replies'
 
 const approvalUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/approvals`
 async function approvalFor(sessionId: string, signal: AbortSignal) {
@@ -110,6 +111,11 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }, [])
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; error?: string }>({ id: null, question: null, approval: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
+    const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
+    const quickReplyIds = useRef(new Map<string, string>())
+    const quickReplyContext = useRef<{ scope: string; messageId?: string; canSend: boolean }>({ scope: draftKey, canSend: false })
+    const [quickReplyBusy, setQuickReplyBusy] = useState(false)
+    const [quickReplyRetry, setQuickReplyRetry] = useState<string | null>(null)
     const [attempt, setAttempt] = useState(0)
     // An engine run still generating for this conversation (e.g. after reopening it mid-reply).
     const [engineRunning, setEngineRunning] = useState<{ id: string | null; running: boolean; runId?: string | null; failedRunId?: string | null }>({ id: null, running: false })
@@ -135,11 +141,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         const alternate = regenerating.current
         const queued = pendingQueue.current
         const answer = responding.current
+        const quickReply = quickReplyRequest.current
         let response: Response
         try {
             if (tabUid) await pendingTabWrite(agent.id)
             response = await fetch(answer ? answer.url : url, answer ? { ...init, body: JSON.stringify(answer.payload) } : init)
-            if ((pending || alternate || queued || answer) && !response.ok) {
+            if ((pending || alternate || queued || answer || quickReply) && !response.ok) {
                 const body = await response.json().catch(() => null)
                 const fallback = alternate ? 'Could not regenerate this reply. Try again.' : 'Could not send this message. Try again.'
                 throw new Error(typeof body?.error === 'string' ? body.error : fallback)
@@ -149,6 +156,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     throw new Error('approvalId' in answer.payload ? 'Could not confirm your decisions. Retry the same decisions to check safely.' : 'Could not confirm your answer. Retry the same answer to check safely.')
                 }
                 answer.accepted = true
+            }
+            if (quickReply) {
+                if (response.headers.get('x-session-id') !== quickReply.sessionId || response.headers.get('x-run-id') !== quickReply.requestId) {
+                    throw new Error('Could not confirm this suggested reply. Retry the same reply to check safely.')
+                }
+                quickReply.accepted = true
             }
         } catch (cause) {
             if (answer) answer.error = cause instanceof Error ? cause : new Error('approvalId' in answer.payload ? 'Could not send your decisions. Try again.' : 'Could not send your answer. Try again.')
@@ -223,7 +236,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const pendingRequest = question || approval
     // Both request kinds must be known before a later turn or an automatic queue flush.
     const requestBlocked = !!sessionId && (question !== null || approval !== null)
-    const canRegenerate = !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
+    const canRegenerate = !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
     const historyError = history.id === sessionId ? history.error : undefined
@@ -305,7 +318,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     async function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if ((requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || inactive || !text || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current) return
+        if ((requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || !text || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current) return
         if (generating || (queue.queued && draftQueues.current.has(queue.queued.id))) {
             if (!queue.loaded || queue.error) return
             try {
@@ -332,7 +345,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }
 
     async function sendQueued(item: DesktopQueuedMessage) {
-        if (requestBlocked || responding.current || !sessionId || inactive || stopping || generating || !ready || pendingAttachment.current || regenerating.current || flushingQueue.current) return
+        if (quickReplyRequest.current || requestBlocked || responding.current || !sessionId || inactive || stopping || generating || !ready || pendingAttachment.current || regenerating.current || flushingQueue.current) return
         flushingQueue.current = item.id
         setSendQueuedId(null)
         setQueueNotice(undefined)
@@ -357,7 +370,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
 
     async function sendQueuedNow() {
         const item = queue.queued
-        if ((requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || !item || inactive || queue.pending || stopping || flushingQueue.current) return
+        if ((requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || !item || inactive || queue.pending || stopping || flushingQueue.current) return
         setQueueNotice(undefined)
         // Cancellation must finish before the flush effect starts another stream. The engine's
         // Stop operation cancels all current runs in this conversation, including a reopened one.
@@ -420,7 +433,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     })
 
     async function regenerateReply(messageId: string) {
-        if (!canRegenerate || !sessionId || !history.transcript || regenerating.current || pendingAttachment.current) return
+        if (quickReplyRequest.current || !canRegenerate || !sessionId || !history.transcript || regenerating.current || pendingAttachment.current) return
         if (tabUid && onStartFork && !onStartFork(tabUid)) return
         const key = JSON.stringify([sessionId, messageId])
         const requestId = regenerationIds.current.get(key) ?? crypto.randomUUID()
@@ -440,7 +453,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }
 
     async function answerQuestion(payload: DesktopQuestionAnswer) {
-        if (!active || !sessionId || !question || payload.questionId !== question.id || inactive || generating || stopping || !ready || responding.current || flushingQueue.current || regenerating.current) throw new Error('This question is not ready for an answer. Try again.')
+        if (quickReplyRequest.current || !active || !sessionId || !question || payload.questionId !== question.id || inactive || generating || stopping || !ready || responding.current || flushingQueue.current || regenerating.current) throw new Error('This question is not ready for an answer. Try again.')
         const answer = { sessionId, payload, url: questionUrl(sessionId), receiptHeader: 'x-question-id', receiptId: payload.questionId, accepted: false, error: undefined as Error | undefined }
         responding.current = answer
         setLiveSessionId(null)
@@ -458,7 +471,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }
 
     async function decideApproval(payload: DesktopApprovalAnswer) {
-        if (!active || !sessionId || !approval || payload.approvalId !== approval.id || inactive || generating || stopping || !ready || responding.current || flushingQueue.current || regenerating.current || pendingAttachment.current) throw new Error('This approval request is not ready. Try again.')
+        if (quickReplyRequest.current || !active || !sessionId || !approval || payload.approvalId !== approval.id || inactive || generating || stopping || !ready || responding.current || flushingQueue.current || regenerating.current || pendingAttachment.current) throw new Error('This approval request is not ready. Try again.')
         const answer = { sessionId, payload, url: approvalUrl(sessionId), receiptHeader: 'x-approval-id', receiptId: payload.approvalId, accepted: false, error: undefined as Error | undefined }
         responding.current = answer
         setLiveSessionId(null)
@@ -472,6 +485,47 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         } finally {
             if (responding.current === answer) responding.current = null
             setAttempt(n => n + 1)
+        }
+    }
+
+    const lastMessage = transcript.at(-1)
+    const quickReplyErrorIsRetryable = !!lastMessage && quickReplyRetry === lastMessage.id
+    const quickRepliesVisible = active && !!sessionId && !requestBlocked && !generating && !stopping
+        && !historyError && (!error || quickReplyErrorIsRetryable) && !stopError && !queue.error && !queueNotice
+    const canSendQuickReply = quickRepliesVisible && !inactive && ready && modelReady && queueStatusKnown
+        && queue.loaded && !queue.pending && !queue.queued && !queue.restoredId && !quickReplyBusy
+    quickReplyContext.current = { scope: draftKey, messageId: lastMessage?.id, canSend: canSendQuickReply }
+
+    async function sendQuickReply(messageId: string, text: string): Promise<boolean> {
+        const current = quickReplyContext.current
+        // A retained callback must still belong to the visible chat's last assistant message.
+        if (!sessionId || !history.transcript || current.scope !== draftKey || current.messageId !== messageId || !current.canSend
+            || !lastMessage || lastMessage.role !== 'assistant' || !desktopQuickRepliesOf(lastMessage).includes(text)
+            || quickReplyRequest.current || responding.current || pendingAttachment.current || regenerating.current || flushingQueue.current) return false
+        const key = JSON.stringify([agent.id, sessionId, messageId, text])
+        const requestId = quickReplyIds.current.get(key) ?? crypto.randomUUID()
+        quickReplyIds.current.set(key, requestId)
+        const request = { sessionId, requestId, accepted: false }
+        quickReplyRequest.current = request
+        setQuickReplyBusy(true)
+        setQuickReplyRetry(null)
+        setLiveSessionId(null)
+        setLiveRunId(null)
+        clearError?.()
+        try {
+            // Drop any optimistic user row left by a failed SDK transport before retrying.
+            // The verified snapshot belongs to this idle, currently selected suggestion.
+            setMessages(history.transcript)
+            // The suggestion is its own message: preserve the ordinary text and file draft.
+            await sendMessage({ text }, { body: { agentId: agent.id, sessionId, requestId } })
+            return request.accepted
+        } finally {
+            if (quickReplyRequest.current === request) {
+                quickReplyRequest.current = null
+                setQuickReplyBusy(false)
+                if (quickReplyContext.current.scope === draftKey) setQuickReplyRetry(request.accepted ? null : messageId)
+                setAttempt(n => n + 1)
+            }
         }
     }
 
@@ -552,6 +606,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                     {message.role === 'assistant'
                                         ? <DesktopAssistantReply message={message} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
                                             pendingRequestToolCallId={pendingRequest?.toolCallId}
+                                            quickReplies={{ show: messageIndex === transcript.length - 1 && quickRepliesVisible, disabled: !canSendQuickReply,
+                                                pending: quickReplyBusy || queue.pending, onSend: text => sendQuickReply(message.id, text) }}
                                             feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
                                             onRate={message.id.startsWith('engine-') ? rating => feedback.rate(message.id, rating) : undefined}
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />

@@ -20,6 +20,7 @@ type Preview = { path: string; content: string; truncated: boolean; hash?: strin
 function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (next: string) => void; onCancel: () => void }) {
     const [value, setValue] = useState(name)
     const ref = useRef<HTMLInputElement>(null)
+    const settled = useRef(false)
     useEffect(() => {
         const input = ref.current
         if (!input) return
@@ -28,6 +29,8 @@ function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (ne
         input.setSelectionRange(0, dot > 0 ? dot : name.length)
     }, [name])
     const submit = () => {
+        if (settled.current) return
+        settled.current = true
         const next = value.trim()
         if (next && next !== name) onSubmit(next)
         else onCancel()
@@ -37,7 +40,7 @@ function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (ne
         onKeyDown={event => {
             event.stopPropagation()
             if (event.key === 'Enter') { event.preventDefault(); submit() }
-            if (event.key === 'Escape') { event.preventDefault(); onCancel() }
+            if (event.key === 'Escape') { event.preventDefault(); settled.current = true; onCancel() }
         }}
         className="h-7 px-2 text-sm" />
 }
@@ -56,6 +59,13 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const [renaming, setRenaming] = useState<string | null>(null)
     const [menuName, setMenuName] = useState<string | null>(null)
     const [selected, setSelected] = useState<string | null>(null)
+    const [renamePending, setRenamePending] = useState(false)
+    const renamingNow = useRef(false)
+    useEffect(() => {
+        if (!renamePending) return
+        registerCloseGuard(() => {})
+        return () => registerCloseGuard(null)
+    }, [renamePending, registerCloseGuard])
 
     const list = useCallback(async (path: string, showHidden: boolean) => {
         const response = await fetch(`${base}?path=${encodeURIComponent(path)}${showHidden ? '&hidden=1' : ''}`, { cache: 'no-store' })
@@ -117,6 +127,9 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const selectedHere = selected && parentOf(selected) === currentPath ? selected.slice(selected.lastIndexOf('/') + 1) : null
     const retarget = (value: string, from: string, to: string, directory: boolean) => value === from || (directory && value.startsWith(`${from}/`)) ? `${to}${value.slice(from.length)}` : value
     const renameEntry = async (name: string, next: string) => {
+        if (renamingNow.current) return
+        renamingNow.current = true
+        setRenamePending(true)
         const from = childPath(name)
         const directory = entries.some(entry => entry.name === name && entry.type === 'dir')
         setNotice(null)
@@ -133,6 +146,9 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             await reload()
         } catch {
             setNotice({ ok: false, folder: currentPath, text: `Could not rename “${name}”.` })
+        } finally {
+            renamingNow.current = false
+            setRenamePending(false)
         }
     }
 
@@ -145,13 +161,13 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     if (preview && 'conflict' in preview) {
         return <FileEditor base={base} path={preview.path} content={preview.conflict.content} hash={preview.conflict.hash} identity={preview.conflict.identity} initialConflict={preview.conflict} registerCloseGuard={registerCloseGuard}
             onClose={() => setPreview(null)}
-            onSaved={(content, hash) => { setPreview({ path: preview.path, content, truncated: false, hash, identity: preview.conflict.identity }); setEditingPath(null) }} />
+            onSaved={(content, hash, identity) => { setPreview({ path: preview.path, content, truncated: false, hash, identity }); setEditingPath(null) }} />
     }
 
     if (preview && editing && 'hash' in preview && preview.hash) {
         return <FileEditor base={base} path={preview.path} content={preview.content} hash={preview.hash} identity={preview.identity} registerCloseGuard={registerCloseGuard}
             onClose={() => setEditingPath(null)}
-            onSaved={(content, hash) => { setPreview({ path: preview.path, content, truncated: false, hash, identity: preview.identity }); setEditingPath(null) }} />
+            onSaved={(content, hash, identity) => { setPreview({ path: preview.path, content, truncated: false, hash, identity }); setEditingPath(null) }} />
     }
 
     if (preview) {
@@ -175,31 +191,32 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
 
     return <div className="flex min-h-0 flex-1 flex-col">
         <nav aria-label="Folder" className="flex items-center gap-1 overflow-x-auto border-b pb-2 text-xs">
-            <button type="button" aria-label="Workspace home" onClick={goHome} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><HomeIcon className="size-3.5" /></button>
+            <button type="button" aria-label="Workspace home" disabled={renamePending} onClick={goHome} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><HomeIcon className="size-3.5" /></button>
             {breadcrumbs.map((crumb, i) => <span key={i} className="flex shrink-0 items-center gap-1">
                 <ChevronRightIcon className="size-3 text-muted-foreground" />
-                <button type="button" onClick={() => navigate(breadcrumbs.slice(0, i + 1).join('/'))} className="text-muted-foreground hover:text-foreground">{crumb}</button>
+                <button type="button" disabled={renamePending} onClick={() => navigate(breadcrumbs.slice(0, i + 1).join('/'))} className="text-muted-foreground hover:text-foreground">{crumb}</button>
             </span>)}
             <div className="flex-1" />
-            <button type="button" onClick={() => setShowHidden(v => !v)} title={showHidden ? 'Hide hidden files' : 'Show hidden files'} aria-label={showHidden ? 'Hide hidden files' : 'Show hidden files'}
+            <button type="button" disabled={renamePending} onClick={() => setShowHidden(v => !v)} title={showHidden ? 'Hide hidden files' : 'Show hidden files'} aria-label={showHidden ? 'Hide hidden files' : 'Show hidden files'}
                 className={`shrink-0 rounded p-1 hover:bg-accent/50 ${showHidden ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                 {showHidden ? <EyeIcon className="size-3.5" /> : <EyeOffIcon className="size-3.5" />}
             </button>
             <input ref={fileInput} type="file" accept=".txt,.md,text/plain,text/markdown" className="hidden" data-testid="import-file-input"
                 onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importFile(file) }} />
-            <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 px-2 text-xs" disabled={importing || loading || busy || !!error} onClick={() => fileInput.current?.click()}>
+            <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 px-2 text-xs" disabled={renamePending || importing || loading || busy || !!error} onClick={() => fileInput.current?.click()}>
                 {importing ? 'Importing…' : 'Import file'}
             </Button>
-            <button type="button" aria-label="Refresh files" onClick={reload} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><RefreshCwIcon className="size-3.5" /></button>
+            <button type="button" aria-label="Refresh files" disabled={renamePending} onClick={reload} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><RefreshCwIcon className="size-3.5" /></button>
         </nav>
+        {renamePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Renaming…</p>}
         {notice?.folder === currentPath && <p role={notice.ok ? 'status' : 'alert'} data-testid="import-notice" className={`pt-2 text-xs ${notice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{notice.text}</p>}
-        <div className={`min-h-0 flex-1 overflow-y-auto py-2 ${busy ? 'pointer-events-none opacity-60' : ''}`}>
+        <div className={`min-h-0 flex-1 overflow-y-auto py-2 ${busy || renamePending ? 'pointer-events-none opacity-60' : ''}`}>
             {loading ? <p role="status" className="text-sm text-muted-foreground">Loading files…</p>
                 : error ? <p role="alert" className="text-sm text-destructive">{error}</p>
                 : <ContextMenu onOpenChange={open => { if (!open) setMenuName(null) }}>
                     <ContextMenuTrigger asChild>
                         <ul className="space-y-0.5">
-                            {currentPath && <li><button type="button" onContextMenu={event => { event.preventDefault(); setMenuName(null) }} onClick={goUp} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50"><FolderIcon className="size-4 text-muted-foreground" />..</button></li>}
+                            {currentPath && <li><button type="button" onContextMenu={event => { event.preventDefault(); setMenuName(null) }} disabled={renamePending} onClick={goUp} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50"><FolderIcon className="size-4 text-muted-foreground" />..</button></li>}
                             {entries.map(entry => {
                                 const path = childPath(entry.name)
                                 const glyph = entry.type === 'dir' ? <FolderIcon className="size-4 shrink-0 text-muted-foreground" /> : <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
@@ -207,7 +224,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                                     {renaming === entry.name ? <div className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm">
                                         {glyph}
                                         <RenameField name={entry.name} onSubmit={next => { setRenaming(null); void renameEntry(entry.name, next) }} onCancel={() => setRenaming(null)} />
-                                    </div> : <button type="button" aria-selected={selectedHere === entry.name} onContextMenu={() => setMenuName(entry.name)}
+                                    </div> : <button type="button" disabled={renamePending} aria-selected={selectedHere === entry.name} onContextMenu={() => setMenuName(entry.name)}
                                         onClick={() => { setSelected(path); if (entry.type === 'dir') enter(entry.name); else setPreview({ path, loading: true }) }}
                                         className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50 ${selectedHere === entry.name ? 'bg-accent/60' : ''}`}>
                                         {glyph}
@@ -220,7 +237,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                     </ContextMenuTrigger>
                     {menuEntry && <ContextMenuContent>
                         <ContextMenuLabel className="max-w-56 truncate">{menuEntry.name}</ContextMenuLabel>
-                        <ContextMenuItem onSelect={() => setRenaming(menuEntry.name)}>
+                        <ContextMenuItem disabled={renamePending} onSelect={() => setRenaming(menuEntry.name)}>
                             <PencilIcon className="size-4" />
                             Rename
                         </ContextMenuItem>
@@ -231,14 +248,14 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
 }
 
 type FileConflict = { content: string; hash: string; identity?: string; stale?: boolean; recovery?: { draft: string; external: string } }
-type SaveResponse = { path: string; hash: string } | { error: string; conflict?: true; stale?: boolean; current?: { content: string; hash: string; identity?: string } | null; recovery?: { draft: string; external: string } }
+type SaveResponse = { path: string; hash: string; identity?: string } | { error: string; conflict?: true; stale?: boolean; current?: { content: string; hash: string; identity?: string } | null; recovery?: { draft: string; external: string } }
 
 /**
  * Original FileEditorDialog layout and editor, with desktop conflict details. Every close path
  * guards the draft, including the Files dialog behind this modal. Overwrite retries against the
  * version shown, so another change still produces a conflict.
  */
-function FileEditor({ base, path, content, hash, identity, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; identity?: string; initialConflict?: FileConflict | null; registerCloseGuard: (guard: CloseGuard | null) => void; onClose: () => void; onSaved: (content: string, hash: string) => void }) {
+function FileEditor({ base, path, content, hash, identity, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; identity?: string; initialConflict?: FileConflict | null; registerCloseGuard: (guard: CloseGuard | null) => void; onClose: () => void; onSaved: (content: string, hash: string, identity?: string) => void }) {
     const [opened, setOpened] = useState(() => ({ ...splitEol(content), hash, identity }))
     const [draft, setDraft] = useState(opened.text)
     const [saving, setSaving] = useState(false)
@@ -273,7 +290,7 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
         try {
             const response = await fetch(`${base}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, content: next, baseHash, ...(fileIdentity && { identity: fileIdentity }) }) })
             const body = await response.json().catch(() => ({ error: 'Could not save this file.' })) as SaveResponse
-            if (response.ok && 'hash' in body) { onSaved(next, body.hash); return }
+            if (response.ok && 'hash' in body) { onSaved(next, body.hash, body.identity); return }
             if ('conflict' in body && body.conflict && body.current) setConflict({ ...body.current, ...(body.recovery && { recovery: body.recovery }), ...(body.stale ? { stale: true } : {}) })
             else setError('error' in body && body.error ? `${body.error} Your edits are still here; try again.` : 'Could not save this file. Your edits are still here; try again.')
         } catch {
@@ -321,7 +338,7 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
             title={conflict.stale ? `${name} is no longer at this path` : `${name} changed on this Mac`}
             description={<span className="block space-y-2" data-testid="edit-conflict">
                 <span className="block">{conflict.stale
-                    ? 'This file was renamed. The draft was not written, and the file now at the old path was left as it is.'
+                    ? 'This file was moved or replaced. The draft was not written, and the file now at the old path was left as it is.'
                     : initialConflict
                     ? 'This file was recovered after an interrupted save. Your draft is in the named recovery copy; the external version is below.'
                     : 'Someone, or a coworker, wrote to this file after you opened it. Your edits are still in the editor. Overwrite replaces the version below with yours.'}</span>

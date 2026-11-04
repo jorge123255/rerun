@@ -54,7 +54,6 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     pending('hub', 'Service catalog', 'Discover and configure Rerun services.', 'Requires an authenticated Rerun hub.'),
     pending('paidData', 'Paid data', 'Search external datasets.', 'Requires a configured provider and billing controls.'),
     pending('cards', 'Result cards', 'Show files and structured results in chat.', 'Requires safe file or table previews in the chat panel.'),
-    pending('quickReplies', 'Quick replies', 'Suggest one-click responses below a coworker reply.', 'Requires quick reply buttons in the Mac chat panel.'),
     pending('suggestService', 'Suggest services', 'Suggest a connection for the user to configure.', 'Requires the service connection flow.'),
     pending('requestSecret', 'Request a secret', 'Request a credential through a secure field.', 'Requires a secure entry and credential storage flow.'),
     pending('self', 'Self-improvement', 'Update instructions or install tools.', 'Requires a review flow and isolated installation.'),

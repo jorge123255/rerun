@@ -55,10 +55,11 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
     // system prompts can be sealed, cannot be resolved by their engine IDs through this route.
     const engine = engineOf(runtime)
     try {
-        const { memoryEnabled, autoMemory, workspaceReadEnabled, ...textSettings } = patch ?? {}
+        const { memoryEnabled, autoMemory, suggestedReplies, workspaceReadEnabled, ...textSettings } = patch ?? {}
         const tools = {
             ...(workspaceReadEnabled !== undefined && { desktopToolGrants: { workspaceRead: workspaceReadEnabled } }),
             ...(memoryEnabled !== undefined && { memory: memoryEnabled }),
+            ...(suggestedReplies !== undefined && { quickReplies: suggestedReplies }),
         }
         const detail = patch ? await patchAgent(engine, agent.engineAgentId, {
             ...textSettings,
@@ -69,6 +70,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
             soul: detail.soul, verbosity: detail.config.verbosity, soulEditable: true,
             workspaceReadEnabled: desktopRerunGrantsOf(detail.config.tools).workspaceRead,
             memoryEnabled: detail.config.tools.memory,
+            suggestedReplies: detail.config.tools.quickReplies,
             autoMemory: detail.config.selfImprovement.autoMemory,
             selfImprovementEnabled: detail.config.selfImprovement.enabled,
         }

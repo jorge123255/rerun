@@ -43,6 +43,11 @@ test('same-title results open their exact older transcripts, preserve Chats sele
             { id: `${agentId}-newest`, agentId, title: 'Newer conversation', createdAt: '', updatedAt: '' },
             { id: `${agentId}-shared`, agentId, title: 'Shared plan', createdAt: '', updatedAt: '' },
         ] }) }
+        const historyAgent = url.match(/^\/api\/desktop\/agents\/([^/]+)\/chat-history$/)?.[1]
+        if (historyAgent) return Response.json({ conversations: [
+            { id: `${historyAgent}-newest`, agentId: historyAgent, engineSessionId: `${historyAgent}-engine-new`, title: 'Newer conversation', createdAt: '', updatedAt: '', source: 'dashboard', needsYou: false, pendingQuestion: null },
+            { id: `${historyAgent}-shared`, agentId: historyAgent, engineSessionId: `${historyAgent}-engine-shared`, title: 'Shared plan', createdAt: '', updatedAt: '', source: 'dashboard', needsYou: false, pendingQuestion: null },
+        ], enrichment: 'ok', questions: 'ok' })
         const messages = url.match(/^\/api\/desktop\/sessions\/([^/]+)\/messages$/)
         if (messages) { reads.push(messages[1]); return Response.json({ messages: [{ id: messages[1], role: 'assistant', parts: [{ type: 'text', text: `Reply for ${messages[1]}` }] }] }) }
         if (url.endsWith('/stop')) return Response.json({ running: false })

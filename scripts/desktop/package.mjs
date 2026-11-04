@@ -10,6 +10,7 @@ const scripts = file => join(repoRoot, 'scripts', 'desktop', file)
 const stage = async file => { console.log(`\n--- ${file}`); await run(process.execPath, [scripts(file), ...stageArguments()]) }
 
 await stage('stage-main.mjs')
+await stage('stage-file-helper.mjs')
 await stage('stage-node.mjs')
 await stage('stage-ui.mjs')
 await stage('stage-engine.mjs')

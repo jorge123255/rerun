@@ -1,5 +1,5 @@
 import 'server-only'
-import type { SessionSource } from '@rerun/contracts'
+import { sessionSourceSchema, type SessionSource } from '@rerun/contracts'
 import type { DesktopSession } from './store'
 
 export const PENDING_QUESTION_READ_CONCURRENCY = 4
@@ -84,7 +84,11 @@ export async function readDesktopChatHistory(dependencies: DesktopChatHistoryDep
     } catch {
         engineSessions = null
     }
-    const engineById = new Map((engineSessions ?? []).map(session => [session.id, session]))
+    // A missing/invalid association is unknown, including a successful but incomplete engine
+    // listing. It must not be classified as an ordinary chat or advertised as an empty filter.
+    const engineById = new Map((engineSessions ?? []).filter(session =>
+        sessionSourceSchema.safeParse(session.source).success && Number.isFinite(Date.parse(session.updatedAt))
+    ).map(session => [session.id, session]))
     const { labels, status: questions } = await readPendingQuestions(ownedSessions, dependencies.pendingQuestionFor)
 
     const conversations = ownedSessions.map(session => {
@@ -103,5 +107,5 @@ export async function readDesktopChatHistory(dependencies: DesktopChatHistoryDep
         } satisfies DesktopChatHistoryConversation
     }).sort((a, b) => updatedTime(b.updatedAt) - updatedTime(a.updatedAt) || updatedTime(b.createdAt) - updatedTime(a.createdAt) || a.id.localeCompare(b.id))
 
-    return { conversations, enrichment: engineSessions === null ? 'unavailable' : 'ok', questions }
+    return { conversations, enrichment: engineSessions === null || ownedSessions.some(session => !engineById.has(session.engineSessionId)) ? 'unavailable' : 'ok', questions }
 }
