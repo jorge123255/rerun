@@ -146,6 +146,9 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         if (!openPath || editingPath === openPath) return
         const shown = previewNow.current
         if (shown?.path === openPath && 'conflict' in shown) return
+        // Closing a saved/unchanged editor already has the accepted bytes. Only a
+        // changed listing identity needs another read before showing the preview.
+        if (shown?.path === openPath && 'content' in shown && shown.identity === textIdentity) return
         const controller = new AbortController()
         setPreview(existing => {
             if (!existing || existing.path !== openPath || 'conflict' in existing || 'loading' in existing) return existing
