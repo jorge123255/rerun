@@ -22,7 +22,9 @@ function setPages(pages: Record<string, unknown>) {
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-device-test-'))
     const cli = join(root, 'fixture-cli')
-    await writeFile(cli, `#!${process.execPath}
+    // App-bundled Node lives under "Rerun Desktop Preview.app". A shebang cannot
+    // represent an interpreter path containing spaces; inherit the test runner's PATH.
+    await writeFile(cli, `#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path'),state=path.join(process.cwd(),'fixture-auth')
 const send=m=>console.log(JSON.stringify(m))
 require('node:readline').createInterface({input:process.stdin}).on('line', line=>{

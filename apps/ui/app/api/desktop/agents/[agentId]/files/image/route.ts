@@ -11,7 +11,7 @@ export function GET(request: Request, { params }: Context) {
         const url = new URL(request.url)
         const identity = url.searchParams.get('identity')
         const image = await readCoworkerImage(runtime, agentId, url.searchParams.get('path') ?? '', identity === null ? undefined : identity)
-        return new Response(image.bytes, { headers: {
+        return new Response(new Uint8Array(image.bytes), { headers: {
             'content-type': image.contentType,
             'content-length': String(image.bytes.byteLength),
             'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(image.name)}`,

@@ -233,9 +233,9 @@ async function readImage(runtime: DesktopRuntime, agentId: string, path: string,
     if (listed.isSymbolicLink()) throw new DesktopHttpError(400, 'Choose an image file, not a symlink.')
     if (!listed.isFile()) throw new DesktopHttpError(400, 'That path is not a file.')
     if (listed.uid !== uid) throw new DesktopHttpError(403, 'This file belongs to another user. It was left unopened.')
-    if (listed.nlink !== 1n) throw new DesktopHttpError(400, 'This image has another link. It was left unopened.')
+    if (listed.nlink !== BigInt(1)) throw new DesktopHttpError(400, 'This image has another link. It was left unopened.')
     if (identity && `${listed.dev}:${listed.ino}` !== identity) throw new DesktopHttpError(409, `“${name}” was renamed or replaced. It was left unchanged.`)
-    if (listed.size === 0n) throw new DesktopHttpError(415, 'This image is damaged and can’t be previewed.')
+    if (listed.size === BigInt(0)) throw new DesktopHttpError(415, 'This image is damaged and can’t be previewed.')
     if (listed.size > BigInt(DESKTOP_IMAGE_MAX_BYTES)) throw new DesktopHttpError(413, 'Images can be up to 8 MB.')
     if (claimed(parentPath, name)) throw new DesktopHttpError(409, 'This file is being saved. Try the preview again once that finishes.')
     const canonical = await realpath(located).catch(() => null)
@@ -255,7 +255,7 @@ async function readImage(runtime: DesktopRuntime, agentId: string, path: string,
         })
         try {
             const opened = await handle.stat({ bigint: true })
-            if (!sameFile(opened, listed) || opened.isSymbolicLink() || !opened.isFile() || opened.uid !== uid || opened.nlink !== 1n) {
+            if (!sameFile(opened, listed) || opened.isSymbolicLink() || !opened.isFile() || opened.uid !== uid || opened.nlink !== BigInt(1)) {
                 throw new DesktopHttpError(409, `“${name}” was renamed or replaced. It was left unchanged.`)
             }
             const length = Number(opened.size)
