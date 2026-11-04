@@ -124,7 +124,10 @@ const switchTable = async (name: 'Alpha' | 'Beta', body: string) => {
     await screen.findByText(body)
 }
 
-beforeEach(() => { localStorage.clear() })
+beforeEach(() => {
+    const stored = new Map<string, string>()
+    Object.defineProperty(window, 'localStorage', { configurable: true, value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value) } })
+})
 afterEach(async () => { await cleanup(); vi.clearAllMocks() })
 
 describe('DataBrowser mutation ownership', () => {
@@ -245,7 +248,7 @@ describe('DataBrowser mutation ownership', () => {
         await act(async () => { pending.resolve({ success: true, view: { ...view('alpha', 'First private view'), id: 'first-private' } }) })
         expect(screen.queryByText('First private view')).toBeNull()
         expect(screen.getByLabelText('Active view').textContent).toBe('alpha-view')
-        expect(localStorage.getItem('rerun:data-view:Second:alpha')).toBeNull()
+        expect(window.localStorage.getItem('rerun:data-view:Second:alpha')).toBeNull()
     })
 
     it.each(['purge', 'delete'] as const)('ignores a %s failure from the previous table and resets the new table busy state', async action => {
