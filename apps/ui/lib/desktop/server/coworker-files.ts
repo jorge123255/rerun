@@ -9,6 +9,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { hashText, looksBinary } from '@/lib/files/editable'
 import { DesktopHttpError } from './auth'
 import { DESKTOP_AUDIO_MAX_BYTES, DesktopAudioBytesError, desktopAudioKind, inspectDesktopAudioBytes, type DesktopAudioContentType } from './audio-bytes'
+import { DESKTOP_VIDEO_MAX_BYTES, DesktopVideoBytesError, desktopVideoKind, inspectDesktopVideoBytes, type DesktopVideoContentType } from './video-bytes'
 import { DESKTOP_IMAGE_MAX_BYTES, DesktopImageBytesError, desktopRasterKind, inspectDesktopImageBytes, type DesktopImageContentType } from './image-bytes'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
@@ -392,6 +393,104 @@ async function readAudio(runtime: DesktopRuntime, agentId: string, path: string,
     } finally { await dir.close() }
 }
 
+export type CoworkerVideoPreview = { path: string; name: string; bytes: Uint8Array; contentType: DesktopVideoContentType; identity: string }
+
+const VIDEO_IDENTITY = /^\d{1,24}:\d{1,24}$/
+const MAX_VIDEO_DEPTH = 64
+// Darwin's O_NOFOLLOW_ANY already covers every component and must not be combined with O_NOFOLLOW.
+const VIDEO_FILE_OPEN = constants.O_RDONLY | constants.O_NONBLOCK | (process.platform === 'darwin' ? 0x20000000 : constants.O_NOFOLLOW)
+
+/** Read one existing MP4 for the Files preview. Text, image, audio, import, and attachment stay
+ * on their own paths. The response is the file's own bytes, never a filesystem URL. */
+export async function readCoworkerVideo(runtime: DesktopRuntime, agentId: string, path: string, identity?: string): Promise<CoworkerVideoPreview> {
+    return withCoworkerFiles(runtime, agentId, () => readVideo(runtime, agentId, path, identity))
+}
+
+async function readVideo(runtime: DesktopRuntime, agentId: string, path: string, identity?: string): Promise<CoworkerVideoPreview> {
+    if (identity !== undefined && !VIDEO_IDENTITY.test(identity)) throw new DesktopHttpError(400, 'Send the video to preview.')
+    const rel = lexicalRelative(path)
+    if (!rel) throw new DesktopHttpError(400, 'Choose a video file to preview.')
+    const parts = rel.split('/')
+    if (parts.length > MAX_VIDEO_DEPTH) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+    const name = parts[parts.length - 1]!
+    if (parts.some(part => !simpleName(part) || reservedName(part))) throw new DesktopHttpError(400, 'That name can’t be previewed.')
+    const kind = desktopVideoKind(name)
+    if (!kind) throw new DesktopHttpError(415, 'Only MP4 files can be previewed.')
+    const workspace = await coworkerWorkspace(runtime, agentId)
+    const root = await containedPath(workspace, '')
+    if (!root.root) throw new DesktopHttpError(404, `“${name}” was not found.`)
+    const uid = currentUid('Video preview is only available on this Mac.')
+    const parentRel = parts.slice(0, -1).join('/')
+    const parentPath = join(/* turbopackIgnore: true */ root.root, parentRel)
+    await assertVideoDirectories(root.root, parts.slice(0, -1), uid, name)
+    await recoverInterruptedCoworkerEdits(parentPath, root.root)
+    const parents = await assertVideoDirectories(root.root, parts.slice(0, -1), uid, name)
+    const located = join(/* turbopackIgnore: true */ parentPath, name)
+    const listed = await fileStat(located)
+    if (!listed) throw new DesktopHttpError(404, `“${name}” was not found.`)
+    if (listed.isSymbolicLink()) throw new DesktopHttpError(400, 'Choose a video file, not a symlink.')
+    if (!listed.isFile()) throw new DesktopHttpError(400, 'That path is not a file.')
+    if (listed.uid !== uid) throw new DesktopHttpError(403, 'This file belongs to another user. It was left unopened.')
+    if (listed.nlink !== BigInt(1)) throw new DesktopHttpError(400, 'This video has another link. It was left unopened.')
+    if (identity && `${listed.dev}:${listed.ino}` !== identity) throw new DesktopHttpError(409, `“${name}” was renamed or replaced. It was left unchanged.`)
+    if (listed.size === BigInt(0)) throw new DesktopHttpError(415, 'This video is damaged and can’t be previewed.')
+    if (listed.size > BigInt(DESKTOP_VIDEO_MAX_BYTES)) throw new DesktopHttpError(413, 'Video files can be up to 16 MB.')
+    if (claimed(parentPath, name)) throw new DesktopHttpError(409, 'This file is being saved. Try the preview again once that finishes.')
+    // This is a runtime coworker path. Tracing a dynamic realpath at build time
+    // otherwise sweeps the source tree into Next's standalone application.
+    const canonical = await realpath(/* turbopackIgnore: true */ located).catch(() => null)
+    if (canonical !== located || !inside(root.root, canonical)) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+    const dir = await openResolved(parentPath, true)
+    try {
+        const pinned = await pinnedDirectory(dir)
+        const openedParent = await dir.stat({ bigint: true })
+        if (!sameFile(openedParent, parents[parents.length - 1] ?? null) || openedParent.uid !== uid) {
+            throw new DesktopHttpError(400, 'That folder changed. The video was left unopened.')
+        }
+        const handle = await open(join(pinned, name), VIDEO_FILE_OPEN).catch(error => {
+            const code = (error as NodeJS.ErrnoException).code
+            if (code === 'ELOOP' || code === 'ENOTDIR') throw new DesktopHttpError(400, 'Choose a video file, not a symlink.')
+            if (code === 'ENOENT') throw new DesktopHttpError(409, `“${name}” was renamed or replaced. It was left unchanged.`)
+            throw error
+        })
+        try {
+            const opened = await handle.stat({ bigint: true })
+            if (!sameFile(opened, listed) || opened.isSymbolicLink() || !opened.isFile() || opened.uid !== uid || opened.nlink !== BigInt(1)) {
+                throw new DesktopHttpError(409, `“${name}” was renamed or replaced. It was left unchanged.`)
+            }
+            const length = Number(opened.size)
+            if (!Number.isSafeInteger(length) || length > DESKTOP_VIDEO_MAX_BYTES) throw new DesktopHttpError(413, 'Video files can be up to 16 MB.')
+            if (length < 1) throw new DesktopHttpError(409, `“${name}” was renamed or replaced. It was left unchanged.`)
+            const buffer = Buffer.alloc(length)
+            let got = 0
+            while (got < length) {
+                const read = await handle.read(buffer, got, length - got, got)
+                if (!read.bytesRead) break
+                got += read.bytesRead
+            }
+            const after = await handle.stat({ bigint: true })
+            const still = await fileStat(join(pinned, name))
+            if (got !== length || !sameFile(after, listed) || after.size !== opened.size || !sameFile(still, listed)) {
+                throw new DesktopHttpError(409, 'This video changed while it was being read.')
+            }
+            for (const parent of parents) {
+                const now = await fileStat(parent.path)
+                if (!now || now.isSymbolicLink() || !now.isDirectory() || !sameFile(now, parent) || now.uid !== uid) {
+                    throw new DesktopHttpError(400, 'That folder changed. The video was left unopened.')
+                }
+            }
+            let inspected: ReturnType<typeof inspectDesktopVideoBytes>
+            try { inspected = inspectDesktopVideoBytes(kind, buffer.subarray(0, got)) }
+            catch (error) {
+                if (error instanceof DesktopVideoBytesError && error.reason === 'mismatch') throw new DesktopHttpError(415, 'This file is not a supported video file.')
+                if (error instanceof DesktopVideoBytesError && error.reason === 'unsupported') throw new DesktopHttpError(415, 'This video format can’t be previewed.')
+                throw new DesktopHttpError(415, 'This video is damaged and can’t be previewed.')
+            }
+            return { path: rel, name, bytes: new Uint8Array(buffer.subarray(0, got)), contentType: inspected.contentType, identity: `${listed.dev}:${listed.ino}` }
+        } finally { await handle.close() }
+    } finally { await dir.close() }
+}
+
 function lexicalRelative(path: string): string {
     const rel = path.split('/').filter(part => part && part !== '.').join('/')
     if (isAbsolute(path) || path.includes('\0') || rel.split('/').includes('..')) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
@@ -434,6 +533,25 @@ async function assertAudioDirectories(root: string, directories: string[], uid: 
         const info = await fileStat(directory)
         if (!info) throw new DesktopHttpError(404, `“${fileName}” was not found.`)
         if (info.isSymbolicLink()) throw new DesktopHttpError(400, 'Choose an audio file, not a symlink.')
+        if (!info.isDirectory()) throw new DesktopHttpError(400, 'That path is not a folder.')
+        if (info.uid !== uid) throw new DesktopHttpError(403, 'This file belongs to another user. It was left unopened.')
+        parents.push({ path: directory, dev: info.dev, ino: info.ino })
+    }
+    return parents
+}
+
+async function assertVideoDirectories(root: string, directories: string[], uid: bigint, fileName: string): Promise<Array<FileIdentity & { path: string }>> {
+    const parents: Array<FileIdentity & { path: string }> = []
+    let directory = root
+    const rootInfo = await fileStat(directory)
+    if (!rootInfo?.isDirectory() || rootInfo.isSymbolicLink()) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+    if (rootInfo.uid !== uid) throw new DesktopHttpError(403, 'This file belongs to another user. It was left unopened.')
+    parents.push({ path: directory, dev: rootInfo.dev, ino: rootInfo.ino })
+    for (const part of directories) {
+        directory = join(/* turbopackIgnore: true */ directory, part)
+        const info = await fileStat(directory)
+        if (!info) throw new DesktopHttpError(404, `“${fileName}” was not found.`)
+        if (info.isSymbolicLink()) throw new DesktopHttpError(400, 'Choose a video file, not a symlink.')
         if (!info.isDirectory()) throw new DesktopHttpError(400, 'That path is not a folder.')
         if (info.uid !== uid) throw new DesktopHttpError(403, 'This file belongs to another user. It was left unopened.')
         parents.push({ path: directory, dev: info.dev, ino: info.ino })

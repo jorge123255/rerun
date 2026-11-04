@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, Trash2Icon, XIcon } from '@/lib/icons'
 import { DesktopFileAudioPreview, isDesktopAudioName } from './DesktopFileAudioPreview'
 import { DesktopFileImagePreview, isDesktopRasterName } from './DesktopFileImagePreview'
+import { DesktopFileVideoPreview, isDesktopVideoName } from './DesktopFileVideoPreview'
 import { applyEol, splitEol } from '@/lib/files/editable'
 import { Badge } from '@rerun/ui/primitives'
 import type { DesktopAgentView } from './DesktopApp'
@@ -54,13 +55,14 @@ async function errorOf(response: Response, fallback: string) {
     return typeof body?.error === 'string' ? body.error : fallback
 }
 
-/** Port of AgentPanelFiles: breadcrumb folder navigation, text, raster, and audio previews, and a single .txt/.md import, scoped to one coworker. */
+/** Port of AgentPanelFiles: breadcrumb folder navigation, text, raster, audio, and video previews, and a single .txt/.md import, scoped to one coworker. */
 function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; registerCloseGuard: (guard: CloseGuard | null) => void }) {
     const base = `/api/desktop/agents/${encodeURIComponent(agent.id)}/files`
     const [error, setError] = useState('')
     const [preview, setPreview] = useState<Preview | null>(null)
     const [image, setImage] = useState<{ path: string; name: string; identity?: string } | null>(null)
     const [audio, setAudio] = useState<{ path: string; name: string; identity?: string } | null>(null)
+    const [video, setVideo] = useState<{ path: string; name: string; identity?: string } | null>(null)
     const [renaming, setRenaming] = useState<string | null>(null)
     const [menuName, setMenuName] = useState<string | null>(null)
     const renameAfterMenu = useRef<string | null>(null)
@@ -88,6 +90,13 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     }, [base])
 
     const { currentPath, entries, loading, busy, showHidden, navigate, enter, goUp, goHome, setShowHidden, reload } = useFileNavigation<Entry>({ list })
+
+    useEffect(() => {
+        // Folder navigation is the Mac list's paging. Leave the player so its cleanup pauses and revokes.
+        if (!video) return
+        const folder = video.path.includes('/') ? video.path.slice(0, video.path.lastIndexOf('/')) : ''
+        if (folder !== currentPath) setVideo(null)
+    }, [currentPath, video])
 
     const openPath = preview?.path
     useEffect(() => {
@@ -222,6 +231,12 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         return <DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => setAudio(null)} />
     }
 
+    if (video) {
+        const params = new URLSearchParams({ path: video.path })
+        if (video.identity) params.set('identity', video.identity)
+        return <DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => setVideo(null)} />
+    }
+
     if (preview) {
         const name = preview.path.split('/').pop()
         const editable = 'hash' in preview && !!preview.hash
@@ -281,9 +296,10 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                                         onClick={() => {
                                             setSelected(path)
                                             if (entry.type === 'dir') enter(entry.name)
-                                            else if (isDesktopRasterName(entry.name)) { setAudio(null); setPreview(null); setEditingPath(null); setImage({ path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }) }
-                                            else if (isDesktopAudioName(entry.name)) { setImage(null); setPreview(null); setEditingPath(null); setAudio({ path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }) }
-                                            else { setImage(null); setAudio(null); setPreview({ path, loading: true }) }
+                                            else if (isDesktopRasterName(entry.name)) { setAudio(null); setVideo(null); setPreview(null); setEditingPath(null); setImage({ path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }) }
+                                            else if (isDesktopAudioName(entry.name)) { setImage(null); setVideo(null); setPreview(null); setEditingPath(null); setAudio({ path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }) }
+                                            else if (isDesktopVideoName(entry.name)) { setImage(null); setAudio(null); setPreview(null); setEditingPath(null); setVideo({ path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }) }
+                                            else { setImage(null); setAudio(null); setVideo(null); setPreview({ path, loading: true }) }
                                         }}
                                         className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50 ${selectedHere === entry.name ? 'bg-accent/60' : ''}`}>
                                         {glyph}
@@ -450,7 +466,7 @@ export function DesktopCoworkerFiles({ agent, dialogControl }: { agent: DesktopA
         }}>
             <DialogHeader>
                 <DialogTitle>Files</DialogTitle>
-                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file. PNG, JPEG, WebP, and GIF files already in the folder can be previewed. WAV and MP3 files already in the folder can be played.</DialogDescription>
+                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file. PNG, JPEG, WebP, and GIF files already in the folder can be previewed. WAV and MP3 files already in the folder can be played. MP4 files already in the folder can be played.</DialogDescription>
             </DialogHeader>
             <FilesPanel key={agent.id} agent={agent} registerCloseGuard={registerCloseGuard} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
