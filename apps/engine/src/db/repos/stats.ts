@@ -3,6 +3,7 @@ import type { SQLiteColumn, SQLiteTable } from 'drizzle-orm/sqlite-core'
 import type { StatsDataset, StatsGroupBy, StatsMetric, StatsPoint, StatsRunStatusFilter } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
 import { runs, runSteps, sessions, toolCalls } from '../schema.js'
+import { INTERRUPTED_RUN_ERROR } from './runs.js'
 
 type DatasetDef = {
     table: SQLiteTable
@@ -59,7 +60,11 @@ const DATASETS: Record<StatsDataset, DatasetDef> = {
             triggerSource: sql<string | null>`${runs.triggerSource}`,
         },
         extraConditions: {
-            avgDurationMs: isNotNull(runs.finishedAt),
+            avgDurationMs: and(
+                isNotNull(runs.finishedAt),
+                sql`julianday(${runs.finishedAt}) >= julianday(${runs.startedAt})`,
+                sql`coalesce(${runs.error}, '') <> ${INTERRUPTED_RUN_ERROR}`
+            )!,
         },
     },
     runSteps: {

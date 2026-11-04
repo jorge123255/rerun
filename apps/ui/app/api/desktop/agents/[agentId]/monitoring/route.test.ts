@@ -24,6 +24,9 @@ const defaults = (): Record<string, StatsPoint[]> => ({
     'recordedTokenRuns:none': [point(2, 2)],
     'cost:none': [point(500, 2)],
     'recordedCostRuns:none': [point(2, 2)],
+    'avgDurationMs:none': [point(3000, 2)],
+    'count:toolName': [point(4, 4, 'web_search'), point(1, 1, 'read_file')],
+    'errorCount:toolName': [point(1, 5, 'web_search')],
 })
 
 const request = (id: string, range?: string) => new Request(`http://127.0.0.1:3189/api/desktop/agents/${id}/monitoring${range ? `?range=${range}` : ''}`, { headers: { host: '127.0.0.1:3189', cookie: `rerun-desktop-session=${'r'.repeat(48)}` } })
@@ -61,7 +64,7 @@ afterEach(async () => {
 
 const statsCalls = () => requests.map(line => line.split(' ')[1].split('?')[1]).map(qs => `${new URLSearchParams(qs).get('metric')}:${new URLSearchParams(qs).get('groupBy')}`)
 
-test('maps the local coworker server-side and issues exactly eight runs stats reads for the range', async () => {
+test('maps the local coworker server-side and issues exactly eleven stats reads for the range', async () => {
     const response = await get(alice)
     expect(response.headers.get('cache-control')).toBe('no-store')
     const body = await response.json()
@@ -70,18 +73,25 @@ test('maps the local coworker server-side and issues exactly eight runs stats re
     expect(body.runs).toEqual(defaults()['count:none'])
     expect(body.totalTokens).toEqual(defaults()['totalTokens:none'])
     expect(body.cost).toEqual(defaults()['cost:none'])
+    expect(body.avgDuration).toEqual(defaults()['avgDurationMs:none'])
+    expect(body.toolCalls).toEqual(defaults()['count:toolName'])
+    expect(body.toolErrors).toEqual(defaults()['errorCount:toolName'])
     expect(requests.every(line => line.startsWith('GET /agents/engine-alice/stats?'))).toBe(true)
-    expect(requests.every(line => line.includes('dataset=runs') && line.includes('range=7d'))).toBe(true)
+    expect(requests.every(line => (line.includes('dataset=runs') || line.includes('dataset=toolCalls')) && line.includes('range=7d'))).toBe(true)
     expect(statsCalls().sort()).toEqual([
-        'count:model', 'count:none', 'count:status', 'cost:none', 'errorRate:none', 'recordedCostRuns:none', 'recordedTokenRuns:none', 'totalTokens:none',
+        'count:model', 'count:none', 'count:status', 'count:toolName', 'cost:none', 'errorCount:toolName', 'errorRate:none',
+        'recordedCostRuns:none', 'recordedTokenRuns:none', 'totalTokens:none', 'avgDurationMs:none',
     ].sort())
+    const toolCallsReads = requests.filter(line => line.includes('dataset=toolCalls'))
+    expect(toolCallsReads).toHaveLength(2)
+    expect(toolCallsReads.every(line => line.startsWith('GET /agents/engine-alice/stats?') && (line.includes('metric=count') || line.includes('metric=errorCount')) && line.includes('groupBy=toolName'))).toBe(true)
     expect(requests.some(line => line.includes('/usage') || line.includes('/chat'))).toBe(false)
 })
 
 test('passes the requested 90d range through to every engine read', async () => {
     const response = await get(alice, request(alice, '90d'))
     expect((await response.json()).range).toBe('90d')
-    expect(requests).toHaveLength(8)
+    expect(requests).toHaveLength(11)
     expect(requests.every(line => line.includes('range=90d'))).toBe(true)
 })
 

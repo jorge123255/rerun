@@ -10,7 +10,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import { desktopMonitoringSchema, MONITORING_RANGES, type DesktopMonitoring, type MonitoringRange } from '@/lib/desktop/monitoring'
-import { ActivityIcon, BarChart3Icon, CircleDollarSignIcon, CoinsIcon, CpuIcon, GaugeIcon, HashIcon, Maximize2Icon } from '@/lib/icons'
+import { ActivityIcon, AlertTriangleIcon, BarChart3Icon, CircleDollarSignIcon, CoinsIcon, CpuIcon, GaugeIcon, HashIcon, Maximize2Icon, TimerIcon, WrenchIcon } from '@/lib/icons'
 import type { DesktopAgentView } from './DesktopApp'
 
 const POLL_MS = 30000
@@ -63,7 +63,7 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
 
     const data = loaded?.key === key ? loaded.data : null
     const failed = failedKey === key
-    const isEmpty = !!data && data.runs.length === 0
+    const isEmpty = !!data && data.runs.length === 0 && data.toolCalls.length === 0
 
     const kpiSpecs: (ChartSpec & { points: StatsPoint[] | null })[] = [
         { key: 'kpiRuns', title: 'Runs', icon: HashIcon, metric: 'count', groupBy: 'none', chartType: 'stat', points: data?.runs ?? null },
@@ -71,9 +71,18 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
         ...(data?.totalTokens ? [{ key: 'kpiTokens', title: 'Total tokens', icon: CoinsIcon, metric: 'totalTokens' as StatsMetric, groupBy: 'none' as StatsGroupBy, chartType: 'stat' as StatsChartType, points: data.totalTokens }] : []),
         { key: 'kpiErrorRate', title: 'Error rate', icon: GaugeIcon, metric: 'errorRate', groupBy: 'none', chartType: 'stat', points: data?.errorRate ?? null },
     ]
+    const chartMessage = (text: string) => <div className="flex h-full items-center justify-center text-center text-[12px] text-muted-foreground">{text}</div>
+    const toolChart = (metric: StatsMetric, points: StatsPoint[] | null) =>
+        points !== null && points.length === 0
+            ? chartMessage('No recorded tool calls in this period.')
+            : <StatsChart dataset="toolCalls" metric={metric} groupBy="toolName" chartType="bar" points={points} />
     const chartPanels: { key: string; title: string; icon: ComponentType<{ className?: string }>; node: ReactNode }[] = [
         { key: 'runsOverTime', title: 'Runs over time', icon: ActivityIcon, node: <StatsChart dataset="runs" metric="count" groupBy="status" chartType="bar" points={data?.runsByStatus ?? null} /> },
+        { key: 'costOverTime', title: 'Cost over time', icon: CircleDollarSignIcon, node: data?.cost === null ? chartMessage('Cost was not recorded for every run in this period.') : <StatsChart dataset="runs" metric="cost" groupBy="none" chartType="area" points={data?.cost ?? null} /> },
+        { key: 'avgDuration', title: 'Avg run duration', icon: TimerIcon, node: <StatsChart dataset="runs" metric="avgDurationMs" groupBy="none" chartType="line" points={data?.avgDuration ?? null} /> },
         { key: 'runsByModel', title: 'Runs by model', icon: CpuIcon, node: <StatsChart dataset="runs" metric="count" groupBy="model" chartType="donut" points={data?.runsByModel ?? null} /> },
+        { key: 'topTools', title: 'Top tool calls', icon: WrenchIcon, node: toolChart('count', data?.toolCalls ?? null) },
+        { key: 'toolErrors', title: 'Tool errors', icon: AlertTriangleIcon, node: toolChart('errorCount', data?.toolErrors ?? null) },
     ]
     const expanded = chartPanels.find(panel => panel.key === expandedKey) ?? null
 
@@ -167,7 +176,7 @@ function MonitoringSkeleton() {
                 ))}
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                {Array.from({ length: 2 }).map((_, i) => (
+                {Array.from({ length: 6 }).map((_, i) => (
                     <Skeleton key={i} className="h-56" />
                 ))}
             </div>

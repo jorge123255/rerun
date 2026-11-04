@@ -19,6 +19,9 @@ const body = (agentId: string, range: MonitoringRange, over: Partial<DesktopMoni
     runsByModel: [point(8, 8, 'local-test')],
     totalTokens: [point(320, 8)],
     cost: [point(2_500_000, 8)],
+    avgDuration: [point(3000, 8)],
+    toolCalls: [point(4, 4, 'web_search'), point(1, 1, 'read_file')],
+    toolErrors: [point(1, 5, 'web_search')],
     ...over,
 })
 
@@ -58,7 +61,11 @@ test('shows the skeleton then the monitoring cards for the coworker', async () =
         expect(dialogText()).toContain('Total tokens')
         expect(dialogText()).toContain('320')
         expect(dialogText()).toContain('Runs over time')
+        expect(dialogText()).toContain('Cost over time')
+        expect(dialogText()).toContain('Avg run duration')
         expect(dialogText()).toContain('Runs by model')
+        expect(dialogText()).toContain('Top tool calls')
+        expect(dialogText()).toContain('Tool errors')
         expect(fetcher.mock.calls.every(([url, init]) => String(url).includes('/monitoring?') && !init?.method)).toBe(true)
     } finally { await act(async () => { root.unmount() }) }
 })
@@ -84,20 +91,22 @@ test('weights both halves of the error-rate trend by the number of runs', async 
 })
 
 test('names the empty period and hides cost and token cards when not recorded', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(body('alice', '7d', { runs: [], errorRate: [], runsByStatus: [], runsByModel: [], totalTokens: null, cost: null }))))
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(body('alice', '7d', { runs: [], errorRate: [], runsByStatus: [], runsByModel: [], totalTokens: null, cost: null, avgDuration: [], toolCalls: [], toolErrors: [] }))))
     const { root } = mount()
     try {
         await act(async () => { root.render(<DesktopCoworkerMonitoring agent={alice} />) })
         await click('Monitoring')
         expect(dialogText()).toContain('No runs in the last 7 days')
-        vi.stubGlobal('fetch', vi.fn(async () => Response.json(body('alice', '24h', { runs: [], errorRate: [], runsByStatus: [], runsByModel: [], totalTokens: null, cost: null }))))
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json(body('alice', '24h', { runs: [], errorRate: [], runsByStatus: [], runsByModel: [], totalTokens: null, cost: null, avgDuration: [], toolCalls: [], toolErrors: [] }))))
         await click('24h')
         expect(dialogText()).toContain('No runs in the last 24 hours')
-        vi.stubGlobal('fetch', vi.fn(async () => Response.json(body('alice', '30d', { totalTokens: null, cost: null }))))
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json(body('alice', '30d', { totalTokens: null, cost: null, toolCalls: [], toolErrors: [] }))))
         await click('30d')
         expect(dialogText()).toContain('Runs')
         expect(dialogText()).not.toContain('Total cost')
         expect(dialogText()).not.toContain('Total tokens')
+        expect(dialogText()).toContain('Cost was not recorded for every run in this period.')
+        expect(dialogText()).toContain('No recorded tool calls in this period.')
     } finally { await act(async () => { root.unmount() }) }
 })
 

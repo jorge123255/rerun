@@ -8,6 +8,7 @@ process.env.RERUN_API_KEY = ''
 const { beforeAll, describe, expect, it } = await import('vitest')
 const { getSystemDb } = await import('../systemDb.js')
 const { aggregateStats } = await import('./stats.js')
+const { INTERRUPTED_RUN_ERROR } = await import('./runs.js')
 import type { StatsRepoQuery } from './stats.js'
 import type { StatsPoint } from '@rerun/contracts'
 
@@ -122,6 +123,20 @@ describe('aggregateStats on runs', () => {
         ])
         expect(Number(points[0].value)).toBeCloseTo(3000, 0)
         expect(Number(points[1].value)).toBeCloseTo(6000, 0)
+    })
+
+    it('excludes restarted and clock-skewed runs, whose finished_at is not a measurement', async () => {
+        const owner = 'durations'
+        const { client } = await getSystemDb(owner)
+        await client.executeMultiple(`
+            INSERT INTO runs (id, agent_id, session_id, status, started_at, finished_at, error) VALUES
+                ('measured', 'durations', 's', 'done', '2026-09-01T10:00:00.000Z', '2026-09-01T10:00:02.000Z', NULL),
+                ('restarted', 'durations', 's', 'error', '2026-09-01T11:00:00.000Z', '2026-09-01T12:00:00.000Z', '${INTERRUPTED_RUN_ERROR}'),
+                ('skewed', 'durations', 's', 'done', '2026-09-01T13:00:00.000Z', '2026-09-01T12:00:00.000Z', NULL);
+        `)
+        const points = await aggregateStats(owner, query({ dataset: 'runs', metric: 'avgDurationMs' }))
+        expect(points.map(point => [point.bucket, point.count])).toEqual([['2026-09-01', 1]])
+        expect(Number(points[0].value)).toBeCloseTo(2000, 0)
     })
 
     it('buckets by hour', async () => {

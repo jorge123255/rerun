@@ -1,19 +1,22 @@
 import 'server-only'
-import type { StatsGroupBy, StatsMetric, StatsPoint } from '@rerun/contracts'
+import type { StatsDataset, StatsGroupBy, StatsMetric, StatsPoint } from '@rerun/contracts'
 import { getAgentStats } from '@/lib/engine/client'
 import type { EngineConnection } from '@/lib/engine/types'
 import { desktopMonitoringSchema, type DesktopMonitoring, type MonitoringRange } from '../monitoring'
 import type { DesktopAgent } from './store'
 
-const QUERIES: { key: 'runs' | 'errorRate' | 'runsByStatus' | 'runsByModel' | 'totalTokens' | 'recordedTokenRuns' | 'cost' | 'recordedCostRuns'; metric: StatsMetric; groupBy: StatsGroupBy }[] = [
-    { key: 'runs', metric: 'count', groupBy: 'none' },
-    { key: 'errorRate', metric: 'errorRate', groupBy: 'none' },
-    { key: 'runsByStatus', metric: 'count', groupBy: 'status' },
-    { key: 'runsByModel', metric: 'count', groupBy: 'model' },
-    { key: 'totalTokens', metric: 'totalTokens', groupBy: 'none' },
-    { key: 'recordedTokenRuns', metric: 'recordedTokenRuns', groupBy: 'none' },
-    { key: 'cost', metric: 'cost', groupBy: 'none' },
-    { key: 'recordedCostRuns', metric: 'recordedCostRuns', groupBy: 'none' },
+const QUERIES: { key: 'runs' | 'errorRate' | 'runsByStatus' | 'runsByModel' | 'totalTokens' | 'recordedTokenRuns' | 'cost' | 'recordedCostRuns' | 'avgDuration' | 'toolCalls' | 'toolErrors'; dataset: StatsDataset; metric: StatsMetric; groupBy: StatsGroupBy }[] = [
+    { key: 'runs', dataset: 'runs', metric: 'count', groupBy: 'none' },
+    { key: 'errorRate', dataset: 'runs', metric: 'errorRate', groupBy: 'none' },
+    { key: 'runsByStatus', dataset: 'runs', metric: 'count', groupBy: 'status' },
+    { key: 'runsByModel', dataset: 'runs', metric: 'count', groupBy: 'model' },
+    { key: 'totalTokens', dataset: 'runs', metric: 'totalTokens', groupBy: 'none' },
+    { key: 'recordedTokenRuns', dataset: 'runs', metric: 'recordedTokenRuns', groupBy: 'none' },
+    { key: 'cost', dataset: 'runs', metric: 'cost', groupBy: 'none' },
+    { key: 'recordedCostRuns', dataset: 'runs', metric: 'recordedCostRuns', groupBy: 'none' },
+    { key: 'avgDuration', dataset: 'runs', metric: 'avgDurationMs', groupBy: 'none' },
+    { key: 'toolCalls', dataset: 'toolCalls', metric: 'count', groupBy: 'toolName' },
+    { key: 'toolErrors', dataset: 'toolCalls', metric: 'errorCount', groupBy: 'toolName' },
 ]
 
 // The engine returns one point per bucket in chronological order. While a coworker is
@@ -30,7 +33,7 @@ function measuredTotal(runs: StatsPoint[], values: StatsPoint[], coverage: Stats
 
 export async function readDesktopMonitoring(engine: EngineConnection, agent: DesktopAgent, range: MonitoringRange): Promise<DesktopMonitoring> {
     const results = await Promise.all(
-        QUERIES.map(query => getAgentStats(engine, agent.engineAgentId, { dataset: 'runs', metric: query.metric, groupBy: query.groupBy, range }))
+        QUERIES.map(query => getAgentStats(engine, agent.engineAgentId, { dataset: query.dataset, metric: query.metric, groupBy: query.groupBy, range }))
     )
     const stats = Object.fromEntries(QUERIES.map((query, i) => [query.key, results[i]])) as Record<(typeof QUERIES)[number]['key'], StatsPoint[]>
     return desktopMonitoringSchema.parse({
@@ -42,5 +45,8 @@ export async function readDesktopMonitoring(engine: EngineConnection, agent: Des
         runsByModel: stats.runsByModel,
         totalTokens: measuredTotal(stats.runs, stats.totalTokens, stats.recordedTokenRuns),
         cost: measuredTotal(stats.runs, stats.cost, stats.recordedCostRuns),
+        avgDuration: stats.avgDuration,
+        toolCalls: stats.toolCalls,
+        toolErrors: stats.toolErrors,
     })
 }

@@ -128,6 +128,7 @@ export async function cancelRun(agentId: string, id: string): Promise<void> {
 }
 
 export type InterruptedRun = { id: string; sessionId: string; triggerSource: string | null; triggerSlug: string | null; startedAt: string }
+export const INTERRUPTED_RUN_ERROR = 'interrupted: engine restarted'
 
 // Returns the rows it repaired rather than a count: a run interrupted mid-flight also left a
 // conversation stuck on the hub, and only these ids can tell it the run is over.
@@ -138,6 +139,6 @@ export async function failInterruptedRuns(agentId: string): Promise<InterruptedR
         .from(runs)
         .where(eq(runs.status, 'running'))
     if (stale.length === 0) return []
-    await db.update(runs).set({ status: 'error', finishedAt: nowIso(), error: 'interrupted: engine restarted' }).where(eq(runs.status, 'running'))
+    await db.update(runs).set({ status: 'error', finishedAt: nowIso(), error: INTERRUPTED_RUN_ERROR }).where(eq(runs.status, 'running'))
     return stale
 }

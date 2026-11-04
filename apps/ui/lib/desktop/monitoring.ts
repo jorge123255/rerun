@@ -14,5 +14,8 @@ export const desktopMonitoringSchema = z.object({
     runsByModel: z.array(statsPointSchema),
     totalTokens: z.array(statsPointSchema).nullable(),
     cost: z.array(statsPointSchema).nullable(),
+    avgDuration: z.array(statsPointSchema),
+    toolCalls: z.array(statsPointSchema),
+    toolErrors: z.array(statsPointSchema),
 })
 export type DesktopMonitoring = z.infer<typeof desktopMonitoringSchema>
