@@ -11,16 +11,19 @@ const checkedAt = '2026-11-04T12:00:00.000Z'
 const question = { id: 'q1', kind: 'question', agentId: 'researcher', agentName: 'Researcher', agentEnabled: true, sessionId: 's1', title: 'Filter before matching', summary: 'Should I filter by date before matching?', updatedAt: '2026-11-04T11:50:00.000Z' }
 const approval = { id: 'a1', kind: 'approval', agentId: 'reviewer', agentName: 'Reviewer', agentEnabled: false, sessionId: 's2', title: 'Approve final report', summary: 'Approve publishing the final report.', updatedAt: '2026-11-04T11:55:00.000Z' }
 
-// The inbox now reads two endpoints on the same tick: the attention projection (pending questions
-// and approvals) and the completion store (finished runs). The scaffolding below answers each URL
-// with a payload of its own shape, so the counts and content stay deterministic.
+// The inbox reads two endpoints on the same tick: the pending-inbox projection (shared attention
+// minus the inbox's own read receipts) and the completion store (finished runs). The scaffolding
+// below answers each URL with a payload of its own shape, so the counts and content stay
+// deterministic. Mark-as-read posts land on the pending-inbox/read and completions/read routes.
 const enabledAt = '2026-11-04T10:00:00.000Z'
 const completionsEmpty = () => Response.json({ items: [], unavailableAgentIds: [], enabledAt, nextCursor: null, checkedAt })
-const routedFetch = (attention: () => Response, completions: () => Response = completionsEmpty, read: () => Response = () => Response.json({ marked: 1 })) =>
+const pendingReadOk = () => Response.json({ marked: 1, failedIds: [] })
+const routedFetch = (pending: () => Response, completions: () => Response = completionsEmpty, read: () => Response = () => Response.json({ marked: 1 })) =>
     vi.fn((url: string, _init?: RequestInit) => {
+        if (url === '/api/desktop/pending-inbox/read') return Promise.resolve(pendingReadOk())
         if (url === '/api/desktop/completions/read') return Promise.resolve(read())
         if (url === '/api/desktop/completions') return Promise.resolve(completions())
-        return Promise.resolve(attention())
+        return Promise.resolve(pending())
     })
 
 afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.useRealTimers(); vi.restoreAllMocks() })
@@ -110,7 +113,7 @@ test('rerendering never adds immediate reads — one read per endpoint per inter
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container)
     await act(async () => { root.render(<DesktopActionsInbox open className="a" />) })
-    // One attention read and one completion read on mount.
+    // One pending-inbox read and one completion read on mount.
     expect(fetcher).toHaveBeenCalledTimes(2)
     // A re-render (a changing className here) must not restart the interval and fetch immediately.
     await act(async () => { root.render(<DesktopActionsInbox open className="b" />) })
@@ -194,7 +197,7 @@ test('closing cancels an in-flight read and reopening reads immediately', async 
     expect(fetcher).toHaveBeenCalledTimes(4)
 
     // The reopened reads are the second request per endpoint: resolve them both.
-    await act(async () => { pending.get('/api/desktop/attention')?.[1]?.(Response.json({ items: [], unavailableAgentIds: [], checkedAt })) })
+    await act(async () => { pending.get('/api/desktop/pending-inbox')?.[1]?.(Response.json({ items: [], unavailableAgentIds: [], checkedAt })) })
     await act(async () => { pending.get('/api/desktop/completions')?.[1]?.(completionsEmpty()) })
     expect(container.textContent).toContain('No pending')
     await act(async () => { root.unmount() })
@@ -264,7 +267,7 @@ test('a late response from the old roster cannot restore a deleted request', asy
     expect(pending[0].signal?.aborted).toBe(true)
     expect(pending[1].signal?.aborted).toBe(true)
     // A late response for the new roster cannot bring back a request the roster has dropped.
-    const attention = pending.filter(entry => entry.url === '/api/desktop/attention')
+    const attention = pending.filter(entry => entry.url === '/api/desktop/pending-inbox')
     await act(async () => { attention[1].resolve(Response.json({ items: [question], unavailableAgentIds: [], checkedAt })) })
     await act(async () => { pending.filter(entry => entry.url === '/api/desktop/completions')[1].resolve(completionsEmpty()) })
     await act(async () => { pending[0].resolve(Response.json({ items: [question], unavailableAgentIds: [], checkedAt })) })
@@ -338,7 +341,7 @@ test('finished runs render as Done rows; Mark as read acknowledges the exact com
     await act(async () => { root.unmount() })
 })
 
-test('Mark all as read acknowledges exactly the displayed completion IDs', async () => {
+test('Mark all as read confirms first and acknowledges exactly the displayed completion IDs', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     const fetcher = routedFetch(
@@ -352,6 +355,12 @@ test('Mark all as read acknowledges exactly the displayed completion IDs', async
 
     const markAll = Array.from(container.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === 'Mark all as read')!
     await act(async () => { markAll.click() })
+    // The original confirmation appears before anything is marked, with its count and warning.
+    expect(document.body.textContent).toContain('Mark everything as read?')
+    expect(document.body.textContent).toContain('2 items will leave this list. Requests still waiting on an answer are cleared too, without being answered.')
+    expect(fetcher.mock.calls.filter(([url]) => url === '/api/desktop/completions/read')).toHaveLength(0)
+    const confirm = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Mark all as read')!
+    await act(async () => { confirm.click() })
     const post = fetcher.mock.calls.find(([url]) => url === '/api/desktop/completions/read')
     expect(post).toBeTruthy()
     expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({ completionIds: ['run-1', 'run-2', 'run-3'] })
@@ -469,4 +478,140 @@ test('mark-read failure leaves a usable Done row and an explicit Retry without r
         expect(fetcher.mock.calls.filter(([url]) => url === '/api/desktop/completions/read')).toHaveLength(2)
         expect(container.querySelector('[data-actions-inbox-done]')).toBeNull()
     } finally { await act(async () => { root.unmount() }) }
+})
+
+test('pending Mark as read posts the exact request target and hides only that row', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const fetcher = routedFetch(() => Response.json({ items: [question, approval], unavailableAgentIds: [], checkedAt }))
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    const onOpen = vi.fn()
+    await act(async () => { root.render(<DesktopActionsInbox open onOpenConversation={onOpen} />) })
+
+    // Rows sort by recency, so target the acknowledged row's own button.
+    const readButton = container.querySelector<HTMLButtonElement>('[data-actions-inbox-item="q1"] button[aria-label="Mark as read"]')!
+    await act(async () => { readButton.click() })
+    const post = fetcher.mock.calls.find(([url]) => url === '/api/desktop/pending-inbox/read')
+    expect(post).toBeTruthy()
+    expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({ items: [{ id: 'q1', kind: 'question', agentId: 'researcher', sessionId: 's1' }] })
+    // Only the acknowledged row leaves; the other pending row and navigation stay intact.
+    expect(container.querySelector('[data-actions-inbox-item="q1"]')).toBeNull()
+    expect(container.querySelector('[data-actions-inbox-item="a1"]')).not.toBeNull()
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 1 pending')
+    expect(onOpen).not.toHaveBeenCalled()
+
+    await act(async () => { root.unmount() })
+})
+
+test('confirmed Mark all captures pending and done at confirmation opening; a later arrival stays unread', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    let pending: () => Response = () => Response.json({ items: [question], unavailableAgentIds: [], checkedAt })
+    const fetcher = routedFetch(() => pending(), completionsWith([doneChat]))
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    await act(async () => { root.render(<DesktopActionsInbox open />) })
+
+    const markAll = Array.from(container.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === 'Mark all as read')!
+    await act(async () => { markAll.click() })
+    expect(document.body.textContent).toContain('Mark everything as read?')
+    expect(document.body.textContent).toContain('2 items will leave this list. Requests still waiting on an answer are cleared too, without being answered.')
+    // A newer pending request arrives in a poll while the confirmation is still open.
+    const q2 = { ...question, id: 'q2', title: 'Filter again', summary: 'A newer question in the same chat.', updatedAt: '2026-11-04T11:59:00.000Z' }
+    pending = () => Response.json({ items: [question, q2], unavailableAgentIds: [], checkedAt })
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(container.textContent).toContain('A newer question in the same chat.')
+    // The count was captured at opening and does not sweep the arrival in.
+    expect(document.body.textContent).toContain('2 items will leave this list.')
+
+    const confirm = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Mark all as read')!
+    await act(async () => { confirm.click() })
+    const pendingPost = fetcher.mock.calls.find(([url]) => url === '/api/desktop/pending-inbox/read')
+    expect(pendingPost).toBeTruthy()
+    expect(JSON.parse(String((pendingPost![1] as RequestInit).body))).toEqual({ items: [{ id: 'q1', kind: 'question', agentId: 'researcher', sessionId: 's1' }] })
+    const donePost = fetcher.mock.calls.find(([url]) => url === '/api/desktop/completions/read')
+    expect(JSON.parse(String((donePost![1] as RequestInit).body))).toEqual({ completionIds: ['run-1'] })
+    // The captured rows left; the arrival after the dialog opened stays unread.
+    expect(container.querySelector('[data-actions-inbox-item="q1"]')).toBeNull()
+    expect(container.querySelector('[data-actions-inbox-item="q2"]')).not.toBeNull()
+    expect(container.querySelector('[data-actions-inbox-done]')).toBeNull()
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 1 pending')
+
+    await act(async () => { root.unmount() })
+})
+
+test('a new pending request in the same chat reappears after the earlier one was marked read', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    let pending: () => Response = () => Response.json({ items: [question], unavailableAgentIds: [], checkedAt })
+    const fetcher = routedFetch(() => pending())
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    await act(async () => { root.render(<DesktopActionsInbox open />) })
+
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Mark as read"]')!.click() })
+    expect(container.querySelector('[data-actions-inbox-item="q1"]')).toBeNull()
+    // The same session asks again: the new request id is not covered by the q1 receipt.
+    const q2 = { ...question, id: 'q2', summary: 'A newer question in the same chat.', updatedAt: '2026-11-04T11:59:00.000Z' }
+    pending = () => Response.json({ items: [q2], unavailableAgentIds: [], checkedAt })
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(container.textContent).toContain('A newer question in the same chat.')
+    expect(container.querySelector('[data-actions-inbox-item="q2"]')).not.toBeNull()
+    expect(container.querySelector('[data-actions-inbox-item="q1"]')).toBeNull()
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 1 pending')
+
+    await act(async () => { root.unmount() })
+})
+
+test('a pending mark-read failure keeps the row visible with a Retry that re-posts and recovers', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    let fail = true
+    const fetcher = vi.fn((url: string, _init?: RequestInit) => {
+        if (url === '/api/desktop/completions') return Promise.resolve(completionsEmpty())
+        if (url === '/api/desktop/completions/read') return Promise.resolve(Response.json({ marked: 1 }))
+        if (url === '/api/desktop/pending-inbox/read') return Promise.resolve(fail ? Response.json({}, { status: 503 }) : Response.json({ marked: 1, failedIds: [] }))
+        return Promise.resolve(Response.json({ items: [question], unavailableAgentIds: [], checkedAt }))
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    try {
+        await act(async () => { root.render(<DesktopActionsInbox open />) })
+        await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Mark as read"]')!.click() })
+        expect(container.textContent).toContain("Some pending requests couldn't be marked as read. They are still here.")
+        expect(container.querySelector('[data-actions-inbox-item="q1"]')).not.toBeNull()
+        // Polling refreshes the list but never re-posts a failed mark.
+        await act(async () => { await vi.advanceTimersByTimeAsync(9000) })
+        expect(fetcher.mock.calls.filter(([url]) => url === '/api/desktop/pending-inbox/read')).toHaveLength(1)
+        fail = false
+        await act(async () => { container.querySelector<HTMLElement>('[role="alert"] button')!.click() })
+        expect(fetcher.mock.calls.filter(([url]) => url === '/api/desktop/pending-inbox/read')).toHaveLength(2)
+        expect(container.querySelector('[data-actions-inbox-item="q1"]')).toBeNull()
+        expect(container.textContent).not.toContain("Some pending requests couldn't be marked as read.")
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('opening a pending row navigates but never marks it read', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const fetcher = routedFetch(() => Response.json({ items: [question], unavailableAgentIds: [], checkedAt }))
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    const onOpen = vi.fn()
+    await act(async () => { root.render(<DesktopActionsInbox open onOpenConversation={onOpen} />) })
+
+    const row = container.querySelector<HTMLElement>('[data-actions-inbox-item="q1"]')!
+    await act(async () => { row.click() })
+    expect(onOpen).toHaveBeenCalledWith({ id: 's1', agentId: 'researcher', agentName: 'Researcher', title: 'Filter before matching' })
+    expect(fetcher.mock.calls.filter(([url]) => url === '/api/desktop/pending-inbox/read')).toHaveLength(0)
+    expect(container.querySelector('[data-actions-inbox-item="q1"]')).not.toBeNull()
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 1 pending')
+
+    await act(async () => { root.unmount() })
 })

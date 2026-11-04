@@ -6,23 +6,24 @@ import { AttentionBuddy, ATTENTION_STATUS_META } from '@rerun/ui/inbox'
 import { EmptyState } from '@rerun/ui/primitives'
 import { shortRelativeTime } from '@rerun/ui/time'
 import { DISABLED_AGENT_LABEL } from '@rerun/ui/iso-grid'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
-import type { DesktopAttentionItem } from '@/lib/desktop/attention'
 import type { DesktopCompletionItem } from '@/lib/desktop/completed-actions'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
+import type { DesktopPendingInboxItem } from '@/lib/desktop/pending-inbox'
 import { AlertCircleIcon, BellIcon, CheckCheckIcon, InboxIcon, Loader2Icon, RefreshCcwIcon, TriangleAlertIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from './DesktopApp'
-import { useDesktopAttention, type DesktopAttentionRead } from './useDesktopAttention'
 import { useDesktopCompletions } from './useDesktopCompletions'
+import { useDesktopPendingInbox, type DesktopPendingInboxRead } from './useDesktopPendingInbox'
 
 // The original inbox folds question and approval under one « Needs you » heading, keyed on the
 // status metadata labels Question (cyan) and Approval (yellow).
-const KIND_STATUS: Record<DesktopAttentionItem['kind'], string> = {
+const KIND_STATUS: Record<DesktopPendingInboxItem['kind'], string> = {
     question: 'awaiting_question',
     approval: 'awaiting_approval',
 }
-const KIND_SENTENCE: Record<DesktopAttentionItem['kind'], string> = {
+const KIND_SENTENCE: Record<DesktopPendingInboxItem['kind'], string> = {
     question: 'asked you a question',
     approval: 'needs your approval',
 }
@@ -43,9 +44,9 @@ export type DesktopActionsInboxProps = {
     className?: string
 }
 
-// The row mirrors @rerun/ui/inbox InboxRow without its Mark-as-read button: this slice is
-// navigation only, so a visible-but-inert button would only suggest an action the inbox must not take.
-function ActionRow({ item, onOpen }: { item: DesktopAttentionItem; onOpen: (item: DesktopAttentionItem) => void }) {
+// The row mirrors @rerun/ui/inbox InboxRow without its hover-revealed Mark-as-read button:
+// marking read is an explicit, per-request acknowledgment that never answers, approves or opens.
+function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem; onOpen: (item: DesktopPendingInboxItem) => void; onMarkRead: (item: DesktopPendingInboxItem) => void }) {
     const status = KIND_STATUS[item.kind]
     const meta = ATTENTION_STATUS_META[status]
     const activate = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -76,6 +77,15 @@ function ActionRow({ item, onOpen }: { item: DesktopAttentionItem; onOpen: (item
                     )}
                 </span>
             </div>
+            <span
+                role="presentation"
+                onClick={event => event.stopPropagation()}
+                onKeyDown={event => event.stopPropagation()}
+            >
+                <Button size="icon-sm" variant="ghost" aria-label="Mark as read" title="Mark as read" onClick={() => onMarkRead(item)}>
+                    <CheckCheckIcon className="size-3.5" />
+                </Button>
+            </span>
         </div>
     )
 }
@@ -127,7 +137,7 @@ function DoneRow({ item, onOpen, onMarkRead }: { item: DesktopCompletionItem; on
     )
 }
 
-function PillContent({ status, items, doneCount, unavailable, failed, open, hasMore }: { status: DesktopAttentionRead; items: DesktopAttentionItem[]; doneCount: number; unavailable: boolean; failed: boolean; open: boolean; hasMore: boolean }) {
+function PillContent({ status, items, doneCount, unavailable, failed, open, hasMore }: { status: DesktopPendingInboxRead; items: DesktopPendingInboxItem[]; doneCount: number; unavailable: boolean; failed: boolean; open: boolean; hasMore: boolean }) {
     const count = items.length
     if (status === 'loading' && count === 0 && doneCount === 0) {
         return (
@@ -189,12 +199,13 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
 }
 
 /**
- * The Actions inbox for the Mac app: pending questions and action approvals projected from the
- * shared read-only `/api/desktop/attention` endpoint, plus finished runs from the desktop
- * completion store (`/api/desktop/completions`). It reuses the original inbox rows, labels and
- * empty state. Opening a row only navigates to the coworker/session where the existing chat cards
- * answer, approve or decline; a Done row is additionally acknowledged with the exact completion
- * IDs it displayed.
+ * The Actions inbox for the Mac app: pending questions and action approvals from the desktop
+ * pending inbox (`/api/desktop/pending-inbox`, the shared attention projection minus the inbox's
+ * own read receipts), plus finished runs from the desktop completion store
+ * (`/api/desktop/completions`). It reuses the original inbox rows, labels and empty state. Opening
+ * a row only navigates to the coworker/session where the existing chat cards answer, approve or
+ * decline; marking pending read is explicit and never answers; a Done row is additionally
+ * acknowledged with the exact completion IDs it displayed.
  */
 export function DesktopActionsInbox({ agents, onOpenConversation, visibleSessionId, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
     const [internalOpen, setInternalOpen] = useState(false)
@@ -207,7 +218,8 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
         [onOpenChange]
     )
     // Polling runs only while the card is open and the window is visible; closing cancels a read in flight.
-    const { status, items: received, unavailableAgentIds: unavailable, retry } = useDesktopAttention(open, agents?.map(agent => agent.id))
+    const pendingInbox = useDesktopPendingInbox(open, agents?.map(agent => agent.id))
+    const { status, items: received, unavailableAgentIds: unavailable, retry, readError: pendingReadError, markRead, markAllRead: markPendingAllRead } = pendingInbox
     const roster = useMemo(() => agents ? new Map(agents.map(agent => [agent.id, agent])) : null, [agents])
     const items = useMemo(() => received.flatMap(item => {
         if (!roster) return [item]
@@ -239,7 +251,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     const partial = unavailableAgentIds.length > 0
 
     const openItem = useCallback(
-        (item: DesktopAttentionItem) => {
+        (item: DesktopPendingInboxItem) => {
             if (!open || !lifetime.current.mounted || lifetime.current.generation !== generation) return
             const current = latest.current.items.find(row => row.id === item.id && row.agentId === item.agentId && row.sessionId === item.sessionId)
             if (!current) return
@@ -264,10 +276,26 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
         [change, completions.markRead, generation, open]
     )
 
-    // Mark-all covers exactly the done rows currently displayed, never a newer arrival.
-    const markAllDone = useCallback(() => {
-        completions.markAllRead()
-    }, [completions.markAllRead])
+    // Mark-all covers exactly the rows on screen at confirmation opening — the pending item ids
+    // and the done completion ids alike — never a newer arrival. Like the original inbox, the
+    // whole-list mark asks first, with the original copy.
+    const [confirmAllOpen, setConfirmAllOpen] = useState(false)
+    const markAllTargets = useRef<{ pending: DesktopPendingInboxItem[]; done: DesktopCompletionItem[] } | null>(null)
+    const openMarkAllConfirm = useCallback(() => {
+        if (!open || !lifetime.current.mounted || lifetime.current.generation !== generation) return
+        if (items.length + doneItems.length === 0) return
+        markAllTargets.current = { pending: items, done: doneItems }
+        setConfirmAllOpen(true)
+    }, [doneItems, generation, items, open])
+    const confirmMarkAll = useCallback(() => {
+        const targets = markAllTargets.current
+        markAllTargets.current = null
+        setConfirmAllOpen(false)
+        if (!targets || !lifetime.current.mounted || lifetime.current.generation !== generation) return
+        markPendingAllRead(targets.pending)
+        completions.markAllRead(targets.done.flatMap(item => item.completionIds))
+    }, [completions.markAllRead, generation, markPendingAllRead])
+    const confirmCount = markAllTargets.current ? markAllTargets.current.pending.length + markAllTargets.current.done.length : 0
 
     // Only an explicit Close or Escape folds the card back onto the pill and takes the focus
     // there, like the original InboxSurface. Navigation and an outside pointer-down close the
@@ -328,8 +356,8 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                             {doneCount > 0 && <span className="text-xs text-emerald-500 tabular-nums">· {doneCount} done</span>}
                         </div>
                         <div className="flex items-center gap-1">
-                            {doneCount > 0 && (
-                                <Button size="icon-sm" variant="ghost" aria-label="Mark all as read" title="Mark all as read" onClick={markAllDone}>
+                            {(items.length > 0 || doneCount > 0) && (
+                                <Button size="icon-sm" variant="ghost" aria-label="Mark all as read" title="Mark all as read" onClick={openMarkAllConfirm}>
                                     <CheckCheckIcon className="size-4" />
                                 </Button>
                             )}
@@ -371,6 +399,15 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                             <AlertCircleIcon className="size-3.5 shrink-0 text-red-400" />
                             <span className="min-w-0 flex-1 truncate">Couldn't refresh finished runs.</span>
                             <Button size="sm" variant="outline" onClick={completions.retry}>
+                                <RefreshCcwIcon className="size-3.5" /> Retry
+                            </Button>
+                        </div>
+                    )}
+                    {pendingReadError && (
+                        <div role="alert" className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                            <AlertCircleIcon className="size-3.5 shrink-0 text-red-400" />
+                            <span className="min-w-0 flex-1">Some pending requests couldn't be marked as read. They are still here.</span>
+                            <Button size="sm" variant="outline" onClick={retry}>
                                 <RefreshCcwIcon className="size-3.5" /> Retry
                             </Button>
                         </div>
@@ -417,7 +454,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
                                     <section aria-label="Needs you">
                                         <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Needs you</h3>
                                         {sorted.map(item => (
-                                            <ActionRow key={item.id} item={item} onOpen={openItem} />
+                                            <ActionRow key={item.id} item={item} onOpen={openItem} onMarkRead={markRead} />
                                         ))}
                                     </section>
                                 )}
@@ -458,6 +495,15 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
             >
                 <PillContent status={checking ? 'loading' : status} items={items} doneCount={doneCount} unavailable={anyPartial} failed={anyFailed} open={open} hasMore={hasMore} />
             </ChromePill>
+            <ConfirmDialog
+                open={confirmAllOpen}
+                onOpenChange={setConfirmAllOpen}
+                title="Mark everything as read?"
+                description={`${confirmCount} item${confirmCount !== 1 ? 's' : ''} will leave this list. Requests still waiting on an answer are cleared too, without being answered.`}
+                confirmLabel="Mark all as read"
+                confirmVariant="default"
+                onConfirm={() => confirmMarkAll()}
+            />
         </div>
     )
 }

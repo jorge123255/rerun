@@ -22,7 +22,9 @@ export type DesktopCompletionsController = DesktopCompletionsState & {
     retry: () => void
     loadMore: () => void
     markRead: (item: DesktopCompletionItem) => void
-    markAllRead: () => void
+    // `exact` (the confirmation's snapshot) makes the whole-list mark acknowledge only those IDs;
+    // with no argument it keeps the click-time capture of whatever is displayed.
+    markAllRead: (exact?: string[]) => void
 }
 
 const empty = (): DesktopCompletionsState => ({ status: 'loading', items: [], unavailableAgentIds: [], enabledAt: null, checkedAt: null, nextCursor: null, loadingMore: false, windowFull: false })
@@ -154,10 +156,11 @@ export function useDesktopCompletions(active = true, agentIds?: readonly string[
         const live = displayed.current.find(row => row.id === item.id && row.agentId === item.agentId && row.sessionId === item.sessionId)
         if (live) void postSeen(item.completionIds.filter(id => live.completionIds.includes(id)))
     }, [active, current, postSeen])
-    const markAllRead = useCallback(() => {
+    const markAllRead = useCallback((exact?: string[]) => {
         if (!active || !current()) return
-        const live = new Set(displayed.current.flatMap(item => item.completionIds))
-        // Capture this render, never sweep newer IDs into a retained handler.
+        // With no argument this keeps the click-time capture; with `exact` (the confirmation's
+        // snapshot) only those IDs leave, so a later arrival stays unread.
+        const live = exact ? new Set(exact) : new Set(displayed.current.flatMap(item => item.completionIds))
         void postSeen(items.flatMap(item => item.completionIds).filter(id => live.has(id)))
     }, [active, current, items, postSeen])
 
