@@ -145,7 +145,13 @@ test('requires the existing local workspace and enforces the icon foreign key', 
     await GET(request())
     const db = await openDesktopDatabase(root)
     await expect(db.execute({ sql: 'INSERT INTO desktop_workspace_icon(workspace_id,catalog_id,created_at,updated_at) VALUES (2,?,?,?)', args: [first, 'fixture', 'fixture'] })).rejects.toThrow()
-    await db.execute('DELETE FROM desktop_workspace WHERE id=1')
+    // Remove the empty board fixture before simulating a missing workspace; Boxes
+    // and their revision are now also protected by workspace foreign keys.
+    await db.batch([
+        'DELETE FROM desktop_spaces WHERE workspace_id=1',
+        'DELETE FROM desktop_board_state WHERE workspace_id=1',
+        'DELETE FROM desktop_workspace WHERE id=1',
+    ], 'write')
     expect((await put({ name: 'Must not recreate', catalogId: first })).status).toBe(404)
     expect(await iconRows()).toEqual([])
 })

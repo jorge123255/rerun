@@ -206,12 +206,13 @@ test('thumbnail allocation uses current bytes rather than the smaller sizes reco
     const urls = objectUrls()
     const requests = imageReads(() => imageResponse(CARD_MAX_IMAGE_BYTES))
     const root = mount()
-    // A mixed card shows every image, so this also exercises stopping before the fifth read.
+    // A mixed card shows every image. Stop as soon as actual bytes fill the budget,
+    // without fetching a fourth thumbnail that cannot fit.
     await act(async () => root.render(<DesktopFileCard agentId="budget-owner" card={cardOf([
         textFile(), ...Array.from({ length: 5 }, (_, i) => image(i + 1)),
     ])} />))
     await flush()
-    expect(requests.map(request => request.path)).toEqual(['shots/1.png', 'shots/2.png', 'shots/3.png', 'shots/4.png'])
+    expect(requests.map(request => request.path)).toEqual(['shots/1.png', 'shots/2.png', 'shots/3.png'])
     expect(urls.create).toHaveBeenCalledTimes(3)
     expect(document.querySelectorAll('[data-file-card] img')).toHaveLength(3)
     expect([...document.querySelectorAll('button')].filter(node => node.textContent?.trim() === 'Image unavailable')).toHaveLength(2)
