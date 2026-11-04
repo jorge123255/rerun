@@ -30,6 +30,8 @@ type ControlCenterPanelProps = {
     sections: ControlSection[]
     emptyLabel: string
     mod: string
+    closeHint?: string
+    resultsHint?: string
 }
 
 export const HINT_KEY = 'min-w-5 px-1 py-0 text-[10px] shadow-none'
@@ -67,7 +69,7 @@ function measureOrbAnchor(): OrbAnchor | null {
     }
 }
 
-export function ControlCenterView({ open, onOpenChange, anchorToOrb = false, ...panel }: ControlCenterPanelProps & { open: boolean; onOpenChange: (open: boolean) => void; anchorToOrb?: boolean }) {
+export function ControlCenterView({ open, onOpenChange, anchorToOrb = false, description = 'Jump to an agent, a setting or a conversation, or ask Rerun.', onCloseAutoFocus, ...panel }: ControlCenterPanelProps & { open: boolean; onOpenChange: (open: boolean) => void; anchorToOrb?: boolean; description?: string; onCloseAutoFocus?: (event: Event) => void }) {
     const [anchor, setAnchor] = useState<OrbAnchor | null>(null)
     const [wasOpen, setWasOpen] = useState(false)
     if (wasOpen !== open) {
@@ -78,7 +80,7 @@ export function ControlCenterView({ open, onOpenChange, anchorToOrb = false, ...
     const header = (
         <DialogHeader className="sr-only">
             <DialogTitle>Control center</DialogTitle>
-            <DialogDescription>Jump to an agent, a setting or a conversation, or ask Rerun.</DialogDescription>
+            <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
     )
 
@@ -86,6 +88,7 @@ export function ControlCenterView({ open, onOpenChange, anchorToOrb = false, ...
     // would take it back to wherever it was before the center opened.
     const keepPillFocus = (event: Event) => {
         if (document.activeElement?.closest('[data-foreman-orb]')) event.preventDefault()
+        onCloseAutoFocus?.(event)
     }
 
     return (
@@ -115,7 +118,7 @@ export function ControlCenterView({ open, onOpenChange, anchorToOrb = false, ...
     )
 }
 
-export function ControlCenterPanel({ query, onQueryChange, placeholder, pageKey, depth, crumbs, onBack, sections, emptyLabel, mod }: ControlCenterPanelProps) {
+export function ControlCenterPanel({ query, onQueryChange, placeholder, pageKey, depth, crumbs, onBack, sections, emptyLabel, mod, closeHint = 'again to search in the page', resultsHint }: ControlCenterPanelProps) {
     const rows = sections.flatMap(section => section.rows)
     const firstRowId = rows.find(row => !row.disabledReason)?.id ?? ''
     const [selectedId, setSelectedId] = useState(firstRowId)
@@ -182,6 +185,7 @@ export function ControlCenterPanel({ query, onQueryChange, placeholder, pageKey,
                     ))}
                 </StepTransition>
             </CommandList>
+            {resultsHint && <p role="status" className="-mx-1 border-t border-border/50 px-3 py-2 text-xs text-muted-foreground">{resultsHint}</p>}
             <div className="-mx-1 -mb-1 flex items-center gap-4 border-t border-border/50 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5">
                     <Kbd className={HINT_KEY}>↵</Kbd>
@@ -202,7 +206,7 @@ export function ControlCenterPanel({ query, onQueryChange, placeholder, pageKey,
                 <span className="ml-auto flex items-center gap-1.5 max-sm:hidden">
                     <Kbd className={HINT_KEY}>{mod}</Kbd>
                     <Kbd className={HINT_KEY}>F</Kbd>
-                    again to search in the page
+                    {closeHint}
                 </span>
             </div>
         </Command>

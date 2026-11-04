@@ -1,12 +1,41 @@
 // @vitest-environment happy-dom
 // Authored for the control-center lane; the integration owner runs all validation.
-import { act } from 'react'
-import { createRoot } from 'react-dom/client'
-import { afterEach, expect, test, vi } from 'vitest'
+import { act, type ReactNode } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { DesktopControlCenter } from './DesktopControlCenter'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+// Keep the original command list, dialog and keyboard behavior; only native animations are
+// removed because happy-dom rejects their cancellation promises when the dialog unmounts.
+vi.mock('motion/react', async original => {
+    const actual = await original<typeof import('motion/react')>()
+    const { createElement, forwardRef } = await import('react')
+    const plain = (tag: string) => forwardRef<HTMLElement, Record<string, unknown>>(({ children, ...props }, ref) =>
+        createElement(tag, { ...Object.fromEntries(Object.entries(props).filter(([name]) => !actual.isValidMotionProp(name))), ref }, children as ReactNode))
+    const elements = new Map<string, ReturnType<typeof plain>>()
+    const element = (tag: string) => {
+        if (!elements.has(tag)) elements.set(tag, plain(tag))
+        return elements.get(tag)!
+    }
+    return { ...actual, AnimatePresence: ({ children }: { children: ReactNode }) => <>{children}</>,
+        motion: new Proxy(actual.motion, { get(target, key, receiver) {
+            if (key === 'create') return (tag: unknown) => typeof tag === 'string' ? element(tag) : tag
+            return typeof key === 'string' && key !== 'then' ? element(key) : Reflect.get(target, key, receiver)
+        } }),
+    }
+})
+
+const rendered = vi.hoisted(() => ({ view: undefined as Parameters<typeof import('@/components/control-center/ControlCenterView')['ControlCenterView']>[0] | undefined }))
+vi.mock('@/components/control-center/ControlCenterView', async original => {
+    const actual = await original<typeof import('@/components/control-center/ControlCenterView')>()
+    return { ...actual, ControlCenterView: (props: Parameters<typeof actual.ControlCenterView>[0]) => {
+        rendered.view = props
+        return <actual.ControlCenterView {...props} />
+    } }
+})
 
 const coworker = (id: string, name = id, description = '', enabled?: boolean) =>
     ({ id, name, description, createdAt: '', updatedAt: '', ...(enabled === undefined ? {} : { enabled }) })
@@ -37,27 +66,47 @@ const clickRow = async (text: string) => {
 const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
 
 type Overrides = {
+    open?: boolean
+    onOpenChange?: (open: boolean) => void
+    disabled?: boolean
     coworkers?: Parameters<typeof DesktopControlCenter>[0]['coworkers']
     selectedCoworkerId?: string | null
     onOpenConversation?: (hit: DesktopConversationHit) => void
+    onOpenCoworker?: (agentId: string) => void
     onAddCoworker?: () => void
     onModelSettings?: () => void
     onBackToBoard?: () => void
 }
 
+const roots = new Set<Root>()
 function mount() {
     const container = document.createElement('div')
     document.body.append(container)
-    return { container, root: createRoot(container) }
+    const root = createRoot(container)
+    roots.add(root)
+    const unmount = root.unmount.bind(root)
+    root.unmount = () => { roots.delete(root); unmount() }
+    return { container, root }
 }
 
-afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals() })
+beforeEach(() => { vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X)') })
+afterEach(async () => {
+    for (const root of roots) await act(async () => { root.unmount() })
+    document.body.innerHTML = ''
+    rendered.view = undefined
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+})
 
 const render = (root: ReturnType<typeof createRoot>, overrides: Overrides = {}) => act(async () => {
     root.render(<DesktopControlCenter
+        open={overrides.open}
+        onOpenChange={overrides.onOpenChange}
+        disabled={overrides.disabled}
         coworkers={overrides.coworkers ?? [coworker('ada', 'Ada', 'Files summaries'), coworker('bob', 'Bob'), coworker('cy', 'Cy', '', false)]}
         selectedCoworkerId={overrides.selectedCoworkerId ?? null}
         onOpenConversation={overrides.onOpenConversation ?? (() => {})}
+        onOpenCoworker={overrides.onOpenCoworker}
         onAddCoworker={overrides.onAddCoworker ?? (() => {})}
         onModelSettings={overrides.onModelSettings ?? (() => {})}
         onBackToBoard={overrides.onBackToBoard ?? (() => {})} />)
@@ -179,10 +228,9 @@ test('conversations come from the local title search, with loading, no results a
     const { root } = mount()
     const onOpenConversation = vi.fn()
     let finishStale!: (response: Response) => void
-    const fetcher = vi.fn()
-        .mockImplementationOnce(() => new Promise<Response>(resolve => { finishStale = resolve }))
-        .mockImplementation(async (url: string) => {
+    const fetcher = vi.fn(async (url: string) => {
             const query = new URL(url, 'http://local').searchParams.get('q')
+            if (query === 'silver') return new Promise<Response>(resolve => { finishStale = resolve })
             if (query === 'brass') return Response.json({ hits: [hit('ada-1', 'ada', 'Ada', 'Brass rehearsal'), hit('bob-1', 'bob', 'Bob', 'Brass band')], hasMore: false })
             if (query === 'gold') return Response.json({ hits: [hit('ada-2', 'ada', 'Ada', 'Gold notes')], hasMore: false })
             return Response.json({ hits: [], hasMore: false })
@@ -200,6 +248,8 @@ test('conversations come from the local title search, with loading, no results a
         expect(dialog()!.textContent).toContain('Ada')
         expect(dialog()!.textContent).toContain('Bob')
         // A newer query cancels the older read: its answer never lands.
+        await type('silver')
+        await settle()
         await type('gold')
         await settle()
         expect(dialog()!.textContent).toContain('Gold notes')
@@ -247,14 +297,15 @@ test('a failed search is distinct from no results and retries from its own row',
     } finally { await act(async () => { root.unmount() }) }
 })
 
-test('Enter drills into a coworker, the page scopes results to that coworker, and Backspace returns', async () => {
+test('a standalone coworker drill scopes the request and results, and Backspace returns', async () => {
     const { root } = mount()
     const onOpenConversation = vi.fn()
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const fetcher = vi.fn(async (url: string) => {
         const query = new URL(url, 'http://local').searchParams.get('q')
         if (query === 'plan') return Response.json({ hits: [hit('ada-1', 'ada', 'Ada', 'Shared plan'), hit('bob-1', 'bob', 'Bob', 'Shared plan')], hasMore: false })
         return Response.json({ hits: [], hasMore: false })
-    }))
+    })
+    vi.stubGlobal('fetch', fetcher)
     try {
         await render(root, { onOpenConversation })
         await press('f', { metaKey: true })
@@ -263,6 +314,7 @@ test('Enter drills into a coworker, the page scopes results to that coworker, an
         expect(dialog()!.textContent).toContain('Type at least 2 characters to search this coworker’s saved chats.')
         await type('plan')
         await settle()
+        expect(new URL(fetcher.mock.calls.at(-1)![0], 'http://local').searchParams.get('agentId')).toBe('ada')
         // Only Ada's identical title is listed here; Bob's stays out of her page.
         expect(rows()).toHaveLength(1)
         expect(rows()[0]!.textContent).toContain('Shared plan')
@@ -277,4 +329,191 @@ test('Enter drills into a coworker, the page scopes results to that coworker, an
         await act(async () => { field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })) })
         expect(field().getAttribute('placeholder')).toBe('Search coworkers, settings, conversations…')
     } finally { await act(async () => { root.unmount() }) }
+})
+
+test('does not open over an existing dialog or alert, or while disabled', async () => {
+    const { root } = mount()
+    await render(root)
+    for (const role of ['dialog', 'alertdialog']) {
+        const existing = document.body.appendChild(document.createElement('div'))
+        existing.setAttribute('role', role)
+        existing.textContent = 'Existing overlay'
+        await press('f', { metaKey: true })
+        await press('k', { metaKey: true })
+        expect(document.body.textContent).not.toContain('Control center')
+        expect(existing.isConnected).toBe(true)
+        existing.remove()
+    }
+    await render(root, { disabled: true })
+    await press('f', { metaKey: true })
+    await press('k', { metaKey: true })
+    expect(dialog()).toBeNull()
+    const onOpenChange = vi.fn()
+    await render(root, { open: true, disabled: true, onOpenChange })
+    expect(dialog()).toBeNull()
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+})
+
+test('controlled Enter opens the coworker while Tab drills without navigating', async () => {
+    const { root } = mount()
+    const onOpenChange = vi.fn()
+    const onOpenCoworker = vi.fn()
+    const props = { open: true, onOpenChange, onOpenCoworker }
+    await render(root, props)
+    await clickRow('Ada')
+    expect(onOpenCoworker).toHaveBeenCalledExactlyOnceWith('ada')
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    await render(root, { ...props, open: false })
+    await render(root, props)
+    await act(async () => { field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })) })
+    expect(field().placeholder).toBe('Search in Ada…')
+    expect(onOpenCoworker).toHaveBeenCalledTimes(1)
+})
+
+test('reopening the same query requires a new answer and rejects a retained prior row callback', async () => {
+    const { root } = mount()
+    const onOpenConversation = vi.fn()
+    let finishRefresh!: (response: Response) => void
+    const fetcher = vi.fn()
+        .mockResolvedValueOnce(Response.json({ hits: [hit('old', 'ada', 'Ada', 'Plan before reopening')], hasMore: false }))
+        .mockImplementationOnce(() => new Promise<Response>(resolve => { finishRefresh = resolve }))
+    vi.stubGlobal('fetch', fetcher)
+    await render(root, { onOpenConversation })
+    await press('f', { metaKey: true })
+    await type('plan')
+    await settle()
+    const oldSelect = rendered.view!.sections.flatMap(section => section.rows).find(row => row.id.endsWith('-old'))!.onSelect
+    expect(dialog()!.textContent).toContain('Plan before reopening')
+    await press('f', { metaKey: true })
+    await press('f', { metaKey: true })
+    await type('plan')
+    expect(dialog()!.textContent).not.toContain('Plan before reopening')
+    expect(dialog()!.textContent).not.toContain('Nothing matches.')
+    await act(async () => { oldSelect() })
+    expect(onOpenConversation).not.toHaveBeenCalled()
+    await settle()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    await act(async () => { finishRefresh(Response.json({ hits: [hit('new', 'ada', 'Ada', 'Plan after reopening')], hasMore: false })) })
+    expect(dialog()!.textContent).toContain('Plan after reopening')
+    await clickRow('Plan after reopening')
+    expect(onOpenConversation).toHaveBeenCalledExactlyOnceWith(hit('new', 'ada', 'Ada', 'Plan after reopening'))
+})
+
+test('hides removed owners and rejects retained callbacks after roster changes or disabling', async () => {
+    const { root } = mount()
+    const onOpenConversation = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ hits: [
+        hit('ada-chat', 'ada', 'Old Ada name', 'Plan for Ada'),
+        hit('bob-chat', 'bob', 'Bob', 'Plan for Bob'),
+        hit('foreign', 'gone', 'Gone', 'Plan for removed coworker'),
+    ], hasMore: false })))
+    await render(root, { onOpenConversation })
+    await press('f', { metaKey: true })
+    await type('plan')
+    await settle()
+    expect(dialog()!.textContent).not.toContain('Plan for removed coworker')
+    const oldRows = rendered.view!.sections.flatMap(section => section.rows)
+    const selectAda = oldRows.find(row => row.id.endsWith('-ada-chat'))!.onSelect
+    const selectBob = oldRows.find(row => row.id.endsWith('-bob-chat'))!.onSelect
+    await render(root, { onOpenConversation, coworkers: [coworker('bob', 'Robert')] })
+    expect(dialog()!.textContent).not.toContain('Plan for Ada')
+    await act(async () => { selectAda() })
+    expect(onOpenConversation).not.toHaveBeenCalled()
+    await act(async () => { selectBob() })
+    expect(onOpenConversation).toHaveBeenCalledExactlyOnceWith(hit('bob-chat', 'bob', 'Robert', 'Plan for Bob'))
+
+    await press('f', { metaKey: true })
+    const command = rendered.view!.sections.flatMap(section => section.rows).find(row => row.id === 'command-model_settings')!.onSelect
+    const onModelSettings = vi.fn()
+    await render(root, { disabled: true, onModelSettings })
+    await act(async () => { command(); selectBob() })
+    expect(onModelSettings).not.toHaveBeenCalled()
+    expect(onOpenConversation).toHaveBeenCalledTimes(1)
+})
+
+test('a coworker scope change aborts the old search and never adopts its late result', async () => {
+    const { root } = mount()
+    let finishAda!: (response: Response) => void
+    const fetcher = vi.fn(async (url: string) => {
+        const params = new URL(url, 'http://local').searchParams
+        if (params.get('agentId') === 'ada') return new Promise<Response>(resolve => { finishAda = resolve })
+        return Response.json({ hits: [hit('bob-chat', 'bob', 'Bob', 'Scoped plan for Bob')], hasMore: false })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    await render(root)
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    await type('plan')
+    await settle()
+    await type('')
+    await act(async () => { field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })) })
+    await clickRow('Bob')
+    await type('plan')
+    await settle()
+    expect(new URL(fetcher.mock.calls.at(-1)![0], 'http://local').searchParams.get('agentId')).toBe('bob')
+    expect(dialog()!.textContent).toContain('Scoped plan for Bob')
+    await act(async () => { finishAda(Response.json({ hits: [hit('ada-chat', 'ada', 'Ada', 'Late plan for Ada')], hasMore: false })) })
+    expect(dialog()!.textContent).not.toContain('Late plan for Ada')
+    expect(dialog()!.textContent).toContain('Scoped plan for Bob')
+})
+
+test('shows the result limit honestly and uses Mac-specific copy in the unchanged original layout', async () => {
+    const { root } = mount()
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ hits: [hit('ada-chat', 'ada', 'Ada', 'Plan')], hasMore: true })))
+    await render(root)
+    await press('f', { metaKey: true })
+    expect(dialog()!.textContent).toContain('Jump to a coworker, model settings or a saved conversation.')
+    expect(dialog()!.textContent).toContain('to close')
+    expect(dialog()!.textContent).not.toContain('again to search in the page')
+    expect(dialog()!.textContent).not.toContain('ask Rerun')
+    await type('plan')
+    await settle()
+    expect(dialog()!.textContent).toContain('Showing the first 50 matches. Refine your search for more.')
+})
+
+test('dismissal restores the original composer focus, but disabling for another overlay does not', async () => {
+    const { root } = mount()
+    const composer = document.body.appendChild(document.createElement('textarea'))
+    composer.value = 'Unsent draft'
+    composer.focus()
+    await render(root)
+    await press('f', { metaKey: true })
+    await press('Escape')
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(dialog()).toBeNull()
+    expect(document.activeElement).toBe(composer)
+    expect(composer.value).toBe('Unsent draft')
+    await press('f', { metaKey: true })
+    const focus = vi.spyOn(composer, 'focus')
+    await render(root, { disabled: true })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(focus).not.toHaveBeenCalled()
+})
+
+test('a quit beginning before the disabled prop updates blocks retained commands and opening shortcuts', async () => {
+    const { root } = mount()
+    const onModelSettings = vi.fn()
+    await render(root, { onModelSettings })
+    await press('f', { metaKey: true })
+    const select = rendered.view!.sections.flatMap(section => section.rows).find(row => row.id === 'command-model_settings')!.onSelect
+    const drafts = await import('@/lib/desktop/draft-writes')
+    vi.spyOn(drafts, 'isDesktopQuitting').mockReturnValue(true)
+    await act(async () => { select() })
+    expect(onModelSettings).not.toHaveBeenCalled()
+    await render(root, { open: false })
+    await press('f', { metaKey: true })
+    expect(dialog()).toBeNull()
+})
+
+test('the shared view retains its original web description and footer when overrides are absent', async () => {
+    const { root } = mount()
+    const { ControlCenterView } = await import('@/components/control-center/ControlCenterView')
+    await act(async () => {
+        root.render(<ControlCenterView open onOpenChange={() => {}} query="" onQueryChange={() => {}}
+            placeholder="Search" pageKey="root" depth={0} crumbs={[]} onBack={() => {}}
+            sections={[]} emptyLabel="Nothing matches." mod="⌘" />)
+    })
+    expect(dialog()!.textContent).toContain('Jump to an agent, a setting or a conversation, or ask Rerun.')
+    expect(dialog()!.textContent).toContain('again to search in the page')
+    expect(dialog()!.textContent).not.toContain('Showing the first 50 matches.')
 })

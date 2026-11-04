@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { desktopChatSearchSchema, type DesktopConversationHit } from './chat-search'
+import { isDesktopQuitting } from './draft-writes'
 
 export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'team_board', 'model_settings'] as const
 
@@ -50,10 +51,13 @@ export type DesktopConversationSearch = {
 // authenticated API. Stale reads are cancelled: an aborted fetch never lands, and an answer only
 // counts while it is still about the query on screen, so an older result can never replace a
 // newer query's own answer.
-export function useDesktopConversationSearch(text: string, enabled: boolean): DesktopConversationSearch {
+export function useDesktopConversationSearch(text: string, enabled: boolean, agentId: string | null = null): DesktopConversationSearch {
     const query = text.trim()
     const [attempt, setAttempt] = useState(0)
-    const [answer, setAnswer] = useState<{ text: string; hits: DesktopConversationHit[]; hasMore: boolean; failed?: boolean } | null>(null)
+    const key = JSON.stringify([query, agentId, enabled, attempt])
+    const [scope, setScope] = useState({ key, version: 0 })
+    if (scope.key !== key) setScope({ key, version: scope.version + 1 })
+    const [answer, setAnswer] = useState<{ version: number; hits: DesktopConversationHit[]; hasMore: boolean; failed?: boolean } | null>(null)
 
     useEffect(() => {
         if (!enabled || query.length < MIN_CONVERSATION_QUERY) return
@@ -61,22 +65,24 @@ export function useDesktopConversationSearch(text: string, enabled: boolean): De
         const timer = setTimeout(() => {
             void (async () => {
                 try {
-                    const response = await fetch(`/api/desktop/conversations/search?q=${encodeURIComponent(query)}`, { signal: controller.signal, cache: 'no-store' })
+                    const params = new URLSearchParams({ q: query })
+                    if (agentId) params.set('agentId', agentId)
+                    const response = await fetch(`/api/desktop/conversations/search?${params}`, { signal: controller.signal, cache: 'no-store' })
                     if (!response.ok) throw new Error('Search unavailable')
                     const result = desktopChatSearchSchema.parse(await response.json())
-                    if (!controller.signal.aborted) setAnswer({ text: query, ...result })
+                    if (!controller.signal.aborted) setAnswer({ version: scope.version, ...result })
                 } catch {
-                    if (!controller.signal.aborted) setAnswer({ text: query, hits: [], hasMore: false, failed: true })
+                    if (!controller.signal.aborted) setAnswer({ version: scope.version, hits: [], hasMore: false, failed: true })
                 }
             })()
         }, DEBOUNCE_MS)
         return () => { clearTimeout(timer); controller.abort() }
-    }, [query, enabled, attempt])
+    }, [query, enabled, agentId, scope.version])
 
     const retry = () => { setAnswer(null); setAttempt(value => value + 1) }
 
     if (!enabled || query.length < MIN_CONVERSATION_QUERY) return { hits: [], hasMore: false, loading: false, failed: false, retry }
-    if (!answer || answer.text !== query) return { hits: [], hasMore: false, loading: true, failed: false, retry }
+    if (scope.key !== key || !answer || answer.version !== scope.version) return { hits: [], hasMore: false, loading: true, failed: false, retry }
     return {
         hits: answer.hits,
         hasMore: answer.hasMore,
@@ -104,21 +110,24 @@ function editingFieldFocused(): boolean {
 }
 
 // ⌘F on a Mac, Ctrl+F elsewhere, exactly like the original control center: pressed while the
-// center is open it only closes it and claims nothing else; otherwise it opens the center. ⌘K
+// center is open it closes it; otherwise it opens the center. ⌘K
 // toggles the center where nothing else holds it — never from an open coworker chat or from an
 // editing field. The capture listener precedes every local handler, like the original's.
-export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen }: {
+export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, disabled = false }: {
     open: boolean
     setOpen: (open: boolean) => void
     conversationOpen: boolean
+    disabled?: boolean
 }): void {
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
+            if (disabled || isDesktopQuitting() || event.defaultPrevented) return
             // Chrome autofill fires keydown events without a key.
             const key = event.key?.toLowerCase()
             if ((key !== 'f' && key !== 'k') || event.shiftKey || event.altKey) return
             const mac = onMac()
             if (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey) return
+            if (!open && document.querySelector('[role="dialog"],[role="alertdialog"]')) return
             if (key === 'k') {
                 if (!open && (conversationOpen || editingFieldFocused())) return
                 event.preventDefault()
@@ -127,6 +136,8 @@ export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen }:
                 return
             }
             if (open) {
+                event.preventDefault()
+                event.stopPropagation()
                 setOpen(false)
                 return
             }
@@ -135,5 +146,5 @@ export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen }:
         }
         window.addEventListener('keydown', onKey, true)
         return () => window.removeEventListener('keydown', onKey, true)
-    }, [open, setOpen, conversationOpen])
+    }, [open, setOpen, conversationOpen, disabled])
 }

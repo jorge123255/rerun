@@ -8,9 +8,9 @@ import { GET } from './route'
 
 const originalEnv = { ...process.env }
 let root: string, alice: string, bob: string, aliceChat: string, bobChat: string
-const request = (text: string) => new Request(`http://127.0.0.1:3189/api/desktop/conversations/search?q=${encodeURIComponent(text)}`, { headers: { host: '127.0.0.1:3189', cookie: `rerun-desktop-session=${'s'.repeat(48)}` } })
-const search = async (text: string) => {
-    const response = await GET(request(text))
+const request = (text: string, agentId?: string) => new Request(`http://127.0.0.1:3189/api/desktop/conversations/search?q=${encodeURIComponent(text)}${agentId === undefined ? '' : `&agentId=${encodeURIComponent(agentId)}`}`, { headers: { host: '127.0.0.1:3189', cookie: `rerun-desktop-session=${'s'.repeat(48)}` } })
+const search = async (text: string, agentId?: string) => {
+    const response = await GET(request(text, agentId))
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe('no-store')
     return response.json()
@@ -70,4 +70,62 @@ test('keeps duplicate-title identities and coworker labels after closing and reo
     const before = await search('Shared')
     await closeDesktopDatabase(root)
     expect(await search('Shared')).toEqual(before)
+})
+
+test('scopes to the coworker before the result limit so other coworkers cannot hide an older matching chat', async () => {
+    const db = await openDesktopDatabase(root)
+    for (let index = 0; index < 52; index++) await createDesktopSession(db, { agentId: bob, engineSessionId: `engine-bob-shared-${index}`, title: `Shared plan ${index}` })
+    const all = await search('Shared')
+    expect(all.hasMore).toBe(true)
+    expect(all.hits).toHaveLength(50)
+    expect(all.hits.every((hit: { agentId: string }) => hit.agentId === bob)).toBe(true)
+    expect(await search('Shared', alice)).toEqual({ hasMore: false, hits: [
+        { id: aliceChat, agentId: alice, agentName: 'Alice', title: 'Shared plan' },
+    ] })
+    const scoped = await search('Shared', bob)
+    expect(scoped.hasMore).toBe(true)
+    expect(scoped.hits).toEqual(all.hits)
+})
+
+test('keeps a disabled coworker scoped and preserves exact conversation identities after restart', async () => {
+    const db = await openDesktopDatabase(root)
+    await db.execute({ sql: 'UPDATE desktop_agents SET enabled = 0 WHERE id = ?', args: [alice] })
+    const before = await search('  SHARED  ', alice)
+    expect(before.hits.map((hit: { id: string }) => hit.id)).toEqual([aliceChat])
+    await closeDesktopDatabase(root)
+    expect(await search('Shared', alice)).toEqual(before)
+    expect(await search('', alice)).toEqual({ hits: [], hasMore: false })
+})
+
+test('rejects unknown, engine-only and deleted coworker scopes without falling back to global matches', async () => {
+    for (const id of [crypto.randomUUID(), 'engine-alice', "' OR 1=1 --"]) {
+        for (const text of ['Shared', '']) expect((await GET(request(text, id))).status).toBe(404)
+    }
+    const db = await openDesktopDatabase(root)
+    await db.execute({ sql: 'DELETE FROM desktop_agents WHERE id = ?', args: [alice] })
+    expect((await GET(request('Shared', alice))).status).toBe(404)
+    expect((await search('Shared')).hits.map((hit: { id: string }) => hit.id)).toEqual([bobChat])
+})
+
+test('excludes persisted foreign-workspace owners from global and scoped searches', async () => {
+    const db = await openDesktopDatabase(root)
+    // Simulate an imported invalid owner row; the single-workspace schema normally prevents it.
+    await db.execute('PRAGMA foreign_keys = OFF')
+    try {
+        await db.execute({ sql: 'UPDATE desktop_agents SET workspace_id = 2 WHERE id = ?', args: [bob] })
+    } finally {
+        await db.execute('PRAGMA foreign_keys = ON')
+    }
+    expect((await GET(request('Shared', bob))).status).toBe(404)
+    expect((await GET(request('', bob))).status).toBe(404)
+    expect((await search('Shared')).hits.map((hit: { id: string }) => hit.id)).toEqual([aliceChat])
+})
+
+test('rejects empty, oversized or ambiguous coworker scopes and still authenticates scoped reads', async () => {
+    for (const scope of ['', ' ', 'x'.repeat(201)]) expect((await GET(request('Shared', scope))).status).toBe(400)
+    const first = request('Shared', alice)
+    const duplicate = new Request(`${first.url}&agentId=${encodeURIComponent(bob)}`, { headers: first.headers })
+    expect((await GET(duplicate)).status).toBe(400)
+    const anonymous = request('Shared', alice); anonymous.headers.delete('cookie')
+    expect((await GET(anonymous)).status).toBe(401)
 })

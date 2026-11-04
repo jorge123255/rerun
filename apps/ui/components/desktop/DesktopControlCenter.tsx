@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type ComponentType } from 'react'
+import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react'
 import { ControlCenterView } from '@/components/control-center/ControlCenterView'
 import type { ControlRow, ControlSection } from '@/components/control-center/types'
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
@@ -8,6 +8,7 @@ import { CirclePlusIcon, LayoutGridIcon, LockKeyholeIcon, MessageCircle, Refresh
 import { parseQuery, searchItems } from '@/lib/control-center/search'
 import { buildDesktopControlCommands, pushRecentCoworker, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
+import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import type { DesktopAgentView } from './DesktopApp'
 
 type Page = { kind: 'root' } | { kind: 'coworker'; coworkerId: string }
@@ -29,31 +30,50 @@ function pageKey(page: Page): string {
 }
 
 export type DesktopControlCenterProps = {
+    open?: boolean
+    onOpenChange?: (open: boolean) => void
+    disabled?: boolean
     coworkers: DesktopAgentView[]
     // The coworker whose chat is open on the board, or null while the board shows.
     selectedCoworkerId: string | null
     onOpenConversation: (hit: DesktopConversationHit) => void
+    onOpenCoworker?: (agentId: string) => void
     onAddCoworker: () => void
     onModelSettings: () => void
     onBackToBoard: () => void
 }
 
-export function DesktopControlCenter({ coworkers, selectedCoworkerId, onOpenConversation, onAddCoworker, onModelSettings, onBackToBoard }: DesktopControlCenterProps) {
-    const [open, setOpen] = useState(false)
+export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onAddCoworker, onModelSettings, onBackToBoard }: DesktopControlCenterProps) {
+    const [internalOpen, setInternalOpen] = useState(false)
+    const requestedOpen = controlledOpen ?? internalOpen
+    const open = requestedOpen && !disabled
+    const setOpen = useCallback((next: boolean) => {
+        if (next && (disabled || isDesktopQuitting())) return
+        if (controlledOpen === undefined) setInternalOpen(next)
+        onOpenChange?.(next)
+    }, [controlledOpen, disabled, onOpenChange])
     const [pages, setPages] = useState<Page[]>([ROOT])
     const [query, setQuery] = useState('')
     const [recent, setRecent] = useState<string[]>([])
-    const [wasOpen, setWasOpen] = useState(open)
+    const [wasOpen, setWasOpen] = useState(false)
+    const [openCycle, setOpenCycle] = useState(0)
+    const returnFocus = useRef<HTMLElement | null>(null)
     if (wasOpen !== open) {
         setWasOpen(open)
         if (open) {
+            returnFocus.current = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null
+            setOpenCycle(value => value + 1)
             setPages([ROOT])
             setQuery('')
         }
     }
 
+    useEffect(() => {
+        if (requestedOpen && disabled) setOpen(false)
+    }, [requestedOpen, disabled, setOpen])
+
     // The component owns its shortcut like the original: mounting it is the whole patch.
-    useDesktopControlCenterKeys({ open, setOpen, conversationOpen: !!selectedCoworkerId })
+    useDesktopControlCenterKeys({ open, setOpen, conversationOpen: !!selectedCoworkerId, disabled })
 
     useEffect(() => {
         if (selectedCoworkerId) setRecent(current => pushRecentCoworker(current, selectedCoworkerId))
@@ -64,20 +84,28 @@ export function DesktopControlCenter({ coworkers, selectedCoworkerId, onOpenConv
     const { scope, text } = parseQuery(query)
     const pageCoworker = page.kind === 'coworker' ? coworkers.find(coworker => coworker.id === page.coworkerId) : undefined
 
-    const searchesConversations = open && (page.kind === 'coworker' || (page.kind === 'root' && scope === 'all' && text.length >= MIN_CONVERSATION_QUERY))
-    const search = useDesktopConversationSearch(text, searchesConversations)
+    const searchesConversations = open && (page.kind === 'coworker' ? !!pageCoworker : scope === 'all' && text.length >= MIN_CONVERSATION_QUERY)
+    const search = useDesktopConversationSearch(text, searchesConversations, page.kind === 'coworker' ? page.coworkerId : null)
+    const selectionScope = JSON.stringify([openCycle, pageKey(page), query])
+    const latest = useRef({ open, disabled, selectionScope, coworkers, search, onOpenConversation, onOpenCoworker, onAddCoworker, onModelSettings, onBackToBoard })
+    latest.current = { open, disabled, selectionScope, coworkers, search, onOpenConversation, onOpenCoworker, onAddCoworker, onModelSettings, onBackToBoard }
+    const available = () => latest.current.open && !latest.current.disabled && !isDesktopQuitting() && latest.current.selectionScope === selectionScope
 
-    const close = (action: () => void) => () => {
+    const close = () => {
+        // Invalidate retained row callbacks immediately, before React commits the closed view.
+        latest.current.open = false
+        returnFocus.current = null
         setOpen(false)
-        action()
     }
 
     const drill = (next: Page) => () => {
+        if (!available() || (next.kind === 'coworker' && !latest.current.coworkers.some(coworker => coworker.id === next.coworkerId))) return
         setPages(stack => [...stack, next])
         setQuery('')
     }
 
     const back = () => {
+        if (!available()) return
         setPages(stack => (stack.length > 1 ? stack.slice(0, -1) : stack))
         setQuery('')
     }
@@ -88,8 +116,13 @@ export function DesktopControlCenter({ coworkers, selectedCoworkerId, onOpenConv
         detail: coworker.description || undefined,
         leading: { kind: 'agent', agentId: coworker.id },
         badge: coworker.enabled === false ? { label: 'Off', tone: 'neutral' } : undefined,
-        // Opening the coworker's chat belongs to the board tile; the center only drills in.
-        onSelect: drill({ kind: 'coworker', coworkerId: coworker.id }),
+        onSelect: () => {
+            if (!available() || !latest.current.coworkers.some(current => current.id === coworker.id)) return
+            const action = latest.current.onOpenCoworker
+            if (!action) return drill({ kind: 'coworker', coworkerId: coworker.id })()
+            close()
+            action(coworker.id)
+        },
         onDrill: drill({ kind: 'coworker', coworkerId: coworker.id }),
     })
 
@@ -98,32 +131,40 @@ export function DesktopControlCenter({ coworkers, selectedCoworkerId, onOpenConv
             return [{
                 id: section,
                 heading,
-                rows: [{ id: `${section}-retry`, label: 'Could not search saved chats', detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: search.retry }],
+                rows: [{ id: `${section}-retry`, label: 'Could not search saved chats', detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: () => { if (available()) latest.current.search.retry() } }],
             }]
         }
-        const hits = coworkerId ? search.hits.filter(hit => hit.agentId === coworkerId) : search.hits
+        const hits = search.hits.filter(hit => (!coworkerId || hit.agentId === coworkerId) && coworkers.some(coworker => coworker.id === hit.agentId))
         const rows: ControlRow[] = hits.map(hit => ({
             id: `${section}-conversation-${hit.id}`,
             label: hit.title,
             detail: coworkerId ? undefined : coworkers.find(coworker => coworker.id === hit.agentId)?.name,
             leading: { kind: 'icon', icon: MessageCircle },
-            onSelect: close(() => onOpenConversation(hit)),
+            onSelect: () => {
+                const current = latest.current
+                if (!available() || current.search.loading || current.search.failed) return
+                const liveHit = current.search.hits.find(candidate => candidate.id === hit.id && candidate.agentId === hit.agentId)
+                const owner = current.coworkers.find(coworker => coworker.id === hit.agentId)
+                if (!liveHit || !owner || (coworkerId && liveHit.agentId !== coworkerId)) return
+                close()
+                current.onOpenConversation({ ...liveHit, agentName: owner.name })
+            },
         }))
         const loading = search.loading && rows.length === 0
         return rows.length > 0 || loading ? [{ id: section, heading, rows, loading }] : []
-    }
-
-    const commandActions: Record<DesktopControlCommandId, () => void> = {
-        add_coworker: onAddCoworker,
-        team_board: onBackToBoard,
-        model_settings: onModelSettings,
     }
 
     const commandRow = (command: DesktopControlCommand): ControlRow => ({
         id: `command-${command.id}`,
         label: command.label,
         leading: { kind: 'icon', icon: COMMAND_ICONS[command.id] },
-        onSelect: close(commandActions[command.id]),
+        onSelect: () => {
+            if (!available()) return
+            const current = latest.current
+            const action = { add_coworker: current.onAddCoworker, team_board: current.onBackToBoard, model_settings: current.onModelSettings }[command.id]
+            close()
+            action()
+        },
     })
 
     function sections(): ControlSection[] {
@@ -170,6 +211,28 @@ export function DesktopControlCenter({ coworkers, selectedCoworkerId, onOpenConv
             open={open}
             onOpenChange={setOpen}
             anchorToOrb={false}
+            description="Jump to a coworker, model settings or a saved conversation."
+            closeHint="to close"
+            resultsHint={search.hasMore ? 'Showing the first 50 matches. Refine your search for more.' : undefined}
+            onCloseAutoFocus={event => {
+                event.preventDefault()
+                if (latest.current.open) return
+                const target = returnFocus.current
+                returnFocus.current = null
+                const closedScope = latest.current.selectionScope
+                const closingDialog = event.target instanceof HTMLElement ? event.target : null
+                // Radix finishes removing its focus scope after this callback. Its temporary
+                // aria-hidden markers must not stop us returning to the original composer.
+                queueMicrotask(() => {
+                    const current = latest.current
+                    if (!target?.isConnected || current.open || current.disabled || current.selectionScope !== closedScope || isDesktopQuitting() || target.closest('[inert]')) return
+                    const modal = [...document.querySelectorAll('[role="dialog"],[role="alertdialog"]')].find(element => element !== closingDialog && element.getAttribute('data-state') !== 'closed')
+                    if (modal && !modal.contains(target)) return
+                    const active = document.activeElement
+                    if (active && active !== document.body && active !== target && !closingDialog?.contains(active)) return
+                    target.focus({ preventScroll: true })
+                })
+            }}
             query={query}
             onQueryChange={setQuery}
             placeholder={placeholder}

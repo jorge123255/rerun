@@ -12,6 +12,8 @@ import { SidePanel } from '@/components/layout/SidePanel'
 import { SIDE_PANEL_GAP } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopBoard } from './DesktopBoard'
+import { DesktopControlCenter } from './DesktopControlCenter'
+import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { GridPosition } from '@rerun/ui/iso-grid'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -38,13 +40,22 @@ async function json<T>(response: Response): Promise<T> {
 }
 
 export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
+    const [controlCenterOpen, setControlCenterOpen] = useState(false)
+    const [placingCopy, setPlacingCopy] = useState(false)
+    const [quitting, setQuitting] = useState(false)
     useEffect(() => {
         const bridge = (window as Window & { desktopApp?: {
             onBeforeQuit?: (listener: () => Promise<boolean>) => () => void
             onQuitCancelled?: (listener: () => void) => () => void
         } }).desktopApp
-        const stop = bridge?.onBeforeQuit?.(flushDesktopDrafts)
-        const cancel = bridge?.onQuitCancelled?.(cancelDraftShutdown)
+        const stop = bridge?.onBeforeQuit?.(async () => {
+            setQuitting(true)
+            setControlCenterOpen(false)
+            const ready = await flushDesktopDrafts()
+            if (!ready) setQuitting(false)
+            return ready
+        })
+        const cancel = bridge?.onQuitCancelled?.(() => { cancelDraftShutdown(); setQuitting(false) })
         return () => { stop?.(); cancel?.() }
     }, [])
     const [preference, setPreference] = useState(initialData.theme)
@@ -104,6 +115,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const defaultProvider = available.find(c => c.id === providers.default?.connectionId)
     const sidebarProvider = defaultProvider ?? available[0]
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
+    const currentAgents = useRef(agents)
+    currentAgents.current = agents
+    const controlCenterDisabled = settings || creating || !!busy || placingCopy || quitting
 
     useEffect(() => {
         if (panelOpen && !settings) panelContent.current?.focus({ preventScroll: true })
@@ -241,11 +255,20 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setError(null)
     }
 
+    function openSavedConversation(hit: DesktopConversationHit) {
+        if (currentAgents.current.some(agent => agent.id === hit.agentId)) selectCoworker(hit.agentId, hit.id)
+    }
+
     const openSettings = () => setSettings(true)
     const modelLabel = defaultProvider ? providers.default?.model : undefined
     const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} profileName={initialData.profile.displayName}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
-        modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings} />
+        modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings}
+        onControlCenter={() => {
+            if (controlCenterDisabled) return
+            boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')?.focus({ preventScroll: true })
+            setControlCenterOpen(true)
+        }} />
 
     return (
         <main className="relative flex h-dvh w-full flex-col overflow-clip bg-frame text-foreground md:p-2">
@@ -254,7 +277,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
                     onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
-                    onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={hit => { if (agents.some(agent => agent.id === hit.agentId)) selectCoworker(hit.agentId, hit.id) }} />
+                    onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
                 {selectedAgent && <div inert={!panelOpen} aria-hidden={!panelOpen || undefined}>
                     <SidePanel isOpen={panelOpen} onDismiss={closePanel}>
                         <section ref={panelContent} tabIndex={-1} aria-label="Coworker chat" className="flex h-full min-h-0 flex-col outline-none"
@@ -299,6 +322,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     </form>
                 </DialogContent>}
             </Dialog>
+            <DesktopControlCenter coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null}
+                open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
+                onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) selectCoworker(id) }}
+                onOpenConversation={openSavedConversation} onAddCoworker={() => showBoard(true)}
+                onModelSettings={openSettings} onBackToBoard={() => showBoard()} />
         </main>
     )
 }

@@ -25,7 +25,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete }: {
+export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange }: {
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
@@ -39,6 +39,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
     onCreate: () => void
     onDismiss?: () => void
     onOpenConversation?: (hit: DesktopConversationHit) => void
+    onPlacementChange?: (placing: boolean) => void
 }) {
     const { statuses: activity, attention } = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]))
     const openState = useRef({ agents, activity, attention, onOpen, onOpenConversation })
@@ -49,6 +50,8 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
         return counts
     }, [attention])
     const [placement, setPlacement] = useState<CopyPlacement | null>(null)
+    const placing = !!placement
+    useEffect(() => { onPlacementChange?.(placing) }, [placing, onPlacementChange])
     const submitting = useRef(false)
     const section = useRef<HTMLElement>(null)
     const placeButton = useRef<HTMLButtonElement>(null)

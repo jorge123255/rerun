@@ -1,12 +1,13 @@
 'use client'
 
 import { WorkspacePill } from '@rerun/ui/chrome'
-import { LayoutGrid, Settings } from 'lucide-react'
+import { LayoutGrid, Search, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
+import { useRef } from 'react'
 
-export function DesktopWorkspaceMenu({ workspaceName, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings }: {
+export function DesktopWorkspaceMenu({ workspaceName, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onControlCenter }: {
     workspaceName: string
     profileName: string
     agents: DesktopAgentView[]
@@ -16,15 +17,21 @@ export function DesktopWorkspaceMenu({ workspaceName, profileName, agents, selec
     onBoard: () => void
     onCoworker: (id: string) => void
     onSettings: () => void
+    onControlCenter?: () => void
 }) {
+    const openingControlCenter = useRef(false)
     return <nav aria-label="Workspace" className="flex min-w-0 flex-wrap items-center gap-1.5">
         <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
                 <WorkspacePill name={workspaceName} iconUrl="/pricing/solo.png" aria-label={`Workspace menu, ${workspaceName}`} />
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-64">
+            <DropdownMenuContent className="w-64" onCloseAutoFocus={event => {
+                if (openingControlCenter.current) event.preventDefault()
+                openingControlCenter.current = false
+            }}>
                 <DropdownMenuLabel>{profileName} · Rerun Local</DropdownMenuLabel>
                 <DropdownMenuItem onSelect={onBoard}><LayoutGrid /> Team board</DropdownMenuItem>
+                {onControlCenter && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> Control center</DropdownMenuItem>}
                 <DropdownMenuItem onSelect={onSettings}><Settings /> Settings</DropdownMenuItem>
                 {agents.length > 0 && <><DropdownMenuSeparator /><DropdownMenuLabel>Coworkers</DropdownMenuLabel></>}
                 {agents.map(agent => <DropdownMenuItem key={agent.id} aria-current={selected === agent.id ? 'true' : undefined} onSelect={() => onCoworker(agent.id)}>
