@@ -506,7 +506,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     busy={generating} pending={queue.pending || stopping || inactive || !!flushingQueue.current}
                     onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
                 <form onSubmit={submit} className="flex min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring">
-                    {attachment && <div className="px-2.5 pt-2"><AttachmentChip path={attachment} disabled={generating || stopping} onRemove={() => setDraftAttachment(draftKey)} /></div>}
+                    {attachment && <div className="px-2.5 pt-2"><AttachmentChip path={attachment}
+                        disabled={stopping || queue.pending || (pendingAttachment.current?.key === draftKey && pendingAttachment.current.attachment === attachment)}
+                        onRemove={() => setDraftAttachment(draftKey)} /></div>}
                     <label htmlFor={composerId} className="sr-only">Message {agent.name}</label>
                     <Textarea
                         id={composerId}

@@ -130,3 +130,48 @@ test('stale folder failures do not replace a more recent listing or reopen a dis
     expect(button('stale.md')).toBeUndefined()
     expect(button('bob.md')).toBeDefined()
 })
+
+test('a follow-up attachment can be removed while streaming without changing the attachment already sent', async () => {
+    const posts: Record<string, unknown>[] = []
+    let queued: Record<string, unknown> | null = null
+    let accept!: (response: Response) => void
+    let finish!: () => void
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/queue')) {
+            if (init?.method === 'PUT') queued = JSON.parse(String(init.body)).item
+            return Response.json({ queued })
+        }
+        if (url.pathname.endsWith('/files')) return Response.json({ entries: [entry('original.md'), entry('followup.md')] })
+        if (url.pathname.endsWith('/chat')) {
+            posts.push(JSON.parse(String(init?.body)))
+            return new Promise<Response>(resolve => { accept = resolve })
+        }
+        if (url.pathname.endsWith('/messages')) return Response.json({ messages: [] })
+        return Response.json({ running: false })
+    }))
+    await render('alice', 'saved')
+    await click('Attach from Files'); await click('original.md')
+    await writeDraft('Read the original file'); await click('Send')
+    expect(button('Remove attachment original.md')!.disabled).toBe(true)
+    expect(posts).toEqual([{ agentId: 'alice', sessionId: 'saved', text: 'Read the original file', attachmentPath: 'original.md' }])
+    await act(async () => {
+        const encoder = new TextEncoder()
+        accept(new Response(new ReadableStream({ start(controller) {
+            controller.enqueue(encoder.encode('data: {"type":"start","messageId":"reply"}\n\ndata: {"type":"text-start","id":"text"}\n\ndata: {"type":"text-delta","id":"text","delta":"Working"}\n\n'))
+            finish = () => {
+                controller.enqueue(encoder.encode('data: {"type":"text-end","id":"text"}\n\ndata: {"type":"finish"}\n\ndata: [DONE]\n\n'))
+                controller.close()
+            }
+        } }), { headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': 'saved', 'x-run-id': 'run-original' } }))
+    })
+    await click('Attach from Files'); await click('followup.md')
+    expect(button('Remove attachment followup.md')!.disabled).toBe(false)
+    await click('Remove attachment followup.md')
+    expect(button('Remove attachment followup.md')).toBeUndefined()
+    await writeDraft('A follow-up without a file'); await click('Send')
+    expect(queued).toMatchObject({ text: 'A follow-up without a file', behindRunId: 'run-original' })
+    expect(queued).not.toHaveProperty('attachmentPath')
+    expect(posts).toEqual([{ agentId: 'alice', sessionId: 'saved', text: 'Read the original file', attachmentPath: 'original.md' }])
+    await act(async () => { finish() })
+})
