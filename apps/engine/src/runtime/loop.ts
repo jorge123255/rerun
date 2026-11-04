@@ -19,7 +19,7 @@ import type { LoadedAgent } from '../agents/types.js'
 import { turnOrder } from '../agents/turn-order.js'
 import { answeringModel } from '../agents/rerun-upstream.js'
 import { listAgentIndex, setAgentStatus } from '../db/repos/agents.js'
-import { appendMessage, lastMessageId, listSessionAuthorIds, setMessageToolCalls, storedContent } from '../db/repos/messages.js'
+import { appendMessage, completeQueuedUser, lastMessageId, listSessionAuthorIds, setMessageToolCalls, storedContent } from '../db/repos/messages.js'
 import type { MessageRow } from '../db/schema.js'
 import { isSharedConversation, signHistoryMessage, signText } from './message-authors.js'
 import { bumpRunStep, cancelRun, failRun, finishRun, setRunContext, startRun } from '../db/repos/runs.js'
@@ -226,6 +226,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     const controller = registerRunAbort(run.id)
     const author = trigger.source === 'chat' ? trigger.author : undefined
     const savedUser = trigger.source === 'chat' ? trigger.savedUser : undefined
+    const queuedUser = trigger.source === 'chat' ? trigger.queuedUser : undefined
 
     let agent = baseAgent
     let { connection, provider, model } = baseAgent.resolved
@@ -441,7 +442,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         const built = await toolsP
         closeTools = built.close
         const { tools } = built
-        const history = repairToolPairs(await prepareRunHistory(ctx, systemText, override, shared, toolPayloadChars(tools), savedUser?.id))
+        const history = repairToolPairs(await prepareRunHistory(ctx, systemText, override, shared, toolPayloadChars(tools), savedUser?.id ?? queuedUser?.id))
 
         const [memories, mcpServers] = await Promise.all([memoriesP, mcpServersP, cliAuthP])
         const recall = recallSection(memories, history)
@@ -455,7 +456,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         // A new worker has a new private directory and endpoint. Raw Code Mode observations
         // are also available only on thread/start. Replay saved history in both cases.
         const freshToolThread = desktopApp() && (agent.config.tools.desktopCodexGrants?.shell || agent.config.tools.desktopCodexGrants?.workspaceWrite || agent.config.tools.desktopCodexGrants?.codeMode)
-        const resumeThreadId = provider === 'codex' && !savedUser && !freshToolThread ? codexThreadToResume(agent.id, sessionId, connection?.id ?? RERUN_CONNECTION_ID, await lastMessageId(agent.id, sessionId), codexToolAccess) : undefined
+        const resumeThreadId = provider === 'codex' && !savedUser && !queuedUser && !freshToolThread ? codexThreadToResume(agent.id, sessionId, connection?.id ?? RERUN_CONNECTION_ID, await lastMessageId(agent.id, sessionId), codexToolAccess) : undefined
         const codexTurnOptions = resumeThreadId || effort ? {
             'codex-app-server': { ...(resumeThreadId ? { threadId: resumeThreadId } : {}), ...(effort ? { effort } : {}) },
         } : undefined
@@ -472,7 +473,9 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             const suffix = [recall, userLanguageBlock(trigger.source === 'chat' ? trigger.userLanguage : undefined), nowBlock()].filter(Boolean).join('\n\n')
             const attachment = trigger.source === 'chat' ? trigger.workspaceAttachment : undefined
             const context = [...(attachment ? [workspaceAttachmentPart(attachment)] : []), ...(suffix ? [contextTextPart(suffix)] : [])]
-            appendP = appendMessage(agent.id, sessionId, { role: 'user', content: [{ type: 'text', text: userText }, ...context] }, author)
+            const content = [{ type: 'text' as const, text: userText }, ...context]
+            appendP = queuedUser ? completeQueuedUser(agent.id, queuedUser, content) : appendMessage(agent.id, sessionId, { role: 'user', content }, author)
+            if (queuedUser) await appendP
             appendP.catch(err => logger.error({ err: String(err), agent: agent.id }, 'append user message failed'))
             turn = { role: 'user', content: [{ type: 'text', text: shared ? signText(userText, author) : userText }, ...context] }
         }

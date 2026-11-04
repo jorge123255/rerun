@@ -78,6 +78,14 @@ async function initialize(dataRoot: string): Promise<Client> {
             revision INTEGER NOT NULL,
             layout TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS desktop_queued_messages (
+            agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            target TEXT NOT NULL,
+            session_id TEXT REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+            message_id TEXT NOT NULL UNIQUE,
+            payload TEXT NOT NULL,
+            PRIMARY KEY(agent_id, target)
+        );
         CREATE TABLE IF NOT EXISTS desktop_tab_starts (
             agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
             uid TEXT NOT NULL,

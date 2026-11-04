@@ -15,6 +15,7 @@ type Props = {
     workspaceModel?: string
     onOpenSettings?: () => void
     onConversationChoice?: (choice: DesktopModelPick | undefined) => void
+    onReady?: (ready: boolean) => void
 }
 
 function modelUrl(agentId: string, sessionId: string | null) {
@@ -35,7 +36,7 @@ export function DesktopModelSelector(props: Props) {
     return <ChatModelMenu key={JSON.stringify([props.agentId, props.sessionId])} {...props} />
 }
 
-function ChatModelMenu({ agentId, sessionId, disabled, active = true, workspaceModel, onOpenSettings, onConversationChoice }: Props) {
+function ChatModelMenu({ agentId, sessionId, disabled, active = true, workspaceModel, onOpenSettings, onConversationChoice, onReady }: Props) {
     const [open, setOpen] = useState(false)
     const [state, setState] = useState<DesktopModelView | null>(null)
     const [pending, setPending] = useState<DesktopModelPick | null>(null)
@@ -46,6 +47,7 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, workspaceM
     const reported = useRef<string | null>(null)
     const version = useRef(0)
     const current = state
+    useEffect(() => { onReady?.(!!current?.effective.available && !saving && !error) }, [current, saving, error, onReady])
 
     const load = useCallback(async (signal?: AbortSignal) => {
         const response = await fetch(modelUrl(agentId, sessionId), { signal, cache: 'no-store' })

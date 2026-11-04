@@ -1,7 +1,10 @@
+import { desktopApp } from '../desktop/policy.js'
+
 type RunHandle = { controller: AbortController; cancel?: () => void | Promise<unknown> }
 
 const controllers = new Map<string, RunHandle>()
 const cancellations = new Set<Promise<unknown>>()
+const desktopCancellations = new Map<string, Promise<boolean>>()
 
 // One live run per conversation. Two runs on the same session read the same history before
 // either has written its user message, so they answer past each other and interleave their
@@ -62,15 +65,35 @@ export function abortRun(runId: string): boolean {
     const handle = controllers.get(runId)
     if (!handle) return false
     controllers.delete(runId)
-    releaseSession(runId)
+    const waitForSettlement = desktopApp() && !!handle.cancel
+    if (!waitForSettlement) releaseSession(runId)
     handle.controller.abort()
     // Closes the run for good: writes its terminal row, tells the hub, and tears the provider
     // process down. Without it a provider that ignores the abort keeps the conversation "working".
     let pending: Promise<unknown>
     try { pending = Promise.resolve(handle.cancel?.()) } catch (error) { pending = Promise.reject(error) }
     cancellations.add(pending)
+    if (waitForSettlement) {
+        // The next queued prompt must see the previous transcript after persistence and provider
+        // teardown. A rejected settlement still releases the claim instead of wedging the chat.
+        const completed = pending.then(() => true, () => false).finally(() => {
+            releaseSession(runId)
+            if (desktopCancellations.get(runId) === completed) desktopCancellations.delete(runId)
+        })
+        desktopCancellations.set(runId, completed)
+    }
     void pending.finally(() => cancellations.delete(pending)).catch(() => {})
     return true
+}
+
+/** A timed-out Stop is retryable; its session stays claimed until the actual cleanup settles. */
+export async function waitForRunCancellation(runId: string, timeoutMs = 5_000): Promise<boolean> {
+    const pending = desktopCancellations.get(runId)
+    if (!pending) return true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+        return await Promise.race([pending, new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs) })])
+    } finally { if (timer) clearTimeout(timer) }
 }
 
 export async function abortAllRuns(): Promise<void> {

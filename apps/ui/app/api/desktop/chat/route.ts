@@ -10,10 +10,11 @@ const sendInput = z.object({
     text: z.string().trim().min(1).max(20_000),
     attachmentPath: z.string().min(1).max(4096).optional(),
     regenerateMessageId: z.never().optional(),
-    requestId: z.never().optional(),
+    requestId: z.string().uuid().optional(),
+    reconcileOnly: z.boolean().optional(),
     modelChoice: desktopModelPickSchema.optional(),
     tabUid: z.string().min(1).max(128).optional(),
-}).refine(input => !input.tabUid || !input.sessionId)
+}).refine(input => (!input.tabUid || !input.sessionId) && (!input.requestId || !!input.sessionId) && (!input.reconcileOnly || !!input.requestId))
 const regenerateInput = z.object({
     agentId: z.string().min(1),
     sessionId: z.string().min(1),

@@ -3,7 +3,8 @@ import { aggregateUsageByDay, cancelRun, getRun, listRunsByAgent } from '../../d
 import { listRunSteps, listToolCalls } from '../../db/repos/telemetry.js'
 import { collectAssistantText } from '../../db/repos/messages.js'
 import { resumeStreamResponse } from '../../runtime/stream.js'
-import { abortRun } from '../../runtime/run-control.js'
+import { abortRun, waitForRunCancellation } from '../../runtime/run-control.js'
+import { desktopApp } from '../../desktop/policy.js'
 import { abortSubRun } from '../../tools/builtin/sub-run-watch.js'
 import { emitRunTerminal, triggerFromRun } from '../../runtime/run-events.js'
 
@@ -31,6 +32,9 @@ runRoutes.post('/:rid/cancel', async c => {
     const run = await getRun(agentId, rid)
     if (!run || run.agentId !== agentId) return c.json({ error: 'run not found' }, 404)
     const aborted = abortRun(rid)
+    if (desktopApp() && !await waitForRunCancellation(rid)) {
+        return c.json({ error: 'This reply has not finished stopping. Wait a moment and try Stop again.' }, 503)
+    }
     if (run.status === 'running') {
         await cancelRun(agentId, rid)
         // When the run loop is still there it announces its own end. When it is not -- the process

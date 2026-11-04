@@ -28,8 +28,13 @@ async function runningRuns({ conn, engineAgentId, engineSessionId }: Target) {
     }
 }
 
-export async function readDesktopTurnRunning(runtime: DesktopRuntime, sessionId: string): Promise<{ running: boolean }> {
-    return { running: (await runningRuns(await targetOf(runtime, sessionId))).length > 0 }
+export async function readDesktopTurnRunning(runtime: DesktopRuntime, sessionId: string): Promise<{ running: boolean; runId: string | null; failedRunId: string | null }> {
+    const target = await targetOf(runtime, sessionId)
+    try {
+        const owned = (await listRuns(target.conn, target.engineAgentId, { sessionId: target.engineSessionId })).filter(run => run.sessionId === target.engineSessionId && run.agentId === target.engineAgentId)
+        const running = owned.find(run => run.status === 'running')
+        return { running: !!running, runId: running?.id ?? null, failedRunId: owned[0]?.status === 'error' ? owned[0].id : null }
+    } catch { throw new DesktopHttpError(502, 'Could not read this reply’s status. Try again.') }
 }
 
 export async function stopDesktopTurn(runtime: DesktopRuntime, sessionId: string): Promise<{ canceled: number; alreadyFinished: boolean }> {

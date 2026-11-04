@@ -9,7 +9,9 @@ import { createSession, getSession } from '../../db/repos/sessions.js'
 import { extractText, storedContent } from '../../db/repos/messages.js'
 import { forkReply, getRegeneration } from '../../db/repos/regenerations.js'
 import { startDesktopTabRun } from '../../db/repos/desktop-tab-runs.js'
-import { startRun } from '../../db/repos/runs.js'
+import { getDesktopQueuedTurn, reserveDesktopQueuedTurn } from '../../db/repos/desktop-queued-turns.js'
+import { getRun, startRun } from '../../db/repos/runs.js'
+import { withAgentLock } from '../../agents/lock.js'
 import { agentDisabled, HttpError } from '../../lib/errors.js'
 import { newId } from '../../lib/ids.js'
 import type { LoadedAgent } from '../../agents/types.js'
@@ -21,10 +23,13 @@ import { resumeStreamResponse, toResumableStreamResponse } from '../../runtime/s
 
 export const chatRoutes = new Hono()
 const desktopFirstTurn = z.object({ sessionId: z.uuid(), runId: z.uuid() }).strict()
+const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), replayOnly: z.boolean().optional() }).strict()
 const desktopChatRequest = chatRequestSchema.extend({
     workspaceAttachment: desktopWorkspaceAttachmentSchema.optional(),
     desktopFirstTurn: desktopFirstTurn.optional(),
-}).refine(body => !body.desktopFirstTurn || (!body.sessionId && !body.install && !body.foreman && (!body.source || body.source === 'dashboard')))
+    desktopQueuedTurn: desktopQueuedTurn.optional(),
+}).refine(body => (!body.desktopFirstTurn || (!body.sessionId && !body.install && !body.foreman && !body.desktopQueuedTurn && (!body.source || body.source === 'dashboard')))
+    && (!body.desktopQueuedTurn || (!!body.sessionId && !body.install && !body.foreman && (!body.source || body.source === 'dashboard'))))
 
 const regenerateRequest = chatRequestSchema.pick({ provider: true, model: true, connectionId: true, author: true }).extend({
     sessionId: z.string().min(1),
@@ -82,7 +87,7 @@ chatRoutes.post('/chat', async c => {
     if (!agent.config.enabled) throw agentDisabled()
     const input = await c.req.json()
     if (desktopApp() && input && typeof input === 'object' && 'regenerateMessageId' in input) return regenerateChat(agent, regenerateRequest.parse(input))
-    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), workspaceAttachment: undefined, desktopFirstTurn: undefined }
+    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), workspaceAttachment: undefined, desktopFirstTurn: undefined, desktopQueuedTurn: undefined }
     const runAgentView = agent.config.kind === 'foreman' && body.foreman ? { ...agent, brief: body.foreman } : agent
     const source = body.source ?? 'dashboard'
     if (body.desktopFirstTurn) {
@@ -94,6 +99,31 @@ chatRoutes.post('/chat', async c => {
         claimSession(sessionId, runId, body.author?.id)
         return streamChat(agent, sessionId, runId, body.message, override, { provider, model }, { source: 'chat', author: body.author, workspaceAttachment: body.workspaceAttachment })
     }
+    if (body.desktopQueuedTurn) return withAgentLock(agentId, async () => {
+        const queued = body.desktopQueuedTurn!
+        const session = await getSession(agentId, body.sessionId!)
+        if (!session || session.agentId !== agentId) throw new HttpError(404, 'Session not found for this agent')
+        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, attachmentPath: queued.attachmentPath }
+        if (await getDesktopQueuedTurn(agentId, turn)) return identified(resumeStreamResponse(turn.runId), session.id, turn.runId)
+        if (await getRun(agentId, turn.runId)) throw new HttpError(409, 'This queued message ID is already in use.')
+        // The bridge can reconcile a lost acknowledgement before re-reading a moved file or
+        // resolving a changed model. A probe never creates a run or a user message.
+        if (queued.replayOnly) return c.json({ code: 'queued_turn_not_found' }, 404)
+        if (queued.attachmentPath !== body.workspaceAttachment?.path) throw new HttpError(400, 'The queued attachment does not match this message.')
+        const override = { connectionId: body.connectionId, provider: body.provider, model: body.model }
+        const { provider, model } = await resolveRunModel(agent, override)
+        const holder = claimSession(session.id, turn.runId, body.author?.id)
+        if (holder) return c.json({ error: 'a run is already in flight on this session', code: 'run_in_flight', runId: holder, sessionId: session.id }, 409)
+        try {
+            const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, body.workspaceAttachment, body.author)
+            return streamChat(agent, session.id, turn.runId, body.message, override, { provider, model }, {
+                source: 'chat', author: body.author, workspaceAttachment: body.workspaceAttachment, queuedUser,
+            })
+        } catch (error) {
+            releaseSession(turn.runId)
+            throw error
+        }
+    })
     const claim = body.install && !body.sessionId ? await claimInstallSession(agentId, () => createSession(agentId, undefined, undefined, source)) : null
     if (claim && 'inFlight' in claim) return c.json({ error: 'the installation is already under way in another conversation', code: 'install_in_flight', sessionId: claim.inFlight }, 409)
     const session = claim ? claim.session : await resolveSession(agentId, body.sessionId, source)

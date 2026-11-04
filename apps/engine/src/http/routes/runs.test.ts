@@ -24,10 +24,11 @@ const { writeAgentConfig } = await import('../../agents/config-write.js')
 const { agentDir } = await import('../../config/paths.js')
 const { createSession } = await import('../../db/repos/sessions.js')
 const { getRun, startRun } = await import('../../db/repos/runs.js')
-const { appendMessage } = await import('../../db/repos/messages.js')
+const { appendMessage, listMessages } = await import('../../db/repos/messages.js')
+const { reserveDesktopQueuedTurn } = await import('../../db/repos/desktop-queued-turns.js')
 const { insertRunStep, insertToolCall } = await import('../../db/repos/telemetry.js')
 const { getSystemDb } = await import('../../db/systemDb.js')
-const { registerRunAbort, unregisterRunAbort, activeRunCount } = await import('../../runtime/run-control.js')
+const { registerRunAbort, unregisterRunAbort, activeRunCount, claimSession, releaseSession, setRunCancel, sessionClaim } = await import('../../runtime/run-control.js')
 const { registerRun } = await import('../../runtime/stream.js')
 const { registerSubRunStop } = await import('../../tools/builtin/sub-run-watch.js')
 
@@ -244,6 +245,71 @@ describe('POST /agents/:id/runs/:rid/cancel', () => {
         expect(activeRunCount()).toBe(0)
         expect((await getRun(id, rid))?.status).toBe('cancelled')
         expect(sent).toEqual([])
+    })
+
+    it('desktop Stop waits for the prior transcript and teardown before a queued turn can claim the session', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const session = await createSession(id, 'queued after Stop')
+        const rid = await seedRun(id, session.id)
+        const nextId = crypto.randomUUID()
+        let allowPersistence!: () => void, allowTeardown!: () => void, entered!: () => void, persisted!: () => void
+        const persistence = new Promise<void>(resolve => { allowPersistence = resolve })
+        const teardown = new Promise<void>(resolve => { allowTeardown = resolve })
+        const cancelling = new Promise<void>(resolve => { entered = resolve })
+        const saved = new Promise<void>(resolve => { persisted = resolve })
+        registerRunAbort(rid)
+        claimSession(session.id, rid)
+        setRunCancel(rid, async () => {
+            entered()
+            await persistence
+            await appendMessage(id, session.id, { role: 'assistant', content: 'Previous final reply' })
+            persisted()
+            await teardown
+            unregisterRunAbort(rid)
+        })
+        let finished = false
+        const stopping = cancel(rid).then(response => { finished = true; return response })
+        try {
+            await cancelling
+            expect(finished).toBe(false)
+            expect(claimSession(session.id, nextId)).toBe(rid)
+            expect(await listMessages(id, session.id)).toHaveLength(0)
+            allowPersistence()
+            await saved
+            expect(finished).toBe(false)
+            expect(claimSession(session.id, nextId)).toBe(rid)
+            allowTeardown()
+            expect((await stopping).status).toBe(200)
+            expect(sessionClaim(session.id)).toBeNull()
+            expect(claimSession(session.id, nextId)).toBeNull()
+            await reserveDesktopQueuedTurn(id, { runId: nextId, sessionId: session.id, message: 'Follow-up after Stop' })
+            const messages = await listMessages(id, session.id)
+            expect(messages.map(message => message.role)).toEqual(['assistant', 'user'])
+            expect(messages[0].contentJson).toContain('Previous final reply')
+            expect(messages[1].contentJson).toContain('Follow-up after Stop')
+        } finally {
+            allowPersistence()
+            allowTeardown()
+            await stopping
+            unregisterRunAbort(rid)
+            releaseSession(nextId)
+            vi.unstubAllEnvs()
+        }
+    })
+
+    it('a failed desktop cancellation reports an error and a later Stop can close the orphan', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const session = await createSession(id, 'failed Stop')
+        const rid = await seedRun(id, session.id)
+        registerRunAbort(rid)
+        claimSession(session.id, rid)
+        setRunCancel(rid, async () => { throw new Error('failed persistence') })
+        try {
+            expect((await cancel(rid)).status).toBe(503)
+            expect(sessionClaim(session.id)).toBeNull()
+            expect((await cancel(rid)).status).toBe(200)
+            expect((await getRun(id, rid))?.status).toBe('cancelled')
+        } finally { unregisterRunAbort(rid); vi.unstubAllEnvs() }
     })
 
     it('closes an orphaned run and tells the hub itself', async () => {

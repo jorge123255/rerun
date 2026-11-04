@@ -34,6 +34,7 @@ beforeEach(() => {
     stopResponse = () => Response.json({ canceled: 1, alreadyFinished: false })
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
         requests.push(`${init?.method ?? 'GET'} ${url}`)
+        if (url.includes('/queue?')) return Response.json({ queued: null })
         if (url.startsWith('/reply/')) return new Response(null, { headers: { 'x-session-id': url.slice('/reply/'.length) } })
         if (url.endsWith('/messages')) return saved.clone()
         if (url.endsWith('/stop') && init?.method === 'POST') { running = false; return stopResponse() }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { abortRun, activeRunCount, claimSession, registerRunAbort, releaseSession, sessionClaim, sessionClaimCount, setRunCancel, unregisterRunAbort } from './run-control.js'
+import { abortRun, activeRunCount, claimSession, registerRunAbort, releaseSession, sessionClaim, sessionClaimCount, setRunCancel, unregisterRunAbort, waitForRunCancellation } from './run-control.js'
 
 describe('abortRun', () => {
     it('returns false for a run it never registered', () => {
@@ -36,6 +36,72 @@ describe('abortRun', () => {
         const controller = registerRunAbort('run-c')
         expect(abortRun('run-c')).toBe(true)
         expect(controller.signal.aborted).toBe(true)
+    })
+
+    it('keeps a desktop conversation claimed until cancellation persistence and teardown finish', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        let finish!: () => void
+        const gate = new Promise<void>(resolve => { finish = resolve })
+        try {
+            registerRunAbort('desktop-settling')
+            claimSession('desktop-session', 'desktop-settling')
+            setRunCancel('desktop-settling', () => gate)
+            expect(abortRun('desktop-settling')).toBe(true)
+            expect(claimSession('desktop-session', 'queued-next')).toBe('desktop-settling')
+            let completed = false
+            const stopped = waitForRunCancellation('desktop-settling').then(result => { completed = true; return result })
+            await Promise.resolve()
+            expect(completed).toBe(false)
+            finish()
+            expect(await stopped).toBe(true)
+            expect(claimSession('desktop-session', 'queued-next')).toBeNull()
+        } finally {
+            finish()
+            await waitForRunCancellation('desktop-settling')
+            releaseSession('desktop-settling')
+            releaseSession('queued-next')
+            vi.unstubAllEnvs()
+        }
+    })
+
+    it('bounds a desktop Stop wait without freeing a still-settling conversation', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.useFakeTimers()
+        let finish!: () => void
+        const gate = new Promise<void>(resolve => { finish = resolve })
+        try {
+            registerRunAbort('desktop-slow')
+            claimSession('desktop-slow-session', 'desktop-slow')
+            setRunCancel('desktop-slow', () => gate)
+            abortRun('desktop-slow')
+            const first = waitForRunCancellation('desktop-slow', 50)
+            await vi.advanceTimersByTimeAsync(50)
+            expect(await first).toBe(false)
+            expect(sessionClaim('desktop-slow-session')?.runId).toBe('desktop-slow')
+            expect(abortRun('desktop-slow')).toBe(false)
+            const retry = waitForRunCancellation('desktop-slow', 50)
+            finish()
+            expect(await retry).toBe(true)
+            expect(sessionClaim('desktop-slow-session')).toBeNull()
+        } finally {
+            finish()
+            vi.useRealTimers()
+            await waitForRunCancellation('desktop-slow')
+            releaseSession('desktop-slow')
+            vi.unstubAllEnvs()
+        }
+    })
+
+    it('reports failed desktop settlement and releases its claim for a later retry', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            registerRunAbort('desktop-failed')
+            claimSession('desktop-failed-session', 'desktop-failed')
+            setRunCancel('desktop-failed', async () => { throw new Error('persistence failed') })
+            abortRun('desktop-failed')
+            expect(await waitForRunCancellation('desktop-failed')).toBe(false)
+            expect(sessionClaim('desktop-failed-session')).toBeNull()
+        } finally { releaseSession('desktop-failed'); vi.unstubAllEnvs() }
     })
 })
 

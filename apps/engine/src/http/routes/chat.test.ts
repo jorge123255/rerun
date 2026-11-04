@@ -84,6 +84,75 @@ beforeEach(() => {
 })
 
 describe('POST /agents/:id/chat', () => {
+    it('reserves one queued run and durable user row for concurrent requests and lost acknowledgements', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id)
+            const other = await createSession(id)
+            const runId = crypto.randomUUID()
+            const input = { sessionId: session.id, message: 'Only one follow-up', desktopQueuedTurn: { runId } }
+            const responses = await Promise.all([chat(id, input), chat(id, input)])
+            for (const response of responses) {
+                expect([200, 204]).toContain(response.status)
+                expect(response.headers.get('x-run-id')).toBe(runId)
+                expect(response.headers.get('x-session-id')).toBe(session.id)
+                await response.text()
+            }
+            expect(state.calls).toHaveLength(1)
+            expect(state.calls[0].trigger).toHaveProperty('queuedUser')
+            const { listMessages } = await import('../../db/repos/messages.js')
+            expect((await listMessages(id, session.id)).filter(row => row.role === 'user')).toHaveLength(1)
+            expect((await listMessages(id, session.id))[0].contentJson).toContain('Only one follow-up')
+            const replay = await chat(id, { ...input, desktopQueuedTurn: { runId, replayOnly: true } })
+            expect([200, 204]).toContain(replay.status)
+            await replay.text()
+            expect(state.calls).toHaveLength(1)
+            expect((await chat(id, { ...input, message: 'Changed text' })).status).toBe(409)
+            expect((await chat(id, { ...input, sessionId: other.id })).status).toBe(409)
+            expect((await chat(id, { ...input, desktopQueuedTurn: { runId: 'bad' } })).status).toBe(400)
+            expect((await chat(id, { ...input, sessionId: undefined })).status).toBe(400)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('never acknowledges a failed queued reservation and retries after the transaction rolls back', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const { getSystemDb } = await import('../../db/systemDb.js')
+        const { client } = await getSystemDb(id)
+        try {
+            const session = await createSession(id)
+            const input = { sessionId: session.id, message: 'Keep this draft', desktopQueuedTurn: { runId: crypto.randomUUID() } }
+            await client.execute("CREATE TRIGGER reject_queued_user BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT,'unavailable'); END")
+            const failed = await Promise.all([chat(id, input), chat(id, input)])
+            expect(failed.map(response => response.status)).toEqual([500, 500])
+            expect(state.calls).toHaveLength(0)
+            expect(await getRun(id, input.desktopQueuedTurn.runId)).toBeUndefined()
+            await client.execute('DROP TRIGGER reject_queued_user')
+            const retry = await chat(id, input)
+            expect(retry.status).toBe(200)
+            await retry.text()
+            expect(state.calls).toHaveLength(1)
+        } finally {
+            await client.execute('DROP TRIGGER IF EXISTS reject_queued_user')
+            vi.unstubAllEnvs()
+        }
+    })
+
+    it('a queued probe cannot start a run, and a busy session leaves the requested ID unreserved', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const holder = crypto.randomUUID()
+        try {
+            const session = await createSession(id)
+            const input = { sessionId: session.id, message: 'Wait for it', desktopQueuedTurn: { runId: crypto.randomUUID() } }
+            expect((await chat(id, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, replayOnly: true } })).status).toBe(404)
+            claimSession(session.id, holder)
+            expect((await chat(id, input)).status).toBe(409)
+            expect(await getRun(id, input.desktopQueuedTurn.runId)).toBeUndefined()
+            expect(state.calls).toHaveLength(0)
+            releaseSession(holder)
+            await (await chat(id, input)).text()
+            expect(state.calls).toHaveLength(1)
+        } finally { releaseSession(holder); vi.unstubAllEnvs() }
+    })
     it('dispatches one first turn for simultaneous retries of a desktop tab', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         try {

@@ -1,4 +1,5 @@
 import 'server-only'
+import { startQueuedChat } from './queued-chat'
 import { desktopRerunGrantsOf } from '@rerun/contracts'
 import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
@@ -78,7 +79,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick; tabUid?: string }
+    | { sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -99,13 +100,24 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id, 'x-run-id': String(previousStart.run_id),
         } }) }
     }
-    const file = !regenerate && input.attachmentPath !== undefined ? await readCoworkerFile(runtime, agent.id, input.attachmentPath, 'attach') : undefined
+    const queued = !regenerate && input.requestId ? { runId: input.requestId, attachmentPath: input.attachmentPath } : undefined
+    let replay: Response | undefined
+    if (queued && existing && !regenerate) {
+        const probe = await chat(engineOf(runtime), agent.engineAgentId, {
+            sessionId: existing.engineSessionId, message: input.text,
+            desktopQueuedTurn: { ...queued, replayOnly: true }, source: 'dashboard',
+        })
+        if (probe.status === 404 && (await probe.clone().json().catch(() => ({}))).code === 'queued_turn_not_found') {
+            if (input.reconcileOnly) throw new DesktopHttpError(404, 'This queued message has not been sent. Review it before sending.')
+        } else replay = probe
+    }
+    const file = !replay && !regenerate && input.attachmentPath !== undefined ? await readCoworkerFile(runtime, agent.id, input.attachmentPath, 'attach') : undefined
     // Existing chats resolve their own saved model. Only a first send can carry an unsaved choice.
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
-    const { connectionId, model } = await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
+    const { connectionId, model } = replay ? {} : await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
     const requestId = regenerate ? await regenerationRequestId(db, input.sessionId, input.regenerateMessageId, input.requestId) : undefined
     const start = !regenerate && uid ? previousStart ?? await reserveTabStart(db, agent, uid, input, runtime.launchNonce) : null
-    const engineResponse = await chat(engineOf(runtime), agent.engineAgentId, {
+    const engineResponse = replay ?? await (queued ? startQueuedChat : chat)(engineOf(runtime), agent.engineAgentId, {
         ...(regenerate ? {
             sessionId: existing!.engineSessionId,
             regenerateMessageId: input.regenerateMessageId.slice('engine-'.length),
@@ -113,6 +125,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         } : {
             sessionId: existing?.engineSessionId, message: input.text,
             ...(start && { desktopFirstTurn: { sessionId: String(start.engine_session_id), runId: String(start.run_id) } }),
+            ...(queued && { desktopQueuedTurn: queued }),
             workspaceAttachment: file && { path: file.path, content: file.content },
         }),
         connectionId,
@@ -130,12 +143,14 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         throw new DesktopHttpError(engineResponse.status, 'The engine could not start this first message. Check the coworker or model, then try again.')
     }
     if (engineResponse.status === 403) throw new DesktopHttpError(403, disabledCoworkerMessage)
+    if (queued && engineResponse.status === 409) throw new DesktopHttpError(409, 'This conversation is still working or the queued message changed. The queued message is kept; wait for the reply or use Send now.')
     // A replay can recover the alternate even after the engine's stream has expired.
-    const completedReplay = (regenerate || !!start) && engineResponse.status === 204
+    const completedReplay = (regenerate || !!start || !!queued) && engineResponse.status === 204
     if (!engineResponse.ok || (!engineResponse.body && !completedReplay)) throw new DesktopHttpError(502, 'The engine could not start this conversation')
     const engineSessionId = engineResponse.headers.get('x-session-id')
     if (!engineSessionId) throw new DesktopHttpError(502, 'The engine did not return a conversation ID')
     if (start && (engineSessionId !== start.engine_session_id || engineResponse.headers.get('x-run-id') !== start.run_id)) throw new DesktopHttpError(502, 'The engine returned a different first turn.')
+    if (queued && (engineSessionId !== existing?.engineSessionId || engineResponse.headers.get('x-run-id') !== queued.runId)) throw new DesktopHttpError(502, 'The engine returned a different queued message.')
     if (regenerate && engineSessionId === existing!.engineSessionId) throw new DesktopHttpError(502, 'The engine did not return an alternate conversation.')
     const session = regenerate
         ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId, model: savedChoice(existing) })

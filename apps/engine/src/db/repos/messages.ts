@@ -43,6 +43,13 @@ export async function appendMessage(agentId: string, sessionId: string, message:
     return row
 }
 
+// A queued turn already saved its text atomically with the run. Complete that same row with the
+// normal recall/file context before invoking the provider; its visible text and FTS entry stay put.
+export async function completeQueuedUser(agentId: string, row: MessageRow, content: ModelMessage['content']): Promise<void> {
+    const { db } = await getSystemDb(agentId)
+    await db.update(messages).set({ contentJson: JSON.stringify(content) }).where(and(eq(messages.id, row.id), eq(messages.sessionId, row.sessionId), eq(messages.role, 'user')))
+}
+
 // The replies the model closed its answer with live beside the row, never in `content_json`: the
 // history the model reads back must not show them, the chat and a reload must.
 export async function setMessageToolCalls(agentId: string, messageId: string, calls: unknown[]): Promise<void> {

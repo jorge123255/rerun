@@ -22,6 +22,7 @@ async function finish(db: Client, receipt: Row) {
     // Explicit ownership predicates also clean workspaces created before the session foreign
     // keys existed. A copy's completed receipt stays as a tombstone against stale copy retries.
     await db.batch([
+        { sql: 'DELETE FROM desktop_queued_messages WHERE agent_id = ? OR session_id IN (SELECT id FROM desktop_sessions WHERE agent_id = ?)', args: [id, id] },
         { sql: 'DELETE FROM desktop_message_feedback WHERE agent_id = ? OR session_id IN (SELECT id FROM desktop_sessions WHERE agent_id = ?)', args: [id, id] },
         { sql: 'DELETE FROM desktop_regeneration_requests WHERE source_session_id IN (SELECT id FROM desktop_sessions WHERE agent_id = ?)', args: [id] },
         { sql: 'UPDATE desktop_regeneration_requests SET alternate_session_id = NULL WHERE alternate_session_id IN (SELECT id FROM desktop_sessions WHERE agent_id = ?)', args: [id] },
