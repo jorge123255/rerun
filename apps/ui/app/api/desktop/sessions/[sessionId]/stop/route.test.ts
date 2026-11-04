@@ -31,6 +31,12 @@ beforeEach(async () => {
     server = createServer((req, res) => {
         const url = new URL(req.url ?? '/', 'http://engine')
         const json = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
+        // Board attention now verifies that a stopped chat has no pending request.
+        const messages = /^\/agents\/([^/]+)\/sessions\/([^/]+)\/messages$/.exec(url.pathname)
+        if (req.method === 'GET' && messages) {
+            const owned = runs.some(run => run.agentId === decodeURIComponent(messages[1]) && run.sessionId === decodeURIComponent(messages[2]))
+            return owned ? json(200, { messages: [] }) : json(404, { error: 'conversation not found' })
+        }
         const list = /^\/agents\/([^/]+)\/runs$/.exec(url.pathname)
         if (req.method === 'GET' && list) {
             if (listFails) return json(503, { error: 'down' })
