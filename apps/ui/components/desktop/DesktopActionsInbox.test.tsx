@@ -210,3 +210,63 @@ test('outside pointer-down close keeps focus; explicit close and Escape return i
 
     await act(async () => { root.unmount() })
 })
+
+test('current roster filters counts and unknown owners, and removed rows cannot reopen a coworker', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ items: [question, approval], unavailableAgentIds: ['removed'], checkedAt })))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container), onOpen = vi.fn()
+    const researcher = { id: 'researcher', name: 'Renamed researcher', enabled: true }
+    await act(async () => { root.render(<DesktopActionsInbox open agents={[researcher]} onOpenConversation={onOpen} />) })
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 1 pending')
+    expect(container.textContent).toContain('Renamed researcher')
+    expect(container.textContent).not.toContain('Reviewer')
+    expect(container.textContent).not.toContain("Some coworkers couldn't be reached")
+    const oldRow = container.querySelector<HTMLElement>('[data-actions-inbox-item="q1"]')!
+    await act(async () => { oldRow.click() })
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ agentName: 'Renamed researcher', id: 's1' }))
+    onOpen.mockClear()
+    await act(async () => { root.render(<DesktopActionsInbox open agents={[]} onOpenConversation={onOpen} />) })
+    expect(container.querySelector('[data-actions-inbox-item]')).toBeNull()
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: no pending')
+    await act(async () => { oldRow.click() })
+    expect(onOpen).not.toHaveBeenCalled()
+    await act(async () => { root.unmount() })
+})
+
+test('a late response from the old roster cannot restore a deleted request', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const pending: { resolve: (value: Response) => void; signal?: AbortSignal | null }[] = []
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise<Response>(resolve => pending.push({ resolve, signal: init?.signal }))))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    await act(async () => { root.render(<DesktopActionsInbox open agents={[{ id: 'researcher', name: 'Researcher' }]} />) })
+    await act(async () => { root.render(<DesktopActionsInbox open agents={[]} />) })
+    expect(pending).toHaveLength(2)
+    expect(pending[0].signal?.aborted).toBe(true)
+    await act(async () => { pending[1].resolve(Response.json({ items: [], unavailableAgentIds: [], checkedAt })) })
+    await act(async () => { pending[0].resolve(Response.json({ items: [question], unavailableAgentIds: [], checkedAt })) })
+    expect(container.querySelector('[data-actions-inbox-item]')).toBeNull()
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: no pending')
+    await act(async () => { root.unmount() })
+})
+
+
+test('failure after a roster change does not relabel an old snapshot as current', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    let respond: (value: Response) => void = () => {}
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ items: [question], unavailableAgentIds: [], checkedAt }))
+        .mockImplementationOnce(() => new Promise<Response>(resolve => { respond = resolve }))
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    const researcher = { id: 'researcher', name: 'Researcher' }
+    await act(async () => { root.render(<DesktopActionsInbox open agents={[researcher, { id: 'old', name: 'Old' }]} />) })
+    expect(container.querySelector('[data-actions-inbox-item="q1"]')).not.toBeNull()
+    await act(async () => { root.render(<DesktopActionsInbox open agents={[researcher, { id: 'new', name: 'New' }]} />) })
+    expect(container.querySelector('[data-actions-inbox-item]')).toBeNull()
+    await act(async () => { respond(Response.json({ error: 'unavailable' }, { status: 503 })) })
+    expect(container.querySelector('[data-actions-inbox-item]')).toBeNull()
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: unavailable')
+    await act(async () => { root.unmount() })
+})

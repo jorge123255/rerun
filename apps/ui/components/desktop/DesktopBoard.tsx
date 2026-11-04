@@ -9,6 +9,7 @@ import { latestBoardAttention, type BoardActivityStatus } from '@/lib/desktop/bo
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { DesktopBoardMenu } from './DesktopBoardMenu'
 import { DesktopFindChat } from './DesktopFindChat'
+import { DesktopActionsInbox } from './DesktopActionsInbox'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import { duplicateAgentName } from '@/lib/copy-name'
 import { canPlaceDesktopCopy, desktopBoardLayout } from '@/lib/desktop/board-layout'
@@ -142,7 +143,9 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
                 />
             }</DesktopBoardMenu>
             <div className="absolute top-4 left-4 z-40 flex items-start gap-2">{workspaceMenu}</div>
-            <ChromeBar className="absolute bottom-4 left-4 z-40 max-w-[calc(100%-2rem)]" aria-label="Board actions" role="group">
+            <div className="absolute bottom-4 left-4 z-40 flex max-w-[calc(100%-2rem)] flex-wrap items-end gap-2">
+            {!placement && onOpenConversation && <DesktopActionsInbox agents={agents} onOpenConversation={onOpenConversation} />}
+            <ChromeBar aria-label="Board actions" role="group">
                 {placement ? <div className="flex min-w-0 items-center gap-2 pl-3">
                     <div className="min-w-0" role="status">
                         <Shimmer as="span" duration={1.6} className="block truncate text-sm font-medium">
@@ -158,6 +161,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
                     <ChromeButton icon={Plus} label="Add coworker" onClick={onCreate} />
                 </>}
             </ChromeBar>
+            </div>
             <ul aria-label="Coworker activity" className="sr-only" aria-live="polite">
                 {agents.map(agent => {
                     const status = agent.enabled === false ? 'inactive' : activity[agent.id] ?? 'unknown'

@@ -11,6 +11,7 @@ import type { DesktopAttentionItem } from '@/lib/desktop/attention'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { AlertCircleIcon, BellIcon, InboxIcon, Loader2Icon, RefreshCcwIcon, TriangleAlertIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import type { DesktopAgentView } from './DesktopApp'
 import { useDesktopAttention, type DesktopAttentionRead } from './useDesktopAttention'
 
 // The original inbox folds question and approval under one « Needs you » heading, keyed on the
@@ -25,6 +26,7 @@ const KIND_SENTENCE: Record<DesktopAttentionItem['kind'], string> = {
 }
 
 export type DesktopActionsInboxProps = {
+    agents?: readonly Pick<DesktopAgentView, 'id' | 'name' | 'enabled'>[]
     /** Navigation only: opens the exact coworker/session, never answers, approves or marks handled. */
     onOpenConversation?: (hit: DesktopConversationHit) => void
     /** Controlled open state. Without it the inbox manages its own fold. */
@@ -125,7 +127,7 @@ function PillContent({ status, items, unavailable, failed, open }: { status: Des
  * empty state. Opening a row only navigates to the coworker/session where the existing chat cards
  * answer, approve or decline.
  */
-export function DesktopActionsInbox({ onOpenConversation, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
+export function DesktopActionsInbox({ agents, onOpenConversation, open: openProp, onOpenChange, className }: DesktopActionsInboxProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const open = openProp ?? internalOpen
     const change = useCallback(
@@ -136,7 +138,16 @@ export function DesktopActionsInbox({ onOpenConversation, open: openProp, onOpen
         [onOpenChange]
     )
     // Polling runs only while the card is open and the window is visible; closing cancels a read in flight.
-    const { status, items, unavailableAgentIds, retry } = useDesktopAttention(open)
+    const { status, items: received, unavailableAgentIds: unavailable, retry } = useDesktopAttention(open, agents?.map(agent => agent.id))
+    const roster = useMemo(() => agents ? new Map(agents.map(agent => [agent.id, agent])) : null, [agents])
+    const items = useMemo(() => received.flatMap(item => {
+        if (!roster) return [item]
+        const agent = roster.get(item.agentId)
+        return agent ? [{ ...item, agentName: agent.name, agentEnabled: agent.enabled !== false }] : []
+    }), [received, roster])
+    const unavailableAgentIds = unavailable.filter(id => !roster || roster.has(id))
+    const latest = useRef({ items, onOpenConversation })
+    latest.current = { items, onOpenConversation }
     const rootRef = useRef<HTMLDivElement>(null)
     const pillRef = useRef<HTMLButtonElement>(null)
     const cardId = useId()
@@ -145,11 +156,13 @@ export function DesktopActionsInbox({ onOpenConversation, open: openProp, onOpen
 
     const openItem = useCallback(
         (item: DesktopAttentionItem) => {
-            // Navigation: close without claiming the pill's focus, so the chat input keeps it.
+            const current = latest.current.items.find(row => row.id === item.id && row.agentId === item.agentId && row.sessionId === item.sessionId)
+            if (!current) return
+            // Navigation only. Retained handlers cannot revive a deleted owner or old request.
             change(false)
-            onOpenConversation?.({ id: item.sessionId, agentId: item.agentId, agentName: item.agentName, title: item.title })
+            latest.current.onOpenConversation?.({ id: current.sessionId, agentId: current.agentId, agentName: current.agentName, title: current.title })
         },
-        [change, onOpenConversation]
+        [change]
     )
 
     // Only an explicit Close or Escape folds the card back onto the pill and takes the focus

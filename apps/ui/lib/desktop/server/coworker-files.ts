@@ -1028,6 +1028,8 @@ const MAX_DELETE_DEPTH = 64
 const DIRECTORY_OPEN = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK
 type DeleteNode = { name: string; dev: string; ino: string; type: 'file' | 'dir'; children?: DeleteNode[] }
 type DeleteJournal = { v: 1; name: string; dev: string; ino: string; parentDev: string; parentIno: string; workspaceDev: string; workspaceIno: string; nodes?: DeleteNode[] }
+type DeleteWorkspace = FileIdentity & { path: string }
+type DeleteStage = Omit<DeleteJournal, 'v' | 'nodes'> & { v: 2; kind: 'stage'; type: 'file' | 'dir'; temp: string; recovery: string }
 
 function idText(value: bigint): string {
     const text = value.toString()
@@ -1077,20 +1079,28 @@ function parseDeleteJournal(raw: string): DeleteJournal | null {
     } catch { return null }
 }
 
-function treeHasFile(nodes: DeleteNode[]): boolean {
-    return nodes.some(node => node.type === 'file' || treeHasFile(node.children ?? []))
+function parseDeleteStage(raw: string): DeleteStage | null {
+    try {
+        const value = JSON.parse(raw) as DeleteStage
+        if (value.v !== 2 || value.kind !== 'stage' || !['file', 'dir'].includes(value.type) ||
+            !simpleName(value.name) || reservedName(value.name) || !/^\.rerun-delete-[a-f0-9]{24}$/.test(value.temp) ||
+            !simpleName(value.recovery) || !value.recovery.startsWith('delete-recovery-') || reservedName(value.recovery)) return null
+        if (![value.dev, value.ino, value.parentDev, value.parentIno, value.workspaceDev, value.workspaceIno].every(parseId)) return null
+        return value
+    } catch { return null }
 }
 
-function journalIdentities(journal: DeleteJournal): FileIdentity[] {
-    const all = [asIdentity(journal.dev, journal.ino)]
-    const walk = (nodes: DeleteNode[]) => {
-        for (const node of nodes) {
-            all.push(asIdentity(node.dev, node.ino))
-            if (node.children) walk(node.children)
+function deleteDirectoryGuard(canonical: string, identity: FileIdentity, root: DeleteWorkspace, ancestor: () => Promise<void>) {
+    return async () => {
+        await ancestor()
+        const [listed, actual, workspace, workspaceActual] = await Promise.all([
+            fileStat(canonical), realpath(canonical).catch(() => null), fileStat(root.path), realpath(root.path).catch(() => null),
+        ])
+        if (!listed?.isDirectory() || listed.isSymbolicLink() || !sameFile(listed, identity) || actual !== canonical || !inside(root.path, actual) ||
+            !workspace?.isDirectory() || workspace.isSymbolicLink() || !sameFile(workspace, root) || workspaceActual !== root.path) {
+            throw new DesktopHttpError(400, 'That folder moved outside this coworker’s workspace. Its remaining files were left unchanged.')
         }
     }
-    if (journal.nodes) walk(journal.nodes)
-    return all
 }
 
 function assertDeleteHelper() {
@@ -1098,103 +1108,169 @@ function assertDeleteHelper() {
     if (!helper || !isAbsolute(helper)) throw new DesktopHttpError(503, 'The safe rename helper is unavailable. Reopen the app and try again.')
 }
 
-/** Unlink a private name only when it is still the regular file that was staged. A symlink or a
- * different inode at that name is left alone, including a hard link under a normal name. */
-async function sweepStagedFile(pinned: string, identity: FileIdentity): Promise<boolean> {
-    let names: string[]
-    try { names = await readdir(pinned) } catch (error) { if (missing(error)) return false; throw error }
-    let removed = false
-    for (const name of names) {
-        if (!name.startsWith(DELETE_PREFIX) || name.endsWith('.json') || !simpleName(name)) continue
-        const path = join(pinned, name)
-        const info = await fileStat(path)
-        if (!info || !sameFile(info, identity) || info.isSymbolicLink() || !info.isFile()) continue
-        await unlink(path).catch(error => { if (!missing(error)) throw error })
-        const left = await fileStat(path)
-        if (left && sameFile(left, identity) && left.isFile()) return false
-        removed = true
-    }
-    return removed
-}
-
-async function stagedFileRemains(pinned: string, identities: FileIdentity[], depth = 0): Promise<boolean> {
+async function stagedFileRemains(canonicalDir: string, pinned: string, root: DeleteWorkspace, assertUnmoved: () => Promise<void>, depth = 0): Promise<boolean> {
     if (depth > MAX_DELETE_DEPTH) return true
+    await assertUnmoved()
     let names: string[]
     try { names = await readdir(pinned) } catch (error) { if (missing(error)) return false; throw error }
     for (const name of names) {
+        await assertUnmoved()
         if (!simpleName(name)) continue
         const info = await fileStat(join(pinned, name))
-        if (!info || info.isSymbolicLink()) continue
-        if (name.startsWith(DELETE_PREFIX) && !name.endsWith('.json') && info.isFile() && identities.some(identity => sameFile(info, identity))) return true
-        if (info.isDirectory() && !reservedName(name) && await stagedFileRemains(join(pinned, name), identities, depth + 1)) return true
+        if (!info) continue
+        // An unexpected staged inode is still recovery data. Identity mismatch never makes
+        // it safe to forget the intent, including legacy unrecorded private names.
+        if (name.startsWith(DELETE_PREFIX) && !name.endsWith('.json')) return true
+        if (name.startsWith(DELETE_PREFIX) && name.endsWith('.json')) {
+            const raw = await readRecoveryText(join(pinned, name), 8 * 1024 * 1024)
+            await assertUnmoved()
+            if (raw && parseDeleteStage(raw)) return true
+        }
+        if (info.isDirectory() && !info.isSymbolicLink() && !reservedName(name)) {
+            const child = await open(join(pinned, name), DIRECTORY_OPEN)
+            try {
+                const opened = await child.stat({ bigint: true })
+                if (!sameFile(info, opened)) return true
+                const canonical = join(canonicalDir, name)
+                const guard = deleteDirectoryGuard(canonical, opened, root, assertUnmoved)
+                await guard()
+                if (await stagedFileRemains(canonical, await pinnedDirectory(child), root, guard, depth + 1)) return true
+            } finally { await child.close() }
+        }
     }
     return false
 }
 
-async function stageAndUnlinkFile(canonicalDir: string, parent: FileIdentity, pinned: string, name: string, identity: FileIdentity, assertUnmoved: () => Promise<void>): Promise<'removed' | 'missing' | 'kept'> {
+async function finishDeleteStage(canonicalDir: string, pinned: string, stage: DeleteStage, journalIdentity: FileIdentity, root: DeleteWorkspace, assertUnmoved: () => Promise<void>): Promise<'removed' | 'kept'> {
+    const parent = asIdentity(stage.parentDev, stage.parentIno), expected = asIdentity(stage.dev, stage.ino)
+    const journalName = stage.temp + '.json', tempPath = join(pinned, stage.temp)
+    const preserve = async (actual: FileIdentity) => {
+        let visible = stage.name
+        await assertUnmoved()
+        try { await renameWithoutReplace(canonicalDir, parent, stage.temp, actual, visible) }
+        catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+            visible = stage.recovery
+            await assertUnmoved()
+            await renameWithoutReplace(canonicalDir, parent, stage.temp, actual, visible)
+        }
+        await assertUnmoved()
+        if (await fileStat(tempPath)) throw new DesktopHttpError(409, 'Delete recovery is incomplete. The staged entry and its journal were kept.')
+        await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
+        throw new DesktopHttpError(409, `An entry changed during delete. All remaining versions were kept; refresh Files to find “${visible}”.`)
+    }
     await assertUnmoved()
-    const swept = await sweepStagedFile(pinned, identity)
-    const info = await fileStat(join(pinned, name))
-    if (!info) return swept || await sweepStagedFile(pinned, identity) ? 'removed' : 'missing'
-    if (!sameFile(info, identity) || info.isSymbolicLink() || !info.isFile()) return 'kept'
-    const temp = `${DELETE_PREFIX}${randomBytes(12).toString('hex')}`
-    claim(canonicalDir, temp)
+    const staged = await fileStat(tempPath)
+    if (!staged) { await removeJournal(pinned, journalName, journalIdentity, assertUnmoved); return 'removed' }
+    if (staged.isSymbolicLink() || (!staged.isFile() && !staged.isDirectory())) throw new DesktopHttpError(409, 'A staged entry changed type during delete. Its recovery journal was kept; review the folder before trying again.')
+    if (!sameFile(staged, expected) || staged.isDirectory() !== (stage.type === 'dir')) return preserve(staged)
+    if (stage.type === 'dir') {
+        const child = await open(tempPath, DIRECTORY_OPEN)
+        try {
+            const opened = await child.stat({ bigint: true })
+            if (!sameFile(opened, expected)) return preserve(opened)
+            const guard = deleteDirectoryGuard(join(canonicalDir, stage.temp), opened, root, assertUnmoved)
+            await guard()
+            if ((await readdir(await pinnedDirectory(child))).length) return preserve(opened)
+            await guard()
+            try { await rmdir(tempPath) }
+            catch (error) {
+                if (['ENOTEMPTY', 'EEXIST'].includes((error as NodeJS.ErrnoException).code ?? '')) return preserve(opened)
+                if (!missing(error)) throw error
+            }
+        } finally { await child.close() }
+    } else {
+        await assertUnmoved()
+        const current = await fileStat(tempPath)
+        if (current && !sameFile(current, expected)) return preserve(current)
+        await assertUnmoved()
+        await unlink(tempPath).catch(error => { if (!missing(error)) throw error })
+    }
+    await assertUnmoved()
+    const left = await fileStat(tempPath)
+    if (left) {
+        if (!sameFile(left, expected)) return preserve(left)
+        return 'kept'
+    }
+    await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
+    return 'removed'
+}
+
+async function recoverDeleteStages(canonicalDir: string, parent: FileIdentity, pinned: string, root: DeleteWorkspace, assertUnmoved: () => Promise<void>) {
+    await assertUnmoved()
+    for (const name of await readdir(pinned)) {
+        if (!name.startsWith(DELETE_PREFIX) || !name.endsWith('.json') || claimed(canonicalDir, name)) continue
+        const identity = await fileStat(join(pinned, name))
+        const raw = await readRecoveryText(join(pinned, name), 8192)
+        await assertUnmoved()
+        const stage = raw && parseDeleteStage(raw)
+        if (!stage || name !== stage.temp + '.json' || !identity || !sameFile(parent, asIdentity(stage.parentDev, stage.parentIno)) ||
+            !sameFile(root, asIdentity(stage.workspaceDev, stage.workspaceIno)) || claimed(canonicalDir, stage.temp)) continue
+        await finishDeleteStage(canonicalDir, pinned, stage, identity, root, assertUnmoved)
+    }
+}
+
+async function stageAndRemove(canonicalDir: string, parent: FileIdentity, pinned: string, name: string, identity: FileIdentity, type: 'file' | 'dir', root: DeleteWorkspace, assertUnmoved: () => Promise<void>): Promise<'removed' | 'missing' | 'kept'> {
+    await recoverDeleteStages(canonicalDir, parent, pinned, root, assertUnmoved)
+    await assertUnmoved()
+    const source = await fileStat(join(pinned, name))
+    if (!source) return 'missing'
+    if (!sameFile(source, identity) || source.isSymbolicLink() || (type === 'dir' ? !source.isDirectory() : !source.isFile())) return 'kept'
+    const token = randomBytes(12).toString('hex'), temp = DELETE_PREFIX + token
+    const stage: DeleteStage = { v: 2, kind: 'stage', type, name, temp, recovery: `delete-recovery-${token}${type === 'file' ? name.match(/\.[^.]+$/)?.[0] ?? '' : ''}`,
+        dev: idText(identity.dev), ino: idText(identity.ino), parentDev: idText(parent.dev), parentIno: idText(parent.ino), workspaceDev: idText(root.dev), workspaceIno: idText(root.ino) }
+    const journalName = temp + '.json'
+    for (const entry of [temp, journalName]) claim(canonicalDir, entry)
     try {
+        const receipt = await writeDeleteJournal(pinned, journalName, stage, assertUnmoved)
         await assertUnmoved()
         try { await renameWithoutReplace(canonicalDir, parent, name, identity, temp) }
         catch (error) {
+            // ESTALE can mean a different source inode actually moved. Inspect the exact
+            // journaled destination even on failure; never treat it as an untouched source.
+            await assertUnmoved()
+            if (await fileStat(join(pinned, temp))) await finishDeleteStage(canonicalDir, pinned, stage, receipt, root, assertUnmoved)
+            else await removeJournal(pinned, journalName, receipt, assertUnmoved)
             const code = (error as NodeJS.ErrnoException).code
             if (code === 'ENOENT') return 'missing'
-            if (code === 'ESTALE' || code === 'EEXIST' || code === 'EINVAL') return 'kept'
+            if (['ESTALE', 'EEXIST', 'EINVAL'].includes(code ?? '')) return 'kept'
             throw error
         }
-        // Test seam only. Unset in the app, so a crash here leaves the journal and the private name.
         if (process.env.RERUN_FILE_DELETE_CRASH === 'staged') throw new DesktopHttpError(500, 'Delete stopped after the entry was set aside.')
-        await assertUnmoved()
-        const staged = await fileStat(join(pinned, temp))
-        if (!staged || !sameFile(staged, identity) || staged.isSymbolicLink() || !staged.isFile()) return 'kept'
-        await unlink(join(pinned, temp)).catch(error => { if (!missing(error)) throw error })
-        const left = await fileStat(join(pinned, temp))
-        return left && sameFile(left, identity) ? 'kept' : 'removed'
-    } finally { unclaim(canonicalDir, temp) }
+        return await finishDeleteStage(canonicalDir, pinned, stage, receipt, root, assertUnmoved)
+    } finally { for (const entry of [temp, journalName]) unclaim(canonicalDir, entry) }
 }
 
-async function removeEmptyDirectory(canonicalDir: string, pinned: string, name: string, identity: FileIdentity, root: string, assertUnmoved: () => Promise<void>): Promise<'removed' | 'missing' | 'kept'> {
+async function stageAndUnlinkFile(canonicalDir: string, parent: FileIdentity, pinned: string, name: string, identity: FileIdentity, root: DeleteWorkspace, assertUnmoved: () => Promise<void>) {
+    return stageAndRemove(canonicalDir, parent, pinned, name, identity, 'file', root, assertUnmoved)
+}
+
+async function removeEmptyDirectory(canonicalDir: string, parent: FileIdentity, pinned: string, name: string, identity: FileIdentity, root: DeleteWorkspace, assertUnmoved: () => Promise<void>) {
+    await recoverDeleteStages(canonicalDir, parent, pinned, root, assertUnmoved)
     await assertUnmoved()
     const info = await fileStat(join(pinned, name))
     if (!info) return 'missing'
     if (!sameFile(info, identity) || info.isSymbolicLink() || !info.isDirectory()) return 'kept'
-    const canonical = join(canonicalDir, name)
-    const actual = await realpath(canonical).catch(() => null)
-    if (actual !== canonical || !inside(root, actual)) return 'kept'
-    let child: FileHandle
-    try { child = await open(join(pinned, name), DIRECTORY_OPEN) }
-    catch (error) {
-        const code = (error as NodeJS.ErrnoException).code
-        if (code === 'ENOENT') return 'missing'
-        if (code === 'ELOOP' || code === 'ENOTDIR') return 'kept'
-        throw error
-    }
+    const child = await open(join(pinned, name), DIRECTORY_OPEN)
     try {
         const opened = await child.stat({ bigint: true })
         if (!sameFile(opened, identity)) return 'kept'
+        const guard = deleteDirectoryGuard(join(canonicalDir, name), opened, root, assertUnmoved)
+        await guard()
         if ((await readdir(await pinnedDirectory(child))).length) return 'kept'
+        await guard()
+        return await stageAndRemove(canonicalDir, parent, pinned, name, identity, 'dir', root, assertUnmoved)
     } finally { await child.close() }
-    try { await rmdir(join(pinned, name)) }
-    catch (error) {
-        if (missing(error)) return 'missing'
-        if ((error as NodeJS.ErrnoException).code === 'ENOTEMPTY' || (error as NodeJS.ErrnoException).code === 'EEXIST') return 'kept'
-        throw error
-    }
-    return 'removed'
 }
 
-async function deleteNodes(canonicalDir: string, parent: FileIdentity, pinned: string, nodes: DeleteNode[], root: string, assertUnmoved: () => Promise<void>): Promise<boolean> {
+async function deleteNodes(canonicalDir: string, parent: FileIdentity, pinned: string, nodes: DeleteNode[], root: DeleteWorkspace, assertUnmoved: () => Promise<void>): Promise<boolean> {
+    await assertUnmoved()
+    await recoverDeleteStages(canonicalDir, parent, pinned, root, assertUnmoved)
     let complete = true
     for (const node of nodes) {
         const identity = asIdentity(node.dev, node.ino)
         if (node.type === 'file') {
-            if (await stageAndUnlinkFile(canonicalDir, parent, pinned, node.name, identity, assertUnmoved) === 'kept') complete = false
+            if (await stageAndUnlinkFile(canonicalDir, parent, pinned, node.name, identity, root, assertUnmoved) === 'kept') complete = false
             continue
         }
         const info = await fileStat(join(pinned, node.name))
@@ -1202,30 +1278,34 @@ async function deleteNodes(canonicalDir: string, parent: FileIdentity, pinned: s
         if (!sameFile(info, identity) || info.isSymbolicLink() || !info.isDirectory()) { complete = false; continue }
         const childCanonical = join(canonicalDir, node.name)
         const actual = await realpath(childCanonical).catch(() => null)
-        if (actual !== childCanonical || !inside(root, actual)) { complete = false; continue }
+        if (actual !== childCanonical || !inside(root.path, actual)) { complete = false; continue }
         let child: FileHandle | null = null
         try {
             child = await open(join(pinned, node.name), DIRECTORY_OPEN)
             const opened = await child.stat({ bigint: true })
             if (!sameFile(opened, identity)) { complete = false; continue }
-            if (!await deleteNodes(childCanonical, { dev: opened.dev, ino: opened.ino }, await pinnedDirectory(child), node.children ?? [], root, assertUnmoved)) complete = false
+            const guard = deleteDirectoryGuard(childCanonical, opened, root, assertUnmoved)
+            await guard()
+            if (!await deleteNodes(childCanonical, { dev: opened.dev, ino: opened.ino }, await pinnedDirectory(child), node.children ?? [], root, guard)) complete = false
         } catch (error) {
             if (error instanceof DesktopHttpError) throw error
             const code = (error as NodeJS.ErrnoException).code
             if (code === 'ELOOP' || code === 'ENOTDIR' || code === 'ENOENT') { complete = false; continue }
             throw error
         } finally { await child?.close() }
-        if (await removeEmptyDirectory(canonicalDir, pinned, node.name, identity, root, assertUnmoved) === 'kept') complete = false
+        if (await removeEmptyDirectory(canonicalDir, parent, pinned, node.name, identity, root, assertUnmoved) === 'kept') complete = false
     }
     return complete
 }
 
-async function inspectTree(pinned: string, canonicalDir: string, depth: number, counter: { n: number }): Promise<DeleteNode[]> {
+async function inspectTree(pinned: string, canonicalDir: string, depth: number, counter: { n: number }, root: DeleteWorkspace, assertUnmoved: () => Promise<void>): Promise<DeleteNode[]> {
     if (depth > MAX_DELETE_DEPTH) throw new DesktopHttpError(409, 'This folder is too deep to delete safely. It was left unchanged.')
+    await assertUnmoved()
     let names: string[]
     try { names = await readdir(pinned) } catch (error) { if (missing(error)) throw new DesktopHttpError(404, 'Folder not found'); throw error }
     const nodes: DeleteNode[] = []
     for (const name of names) {
+        await assertUnmoved()
         if (++counter.n > MAX_DELETE_NODES) throw new DesktopHttpError(409, 'This folder is too large to delete safely. It was left unchanged.')
         if (!simpleName(name) || reservedName(name)) throw new DesktopHttpError(409, 'This folder contains a recovery file. It was left unchanged.')
         if (claimed(canonicalDir, name)) throw new DesktopHttpError(409, 'This file is being saved. Try the delete again once that finishes.')
@@ -1243,7 +1323,10 @@ async function inspectTree(pinned: string, canonicalDir: string, depth: number, 
             try {
                 const opened = await child.stat({ bigint: true })
                 if (!sameFile(opened, info)) throw new DesktopHttpError(409, 'This folder changed while it was checked. It was left unchanged.')
-                const children = await inspectTree(await pinnedDirectory(child), join(canonicalDir, name), depth + 1, counter)
+                const canonical = join(canonicalDir, name)
+                const guard = deleteDirectoryGuard(canonical, opened, root, assertUnmoved)
+                await guard()
+                const children = await inspectTree(await pinnedDirectory(child), canonical, depth + 1, counter, root, guard)
                 nodes.push({ name, dev: idText(info.dev), ino: idText(info.ino), type: 'dir', children })
             } finally { await child.close() }
         } else if (info.isFile()) nodes.push({ name, dev: idText(info.dev), ino: idText(info.ino), type: 'file' })
@@ -1252,23 +1335,36 @@ async function inspectTree(pinned: string, canonicalDir: string, depth: number, 
     return nodes
 }
 
-async function writeDeleteJournal(pinned: string, journalName: string, body: DeleteJournal): Promise<FileIdentity> {
+async function writeDeleteJournal(pinned: string, journalName: string, body: DeleteJournal | DeleteStage, assertUnmoved: () => Promise<void>): Promise<FileIdentity> {
+    await assertUnmoved()
     const handle = await open(join(pinned, journalName), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
     try {
         const identity = await handle.stat({ bigint: true })
+        await assertUnmoved()
         await handle.writeFile(JSON.stringify(body))
+        await assertUnmoved()
         await handle.sync()
+        // The sidecar's directory entry must be durable before its recorded native move.
+        await assertUnmoved()
+        const parent = await open(pinned, DIRECTORY_OPEN)
+        try { await assertUnmoved(); await parent.sync() } finally { await parent.close() }
         return { dev: identity.dev, ino: identity.ino }
     } finally { await handle.close() }
 }
 
-async function removeJournal(pinned: string, journalName: string, journalIdentity: FileIdentity | null) {
+async function removeJournal(pinned: string, journalName: string, journalIdentity: FileIdentity | null, assertUnmoved: () => Promise<void>) {
+    await assertUnmoved()
     const path = join(pinned, journalName)
-    if (sameFile(journalIdentity, await fileStat(path))) await removeName(path)
+    if (sameFile(journalIdentity, await fileStat(path))) { await assertUnmoved(); await removeName(path); await assertUnmoved() }
 }
 
 async function recoverDeleteJournals(directory: string, pinned: string, assertUnmoved: () => Promise<void>, workspaceRoot: (FileIdentity & { path: string }) | null) {
     if (!workspaceRoot) return
+    const directoryInfo = await fileStat(directory)
+    if (!directoryInfo?.isDirectory()) return
+    assertUnmoved = deleteDirectoryGuard(directory, directoryInfo, workspaceRoot, assertUnmoved)
+    await assertUnmoved()
+    await recoverDeleteStages(directory, directoryInfo, pinned, workspaceRoot, assertUnmoved)
     let names: string[]
     try { names = await readdir(pinned) } catch (error) { if (missing(error)) return; throw error }
     for (const name of names) {
@@ -1291,27 +1387,30 @@ async function recoverDeleteJournals(directory: string, pinned: string, assertUn
                         child = await open(join(pinned, journal.name), DIRECTORY_OPEN)
                         const stat = await child.stat({ bigint: true })
                         if (sameFile(stat, identity)) {
-                            await deleteNodes(join(directory, journal.name), { dev: stat.dev, ino: stat.ino }, await pinnedDirectory(child), journal.nodes, workspaceRoot.path, assertUnmoved)
+                            const canonical = join(directory, journal.name)
+                            const guard = deleteDirectoryGuard(canonical, stat, workspaceRoot, assertUnmoved)
+                            await guard()
+                            await deleteNodes(canonical, { dev: stat.dev, ino: stat.ino }, await pinnedDirectory(child), journal.nodes, workspaceRoot, guard)
                         }
                     } finally { await child?.close() }
-                    await removeEmptyDirectory(directory, pinned, journal.name, identity, workspaceRoot.path, assertUnmoved)
+                    await removeEmptyDirectory(directory, parent, pinned, journal.name, identity, workspaceRoot, assertUnmoved)
                 }
-            } else await stageAndUnlinkFile(directory, parent, pinned, journal.name, identity, assertUnmoved)
+            } else await stageAndUnlinkFile(directory, parent, pinned, journal.name, identity, workspaceRoot, assertUnmoved)
         } catch (error) {
             if (error instanceof DesktopHttpError && (error.status === 503 || error.status === 500)) return
             throw error
         }
         await assertUnmoved()
         const selected = await fileStat(join(pinned, journal.name))
-        if ((!selected || !sameFile(selected, identity)) && !await stagedFileRemains(pinned, journalIdentities(journal))) {
-            await removeJournal(pinned, name, journalIdentity)
+        if ((!selected || !sameFile(selected, identity)) && !await stagedFileRemains(directory, pinned, workspaceRoot, assertUnmoved)) {
+            await removeJournal(pinned, name, journalIdentity, assertUnmoved)
         }
     }
 }
 
 /** Delete one selected file or folder. Files and nested files are moved aside with the exclusive
  * rename helper, then that private name is unlinked only if it is still the same regular file.
- * Directories are removed with rmdir after their checked children are gone. Nothing calls
+ * Empty directories use the same journaled staging before rmdir. Nothing calls
  * recursive rm on a workspace path. */
 export async function deleteCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, identity?: string): Promise<{ path: string }> {
     return withCoworkerFiles(runtime, agentId, () => deleteEntry(runtime, agentId, path, identity))
@@ -1334,15 +1433,13 @@ async function deleteEntry(runtime: DesktopRuntime, agentId: string, path: strin
     const replaced = () => new DesktopHttpError(409, `“${sourceName}” was renamed or replaced. It was left unchanged.`)
     const workspaceInfo = await fileStat(root)
     if (!workspaceInfo?.isDirectory()) throw outside()
+    const workspaceIdentity: DeleteWorkspace = { path: root, dev: workspaceInfo.dev, ino: workspaceInfo.ino }
     await recoverInterruptedCoworkerEdits(folder, root)
     const dir = await openResolved(folder, true)
     try {
         const pinned = await pinnedDirectory(dir)
         const parent = await dir.stat({ bigint: true })
-        const assertUnmoved = async () => {
-            const [listed, actual] = await Promise.all([fileStat(folder), realpath(folder).catch(() => null)])
-            if (!sameFile(parent, listed) || actual !== folder || !inside(root, actual)) throw outside()
-        }
+        const assertUnmoved = deleteDirectoryGuard(folder, parent, workspaceIdentity, async () => {})
         await assertUnmoved()
         const source = await fileStat(join(pinned, sourceName))
         if (!source) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
@@ -1359,10 +1456,13 @@ async function deleteEntry(runtime: DesktopRuntime, agentId: string, path: strin
             try {
                 const opened = await child.stat({ bigint: true })
                 if (!sameFile(opened, source)) throw replaced()
-                nodes = await inspectTree(await pinnedDirectory(child), join(folder, sourceName), 1, { n: 0 })
+                const canonical = join(folder, sourceName)
+                const guard = deleteDirectoryGuard(canonical, opened, workspaceIdentity, assertUnmoved)
+                await guard()
+                nodes = await inspectTree(await pinnedDirectory(child), canonical, 1, { n: 0 }, workspaceIdentity, guard)
             } finally { await child.close() }
-            if (treeHasFile(nodes)) assertDeleteHelper()
-        } else assertDeleteHelper()
+        }
+        assertDeleteHelper()
         const journalName = `${DELETE_PREFIX}${randomBytes(12).toString('hex')}.json`
         const journal: DeleteJournal = {
             v: 1, name: sourceName, dev: idText(source.dev), ino: idText(source.ino),
@@ -1370,13 +1470,12 @@ async function deleteEntry(runtime: DesktopRuntime, agentId: string, path: strin
             workspaceDev: idText(workspaceInfo.dev), workspaceIno: idText(workspaceInfo.ino),
             ...(nodes && { nodes }),
         }
-        const identities = () => journalIdentities(journal)
         claim(folder, sourceName)
         claim(folder, journalName)
         let journalIdentity: FileIdentity | null = null
         try {
             await assertUnmoved()
-            journalIdentity = await writeDeleteJournal(pinned, journalName, journal)
+            journalIdentity = await writeDeleteJournal(pinned, journalName, journal, assertUnmoved)
             if (nodes) {
                 const child = await open(join(pinned, sourceName), DIRECTORY_OPEN).catch(error => {
                     const code = (error as NodeJS.ErrnoException).code
@@ -1386,28 +1485,32 @@ async function deleteEntry(runtime: DesktopRuntime, agentId: string, path: strin
                 try {
                     const opened = await child.stat({ bigint: true })
                     if (!sameFile(opened, source)) throw replaced()
-                    await deleteNodes(join(folder, sourceName), { dev: opened.dev, ino: opened.ino }, await pinnedDirectory(child), nodes, root, assertUnmoved)
+                    const canonical = join(folder, sourceName)
+                    const guard = deleteDirectoryGuard(canonical, opened, workspaceIdentity, assertUnmoved)
+                    await guard()
+                    await deleteNodes(canonical, { dev: opened.dev, ino: opened.ino }, await pinnedDirectory(child), nodes, workspaceIdentity, guard)
                 } finally { await child.close() }
-                await removeEmptyDirectory(folder, pinned, sourceName, source, root, assertUnmoved)
-            } else await stageAndUnlinkFile(folder, parent, pinned, sourceName, source, assertUnmoved)
+                await removeEmptyDirectory(folder, parent, pinned, sourceName, source, workspaceIdentity, assertUnmoved)
+            } else await stageAndUnlinkFile(folder, parent, pinned, sourceName, source, workspaceIdentity, assertUnmoved)
             await assertUnmoved()
             const after = await fileStat(join(pinned, sourceName))
-            const stuck = await stagedFileRemains(pinned, identities())
+            const stuck = await stagedFileRemains(folder, pinned, workspaceIdentity, assertUnmoved)
             if (after && !sameFile(after, source)) {
-                if (!stuck) await removeJournal(pinned, journalName, journalIdentity)
+                if (!stuck) await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
                 throw new DesktopHttpError(409, `“${sourceName}” was replaced during delete. The newer entry was left in place.`)
             }
             if (after && sameFile(after, source)) {
-                if (!stuck) await removeJournal(pinned, journalName, journalIdentity)
+                if (!stuck) await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
                 throw new DesktopHttpError(409, nodes
                     ? 'This folder changed during delete. Matching entries were removed. Newer files were left in place.'
                     : `“${sourceName}” changed during delete. It was left unchanged.`)
             }
-            if (!stuck) await removeJournal(pinned, journalName, journalIdentity)
+            if (stuck) throw new DesktopHttpError(409, 'Delete recovery is incomplete. The staged entries and their journals were kept; refresh Files before trying again.')
+            await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
             return { path: located.rel }
         } catch (error) {
-            if (error instanceof DesktopHttpError && error.status === 503 && journalIdentity && !await stagedFileRemains(pinned, identities())) {
-                await removeJournal(pinned, journalName, journalIdentity)
+            if (error instanceof DesktopHttpError && error.status === 503 && journalIdentity && !await stagedFileRemains(folder, pinned, workspaceIdentity, assertUnmoved)) {
+                await removeJournal(pinned, journalName, journalIdentity, assertUnmoved)
             }
             throw error
         } finally {
