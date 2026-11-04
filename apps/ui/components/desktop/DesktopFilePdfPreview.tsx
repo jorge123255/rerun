@@ -103,7 +103,7 @@ export function DesktopFilePdfPreview({ name, path, identity, srcUrl, onBack, si
         </PanelEditorHeader>
         <div key={path} className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {'src' in view ? <iframe ref={bindFrame} title={name} sandbox="" data-testid="file-pdf-preview" className="h-full w-full bg-white"
-                onError={() => {
+                onErrorCapture={() => {
                     if (failed.current || !frameRef.current?.getAttribute('src')) return
                     failed.current = true
                     stopFrame(frameRef.current)
