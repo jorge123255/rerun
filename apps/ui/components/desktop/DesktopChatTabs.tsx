@@ -212,7 +212,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
                     onSelectSession={id => open(id, sessions.find(s => s.id === id)?.title ?? 'New conversation')}
                     onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
                     modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
-                    renderHistory={() => <DesktopChatHistory sessions={sessions} selectedId={tab.id} busy={false} onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
+                    renderHistory={() => <DesktopChatHistory agentId={agent.id} count={sessions.length} selectedId={tab.id} busy={false} onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
                     renderRunHistory={<DesktopRunHistory agent={agent} />} />
             </div>
         })}

@@ -1,69 +1,208 @@
 'use client'
 
-import { useId, useState } from 'react'
-import { MessageCircle } from 'lucide-react'
+import { useEffect, useId, useState } from 'react'
+import { Badge } from '@rerun/ui/primitives'
 import { Button } from '@/components/ui/button'
+import { Chip } from '@/components/ui/chip'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { fullDateTime, messageDayLabel, messageTime } from '@/lib/time'
+import { CalendarClock, LoaderIcon, MessageCircle, MessageCircleQuestionIcon, WebhookIcon } from '@/lib/icons'
+import {
+    countChatsNeedingYou,
+    DESKTOP_CHAT_FILTERS,
+    desktopChatHistorySchema,
+    filterDesktopChats,
+    groupDesktopChats,
+    isAutomatedChat,
+    type DesktopChatFilter,
+    type DesktopChatHistory,
+    type DesktopChatHistoryConversation,
+} from '@/lib/desktop/chat-history'
+import { fullDateTime, messageTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
-import type { DesktopSessionView } from './DesktopApp'
 
-export function groupDesktopChats(sessions: DesktopSessionView[], now = new Date()) {
-    const groups: { day: string; sessions: DesktopSessionView[] }[] = []
-    const ordered = [...sessions].sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0))
-    for (const session of ordered) {
-        const day = Number.isFinite(Date.parse(session.createdAt)) ? messageDayLabel(session.createdAt, now) : 'Date unavailable'
-        const last = groups.at(-1)
-        if (last?.day === day) last.sessions.push(session)
-        else groups.push({ day, sessions: [session] })
-    }
-    return groups
+function ChatHistoryRow({ conversation, active, busy, onOpen }: {
+    conversation: DesktopChatHistoryConversation
+    active: boolean
+    busy: boolean
+    onOpen: () => void
+}) {
+    const automated = isAutomatedChat(conversation)
+    const SourceIcon = conversation.source === 'trigger' ? WebhookIcon : CalendarClock
+    const updatedAt = Number.isFinite(Date.parse(conversation.updatedAt)) ? conversation.updatedAt : null
+    return (
+        <button type="button" disabled={busy} aria-current={active ? 'true' : undefined} onClick={onOpen}
+            className={cn('flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-muted/40 disabled:opacity-50', active && 'bg-muted/60')}>
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="flex min-w-0 items-center gap-1.5">
+                    {automated && <SourceIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
+                    <span title={conversation.title} className="min-w-0 flex-1 truncate text-sm font-medium">{conversation.title}</span>
+                    {conversation.needsYou && <Badge size="xs" tone="orange" glow={false} className="shrink-0">Needs you</Badge>}
+                </span>
+                {conversation.needsYou && conversation.pendingQuestion && (
+                    <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                        <MessageCircleQuestionIcon aria-hidden className="size-3 shrink-0" />
+                        <span className="truncate">{conversation.pendingQuestion}</span>
+                    </span>
+                )}
+            </span>
+            {updatedAt && <time dateTime={updatedAt} title={`Updated ${fullDateTime(updatedAt)}`}
+                className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{messageTime(updatedAt)}</time>}
+        </button>
+    )
 }
 
-export function DesktopChatHistory({ sessions, selectedId, busy, onSelect }: {
-    sessions: DesktopSessionView[]
+function NeedsFilterNote({ onRetry }: { onRetry: () => void }) {
+    return (
+        <div role="status" className="flex flex-col items-center gap-2 px-3 py-5 text-center text-xs text-muted-foreground">
+            <span>Pending questions could not be loaded.</span>
+            <Button type="button" size="sm" variant="outline" onClick={onRetry}>Retry</Button>
+        </div>
+    )
+}
+
+function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, onRetry }: {
+    history: DesktopChatHistory
+    filter: DesktopChatFilter
+    query: string
+    selectedId: string | null
+    busy: boolean
+    onSelect: (id: string) => void
+    onRetry: () => void
+}) {
+    const shown = filterDesktopChats(history.conversations, filter, query)
+    const groups = groupDesktopChats(shown)
+    const questionsUnavailable = history.questions === 'unavailable'
+    const empty = query.trim()
+        ? 'No matching conversations.'
+        : filter === 'needs' ? 'Nothing waits on you.'
+            : filter === 'automations' ? 'No automated run yet.'
+                : filter === 'chats' ? 'No chat yet.'
+                    : 'No conversation yet.'
+    return (
+        <div className="max-h-[min(420px,50dvh)] min-h-0 overflow-y-auto">
+            {history.enrichment === 'unavailable' && (
+                <p className="px-2.5 py-1 text-[11px] text-muted-foreground">Recent activity could not be read. Showing saved dates.</p>
+            )}
+            {filter === 'needs' && questionsUnavailable && <NeedsFilterNote onRetry={onRetry} />}
+            {groups.map(({ day, entries }) => (
+                <div key={day} className="pb-1">
+                    <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{day}</p>
+                    {entries.map(conversation => (
+                        <ChatHistoryRow key={conversation.id} conversation={conversation} active={selectedId === conversation.id}
+                            busy={busy} onOpen={() => onSelect(conversation.id)} />
+                    ))}
+                </div>
+            ))}
+            {shown.length === 0 && !(filter === 'needs' && questionsUnavailable) && (
+                <p className="px-3 py-6 text-center text-xs text-muted-foreground">{empty}</p>
+            )}
+        </div>
+    )
+}
+
+function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descriptionId }: {
+    agentId: string
+    selectedId: string | null
+    busy: boolean
+    onSelect: (id: string) => void
+    titleId: string
+    descriptionId: string
+}) {
+    const [history, setHistory] = useState<DesktopChatHistory | null>(null)
+    const [error, setError] = useState<string | null>(null)
+    const [attempt, setAttempt] = useState(0)
+    const [query, setQuery] = useState('')
+    const [filter, setFilter] = useState<DesktopChatFilter>('all')
+
+    useEffect(() => {
+        const controller = new AbortController()
+        void (async () => {
+            try {
+                const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/chat-history`, { signal: controller.signal, cache: 'no-store' })
+                const body = await response.json().catch(() => ({}))
+                if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not load conversations')
+                const parsed = desktopChatHistorySchema.parse(body)
+                if (!controller.signal.aborted) {
+                    setHistory(parsed)
+                    setError(null)
+                }
+            } catch (cause) {
+                if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
+            }
+        })()
+        return () => controller.abort()
+    }, [agentId, attempt])
+
+    const retry = () => {
+        setError(null)
+        setHistory(null)
+        setAttempt(value => value + 1)
+    }
+
+    return (
+        <>
+            <div className="shrink-0 px-2 pt-1">
+                <h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold">
+                    <MessageCircle aria-hidden className="size-4 text-muted-foreground" />
+                    Chats
+                </h2>
+                <p id={descriptionId} className="mt-1 text-xs text-muted-foreground">Dates show when chats were last updated.</p>
+            </div>
+            <Input className="shrink-0" type="search" aria-label="Search conversations" placeholder="Search conversations…" value={query}
+                onChange={event => setQuery(event.target.value)} />
+            <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto px-0.5 py-1">
+                {DESKTOP_CHAT_FILTERS.map(({ value, label }) => (
+                    <Chip key={value} selected={filter === value} onClick={() => setFilter(value)}>
+                        {label}
+                        {value === 'needs' && history?.questions === 'ok' && (
+                            <span className={cn('ml-1 tabular-nums', filter === 'needs' ? 'text-background/60' : 'text-muted-foreground/70')}>
+                                {countChatsNeedingYou(history.conversations)}
+                            </span>
+                        )}
+                    </Chip>
+                ))}
+            </div>
+            {error ? (
+                <div role="alert" className="flex flex-col items-center gap-2 px-3 py-6 text-center text-xs">
+                    <p className="text-destructive">{error}</p>
+                    <Button type="button" size="sm" variant="outline" onClick={retry}>Retry conversations</Button>
+                </div>
+            ) : history === null ? (
+                <p role="status" className="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground">
+                    <LoaderIcon aria-hidden className="size-3.5 animate-spin" />
+                    Loading conversations…
+                </p>
+            ) : (
+                <ChatHistoryList history={history} filter={filter} query={query} selectedId={selectedId} busy={busy} onSelect={onSelect} onRetry={retry} />
+            )}
+        </>
+    )
+}
+
+export function DesktopChatHistory({ agentId, count, selectedId, busy, onSelect }: {
+    agentId: string
+    count?: number
     selectedId: string | null
     busy: boolean
     onSelect: (id: string) => void
 }) {
     const [open, setOpen] = useState(false)
-    const [query, setQuery] = useState('')
     const titleId = useId()
     const descriptionId = useId()
-    const shown = sessions.filter(session => session.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
-
     return (
-        <Popover open={open} onOpenChange={value => { setOpen(value); if (!value) setQuery('') }}>
+        <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-                <Button type="button" size="icon" variant="outline" className="size-10 rounded-full border-border/50 bg-background/85 shadow-sm" title="Chats" disabled={busy} aria-label={`Conversation history (${sessions.length})`}>
+                <Button type="button" size="icon" variant="outline" className="size-10 rounded-full border-border/50 bg-background/85 shadow-sm" title="Chats" disabled={busy}
+                    aria-label={count === undefined ? 'Conversation history' : `Conversation history (${count})`}>
                     <MessageCircle aria-hidden className="size-4 text-muted-foreground" /><span className="sr-only">Chats</span>
                 </Button>
             </PopoverTrigger>
             <PopoverContent align="end" collisionPadding={12} aria-labelledby={titleId} aria-describedby={descriptionId}
                 className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] gap-2 overflow-hidden p-2">
-                <div className="shrink-0 px-2 pt-1">
-                    <h2 id={titleId} className="text-sm font-semibold">Saved conversations</h2>
-                    <p id={descriptionId} className="mt-1 text-xs text-muted-foreground">Dates show when chats were created.</p>
-                </div>
-                {sessions.length > 0 && <Input className="shrink-0" type="search" aria-label="Search conversations" placeholder="Search conversations…" value={query} onChange={event => setQuery(event.target.value)} />}
-                <div className="max-h-[min(420px,50dvh)] min-h-0 overflow-y-auto">
-                    {groupDesktopChats(shown).map(({ day, sessions: entries }) => (
-                        <div key={day} className="pb-1">
-                            <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{day}</p>
-                            {entries.map(session => (
-                                <button key={session.id} type="button" disabled={busy} aria-current={selectedId === session.id ? 'true' : undefined}
-                                    onClick={() => { onSelect(session.id); setOpen(false); setQuery('') }}
-                                    className={cn('flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-muted/40 disabled:opacity-50', selectedId === session.id && 'bg-muted/60')}>
-                                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{session.title}</span>
-                                    {Number.isFinite(Date.parse(session.createdAt)) && <time dateTime={session.createdAt} title={`Created ${fullDateTime(session.createdAt)}`}
-                                        className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{messageTime(session.createdAt)}</time>}
-                                </button>
-                            ))}
-                        </div>
-                    ))}
-                    {shown.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">{sessions.length ? 'No matching conversations.' : 'No saved conversations yet. Start with New chat.'}</p>}
-                </div>
+                {open && <ChatHistoryPanel key={agentId} agentId={agentId} selectedId={selectedId} busy={busy}
+                    titleId={titleId} descriptionId={descriptionId}
+                    onSelect={id => { onSelect(id); setOpen(false) }} />}
             </PopoverContent>
         </Popover>
     )
