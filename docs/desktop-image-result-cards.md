@@ -38,11 +38,12 @@ has no raw URL or Download, because the Mac reads authenticated bytes rather tha
   8 MiB, a valid endpoint identity, and the aggregate image budget. Old text cards without an
   identity still parse. A malformed, replaced or unsupported entry returns `undefined`, so the
   assistant keeps the honest tool-result step.
-- **Album/tiles:** `DesktopFileCard` fetches each image through the authenticated image endpoint,
-  sequentially, with an actual aggregate check. It produces released object URLs, shows a loading
-  placeholder per tile, and exposes errors for replaced, deleted, animated, damaged or over-budget
-  images. All-image cards use the original album layout, captions and `+N` cover; mixed cards keep
-  the original square-tile row; text keeps the original tile and text lightbox.
+- **Album/tiles:** `DesktopFileCard` fetches each visible image thumbnail through the
+  authenticated image endpoint, sequentially, with an actual aggregate check. It produces released
+  object URLs, shows a loading placeholder per tile, and exposes errors for replaced, deleted,
+  animated, damaged or over-budget images. All-image cards use the original album layout, captions
+  and `+N` cover; mixed cards keep the original square-tile row; text keeps the original tile and
+  text lightbox. Hidden album tiles are fetched by the lightbox when paged to.
 - **Lightbox:** `DesktopFileLightbox` pages through the card's files, fetches the selected current
   file, aborts the previous request on paging or owner changes, ignores stale completions, revokes
   its object URL on replacement, unmount and image error, and shows the image endpoint's explicit
