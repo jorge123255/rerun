@@ -356,3 +356,14 @@ it('keeps the recorded card result as the fallback when its stored body is malfo
     expect(result.parts[0]).toMatchObject({ type: 'tool-card_file', desktopPreview: true, state: 'output-available' })
     expect(JSON.stringify(result)).toContain('../escape.md')
 })
+
+it('keeps a validated recorded image card and its endpoint identity across a reopened chat', () => {
+    const card = { kind: 'file', files: [{ path: 'shots/photo.png', name: 'photo.png', size: 1024, scope: 'agent', identity: '12:34' }] }
+    const part = { type: 'tool-card_file' as const, toolName: 'card_file', toolCallId: 'card-image', state: 'output-available' as const,
+        input: { files: [{ path: 'shots/photo.png' }] }, output: JSON.stringify(card) }
+    const [result] = publicDesktopHistory([{ id: 'engine-card-image', role: 'assistant', parts: [part] }])
+    expect(result.parts[0]).toEqual({
+        type: 'tool-card_file', toolName: 'card_file', toolCallId: 'card-image', desktopPreview: true,
+        state: 'output-available', input: {}, output: JSON.stringify(card),
+    })
+})

@@ -1,9 +1,9 @@
 import { mkdtempSync } from 'node:fs'
-import { link, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { CARD_MAX_FILES, DESKTOP_ATTACHMENT_MAX_BYTES, fileCardSchema } from '@rerun/contracts'
+import { CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES, fileCardSchema } from '@rerun/contracts'
 import type { RunContext } from '../runtime/context.js'
 
 const root = mkdtempSync(join(tmpdir(), 'rerun-mac-card-file-'))
@@ -36,9 +36,19 @@ beforeAll(async () => {
     vi.stubEnv('RERUN_DESKTOP_APP', '1')
     for (const id of [alpha, bravo]) {
         await mkdir(join(workspaceDir(id), 'reports'), { recursive: true })
+        await mkdir(join(workspaceDir(id), 'shots'), { recursive: true })
         await writeAgentConfig(id, config(id))
         await writeFile(join(workspaceDir(id), 'reports', 'summary.md'), 'Summary')
         await writeFile(join(workspaceDir(id), 'reports', 'notes.txt'), 'Notes')
+        await writeFile(join(workspaceDir(id), 'shots', 'photo.png'), Buffer.alloc(1024, 7))
+        await writeFile(join(workspaceDir(id), 'shots', 'empty.png'), Buffer.alloc(0))
+        await writeFile(join(workspaceDir(id), 'shots', 'big.png'), '')
+        await truncate(join(workspaceDir(id), 'shots', 'big.png'), CARD_MAX_IMAGE_BYTES + 1)
+        for (let n = 0; n < 3; n++) {
+            await writeFile(join(workspaceDir(id), 'shots', `eight-${n}.png`), '')
+            await truncate(join(workspaceDir(id), 'shots', `eight-${n}.png`), CARD_MAX_IMAGE_BYTES)
+        }
+        await writeFile(join(workspaceDir(id), 'shots', 'one-byte.png'), Buffer.from([1]))
     }
 })
 afterAll(async () => {
@@ -67,20 +77,36 @@ it('refuses shared, foreign, hidden, linked, directory, unsupported and oversize
     const root = workspaceDir(alpha), other = workspaceDir(bravo)
     await symlink(join(other, 'reports', 'summary.md'), join(root, 'linked.md'))
     await link(join(other, 'reports', 'summary.md'), join(root, 'alias.md'))
+    await symlink(join(other, 'shots', 'photo.png'), join(root, 'linked.png'))
+    await link(join(other, 'shots', 'photo.png'), join(root, 'alias.png'))
     await mkdir(join(root, 'folder.md'))
+    await mkdir(join(root, 'folder.png'))
     await writeFile(join(root, 'big.md'), Buffer.alloc(DESKTOP_ATTACHMENT_MAX_BYTES + 1, 65))
     const cases: [string, 'agent' | 'shared', RegExp][] = [
         ['reports/summary.md', 'shared', /Shared files are not available/],
+        ['shots/photo.png', 'shared', /Shared files are not available/],
         ['/etc/passwd.md', 'agent', /relative .* path/],
+        ['/etc/passwd.png', 'agent', /relative .* path/],
         ['../cards-bravo/workspace/reports/summary.md', 'agent', /relative .* path/],
+        ['../cards-bravo/workspace/shots/photo.png', 'agent', /relative .* path/],
         ['.secret/summary.md', 'agent', /relative .* path/],
+        ['.secret/photo.png', 'agent', /relative .* path/],
         ['reports\\summary.md', 'agent', /relative .* path/],
+        ['shots\\photo.png', 'agent', /relative .* path/],
         ['linked.md', 'agent', /unavailable/],
         ['alias.md', 'agent', /unavailable/],
+        ['linked.png', 'agent', /unavailable/],
+        ['alias.png', 'agent', /unavailable/],
         ['folder.md', 'agent', /folder, not a file/],
-        ['reports/image.png', 'agent', /relative .* path/],
+        ['folder.png', 'agent', /folder, not a file/],
+        ['reports/image.svg', 'agent', /relative .* path/],
+        ['reports/image.pdf', 'agent', /relative .* path/],
+        ['shots/clip.mp4', 'agent', /relative .* path/],
         ['big.md', 'agent', /32 KiB/],
+        ['shots/big.png', 'agent', /8 MB/],
+        ['shots/empty.png', 'agent', /empty/],
         ['missing.md', 'agent', /unavailable/],
+        ['shots/missing.png', 'agent', /unavailable/],
     ]
     for (const [path, scope, message] of cases) {
         const result = await show(tool, path, scope)
@@ -90,6 +116,37 @@ it('refuses shared, foreign, hidden, linked, directory, unsupported and oversize
         expect(result, path).not.toContain(other)
         expect(result, path).not.toContain('kind')
     }
+})
+
+it('returns an image card with the authenticated endpoint identity and byte size', async () => {
+    await grant(alpha, true)
+    const tool = await toolFor(alpha)
+    const card = fileCardSchema.parse(JSON.parse(await show(tool, 'shots/photo.png')))
+    expect(card.files[0]).toMatchObject({ path: 'shots/photo.png', name: 'photo.png', size: 1024, scope: 'agent' })
+    expect(card.files[0]?.identity).toMatch(/^\d+:\d+$/)
+    expect(await show(tool, join(workspaceDir(alpha), 'shots', 'photo.png'))).toContain('shots/photo.png')
+})
+
+it('keeps mixed text and image files in the order the model asked for', async () => {
+    await grant(alpha, true)
+    const tool = await toolFor(alpha)
+    const result = String(await tool.execute!({ files: [
+        { path: 'reports/summary.md' }, { path: 'shots/photo.png' }, { path: 'reports/notes.txt' },
+    ] }, options))
+    const card = fileCardSchema.parse(JSON.parse(result))
+    expect(card.files.map(file => file.path)).toEqual(['reports/summary.md', 'shots/photo.png', 'reports/notes.txt'])
+    expect(card.files[1]?.identity).toMatch(/^\d+:\d+$/)
+})
+
+it('refuses images whose total exceeds the bounded card preview budget', async () => {
+    await grant(alpha, true)
+    const tool = await toolFor(alpha)
+    const result = String(await tool.execute!({ files: [
+        { path: 'shots/eight-0.png' }, { path: 'shots/eight-1.png' }, { path: 'shots/eight-2.png' }, { path: 'shots/one-byte.png' },
+    ] }, options))
+    expect(result).toContain('nothing was shown')
+    expect(result).toContain('24 MB')
+    expect(result).not.toContain('kind')
 })
 
 it('shows nothing when one file of a multi-file card is missing', async () => {

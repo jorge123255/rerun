@@ -1,11 +1,25 @@
-import { CARD_MAX_FILES, DESKTOP_ATTACHMENT_MAX_BYTES, fileCardSchema, isDesktopAttachmentPath, type FileCard, type FileCardEntry } from '@rerun/contracts'
+import {
+    CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES,
+    fileCardSchema, isDesktopAttachmentPath, type FileCard, type FileCardEntry,
+} from '@rerun/contracts'
 
-// A Mac result card points at one of this coworker's visible text files. The engine wrote these
-// fields, but a saved tool result is still untrusted input to the renderer: accept only the small
-// card shape and only paths the desktop read endpoint can open.
+// A Mac result card points at one of this coworker's visible persistent files. The engine wrote
+// these fields, but a saved tool result is still untrusted input to the renderer: accept only the
+// small card shape and only paths an authenticated desktop route can open.
 const hiddenSegment = (path: string) => path.split('/').some(segment => segment.startsWith('.'))
-const validPath = (path: string) => isDesktopAttachmentPath(path) && !path.includes('\\') && !hiddenSegment(path)
+const visiblePath = (path: string) => path.length <= 4096 && !/[\\\p{Cc}]/u.test(path)
+    && path.split('/').every(segment => segment !== '' && segment !== '.' && segment !== '..' && !segment.startsWith('.'))
+const textPath = (path: string) => isDesktopAttachmentPath(path) && !path.includes('\\') && !hiddenSegment(path)
+const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
+const imagePath = (path: string) => visiblePath(path) && CARD_IMAGE.test(path)
 const validName = (name: string) => name.length > 0 && name.length <= 255 && !/[\\/\p{Cc}]/u.test(name)
+const IMAGE_IDENTITY = /^\d{1,24}:\d{1,24}$/
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+
+/** A card's file is an image (not a document) when its path names a supported static raster. */
+export function isDesktopCardImage(path: string): boolean {
+    return imagePath(path)
+}
 
 function candidate(value: unknown, depth = 0): unknown {
     if (depth > 2) return undefined
@@ -24,9 +38,10 @@ function candidate(value: unknown, depth = 0): unknown {
 /**
  * Validate one recorded card_file result for the Mac conversation. It accepts the live tool output
  * (a JSON string), a stored text/json wrapper, a parsed card, and the legacy single-file card. Every
- * file must still look like a visible, singular .txt/.md reference of this coworker, with the
- * bounded size the card tool writes. Anything else returns undefined so the reply can fall back to
- * the real tool result instead of drawing a fabricated or partial card.
+ * file must still look like a visible reference of this coworker: a .txt/.md document or a static
+ * PNG/JPEG/WebP/GIF image. Images carry the endpoint's inode identity and its 8 MiB / 24 MiB card
+ * bounds; text keeps its 32 KiB bound. Anything else returns undefined so the reply can fall back to
+ * the real tool result instead of drawing a fabricated, replaced or partial card.
  */
 export function desktopFileCardOf(value: unknown): FileCard | undefined {
     const parsed = fileCardSchema.safeParse(candidate(value))
@@ -34,22 +49,52 @@ export function desktopFileCardOf(value: unknown): FileCard | undefined {
     const { files } = parsed.data
     if (files.length < 1 || files.length > CARD_MAX_FILES) return undefined
     const normalized: FileCardEntry[] = []
+    let imageBytes = 0
     for (const file of files) {
         if (file.scope !== 'agent') return undefined
-        if (!validPath(file.path)) return undefined
         if (!validName(file.name) || file.name !== file.path.split('/').at(-1)) return undefined
-        if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > DESKTOP_ATTACHMENT_MAX_BYTES) return undefined
-        normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent' })
+        if (!Number.isSafeInteger(file.size) || file.size < 0) return undefined
+        if (imagePath(file.path)) {
+            if (file.size === 0 || file.size > CARD_MAX_IMAGE_BYTES) return undefined
+            if (!file.identity || !IMAGE_IDENTITY.test(file.identity)) return undefined
+            imageBytes += file.size
+            if (imageBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return undefined
+            normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
+        } else if (textPath(file.path)) {
+            if (file.size > DESKTOP_ATTACHMENT_MAX_BYTES) return undefined
+            normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent' })
+        } else return undefined
     }
     return { kind: 'file', files: normalized }
 }
 
+/** A route or validation error safe to show in the card's preview. */
+export class DesktopCardError extends Error {}
+
 /** Read a card's text through the authenticated desktop Files route, at the moment it is opened. */
-export async function readDesktopCardFile(agentId: string, path: string): Promise<{ content: string; truncated: boolean }> {
+export async function readDesktopCardFile(agentId: string, path: string, signal?: AbortSignal): Promise<{ content: string; truncated: boolean }> {
     const query = new URLSearchParams({ path })
-    const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/files/read?${query.toString()}`, { cache: 'no-store' })
+    const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/files/read?${query.toString()}`, { cache: 'no-store', ...(signal && { signal }) })
     const body = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : 'This file is no longer available.')
-    if (typeof body?.content !== 'string') throw new Error('This file is no longer available.')
+    if (!response.ok) throw new DesktopCardError(typeof body?.error === 'string' ? body.error : 'This file is no longer available.')
+    if (typeof body?.content !== 'string') throw new DesktopCardError('This file is no longer available.')
     return { content: body.content, truncated: body.truncated === true }
+}
+
+/** Read a card's current image through the authenticated desktop Files image route. */
+export async function readDesktopCardImage(agentId: string, path: string, identity: string | undefined, signal?: AbortSignal): Promise<{ blob: Blob; contentType: string }> {
+    if (!imagePath(path)) throw new DesktopCardError('This file is not a supported image.')
+    if (!identity || !IMAGE_IDENTITY.test(identity)) throw new DesktopCardError('Send this image to preview again.')
+    const query = new URLSearchParams({ path, identity })
+    const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/files/image?${query.toString()}`, { cache: 'no-store', ...(signal && { signal }) })
+    if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        throw new DesktopCardError(typeof body?.error === 'string' ? body.error : 'This image is no longer available.')
+    }
+    const blob = await response.blob()
+    const contentType = (response.headers.get('content-type') ?? blob.type).split(';')[0]!.trim()
+    if (!IMAGE_TYPES.has(contentType) || blob.size < 1 || blob.size > CARD_MAX_IMAGE_BYTES) {
+        throw new DesktopCardError('This image can’t be displayed.')
+    }
+    return { blob, contentType }
 }
