@@ -16,6 +16,8 @@ Ownership: A owns coworker Files/audio read and presentation; B owns card-specif
 
 Scope remains bounded: A adds no recording or model audio input; B adds no image chat inputs, generated-file publication or table cards; C adds no website fetch, SVG/GIF animation or hosted storage; D adds no package installation, MCP registration, credential flow or arbitrary command permissions. All four follow the pinned original components rather than inventing replacements. Full D5/C8/B5/E7 parity stays open until the remaining capabilities pass integration and Mac acceptance.
 
+Root’s slice is accepted in installed source `978cee1`: original Workspace settings, Recenter the board and durable Switch to light/dark theme commands. Root passed 3,629 UI tests (20 existing skips), typecheck, production packaging and runtime verification, then exercised the commands with a real Codex reply and draft in the Mac app. Theme, exact chat/tab/message/draft state and provider defaults survived restart. Original appearance was restored; cleanup after a verified recovery copy preserved all original 23 chats and 88 messages. Engine source was unchanged and its suite was not rerun. See `desktop-control-center-actions.md`. This acceptance does not change the prepared external-lane base or assert that those agents have started.
+
 The preceding round is accepted in installed source `6fdf5f0`: A static raster previews, B text-file result cards, C 50 workspace illustrations and D genuine Done items. Root passed 3,620 UI tests (20 existing skips); the unchanged engine passed 3,063 tests in that round. Board/live Codex/restart acceptance preserved the original 23 chats and 88 messages exactly. See `desktop-files-done-acceptance.md` and `desktop-workspace-icons-acceptance.md`.
 
 ---
