@@ -162,7 +162,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         let cancelled = false
         const selection = viewSelection.current
         setActiveId(null)
-        const remembered = source.preferredView
+        const preferenceRequest = source.preferredView
             ? source.preferredView.read(selected).then(viewId => ({ viewId, error: null as string | null }), () => ({ viewId: null, error: 'Could not restore your preferred view. Choose a view to try saving it again.' }))
             : Promise.resolve({ viewId: readLastView(source.storageKey, selected), error: null as string | null })
         source.listViews(selected).then(async result => {
@@ -170,7 +170,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
             const list = result.success ? result.views : []
             setViews(list)
             setViewsError(result.success ? null : result.error)
-            const preference = await remembered
+            const preference = await preferenceRequest
             if (cancelled || !currentScope() || viewSelection.current !== selection) return
             setPreferenceError(preference.error)
             const wanted = requestedViewRef.current
