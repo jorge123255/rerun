@@ -1,4 +1,34 @@
-# Next desktop port round — video, audio cards and pending inbox reads
+# Next desktop port round — Files navigation and MP4 result cards
+
+Prepared A/B base: `f8375b73191ad55ce88bf0ada19b83dfc4fab2ee`. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+
+| Owner | Current scope | Worktree / branch | Status |
+| --- | --- | --- | --- |
+| A | D5: original Previous file / Next file navigation in Files previews | `file-preview-navigation` / `desktop/file-preview-navigation` | Prompt prepared; start not confirmed |
+| B | C8: existing own MP4 result cards, original media albums and paged playback | `file-video-cards` / `desktop/file-video-cards` | Prompt prepared; start not confirmed |
+| C | B5: local workspace logo upload from its existing base | `workspace-logo-upload` / `desktop/workspace-logo-upload` | Reported finished at `8f031fe`; review in progress |
+| D | C7: exact pending-request inbox read receipts | `pending-inbox-read` / `desktop/pending-inbox-read` | Installed and accepted in `c6fa087` |
+| Root | Pending-read corrections and live collapsed inbox counts; all integration and QA | coding worktree `rerun-desktop` / `desktop/m1` | Installed and accepted in `c6fa087`; reviewing C next |
+
+A/B worktree paths are under `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/`. C retains its existing base `49a224e`; its active worktree is not rebased, integrated or accepted by this round. Prior lane worktrees remain preserved. Prepared prompts do not imply that A or B has started, finished or passed acceptance.
+
+Copyable prompts are [Agent A next prompt.md](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent A next prompt.md>) and [Agent B next prompt.md](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent B next prompt.md>). These Markdown prompts are the current assignments; older text prompts describe previous rounds.
+
+Only root runs tests, type checks, lint, builds, packaging, installation, live model requests and native Mac/restart QA. Lanes implement source in their assigned worktrees and may author regressions without executing them. They do not install dependencies, open or alter the installed app or live workspace, touch credentials, push, merge or modify another worktree. Each lane returns a local commit SHA, changed files, original-source references, integration notes and known limits.
+
+A follows original `AgentPanelFiles.tsx`, `useSiblingFiles.ts` and `FileDetail.tsx`: header arrows, index/total, alphabetical siblings, wraparound and folder exclusion. A owns `DesktopCoworkerFiles.tsx`, the desktop image/audio/video preview components and narrow Files-navigation helpers. Navigation stays within the current folder and hidden-file setting, including loading/error views. Back retains the folder. Editing, save, conflict, rename and delete guards remain intact; keyboard navigation respects typing, menus, stacked dialogs, modifiers and native media seeking. File/owner changes abort old reads, stop playback and release object URLs. No reader/API changes, new formats, imports, shell/dependency changes or persisted viewer position.
+
+B follows original `cards.ts`, `chat-card.ts`, `FileCard.tsx`, `MediaAlbum.tsx`, `ChatVideoTile.tsx`, `AttachmentTile.tsx`, `AttachmentLightbox.tsx` and `FilePreview.tsx`. B owns card contracts, the cardFile catalog description, desktop engine card admission and its system-prompt wording, the UI card parser/read adapter, `DesktopFileCard.tsx`, `DesktopFileLightbox.tsx` and isolated desktop video-card helpers. The installed authenticated `/files/video` route, `readCoworkerVideo` and `video-bytes.ts` are consumed unchanged. All-image/video groups use the original album; groups containing text/audio use mixed square tiles. Playback requires a user action.
+
+B keeps 12 files per card, 32 KiB per text file, 8 MiB per image and 16 MiB per audio file. MP4 is limited to 16 MiB per file, with a 24 MiB combined image/video budget per card. Validate recorded and fetched byte bounds, trusted owner, visible persistent paths and inode identities. Preserve all-or-nothing card admission, at most four visible album previews, lazy hidden-media reads and lazy audio. Paging, owner/card changes, close, errors and unmount stop players and revoke URLs; late responses cannot restore old media. Shared files, other video formats, PDF, recording, uploads, publication, model video input and temporary Codex output stay excluded.
+
+Root retains `DesktopApp`, `DesktopBoard`, `DesktopConversation`, chat/tab/draft state, central database/bootstrap, shell and global shortcut/help wiring. Root will update the video-route consumer comment when B is integrated. A/B do not alter the pending-inbox work. PDF remains a future Files slice requiring a renderer decision.
+
+D and root's inbox follow-up passed root-run acceptance in `c6fa087`: 3,793 UI checks (20 existing skips), typecheck, packaging and native board/restart checks. Exact read receipts survived restart without answering requests, a new request in the same chat appeared unread, and Cancel/Escape preserved state. A native Escape propagation defect was corrected before acceptance. Backed-up cleanup preserved the original 23 chats / 88 messages and defaults. See `desktop-pending-inbox-acceptance.md`. C's logo upload is being reviewed separately; it is not included in that installed source. Historical release results below apply only to those earlier releases.
+
+---
+
+# Previous desktop port round — video, audio cards and pending inbox reads
 
 Prepared base: `c6744ef7178b2a59d26a5af3298942b2a6dfc293`. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 

@@ -35,9 +35,9 @@ fingerprint]` (approval ids are `'approval'`-prefixed). Because the receipt is k
 pending-request identity, a new request in the same chat has a new id and always reappears, and no
 receipt is ever written by session alone.
 
-Root wiring (typed): in `apps/ui/lib/desktop/server/database.ts`, inside the existing
+Integrated root wiring: in `apps/ui/lib/desktop/server/database.ts`, inside the existing
 `async function initialize(dataRoot: string)` where `initializeDesktopCompletions(client)` is
-called, add
+called, root added
 
 ```ts
 import { initializeDesktopPendingInbox } from './pending-inbox-db'
@@ -77,8 +77,9 @@ marking read never answers, declines, approves, executes or grants a tool.
 - `apps/ui/lib/desktop/pending-inbox.ts` — client contract: inbox schema, read-target type,
   `{ marked, failedIds }` result schema, URL constants and `readTargetOf(item)`.
 - `apps/ui/components/desktop/useDesktopPendingInbox.ts` — new inbox-specific hook. Polls the
-  pending inbox while the panel is open and the window is visible (same
-  `useVisibleInterval`/in-flight-guard/abort pattern as `useDesktopAttention`). Mark-read is
+  pending inbox while the window is visible, including when the panel is closed so its count
+  stays current. Explicit mutations still require an open panel and current lifecycle. It uses
+  `useVisibleInterval` with guarded, abortable reads. Mark-read is
   explicit and non-optimistic: rows hide only after the server confirms. Failed targets stay keyed
   for `retry` re-post; polling never re-posts a failed mark. Opening a row never acknowledges.
 - `apps/ui/components/desktop/DesktopActionsInbox.tsx` — the pending section now uses the new hook.
@@ -137,7 +138,7 @@ marking read never answers, declines, approves, executes or grants a tool.
 - Route tests: GET filters receipts; mark-read revalidates and is idempotent across retries;
   never writes answer/approval/request rows; new-request reappearance; stale/forged/unknown
   targets → `failedIds`; unreachable engine read → partial `failedIds` then retry recovery;
-  cascade deletes; auth 401/403; malformed/empty bodies → 400; deadline cancels stalled engine
+  cascade deletes; auth 401/403; malformed bodies → 400; deadline cancels stalled engine
   reads without acknowledging.
 
 All execution, full-suite validation, packaging and native Mac acceptance remain root-owned.
@@ -153,3 +154,25 @@ All execution, full-suite validation, packaging and native Mac acceptance remain
 4. Mark all with both pending + Done present, confirm the original dialog copy and count, and
    confirm a request arriving mid-dialog stays unread.
 5. Kill the app between a mark and a re-open: receipts persist.
+
+## Root integration corrections
+
+The central initializer is wired. The backend checks deadline expiry after each pending resolver,
+and a later failed target in the same chat cannot report an earlier confirmed target as failed.
+Unreachable requests remain explicitly unknown through `unavailableAgentIds` and reappear when
+reads recover; the inbox does not invent a confirmed request from an unreachable engine.
+
+Pending callbacks validate open/scope generations, exact current identity and Quit. Retry sends
+only failed targets still present in the current roster with the same owner, chat and kind. The
+original confirmation remains open through portal clicks and Escape only dismisses the dialog;
+old callbacks from a cancelled dialog cannot consume a later confirmation. Native QA exposed
+one more Escape propagation race: Radix can dismiss synchronously during capture, then the
+newly attached inbox listener sees the same event during bubbling. The inbox now respects
+`defaultPrevented`; a synchronous-dismissal regression reproduces the failure before the fix.
+
+Both inbox hooks observe while the window is visible and the panel is closed. Explicit read
+actions still require an open panel. Hidden windows stop reads; Quit prevents new reads or
+mutations. The collapsed Done count sums terminal executions, matching original `doneCountOf`,
+rather than counting grouped rows. Focused visible-chat automatic Done receipts remain intact.
+
+Root-authored/executed acceptance is recorded separately after the native restart checks.
