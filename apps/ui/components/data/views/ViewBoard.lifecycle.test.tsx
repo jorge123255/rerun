@@ -64,7 +64,7 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => { root.unmount() }); container.remove() })
 const render = async (patch: Partial<ComponentProps<typeof ViewBoard>>) => {
-    props = { table: 'alpha', view: boardView, query: '', refreshKey: 0, context: {}, ...props, ...patch }
+    props = { ...props, ...patch }
     await act(async () => { root.render(<ViewBoard {...props} />) })
 }
 const showMore = async () => {
