@@ -38,6 +38,7 @@ test('a scoped picker supports retry, folders, removal, and rejects a second or 
     let fail = true
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
         if (url.pathname.endsWith('/files')) {
@@ -77,6 +78,7 @@ test('sending a workspace file keeps the draft for retry and renders only its sa
     let accepted = false
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
         if (url.pathname.endsWith('/files')) return Response.json({ entries: url.searchParams.get('path') ? [entry('notes.md')] : [entry('docs','dir')] })
@@ -111,6 +113,7 @@ test('stale folder failures do not replace a more recent listing or reopen a dis
     let finish!: (response: Response) => void
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
         if (!url.pathname.endsWith('/files')) return Response.json({ running: false })
@@ -141,6 +144,7 @@ test('a follow-up attachment can be removed while streaming without changing the
     let finish!: () => void
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) {
             if (init?.method === 'PUT') queued = JSON.parse(String(init.body)).item

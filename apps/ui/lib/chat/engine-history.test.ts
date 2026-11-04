@@ -314,3 +314,15 @@ it('preserves only bounded question fields for the original desktop form after r
     const [invalid] = publicDesktopHistory([{ id: 'engine-q2', role: 'assistant', parts: [{ ...part, input: { questions: [{ question: 'x'.repeat(4001) }] } }] }])
     expect(invalid.parts[0]).toMatchObject({ input: {} })
 })
+
+
+it('preserves bounded approval actions and details without forwarding unrelated saved input', () => {
+    const approval = { action: 'Create a draft', detail: 'draft.md: a short plan' }
+    const part = { type: 'tool-request_approval' as const, toolName: 'mcp__rerun__request_approval', toolCallId: 'approval-1', state: 'output-available' as const,
+        input: { approvals: [{ ...approval, internal: 'unrelated private field' }], token: 'unrelated-secret' }, output: { status: 'delivered' } }
+    const [result] = publicDesktopHistory([{ id: 'engine-approval', role: 'assistant', parts: [part] }])
+    expect(result.parts[0]).toMatchObject({ input: { approvals: [approval] } })
+    expect(JSON.stringify(result)).not.toMatch(/unrelated private field|unrelated-secret/)
+    const [invalid] = publicDesktopHistory([{ id: 'engine-invalid-approval', role: 'assistant', parts: [{ ...part, input: { approvals: [{ action: '', detail: 'Do not substitute an actionable placeholder' }] } }] }])
+    expect(invalid.parts[0]).toMatchObject({ input: {} })
+})

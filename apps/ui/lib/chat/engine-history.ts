@@ -7,7 +7,7 @@ import { encodePeaks } from '@/lib/voice/peaks'
 import { parseVoiceMessage } from '@/lib/voice/marker'
 import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
 import { hitlKindOf } from '@/lib/chat-hitl'
-import { desktopQuestionInput, desktopSourceParts, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPath, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
+import { desktopApprovalInput, desktopQuestionInput, desktopSourceParts, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPath, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
 type TextPart = { type: 'text'; text: string }
 type ToolInvocationPart = {
@@ -159,10 +159,12 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
         parts: message.parts.map(part => {
             if (!('toolName' in part)) return part
             const view = desktopToolPresentation(part.toolName, part.input, part.output)
-            const questionInput = stripBridgePrefix(part.toolName) === 'ask_user' ? desktopQuestionInput(part.input) : null
+            const toolName = stripBridgePrefix(part.toolName)
+            const formInput = toolName === 'ask_user' ? desktopQuestionInput(part.input)
+                : toolName === 'request_approval' ? desktopApprovalInput(part.input) : null
             return {
                 type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
-                state: view.errorText ? 'output-error' as const : part.state, input: questionInput ?? view.input ?? {},
+                state: view.errorText ? 'output-error' as const : part.state, input: formInput ?? view.input ?? {},
                 ...(view.output !== undefined && { output: view.output }), ...(view.errorText && { errorText: view.errorText }),
             }
         }),

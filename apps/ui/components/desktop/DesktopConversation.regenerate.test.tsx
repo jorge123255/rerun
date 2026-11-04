@@ -23,6 +23,7 @@ test('regenerates the selected saved reply in a separate chat and retries a lost
     let completeRequest!: (response: Response) => void
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
         if (url.pathname.endsWith('/chat')) {
@@ -99,6 +100,7 @@ test('stopping a regenerating reply cancels only the alternate run', async () =>
     const stopped: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
         if (url.pathname.endsWith('/messages')) return Response.json({ messages: url.pathname.includes('/alternate/') ? alternate : original })

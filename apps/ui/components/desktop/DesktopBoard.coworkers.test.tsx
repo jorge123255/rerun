@@ -30,6 +30,7 @@ async function mount(options: {
 } = {}) {
     let rejectNext = false
     const requests = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (init?.method === 'DELETE' && options.remove) return options.remove(url.split('/').at(-1)!, JSON.parse(String(init.body)).confirmationName)
         if (url.endsWith('/enabled') && init?.method === 'PATCH' && options.enabled) return options.enabled(url.split('/').at(-2)!, JSON.parse(String(init.body)).enabled)

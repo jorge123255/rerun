@@ -24,6 +24,7 @@ test('a held vote stays on its chat while another coworker keeps the same answer
     const votes = new Map<string, { id: string; messageId: string; rating: string }[]>([[second, [{ id: beaVote, messageId: 'engine-msg-b', rating: 'down' }]]])
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input)
+        if (url.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.endsWith('/questions')) return Response.json({ question: null })
         if (url.includes('/queue?')) return Response.json({ queued: null })
         const method = init?.method ?? 'GET'

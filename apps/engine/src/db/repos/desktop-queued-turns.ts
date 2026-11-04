@@ -1,18 +1,19 @@
 import { createHash } from 'node:crypto'
-import type { DesktopQuestionGuard, DesktopWorkspaceAttachment, MessageAuthor } from '@rerun/contracts'
+import type { DesktopApprovalGuard, DesktopQuestionGuard, DesktopWorkspaceAttachment, MessageAuthor } from '@rerun/contracts'
 import { workspaceAttachmentPart } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
 import type { MessageRow } from '../schema.js'
 import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
 
-export type QueuedTurn = { runId: string; sessionId: string; message: string; attachmentPath?: string; question?: DesktopQuestionGuard }
+export type QueuedTurn = { runId: string; sessionId: string; message: string; attachmentPath?: string; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard }
 
 function fingerprint(turn: QueuedTurn) {
     const parts: unknown[] = [turn.sessionId, turn.message, turn.attachmentPath ?? null]
     // Old queue receipts keep their original fingerprint. A question answer also binds the
     // immutable source call, so its run ID cannot be replayed for a different question.
     if (turn.question) parts.push([turn.question.sourceMessageId, turn.question.toolCallId, turn.question.fingerprint])
+    if (turn.approval) parts.push(['approval', turn.approval.sourceMessageId, turn.approval.toolCallId, turn.approval.fingerprint])
     return createHash('sha256').update(JSON.stringify(parts)).digest('hex')
 }
 

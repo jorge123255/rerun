@@ -93,6 +93,126 @@ describe('POST /agents/:id/chat', () => {
         return guard
     }
 
+    async function pendingApproval(sessionId: string) {
+        const { appendMessage } = await import('../../db/repos/messages.js')
+        const { findDesktopApproval } = await import('@rerun/contracts')
+        const request = await appendMessage(id, sessionId, { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'approval-call', toolName: 'request_approval', input: { approvals: [{ action: 'Use blue', detail: 'Main title' }, { action: 'Use green', detail: 'Subtitle' }] } }] })
+        const delivered = await appendMessage(id, sessionId, { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'approval-call', toolName: 'request_approval', output: { type: 'json', value: { status: 'delivered' } } }] })
+        const { approvals: _approvals, ...guard } = findDesktopApproval([request, delivered])!
+        return guard
+    }
+
+    it('accepts mixed approval decisions once and binds receipt replay to the approval kind and exact content', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id)
+            const approval = await pendingApproval(session.id)
+            const { serializeApprovalDecisions } = await import('@rerun/contracts')
+            const message = serializeApprovalDecisions([{ action: 'Use blue', detail: 'Main title', decision: 'approved' }, { action: 'Use green', detail: 'Subtitle', decision: 'declined', note: 'Keep the subtitle plain.' }])
+            const input = { sessionId: session.id, message, desktopQueuedTurn: { runId: crypto.randomUUID(), approval } }
+            const responses = await Promise.all([chat(id, input), chat(id, input)])
+            for (const response of responses) {
+                expect([200, 204]).toContain(response.status)
+                await response.text()
+            }
+            const { listMessages } = await import('../../db/repos/messages.js')
+            const users = (await listMessages(id, session.id)).filter(row => row.role === 'user')
+            expect(users).toHaveLength(1)
+            expect(users[0].contentJson).toContain('Keep the subtitle plain.')
+            expect(state.calls).toHaveLength(1)
+            expect(state.calls[0].message).toBe(message)
+            const replay = await chat(id, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, replayOnly: true } })
+            expect([200, 204]).toContain(replay.status)
+            await replay.text()
+            expect(state.calls).toHaveLength(1)
+            expect((await chat(id, { ...input, message: 'Approve everything' })).status).toBe(409)
+            expect((await chat(id, { ...input, desktopQueuedTurn: { runId: input.desktopQueuedTurn.runId, question: approval } })).status).toBe(409)
+            expect((await chat(id, { ...input, desktopQueuedTurn: { runId: input.desktopQueuedTurn.runId } })).status).toBe(409)
+            expect((await chat(id, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, question: approval } })).status).toBe(400)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('rejects stale, foreign and changed approval guards, including a newer request of the other kind', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id)
+            const other = await createSession(id)
+            const question = await pendingQuestion(session.id)
+            const approval = await pendingApproval(session.id)
+            const send = (sessionId: string, guard = approval) => {
+                const runId = crypto.randomUUID()
+                return { runId, response: chat(id, { sessionId, message: 'Approved', desktopQueuedTurn: { runId, approval: guard } }) }
+            }
+            for (const attempt of [send(other.id), send(session.id, { ...approval, fingerprint: approval.fingerprint + ' ' }), send(session.id, { ...approval, sourceMessageId: 'another-message' })]) {
+                expect((await attempt.response).status).toBe(409)
+                expect(await getRun(id, attempt.runId)).toBeUndefined()
+            }
+            expect((await chat(id, { sessionId: session.id, message: 'Blue', desktopQueuedTurn: { runId: crypto.randomUUID(), question } })).status).toBe(409)
+            await pendingQuestion(session.id)
+            const superseded = send(session.id)
+            expect((await superseded.response).status).toBe(409)
+            expect(await getRun(id, superseded.runId)).toBeUndefined()
+            const { appendMessage, listMessages } = await import('../../db/repos/messages.js')
+            const newer = await pendingApproval(session.id)
+            await appendMessage(id, session.id, { role: 'user', content: 'I already replied elsewhere.' })
+            expect((await send(session.id, newer).response).status).toBe(409)
+            expect((await listMessages(id, session.id)).filter(row => row.role === 'user')).toHaveLength(1)
+            expect(state.calls).toHaveLength(0)
+            expect(sessionClaimCount()).toBe(0)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('blocks queued and ordinary desktop sends behind a pending approval without reserving either run', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id)
+            const approval = await pendingApproval(session.id)
+            const queued = { sessionId: session.id, message: 'Saved follow-up', desktopQueuedTurn: { runId: crypto.randomUUID() } }
+            for (const input of [queued, { sessionId: session.id, message: 'From a stale panel' }]) {
+                const response = await chat(id, input)
+                expect(response.status).toBe(409)
+                expect(await response.json()).toMatchObject({ code: 'approval_pending' })
+            }
+            expect(await getRun(id, queued.desktopQueuedTurn.runId)).toBeUndefined()
+            const { getSystemDb } = await import('../../db/systemDb.js')
+            const { client } = await getSystemDb(id)
+            expect(Number((await client.execute({ sql: 'SELECT COUNT(*) AS total FROM runs WHERE session_id = ?', args: [session.id] })).rows[0].total)).toBe(0)
+            expect(sessionClaimCount()).toBe(0)
+            expect(state.calls).toHaveLength(0)
+            await (await chat(id, { sessionId: session.id, message: 'Declined both actions.', desktopQueuedTurn: { runId: crypto.randomUUID(), approval } })).text()
+            const after = await chat(id, queued)
+            expect(after.status).toBe(200)
+            await after.text()
+            expect(state.calls.map(call => call.message)).toEqual(['Declined both actions.', queued.message])
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('reconciles an accepted approval after disable without dispatching an unaccepted decision', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const enabled = (value: boolean) => app.request(`/agents/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: value }) })
+        try {
+            const session = await createSession(id)
+            const approval = await pendingApproval(session.id)
+            const input = { sessionId: session.id, message: 'Declined both actions.', desktopQueuedTurn: { runId: crypto.randomUUID(), approval } }
+            await (await chat(id, input)).text()
+            expect((await enabled(false)).status).toBe(200)
+            const replay = await chat(id, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, replayOnly: true } })
+            expect([200, 204]).toContain(replay.status)
+            expect(replay.headers.get('x-run-id')).toBe(input.desktopQueuedTurn.runId)
+            await replay.text()
+            const missing = crypto.randomUUID()
+            expect((await chat(id, { ...input, desktopQueuedTurn: { runId: missing, approval, replayOnly: true } })).status).toBe(403)
+            expect((await chat(id, { ...input, desktopQueuedTurn: { runId: missing, approval } })).status).toBe(403)
+            expect((await chat(id, { ...input, message: 'Approved', desktopQueuedTurn: { ...input.desktopQueuedTurn, replayOnly: true } })).status).toBe(409)
+            expect(await getRun(id, missing)).toBeUndefined()
+            expect(state.calls).toHaveLength(1)
+            expect(sessionClaimCount()).toBe(0)
+        } finally {
+            await enabled(true)
+            vi.unstubAllEnvs()
+        }
+    })
+
     it('reserves a question answer once and replays the receipt after the question is no longer pending', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         try {

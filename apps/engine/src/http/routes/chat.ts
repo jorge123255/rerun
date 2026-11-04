@@ -1,4 +1,4 @@
-import { chatRequestSchema, desktopQuestionGuardSchema, findDesktopQuestion, desktopWorkspaceAttachmentSchema, type SessionSource } from '@rerun/contracts'
+import { chatRequestSchema, desktopApprovalGuardSchema, desktopQuestionGuardSchema, findDesktopApproval, findDesktopQuestion, desktopWorkspaceAttachmentSchema, type SessionSource } from '@rerun/contracts'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { desktopApp } from '../../desktop/policy.js'
@@ -23,8 +23,10 @@ import { resumeStreamResponse, toResumableStreamResponse } from '../../runtime/s
 
 export const chatRoutes = new Hono()
 const questionPendingMessage = 'Answer or dismiss the coworker’s questions before sending another message.'
+const approvalPendingMessage = 'Approve or decline the coworker’s proposed actions before sending another message.'
 const desktopFirstTurn = z.object({ sessionId: z.uuid(), runId: z.uuid() }).strict()
-const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional() }).strict()
+const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional() }).strict()
+    .refine(turn => !turn.question || !turn.approval, 'An answer can target only one pending request.')
 const desktopChatRequest = chatRequestSchema.extend({
     workspaceAttachment: desktopWorkspaceAttachmentSchema.optional(),
     desktopFirstTurn: desktopFirstTurn.optional(),
@@ -96,7 +98,7 @@ chatRoutes.post('/chat', async c => {
             const session = await getSession(agentId, body.sessionId)
             if (session?.agentId === agentId && await getDesktopQueuedTurn(agentId, {
                 runId: queued.runId, sessionId: session.id, message: body.message,
-                attachmentPath: queued.attachmentPath, question: queued.question,
+                attachmentPath: queued.attachmentPath, question: queued.question, approval: queued.approval,
             })) return identified(resumeStreamResponse(queued.runId), session.id, queued.runId)
         }
         throw agentDisabled()
@@ -118,7 +120,7 @@ chatRoutes.post('/chat', async c => {
         const queued = body.desktopQueuedTurn!
         const session = await getSession(agentId, body.sessionId!)
         if (!session || session.agentId !== agentId) throw new HttpError(404, 'Session not found for this agent')
-        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, attachmentPath: queued.attachmentPath, question: queued.question }
+        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, attachmentPath: queued.attachmentPath, question: queued.question, approval: queued.approval }
         if (await getDesktopQueuedTurn(agentId, turn)) return identified(resumeStreamResponse(turn.runId), session.id, turn.runId)
         if (await getRun(agentId, turn.runId)) throw new HttpError(409, 'This queued message ID is already in use.')
         // The bridge can reconcile a lost acknowledgement before re-reading a moved file or
@@ -132,17 +134,24 @@ chatRoutes.post('/chat', async c => {
         try {
             // Hold the session claim while checking the durable transcript: an ordinary chat
             // cannot append a new turn between this check and the atomic answer reservation.
-            const pending = findDesktopQuestion(await listMessages(agentId, session.id))
+            const messages = await listMessages(agentId, session.id)
+            const pending = findDesktopQuestion(messages)
+            const approval = findDesktopApproval(messages)
             if (queued.question) {
                 const expected = queued.question
                 if (!pending || pending.sourceMessageId !== expected.sourceMessageId || pending.toolCallId !== expected.toolCallId || pending.fingerprint !== expected.fingerprint) {
                     throw new HttpError(409, 'This question is no longer waiting for an answer. Reload the conversation.')
                 }
-            } else if (pending) {
+            } else if (queued.approval) {
+                const expected = queued.approval
+                if (!approval || approval.sourceMessageId !== expected.sourceMessageId || approval.toolCallId !== expected.toolCallId || approval.fingerprint !== expected.fingerprint) {
+                    throw new HttpError(409, 'This approval is no longer waiting for a decision. Reload the conversation.')
+                }
+            } else if (pending || approval) {
                 // The panel may have read an idle snapshot just before this question was saved.
                 // Its queued draft must remain unsent until the explicit answer is accepted.
                 releaseSession(turn.runId)
-                return c.json({ error: questionPendingMessage, code: 'question_pending' }, 409)
+                return c.json({ error: pending ? questionPendingMessage : approvalPendingMessage, code: pending ? 'question_pending' : 'approval_pending' }, 409)
             }
             const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, body.workspaceAttachment, body.author)
             return streamChat(agent, session.id, turn.runId, body.message, override, { provider, model }, {
@@ -172,9 +181,12 @@ chatRoutes.post('/chat', async c => {
     }
     if (desktopApp()) {
         try {
-            if (findDesktopQuestion(await listMessages(agentId, session.id))) {
+            const messages = await listMessages(agentId, session.id)
+            const question = findDesktopQuestion(messages)
+            const approval = findDesktopApproval(messages)
+            if (question || approval) {
                 releaseSession(runId)
-                return c.json({ error: questionPendingMessage, code: 'question_pending' }, 409)
+                return c.json({ error: question ? questionPendingMessage : approvalPendingMessage, code: question ? 'question_pending' : 'approval_pending' }, 409)
             }
         } catch (error) {
             releaseSession(runId)

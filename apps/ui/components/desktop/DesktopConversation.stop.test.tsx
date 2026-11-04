@@ -33,6 +33,7 @@ beforeEach(() => {
     running = false; statusUnavailable = false
     stopResponse = () => Response.json({ canceled: 1, alreadyFinished: false })
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.endsWith('/questions')) return Response.json({ question: null })
         requests.push(`${init?.method ?? 'GET'} ${url}`)
         if (url.includes('/queue?')) return Response.json({ queued: null })

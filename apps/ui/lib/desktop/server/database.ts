@@ -136,6 +136,22 @@ async function initialize(dataRoot: string): Promise<Client> {
             request_id TEXT PRIMARY KEY,
             answer_id TEXT NOT NULL REFERENCES desktop_question_answers(request_id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS desktop_approval_answers (
+            request_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+            approval_id TEXT NOT NULL,
+            approval_guard TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            answer_text TEXT NOT NULL,
+            accepted INTEGER NOT NULL DEFAULT 0 CHECK (accepted IN (0, 1)),
+            created_at TEXT NOT NULL,
+            UNIQUE (session_id, approval_id)
+        );
+        CREATE TABLE IF NOT EXISTS desktop_approval_requests (
+            request_id TEXT PRIMARY KEY,
+            answer_id TEXT NOT NULL REFERENCES desktop_approval_answers(request_id) ON DELETE CASCADE
+        );
         PRAGMA user_version = 1;
     `)
     const columns = await client.execute('PRAGMA table_info(desktop_sessions)')

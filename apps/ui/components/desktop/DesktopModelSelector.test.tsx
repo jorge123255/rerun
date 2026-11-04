@@ -135,6 +135,7 @@ test('changing the model keeps the typed draft of an already open chat', async (
     conversations = { open: null }
     patches.length = 0
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (String(url).endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (String(url).includes('/model')) {
             if (init?.method === 'PATCH') patches.push(JSON.parse(String(init.body)))

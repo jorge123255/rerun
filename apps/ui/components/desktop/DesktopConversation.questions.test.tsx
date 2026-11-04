@@ -47,6 +47,7 @@ beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://local')
         const sessionId = url.pathname.split('/')[4]
+        if (url.pathname.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) {
             if (init?.method === 'POST') {
                 const body = JSON.parse(String(init.body)) as DesktopQuestionAnswer

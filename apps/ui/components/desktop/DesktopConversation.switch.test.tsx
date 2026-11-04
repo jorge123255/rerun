@@ -18,6 +18,7 @@ test('switching, failed loads, retry, and New chat keep drafts and never show an
     let resolveSlow!: (value: Response) => void
     let sends = 0
     vi.stubGlobal('fetch', vi.fn((url: string) => {
+        if (url.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.endsWith('/questions')) return Response.json({ question: null })
         if (url.includes('/queue?')) return Response.json({ queued: null })
         if (url.includes('/first/messages')) return messages('First answer.')

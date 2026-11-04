@@ -108,13 +108,13 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingQuestionToolCallId }: {
+export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId }: {
     message: UIMessage
     streaming: boolean
     onRegenerate?: (id: string) => void
     feedbackRating?: MessageFeedbackRating | null
     onRate?: (rating: MessageFeedbackRating) => void
-    pendingQuestionToolCallId?: string
+    pendingRequestToolCallId?: string
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const blocks: ReactNode[] = []
@@ -130,7 +130,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
                 paragraph = ''
             }
         } else if (isToolUIPart(part)) {
-            if (part.toolCallId === pendingQuestionToolCallId) continue
+            if (part.toolCallId === pendingRequestToolCallId) continue
             blocks.push(<DesktopToolStep key={part.toolCallId} part={part} restored={message.id.startsWith('engine-')} />)
         } else if (part.type === 'reasoning' && isDesktopSummaryMetadata(part.providerMetadata) && (part.text || live)) {
             blocks.push(<ReasoningStep key={index} text={part.text} isStreaming={live} renderText={replyMarkdown} />)

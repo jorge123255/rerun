@@ -30,9 +30,19 @@ import { QueuedMessagePill } from '@/components/chat/QueuedMessagePill'
 import { shouldFlush, shouldKeepQueued } from '@/lib/chat/queued-message'
 import { desktopQueuedPreview, type DesktopQueuedMessage } from '@/lib/desktop/queued-message'
 import { useDesktopQueuedMessage } from '@/lib/desktop/use-queued-message'
-import { HITL_CANCELLED, serializeAnswers } from '@rerun/contracts'
+import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions } from '@rerun/contracts'
 import { desktopQuestionViewSchema, type DesktopPendingQuestion, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import { DesktopQuestionCard } from './DesktopQuestionCard'
+import { desktopApprovalViewSchema, type DesktopPendingApproval, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
+import { DesktopApprovalCard } from './DesktopApprovalCard'
+
+const approvalUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/approvals`
+async function approvalFor(sessionId: string, signal: AbortSignal) {
+    const response = await fetch(approvalUrl(sessionId), { signal })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not load the coworker’s approval request. Try again.')
+    return desktopApprovalViewSchema.parse(body).approval
+}
 
 const questionUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/questions`
 async function questionFor(sessionId: string, signal: AbortSignal) {
@@ -98,8 +108,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             return next
         })
     }, [])
-    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; error?: string }>({ id: null, question: null })
-    const answering = useRef<{ sessionId: string; payload: DesktopQuestionAnswer; accepted: boolean; error?: Error } | null>(null)
+    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; error?: string }>({ id: null, question: null, approval: null })
+    const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const [attempt, setAttempt] = useState(0)
     // An engine run still generating for this conversation (e.g. after reopening it mid-reply).
     const [engineRunning, setEngineRunning] = useState<{ id: string | null; running: boolean; runId?: string | null; failedRunId?: string | null }>({ id: null, running: false })
@@ -124,24 +134,24 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         const pending = pendingAttachment.current
         const alternate = regenerating.current
         const queued = pendingQueue.current
-        const answer = answering.current
+        const answer = responding.current
         let response: Response
         try {
             if (tabUid) await pendingTabWrite(agent.id)
-            response = await fetch(answer ? questionUrl(answer.sessionId) : url, answer ? { ...init, body: JSON.stringify(answer.payload) } : init)
+            response = await fetch(answer ? answer.url : url, answer ? { ...init, body: JSON.stringify(answer.payload) } : init)
             if ((pending || alternate || queued || answer) && !response.ok) {
                 const body = await response.json().catch(() => null)
                 const fallback = alternate ? 'Could not regenerate this reply. Try again.' : 'Could not send this message. Try again.'
                 throw new Error(typeof body?.error === 'string' ? body.error : fallback)
             }
             if (answer) {
-                if (response.headers.get('x-session-id') !== answer.sessionId || response.headers.get('x-question-id') !== answer.payload.questionId || !response.headers.get('x-run-id')) {
-                    throw new Error('Could not confirm your answer. Retry the same answer to check safely.')
+                if (response.headers.get('x-session-id') !== answer.sessionId || response.headers.get(answer.receiptHeader) !== answer.receiptId || !response.headers.get('x-run-id')) {
+                    throw new Error('approvalId' in answer.payload ? 'Could not confirm your decisions. Retry the same decisions to check safely.' : 'Could not confirm your answer. Retry the same answer to check safely.')
                 }
                 answer.accepted = true
             }
         } catch (cause) {
-            if (answer) answer.error = cause instanceof Error ? cause : new Error('Could not send your answer. Try again.')
+            if (answer) answer.error = cause instanceof Error ? cause : new Error('approvalId' in answer.payload ? 'Could not send your decisions. Try again.' : 'Could not send your answer. Try again.')
             throw cause
         } finally {
             pendingAttachment.current = null
@@ -209,9 +219,11 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const dirty = !!(input || attachment || queue.queued)
     useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty }) }, [tabUid, generating, dirty, onTabActivity])
     const question = history.id === sessionId ? history.question : undefined
-    // Check the saved question before sending any later turn, including an automatic queue flush.
-    const questionBlocked = !!sessionId && question !== null
-    const canRegenerate = !questionBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
+    const approval = history.id === sessionId ? history.approval : undefined
+    const pendingRequest = question || approval
+    // Both request kinds must be known before a later turn or an automatic queue flush.
+    const requestBlocked = !!sessionId && (question !== null || approval !== null)
+    const canRegenerate = !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
     const historyError = history.id === sessionId ? history.error : undefined
@@ -223,11 +235,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     useEffect(() => {
         if (busy) return
         const controller = new AbortController()
-        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal)]) : Promise.resolve([[], null] as [UIMessage[], null])
-        void read.then(([result, pending]) => {
+        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal), approvalFor(sessionId, controller.signal)]) : Promise.resolve([[], null, null] as [UIMessage[], null, null])
+        void read.then(([result, pending, approval]) => {
             if (controller.signal.aborted) return
+            if (pending && approval) throw new Error('This conversation changed while loading. Reload it to see the current request.')
             setMessages(result)
-            setHistory({ id: sessionId, transcript: result, question: pending })
+            setHistory({ id: sessionId, transcript: result, question: pending, approval })
         }).catch(cause => {
             if (!controller.signal.aborted) setHistory({ id: sessionId, error: cause instanceof Error ? cause.message : 'Could not load history' })
         })
@@ -252,7 +265,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     wasRunning = true
                     timer = setTimeout(check, RUN_POLL_MS)
                 } else if (wasRunning) {
-                    setHistory(current => current.id === sessionId ? { ...current, question: undefined } : current)
+                    setHistory(current => current.id === sessionId ? { ...current, question: undefined, approval: undefined } : current)
                     setAttempt(n => n + 1) // The reply finished elsewhere: reload the saved transcript.
                 }
             } catch {
@@ -278,7 +291,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             const body = await response.json().catch(() => ({}))
             if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not stop this reply. Try again.')
             setEngineRunning({ id, running: false })
-            setHistory(current => current.id === id ? { ...current, question: undefined } : current)
+            setHistory(current => current.id === id ? { ...current, question: undefined, approval: undefined } : current)
             setAttempt(n => n + 1)
             return true
         } catch (cause) {
@@ -292,7 +305,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     async function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if ((questionBlocked && !generating) || !!question || (answering.current && !(generating && answering.current.accepted)) || inactive || !text || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current) return
+        if ((requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || inactive || !text || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current) return
         if (generating || (queue.queued && draftQueues.current.has(queue.queued.id))) {
             if (!queue.loaded || queue.error) return
             try {
@@ -319,7 +332,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }
 
     async function sendQueued(item: DesktopQueuedMessage) {
-        if (questionBlocked || answering.current || !sessionId || inactive || stopping || generating || !ready || pendingAttachment.current || regenerating.current || flushingQueue.current) return
+        if (requestBlocked || responding.current || !sessionId || inactive || stopping || generating || !ready || pendingAttachment.current || regenerating.current || flushingQueue.current) return
         flushingQueue.current = item.id
         setSendQueuedId(null)
         setQueueNotice(undefined)
@@ -344,7 +357,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
 
     async function sendQueuedNow() {
         const item = queue.queued
-        if ((questionBlocked && !generating) || !!question || (answering.current && !(generating && answering.current.accepted)) || !item || inactive || queue.pending || stopping || flushingQueue.current) return
+        if ((requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || !item || inactive || queue.pending || stopping || flushingQueue.current) return
         setQueueNotice(undefined)
         // Cancellation must finish before the flush effect starts another stream. The engine's
         // Stop operation cancels all current runs in this conversation, including a reopened one.
@@ -399,10 +412,10 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
 
     const queued = queue.queued
     const queuedBehindFailure = !!queued?.behindRunId && queued.behindRunId === engineRunning.failedRunId
-    const canFlushQueue = !questionBlocked && !inactive && !!sessionId && ready && modelReady && queue.loaded && !queue.pending && !queue.restoredId && queueStatusKnown && !stopping && !stopError && !queue.error
+    const canFlushQueue = !requestBlocked && !inactive && !!sessionId && ready && modelReady && queue.loaded && !queue.pending && !queue.restoredId && queueStatusKnown && !stopping && !stopError && !queue.error
         && shouldFlush({ queued, busy: generating, uploading: !!pendingAttachment.current || !!regenerating.current, status, hasError: !!error || !!queueNotice || queuedBehindFailure })
     useEffect(() => {
-        if (questionBlocked || !queued || queue.pending || !ready || !modelReady || !queueStatusKnown || inactive || generating || stopping || flushingQueue.current) return
+        if (requestBlocked || !queued || queue.pending || !ready || !modelReady || !queueStatusKnown || inactive || generating || stopping || flushingQueue.current) return
         if (sendQueuedId === queued.id || (canFlushQueue && queued.state === 'waiting')) void sendQueued(queued)
     })
 
@@ -427,9 +440,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }
 
     async function answerQuestion(payload: DesktopQuestionAnswer) {
-        if (!active || !sessionId || !question || payload.questionId !== question.id || inactive || generating || stopping || !ready || answering.current || flushingQueue.current || regenerating.current) throw new Error('This question is not ready for an answer. Try again.')
-        const answer = { sessionId, payload, accepted: false, error: undefined as Error | undefined }
-        answering.current = answer
+        if (!active || !sessionId || !question || payload.questionId !== question.id || inactive || generating || stopping || !ready || responding.current || flushingQueue.current || regenerating.current) throw new Error('This question is not ready for an answer. Try again.')
+        const answer = { sessionId, payload, url: questionUrl(sessionId), receiptHeader: 'x-question-id', receiptId: payload.questionId, accepted: false, error: undefined as Error | undefined }
+        responding.current = answer
         setLiveSessionId(null)
         setLiveRunId(null)
         clearError?.()
@@ -439,7 +452,25 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             await sendMessage({ text }, { body: payload })
             if (!answer.accepted) throw answer.error ?? new Error('Could not confirm your answer. Try again.')
         } finally {
-            if (answering.current === answer) answering.current = null
+            if (responding.current === answer) responding.current = null
+            setAttempt(n => n + 1)
+        }
+    }
+
+    async function decideApproval(payload: DesktopApprovalAnswer) {
+        if (!active || !sessionId || !approval || payload.approvalId !== approval.id || inactive || generating || stopping || !ready || responding.current || flushingQueue.current || regenerating.current || pendingAttachment.current) throw new Error('This approval request is not ready. Try again.')
+        const answer = { sessionId, payload, url: approvalUrl(sessionId), receiptHeader: 'x-approval-id', receiptId: payload.approvalId, accepted: false, error: undefined as Error | undefined }
+        responding.current = answer
+        setLiveSessionId(null)
+        setLiveRunId(null)
+        clearError?.()
+        const text = serializeApprovalDecisions(approval.approvals.map((item, index) => ({ ...item, ...payload.decisions[index] })))
+        try {
+            // Only indexed decisions travel to the API. It reconstructs the authoritative actions.
+            await sendMessage({ text }, { body: payload })
+            if (!answer.accepted) throw answer.error ?? new Error('Could not confirm your decisions. Retry the saved decisions.')
+        } finally {
+            if (responding.current === answer) responding.current = null
             setAttempt(n => n + 1)
         }
     }
@@ -520,7 +551,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                         <div className="mb-1"><AttachmentChip path={message.metadata.attachmentPath} /></div> : null}
                                     {message.role === 'assistant'
                                         ? <DesktopAssistantReply message={message} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
-                                            pendingQuestionToolCallId={question?.toolCallId}
+                                            pendingRequestToolCallId={pendingRequest?.toolCallId}
                                             feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
                                             onRate={message.id.startsWith('engine-') ? rating => feedback.rate(message.id, rating) : undefined}
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
@@ -548,10 +579,11 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 {(queue.error || queueNotice) && <p role={queue.error ? 'alert' : 'status'} className="mb-2 px-1 text-xs text-muted-foreground">{queue.error || queueNotice}</p>}
                 {queuedBehindFailure && !queueNotice && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">The previous reply failed. Your queued message is kept; use Send now when you are ready.</p>}
                 <QueuedMessagePill text={queued && !(draftQueues.current.has(queued.id) && input.trim() === queued.text && attachment === queued.attachmentPath) ? desktopQueuedPreview(queued) : null}
-                    busy={generating} pending={(questionBlocked && !generating) || !!question || queue.pending || stopping || inactive || !!flushingQueue.current}
+                    busy={generating} pending={(requestBlocked && !generating) || !!pendingRequest || queue.pending || stopping || inactive || !!flushingQueue.current}
                     onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
                 {question && <DesktopQuestionCard key={question.id} question={question} disabled={!active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
-                <form onSubmit={submit} hidden={!!question} className={cn('min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', question ? 'hidden' : 'flex')}>
+                {approval && <DesktopApprovalCard key={approval.id} approval={approval} disabled={!active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
+                <form onSubmit={submit} hidden={!!pendingRequest} className={cn('min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest ? 'hidden' : 'flex')}>
                     {attachment && <div className="px-2.5 pt-2"><AttachmentChip path={attachment}
                         disabled={stopping || queue.pending || (pendingAttachment.current?.key === draftKey && pendingAttachment.current.attachment === attachment)}
                         onRemove={() => setDraftAttachment(draftKey)} /></div>}
@@ -580,7 +612,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={inactive || stopping || !ready || queue.pending}
                                 onSelect={path => setDraftAttachment(draftKey, path)} />
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
-                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={(questionBlocked && !generating) || !!question || inactive || !input.trim() || stopping || !ready || !queue.loaded || queue.pending || !!queue.error}>
+                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={(requestBlocked && !generating) || !!pendingRequest || inactive || !input.trim() || stopping || !ready || !queue.loaded || queue.pending || !!queue.error}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
                             </Button>
                         </div>

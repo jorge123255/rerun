@@ -83,6 +83,7 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
     const sent: Record<string, string>[] = []
     let finish!: () => void
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url) && (init?.method ?? 'GET') === 'GET') return Response.json({ queued: null })
         const write = url.match(/^\/api\/desktop\/agents\/([^/]+)\/tabs$/)
@@ -170,6 +171,7 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
 test('history read failure can be retried without turning it into an empty saved history', async () => {
     let reads = 0
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url)) return Response.json({ queued: null })
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })

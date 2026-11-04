@@ -1,6 +1,6 @@
 import 'server-only'
 import { startQueuedChat } from './queued-chat'
-import { desktopRerunGrantsOf, type DesktopQuestionGuard } from '@rerun/contracts'
+import { desktopRerunGrantsOf, type DesktopQuestionGuard, type DesktopApprovalGuard } from '@rerun/contracts'
 import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
 import { publicDesktopHistory, transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
@@ -79,7 +79,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard }
+    | { sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -100,7 +100,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id, 'x-run-id': String(previousStart.run_id),
         } }) }
     }
-    const queued = !regenerate && input.requestId ? { runId: input.requestId, attachmentPath: input.attachmentPath, ...(input.question && { question: input.question }) } : undefined
+    const queued = !regenerate && input.requestId ? { runId: input.requestId, attachmentPath: input.attachmentPath, ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }) } : undefined
     let replay: Response | undefined
     if (queued && existing && !regenerate) {
         const probe = await chat(engineOf(runtime), agent.engineAgentId, {
@@ -143,6 +143,8 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         throw new DesktopHttpError(engineResponse.status, 'The engine could not start this first message. Check the coworker or model, then try again.')
     }
     if (engineResponse.status === 403) throw new DesktopHttpError(403, disabledCoworkerMessage)
+    if (input.approval && engineResponse.status === 409) throw new DesktopHttpError(409, 'This approval request changed or the conversation is still working. Reload the conversation and retry the saved decisions.')
+    if (input.question && engineResponse.status === 409) throw new DesktopHttpError(409, 'This question changed or the conversation is still working. Reload the conversation and retry the saved answers.')
     if (queued && engineResponse.status === 409) throw new DesktopHttpError(409, 'This conversation is still working or the queued message changed. The queued message is kept; wait for the reply or use Send now.')
     // A replay can recover the alternate even after the engine's stream has expired.
     const completedReplay = (regenerate || !!start || !!queued) && engineResponse.status === 204

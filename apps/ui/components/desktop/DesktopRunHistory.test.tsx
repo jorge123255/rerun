@@ -23,6 +23,7 @@ test('opens from a board coworker, updates a running entry, isolates coworkers, 
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     let runs = [running], reads = 0
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })
         if (url === '/api/desktop/board-activity') return Response.json({ agents: { alice: 'idle', bob: 'idle' } })

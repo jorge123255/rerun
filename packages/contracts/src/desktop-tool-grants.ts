@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser'] as const
+export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -34,6 +34,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('memoryWrite', 'Write memories', 'Create or update this coworker’s notes. Requires Learn from replies.', 'memory_write'),
     supported('memoryDelete', 'Delete memories', 'Remove a specific note from this coworker’s Memories using its last known text.', 'memory_delete'),
     supported('askUser', 'Ask the user', 'Ask questions in chat and continue after you answer.', 'ask_user'),
+    supported('requestApproval', 'Request approval', 'Ask you to approve or decline proposed actions in chat.', 'request_approval'),
     pending('filesystem', 'Edit workspace files', 'Create and change workspace documents.', 'Requires conflict-safe writes in the workspace editor.', 'fs_write', 'fs_edit'),
     pending('shared', 'Shared files', 'Work on files visible to multiple coworkers.', 'Requires a shared workspace and its access controls.', 'shared_read', 'shared_write'),
     pending('shell', 'Run commands', 'Run Rerun shell commands in a workspace.', 'Requires a confined engine command runner.', 'shell_exec'),
@@ -54,7 +55,6 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     pending('paidData', 'Paid data', 'Search external datasets.', 'Requires a configured provider and billing controls.'),
     pending('cards', 'Result cards', 'Show files and structured results in chat.', 'Requires safe file or table previews in the chat panel.'),
     pending('quickReplies', 'Quick replies', 'Suggest one-click responses below a coworker reply.', 'Requires quick reply buttons in the Mac chat panel.'),
-    pending('requestApproval', 'Request approval', 'Pause for a person to approve an action.', 'Requires resumable approvals in chat.'),
     pending('suggestService', 'Suggest services', 'Suggest a connection for the user to configure.', 'Requires the service connection flow.'),
     pending('requestSecret', 'Request a secret', 'Request a credential through a secure field.', 'Requires a secure entry and credential storage flow.'),
     pending('self', 'Self-improvement', 'Update instructions or install tools.', 'Requires a review flow and isolated installation.'),
