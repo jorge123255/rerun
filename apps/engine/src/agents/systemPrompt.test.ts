@@ -27,6 +27,25 @@ function agentWithVerbosity(verbosity: string, selfImprovementEnabled: boolean) 
     return { ...agent, config: agentConfigSchema.parse({ name: 'Prompt test', provider: 'rerun', verbosity, selfImprovement: { enabled: selfImprovementEnabled }, tools: { memory: false, db: false, schedule: false } }) }
 }
 
+describe('desktop image card instructions', () => {
+    afterEach(() => vi.unstubAllEnvs())
+
+    it('advertises static albums and mixed files only with the coworker grant, retaining persistent-file limits', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const enabled = { ...agent, config: agentConfigSchema.parse({ name: 'Media prompt', tools: { desktopToolGrants: { cardFile: true } } }) }
+        const prompt = await buildSystemPrompt(enabled, { source: 'chat' })
+        const cards = prompt.slice(prompt.indexOf('<chat_cards>'), prompt.indexOf('</chat_cards>'))
+        expect(cards).toContain('static PNG, JPEG, WebP or single-frame GIF')
+        expect(cards).toContain('one album')
+        expect(cards).toContain('mixed document/image cards')
+        expect(cards).toContain('8 MiB per image and 24 MiB')
+        expect(cards).toContain('cannot save, import or publish')
+        expect(cards).toContain('Table cards are unavailable')
+        expect(cards).not.toContain('only for existing .txt or .md')
+        expect(await buildSystemPrompt(agent, { source: 'chat' })).not.toContain('<chat_cards>')
+    })
+})
+
 describe('buildSystemPrompt database sections', () => {
     it('drops the "only one database" claim once the shared one is reachable', async () => {
         const prompt = await buildSystemPrompt(agentWith({ db: true, sharedDb: true }), { source: 'chat' })
