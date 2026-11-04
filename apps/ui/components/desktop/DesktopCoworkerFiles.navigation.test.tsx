@@ -207,9 +207,11 @@ test('arrow keys move between files except while typing, holding a modifier, or 
     await key('ArrowRight', { metaKey: true })
     expect(document.querySelector('[data-testid="file-preview"]')?.textContent).toBe('alpha body')
 
+    const filesDialog = document.querySelector('[data-testid="file-preview"]')!.closest('[role="dialog"]')!
     const field = document.createElement('input')
-    document.body.append(field)
+    filesDialog.append(field)
     field.focus()
+    expect(document.activeElement).toBe(field)
     await key('ArrowRight', {}, field)
     expect(document.querySelector('[data-testid="file-preview"]')?.textContent).toBe('alpha body')
     field.remove()
@@ -218,9 +220,11 @@ test('arrow keys move between files except while typing, holding a modifier, or 
     menu.setAttribute('role', 'menu')
     const item = document.createElement('button')
     menu.append(item)
-    document.body.append(menu)
+    // Keep the synthetic overlay inside Files' real focus trap, outside its viewer.
+    filesDialog.append(menu)
     item.focus()
-    await key('ArrowRight')
+    expect(document.activeElement).toBe(item)
+    await key('ArrowRight', {}, item)
     expect(document.querySelector('[data-testid="file-preview"]')?.textContent).toBe('alpha body')
     menu.remove()
 
@@ -228,9 +232,10 @@ test('arrow keys move between files except while typing, holding a modifier, or 
     dialog.setAttribute('role', 'dialog')
     const trap = document.createElement('button')
     dialog.append(trap)
-    document.body.append(dialog)
+    filesDialog.append(dialog)
     trap.focus()
-    await key('ArrowRight')
+    expect(document.activeElement).toBe(trap)
+    await key('ArrowRight', {}, trap)
     expect(document.querySelector('[data-testid="file-preview"]')?.textContent).toBe('alpha body')
     dialog.remove()
 
@@ -279,6 +284,64 @@ test('edit and conflict hide the arrows', async () => {
     await key('ArrowRight')
     expect(document.querySelector('[data-testid="conflict-disk"]')?.textContent).toBe('disk copy')
     act(() => conflict.unmount())
+})
+
+test.each(['replaced', 'failed'] as const)('an import-triggered %s listing cannot discard the open editor draft', async reloadResult => {
+    let finishImport!: (response: Response) => void
+    const imported = new Promise<Response>(resolve => { finishImport = resolve })
+    let listings = 0
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://127.0.0.1')
+        if (init?.method === 'POST') return imported
+        if (url.pathname.endsWith('/files/read')) {
+            reads++
+            const replaced = listings > 1 && reloadResult === 'replaced'
+            return Response.json({ path: 'alpha.md', content: replaced ? 'new disk copy' : 'alpha body', truncated: false, hash: replaced ? 'def' : 'abc', identity: replaced ? '2:1' : '1:1' })
+        }
+        listings++
+        if (listings > 1 && reloadResult === 'failed') return Response.json({ error: 'Could not open this folder.' }, { status: 500 })
+        return Response.json({ path: '', entries: [entry('alpha.md', 'file', listings > 1 ? '2:1' : '1:1'), entry('zeta.txt', 'file', '9:1')] })
+    }))
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    try {
+        await act(async () => { root.render(<DesktopCoworkerFiles agent={alice} />) })
+        await click('Files')
+        await flush()
+        const input = document.querySelector<HTMLInputElement>('[data-testid="import-file-input"]')!
+        Object.defineProperty(input, 'files', { configurable: true, value: [new File(['imported'], 'new.md')] })
+        await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })) })
+        await click('alpha.md')
+        await flush()
+        await click('Edit')
+        const editor = document.querySelector<HTMLTextAreaElement>('[aria-label="Edit alpha.md"]')!
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+        await act(async () => {
+            setter.call(editor, 'my unsaved draft')
+            editor.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        expect(button('Save changes')?.disabled).toBe(false)
+
+        await act(async () => { finishImport(Response.json({ path: 'new.md' })) })
+        await flush()
+        expect(listings).toBe(2)
+        expect(reads).toBe(1)
+        expect(document.querySelector('[aria-label="Edit alpha.md"]')).toBe(editor)
+        expect(editor.value).toBe('my unsaved draft')
+        expect(button('Next file')).toBeUndefined()
+
+        await click('Cancel')
+        expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Discard your changes?')
+        await click('Keep editing')
+        expect(editor.value).toBe('my unsaved draft')
+        await click('Cancel')
+        await click('Discard changes')
+        await flush()
+        expect(document.querySelector('[data-testid="file-preview"]')?.textContent).toBe(reloadResult === 'replaced' ? 'new disk copy' : 'alpha body')
+        expect(reads).toBe(2)
+    } finally { act(() => root.unmount()) }
 })
 
 test('back returns to the same folder', async () => {

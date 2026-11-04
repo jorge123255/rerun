@@ -141,7 +141,9 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         ? entries.find(entry => entry.type !== 'dir' && entry.name === nameOf(preview.path))?.identity
         : undefined
     useEffect(() => {
-        if (!openPath) return
+        // A pending import can reload the listing while the editor owns a draft. Keep that
+        // editor mounted; its save/conflict flow checks the disk version before writing.
+        if (!openPath || editingPath === openPath) return
         const shown = previewNow.current
         if (shown?.path === openPath && 'conflict' in shown) return
         const controller = new AbortController()
@@ -163,7 +165,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             }
         })()
         return () => controller.abort()
-    }, [base, openPath, textIdentity])
+    }, [base, openPath, textIdentity, editingPath])
 
     const fileInput = useRef<HTMLInputElement>(null)
     const [importing, setImporting] = useState(false)

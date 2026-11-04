@@ -354,7 +354,7 @@ test('Recenter the board applies the existing canvas framing without replacing t
     expect(app.writes).toEqual([])
 })
 
-test('the /hotkeys command opens the original help view with only the six supported Mac shortcuts', async () => {
+test('the /hotkeys command opens the original help view with the eight supported Mac shortcuts', async () => {
     const app = fixture()
     const mounted = await app.mount()
     const view = await openChat(mounted.container)
@@ -379,6 +379,8 @@ test('the /hotkeys command opens the original help view with only the six suppor
         { action: 'Close active tab, outside a text field', keys: ['⌘', '⌫'] },
         { action: 'Send message', keys: ['Enter'] },
         { action: 'New line', keys: ['Shift', 'Enter'] },
+        { action: 'Previous file', keys: ['←'] },
+        { action: 'Next file', keys: ['→'] },
     ])
     expect(dialog.textContent).toContain('Previous file')
     expect(dialog.textContent).toContain('Next file')
