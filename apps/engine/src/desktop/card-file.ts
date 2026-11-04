@@ -2,6 +2,7 @@ import { CARD_MAX_FILES, DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath, 
 import { tool, type ToolSet } from 'ai'
 import { basename, isAbsolute, join, relative } from 'node:path'
 import { z } from 'zod'
+import { workspaceDir } from '../config/paths.js'
 import type { RunContext } from '../runtime/context.js'
 import { jsonTolerantArray } from '../tools/builtin/hitl.js'
 import { openWithoutLinks } from './open-without-links.js'
@@ -23,12 +24,18 @@ function assertScope(scope: 'agent' | 'shared' | undefined) {
 
 // The model often copies an absolute path from a shell listing. Accept it only when it resolves
 // inside this coworker's workspace, and always store the relative path the Files route opens.
+const inside = (rel: string) => !!rel && !rel.startsWith('..') && !isAbsolute(rel)
+
 async function cardRelativePath(ctx: RunContext, path: string): Promise<string> {
     if (!path || path.length > 4096 || /[\\\p{Cc}]/u.test(path) || path.split('/').some(part => part === '..')) throw new CardFileError(badPath)
     const workspace = await workspaceRoot(ctx.agent.id)
-    const target = isAbsolute(path) ? path : join(workspace, path)
-    const rel = relative(workspace, target)
-    if (!rel || rel.startsWith('..') || isAbsolute(rel) || !isDesktopAttachmentPath(rel) || !validPath(rel)) throw new CardFileError(badPath)
+    // The model may copy the workspace path as the app prints it (/var/…) or as the filesystem
+    // canonicalises it (/private/var/…). Match either prefix, then open only the relative path so
+    // openWithoutLinks still refuses a symlink anywhere inside the workspace.
+    const rel = isAbsolute(path)
+        ? [relative(workspaceDir(ctx.agent.id), path), relative(workspace, path)].find(inside)
+        : relative(workspace, join(workspace, path))
+    if (!rel || !inside(rel) || !isDesktopAttachmentPath(rel) || !validPath(rel)) throw new CardFileError(badPath)
     return rel
 }
 
