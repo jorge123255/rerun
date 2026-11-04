@@ -2,11 +2,14 @@
 
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { DesktopApp } from './DesktopApp'
 import { DesktopFindChat } from './DesktopFindChat'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+let drafts: ReturnType<typeof createDesktopDraftFixture>
+beforeEach(() => { drafts = createDesktopDraftFixture() })
 const hits = [
     { id: 'alice-shared', agentId: 'alice', agentName: 'Alice', title: 'Shared plan' },
     { id: 'bob-shared', agentId: 'bob', agentName: 'Bob', title: 'Shared plan' },
@@ -33,6 +36,9 @@ test('same-title results open their exact older transcripts, preserve Chats sele
     const initial = { theme: 'system' as const, connections: [], default: null, agents, profile: { id: 1, displayName: 'Test' }, workspace: { id: 1, name: 'Disposable' } }
     const reads: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        const draftResponse = drafts.handle(url, init)
+        if (draftResponse) return draftResponse
+        if (url.endsWith('/tabs') && init?.method === 'PUT') return Response.json({ tabs: { revision: JSON.parse(String(init.body)).baseRevision + 1 } })
         if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })
@@ -114,6 +120,9 @@ test('debounces, aborts stale queries, reports failures distinctly and retries',
 
 test('a stale search selection never falls back to the coworker’s newest conversation', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        const draftResponse = drafts.handle(url, init)
+        if (draftResponse) return draftResponse
+        if (url.endsWith('/tabs') && init?.method === 'PUT') return Response.json({ tabs: { revision: JSON.parse(String(init.body)).baseRevision + 1 } })
         if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })

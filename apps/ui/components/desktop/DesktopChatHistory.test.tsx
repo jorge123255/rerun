@@ -2,12 +2,15 @@
 
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { DesktopApp, type DesktopBootstrap, type DesktopSessionView } from './DesktopApp'
 import { DesktopChatHistory } from './DesktopChatHistory'
 import { groupDesktopChats, type DesktopChatHistoryConversation } from '@/lib/desktop/chat-history'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+let drafts: ReturnType<typeof createDesktopDraftFixture>
+beforeEach(() => { drafts = createDesktopDraftFixture() })
 
 const createdAt = '2026-01-01T12:00:00.000Z'
 const openTile = (name: string) => act(async () => {
@@ -173,6 +176,8 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
     const sent: Record<string, string>[] = []
     let finish!: () => void
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        const draftResponse = drafts.handle(url, init)
+        if (draftResponse) return draftResponse
         if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url) && (init?.method ?? 'GET') === 'GET') return Response.json({ queued: null })
@@ -263,6 +268,8 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
 test('history read failure can be retried without turning it into an empty saved history', async () => {
     let reads = 0
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        const draftResponse = drafts.handle(url, init)
+        if (draftResponse) return draftResponse
         if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url)) return Response.json({ queued: null })

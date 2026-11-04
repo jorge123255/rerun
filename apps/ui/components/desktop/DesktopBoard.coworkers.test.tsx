@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DesktopApp, type DesktopAgentView } from './DesktopApp'
 import type { GridPosition } from '@rerun/ui/iso-grid'
+import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -28,8 +29,11 @@ async function mount(options: {
     enabled?: (id: string, enabled: boolean) => Response | Promise<Response>
     remove?: (id: string, confirmationName: string) => Response | Promise<Response>
 } = {}) {
+    const drafts = createDesktopDraftFixture()
     let rejectNext = false
     const requests = vi.fn(async (url: string, init?: RequestInit) => {
+        const draftResponse = drafts.handle(url, init)
+        if (draftResponse) return draftResponse
         if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (init?.method === 'DELETE' && options.remove) return options.remove(url.split('/').at(-1)!, JSON.parse(String(init.body)).confirmationName)

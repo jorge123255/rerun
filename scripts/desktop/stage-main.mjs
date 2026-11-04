@@ -4,7 +4,7 @@ import { cleanDir, desktopDir, existsSync, resourcesDir } from './lib.mjs'
 import { sourceStamp, writeStamp } from './provenance.mjs'
 
 const required = [
-    'index.js', 'index.mjs', 'preload.cjs', 'startup.html',
+    'index.js', 'index.mjs', 'preload.cjs', 'before-quit.mjs', 'startup.html',
     'startup.css', 'startup.js', 'runtime.mjs', 'supervisor.mjs', 'ui-host.mjs',
 ]
 

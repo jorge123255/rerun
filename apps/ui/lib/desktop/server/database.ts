@@ -78,6 +78,24 @@ async function initialize(dataRoot: string): Promise<Client> {
             revision INTEGER NOT NULL,
             layout TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS desktop_composer_drafts (
+            agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            tab_uid TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+            text TEXT NOT NULL DEFAULT '',
+            attachment_path TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (agent_id, tab_uid)
+        );
+        CREATE TABLE IF NOT EXISTS desktop_composer_draft_writes (
+            request_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            tab_uid TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            result_revision INTEGER NOT NULL,
+            cleared INTEGER NOT NULL DEFAULT 0 CHECK (cleared IN (0, 1)),
+            FOREIGN KEY (agent_id, tab_uid) REFERENCES desktop_composer_drafts(agent_id, tab_uid) ON DELETE CASCADE
+        );
         CREATE TABLE IF NOT EXISTS desktop_queued_messages (
             agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
             target TEXT NOT NULL,

@@ -3,6 +3,8 @@ import type { Client, Row } from '@libsql/client'
 import type { DesktopTabLayout, DesktopTabWrite } from '../session-tabs'
 import { DesktopHttpError } from './auth'
 import { desktopSessionsQuery, sessionOf } from './store'
+import { assertCoworkerNotDeleting } from './coworker-delete'
+import { withRosterWrite } from './roster-writes'
 
 type StoredLayout = Pick<DesktopTabWrite, 'tabs' | 'activeIndex'>
 function layoutOf(row: Row, sessions: Row[]): DesktopTabLayout {
@@ -34,25 +36,62 @@ export async function readDesktopChats(db: Client, agentId: string) {
     return { sessions, tabs: state.rows[0] ? layoutOf(state.rows[0], chats.rows) : null }
 }
 
-export async function writeDesktopTabs(db: Client, agentId: string, input: DesktopTabWrite) {
-    const layout = JSON.stringify({ tabs: input.tabs, activeIndex: input.activeIndex } satisfies StoredLayout)
-    // Compare and replace in SQLite: delayed writes from a different panel cannot overwrite a newer layout.
-    const [, current, chats] = await db.batch([{
-        sql: `INSERT INTO desktop_agent_tabs (agent_id, revision, layout)
-              SELECT :agent, :base + 1, :layout
-              WHERE COALESCE((SELECT revision FROM desktop_agent_tabs WHERE agent_id = :agent), 0) = :base
-                AND NOT EXISTS (
-                    SELECT 1 FROM json_each(:layout, '$.tabs') AS t WHERE json_extract(t.value, '$.id') IS NOT NULL
-                      AND NOT EXISTS (SELECT 1 FROM desktop_sessions WHERE agent_id = :agent AND id = json_extract(t.value, '$.id'))
-                )
-              ON CONFLICT(agent_id) DO UPDATE SET revision = excluded.revision, layout = excluded.layout`,
-        args: { agent: agentId, base: input.baseRevision, layout },
-    }, layoutQuery(agentId), desktopSessionsQuery(agentId)], 'write')
-    const sessions = chats.rows.map(sessionOf)
-    const owned = new Set(sessions.map(s => s.id))
-    if (input.tabs.some(t => t.id !== null && !owned.has(t.id))) throw new DesktopHttpError(404, 'Conversation not found for this coworker')
-    const row = current.rows[0]
-    const tabs = row ? layoutOf(row, chats.rows) : null
-    // A retry with a lost success response can acknowledge the already-stored layout.
-    return { tabs, conflict: row?.layout !== layout }
+export function writeDesktopTabs(db: Client, agentId: string, input: DesktopTabWrite) {
+    return withRosterWrite(async () => {
+        await assertCoworkerNotDeleting(db, agentId)
+        const layout = JSON.stringify({ tabs: input.tabs, activeIndex: input.activeIndex } satisfies StoredLayout)
+        const transaction = await db.transaction('write')
+        try {
+            const current = await transaction.execute(layoutQuery(agentId))
+            const chats = await transaction.execute(desktopSessionsQuery(agentId))
+            const owned = new Set(chats.rows.map(row => String(row.id)))
+            if (input.tabs.some(t => t.id !== null && !owned.has(t.id))) throw new DesktopHttpError(404, 'Conversation not found for this coworker')
+            const row = current.rows[0]
+            // Lost-response retries acknowledge the stored layout without repeating a fork
+            // transfer or clearing the alternate's newer draft a second time.
+            if (Number(row?.revision ?? 0) !== input.baseRevision) {
+                await transaction.commit()
+                return { tabs: row ? layoutOf(row, chats.rows) : null, conflict: row?.layout !== layout }
+            }
+            const old: StoredLayout = row ? JSON.parse(String(row.layout)) : { tabs: [], activeIndex: 0 }
+            const first = new Map(chats.rows.filter(s => s.first_tab_uid !== null).map(s => [String(s.first_tab_uid), String(s.id)]))
+            const previous = old.tabs.map(tab => ({ ...tab, id: tab.id ?? first.get(tab.uid) ?? null }))
+            const storedDrafts = await transaction.execute({ sql: 'SELECT tab_uid, revision, text, attachment_path FROM desktop_composer_drafts WHERE agent_id = ?', args: [agentId] })
+            const drafts = new Map(storedDrafts.rows.map(draft => [String(draft.tab_uid), draft]))
+            const transfers = new Map<string, Row>()
+            const clear = new Set<string>()
+            const writeDraft = async (uid: string, prior: Row | undefined, text: string, attachment: string | null) => {
+                const version = Number(prior?.revision ?? 0)
+                if (version >= Number.MAX_SAFE_INTEGER - 1) throw new DesktopHttpError(409, 'This draft version cannot be moved. Open a new conversation tab.')
+                await transaction.execute({ sql: `INSERT INTO desktop_composer_drafts (agent_id,tab_uid,revision,text,attachment_path,updated_at) VALUES (?,?,?,?,?,?)
+                    ON CONFLICT(agent_id,tab_uid) DO UPDATE SET revision=excluded.revision,text=excluded.text,attachment_path=excluded.attachment_path,updated_at=excluded.updated_at`,
+                    args: [agentId, uid, version + 1, text, attachment, new Date().toISOString()] })
+            }
+            for (const before of previous) {
+                const after = input.tabs.find(tab => tab.uid === before.uid)
+                if (before.id === null || after?.id === before.id) continue
+                const source = drafts.get(before.uid)
+                const destination = input.tabs.find(tab => tab.id === before.id && tab.uid !== before.uid)
+                if (destination && source && (source.text !== '' || source.attachment_path !== null)) {
+                    const existing = drafts.get(destination.uid)
+                    if (existing && (existing.text !== '' || existing.attachment_path !== null) &&
+                        (existing.text !== source.text || existing.attachment_path !== source.attachment_path)) throw new DesktopHttpError(409, 'Both conversation tabs have drafts. Reload the tabs before moving them.')
+                    transfers.set(destination.uid, source)
+                }
+                // A regenerated reply keeps the live UID. Its old draft belongs to the original
+                // chat's new UID; a versioned empty row rejects autosaves still in flight there.
+                if (after) clear.add(before.uid)
+            }
+            for (const uid of clear) if (!transfers.has(uid)) await writeDraft(uid, drafts.get(uid), '', null)
+            for (const [uid, source] of transfers) await writeDraft(uid, drafts.get(uid), String(source.text), source.attachment_path === null ? null : String(source.attachment_path))
+            await transaction.execute({ sql: `INSERT INTO desktop_agent_tabs (agent_id,revision,layout) VALUES (?,?,?)
+                ON CONFLICT(agent_id) DO UPDATE SET revision=excluded.revision,layout=excluded.layout`, args: [agentId, input.baseRevision + 1, layout] })
+            // Closing a tab discards only that tab's ordinary draft and its bounded retry receipts.
+            await transaction.execute({ sql: `DELETE FROM desktop_composer_drafts WHERE agent_id = ? AND tab_uid NOT IN
+                (SELECT json_extract(value, '$.uid') FROM json_each(?, '$.tabs'))`, args: [agentId, layout] })
+            const saved = (await transaction.execute(layoutQuery(agentId))).rows[0]
+            await transaction.commit()
+            return { tabs: layoutOf(saved, chats.rows), conflict: false }
+        } finally { transaction.close() }
+    })
 }

@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopApp } from './DesktopApp'
 import { DesktopRunHistory } from './DesktopRunHistory'
 import type { DesktopRunView } from '@/lib/desktop/run-history'
+import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const alice = { id: 'alice', name: 'Alice', description: '', createdAt: '', updatedAt: '' }
@@ -22,7 +23,11 @@ afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.useRea
 test('opens from a board coworker, updates a running entry, isolates coworkers, and preserves the transcript and typed draft', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     let runs = [running], reads = 0
+    const drafts = createDesktopDraftFixture()
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        const draftResponse = drafts.handle(url, init)
+        if (draftResponse) return draftResponse
+        if (url.endsWith('/tabs') && init?.method === 'PUT') return Response.json({ tabs: { revision: JSON.parse(String(init.body)).baseRevision + 1 } })
         if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })

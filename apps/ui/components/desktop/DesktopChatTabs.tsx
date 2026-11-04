@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { MAX_REMEMBERED_TABS, closeSessionTab, newSessionTab, openSessionTab, type SessionTabsState } from '@/lib/chat/session-tabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { queueTabWrite } from '@/lib/desktop/tab-writes'
+import { forgetDesktopDraft, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopChatHistory } from './DesktopChatHistory'
 import { DesktopConversation, type ComposerDraft, type TabActivity } from './DesktopConversation'
@@ -46,9 +47,9 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
     const active = layout.tabs[layout.activeIndex]
     const [visited, setVisited] = useState<string[]>([active.uid])
     const lastRequest = useRef(requested)
-    const save = useCallback((next: SessionTabsState) => {
-        queueTabWrite(agent.id, async () => {
-            if (conflicted.current) return
+    const save = useCallback((next: SessionTabsState): Promise<boolean> => {
+        return queueTabWrite(agent.id, async () => {
+            if (conflicted.current) return false
             try {
                 const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agent.id)}/tabs`, {
                     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
@@ -60,28 +61,36 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
                     if (response.status === 409) conflicted.current = true
                     throw new Error(body.error || 'Could not save the open conversations.')
                 }
+                if (!Number.isSafeInteger(body?.tabs?.revision) || body.tabs.revision < revision.current) throw new Error('Could not confirm the saved conversations. Try again.')
                 revision.current = body.tabs.revision
                 setSaveError(null)
+                return true
             } catch (error) {
                 setSaveError({ message: error instanceof Error ? error.message : 'Could not save the open conversations.', conflict: conflicted.current })
+                return false
             }
         })
     }, [agent.id])
 
-    const change = useCallback((next: SessionTabsState) => {
-        if (next === current.current) return
+    const change = useCallback(async (next: SessionTabsState): Promise<boolean> => {
+        if (next === current.current) return true
+        const previous = current.current
         current.current = next
         setLayout(next)
-        save(next)
-    }, [save])
+        const saved = await save(next)
+        // A failed layout write must not discard drafts that still belong to the saved tabs.
+        if (saved) for (const old of previous.tabs) if (!current.current.tabs.some(tab => tab.uid === old.uid)) forgetDesktopDraft(agent.id, old.uid)
+        return saved
+    }, [agent.id, save])
 
     // A directly requested conversation starts active without loading an unrelated newer chat.
     useEffect(() => {
         if (initialLayout !== current.current) save(current.current)
     }, [initialLayout, save])
 
-    const protectedUids = useCallback(() => new Set(current.current.tabs.filter(t => !t.id || activityRef.current[t.uid]?.busy || activityRef.current[t.uid]?.dirty).map(t => t.uid)), [])
+    const protectedUids = useCallback(() => new Set(current.current.tabs.filter(t => !t.id || !activityRef.current[t.uid] || activityRef.current[t.uid]?.busy || activityRef.current[t.uid]?.dirty).map(t => t.uid)), [])
     const open = useCallback((id: string | null, title: string) => {
+        if (isDesktopQuitting()) return
         const previous = current.current
         if (pendingForks.current.size && previous.tabs.length + pendingForks.current.size >= MAX_REMEMBERED_TABS && !previous.tabs.some(t => t.id === id)) {
             setNotice('Close an idle tab to open another conversation.')
@@ -135,6 +144,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
     }
 
     function requestClose(index: number) {
+        if (isDesktopQuitting()) return
         const tab = current.current.tabs[index]
         if (!tab) return
         if (activityRef.current[tab.uid]?.busy) {
@@ -157,10 +167,10 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
         return () => document.removeEventListener('keydown', shortcut)
     })
 
-    const bindSession = useCallback((uid: string, id: string, sourceDraft?: ComposerDraft) => {
+    const bindSession = useCallback(async (uid: string, id: string, sourceDraft?: ComposerDraft): Promise<boolean> => {
         const previous = current.current
         const source = previous.tabs.find(t => t.uid === uid)
-        if (!source) { void refreshSessions(); return }
+        if (!source) { void refreshSessions(); return false }
         if (source.id !== id) {
             setNotice('')
             let tabs = previous.tabs.map(tab => tab.uid === uid ? { ...tab, id } : tab)
@@ -176,9 +186,21 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
             // A saved chat can be opened from history before its delayed first-send headers arrive.
             tabs = tabs.filter(t => t.uid === uid || t.id !== id)
             if (!tabs.some(t => t.uid === activeUid)) activeUid = uid
-            change({ tabs, activeIndex: tabs.findIndex(t => t.uid === activeUid) })
+            const next = { tabs, activeIndex: tabs.findIndex(t => t.uid === activeUid) }
+            const saved = await change(next)
+            if (!saved) {
+                // Only undo this optimistic fork. A subsequent user selection or layout change
+                // owns the current view and must not be replaced by this older callback.
+                if (source.id && sourceDraft && current.current === next) {
+                    current.current = previous
+                    setLayout(previous)
+                }
+                void refreshSessions()
+                return false
+            }
         }
         void refreshSessions()
+        return true
     }, [change, refreshSessions])
 
     function startFork(uid: string) {
@@ -194,7 +216,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
     const displayTabs = layout.tabs.map(tab => ({ ...tab, title: sessions.find(s => s.id === tab.id)?.title ?? tab.title }))
     const strip = <OpenChatsTabStrip tabs={displayTabs} activeIndex={layout.activeIndex} newLabel="New chat"
         stateOf={tab => activity[tab.uid]?.busy ? 'live' : 'quiet'}
-        onSelect={index => { if (index !== current.current.activeIndex) change({ ...current.current, activeIndex: index }) }}
+        onSelect={index => { if (!isDesktopQuitting() && index !== current.current.activeIndex) change({ ...current.current, activeIndex: index }) }}
         onClose={requestClose} onCreate={() => open(null, 'New conversation')} />
     return <>
         {(saveError || notice) && <div role="alert" className="flex items-center gap-2 px-3 py-1 text-xs text-destructive">

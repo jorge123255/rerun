@@ -1,19 +1,25 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { expect, test, vi } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
+import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { DesktopChatTabs } from './DesktopChatTabs'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+let drafts: ReturnType<typeof createDesktopDraftFixture>
+beforeEach(() => { drafts = createDesktopDraftFixture() })
 
 test('regeneration stays on its own transport while another tab is active, and keeps the source draft in its original conversation', async () => {
     const agent = { id: 'a', name: 'Writer', description: '', createdAt: '', updatedAt: '' }
     const sessions = ['Source', 'Other', 'Alternate'].map(title => ({ id: title.toLowerCase(), agentId: agent.id, title, createdAt: '', updatedAt: '' }))
     const tabs = sessions.slice(0, 2).map(s => ({ uid: s.id + '-tab', id: s.id, title: s.title }))
+    drafts.seedTabs(agent.id, tabs)
     let resolve!: (r: Response) => void
     const requests: Record<string, string>[] = []
     const writes: { activeIndex: number; tabs: { id: string }[] }[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+        const draftResponse = drafts.handle(input, options)
+        if (draftResponse) return draftResponse
         const url = String(input)
         if (url.endsWith('/approvals') && (options?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (options?.method ?? 'GET') === 'GET') return Response.json({ question: null })
@@ -75,11 +81,14 @@ test('keeps an unaccepted first send open, then allows its bound running tab to 
     const agent = { id: 'a', name: 'Writer', description: '', createdAt: '', updatedAt: '' }
     const sessions = ['other', 'started'].map(id => ({ id, agentId: agent.id, title: id, createdAt: '', updatedAt: '' }))
     const tabs = [{ uid: 'blank', id: null, title: 'New conversation' }, { uid: 'other', id: 'other', title: 'other' }]
+    drafts.seedTabs(agent.id, tabs)
     let accept!: (r: Response) => void
     let finish!: () => void
     let stopRequests = 0
     let sent: unknown
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+        const draftResponse = drafts.handle(input, options)
+        if (draftResponse) return draftResponse
         const url = String(input)
         if (url.endsWith('/approvals') && (options?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (options?.method ?? 'GET') === 'GET') return Response.json({ question: null })
@@ -126,5 +135,61 @@ test('keeps an unaccepted first send open, then allows its bound running tab to 
         expect(visible().querySelector('[aria-label="Close started"]')).toBeNull()
         await act(async () => { finish() })
         expect(stopRequests).toBe(0)
+    } finally { await act(async () => { root.unmount() }); vi.unstubAllGlobals(); container.remove() }
+})
+
+test('a refused fork layout keeps the source tab and draft instead of restoring it into the alternate', async () => {
+    const agent = { id: 'fork-owner', name: 'Writer', description: '', createdAt: '', updatedAt: '' }
+    const sessions = ['source', 'alternate'].map(id => ({ id, agentId: agent.id, title: id, createdAt: '', updatedAt: '' }))
+    const tabs = [{ uid: 'source-tab', id: 'source', title: 'source' }]
+    drafts.seedTabs(agent.id, tabs)
+    let rejected = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('/tabs') && options?.method === 'PUT') {
+            const body = JSON.parse(String(options.body))
+            if (body.tabs.some((tab: { id: string | null }) => tab.id === 'alternate')) {
+                rejected++
+                return Response.json({ error: 'The alternate tab could not be saved.' }, { status: 503 })
+            }
+            drafts.handle(input, options)
+            return Response.json({ tabs: { revision: body.baseRevision + 1 } })
+        }
+        const draftResponse = drafts.handle(input, options)
+        if (draftResponse) return draftResponse
+        if (url.endsWith('/approvals')) return Response.json({ approval: null })
+        if (url.endsWith('/questions')) return Response.json({ question: null })
+        if (url.includes('/queue?')) return Response.json({ queued: null })
+        if (url.endsWith('/stop')) return Response.json({ running: false })
+        if (url.includes('/feedback?')) return Response.json({ votes: [] })
+        if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        if (url.endsWith('/messages')) return Response.json({ messages: [
+            { id: 'q', role: 'user', parts: [{ type: 'text', text: 'A question' }] },
+            { id: 'engine-source', role: 'assistant', parts: [{ type: 'text', text: 'The original answer' }] },
+        ] })
+        if (url.endsWith('/chat')) return new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate' } })
+        throw new Error(`Unexpected request: ${url}`)
+    }))
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    try {
+        await act(async () => { root.render(<DesktopChatTabs agent={agent} sessions={sessions} initialLayout={{ tabs, activeIndex: 0, revision: 1 }}
+            requested={null} selected refreshSessions={async () => {}} reload={() => {}} onClosePanel={() => {}} onOpenModelSettings={() => {}} />) })
+        const input = container.querySelector('textarea')!
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'Keep this with the original')
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        const regenerate = [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Regenerate reply')
+        expect(regenerate).toBeDefined()
+        await act(async () => { regenerate!.click() })
+        expect(rejected).toBe(1)
+        expect(container.textContent).toContain('The alternate tab could not be saved.')
+        expect(container.querySelector('[aria-label="Close source"]')).not.toBeNull()
+        expect(container.querySelector('[aria-label="Close alternate"]')).toBeNull()
+        expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Keep this with the original')
+        const stored = await drafts.handle(`/api/desktop/agents/${agent.id}/draft?tabUid=source-tab`)!.json()
+        expect(stored.draft.text).toBe('Keep this with the original')
     } finally { await act(async () => { root.unmount() }); vi.unstubAllGlobals(); container.remove() }
 })

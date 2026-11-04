@@ -20,6 +20,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { DesktopChatTabs } from './DesktopChatTabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
+import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
 
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; enabled?: boolean }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
@@ -37,6 +38,15 @@ async function json<T>(response: Response): Promise<T> {
 }
 
 export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
+    useEffect(() => {
+        const bridge = (window as Window & { desktopApp?: {
+            onBeforeQuit?: (listener: () => Promise<boolean>) => () => void
+            onQuitCancelled?: (listener: () => void) => () => void
+        } }).desktopApp
+        const stop = bridge?.onBeforeQuit?.(flushDesktopDrafts)
+        const cancel = bridge?.onQuitCancelled?.(cancelDraftShutdown)
+        return () => { stop?.(); cancel?.() }
+    }, [])
     const [preference, setPreference] = useState(initialData.theme)
     const { theme, setTheme } = useTheme()
     useEffect(() => {
@@ -168,6 +178,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         }))
         if (result.deletedAgentId !== id) throw new Error('Could not confirm this coworker was deleted. Try again.')
         deletedAgents.current.add(id)
+        forgetCoworkerDrafts(id)
         setAgents(current => current.filter(agent => agent.id !== id))
         if (selectedAgentRef.current === id) {
             selectedAgentRef.current = null

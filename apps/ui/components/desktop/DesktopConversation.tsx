@@ -36,6 +36,8 @@ import { DesktopQuestionCard } from './DesktopQuestionCard'
 import { desktopApprovalViewSchema, type DesktopPendingApproval, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
 import { DesktopApprovalCard } from './DesktopApprovalCard'
 import { desktopQuickRepliesOf } from '@/lib/desktop/quick-replies'
+import { useDesktopComposerDraft } from '@/lib/desktop/use-composer-draft'
+import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 
 const approvalUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/approvals`
 async function approvalFor(sessionId: string, signal: AbortSignal) {
@@ -79,7 +81,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     tabStrip?: ReactNode
     initialDraft?: ComposerDraft
     onTabActivity?: (uid: string, state: TabActivity) => void
-    onChatSession: (id: string, sourceDraft?: ComposerDraft) => void
+    onChatSession: (id: string, sourceDraft?: ComposerDraft) => void | boolean | Promise<boolean>
     renderHistory?: (busy: boolean) => ReactNode
     renderRunHistory?: ReactNode
     onClosePanel?: () => void
@@ -92,23 +94,46 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const [attachments, setAttachments] = useState<ReadonlyMap<string, string>>(() => new Map(initialDraft?.attachment ? [[draftKey, initialDraft.attachment]] : []))
     // Ordinary navigation carries the current composer. An alternate and its original keep independent drafts.
     const inputKey = inputs.has(draftKey) ? draftKey : ''
-    const input = inputs.get(inputKey) ?? ''
-    const setInput = (value: string) => setInputs(current => new Map(current).set(inputKey, value))
-    const attachment = attachments.get(draftKey)
-    const composer = useRef<ComposerDraft>({ text: input, attachment })
+    const composer = useRef<ComposerDraft>(initialDraft ?? { text: '' })
+    const draft = useDesktopComposerDraft(agent.id, tabUid, value => {
+        setInputs(current => new Map(current).set(draftKey, value.text))
+        setAttachments(current => {
+            const next = new Map(current)
+            if (value.attachmentPath) next.set(draftKey, value.attachmentPath)
+            else next.delete(draftKey)
+            return next
+        })
+        composer.current = { text: value.text, attachment: value.attachmentPath }
+    })
+    // The tab UID remains stable when the first accepted message receives its session ID.
+    // Production reads the durable record directly, so newer typing cannot fall off that bind.
+    const input = tabUid ? draft.text : inputs.get(inputKey) ?? ''
+    const attachment = tabUid ? draft.attachmentPath : attachments.get(draftKey)
+    const setInput = (value: string) => {
+        if (!draft.loaded || draft.error || regenerating.current || isDesktopQuitting()) return
+        setInputs(current => new Map(current).set(inputKey, value))
+        composer.current = { text: value, attachment }
+        draft.update({ text: value, attachmentPath: attachment })
+    }
     useEffect(() => { composer.current = { text: input, attachment } }, [input, attachment])
-    const pendingAttachment = useRef<{ key: string; inputKey: string; input: string; attachment?: string } | null>(null)
+    const pendingAttachment = useRef<{ key: string; inputKey: string; input: string; attachment?: string; version: number; release: () => void } | null>(null)
+    const preparingSubmit = useRef(false)
     const regenerationIds = useRef(new Map<string, string>())
-    const regenerating = useRef<{ key: string; agentId: string; sessionId: string; draftKey: string } | null>(null)
+    const regenerating = useRef<{ key: string; agentId: string; sessionId: string; draftKey: string; release: () => void } | null>(null)
     const [regenerationSource, setRegenerationSource] = useState<string | null>(null)
     const setDraftAttachment = useCallback((key: string, path?: string) => {
+        if (!draft.loaded || draft.error || regenerating.current || isDesktopQuitting()) return
         setAttachments(current => {
             const next = new Map(current)
             if (path) next.set(key, path)
             else next.delete(key)
             return next
         })
-    }, [])
+        if (key === draftKey) {
+            composer.current = { ...composer.current, attachment: path }
+            draft.update({ text: composer.current.text, attachmentPath: path })
+        }
+    }, [draft.loaded, draft.error, draft.update, draftKey])
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; error?: string }>({ id: null, question: null, approval: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
@@ -142,6 +167,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         const queued = pendingQueue.current
         const answer = responding.current
         const quickReply = quickReplyRequest.current
+        try {
         let response: Response
         try {
             if (tabUid) await pendingTabWrite(agent.id)
@@ -178,7 +204,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 try { await queued.acknowledge() } catch { setQueueNotice('The message was sent, but its queue receipt could not be cleared. Send now will check the same message safely.') }
                 if (flushingQueue.current === queued.item.id) flushingQueue.current = null
             }
-            if (pending) {
+            if (pending && draft.clear(pending.version)) {
                 setInputs(current => current.get(pending.inputKey) === pending.input ? new Map(current).set(pending.inputKey, '') : current)
                 setAttachments(current => {
                     if (current.get(pending.key) !== pending.attachment) return current
@@ -202,10 +228,15 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             setLiveSessionId(id)
             setLiveRunId(response.headers.get('x-run-id'))
             setHistory({ id })
-            onChatSession(id, alternate ? composer.current : undefined)
+            const bound = await onChatSession(id, alternate ? composer.current : undefined)
+            if (alternate) {
+                if (bound === false) draft.invalidate('Could not save the alternate chat. Reload open tabs before editing its draft.')
+                else await draft.reload()
+            }
         }
         return response
-    }, [agent.id, tabUid, onChatSession, setDraftAttachment])
+        } finally { pending?.release(); alternate?.release() }
+    }, [agent.id, tabUid, onChatSession, setDraftAttachment, draft.clear, draft.reload, draft.invalidate])
 
     // The constructor saves the callback; only a submitted request reads the pending draft.
     // eslint-disable-next-line react-hooks/refs
@@ -229,14 +260,14 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const ready = history.id === sessionId && !history.error
     const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
     const generating = busy || runInFlight
-    const dirty = !!(input || attachment || queue.queued)
+    const dirty = !draft.loaded || !!(input || attachment || queue.queued)
     useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty }) }, [tabUid, generating, dirty, onTabActivity])
     const question = history.id === sessionId ? history.question : undefined
     const approval = history.id === sessionId ? history.approval : undefined
     const pendingRequest = question || approval
     // Both request kinds must be known before a later turn or an automatic queue flush.
     const requestBlocked = !!sessionId && (question !== null || approval !== null)
-    const canRegenerate = !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
+    const canRegenerate = draft.loaded && !draft.error && !draft.quitting && !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
     const historyError = history.id === sessionId ? history.error : undefined
@@ -318,34 +349,43 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     async function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if ((requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || !text || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current) return
-        if (generating || (queue.queued && draftQueues.current.has(queue.queued.id))) {
-            if (!queue.loaded || queue.error) return
-            try {
+        if (!draft.loaded || draft.error || isDesktopQuitting() || preparingSubmit.current || (requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || !text || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current || pendingAttachment.current) return
+        preparingSubmit.current = true
+        const release = holdDraftAdmission()
+        const version = draft.version
+        let handedOff = false
+        try {
+            if (!await draft.flush() || isDesktopQuitting()) return
+            if (generating || (queue.queued && draftQueues.current.has(queue.queued.id))) {
                 const sameDraft = !generating && queue.queued && queue.queued.text === text && queue.queued.attachmentPath === attachment
                 const item = sameDraft ? queue.queued : await queue.enqueue(text, attachment, busy ? liveRunId : engineRunning.runId ?? null)
                 if (!item) return
-                setInputs(current => current.get(inputKey) === input ? new Map(current).set(inputKey, '') : current)
-                setDraftAttachment(draftKey)
+                if (draft.clear(version)) {
+                    setInputs(current => current.get(inputKey) === input ? new Map(current).set(inputKey, '') : current)
+                    setAttachments(current => { const next = new Map(current); if (next.get(draftKey) === attachment) next.delete(draftKey); return next })
+                }
                 draftQueues.current.delete(item.id)
                 setQueueNotice(undefined)
                 if (!generating) setSendQueuedId(item.id)
-            } catch { /* The hook keeps the composer and surfaces the failed write. */ }
-            return
-        }
-        if (pendingAttachment.current) return
-        // Wait for this send's engine-backed session ID before enabling Stop.
-        setLiveSessionId(null)
-        setLiveRunId(null)
-        // Keep the draft until acceptance: a newer question may have arrived since our snapshot.
-        pendingAttachment.current = { key: draftKey, inputKey, input, attachment }
-        const pick = !sessionId && conversationChoice.current?.session === null ? conversationChoice.current.pick : undefined
-        const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(!sessionId && tabUid && { tabUid }), ...(pick && { modelChoice: pick }), ...(attachment && { attachmentPath: attachment }) }
-        void sendMessage({ text, ...(attachment && { metadata: { attachmentPath: attachment } }) }, { body })
+                return
+            }
+            setLiveSessionId(null)
+            setLiveRunId(null)
+            const pending = { key: draftKey, inputKey, input, attachment, version, release }
+            pendingAttachment.current = pending
+            const pick = !sessionId && conversationChoice.current?.session === null ? conversationChoice.current.pick : undefined
+            const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(!sessionId && tabUid && { tabUid }), ...(pick && { modelChoice: pick }), ...(attachment && { attachmentPath: attachment }) }
+            handedOff = true
+            void sendMessage({ text, ...(attachment && { metadata: { attachmentPath: attachment } }) }, { body }).finally(() => {
+                if (pendingAttachment.current === pending) pendingAttachment.current = null
+                release()
+            })
+        } catch { /* Draft/queue saves retain the composer and expose their own retry controls. */ }
+        finally { preparingSubmit.current = false; if (!handedOff) release() }
     }
 
     async function sendQueued(item: DesktopQueuedMessage) {
-        if (quickReplyRequest.current || requestBlocked || responding.current || !sessionId || inactive || stopping || generating || !ready || pendingAttachment.current || regenerating.current || flushingQueue.current) return
+        if (!draft.loaded || draft.error || isDesktopQuitting() || quickReplyRequest.current || requestBlocked || responding.current || !sessionId || inactive || stopping || generating || !ready || pendingAttachment.current || regenerating.current || flushingQueue.current) return
         flushingQueue.current = item.id
         setSendQueuedId(null)
         setQueueNotice(undefined)
@@ -369,6 +409,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }
 
     async function sendQueuedNow() {
+        if (!draft.loaded || draft.error || isDesktopQuitting()) return
         const item = queue.queued
         if ((requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || !item || inactive || queue.pending || stopping || flushingQueue.current) return
         setQueueNotice(undefined)
@@ -385,12 +426,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const queueStatusKnown = busy ? !!liveRunId : !sessionId || engineRunning.id === sessionId
     useEffect(() => {
         const item = queue.queued
-        if (!active || !item || !queue.loaded || queue.pending || !ready || stopping || !queueStatusKnown || (item.id !== queue.restoredId && item.state !== 'review') || flushingQueue.current) return
+        if (!draft.loaded || draft.error || draft.quitting || !active || !item || !queue.loaded || queue.pending || !ready || stopping || !queueStatusKnown || (item.id !== queue.restoredId && item.state !== 'review') || flushingQueue.current) return
         if (item.state === 'waiting' && shouldKeepQueued(item, activeRunId)) { queue.adopt(item.id); return }
         const key = queue.key + item.id
         if (restoredQueues.current.has(key)) return
         restoredQueues.current.add(key)
-        const isCurrent = () => queueScope.current === queue.key
+        const isCurrent = () => queueScope.current === queue.key && !isDesktopQuitting()
         const restoreDraft = async () => {
             await queue.action('review', item.id)
             if (!isCurrent()) return
@@ -399,7 +440,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             if (!composer.current.text && !composer.current.attachment) {
                 draftQueues.current.add(item.id)
                 setInputs(current => new Map(current).set(draftKey, item.text))
-                setDraftAttachment(draftKey, item.attachmentPath)
+                setAttachments(current => { const next = new Map(current); if (item.attachmentPath) next.set(draftKey, item.attachmentPath); else next.delete(draftKey); return next })
+                composer.current = { text: item.text, attachment: item.attachmentPath }
+                draft.update({ text: item.text, attachmentPath: item.attachmentPath })
             }
             setQueueNotice('Your saved queued message is ready to review before sending.')
         }
@@ -421,14 +464,14 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             }
             await restoreDraft()
         })().catch(cause => { if (isCurrent()) setQueueNotice(cause instanceof Error ? cause.message : 'Could not restore the queued message.') })
-    }, [active, activeRunId, agent.id, draftKey, queue, queueStatusKnown, ready, sessionId, setDraftAttachment, stopping])
+    }, [active, activeRunId, agent.id, draftKey, queue, queueStatusKnown, ready, sessionId, setDraftAttachment, stopping, draft.loaded, draft.error, draft.quitting, draft.update])
 
     const queued = queue.queued
     const queuedBehindFailure = !!queued?.behindRunId && queued.behindRunId === engineRunning.failedRunId
-    const canFlushQueue = !requestBlocked && !inactive && !!sessionId && ready && modelReady && queue.loaded && !queue.pending && !queue.restoredId && queueStatusKnown && !stopping && !stopError && !queue.error
+    const canFlushQueue = draft.loaded && !draft.error && !draft.quitting && !requestBlocked && !inactive && !!sessionId && ready && modelReady && queue.loaded && !queue.pending && !queue.restoredId && queueStatusKnown && !stopping && !stopError && !queue.error
         && shouldFlush({ queued, busy: generating, uploading: !!pendingAttachment.current || !!regenerating.current, status, hasError: !!error || !!queueNotice || queuedBehindFailure })
     useEffect(() => {
-        if (requestBlocked || !queued || queue.pending || !ready || !modelReady || !queueStatusKnown || inactive || generating || stopping || flushingQueue.current) return
+        if (!draft.loaded || draft.error || draft.quitting || requestBlocked || !queued || queue.pending || !ready || !modelReady || !queueStatusKnown || inactive || generating || stopping || flushingQueue.current) return
         if (sendQueuedId === queued.id || (canFlushQueue && queued.state === 'waiting')) void sendQueued(queued)
     })
 
@@ -438,13 +481,16 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         const key = JSON.stringify([sessionId, messageId])
         const requestId = regenerationIds.current.get(key) ?? crypto.randomUUID()
         regenerationIds.current.set(key, requestId)
-        regenerating.current = { key, agentId: agent.id, sessionId, draftKey }
+        const release = holdDraftAdmission()
+        regenerating.current = { key, agentId: agent.id, sessionId, draftKey, release }
         setRegenerationSource(sessionId)
         setLiveSessionId(null)
         try {
+            if (!await draft.flush() || isDesktopQuitting()) return
             setMessages(history.transcript)
             await regenerate({ messageId, body: { agentId: agent.id, sessionId, requestId } })
         } finally {
+            release()
             if (tabUid) onFinishFork?.(tabUid)
             regenerating.current = null
             setRegenerationSource(null)
@@ -453,6 +499,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }
 
     async function answerQuestion(payload: DesktopQuestionAnswer) {
+        if (isDesktopQuitting()) throw new Error('Rerun is saving drafts before quitting.')
         if (quickReplyRequest.current || !active || !sessionId || !question || payload.questionId !== question.id || inactive || generating || stopping || !ready || responding.current || flushingQueue.current || regenerating.current) throw new Error('This question is not ready for an answer. Try again.')
         const answer = { sessionId, payload, url: questionUrl(sessionId), receiptHeader: 'x-question-id', receiptId: payload.questionId, accepted: false, error: undefined as Error | undefined }
         responding.current = answer
@@ -471,6 +518,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }
 
     async function decideApproval(payload: DesktopApprovalAnswer) {
+        if (isDesktopQuitting()) throw new Error('Rerun is saving drafts before quitting.')
         if (quickReplyRequest.current || !active || !sessionId || !approval || payload.approvalId !== approval.id || inactive || generating || stopping || !ready || responding.current || flushingQueue.current || regenerating.current || pendingAttachment.current) throw new Error('This approval request is not ready. Try again.')
         const answer = { sessionId, payload, url: approvalUrl(sessionId), receiptHeader: 'x-approval-id', receiptId: payload.approvalId, accepted: false, error: undefined as Error | undefined }
         responding.current = answer
@@ -492,11 +540,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const quickReplyErrorIsRetryable = !!lastMessage && quickReplyRetry === lastMessage.id
     const quickRepliesVisible = active && !!sessionId && !requestBlocked && !generating && !stopping
         && !historyError && (!error || quickReplyErrorIsRetryable) && !stopError && !queue.error && !queueNotice
-    const canSendQuickReply = quickRepliesVisible && !inactive && ready && modelReady && queueStatusKnown
+    const canSendQuickReply = !draft.quitting && quickRepliesVisible && !inactive && ready && modelReady && queueStatusKnown
         && queue.loaded && !queue.pending && !queue.queued && !queue.restoredId && !quickReplyBusy
     quickReplyContext.current = { scope: draftKey, messageId: lastMessage?.id, canSend: canSendQuickReply }
 
     async function sendQuickReply(messageId: string, text: string): Promise<boolean> {
+        if (isDesktopQuitting()) return false
         const current = quickReplyContext.current
         // A retained callback must still belong to the visible chat's last assistant message.
         if (!sessionId || !history.transcript || current.scope !== draftKey || current.messageId !== messageId || !current.canSend
@@ -631,17 +680,23 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
 
             <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} notice="Feedback is stored on this Mac." onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
             <div className="shrink-0 border-t p-2.5">
+                {draft.quitting ? <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">Saving drafts before quitting…</p>
+                    : draft.error ? <div role="alert" className="mb-2 flex flex-wrap items-center gap-2 px-1 text-xs text-destructive">
+                        <span>{draft.error}</span>
+                        {draft.conflict ? <><Button type="button" size="sm" variant="outline" onClick={() => void draft.keep()}>Keep this draft</Button><Button type="button" size="sm" variant="outline" onClick={() => void draft.reload()}>Use saved draft</Button></>
+                            : <Button type="button" size="sm" variant="outline" onClick={() => void draft.retry()}>Retry saving draft</Button>}
+                    </div> : tabUid && (!draft.loaded || draft.saving || input || attachment) ? <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">{!draft.loaded ? 'Restoring draft…' : draft.saving ? 'Saving draft…' : 'Draft saved'}</p> : null}
                 {inactive && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">This coworker is inactive. Enable it from the board to send a message. Your chats are kept.</p>}
                 {(queue.error || queueNotice) && <p role={queue.error ? 'alert' : 'status'} className="mb-2 px-1 text-xs text-muted-foreground">{queue.error || queueNotice}</p>}
                 {queuedBehindFailure && !queueNotice && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">The previous reply failed. Your queued message is kept; use Send now when you are ready.</p>}
                 <QueuedMessagePill text={queued && !(draftQueues.current.has(queued.id) && input.trim() === queued.text && attachment === queued.attachmentPath) ? desktopQueuedPreview(queued) : null}
-                    busy={generating} pending={(requestBlocked && !generating) || !!pendingRequest || queue.pending || stopping || inactive || !!flushingQueue.current}
-                    onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
-                {question && <DesktopQuestionCard key={question.id} question={question} disabled={!active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
-                {approval && <DesktopApprovalCard key={approval.id} approval={approval} disabled={!active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
+                    busy={generating} pending={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || queue.pending || stopping || inactive || !!flushingQueue.current}
+                    onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued && !isDesktopQuitting()) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
+                {question && <DesktopQuestionCard key={question.id} question={question} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
+                {approval && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
                 <form onSubmit={submit} hidden={!!pendingRequest} className={cn('min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest ? 'hidden' : 'flex')}>
                     {attachment && <div className="px-2.5 pt-2"><AttachmentChip path={attachment}
-                        disabled={stopping || queue.pending || (pendingAttachment.current?.key === draftKey && pendingAttachment.current.attachment === attachment)}
+                        disabled={draft.quitting || !!regenerationSource || stopping || queue.pending || (pendingAttachment.current?.key === draftKey && pendingAttachment.current.attachment === attachment)}
                         onRemove={() => setDraftAttachment(draftKey)} /></div>}
                     <label htmlFor={composerId} className="sr-only">Message {agent.name}</label>
                     <Textarea
@@ -649,8 +704,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         rows={2}
                         className="min-h-12 w-full resize-none rounded-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
                         maxLength={20_000}
-                        disabled={inactive}
-                        readOnly={!!attachment && status === 'submitted'}
+                        disabled={inactive || !draft.loaded || !!draft.error || draft.quitting}
+                        readOnly={!!regenerationSource || !!attachment && status === 'submitted'}
                         placeholder="Send a message…"
                         value={input}
                         onChange={event => setInput(event.target.value)}
@@ -665,10 +720,10 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
                             workspaceModel={modelLabel} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} onReady={setModelReady} />
                         <div className="flex shrink-0 items-center gap-1">
-                            <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={inactive || stopping || !ready || queue.pending}
+                            <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={inactive || stopping || !ready || queue.pending || !draft.loaded || !!draft.error || !!regenerationSource || draft.quitting}
                                 onSelect={path => setDraftAttachment(draftKey, path)} />
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
-                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={(requestBlocked && !generating) || !!pendingRequest || inactive || !input.trim() || stopping || !ready || !queue.loaded || queue.pending || !!queue.error}>
+                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || !input.trim() || stopping || !ready || !queue.loaded || queue.pending || !!queue.error}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
                             </Button>
                         </div>
