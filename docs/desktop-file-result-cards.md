@@ -29,8 +29,10 @@ has no raw URL or download. The shared `AttachmentLightbox` is unchanged.
 - **Engine tool:** `apps/engine/src/desktop/card-file.ts` shows only existing visible `.txt`/`.md`
   files in that coworker’s workspace. It re-reads the current coworker and grant before every call,
   uses `openWithoutLinks`, checks the same inode twice, rejects symlinks, hard links, directories,
-  foreign/absolute/traversal paths, shared scope, unsupported extensions and files over 32 KiB, and
-  allows at most 12 files. One bad file means nothing is shown.
+  foreign/absolute/traversal paths outside the workspace, shared scope, unsupported extensions and
+  files over 32 KiB, and allows at most 12 files. An absolute path inside this workspace is
+  normalized to the relative path the Files route opens; a foreign absolute path is refused. One
+  bad file means nothing is shown.
 - **Codex bridge:** the tool is merged into the desktop `buildTools` set, so the existing dynamic
   tool bridge exposes it when the catalog grant is on. No separate runner or model path was added.
 - **Parser/projection:** `apps/ui/lib/desktop/file-card.ts` validates live and saved output: JSON
@@ -69,7 +71,7 @@ catalog and now shows **Show result files** for the selected coworker.
 - Only existing `.txt`/`.md` files are carded. Images, PDFs, shared files, folders, symlinks and
   downloads are not supported by this slice.
 - A card is not an attachment snapshot. Its path and name are recorded at card time; opening may
-  show current content or an unavailable error after a rename/delete.
+  show current content, or the preview’s `This file could not be read` state after a rename/delete.
 - The card tool accepts up to 32 KiB per file. The existing Files preview route may show a larger
   text file truncated; the card itself still only points at the file.
 - Revoking the grant stops new cards. An already-saved card remains a saved historical result and

@@ -16,9 +16,12 @@ export function validPath(path: string): boolean {
     return !!path && path.length <= 4096 && !/[\\\p{Cc}]/u.test(path) && path.split('/').every(part => part && !part.startsWith('.'))
 }
 
+export async function workspaceRoot(id: string) {
+    return join(await realpath(dataDir()), relative(dataDir(), workspaceDir(id)))
+}
+
 export async function workspacePath(id: string, path: string) {
-    const root = await realpath(dataDir())
-    return join(root, relative(dataDir(), workspaceDir(id)), path)
+    return join(await workspaceRoot(id), path)
 }
 
 type Access = DesktopRerunGrantId | (() => Promise<void>)

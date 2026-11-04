@@ -1,12 +1,12 @@
 import { CARD_MAX_FILES, DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath, type FileCard, type FileCardEntry } from '@rerun/contracts'
 import { tool, type ToolSet } from 'ai'
-import { basename } from 'node:path'
+import { basename, isAbsolute, join, relative } from 'node:path'
 import { z } from 'zod'
 import type { RunContext } from '../runtime/context.js'
 import { jsonTolerantArray } from '../tools/builtin/hitl.js'
 import { openWithoutLinks } from './open-without-links.js'
 import { hasDesktopToolGrant, requireDesktopToolGrant } from './tool-grants.js'
-import { validPath, workspacePath } from './workspace-read.js'
+import { validPath, workspacePath, workspaceRoot } from './workspace-read.js'
 
 class CardFileError extends Error {}
 
@@ -21,12 +21,23 @@ function assertScope(scope: 'agent' | 'shared' | undefined) {
     if (scope && scope !== 'agent') throw new CardFileError(shared)
 }
 
+// The model often copies an absolute path from a shell listing. Accept it only when it resolves
+// inside this coworker's workspace, and always store the relative path the Files route opens.
+async function cardRelativePath(ctx: RunContext, path: string): Promise<string> {
+    if (!path || path.length > 4096 || /[\\\p{Cc}]/u.test(path) || path.split('/').some(part => part === '..')) throw new CardFileError(badPath)
+    const workspace = await workspaceRoot(ctx.agent.id)
+    const target = isAbsolute(path) ? path : join(workspace, path)
+    const rel = relative(workspace, target)
+    if (!rel || rel.startsWith('..') || isAbsolute(rel) || !isDesktopAttachmentPath(rel) || !validPath(rel)) throw new CardFileError(badPath)
+    return rel
+}
+
 async function entryFor(ctx: RunContext, path: string, scope: 'agent' | 'shared' | undefined): Promise<FileCardEntry> {
     await requireDesktopToolGrant(ctx, 'cardFile')
     assertScope(scope)
-    if (!isDesktopAttachmentPath(path) || !validPath(path)) throw new CardFileError(badPath)
     try {
-        const target = await workspacePath(ctx.agent.id, path)
+        const rel = await cardRelativePath(ctx, path)
+        const target = await workspacePath(ctx.agent.id, rel)
         const handle = await openWithoutLinks(target)
         try {
             const info = await handle.stat({ bigint: true })
@@ -42,7 +53,7 @@ async function entryFor(ctx: RunContext, path: string, scope: 'agent' | 'shared'
                     || check.size !== info.size || check.ctimeNs !== info.ctimeNs) throw new CardFileError(unavailable)
             } finally { await current.close() }
             await requireDesktopToolGrant(ctx, 'cardFile')
-            return { path, name: basename(path), size: Number(info.size), scope: 'agent' }
+            return { path: rel, name: basename(rel), size: Number(info.size), scope: 'agent' }
         } finally { await handle.close() }
     } catch (error) {
         ctx.abortSignal?.throwIfAborted()
