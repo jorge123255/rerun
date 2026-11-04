@@ -175,16 +175,26 @@ test('a save needs the desktop session and same-origin request', async () => {
     expect(await readFile(join(workspace('engine-alice'), 'docs/notes.md'), 'utf8')).toBe('# Alice notes')
 })
 
-test('review simultaneous edits both reach final check on same base', async () => {
+test('simultaneous edits on the same base keep one winner and return its version to the loser', async () => {
     const path = 'docs/notes.md'
     const prev = await preview(alice, path)
-    let atRename = 0
+    let entered!: () => void
     let resume!: () => void
-    const both = new Promise<void>(r => { resume = r })
-    const timeout = setTimeout(resume, 1200)
-    hooks.beforeRename = async () => { if (++atRename === 2) resume(); await both }
-    const results = await Promise.all(['first new body', 'second new body'].map(content => put(alice, {path, content, baseHash: prev.hash})))
-    clearTimeout(timeout)
+    const writing = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { resume = resolve })
+    hooks.beforeRename = async () => { hooks.beforeRename = undefined; entered(); await gate }
+    const first = put(alice, { path, content: 'first new body', baseHash: prev.hash })
+    let second: Promise<Response> | undefined
+    let results: Response[]
+    try {
+        await writing
+        second = put(alice, { path, content: 'second new body', baseHash: prev.hash })
+        resume()
+        results = await Promise.all([first, second])
+    } finally {
+        resume()
+        await Promise.allSettled([first, ...(second ? [second] : [])])
+    }
     const disk = await readFile(join(workspace('engine-alice'), path), 'utf8')
     console.info('RACE STATUS',results.map(x=>x.status), 'DISK',disk)
     expect(results.map(x=>x.status).sort()).toEqual([200,409])

@@ -1,15 +1,19 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { FileTextEditor } from '@/components/files/FileTextEditor'
 import { useFileNavigation } from '@/components/files/useFileNavigation'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, RefreshCwIcon } from '@/lib/icons'
+import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, RefreshCwIcon, XIcon } from '@/lib/icons'
 import { applyEol, splitEol } from '@/lib/files/editable'
+import { Badge } from '@rerun/ui/primitives'
 import type { DesktopAgentView } from './DesktopApp'
 
 type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
 type Preview = { path: string; content: string; truncated: boolean; hash?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
+type CloseGuard = (close: () => void) => void
 
 async function errorOf(response: Response, fallback: string) {
     const body = await response.json().catch(() => null)
@@ -17,7 +21,7 @@ async function errorOf(response: Response, fallback: string) {
 }
 
 /** Port of AgentPanelFiles: breadcrumb folder navigation, a text preview, and a single .txt/.md import, scoped to one coworker. */
-function FilesPanel({ agent }: { agent: DesktopAgentView }) {
+function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; registerCloseGuard: (guard: CloseGuard | null) => void }) {
     const base = `/api/desktop/agents/${encodeURIComponent(agent.id)}/files`
     const [error, setError] = useState('')
     const [preview, setPreview] = useState<Preview | null>(null)
@@ -83,13 +87,13 @@ function FilesPanel({ agent }: { agent: DesktopAgentView }) {
     const editing = !!preview && editingPath === preview.path
 
     if (preview && 'conflict' in preview) {
-        return <FileEditor base={base} path={preview.path} content={preview.conflict.content} hash={preview.conflict.hash} initialConflict={preview.conflict}
+        return <FileEditor base={base} path={preview.path} content={preview.conflict.content} hash={preview.conflict.hash} initialConflict={preview.conflict} registerCloseGuard={registerCloseGuard}
             onClose={() => setPreview(null)}
             onSaved={(content, hash) => { setPreview({ path: preview.path, content, truncated: false, hash }); setEditingPath(null) }} />
     }
 
     if (preview && editing && 'hash' in preview && preview.hash) {
-        return <FileEditor base={base} path={preview.path} content={preview.content} hash={preview.hash}
+        return <FileEditor base={base} path={preview.path} content={preview.content} hash={preview.hash} registerCloseGuard={registerCloseGuard}
             onClose={() => setEditingPath(null)}
             onSaved={(content, hash) => { setPreview({ path: preview.path, content, truncated: false, hash }); setEditingPath(null) }} />
     }
@@ -155,22 +159,30 @@ type FileConflict = { content: string; hash: string; recovery?: { draft: string;
 type SaveResponse = { path: string; hash: string } | { error: string; conflict?: true; current?: { content: string; hash: string } | null; recovery?: { draft: string; external: string } }
 
 /**
- * Port of FileDetail's FileEditorDialog/useFileDraft. Cancel discards only after asking when there
- * are edits. A stale save (the file changed since the editor opened) keeps both versions on screen:
- * the user's draft stays in the editor and the newer disk text is shown beside it, with Reload
- * (take the disk version, keeping the draft visible to copy) or Save mine anyway (retry against the
- * version now shown, so a third change is still caught).
+ * Original FileEditorDialog layout and editor, with desktop conflict details. Every close path
+ * guards the draft, including the Files dialog behind this modal. Overwrite retries against the
+ * version shown, so another change still produces a conflict.
  */
-function FileEditor({ base, path, content, hash, initialConflict = null, onClose, onSaved }: { base: string; path: string; content: string; hash: string; initialConflict?: FileConflict | null; onClose: () => void; onSaved: (content: string, hash: string) => void }) {
+function FileEditor({ base, path, content, hash, initialConflict = null, registerCloseGuard, onClose, onSaved }: { base: string; path: string; content: string; hash: string; initialConflict?: FileConflict | null; registerCloseGuard: (guard: CloseGuard | null) => void; onClose: () => void; onSaved: (content: string, hash: string) => void }) {
     const [opened, setOpened] = useState(() => ({ ...splitEol(content), hash }))
     const [draft, setDraft] = useState(opened.text)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState('')
     const [conflict, setConflict] = useState<FileConflict | null>(initialConflict)
     const [setAside, setSetAside] = useState<string | null>(null)
-    const [confirmingDiscard, setConfirmingDiscard] = useState(false)
+    const [pendingClose, setPendingClose] = useState<(() => void) | null>(null)
     const dirty = draft !== opened.text
     const name = path.split('/').pop()
+    const requestClose = useCallback((close = onClose) => {
+        if (saving) return
+        if (dirty) setPendingClose(() => close)
+        else close()
+    }, [dirty, saving, onClose])
+
+    useEffect(() => {
+        registerCloseGuard(requestClose)
+        return () => registerCloseGuard(null)
+    }, [registerCloseGuard, requestClose])
 
     useEffect(() => {
         if (!dirty) return
@@ -205,56 +217,67 @@ function FileEditor({ base, path, content, hash, initialConflict = null, onClose
         setConflict(null)
     }
 
-    const requestClose = () => { if (saving) return; if (dirty) setConfirmingDiscard(true); else onClose() }
+    const saveDraft = () => { if (dirty && !saving && !conflict) void save(opened.hash) }
 
-    return <div className="flex min-h-0 flex-1 flex-col gap-2" data-testid="file-editor">
-        <div className="flex items-center gap-2 text-sm">
-            <span className="min-w-0 flex-1 truncate font-mono text-xs" title={path}>Editing {name}</span>
-            {dirty && <span className="rounded bg-orange-500/15 px-1.5 py-0.5 text-[10px] text-orange-600">Unsaved</span>}
-        </div>
-        <textarea aria-label={`Edit ${name}`} value={draft} onChange={event => setDraft(event.target.value)} readOnly={saving} autoFocus spellCheck={false}
-            onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 's') { event.preventDefault(); if (dirty && !saving && !conflict) void save(opened.hash) } }}
-            className="min-h-0 flex-1 resize-none rounded-md border bg-background p-3 font-mono text-xs" />
-        {conflict && <div role="alert" data-testid="edit-conflict" className="space-y-2 rounded-md border border-orange-500/40 bg-orange-500/5 p-2 text-xs">
-            <p className="font-medium">{initialConflict
-                ? `${name} was recovered after an interrupted save. Your draft is in the named recovery copy; the external version is below.`
-                : `${name} changed on disk after you opened it. Your edits are still in the editor; the newer version is below. Nothing was saved.`}</p>
-            <pre data-testid="conflict-disk" className="max-h-32 overflow-auto rounded border bg-muted/30 p-2 font-mono whitespace-pre-wrap break-words">{conflict.content}</pre>
-            {conflict.recovery && <p data-testid="edit-recovery" className="break-words text-muted-foreground">
-                Recovery copies in Files: <code>{conflict.recovery.draft}</code> holds your draft; <code>{conflict.recovery.external}</code> holds the external version. The external version is also back at its original path.
-            </p>}
-            <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={reload} disabled={saving}>Keep theirs</Button>
-                <Button type="button" size="sm" onClick={() => void save(conflict.hash)} disabled={saving}>Overwrite</Button>
+    return <Dialog open asSheet={false} dismissible={!dirty && !saving} onOpenChange={open => { if (!open) requestClose() }}>
+        <DialogContent aria-describedby={undefined} showCloseButton={false} data-testid="file-editor"
+            className="flex h-[85dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
+            onOpenAutoFocus={event => event.preventDefault()}>
+            <div className="flex shrink-0 items-center gap-2 border-b border-border py-2 pr-2 pl-4">
+                <DialogTitle className="min-w-0 flex-1 truncate text-left font-mono text-xs font-normal text-muted-foreground" title={path}>{name}</DialogTitle>
+                {dirty && <Badge size="xs" tone="orange" glow={false}>Unsaved</Badge>}
+                <Button size="icon-sm" variant="ghost" onClick={() => requestClose()} disabled={saving} title="Close editor" aria-label="Close editor"><XIcon className="size-4" /></Button>
             </div>
-        </div>}
-        {setAside !== null && <div className="space-y-1 text-xs" data-testid="set-aside">
-            <p className="text-muted-foreground">Reloaded the newer version. Your previous edits, not saved:</p>
-            <textarea readOnly aria-label="Your previous edits" value={setAside} className="h-24 w-full resize-none rounded border bg-muted/30 p-2 font-mono text-xs" />
-            <div className="flex justify-end"><Button type="button" variant="ghost" size="sm" onClick={() => setSetAside(null)}>Dismiss</Button></div>
-        </div>}
-        {error && <p role="alert" data-testid="edit-error" className="text-xs text-destructive">{error}</p>}
-        {confirmingDiscard ? <div role="alertdialog" aria-label="Discard your changes?" className="flex items-center justify-end gap-2 text-xs">
-            <span className="flex-1">Discard your changes to {name}? The file on disk stays as it was.</span>
-            <Button type="button" variant="outline" size="sm" onClick={() => setConfirmingDiscard(false)}>Keep editing</Button>
-            <Button type="button" variant="destructive" size="sm" onClick={onClose}>Discard changes</Button>
-        </div> : <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={requestClose} disabled={saving}>Cancel</Button>
-            <Button type="button" size="sm" onClick={() => void save(opened.hash)} disabled={!dirty || saving || !!conflict}>{saving ? 'Saving…' : 'Save changes'}</Button>
-        </div>}
-    </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+                <FileTextEditor value={draft} onChange={setDraft} fileName={name ?? path} readOnly={saving} autoFocus onSave={saveDraft} />
+            </div>
+            {setAside !== null && <div className="shrink-0 space-y-1 border-t border-border p-3 text-xs" data-testid="set-aside">
+                <p className="text-muted-foreground">Reloaded the newer version. Your previous edits, not saved:</p>
+                <textarea readOnly aria-label="Your previous edits" value={setAside} className="h-24 w-full resize-none rounded border bg-muted/30 p-2 font-mono text-xs" />
+                <div className="flex justify-end"><Button type="button" variant="ghost" size="sm" onClick={() => setSetAside(null)}>Dismiss</Button></div>
+            </div>}
+            {error && <p role="alert" data-testid="edit-error" className="shrink-0 border-t border-border px-4 pt-2 text-xs text-destructive">{error}</p>}
+            <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border p-3">
+                <Button type="button" variant="outline" size="sm" onClick={() => requestClose()} disabled={saving}>Cancel</Button>
+                <Button type="button" size="sm" onClick={saveDraft} disabled={!dirty || saving || !!conflict}>{saving ? 'Saving…' : 'Save changes'}</Button>
+            </div>
+        </DialogContent>
+        {conflict && <ConfirmDialog open pending={saving} onOpenChange={open => { if (!open && !saving) reload() }}
+            title={`${name} changed on this Mac`}
+            description={<span className="block space-y-2" data-testid="edit-conflict">
+                <span className="block">{initialConflict
+                    ? 'This file was recovered after an interrupted save. Your draft is in the named recovery copy; the external version is below.'
+                    : 'Someone, or a coworker, wrote to this file after you opened it. Your edits are still in the editor. Overwrite replaces the version below with yours.'}</span>
+                <span data-testid="conflict-disk" className="block max-h-32 overflow-auto rounded border bg-muted/30 p-2 font-mono whitespace-pre-wrap break-words">{conflict.content}</span>
+                {conflict.recovery && <span data-testid="edit-recovery" className="block break-words">
+                    Recovery copies in Files: <code>{conflict.recovery.draft}</code> holds your draft; <code>{conflict.recovery.external}</code> holds the external version. The external version is also back at its original path.
+                </span>}
+            </span>}
+            confirmLabel="Overwrite" cancelLabel="Keep theirs"
+            onConfirm={event => { event.preventDefault(); void save(conflict.hash) }} />}
+        {pendingClose && <ConfirmDialog open onOpenChange={open => { if (!open) setPendingClose(null) }}
+            title="Discard your changes?" description={`Your edits to ${name} are not saved yet. Closing the editor throws them away.`}
+            confirmLabel="Discard changes" cancelLabel="Keep editing"
+            onConfirm={() => { setPendingClose(null); pendingClose() }} />}
+    </Dialog>
 }
 
 export function DesktopCoworkerFiles({ agent }: { agent: DesktopAgentView }) {
     const [open, setOpen] = useState(false)
-    return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
+    const closeGuard = useRef<CloseGuard | null>(null)
+    const registerCloseGuard = useCallback((guard: CloseGuard | null) => { closeGuard.current = guard }, [])
+    const changeOpen = (next: boolean) => {
+        if (!next && closeGuard.current) closeGuard.current(() => setOpen(false))
+        else setOpen(next)
+    }
+    return <Dialog open={open} onOpenChange={changeOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Files</Button></DialogTrigger>
         {open && <DialogContent className="flex h-[75dvh] flex-col sm:max-w-2xl">
             <DialogHeader>
                 <DialogTitle>Files</DialogTitle>
                 <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, or import a .txt or .md file.</DialogDescription>
             </DialogHeader>
-            <FilesPanel key={agent.id} agent={agent} />
+            <FilesPanel key={agent.id} agent={agent} registerCloseGuard={registerCloseGuard} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
         </DialogContent>}
     </Dialog>

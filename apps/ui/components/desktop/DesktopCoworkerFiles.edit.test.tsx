@@ -3,7 +3,15 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { hashText } from '@/lib/files/editable'
+import type { FileCodeMirrorProps } from '@/components/files/FileCodeMirror'
 import { DesktopConversation } from './DesktopConversation'
+
+// Exercise the actual modal and conflict controls without CodeMirror's browser layout engine.
+vi.mock('@/components/files/FileTextEditor', () => ({
+    FileTextEditor: ({ value, onChange, fileName, readOnly, onSave }: FileCodeMirrorProps) => <textarea
+        aria-label={`Edit ${fileName}`} value={value} readOnly={readOnly} onChange={event => onChange(event.target.value)}
+        onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 's') { event.preventDefault(); onSave?.() } }} />,
+}))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -87,6 +95,57 @@ test('cancel with edits asks first and never writes', async () => {
     expect(shown()).toBe('original')
     expect(puts).toEqual([])
     act(() => root.unmount())
+})
+
+test.each(['Close editor', 'Done', 'Close', 'Escape', 'Outside'])('%s cannot silently discard an edited file', async action => {
+    const files = { alice: 'original' }
+    const { fetcher, puts } = disk(files)
+    vi.stubGlobal('fetch', fetcher)
+    const root = mount()
+    const dismiss = async () => {
+        if (action === 'Escape') await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+        else if (action === 'Outside') await act(async () => { document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', button: 0 })) })
+        else await click(action)
+        await flush()
+    }
+    try {
+        await openFile(root, 'alice')
+        await click('Edit')
+        await flush()
+        await type('unsaved draft')
+        await dismiss()
+        expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Discard your changes?')
+        await click('Keep editing')
+        expect(document.querySelector<HTMLTextAreaElement>('[data-testid="file-editor"] textarea')!.value).toBe('unsaved draft')
+        await dismiss()
+        await click('Discard changes')
+        expect(document.querySelector('[data-testid="file-editor"]')).toBeNull()
+        expect(files.alice).toBe('original')
+        expect(puts).toEqual([])
+    } finally { act(() => root.unmount()) }
+})
+
+test('a pending save blocks editor and Files dismissal until its result is shown', async () => {
+    const files = { alice: 'original' }
+    const ordinary = disk(files)
+    let finish!: (response: Response) => void
+    const saved = new Promise<Response>(resolve => { finish = resolve })
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => init?.method === 'PUT' ? saved : ordinary.fetcher(input, init)))
+    const root = mount()
+    try {
+        await openFile(root, 'alice')
+        await click('Edit')
+        await type('draft in flight')
+        await click('Save changes')
+        await click('Done')
+        await click('Close')
+        expect(button('Close editor')?.disabled).toBe(true)
+        expect(document.querySelector('[data-testid="file-editor"]')).not.toBeNull()
+        await act(async () => { finish(Response.json({ error: 'Try again' }, { status: 500 })) })
+        await flush()
+        expect(document.querySelector<HTMLTextAreaElement>('[data-testid="file-editor"] textarea')!.value).toBe('draft in flight')
+        expect(document.querySelector('[data-testid="edit-error"]')?.textContent).toContain('Try again')
+    } finally { act(() => root.unmount()) }
 })
 
 test('a stale save keeps both the newer disk text and the draft, then reload or retry', async () => {

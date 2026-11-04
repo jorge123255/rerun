@@ -4,7 +4,7 @@ import { constants } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
-import { link, lstat, mkdir, open, readFile, readdir, realpath, rename, unlink, type FileHandle } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readdir, realpath, rename, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { hashText, looksBinary } from '@/lib/files/editable'
 import { DesktopHttpError } from './auth'
@@ -85,6 +85,19 @@ async function pinnedDirectory(handle: FileHandle): Promise<string> {
 }
 
 export async function listCoworkerFiles(runtime: DesktopRuntime, agentId: string, path: string, showHidden: boolean): Promise<{ path: string; entries: CoworkerFileEntry[] }> {
+    return withCoworkerFiles(runtime, agentId, () => listFiles(runtime, agentId, path, showHidden))
+}
+
+// Listing and reading can recover an interrupted save. Order those mutations with imports,
+// other saves and deletion, including requests admitted through a different route bundle.
+function withCoworkerFiles<T>(runtime: DesktopRuntime, agentId: string, action: () => Promise<T>): Promise<T> {
+    return withRosterWrite(async () => {
+        await assertCoworkerNotDeleting(await openDesktopDatabase(runtime.dataRoot), agentId)
+        return action()
+    })
+}
+
+async function listFiles(runtime: DesktopRuntime, agentId: string, path: string, showHidden: boolean): Promise<{ path: string; entries: CoworkerFileEntry[] }> {
     const { root, target, rel } = await containedPath(await coworkerWorkspace(runtime, agentId), path)
     if (!root) return { path: rel, entries: [] }
     if (!target) throw new DesktopHttpError(404, 'Folder not found')
@@ -115,6 +128,10 @@ export async function listCoworkerFiles(runtime: DesktopRuntime, agentId: string
 }
 
 export async function readCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, mode: 'preview' | 'attach' = 'preview'): Promise<CoworkerFilePreview> {
+    return withCoworkerFiles(runtime, agentId, () => readFileInWorkspace(runtime, agentId, path, mode))
+}
+
+async function readFileInWorkspace(runtime: DesktopRuntime, agentId: string, path: string, mode: 'preview' | 'attach'): Promise<CoworkerFilePreview> {
     if (mode === 'attach' && !isDesktopAttachmentPath(path)) throw new DesktopHttpError(400, 'Choose a .txt or .md file from this coworker’s workspace.')
     const workspace = await coworkerWorkspace(runtime, agentId)
     const located = await containedPath(workspace, path)
@@ -397,25 +414,66 @@ function parseJournal(raw: string): PublishJournal | null {
     } catch { return null }
 }
 
+async function readRecoveryText(path: string, limit: number): Promise<string | null> {
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+        .catch(error => { if (missing(error) || (error as NodeJS.ErrnoException).code === 'ELOOP') return null; throw error })
+    if (!handle) return null
+    try {
+        const before = await handle.stat()
+        if (!before.isFile() || before.size > limit) return null
+        const bytes = Buffer.alloc(before.size)
+        let length = 0
+        while (length < bytes.length) {
+            const read = await handle.read(bytes, length, bytes.length - length, length)
+            if (!read.bytesRead) break
+            length += read.bytesRead
+        }
+        const after = await handle.stat()
+        if (length !== before.size || after.size !== before.size || after.ctimeMs !== before.ctimeMs) return null
+        return editableText(bytes)
+    } finally { await handle.close() }
+}
+
+/** Call only within the roster queue; recovery itself mutates the folder. */
+async function recoverInterruptedCoworkerEdits(directory: string): Promise<InterruptedCoworkerRecovery[]> {
+    const handle = await openResolved(directory, true).catch(error => { if (missing(error)) return null; throw error })
+    if (!handle) return []
+    try {
+        const pinned = await pinnedDirectory(handle)
+        const assertUnmoved = async () => {
+            const [opened, listed, actual] = await Promise.all([
+                handle.stat({ bigint: true }),
+                lstat(directory, { bigint: true }).catch(() => null),
+                realpath(directory).catch(() => null),
+            ])
+            if (!sameFile(opened, listed) || actual !== directory) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+        }
+        await assertUnmoved()
+        return await recoverInDirectory(directory, pinned, assertUnmoved)
+    } finally { await handle.close() }
+}
+
 /** A name this process is publishing is left alone. Every mutation is safe to repeat. */
-export async function recoverInterruptedCoworkerEdits(directory: string, own = false): Promise<InterruptedCoworkerRecovery[]> {
+async function recoverInDirectory(directory: string, pinned: string, assertUnmoved: () => Promise<void>): Promise<InterruptedCoworkerRecovery[]> {
     const recoveries: InterruptedCoworkerRecovery[] = []
     let names: string[]
-    try { names = await readdir(directory) } catch (error) { if (missing(error)) return recoveries; throw error }
+    try { names = await readdir(pinned) } catch (error) { if (missing(error)) return recoveries; throw error }
     const journals = names.filter(name => name.startsWith(PUBLISH_PREFIX))
     const referenced = new Set<string>()
     for (const journalName of journals) {
-        const journalPath = join(directory, journalName)
-        const raw = await readFile(journalPath, 'utf8').catch(error => { if (missing(error)) return null; throw error })
+        const journalPath = join(pinned, journalName)
+        const raw = await readRecoveryText(journalPath, 16 * 1024)
+        await assertUnmoved()
         const journal = raw === null ? null : parseJournal(raw)
         if (!journal) continue
         referenced.add(journal.temp)
         referenced.add(journal.backup)
-        if (!own && [journalName, journal.final, journal.temp, journal.backup].some(name => claimed(directory, name))) continue
-        const finalPath = join(directory, journal.final)
-        const tempPath = join(directory, journal.temp)
-        const backupPath = join(directory, journal.backup)
+        if ([journalName, journal.final, journal.temp, journal.backup].some(name => claimed(directory, name))) continue
+        const finalPath = join(pinned, journal.final)
+        const tempPath = join(pinned, journal.temp)
+        const backupPath = join(pinned, journal.backup)
         const [finalStat, tempStat, backupStat] = await Promise.all([fileStat(finalPath), fileStat(tempPath), fileStat(backupPath)])
+        await assertUnmoved()
         if (finalStat && !finalStat.isFile()) continue
         const draftIsPublished = !!tempStat?.isFile() && sameFile(finalStat, tempStat) && !sameFile(finalStat, backupStat)
         if (journal.phase === 'linked') {
@@ -429,15 +487,18 @@ export async function recoverInterruptedCoworkerEdits(directory: string, own = f
             try { await link(backupPath, finalPath) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
         }
         const kept = await fileStat(finalPath)
-        if (backupStat && kept) {
-            const bytes = await readFile(backupPath).catch(() => null)
-            const text = bytes ? editableText(bytes) : null
-            if (text === null || hashText(text) !== journal.baseHash || await inodeMayBeHeld(backupPath)) {
+        if (backupStat?.isFile() && kept) {
+            // A writer can close after changing the displaced inode. Check for held handles
+            // first, then compare its final bytes before retiring the last backup name.
+            const held = await inodeMayBeHeld(backupPath)
+            const text = await readRecoveryText(backupPath, EDIT_BYTES)
+            await assertUnmoved()
+            if (held || text === null || hashText(text) !== journal.baseHash) {
                 if (journal.phase === 'linked' && sameFile(finalStat, tempStat)) {
                     await retireName(finalPath, finalStat!)
                     await link(backupPath, finalPath)
                 }
-                recoveries.push({ final: journal.final, recovery: await recoveryLinks(directory, journal.final, tempPath, backupPath) })
+                recoveries.push({ final: journal.final, recovery: await recoveryLinks(pinned, journal.final, tempPath, backupPath) })
             }
             await retireName(backupPath, backupStat)
         }
@@ -445,14 +506,16 @@ export async function recoverInterruptedCoworkerEdits(directory: string, own = f
         if (kept || !backupStat) await removeName(journalPath)
     }
     let again: string[]
-    try { again = await readdir(directory) } catch (error) { if (missing(error)) return recoveries; throw error }
+    try { again = await readdir(pinned) } catch (error) { if (missing(error)) return recoveries; throw error }
+    await assertUnmoved()
     for (const name of again) {
         if (!name.startsWith(EDIT_PREFIX) || referenced.has(name) || claimed(directory, name)) continue
         if (again.some(entry => entry.startsWith(PUBLISH_PREFIX))) continue
-        const path = join(directory, name)
+        const path = join(pinned, name)
         const info = await fileStat(path)
         if (info) await retireName(path, info)
     }
+    await assertUnmoved()
     return recoveries
 }
 
@@ -483,6 +546,10 @@ async function withSaveLock<T>(key: string, run: () => Promise<T>): Promise<T> {
  * second copy to edit.
  */
 export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string): Promise<SaveCoworkerFileResult> {
+    return withCoworkerFiles(runtime, agentId, () => saveFile(runtime, agentId, path, content, baseHash))
+}
+
+async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string): Promise<SaveCoworkerFileResult> {
     const bytes = Buffer.from(content, 'utf8')
     if (bytes.byteLength > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
     if (content.includes('\0') || looksBinary(content)) throw new DesktopHttpError(415, 'Only text can be saved here.')
@@ -496,9 +563,9 @@ export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string,
     const finalName = basename(target)
     if (!inside(root, folder)) throw outside()
     return withSaveLock(target, async () => {
+        const interrupted = (await recoverInterruptedCoworkerEdits(folder)).find(item => item.final === finalName)
         claim(folder, finalName)
         try {
-        const interrupted = (await recoverInterruptedCoworkerEdits(folder, true)).find(item => item.final === finalName)
         const interruptedRecovery = interrupted ? {
             draft: rel.slice(0, -finalName.length) + interrupted.recovery.draft,
             external: rel.slice(0, -finalName.length) + interrupted.recovery.external,
@@ -604,6 +671,14 @@ export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string,
                 if (!backupIdentity) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
                 if (await inodeMayBeHeld(backupPath)) {
                     const latest = await readCurrent(currentName)
+                    await assertFolderUnmoved()
+                    const recovery = await preserveRecovery()
+                    throw new CoworkerFileConflict(latest ? { content: latest.content, hash: latest.hash } : null, recovery)
+                }
+                const displaced = await readCurrent(backupName)
+                await assertFolderUnmoved()
+                if (!displaced || displaced.hash !== baseHash) {
+                    const latest = currentName === backupName ? displaced : await readCurrent(currentName)
                     await assertFolderUnmoved()
                     const recovery = await preserveRecovery()
                     throw new CoworkerFileConflict(latest ? { content: latest.content, hash: latest.hash } : null, recovery)
