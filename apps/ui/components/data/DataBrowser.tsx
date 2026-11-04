@@ -40,7 +40,8 @@ type DataBrowserProps = {
     onTableDropped?: () => void
 }
 
-type ViewDialog = { open: boolean; view?: TableView; layout?: CardLayout }
+type ViewDialog = { open: boolean; generation: number; view?: TableView; layout?: CardLayout }
+type BrowserScope = { source: DataSource; table: string | null }
 
 export function DataBrowser({ source, initial, onInitialConsumed, onExpand, table: pinnedTable, onTableDropped }: DataBrowserProps) {
     const [requested] = useState(() => initial ?? null)
@@ -70,8 +71,25 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
     // Null until the views of the selected table are in: the rows wait for them, since the view
     // picks their order.
     const [activeId, setActiveId] = useState<string | null>(null)
-    const [viewDialog, setViewDialog] = useState<ViewDialog>({ open: false })
+    const [viewDialog, setViewDialog] = useState<ViewDialog>({ open: false, generation: 0 })
     const [addingView, setAddingView] = useState(false)
+    const [viewsRefreshKey, setViewsRefreshKey] = useState(0)
+    const mounted = useRef(false)
+    useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+    const scopeRef = useRef<BrowserScope>({ source, table: selected })
+    const scopeSequence = useRef(0)
+    if (scopeRef.current.source !== source || scopeRef.current.table !== selected) {
+        scopeRef.current = { source, table: selected }
+        scopeSequence.current++
+    }
+    const scope = scopeRef.current
+    const currentScope = () => mounted.current && scopeRef.current === scope
+    const sameOwner = () => mounted.current && scopeRef.current.source === source && scopeRef.current.table === selected
+    const dialogRef = useRef(viewDialog)
+    dialogRef.current = viewDialog
+    const activeIdRef = useRef(activeId)
+    activeIdRef.current = activeId
+    const tableRead = useRef(0)
     // The kind of each column is read from the first page of a table and view, then kept, so a
     // column does not change looks from one page to the next.
     const [kindSample, setKindSample] = useState<{ key: string; rows: DbRow[] } | null>(null)
@@ -84,11 +102,14 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
     })
 
     const loadTables = useCallback(() => {
+        const request = ++tableRead.current
+        const current = () => mounted.current && tableRead.current === request && scopeRef.current.source === source
         setLoadingTables(true)
         setError(null)
         return source
             .listTables()
             .then(result => {
+                if (!current()) return
                 setTables(result)
                 // Consumed here rather than in a setState updater: React double-invokes updaters in
                 // development, and this fires a toast and a callback.
@@ -104,9 +125,11 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
                 }
                 setSelected(prev => pinnedTable ?? (prev && result.some(t => t.name === prev) ? prev : (result[0]?.name ?? null)))
             })
-            .catch((e: unknown) => setError(e instanceof Error && e.message ? e.message : source.unreachableMessage))
-            .finally(() => setLoadingTables(false))
+            .catch((e: unknown) => { if (current()) setError(e instanceof Error && e.message ? e.message : source.unreachableMessage) })
+            .finally(() => { if (current()) setLoadingTables(false) })
     }, [source, pinnedTable])
+    const reloadTablesRef = useRef(loadTables)
+    reloadTablesRef.current = loadTables
 
     useEffect(() => {
         loadTables()
@@ -123,7 +146,12 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         setQuery('')
         setSelectedRowIds(new Set())
         setActionError(null)
-    }, [selected])
+        setBusy(false)
+        setAddingView(false)
+        setData(null)
+        setKindSample(null)
+        setViewDialog(current => ({ open: false, generation: current.generation + 1 }))
+    }, [source, selected])
 
     useEffect(() => {
         if (!selected) return
@@ -143,7 +171,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         return () => {
             cancelled = true
         }
-    }, [source, selected])
+    }, [source, selected, viewsRefreshKey])
 
     const activeView = activeId && activeId !== ALL_ROWS ? views.find(view => view.id === activeId) : undefined
     const boardView = activeView?.layout === 'board' && activeView.groupBy ? (activeView as TableView & { groupBy: string }) : undefined
@@ -223,6 +251,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
     const table = useReactTable({
         data: rows,
         columns,
+        getRowId: (row, index) => rowKey(row) ?? String(index),
         state: { sorting, pagination: { pageIndex, pageSize } },
         manualSorting: true,
         manualFiltering: true,
@@ -262,6 +291,10 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
             setBusy(true)
             setActionError(null)
             const result = await source.deleteRows(selected, ids)
+            if (!currentScope()) {
+                if (result.success && sameOwner()) setRefreshKey(k => k + 1)
+                return
+            }
             setBusy(false)
             if (!result.success) {
                 setActionError(result.error ?? 'Failed to delete rows')
@@ -271,7 +304,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
             setPageIndex(0)
             setRefreshKey(k => k + 1)
         },
-        [source, selected],
+        [source, selected, scope],
     )
 
     const saveRow = useCallback(
@@ -280,13 +313,16 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
             if (!selected || id === null) return null
             const result = await source.updateRow(selected, id, values)
             if (!result.success) {
-                toast.error('Could not save this row', { description: result.error })
+                if (currentScope()) toast.error('Could not save this row', { description: result.error })
                 return null
             }
-            setData(current => current && { ...current, rows: current.rows.map(r => (rowKey(r as DbRow) === id ? result.row : r)) })
+            if (currentScope()) setData(current => current && { ...current, rows: current.rows.map(r => (rowKey(r as DbRow) === id ? result.row : r)) })
+            // A -> B -> A can reload A before its old save finishes. Re-read that owner
+            // instead of either losing its successful mutation or patching another table.
+            else if (sameOwner()) setRefreshKey(k => k + 1)
             return result.row as DbRow
         },
-        [source, selected],
+        [source, selected, scope],
     )
 
     const editCell = useCallback(
@@ -300,6 +336,12 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         setBusy(true)
         setActionError(null)
         const result = await source.dropTable(selected)
+        if (!currentScope()) {
+            // The drop is already durable. Refresh only its database, using the current
+            // pinned-table choice; never invoke an old parent's close/drop callback.
+            if (result.success && mounted.current && scopeRef.current.source === source) await reloadTablesRef.current()
+            return
+        }
         setBusy(false)
         if (!result.success) {
             setActionError(result.error ?? 'Failed to delete table')
@@ -307,7 +349,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         }
         if (onTableDropped) onTableDropped()
         else await loadTables()
-    }, [source, selected, loadTables, onTableDropped])
+    }, [source, selected, scope, loadTables, onTableDropped])
 
     const confirmPurgeTable = useCallback(async () => {
         setPurgeDialogOpen(false)
@@ -315,6 +357,10 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         setBusy(true)
         setActionError(null)
         const result = await source.purgeTable(selected)
+        if (!currentScope()) {
+            if (result.success && sameOwner()) setRefreshKey(k => k + 1)
+            return
+        }
         setBusy(false)
         if (!result.success) {
             setActionError(result.error ?? 'Failed to purge table')
@@ -323,7 +369,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         setSelectedRowIds(new Set())
         setPageIndex(0)
         setRefreshKey(k => k + 1)
-    }, [source, selected])
+    }, [source, selected, scope])
 
     const exportTable = useCallback(
         async (format: 'csv' | 'json') => {
@@ -355,9 +401,13 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         setActiveId(id)
     }
 
-    const onViewSaved = (view: TableView) => {
+    const onViewSaved = (view: TableView, select = true) => {
+        if (!currentScope()) {
+            if (sameOwner()) setViewsRefreshKey(k => k + 1)
+            return
+        }
         setViews(current => (current.some(v => v.id === view.id) ? current.map(v => (v.id === view.id ? view : v)) : [...current, view]))
-        selectView(view.id)
+        if (select) selectView(view.id)
         setRefreshKey(k => k + 1)
     }
 
@@ -365,14 +415,14 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         if (!selected) return
         const input = quickViewInput(layout, { columns: allColumns, rows, takenNames: views.map(view => view.name) })
         if (!input) {
-            setViewDialog({ open: true, layout })
+            setViewDialog(current => ({ open: true, layout, generation: current.generation + 1 }))
             return
         }
         setAddingView(true)
         const result = await source.saveView(selected, input)
-        setAddingView(false)
+        if (currentScope()) setAddingView(false)
         if (!result.success) {
-            toast.error('Could not add this view', { description: result.error })
+            if (currentScope()) toast.error('Could not add this view', { description: result.error })
             return
         }
         onViewSaved(result.view)
@@ -382,11 +432,15 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         if (!selected) return
         const result = await source.deleteView(selected, view.id)
         if (!result.success) {
-            toast.error('Could not delete this view', { description: result.error })
+            if (currentScope()) toast.error('Could not delete this view', { description: result.error })
+            return
+        }
+        if (!currentScope()) {
+            if (sameOwner()) setViewsRefreshKey(k => k + 1)
             return
         }
         setViews(current => current.filter(v => v.id !== view.id))
-        if (activeId === view.id) selectView(ALL_ROWS)
+        if (activeIdRef.current === view.id) selectView(ALL_ROWS)
     }
 
     if (loadingTables) return <DataBrowserSkeleton />
@@ -432,13 +486,14 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
                 {activeId !== null && (
                     <div className="mt-4">
                         <DataViewBar
+                            key={scopeSequence.current}
                             views={views}
                             activeId={activeId}
                             unavailableReason={viewsError ?? undefined}
                             onSelect={selectView}
                             onAdd={addView}
                             adding={addingView}
-                            onEdit={view => setViewDialog({ open: true, view })}
+                            onEdit={view => setViewDialog(current => ({ open: true, view, generation: current.generation + 1 }))}
                             onDelete={deleteView}
                             onExpand={onExpand && selected ? () => onExpand({ table: selected, view: activeId === ALL_ROWS ? undefined : activeId }) : undefined}
                             actions={
@@ -475,6 +530,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
                     <ViewGallery view={activeView} rows={rows} context={cellContext} />
                 ) : (
                     <DataBrowserTable
+                        key={scopeSequence.current}
                         table={table}
                         friendly={friendlyByKey}
                         canSelectRows={canSelectRows}
@@ -503,15 +559,20 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
             )}
             {selected && (
                 <ViewSettingsDialog
+                    key={`${scopeSequence.current}:${viewDialog.generation}`}
                     open={viewDialog.open}
-                    onOpenChange={open => setViewDialog(current => ({ ...current, open }))}
+                    onOpenChange={open => {
+                        if (!currentScope()) return
+                        setViewDialog(current => current.generation === viewDialog.generation
+                            ? { ...current, open, generation: current.generation + 1 } : current)
+                    }}
                     source={source}
                     table={selected}
                     columns={allColumns}
                     sample={{ rows, total }}
                     view={viewDialog.view}
                     initialLayout={viewDialog.layout}
-                    onSaved={onViewSaved}
+                    onSaved={view => onViewSaved(view, dialogRef.current.generation === viewDialog.generation)}
                 />
             )}
             <PurgeTableDialog open={purgeDialogOpen} onOpenChange={setPurgeDialogOpen} onConfirm={confirmPurgeTable} table={selected ?? ''} />
