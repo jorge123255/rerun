@@ -1,4 +1,5 @@
 import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -6,6 +7,7 @@ import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/
 import { createDesktopAgent } from '@/lib/desktop/server/store'
 import { GET as list, POST as upload } from './route'
 import { GET as read } from './read/route'
+import { DELETE as removeCoworker } from '../route'
 
 const race = vi.hoisted(() => ({
     beforeMkdir: undefined as undefined | ((target: unknown) => Promise<void>),
@@ -254,18 +256,87 @@ test('a failed write never touches an existing file with the same name', async (
     expect(await readFile(join(workspace('engine-alice'), 'docs', 'notes.md'), 'utf8')).toBe('# Alice notes')
 })
 
-test('an import that is still writing does not claim the name; a racing complete import wins and is kept', async () => {
+test('a queued import waits for a partial failed write, then publishes complete bytes under the same name', async () => {
     let release!: () => void
     const gate = new Promise<void>(r => { release = r })
+    let opened!: () => void
+    const writing = new Promise<void>(resolve => { opened = resolve })
     let first = true
-    race.wrapWrite = (target, handle) => first ? (first = false, failAfterPartialWrite(gate)(target, handle)) : handle
+    race.wrapWrite = (target, handle) => {
+        if (!first) return handle
+        first = false
+        opened()
+        return failAfterPartialWrite(gate)(target, handle)
+    }
     const slow = importFile(alice, 'docs', 'race.md', 'SLOW-AND-FAILS')
-    await new Promise(r => setTimeout(r, 50))
-    const fast = await importFile(alice, 'docs', 'race.md', '# Winner')
-    release()
-    expect((await slow).status).toBe(500)
-    expect(fast.status).toBe(201)
-    expect(await readFile(join(workspace('engine-alice'), 'docs', 'race.md'), 'utf8')).toBe('# Winner')
+    let queued: Promise<Response> | undefined
+    try {
+        await writing
+        let queuedFinished = false
+        queued = importFile(alice, 'docs', 'race.md', '# Winner').then(response => { queuedFinished = true; return response })
+        await new Promise(r => setTimeout(r, 30))
+        expect(queuedFinished).toBe(false)
+        expect(await exists(join(workspace('engine-alice'), 'docs', 'race.md'))).toBe(false)
+        release()
+        expect((await slow).status).toBe(500)
+        expect((await queued).status).toBe(201)
+        expect(await readFile(join(workspace('engine-alice'), 'docs', 'race.md'), 'utf8')).toBe('# Winner')
+    } finally {
+        release()
+        await Promise.allSettled([slow, ...(queued ? [queued] : [])])
+    }
+})
+
+test('Delete waits for an admitted import; an old file picker cannot recreate the deleted coworker', async () => {
+    let release!: () => void, opened!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const writing = new Promise<void>(resolve => { opened = resolve })
+    race.wrapWrite = (_target, handle) => new Proxy(handle, { get: (h, key) => {
+        if (key === 'writeFile') return async (bytes: Uint8Array) => { opened(); await gate; return handle.writeFile(bytes) }
+        const value = Reflect.get(h, key)
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(h) : value
+    } })
+    let engineDeletes = 0
+    const server = createServer(async (req, res) => {
+        try {
+            expect(req.method).toBe('DELETE')
+            expect(req.url).toBe('/agents/engine-alice')
+            engineDeletes++
+            expect(await readFile(join(workspace('engine-alice'), 'docs', 'final.md'), 'utf8')).toBe('Complete before Delete')
+            await rm(join(workspace('engine-alice'), '..'), { recursive: true, force: true })
+            res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ deleted: 'engine-alice' }))
+        } catch { res.writeHead(500).end() }
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Missing fixture port')
+    const runtime = JSON.parse(await readFile(join(root, 'runtime.json'), 'utf8'))
+    runtime.engine.origin = `http://127.0.0.1:${address.port}`
+    await writeFile(join(root, 'runtime.json'), JSON.stringify(runtime))
+    const importing = importFile(alice, 'docs', 'final.md', 'Complete before Delete')
+    let deleting: Promise<Response> | undefined
+    try {
+        await writing
+        deleting = removeCoworker(new Request(`http://127.0.0.1:3190/api/desktop/agents/${alice}`, {
+            method: 'DELETE', headers: { host: '127.0.0.1:3190', origin: 'http://127.0.0.1:3190', cookie: `rerun-desktop-session=${token}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ confirmationName: 'Alice' }),
+        }), { params: Promise.resolve({ agentId: alice }) })
+        await new Promise(r => setTimeout(r, 30))
+        expect(engineDeletes).toBe(0)
+        release()
+        expect((await importing).status).toBe(201)
+        expect((await deleting).status).toBe(200)
+        expect(engineDeletes).toBe(1)
+        expect(await exists(join(workspace('engine-alice'), '..'))).toBe(false)
+        expect((await importFile(alice, '', 'late.md', 'Must not recreate')).status).toBe(404)
+        expect(await exists(join(workspace('engine-alice'), '..'))).toBe(false)
+        expect(await readFile(join(workspace('engine-bob'), 'docs', 'notes.md'), 'utf8')).toBe('# Bob notes')
+    } finally {
+        release()
+        await Promise.allSettled([importing, ...(deleting ? [deleting] : [])])
+        server.closeAllConnections()
+        await new Promise<void>(resolve => server.close(() => resolve()))
+    }
 })
 
 test('two complete imports racing for one name: exactly one wins and is never overwritten', async () => {
