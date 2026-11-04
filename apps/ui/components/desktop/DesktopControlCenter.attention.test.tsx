@@ -142,7 +142,7 @@ test('omitting the optional activity prop preserves isolated Control Center comp
     expect(section('needs-you')).toBeUndefined()
 })
 
-test.each([{}, { ada: 'unknown', bob: 'unknown' }] as const)('initial activity has a loading section and no invented waiting rows', async statuses => {
+test.each([{}, { ada: 'unknown', bob: 'unknown' }] as BoardActivitySnapshot['statuses'][])('initial activity has a loading section and no invented waiting rows', async statuses => {
     const snapshot: BoardActivitySnapshot = { statuses, attention: { items: [], unavailableAgentIds: [], checkedAt: '' } }
     await render(mount(), { activity: snapshot })
     expect(section('needs-you')?.loading).toBe(true)
