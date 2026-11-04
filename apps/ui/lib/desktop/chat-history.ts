@@ -36,6 +36,10 @@ export function isAutomatedChat(conversation: Pick<DesktopChatHistoryConversatio
     return conversation.source === 'schedule' || conversation.source === 'trigger'
 }
 
+export function isOrdinaryChat(conversation: Pick<DesktopChatHistoryConversation, 'source'>): boolean {
+    return conversation.source !== null && !isAutomatedChat(conversation)
+}
+
 function updatedTime(conversation: DesktopChatHistoryConversation): number {
     const parsed = Date.parse(conversation.updatedAt)
     return Number.isFinite(parsed) ? parsed : 0
@@ -52,7 +56,7 @@ export function filterDesktopChats(conversations: readonly DesktopChatHistoryCon
         if (seen.has(conversation.id)) return false
         seen.add(conversation.id)
         if (filter === 'automations' && !isAutomatedChat(conversation)) return false
-        if (filter === 'chats' && isAutomatedChat(conversation)) return false
+        if (filter === 'chats' && !isOrdinaryChat(conversation)) return false
         if (filter === 'needs' && !conversation.needsYou) return false
         return !needle || conversation.title.toLocaleLowerCase().includes(needle)
     }))

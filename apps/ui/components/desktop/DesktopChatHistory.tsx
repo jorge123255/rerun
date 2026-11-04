@@ -61,6 +61,15 @@ function NeedsFilterNote({ onRetry }: { onRetry: () => void }) {
     )
 }
 
+function ClassificationFilterNote({ onRetry }: { onRetry: () => void }) {
+    return (
+        <div role="status" className="flex flex-col items-center gap-2 px-3 py-5 text-center text-xs text-muted-foreground">
+            <span>Conversation types could not be loaded.</span>
+            <Button type="button" size="sm" variant="outline" onClick={onRetry}>Retry</Button>
+        </div>
+    )
+}
+
 function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, onRetry }: {
     history: DesktopChatHistory
     filter: DesktopChatFilter
@@ -73,6 +82,7 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, o
     const shown = filterDesktopChats(history.conversations, filter, query)
     const groups = groupDesktopChats(shown)
     const questionsUnavailable = history.questions === 'unavailable'
+    const classificationUnavailable = (filter === 'chats' || filter === 'automations') && history.enrichment === 'unavailable'
     const empty = query.trim()
         ? 'No matching conversations.'
         : filter === 'needs' ? 'Nothing waits on you.'
@@ -81,11 +91,11 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, o
                     : 'No conversation yet.'
     return (
         <div className="max-h-[min(420px,50dvh)] min-h-0 overflow-y-auto">
-            {history.enrichment === 'unavailable' && (
+            {history.enrichment === 'unavailable' && !classificationUnavailable && (
                 <p className="px-2.5 py-1 text-[11px] text-muted-foreground">Recent activity could not be read. Showing saved dates.</p>
             )}
             {filter === 'needs' && questionsUnavailable && <NeedsFilterNote onRetry={onRetry} />}
-            {groups.map(({ day, entries }) => (
+            {classificationUnavailable ? <ClassificationFilterNote onRetry={onRetry} /> : groups.map(({ day, entries }) => (
                 <div key={day} className="pb-1">
                     <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{day}</p>
                     {entries.map(conversation => (
@@ -94,7 +104,7 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, o
                     ))}
                 </div>
             ))}
-            {shown.length === 0 && !(filter === 'needs' && questionsUnavailable) && (
+            {shown.length === 0 && !classificationUnavailable && !(filter === 'needs' && questionsUnavailable) && (
                 <p className="px-3 py-6 text-center text-xs text-muted-foreground">{empty}</p>
             )}
         </div>
