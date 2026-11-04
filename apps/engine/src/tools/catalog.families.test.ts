@@ -11,21 +11,34 @@ const state = vi.hoisted(() => ({ desktop: true }))
 vi.mock('../config/env.js', async importOriginal => ({ ...(await importOriginal<typeof import('../config/env.js')>()), desktopEnabled: () => state.desktop }))
 
 const { beforeEach, describe, expect, it } = await import('vitest')
-const { TOOL_KEYS } = await import('@rerun/contracts')
+const { TOOL_KEYS, desktopRerunToolCatalog, desktopRerunGrantsOf } = await import('@rerun/contracts')
 const { agentToolCatalog, toolCatalog } = await import('./catalog.js')
 const { agentConfigSchema } = await import('../agents/types.js')
 const { PAID_DATA_ENABLED } = await import('../cloud/index.js')
 
-// The switches of the families this build ships: the open source one has no paid data.
-const BUILD_KEYS = TOOL_KEYS.filter(key => key !== 'paidData' || PAID_DATA_ENABLED)
+// This is the hosted family catalog. The legacy Mac file-read switch maps to the separate
+// desktop workspaceRead grant, and the open source build has no paid-data family.
+const HOSTED_BUILD_KEYS = TOOL_KEYS.filter(key => key !== 'desktopWorkspaceRead' && (key !== 'paidData' || PAID_DATA_ENABLED))
 
 beforeEach(() => {
     state.desktop = true
 })
 
 describe('toolCatalog', () => {
-    it('has one family per capability switch plus self', () => {
-        expect(toolCatalog().map(f => f.family).sort()).toEqual([...BUILD_KEYS, 'self'].sort())
+    it('has one family per hosted capability switch plus self', () => {
+        expect(toolCatalog().map(f => f.family).sort()).toEqual([...HOSTED_BUILD_KEYS, 'self'].sort())
+    })
+
+    it('maps the legacy Mac file-read permission to the separate desktop catalog grant', () => {
+        expect(toolCatalog().map(f => f.family)).not.toContain('desktopWorkspaceRead')
+        expect(desktopRerunToolCatalog.find(entry => entry.id === 'workspaceRead')).toMatchObject({
+            available: true,
+            tools: ['fs_read'],
+        })
+        const grants = (tools: Record<string, unknown>) => desktopRerunGrantsOf(agentConfigSchema.parse({ name: 'x', tools }).tools)
+        expect(grants({}).workspaceRead).toBe(false)
+        expect(grants({ desktopWorkspaceRead: true }).workspaceRead).toBe(true)
+        expect(grants({ desktopWorkspaceRead: true, desktopToolGrants: { workspaceRead: false } }).workspaceRead).toBe(false)
     })
 
     // The quick replies are a block of the message the engine reads, not a tool: the family is
@@ -81,7 +94,7 @@ describe('agentToolCatalog', () => {
     })
 
     it('follows each tool switch one by one', () => {
-        for (const key of BUILD_KEYS) {
+        for (const key of HOSTED_BUILD_KEYS) {
             const catalog = agentToolCatalog(agentConfigSchema.parse({ name: 'x', tools: { [key]: false } }))
             expect(catalog.filter(f => !f.enabled).map(f => f.family), key).toEqual([key])
         }
