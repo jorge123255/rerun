@@ -80,7 +80,7 @@ catalog and now shows **Show result files** for the selected coworker.
 
 ## Verification status
 
-Authored, not executed by this lane: engine grant/tool tests, parser tests, read-route tests,
+Authored, not executed by this lane: engine grant/tool tests, parser tests, read-helper tests,
 `publicDesktopHistory` projection tests and `DesktopAssistantReply` card/fallback tests. I did not
 run Vitest, `tsc`, lint, a build, an install, a live model call or native Mac QA, and I did not touch
 the real workspace, credentials, installed app, packaging or another worktree.
