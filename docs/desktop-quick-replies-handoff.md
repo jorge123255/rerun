@@ -30,4 +30,4 @@ Edit coworker exposes **Suggested replies**. Its `suggestedReplies` setting read
 
 ## Validation status
 
-Root ran all 38 focused suggested-reply cases successfully, covering validation, presenter behavior, guarded sends, receipt matching, retry identity, draft preservation, and the optimistic-row retry regression. Native Mac acceptance, including real Codex output and restart persistence, is still pending.
+Root ran all 38 focused suggested-reply cases successfully, covering validation, presenter behavior, guarded sends, receipt matching, retry identity, draft preservation, and the optimistic-row retry regression. Native Mac acceptance passed on installed build `313d204`: Codex read the renamed file as 42, saved suggestion buttons survived restart, Add eight produced one turn and a reply of 50, and the reply survived a second restart. The current text/file composer draft stayed intact and was not sent with the suggestion. Ordinary unsent drafts themselves remain memory-only across app restarts; that existing limitation is tracked under C9.
