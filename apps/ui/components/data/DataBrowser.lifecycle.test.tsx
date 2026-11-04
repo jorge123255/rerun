@@ -6,6 +6,21 @@ import type { TableView } from '@rerun/contracts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DataSource } from '@/lib/data/source'
 import type { DbRow } from './DataBrowserTable'
+import type { DragEndEvent } from '@dnd-kit/core'
+
+const boardDrag = vi.hoisted(() => ({ end: null as null | ((event: DragEndEvent) => void) }))
+vi.mock('@dnd-kit/core', () => ({
+    DndContext: ({ children, onDragEnd }: { children: ReactNode; onDragEnd: (event: DragEndEvent) => void }) => { boardDrag.end = onDragEnd; return <>{children}</> },
+    DragOverlay: ({ children }: { children: ReactNode }) => <>{children}</>,
+    KeyboardSensor: class {}, PointerSensor: class {}, useSensor: () => ({}), useSensors: () => [],
+    useDroppable: () => ({ setNodeRef: () => {}, isOver: false }),
+    useDraggable: () => ({ setNodeRef: () => {}, listeners: {}, attributes: {}, isDragging: false }),
+}))
+vi.mock('@rerun/ui/chat', async importOriginal => ({
+    ...await importOriginal<typeof import('@rerun/ui/chat')>(),
+    BoardColumnHeader: ({ value, total }: { value: string; total: number }) => <h2>{value}: {total}</h2>,
+    BoardItem: ({ row }: { row: DbRow }) => <span>{String(row.body)}</span>,
+}))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const mounts = new Map<Root, HTMLDivElement>()
@@ -81,11 +96,12 @@ vi.mock('@/components/data/DataViewBar', () => ({ DataViewBar: ({ views, activeI
     </div>)}
     {actions}
 </div> }))
-type SettingsProps = { open: boolean; source: DataSource; table: string; view?: TableView; onSaved: (view: TableView) => void; onOpenChange: (open: boolean) => void }
-vi.mock('@/components/dialogs/ViewSettingsDialog', () => ({ ViewSettingsDialog: function Settings({ open, source, table, view, onSaved, onOpenChange }: SettingsProps) {
+type SettingsProps = { open: boolean; source: DataSource; table: string; view?: TableView; sample: { rows: DbRow[] }; onSaved: (view: TableView) => void; onOpenChange: (open: boolean) => void }
+vi.mock('@/components/dialogs/ViewSettingsDialog', () => ({ ViewSettingsDialog: function Settings({ open, source, table, view, sample, onSaved, onOpenChange }: SettingsProps) {
     const [error, setError] = useState('')
     return open ? <div role="dialog" aria-label="View settings">
     <span>Editing {view?.name}</span>
+    {view?.layout === 'board' && <output aria-label="Preview statuses">{JSON.stringify(sample.rows.map(row => row.status))}</output>}
     {error && <p role="alert">{error}</p>}
     <button onClick={() => void source.saveView(table, { name: 'Saved settings', layout: 'table' }, view?.id).then(result => {
         if (result.success) { onSaved(result.view); onOpenChange(false) }
@@ -125,12 +141,50 @@ const switchTable = async (name: 'Alpha' | 'Beta', body: string) => {
 }
 
 beforeEach(() => {
+    boardDrag.end = null
     const stored = new Map<string, string>()
     Object.defineProperty(window, 'localStorage', { configurable: true, value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value) } })
 })
 afterEach(async () => { await cleanup(); vi.clearAllMocks() })
 
 describe('DataBrowser mutation ownership', () => {
+    it('refreshes the parent settings preview after a real board move without another board reload loop', async () => {
+        const f = fixture()
+        f.rows.alpha = { ...f.rows.alpha, status: 'Todo' }
+        f.views.alpha = [{ ...view('alpha'), layout: 'board', groupBy: 'status', fields: { title: 'body' } }]
+        vi.mocked(f.source.readGroups).mockImplementation(async () => ({ success: true, groups: ['Todo', 'Done'].map(value => ({ value, total: f.rows.alpha!.status === value ? 1 : 0 })) }))
+        vi.mocked(f.source.readRows).mockImplementation(async (table, params) => ({ columns: ['body', 'status'], rows: !params.where?.length || params.where.at(-1)?.equals === f.rows[table]!.status ? [{ ...f.rows[table] }] : [], total: 1 }))
+        await render(<DataBrowser source={f.source} />)
+        await click(screen.getByRole('button', { name: 'Edit alpha view' }))
+        expect(screen.getByLabelText('Preview statuses').textContent).toBe('["Todo"]')
+        await click(screen.getByRole('button', { name: 'Cancel settings' }))
+        const groupsBefore = vi.mocked(f.source.readGroups).mock.calls.length
+        const rowsBefore = vi.mocked(f.source.readRows).mock.calls.filter(([, params]) => !params.where?.length).length
+        expect(boardDrag.end).not.toBeNull()
+        await act(async () => { boardDrag.end!({ active: { data: { current: { row: { ...f.rows.alpha }, from: '"Todo"' } } }, over: { id: '"Done"' } } as unknown as DragEndEvent) })
+        expect(f.rows.alpha!.status).toBe('Done')
+        await click(screen.getByRole('button', { name: 'Edit alpha view' }))
+        expect(screen.getByLabelText('Preview statuses').textContent).toBe('["Done"]')
+        expect(vi.mocked(f.source.readGroups).mock.calls.length).toBe(groupsBefore + 1)
+        expect(vi.mocked(f.source.readRows).mock.calls.filter(([, params]) => !params.where?.length).length).toBe(rowsBefore + 1)
+    })
+
+    it('does not refresh another database when an old board move finishes after that board unmounts', async () => {
+        const a = fixture('First'), b = fixture('Second'), pending = deferred<Awaited<ReturnType<DataSource['updateRow']>>>()
+        a.rows.alpha = { ...a.rows.alpha, status: 'Todo' }
+        a.views.alpha = [{ ...view('alpha'), layout: 'board', groupBy: 'status', fields: { title: 'body' } }]
+        vi.mocked(a.source.readGroups).mockResolvedValue({ success: true, groups: [{ value: 'Todo', total: 1 }, { value: 'Done', total: 0 }] })
+        vi.mocked(a.source.updateRow).mockImplementation(() => pending.promise)
+        const mounted = await render(<DataBrowser source={a.source} />)
+        await act(async () => { boardDrag.end!({ active: { data: { current: { row: { ...a.rows.alpha }, from: '"Todo"' } } }, over: { id: '"Done"' } } as unknown as DragEndEvent) })
+        await mounted.rerender(<DataBrowser source={b.source} />)
+        await screen.findByText('Second alpha')
+        const currentReads = vi.mocked(b.source.readRows).mock.calls.length
+        await act(async () => { pending.resolve({ success: true, row: { ...a.rows.alpha, status: 'Done' } }) })
+        expect(vi.mocked(b.source.readRows).mock.calls.length).toBe(currentReads)
+        expect(screen.getByText('Second alpha')).toBeTruthy()
+    })
+
     it('does not apply a delayed alpha row to beta with the same rowid, and reads the successful save on return', async () => {
         const f = fixture(), pending = deferred<Awaited<ReturnType<DataSource['updateRow']>>>()
         vi.mocked(f.source.updateRow).mockImplementation(() => pending.promise)

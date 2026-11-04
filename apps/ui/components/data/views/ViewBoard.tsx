@@ -27,9 +27,11 @@ type ViewBoardProps = {
     refreshKey: number
     context: CellContext
     onOpenRow?: (row: DbRow) => void
+    /** A committed change to this source/table; the caller guards its current owner. */
+    onRowsChanged?: () => void
 }
 
-export function ViewBoard({ source, table, view, query, refreshKey, context, onOpenRow }: ViewBoardProps) {
+export function ViewBoard({ source, table, view, query, refreshKey, context, onOpenRow, onRowsChanged }: ViewBoardProps) {
     const { groupBy, where, sort, tones } = view
     const fields = view.fields ?? {}
     const formats = view.formats ?? {}
@@ -120,6 +122,9 @@ export function ViewBoard({ source, table, view, query, refreshKey, context, onO
         )
         try {
             const result = await source.updateRow(table, id, { [groupBy]: target.value })
+            // Notify only after a durable success, never from a read/reload. The captured
+            // callback can also refresh this table if the person already left board layout.
+            if (result.success) onRowsChanged?.()
             if (isCurrent()) {
                 if (!result.success) toast.error('Could not move this row', { description: result.error })
                 // Read current durable state instead of rolling back an obsolete lanes array.

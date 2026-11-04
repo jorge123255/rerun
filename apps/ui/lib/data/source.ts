@@ -21,6 +21,8 @@ export type DataSource = {
     scope: DataScope['kind']
     /** Distinguishes this database when the last view opened on each table is remembered. */
     storageKey: string
+    /** Hosted sources support table cards by default; limited clients can hide that promise. */
+    supportsTableCards?: boolean
     listTables: () => Promise<EngineDbTable[]>
     readRows: (table: string, params: DataReadParams) => Promise<EngineDbRows | null>
     deleteRows: (table: string, rowids: (number | string)[]) => Promise<{ success: boolean; error?: string; deleted?: number }>

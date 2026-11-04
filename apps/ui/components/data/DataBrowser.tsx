@@ -60,6 +60,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
     const [error, setError] = useState<string | null>(null)
     const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set())
     const [refreshKey, setRefreshKey] = useState(0)
+    const [rowsRefreshKey, setRowsRefreshKey] = useState(0)
     const [tableDialogOpen, setTableDialogOpen] = useState(false)
     const [purgeDialogOpen, setPurgeDialogOpen] = useState(false)
     const [busy, setBusy] = useState(false)
@@ -212,7 +213,13 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         return () => {
             cancelled = true
         }
-    }, [source, selected, activeId, activeView?.where, pageIndex, pageSize, sorting, query, refreshKey])
+    }, [source, selected, activeId, activeView?.where, pageIndex, pageSize, sorting, query, refreshKey, rowsRefreshKey])
+
+    const onBoardRowsChanged = useCallback(() => {
+        // A successful move must refresh the parent's view-settings sample as well as the
+        // board's lanes. Keep this separate from refreshKey to avoid a second board reload.
+        if (sameOwner()) setRowsRefreshKey(key => key + 1)
+    }, [source, selected])
 
     const tableMeta = tables.find(t => t.name === selected)
     const allColumns = useMemo(() => tableMeta?.columns.map(c => c.name) ?? [], [tableMeta])
@@ -519,7 +526,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
             {actionError && <div className="mx-4 mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive @3xl:mx-12">{actionError}</div>}
             <div className={cn('min-h-0 flex-1 overflow-auto', !boardView && '@3xl:px-12')}>
                 {boardView && selected ? (
-                    <ViewBoard source={source} table={selected} view={boardView} query={query} refreshKey={refreshKey} context={cellContext} />
+                    <ViewBoard source={source} table={selected} view={boardView} query={query} refreshKey={refreshKey} context={cellContext} onRowsChanged={onBoardRowsChanged} />
                 ) : (loadingRows && !data) || activeId === null ? (
                     <SkeletonGrid />
                 ) : rows.length === 0 ? (

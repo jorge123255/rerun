@@ -111,9 +111,11 @@ describe('ViewBoard current view ownership', () => {
 
     it('admits only one move until it settles, reloads a failure, then keeps the next successful move', async () => {
         const f = fixture(), pending = deferred<Awaited<ReturnType<DataSource['updateRow']>>>()
+        const onRowsChanged = vi.fn()
         const update = vi.mocked(f.source.updateRow)
         update.mockImplementationOnce(() => pending.promise)
-        await render({ source: f.source })
+        await render({ source: f.source, onRowsChanged })
+        expect(onRowsChanged).not.toHaveBeenCalled()
         await act(async () => { move(row('Original row')); move(row('Original row'), 'Done', 'Todo') })
         expect(update).toHaveBeenCalledTimes(1)
         expect(container.querySelector('[data-drag-disabled="true"]')).not.toBeNull()
@@ -122,11 +124,13 @@ describe('ViewBoard current view ownership', () => {
         expect(container.textContent).toContain('Current server row')
         expect(container.textContent).not.toContain('Original row')
         expect(container.querySelector('[data-drag-disabled="false"]')).not.toBeNull()
+        expect(onRowsChanged).not.toHaveBeenCalled()
         await act(async () => { move(row('Current server row', 9)) })
         expect(update).toHaveBeenCalledTimes(2)
         expect(f.state.rows[0]!.status).toBe('Done')
         expect(container.textContent).toContain('Done: 1')
         expect(container.textContent).toContain('Current server row')
+        expect(onRowsChanged).toHaveBeenCalledTimes(1)
     })
 
     it('coalesces same-lane Show more and blocks moves until that snapshot finishes', async () => {

@@ -75,7 +75,7 @@ export function ViewSettingsDialog({ open, onOpenChange, source, table, columns,
                         <DialogHeader className="mb-4">
                             <DialogTitle>{view ? 'Edit view' : 'New view'}</DialogTitle>
                             <p className="text-sm text-muted-foreground">
-                                A view of <span className="font-mono">{table}</span>. Everyone who opens this table sees it, and the coworker can draw it in chat.
+                                A view of <span className="font-mono">{table}</span>. Everyone who opens this table sees it{source.supportsTableCards === false ? '.' : ', and the coworker can draw it in chat.'}
                             </p>
                         </DialogHeader>
 
