@@ -4,7 +4,7 @@ import { constants } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
-import { link, lstat, mkdir, open, readdir, realpath, rename, unlink, type FileHandle } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { hashText, looksBinary } from '@/lib/files/editable'
 import { DesktopHttpError } from './auth'
@@ -14,7 +14,7 @@ import { findDesktopAgent } from './store'
 import { withRosterWrite } from './roster-writes'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 
-export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
+export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string }
 /** `hash` is set only when the whole file was read as valid UTF-8 .txt/.md, i.e. when it can be edited. */
 export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean; hash?: string; identity?: string }
 
@@ -101,24 +101,30 @@ async function listFiles(runtime: DesktopRuntime, agentId: string, path: string,
     const { root, target, rel } = await containedPath(await coworkerWorkspace(runtime, agentId), path)
     if (!root) return { path: rel, entries: [] }
     if (!target) throw new DesktopHttpError(404, 'Folder not found')
-    await recoverInterruptedCoworkerEdits(target)
+    await recoverInterruptedCoworkerEdits(target, root)
     const handle = await openResolved(target, true)
     const entries: CoworkerFileEntry[] = []
     try {
         const pinned = await pinnedDirectory(handle)
         for (const name of await readdir(pinned)) {
             if (!showHidden && name.startsWith('.')) continue
-            let info = await lstat(join(pinned, name)).catch(() => null)
+            // Identity is the directory entry itself. A symlink keeps the link inode, so Delete
+            // can refuse it instead of removing the file the link points at.
+            const entryIdentity = await fileStat(join(pinned, name))
+            let info = entryIdentity
             if (info?.isSymbolicLink()) {
                 // Coworker links are read from the running Mac's workspace, outside the build.
                 const real = await realpath(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ target, name)).catch(() => null)
                 if (!real || !inside(root, real)) continue
                 const linked = await openResolved(real).catch(() => null)
                 if (!linked) continue
-                try { info = await linked.stat() } finally { await linked.close() }
+                try { info = await linked.stat({ bigint: true }) } finally { await linked.close() }
             }
             if (!info || (!info.isDirectory() && !info.isFile())) continue
-            entries.push({ name, type: info.isDirectory() ? 'dir' : 'file', size: info.size, modifiedAt: info.mtime.toISOString() })
+            entries.push({
+                name, type: info.isDirectory() ? 'dir' : 'file', size: Number(info.size), modifiedAt: info.mtime.toISOString(),
+                ...(entryIdentity && { identity: `${entryIdentity.dev}:${entryIdentity.ino}` }),
+            })
         }
     } finally {
         await handle.close()
@@ -142,7 +148,7 @@ async function readFileInWorkspace(runtime: DesktopRuntime, agentId: string, pat
     const fileName = located.rel.slice(slash + 1)
     // Wait out an in-process publish, then heal a crash before deciding the file is gone.
     return withSaveLock(join(folder.target, fileName), async () => {
-        const recoveries = await recoverInterruptedCoworkerEdits(folder.target!)
+        const recoveries = await recoverInterruptedCoworkerEdits(folder.target!, folder.root!)
         const { target } = await containedPath(workspace, path)
         if (!target) throw new DesktopHttpError(404, 'File not found')
         const interrupted = recoveries.find(item => item.final === fileName)
@@ -218,7 +224,7 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
     }
     const { target, rel } = resolved
     if (!target) throw new DesktopHttpError(404, 'Folder not found')
-    await recoverInterruptedCoworkerEdits(target)
+    await recoverInterruptedCoworkerEdits(target, resolved.root!)
     const path = rel ? `${rel}/${name}` : name
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace or is not a folder.')
     const exists = () => new DesktopHttpError(409, `This folder already has a file named “${name}”. The existing file was kept; rename yours and import it again.`)
@@ -334,7 +340,8 @@ const EDIT_PREFIX = '.rerun-edit-'
 const BACKUP_PREFIX = '.rerun-backup-'
 const PUBLISH_PREFIX = '.rerun-publish-'
 const RENAME_PREFIX = '.rerun-rename-'
-const reservedName = (name: string) => name.startsWith(EDIT_PREFIX) || name.startsWith(BACKUP_PREFIX) || name.startsWith(PUBLISH_PREFIX) || name.startsWith(RENAME_PREFIX) || name.startsWith('.rerun-import-') || name.startsWith('.rerun-retire-')
+const DELETE_PREFIX = '.rerun-delete-'
+const reservedName = (name: string) => name.startsWith(EDIT_PREFIX) || name.startsWith(BACKUP_PREFIX) || name.startsWith(PUBLISH_PREFIX) || name.startsWith(RENAME_PREFIX) || name.startsWith(DELETE_PREFIX) || name.startsWith('.rerun-import-') || name.startsWith('.rerun-retire-')
 /** Crash steps for the publication interruption test. Unset in the app, so these never fire. */
 export const COWORKER_PUBLISH_CRASH_STEPS = ['temp', 'prepared', 'renamed', 'uncommitted', 'linked'] as const
 const activeNames = new Set<string>()
@@ -527,8 +534,10 @@ async function readRecoveryText(path: string, limit: number): Promise<string | n
     } finally { await handle.close() }
 }
 
-/** Call only within the roster queue; recovery itself mutates the folder. */
-async function recoverInterruptedCoworkerEdits(directory: string): Promise<InterruptedCoworkerRecovery[]> {
+/** Call only within the roster queue; recovery itself mutates the folder. `workspaceRoot` is the
+ * coworker's canonical workspace. Delete recovery refuses to resume when this folder no longer
+ * belongs to that workspace, so a relocated parent is not cleaned up inside another coworker. */
+async function recoverInterruptedCoworkerEdits(directory: string, workspaceRoot?: string): Promise<InterruptedCoworkerRecovery[]> {
     const handle = await openResolved(directory, true).catch(error => { if (missing(error)) return null; throw error })
     if (!handle) return []
     try {
@@ -542,12 +551,14 @@ async function recoverInterruptedCoworkerEdits(directory: string): Promise<Inter
             if (!sameFile(opened, listed) || actual !== directory) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
         }
         await assertUnmoved()
-        return await recoverInDirectory(directory, pinned, assertUnmoved)
+        const rootInfo = workspaceRoot ? await fileStat(workspaceRoot) : null
+        const rootIdentity = workspaceRoot && rootInfo?.isDirectory() ? { path: workspaceRoot, dev: rootInfo.dev, ino: rootInfo.ino } : null
+        return await recoverInDirectory(directory, pinned, assertUnmoved, rootIdentity)
     } finally { await handle.close() }
 }
 
 /** A name this process is publishing is left alone. Every mutation is safe to repeat. */
-async function recoverInDirectory(directory: string, pinned: string, assertUnmoved: () => Promise<void>): Promise<InterruptedCoworkerRecovery[]> {
+async function recoverInDirectory(directory: string, pinned: string, assertUnmoved: () => Promise<void>, workspaceRoot: (FileIdentity & { path: string }) | null): Promise<InterruptedCoworkerRecovery[]> {
     const recoveries: InterruptedCoworkerRecovery[] = []
     let names: string[]
     try { names = await readdir(pinned) } catch (error) { if (missing(error)) return recoveries; throw error }
@@ -611,6 +622,8 @@ async function recoverInDirectory(directory: string, pinned: string, assertUnmov
         if (info) await retireName(path, info)
     }
     await assertUnmoved()
+    await recoverDeleteJournals(directory, pinned, assertUnmoved, workspaceRoot)
+    await assertUnmoved()
     return recoveries
 }
 
@@ -659,7 +672,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
     if (!inside(root, folder)) throw outside()
     return withSaveLock(target, async () => {
         let savedIdentity: string | undefined
-        const interrupted = (await recoverInterruptedCoworkerEdits(folder)).find(item => item.final === finalName)
+        const interrupted = (await recoverInterruptedCoworkerEdits(folder, root!)).find(item => item.final === finalName)
         claim(folder, finalName)
         try {
         const interruptedRecovery = interrupted ? {
@@ -924,7 +937,7 @@ async function renameEntry(runtime: DesktopRuntime, agentId: string, path: strin
     const root = parentPath.root
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
     const kept = () => new DesktopHttpError(409, `This folder already has “${nextName}”. It was left unchanged.`)
-    await recoverInterruptedCoworkerEdits(folder)
+    await recoverInterruptedCoworkerEdits(folder, root)
     const dir = await openResolved(folder, true)
     try {
         const pinned = await pinnedDirectory(dir)
@@ -1006,6 +1019,400 @@ async function renameEntry(runtime: DesktopRuntime, agentId: string, path: strin
             throw error
         } finally {
             for (const name of [sourceName, nextName, temp, journalName]) unclaim(folder, name)
+        }
+    } finally { await dir.close() }
+}
+
+const MAX_DELETE_NODES = 10_000
+const MAX_DELETE_DEPTH = 64
+const DIRECTORY_OPEN = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+type DeleteNode = { name: string; dev: string; ino: string; type: 'file' | 'dir'; children?: DeleteNode[] }
+type DeleteJournal = { v: 1; name: string; dev: string; ino: string; parentDev: string; parentIno: string; workspaceDev: string; workspaceIno: string; nodes?: DeleteNode[] }
+
+function idText(value: bigint): string {
+    const text = value.toString()
+    if (!/^\d{1,24}$/.test(text)) throw new DesktopHttpError(409, 'This entry changed during delete. It was left unchanged.')
+    return text
+}
+const parseId = (value: unknown): string | null => typeof value === 'string' && /^\d{1,24}$/.test(value) ? value : null
+const asIdentity = (dev: string, ino: string): FileIdentity => ({ dev: BigInt(dev), ino: BigInt(ino) })
+
+function parseDeleteNode(value: unknown, depth: number): DeleteNode | null {
+    if (depth > MAX_DELETE_DEPTH || !value || typeof value !== 'object') return null
+    const node = value as Partial<DeleteNode>
+    const dev = parseId(node.dev)
+    const ino = parseId(node.ino)
+    if (!simpleName(node.name) || reservedName(node.name) || !dev || !ino) return null
+    if (node.type === 'file') return node.children === undefined ? { name: node.name, dev, ino, type: 'file' } : null
+    if (node.type !== 'dir' || !Array.isArray(node.children)) return null
+    const children: DeleteNode[] = []
+    for (const child of node.children) {
+        const parsed = parseDeleteNode(child, depth + 1)
+        if (!parsed) return null
+        children.push(parsed)
+    }
+    return { name: node.name, dev, ino, type: 'dir', children }
+}
+
+function parseDeleteJournal(raw: string): DeleteJournal | null {
+    try {
+        const value = JSON.parse(raw) as Partial<DeleteJournal>
+        if (value.v !== 1 || !simpleName(value.name) || reservedName(value.name)) return null
+        const dev = parseId(value.dev)
+        const ino = parseId(value.ino)
+        const parentDev = parseId(value.parentDev)
+        const parentIno = parseId(value.parentIno)
+        const workspaceDev = parseId(value.workspaceDev)
+        const workspaceIno = parseId(value.workspaceIno)
+        if (!dev || !ino || !parentDev || !parentIno || !workspaceDev || !workspaceIno) return null
+        if (value.nodes === undefined) return { v: 1, name: value.name, dev, ino, parentDev, parentIno, workspaceDev, workspaceIno }
+        if (!Array.isArray(value.nodes)) return null
+        const nodes: DeleteNode[] = []
+        for (const node of value.nodes) {
+            const parsed = parseDeleteNode(node, 1)
+            if (!parsed) return null
+            nodes.push(parsed)
+        }
+        return { v: 1, name: value.name, dev, ino, parentDev, parentIno, workspaceDev, workspaceIno, nodes }
+    } catch { return null }
+}
+
+function treeHasFile(nodes: DeleteNode[]): boolean {
+    return nodes.some(node => node.type === 'file' || treeHasFile(node.children ?? []))
+}
+
+function journalIdentities(journal: DeleteJournal): FileIdentity[] {
+    const all = [asIdentity(journal.dev, journal.ino)]
+    const walk = (nodes: DeleteNode[]) => {
+        for (const node of nodes) {
+            all.push(asIdentity(node.dev, node.ino))
+            if (node.children) walk(node.children)
+        }
+    }
+    if (journal.nodes) walk(journal.nodes)
+    return all
+}
+
+function assertDeleteHelper() {
+    const helper = process.env.RERUN_DESKTOP_RENAME_HELPER
+    if (!helper || !isAbsolute(helper)) throw new DesktopHttpError(503, 'The safe rename helper is unavailable. Reopen the app and try again.')
+}
+
+/** Unlink a private name only when it is still the regular file that was staged. A symlink or a
+ * different inode at that name is left alone, including a hard link under a normal name. */
+async function sweepStagedFile(pinned: string, identity: FileIdentity): Promise<boolean> {
+    let names: string[]
+    try { names = await readdir(pinned) } catch (error) { if (missing(error)) return false; throw error }
+    let removed = false
+    for (const name of names) {
+        if (!name.startsWith(DELETE_PREFIX) || name.endsWith('.json') || !simpleName(name)) continue
+        const path = join(pinned, name)
+        const info = await fileStat(path)
+        if (!info || !sameFile(info, identity) || info.isSymbolicLink() || !info.isFile()) continue
+        await unlink(path).catch(error => { if (!missing(error)) throw error })
+        const left = await fileStat(path)
+        if (left && sameFile(left, identity) && left.isFile()) return false
+        removed = true
+    }
+    return removed
+}
+
+async function stagedFileRemains(pinned: string, identities: FileIdentity[], depth = 0): Promise<boolean> {
+    if (depth > MAX_DELETE_DEPTH) return true
+    let names: string[]
+    try { names = await readdir(pinned) } catch (error) { if (missing(error)) return false; throw error }
+    for (const name of names) {
+        if (!simpleName(name)) continue
+        const info = await fileStat(join(pinned, name))
+        if (!info || info.isSymbolicLink()) continue
+        if (name.startsWith(DELETE_PREFIX) && !name.endsWith('.json') && info.isFile() && identities.some(identity => sameFile(info, identity))) return true
+        if (info.isDirectory() && !reservedName(name) && await stagedFileRemains(join(pinned, name), identities, depth + 1)) return true
+    }
+    return false
+}
+
+async function stageAndUnlinkFile(canonicalDir: string, parent: FileIdentity, pinned: string, name: string, identity: FileIdentity, assertUnmoved: () => Promise<void>): Promise<'removed' | 'missing' | 'kept'> {
+    await assertUnmoved()
+    const swept = await sweepStagedFile(pinned, identity)
+    const info = await fileStat(join(pinned, name))
+    if (!info) return swept || await sweepStagedFile(pinned, identity) ? 'removed' : 'missing'
+    if (!sameFile(info, identity) || info.isSymbolicLink() || !info.isFile()) return 'kept'
+    const temp = `${DELETE_PREFIX}${randomBytes(12).toString('hex')}`
+    claim(canonicalDir, temp)
+    try {
+        await assertUnmoved()
+        try { await renameWithoutReplace(canonicalDir, parent, name, identity, temp) }
+        catch (error) {
+            const code = (error as NodeJS.ErrnoException).code
+            if (code === 'ENOENT') return 'missing'
+            if (code === 'ESTALE' || code === 'EEXIST' || code === 'EINVAL') return 'kept'
+            throw error
+        }
+        // Test seam only. Unset in the app, so a crash here leaves the journal and the private name.
+        if (process.env.RERUN_FILE_DELETE_CRASH === 'staged') throw new DesktopHttpError(500, 'Delete stopped after the entry was set aside.')
+        await assertUnmoved()
+        const staged = await fileStat(join(pinned, temp))
+        if (!staged || !sameFile(staged, identity) || staged.isSymbolicLink() || !staged.isFile()) return 'kept'
+        await unlink(join(pinned, temp)).catch(error => { if (!missing(error)) throw error })
+        const left = await fileStat(join(pinned, temp))
+        return left && sameFile(left, identity) ? 'kept' : 'removed'
+    } finally { unclaim(canonicalDir, temp) }
+}
+
+async function removeEmptyDirectory(canonicalDir: string, pinned: string, name: string, identity: FileIdentity, root: string, assertUnmoved: () => Promise<void>): Promise<'removed' | 'missing' | 'kept'> {
+    await assertUnmoved()
+    const info = await fileStat(join(pinned, name))
+    if (!info) return 'missing'
+    if (!sameFile(info, identity) || info.isSymbolicLink() || !info.isDirectory()) return 'kept'
+    const canonical = join(canonicalDir, name)
+    const actual = await realpath(canonical).catch(() => null)
+    if (actual !== canonical || !inside(root, actual)) return 'kept'
+    let child: FileHandle
+    try { child = await open(join(pinned, name), DIRECTORY_OPEN) }
+    catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT') return 'missing'
+        if (code === 'ELOOP' || code === 'ENOTDIR') return 'kept'
+        throw error
+    }
+    try {
+        const opened = await child.stat({ bigint: true })
+        if (!sameFile(opened, identity)) return 'kept'
+        if ((await readdir(await pinnedDirectory(child))).length) return 'kept'
+    } finally { await child.close() }
+    try { await rmdir(join(pinned, name)) }
+    catch (error) {
+        if (missing(error)) return 'missing'
+        if ((error as NodeJS.ErrnoException).code === 'ENOTEMPTY' || (error as NodeJS.ErrnoException).code === 'EEXIST') return 'kept'
+        throw error
+    }
+    return 'removed'
+}
+
+async function deleteNodes(canonicalDir: string, parent: FileIdentity, pinned: string, nodes: DeleteNode[], root: string, assertUnmoved: () => Promise<void>): Promise<boolean> {
+    let complete = true
+    for (const node of nodes) {
+        const identity = asIdentity(node.dev, node.ino)
+        if (node.type === 'file') {
+            if (await stageAndUnlinkFile(canonicalDir, parent, pinned, node.name, identity, assertUnmoved) === 'kept') complete = false
+            continue
+        }
+        const info = await fileStat(join(pinned, node.name))
+        if (!info) continue
+        if (!sameFile(info, identity) || info.isSymbolicLink() || !info.isDirectory()) { complete = false; continue }
+        const childCanonical = join(canonicalDir, node.name)
+        const actual = await realpath(childCanonical).catch(() => null)
+        if (actual !== childCanonical || !inside(root, actual)) { complete = false; continue }
+        let child: FileHandle | null = null
+        try {
+            child = await open(join(pinned, node.name), DIRECTORY_OPEN)
+            const opened = await child.stat({ bigint: true })
+            if (!sameFile(opened, identity)) { complete = false; continue }
+            if (!await deleteNodes(childCanonical, { dev: opened.dev, ino: opened.ino }, await pinnedDirectory(child), node.children ?? [], root, assertUnmoved)) complete = false
+        } catch (error) {
+            if (error instanceof DesktopHttpError) throw error
+            const code = (error as NodeJS.ErrnoException).code
+            if (code === 'ELOOP' || code === 'ENOTDIR' || code === 'ENOENT') { complete = false; continue }
+            throw error
+        } finally { await child?.close() }
+        if (await removeEmptyDirectory(canonicalDir, pinned, node.name, identity, root, assertUnmoved) === 'kept') complete = false
+    }
+    return complete
+}
+
+async function inspectTree(pinned: string, canonicalDir: string, depth: number, counter: { n: number }): Promise<DeleteNode[]> {
+    if (depth > MAX_DELETE_DEPTH) throw new DesktopHttpError(409, 'This folder is too deep to delete safely. It was left unchanged.')
+    let names: string[]
+    try { names = await readdir(pinned) } catch (error) { if (missing(error)) throw new DesktopHttpError(404, 'Folder not found'); throw error }
+    const nodes: DeleteNode[] = []
+    for (const name of names) {
+        if (++counter.n > MAX_DELETE_NODES) throw new DesktopHttpError(409, 'This folder is too large to delete safely. It was left unchanged.')
+        if (!simpleName(name) || reservedName(name)) throw new DesktopHttpError(409, 'This folder contains a recovery file. It was left unchanged.')
+        if (claimed(canonicalDir, name)) throw new DesktopHttpError(409, 'This file is being saved. Try the delete again once that finishes.')
+        const info = await fileStat(join(pinned, name))
+        if (!info) continue
+        if (info.isSymbolicLink()) throw new DesktopHttpError(409, 'This folder contains a symlink. It was left unchanged.')
+        if (info.isDirectory()) {
+            let child: FileHandle
+            try { child = await open(join(pinned, name), DIRECTORY_OPEN) }
+            catch (error) {
+                const code = (error as NodeJS.ErrnoException).code
+                if (code === 'ELOOP' || code === 'ENOTDIR') throw new DesktopHttpError(409, 'This folder contains a symlink. It was left unchanged.')
+                throw error
+            }
+            try {
+                const opened = await child.stat({ bigint: true })
+                if (!sameFile(opened, info)) throw new DesktopHttpError(409, 'This folder changed while it was checked. It was left unchanged.')
+                const children = await inspectTree(await pinnedDirectory(child), join(canonicalDir, name), depth + 1, counter)
+                nodes.push({ name, dev: idText(info.dev), ino: idText(info.ino), type: 'dir', children })
+            } finally { await child.close() }
+        } else if (info.isFile()) nodes.push({ name, dev: idText(info.dev), ino: idText(info.ino), type: 'file' })
+        else throw new DesktopHttpError(409, 'This folder contains an entry that is not a file or folder. It was left unchanged.')
+    }
+    return nodes
+}
+
+async function writeDeleteJournal(pinned: string, journalName: string, body: DeleteJournal): Promise<FileIdentity> {
+    const handle = await open(join(pinned, journalName), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    try {
+        const identity = await handle.stat({ bigint: true })
+        await handle.writeFile(JSON.stringify(body))
+        await handle.sync()
+        return { dev: identity.dev, ino: identity.ino }
+    } finally { await handle.close() }
+}
+
+async function removeJournal(pinned: string, journalName: string, journalIdentity: FileIdentity | null) {
+    const path = join(pinned, journalName)
+    if (sameFile(journalIdentity, await fileStat(path))) await removeName(path)
+}
+
+async function recoverDeleteJournals(directory: string, pinned: string, assertUnmoved: () => Promise<void>, workspaceRoot: (FileIdentity & { path: string }) | null) {
+    if (!workspaceRoot) return
+    let names: string[]
+    try { names = await readdir(pinned) } catch (error) { if (missing(error)) return; throw error }
+    for (const name of names) {
+        if (!name.startsWith(DELETE_PREFIX) || !name.endsWith('.json') || claimed(directory, name)) continue
+        const journalIdentity = await fileStat(join(pinned, name))
+        const raw = await readRecoveryText(join(pinned, name), 8 * 1024 * 1024)
+        await assertUnmoved()
+        const journal = raw === null ? null : parseDeleteJournal(raw)
+        if (!journal || !sameFile(await fileStat(directory), asIdentity(journal.parentDev, journal.parentIno))) continue
+        if (!sameFile(workspaceRoot, asIdentity(journal.workspaceDev, journal.workspaceIno))) continue
+        if (claimed(directory, journal.name)) continue
+        const identity = asIdentity(journal.dev, journal.ino)
+        const parent = asIdentity(journal.parentDev, journal.parentIno)
+        try {
+            if (journal.nodes) {
+                const opened = await fileStat(join(pinned, journal.name))
+                if (opened && sameFile(opened, identity) && !opened.isSymbolicLink() && opened.isDirectory()) {
+                    let child: FileHandle | null = null
+                    try {
+                        child = await open(join(pinned, journal.name), DIRECTORY_OPEN)
+                        const stat = await child.stat({ bigint: true })
+                        if (sameFile(stat, identity)) {
+                            await deleteNodes(join(directory, journal.name), { dev: stat.dev, ino: stat.ino }, await pinnedDirectory(child), journal.nodes, workspaceRoot.path, assertUnmoved)
+                        }
+                    } finally { await child?.close() }
+                    await removeEmptyDirectory(directory, pinned, journal.name, identity, workspaceRoot.path, assertUnmoved)
+                }
+            } else await stageAndUnlinkFile(directory, parent, pinned, journal.name, identity, assertUnmoved)
+        } catch (error) {
+            if (error instanceof DesktopHttpError && (error.status === 503 || error.status === 500)) return
+            throw error
+        }
+        await assertUnmoved()
+        const selected = await fileStat(join(pinned, journal.name))
+        if ((!selected || !sameFile(selected, identity)) && !await stagedFileRemains(pinned, journalIdentities(journal))) {
+            await removeJournal(pinned, name, journalIdentity)
+        }
+    }
+}
+
+/** Delete one selected file or folder. Files and nested files are moved aside with the exclusive
+ * rename helper, then that private name is unlinked only if it is still the same regular file.
+ * Directories are removed with rmdir after their checked children are gone. Nothing calls
+ * recursive rm on a workspace path. */
+export async function deleteCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, identity?: string): Promise<{ path: string }> {
+    return withCoworkerFiles(runtime, agentId, () => deleteEntry(runtime, agentId, path, identity))
+}
+
+async function deleteEntry(runtime: DesktopRuntime, agentId: string, path: string, identity?: string): Promise<{ path: string }> {
+    if (identity !== undefined && !/^\d{1,24}:\d{1,24}$/.test(identity)) throw new DesktopHttpError(400, 'Send the file or folder to delete.')
+    const workspace = await coworkerWorkspace(runtime, agentId)
+    const located = await containedPath(workspace, path)
+    if (!located.rel) throw new DesktopHttpError(400, 'The root folder cannot be deleted.')
+    const slash = located.rel.lastIndexOf('/')
+    const parentRel = slash === -1 ? '' : located.rel.slice(0, slash)
+    const sourceName = located.rel.slice(slash + 1)
+    if (!simpleName(sourceName) || reservedName(sourceName)) throw new DesktopHttpError(400, 'That name can’t be deleted.')
+    const parentPath = await containedPath(workspace, parentRel)
+    if (!parentPath.root || !parentPath.target) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
+    const folder = parentPath.target
+    const root = parentPath.root
+    const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+    const replaced = () => new DesktopHttpError(409, `“${sourceName}” was renamed or replaced. It was left unchanged.`)
+    const workspaceInfo = await fileStat(root)
+    if (!workspaceInfo?.isDirectory()) throw outside()
+    await recoverInterruptedCoworkerEdits(folder, root)
+    const dir = await openResolved(folder, true)
+    try {
+        const pinned = await pinnedDirectory(dir)
+        const parent = await dir.stat({ bigint: true })
+        const assertUnmoved = async () => {
+            const [listed, actual] = await Promise.all([fileStat(folder), realpath(folder).catch(() => null)])
+            if (!sameFile(parent, listed) || actual !== folder || !inside(root, actual)) throw outside()
+        }
+        await assertUnmoved()
+        const source = await fileStat(join(pinned, sourceName))
+        if (!source) throw new DesktopHttpError(404, `“${sourceName}” was not found.`)
+        if (source.isSymbolicLink() || (!source.isFile() && !source.isDirectory())) throw new DesktopHttpError(400, 'Choose a file or folder, not a symlink.')
+        if (identity && `${source.dev}:${source.ino}` !== identity) throw replaced()
+        if (claimed(folder, sourceName)) throw new DesktopHttpError(409, 'This file is being saved. Try the delete again once that finishes.')
+        let nodes: DeleteNode[] | undefined
+        if (source.isDirectory()) {
+            const child = await open(join(pinned, sourceName), DIRECTORY_OPEN).catch(error => {
+                const code = (error as NodeJS.ErrnoException).code
+                if (code === 'ELOOP' || code === 'ENOTDIR') throw new DesktopHttpError(400, 'Choose a file or folder, not a symlink.')
+                throw error
+            })
+            try {
+                const opened = await child.stat({ bigint: true })
+                if (!sameFile(opened, source)) throw replaced()
+                nodes = await inspectTree(await pinnedDirectory(child), join(folder, sourceName), 1, { n: 0 })
+            } finally { await child.close() }
+            if (treeHasFile(nodes)) assertDeleteHelper()
+        } else assertDeleteHelper()
+        const journalName = `${DELETE_PREFIX}${randomBytes(12).toString('hex')}.json`
+        const journal: DeleteJournal = {
+            v: 1, name: sourceName, dev: idText(source.dev), ino: idText(source.ino),
+            parentDev: idText(parent.dev), parentIno: idText(parent.ino),
+            workspaceDev: idText(workspaceInfo.dev), workspaceIno: idText(workspaceInfo.ino),
+            ...(nodes && { nodes }),
+        }
+        const identities = () => journalIdentities(journal)
+        claim(folder, sourceName)
+        claim(folder, journalName)
+        let journalIdentity: FileIdentity | null = null
+        try {
+            await assertUnmoved()
+            journalIdentity = await writeDeleteJournal(pinned, journalName, journal)
+            if (nodes) {
+                const child = await open(join(pinned, sourceName), DIRECTORY_OPEN).catch(error => {
+                    const code = (error as NodeJS.ErrnoException).code
+                    if (code === 'ELOOP' || code === 'ENOTDIR' || code === 'ENOENT') throw replaced()
+                    throw error
+                })
+                try {
+                    const opened = await child.stat({ bigint: true })
+                    if (!sameFile(opened, source)) throw replaced()
+                    await deleteNodes(join(folder, sourceName), { dev: opened.dev, ino: opened.ino }, await pinnedDirectory(child), nodes, root, assertUnmoved)
+                } finally { await child.close() }
+                await removeEmptyDirectory(folder, pinned, sourceName, source, root, assertUnmoved)
+            } else await stageAndUnlinkFile(folder, parent, pinned, sourceName, source, assertUnmoved)
+            await assertUnmoved()
+            const after = await fileStat(join(pinned, sourceName))
+            const stuck = await stagedFileRemains(pinned, identities())
+            if (after && !sameFile(after, source)) {
+                if (!stuck) await removeJournal(pinned, journalName, journalIdentity)
+                throw new DesktopHttpError(409, `“${sourceName}” was replaced during delete. The newer entry was left in place.`)
+            }
+            if (after && sameFile(after, source)) {
+                if (!stuck) await removeJournal(pinned, journalName, journalIdentity)
+                throw new DesktopHttpError(409, nodes
+                    ? 'This folder changed during delete. Matching entries were removed. Newer files were left in place.'
+                    : `“${sourceName}” changed during delete. It was left unchanged.`)
+            }
+            if (!stuck) await removeJournal(pinned, journalName, journalIdentity)
+            return { path: located.rel }
+        } catch (error) {
+            if (error instanceof DesktopHttpError && error.status === 503 && journalIdentity && !await stagedFileRemains(pinned, identities())) {
+                await removeJournal(pinned, journalName, journalIdentity)
+            }
+            throw error
+        } finally {
+            unclaim(folder, sourceName)
+            unclaim(folder, journalName)
         }
     } finally { await dir.close() }
 }

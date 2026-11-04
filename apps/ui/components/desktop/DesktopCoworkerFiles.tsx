@@ -5,15 +5,15 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { FileTextEditor } from '@/components/files/FileTextEditor'
 import { useFileNavigation } from '@/components/files/useFileNavigation'
 import { Button } from '@/components/ui/button'
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuTrigger } from '@/components/ui/context-menu'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, XIcon } from '@/lib/icons'
+import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, Trash2Icon, XIcon } from '@/lib/icons'
 import { applyEol, splitEol } from '@/lib/files/editable'
 import { Badge } from '@rerun/ui/primitives'
 import type { DesktopAgentView } from './DesktopApp'
 
-type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
+type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string }
 type Preview = { path: string; content: string; truncated: boolean; hash?: string; identity?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
 
 /** FileList’s name field: the stem is selected, Enter saves, and Escape cancels. */
@@ -61,12 +61,16 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const renameAfterMenu = useRef<string | null>(null)
     const [selected, setSelected] = useState<string | null>(null)
     const [renamePending, setRenamePending] = useState(false)
+    const [deleting, setDeleting] = useState<{ name: string; type: 'file' | 'dir'; identity?: string } | null>(null)
+    const [deletePending, setDeletePending] = useState(false)
     const renamingNow = useRef(false)
+    const deletingNow = useRef(false)
+    const pending = renamePending || deletePending
     useEffect(() => {
-        if (!renamePending) return
+        if (!pending) return
         registerCloseGuard(() => {})
         return () => registerCloseGuard(null)
-    }, [renamePending, registerCloseGuard])
+    }, [pending, registerCloseGuard])
 
     const list = useCallback(async (path: string, showHidden: boolean) => {
         const response = await fetch(`${base}?path=${encodeURIComponent(path)}${showHidden ? '&hidden=1' : ''}`, { cache: 'no-store' })
@@ -152,6 +156,36 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             setRenamePending(false)
         }
     }
+    // Clear only the deleted path. Do not select a sibling, and do not retarget a chat attachment.
+    const commitDelete = async (target: { name: string; type: 'file' | 'dir'; identity?: string }) => {
+        if (deletingNow.current) return
+        deletingNow.current = true
+        setDeletePending(true)
+        const path = childPath(target.name)
+        setNotice(null)
+        let removed = false
+        try {
+            const response = await fetch(`${base}/delete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, ...(target.identity && { identity: target.identity }) }) })
+            const body = await response.json().catch(() => null) as { path?: string; error?: string } | null
+            if (!response.ok || body?.path !== path) {
+                setNotice({ ok: false, folder: currentPath, text: body?.error ?? `Could not delete “${target.name}”.` })
+                return
+            }
+            removed = true
+            const covered = (value: string | null) => !!value && (value === path || value.startsWith(`${path}/`))
+            setSelected(previous => covered(previous) ? null : previous)
+            setPreview(previous => previous && covered(previous.path) ? null : previous)
+            setEditingPath(previous => covered(previous) ? null : previous)
+            setRenaming(previous => previous === target.name ? null : previous)
+        } catch {
+            setNotice({ ok: false, folder: currentPath, text: `Could not delete “${target.name}”.` })
+        } finally {
+            deletingNow.current = false
+            setDeletePending(false)
+            setDeleting(null)
+        }
+        if (removed) reload()
+    }
 
     const breadcrumbs = currentPath.split('/').filter(Boolean)
     const menuEntry = menuName ? entries.find(entry => entry.name === menuName) : undefined
@@ -192,32 +226,33 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
 
     return <div className="flex min-h-0 flex-1 flex-col">
         <nav aria-label="Folder" className="flex items-center gap-1 overflow-x-auto border-b pb-2 text-xs">
-            <button type="button" aria-label="Workspace home" disabled={renamePending} onClick={goHome} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><HomeIcon className="size-3.5" /></button>
+            <button type="button" aria-label="Workspace home" disabled={pending} onClick={goHome} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><HomeIcon className="size-3.5" /></button>
             {breadcrumbs.map((crumb, i) => <span key={i} className="flex shrink-0 items-center gap-1">
                 <ChevronRightIcon className="size-3 text-muted-foreground" />
-                <button type="button" disabled={renamePending} onClick={() => navigate(breadcrumbs.slice(0, i + 1).join('/'))} className="text-muted-foreground hover:text-foreground">{crumb}</button>
+                <button type="button" disabled={pending} onClick={() => navigate(breadcrumbs.slice(0, i + 1).join('/'))} className="text-muted-foreground hover:text-foreground">{crumb}</button>
             </span>)}
             <div className="flex-1" />
-            <button type="button" disabled={renamePending} onClick={() => setShowHidden(v => !v)} title={showHidden ? 'Hide hidden files' : 'Show hidden files'} aria-label={showHidden ? 'Hide hidden files' : 'Show hidden files'}
+            <button type="button" disabled={pending} onClick={() => setShowHidden(v => !v)} title={showHidden ? 'Hide hidden files' : 'Show hidden files'} aria-label={showHidden ? 'Hide hidden files' : 'Show hidden files'}
                 className={`shrink-0 rounded p-1 hover:bg-accent/50 ${showHidden ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                 {showHidden ? <EyeIcon className="size-3.5" /> : <EyeOffIcon className="size-3.5" />}
             </button>
             <input ref={fileInput} type="file" accept=".txt,.md,text/plain,text/markdown" className="hidden" data-testid="import-file-input"
                 onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importFile(file) }} />
-            <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 px-2 text-xs" disabled={renamePending || importing || loading || busy || !!error} onClick={() => fileInput.current?.click()}>
+            <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 px-2 text-xs" disabled={pending || importing || loading || busy || !!error} onClick={() => fileInput.current?.click()}>
                 {importing ? 'Importing…' : 'Import file'}
             </Button>
-            <button type="button" aria-label="Refresh files" disabled={renamePending} onClick={reload} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><RefreshCwIcon className="size-3.5" /></button>
+            <button type="button" aria-label="Refresh files" disabled={pending} onClick={reload} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><RefreshCwIcon className="size-3.5" /></button>
         </nav>
         {renamePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Renaming…</p>}
+        {deletePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Deleting…</p>}
         {notice?.folder === currentPath && <p role={notice.ok ? 'status' : 'alert'} data-testid="import-notice" className={`pt-2 text-xs ${notice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{notice.text}</p>}
-        <div className={`min-h-0 flex-1 overflow-y-auto py-2 ${busy || renamePending ? 'pointer-events-none opacity-60' : ''}`}>
+        <div className={`min-h-0 flex-1 overflow-y-auto py-2 ${busy || pending ? 'pointer-events-none opacity-60' : ''}`}>
             {loading ? <p role="status" className="text-sm text-muted-foreground">Loading files…</p>
                 : error ? <p role="alert" className="text-sm text-destructive">{error}</p>
                 : <ContextMenu onOpenChange={open => { if (!open) setMenuName(null) }}>
                     <ContextMenuTrigger asChild>
                         <ul className="space-y-0.5">
-                            {currentPath && <li><button type="button" onContextMenu={event => { event.preventDefault(); setMenuName(null) }} disabled={renamePending} onClick={goUp} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50"><FolderIcon className="size-4 text-muted-foreground" />..</button></li>}
+                            {currentPath && <li><button type="button" onContextMenu={event => { event.preventDefault(); setMenuName(null) }} disabled={pending} onClick={goUp} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50"><FolderIcon className="size-4 text-muted-foreground" />..</button></li>}
                             {entries.map(entry => {
                                 const path = childPath(entry.name)
                                 const glyph = entry.type === 'dir' ? <FolderIcon className="size-4 shrink-0 text-muted-foreground" /> : <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
@@ -225,7 +260,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                                     {renaming === entry.name ? <div className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm">
                                         {glyph}
                                         <RenameField name={entry.name} onSubmit={next => { setRenaming(null); void renameEntry(entry.name, next) }} onCancel={() => setRenaming(null)} />
-                                    </div> : <button type="button" disabled={renamePending} aria-selected={selectedHere === entry.name} onContextMenu={() => setMenuName(entry.name)}
+                                    </div> : <button type="button" disabled={pending} aria-selected={selectedHere === entry.name} onContextMenu={() => setMenuName(entry.name)}
                                         onClick={() => { setSelected(path); if (entry.type === 'dir') enter(entry.name); else setPreview({ path, loading: true }) }}
                                         className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50 ${selectedHere === entry.name ? 'bg-accent/60' : ''}`}>
                                         {glyph}
@@ -246,13 +281,22 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                         setRenaming(name)
                     }}>
                         <ContextMenuLabel className="max-w-56 truncate">{menuEntry.name}</ContextMenuLabel>
-                        <ContextMenuItem disabled={renamePending} onSelect={() => { renameAfterMenu.current = menuEntry.name }}>
+                        <ContextMenuItem disabled={pending} onSelect={() => { renameAfterMenu.current = menuEntry.name }}>
                             <PencilIcon className="size-4" />
                             Rename
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem variant="destructive" disabled={pending} onSelect={() => setDeleting({ name: menuEntry.name, type: menuEntry.type, ...(menuEntry.identity && { identity: menuEntry.identity }) })}>
+                            <Trash2Icon className="size-4" />
+                            Delete
                         </ContextMenuItem>
                     </ContextMenuContent>}
                 </ContextMenu>}
         </div>
+        {deleting && <ConfirmDialog open pending={deletePending} onOpenChange={open => { if (!open && !deletingNow.current) setDeleting(null) }}
+            title={`Delete ${deleting.name}?`}
+            description={deleting.type === 'dir' ? 'The folder and everything inside it are deleted from the box. This cannot be undone.' : 'The file is deleted from the box. This cannot be undone.'}
+            onConfirm={event => { event.preventDefault(); if (deleting) void commitDelete(deleting) }} />}
     </div>
 }
 
@@ -383,7 +427,7 @@ export function DesktopCoworkerFiles({ agent }: { agent: DesktopAgentView }) {
         }}>
             <DialogHeader>
                 <DialogTitle>Files</DialogTitle>
-                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, or import a .txt or .md file.</DialogDescription>
+                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file.</DialogDescription>
             </DialogHeader>
             <FilesPanel key={agent.id} agent={agent} registerCloseGuard={registerCloseGuard} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
