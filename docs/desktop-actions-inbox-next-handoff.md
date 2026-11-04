@@ -62,8 +62,37 @@ conversation opener:
   (the list is a pure projection of each read). No system notifications, push/email, or fake
   completed-item history.
 - Row summary renders as text; the schema caps it at 280 characters.
-- A partial read (`unavailableAgentIds`) shows a banner and still lists the reachable items; it is
-  not presented as empty.
+- A partial read (`unavailableAgentIds`) shows a banner (with Retry) and still lists the reachable
+  items; a partial read with no confirmed items shows a distinct partial state, never an empty one.
+
+## Follow-up fixes (review round)
+
+- **Polling frequency.** `useVisibleInterval` now receives the stable `read` callback instead of a
+  fresh inline arrow per render, so a re-render no longer restarts the interval and fetches
+  immediately. One in-flight request is retained (guard ref), polling stays three seconds while
+  visible and open, closing aborts the read in flight, and reopening or Retry reads immediately.
+- **Zero vs missing.** Only a complete ready empty read shows "Nothing to handle"/"No pending".
+  Initial loading is labelled "Checking…" (pill aria `Actions: checking`), a partial empty read is
+  a distinct partial state with Retry (pill aria `Actions: partial — …`), and a total failure is
+  "Unavailable"/"Can't reach the actions list" with Retry. Retry re-reads on any status, so it
+  also refreshes a partial read, not only `status: failed`. The empty-state copy no longer implies
+  completed-task history lands here (this slice has none).
+- **Focus.** Focus returns to the pill only for an explicit Close (X) or Escape, matching the
+  original `InboxSurface`. Opening an item (navigation) and an outside pointer-down close the card
+  without stealing focus, so a chat input keeps it.
+
+## Stale-row behavior for root's mounting integration
+
+The widget renders exactly what `/api/desktop/attention` returns on each read — it does no local
+merge or roster filtering. Consequences Root should guard for at mount time:
+
+- A row whose `agentId` is no longer in the current roster still renders and still opens the same
+  `DesktopConversationHit`; the current-roster/exact-session guards belong to Root's
+  `DesktopApp`/`DesktopBoard` integration (the hit already maps to `selectCoworker(agentId, sessionId)`,
+  which is a no-op for deleted agents).
+- Rows are keyed on the endpoint item `id`; when an accepted receipt resolves an item, the next
+  read simply drops it. Nothing is optimistically removed in the inbox.
+- Session identity for navigation is the endpoint's `sessionId` mapped onto the hit's `id` field.
 
 ## Unverified limitations
 
@@ -77,3 +106,4 @@ conversation opener:
   row is otherwise a faithful clone of `InboxRow`.
 - Only `question` and `approval` kinds render; unknown kinds parse-fail the read rather than
   rendering a guessed status.
+

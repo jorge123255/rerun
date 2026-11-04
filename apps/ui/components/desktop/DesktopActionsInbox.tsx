@@ -71,7 +71,7 @@ function ActionRow({ item, onOpen }: { item: DesktopAttentionItem; onOpen: (item
     )
 }
 
-function PillContent({ status, items, failed, open }: { status: DesktopAttentionRead; items: DesktopAttentionItem[]; failed: boolean; open: boolean }) {
+function PillContent({ status, items, unavailable, failed, open }: { status: DesktopAttentionRead; items: DesktopAttentionItem[]; unavailable: boolean; failed: boolean; open: boolean }) {
     const count = items.length
     if (status === 'loading' && count === 0) {
         return (
@@ -86,6 +86,16 @@ function PillContent({ status, items, failed, open }: { status: DesktopAttention
             <>
                 <TriangleAlertIcon className="size-4 text-red-400" />
                 <span className="text-red-400">Unavailable</span>
+            </>
+        )
+    }
+    // A partial read with no confirmed items cannot claim an empty workspace: some coworkers are
+    // missing, so their pending actions may be missing too.
+    if (unavailable && count === 0) {
+        return (
+            <>
+                <TriangleAlertIcon className="size-4 text-red-400" />
+                <span className="text-red-400">Partial</span>
             </>
         )
     }
@@ -131,20 +141,29 @@ export function DesktopActionsInbox({ onOpenConversation, open: openProp, onOpen
     const pillRef = useRef<HTMLButtonElement>(null)
     const cardId = useId()
     const sorted = useMemo(() => [...items].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [items])
+    const partial = unavailableAgentIds.length > 0
 
     const openItem = useCallback(
         (item: DesktopAttentionItem) => {
+            // Navigation: close without claiming the pill's focus, so the chat input keeps it.
             change(false)
             onOpenConversation?.({ id: item.sessionId, agentId: item.agentId, agentName: item.agentName, title: item.title })
         },
         [change, onOpenConversation]
     )
 
-    // Folding back to the pill gives it the focus again.
-    const previousOpen = useRef(open)
+    // Only an explicit Close or Escape folds the card back onto the pill and takes the focus
+    // there, like the original InboxSurface. Navigation and an outside pointer-down close the
+    // card without stealing focus from whatever the user was interacting with.
+    const refocusPill = useRef(false)
+    const closeToPill = useCallback(() => {
+        refocusPill.current = true
+        change(false)
+    }, [change])
     useEffect(() => {
-        if (previousOpen.current && !open) pillRef.current?.focus({ preventScroll: true })
-        previousOpen.current = open
+        if (open) return
+        if (refocusPill.current) pillRef.current?.focus({ preventScroll: true })
+        refocusPill.current = false
     }, [open])
 
     // An outside press or Escape folds the card; the card's own clicks stay its own.
@@ -155,7 +174,8 @@ export function DesktopActionsInbox({ onOpenConversation, open: openProp, onOpen
             change(false)
         }
         const onKeyDown = (event: globalThis.KeyboardEvent) => {
-            if (event.key === 'Escape') change(false)
+            if (event.key !== 'Escape') return
+            closeToPill()
         }
         document.addEventListener('pointerdown', onPointerDown)
         document.addEventListener('keydown', onKeyDown)
@@ -163,10 +183,15 @@ export function DesktopActionsInbox({ onOpenConversation, open: openProp, onOpen
             document.removeEventListener('pointerdown', onPointerDown)
             document.removeEventListener('keydown', onKeyDown)
         }
-    }, [open, change])
+    }, [open, change, closeToPill])
 
     const failed = status === 'failed'
-    const pillLabel = failed && items.length === 0 ? 'Actions: unavailable' : items.length > 0 ? `Actions: ${items.length} pending` : 'Actions: no pending'
+    const pillLabel =
+        failed && items.length === 0 ? 'Actions: unavailable'
+        : status === 'loading' && items.length === 0 ? 'Actions: checking'
+        : partial && items.length === 0 ? 'Actions: partial — some coworkers unavailable'
+        : items.length > 0 ? `Actions: ${items.length} pending`
+        : 'Actions: no pending'
 
     return (
         <div ref={rootRef} className={cn('relative flex flex-col items-start', className)}>
@@ -177,15 +202,18 @@ export function DesktopActionsInbox({ onOpenConversation, open: openProp, onOpen
                             <h2 className="text-base font-semibold text-foreground">Actions</h2>
                             {status === 'ready' && items.length > 0 && <span className="text-xs text-muted-foreground tabular-nums">{items.length} pending</span>}
                         </div>
-                        <Button size="icon-sm" variant="ghost" aria-label="Close actions inbox" onClick={() => change(false)}>
+                        <Button size="icon-sm" variant="ghost" aria-label="Close actions inbox" onClick={closeToPill}>
                             <XIcon className="size-4" />
                         </Button>
                     </div>
 
-                    {unavailableAgentIds.length > 0 && (
-                        <div role="status" className="mx-3 mt-2 flex items-start gap-2 rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-400">
-                            <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-                            <span>Some coworkers couldn't be reached, so this list may be missing their pending actions.</span>
+                    {partial && (
+                        <div role="status" className="mx-3 mt-2 flex items-center gap-2 rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-400">
+                            <TriangleAlertIcon className="size-3.5 shrink-0" />
+                            <span className="min-w-0 flex-1">Some coworkers couldn't be reached, so this list may be missing their pending actions.</span>
+                            <Button size="sm" variant="outline" onClick={retry}>
+                                <RefreshCcwIcon className="size-3.5" /> Retry
+                            </Button>
                         </div>
                     )}
                     {failed && (
@@ -214,8 +242,19 @@ export function DesktopActionsInbox({ onOpenConversation, open: openProp, onOpen
                                     <RefreshCcwIcon className="size-3.5" /> Retry
                                 </Button>
                             </div>
+                        ) : partial && items.length === 0 ? (
+                            <div className="flex flex-col items-center gap-3 px-6 py-8 text-center">
+                                <TriangleAlertIcon className="size-8 text-red-400" />
+                                <div className="space-y-1">
+                                    <p className="text-sm font-medium text-foreground">Some coworkers couldn't be reached</p>
+                                    <p className="max-w-[36ch] text-xs text-muted-foreground">Their pending actions aren't shown. Retry to refresh the list.</p>
+                                </div>
+                                <Button size="sm" variant="outline" onClick={retry}>
+                                    <RefreshCcwIcon className="size-3.5" /> Retry
+                                </Button>
+                            </div>
                         ) : items.length === 0 ? (
-                            <EmptyState icon={InboxIcon} title="Nothing to handle" description="When a coworker needs you or finishes a task, it lands here." className="py-8" />
+                            <EmptyState icon={InboxIcon} title="Nothing to handle" description="Pending questions and approvals will show up here." className="py-8" />
                         ) : (
                             <section aria-label="Needs you">
                                 <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Needs you</h3>
@@ -236,7 +275,7 @@ export function DesktopActionsInbox({ onOpenConversation, open: openProp, onOpen
                 aria-label={pillLabel}
                 onClick={() => change(!open)}
             >
-                <PillContent status={status} items={items} failed={failed} open={open} />
+                <PillContent status={status} items={items} unavailable={partial} failed={failed} open={open} />
             </ChromePill>
         </div>
     )

@@ -43,7 +43,9 @@ export function useDesktopAttention(active = true): DesktopAttentionState & { re
         }
     }, [])
 
-    useVisibleInterval(() => void read(), DESKTOP_ATTENTION_POLL_MS)
+    // `read` is stable, so the interval never restarts on a re-render: one in-flight request at a
+    // time, three-second polling while visible, abort on close, immediate read on reopen.
+    useVisibleInterval(read, DESKTOP_ATTENTION_POLL_MS)
 
     // Closing the panel stops polling and cancels an in-flight read; opening it reads immediately.
     useEffect(() => {
@@ -51,10 +53,11 @@ export function useDesktopAttention(active = true): DesktopAttentionState & { re
         else inFlight.current?.abort()
     }, [active, read])
 
-    // A manual retry re-reads right away when the last read failed.
+    // A manual retry re-reads right away, whatever the last status: it also refreshes a partial
+    // read that returned confirmed items plus unavailable coworkers, not only a total failure.
     useEffect(() => {
-        if (attempt > 0 && state.status === 'failed') void read()
-    }, [attempt, state.status, read])
+        if (attempt > 0) void read()
+    }, [attempt, read])
 
     useEffect(() => {
         mounted.current = true
