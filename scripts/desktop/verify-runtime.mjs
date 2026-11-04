@@ -4,6 +4,7 @@ import { tmpdir, userInfo } from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, output, repoRoot, resourcesDir } from './lib.mjs'
+import { readUiSharpManifest } from './ui-sharp.mjs'
 
 const execFileAsync = promisify(execFile)
 const failures = []
@@ -55,6 +56,24 @@ const libsql = await probe('@libsql/client', engineDir, `const c = m.createClien
 check(libsql.startsWith('ok'), `engine @libsql/client loads under bundled node (${libsql})`)
 const sharp = await probe('sharp', engineDir, `console.log('sharp-' + m.default.versions.sharp ?? 'loaded')`)
 check(sharp.startsWith('ok'), `engine sharp loads under bundled node (${sharp})`)
+
+try {
+    const uiSharp = await readUiSharpManifest(uiDir)
+    for (const alias of uiSharp.aliases) {
+        const conversion = await probe(alias, join(uiDir, '.next'), `
+            const sharp = m.default;
+            if (sharp.versions.sharp !== ${JSON.stringify(uiSharp.version)}) throw new Error('Wrong UI Sharp version');
+            const png = await sharp({ create: { width: 512, height: 256, channels: 3, background: '#f00' } }).png().toBuffer();
+            const webp = await sharp(png).rotate().resize(256, 256, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 82, effort: 6 }).toBuffer();
+            const metadata = await sharp(webp).metadata();
+            if (metadata.format !== 'webp' || metadata.width !== 256 || metadata.height !== 128) throw new Error('UI logo conversion failed');
+            console.log('ui-sharp-' + sharp.versions.sharp + '-webp');
+        `)
+        check(conversion.startsWith('ok'), `UI Sharp logo conversion through ${alias} (${conversion})`)
+    }
+} catch (error) {
+    check(false, `UI Sharp runtime metadata (${error.message})`)
+}
 
 const forbidden = /^\.env($|\.)/i
 const secretExt = /\.(pem|key|p12|pfx|mobileprovision|jks|keystore)$/i
