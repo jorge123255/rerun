@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import type { FileCardEntry } from '@rerun/contracts'
 import { ChevronLeftIcon, ChevronRightIcon } from '@/lib/icons'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { DesktopCardError, isDesktopCardAudio, isDesktopCardImage, readDesktopCardAudio, readDesktopCardFile, readDesktopCardImage } from '@/lib/desktop/file-card'
 
 type PreviewState =
@@ -55,10 +55,16 @@ export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onCl
     const current = preview.key === key ? preview : loading(key)
     const objectUrl = useRef<string | null>(null)
     const audioRef = useRef<HTMLAudioElement | null>(null)
+    const audioFailed = useRef(false)
+    const bindAudio = useCallback((node: HTMLAudioElement | null) => {
+        if (audioRef.current && audioRef.current !== node) stopAudio(audioRef.current)
+        audioRef.current = node
+    }, [])
 
     useEffect(() => {
         const controller = new AbortController()
         let active = true
+        audioFailed.current = false
         setPreview(loading(key))
         if (kind !== 'text' && !file.identity) {
             setPreview({ key, status: 'error', message: kind === 'audio' ? 'This audio can’t be played.' : 'This image can’t be displayed.' })
@@ -102,6 +108,8 @@ export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onCl
     }
 
     function failAudio(src: string) {
+        if (audioFailed.current) return
+        audioFailed.current = true
         stopAudio(audioRef.current)
         URL.revokeObjectURL(src)
         objectUrl.current = null
@@ -136,7 +144,7 @@ export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onCl
                             <p className="p-3 text-xs text-destructive">{current.message}</p>
                         ) : current.status === 'audio' ? (
                             <div className="flex h-full items-center justify-center p-4">
-                                <audio ref={audioRef} controls src={current.src} data-testid="card-audio-preview" className="w-full max-w-md"
+                                <audio ref={bindAudio} controls src={current.src} data-testid="card-audio-preview" className="w-full max-w-md"
                                     onError={() => failAudio(current.src)} />
                             </div>
                         ) : current.status === 'image' ? (
