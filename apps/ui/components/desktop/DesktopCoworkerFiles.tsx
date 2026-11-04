@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { FileTextEditor } from '@/components/files/FileTextEditor'
 import { useFileNavigation } from '@/components/files/useFileNavigation'
+import { useSiblingFiles } from '@/components/files/useSiblingFiles'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -11,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, Trash2Icon, XIcon } from '@/lib/icons'
 import { DesktopFileAudioPreview, isDesktopAudioName } from './DesktopFileAudioPreview'
 import { DesktopFileImagePreview, isDesktopRasterName } from './DesktopFileImagePreview'
+import { FileSiblingControls, useFileSiblingKeys } from './DesktopFileSiblingNav'
 import { DesktopFileVideoPreview, isDesktopVideoName } from './DesktopFileVideoPreview'
 import { applyEol, splitEol } from '@/lib/files/editable'
 import { Badge } from '@rerun/ui/primitives'
@@ -50,12 +52,21 @@ function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (ne
 }
 type CloseGuard = (close: () => void) => void
 
+function folderOf(path: string) {
+    return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+}
+
+function nameOf(path: string) {
+    const slash = path.lastIndexOf('/')
+    return slash === -1 ? path : path.slice(slash + 1)
+}
+
 async function errorOf(response: Response, fallback: string) {
     const body = await response.json().catch(() => null)
     return typeof body?.error === 'string' ? body.error : fallback
 }
 
-/** Port of AgentPanelFiles: breadcrumb folder navigation, text, raster, audio, and video previews, and a single .txt/.md import, scoped to one coworker. */
+/** Port of AgentPanelFiles: breadcrumb folder navigation, previous and next file, text, raster, audio, and video previews, and a single .txt/.md import, scoped to one coworker. */
 function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; registerCloseGuard: (guard: CloseGuard | null) => void }) {
     const base = `/api/desktop/agents/${encodeURIComponent(agent.id)}/files`
     const [error, setError] = useState('')
@@ -72,6 +83,9 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const [deletePending, setDeletePending] = useState(false)
     const renamingNow = useRef(false)
     const deletingNow = useRef(false)
+    const viewerRef = useRef<HTMLDivElement>(null)
+    const previewNow = useRef<Preview | null>(null)
+    const blockSiblingNav = useRef(false)
     const pending = renamePending || deletePending
     useEffect(() => {
         if (!pending) return
@@ -90,18 +104,52 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     }, [base])
 
     const { currentPath, entries, loading, busy, showHidden, navigate, enter, goUp, goHome, setShowHidden, reload } = useFileNavigation<Entry>({ list })
+    const [editingPath, setEditingPath] = useState<string | null>(null)
 
     useEffect(() => {
-        // Folder navigation is the Mac list's paging. Leave the player so its cleanup pauses and revokes.
-        if (!video) return
-        const folder = video.path.includes('/') ? video.path.slice(0, video.path.lastIndexOf('/')) : ''
-        if (folder !== currentPath) setVideo(null)
-    }, [currentPath, video])
+        // Folder navigation leaves the open file so its reader aborts and its player revokes.
+        const away = (path: string | undefined) => !!path && folderOf(path) !== currentPath
+        if (away(image?.path)) setImage(null)
+        if (away(audio?.path)) setAudio(null)
+        if (away(video?.path)) setVideo(null)
+        if (away(preview?.path)) {
+            setPreview(null)
+            setEditingPath(null)
+        }
+    }, [currentPath, image, audio, video, preview])
 
+    useEffect(() => {
+        // A replaced listing identity must not keep the previous bytes. A missing name stays put.
+        const adopt = (current: { path: string; name: string; identity?: string } | null, apply: (identity: string | undefined) => void) => {
+            if (!current || folderOf(current.path) !== currentPath) return
+            const entry = entries.find(item => item.type !== 'dir' && item.name === current.name)
+            if (!entry || entry.identity === current.identity) return
+            apply(entry.identity)
+        }
+        const applyMedia = (identity: string | undefined, current: { path: string; name: string; identity?: string }, set: (next: { path: string; name: string; identity?: string } | null) => void) => {
+            if (current.identity === identity) return
+            set(identity ? { ...current, identity } : { path: current.path, name: current.name })
+        }
+        adopt(image, identity => { if (image) applyMedia(identity, image, setImage) })
+        adopt(audio, identity => { if (audio) applyMedia(identity, audio, setAudio) })
+        adopt(video, identity => { if (video) applyMedia(identity, video, setVideo) })
+    }, [currentPath, entries, image, audio, video])
+
+    previewNow.current = preview
     const openPath = preview?.path
+    const textIdentity = preview && folderOf(preview.path) === currentPath
+        ? entries.find(entry => entry.type !== 'dir' && entry.name === nameOf(preview.path))?.identity
+        : undefined
     useEffect(() => {
         if (!openPath) return
+        const shown = previewNow.current
+        if (shown?.path === openPath && 'conflict' in shown) return
         const controller = new AbortController()
+        setPreview(existing => {
+            if (!existing || existing.path !== openPath || 'conflict' in existing || 'loading' in existing) return existing
+            if ('content' in existing && existing.identity === textIdentity) return existing
+            return { path: openPath, loading: true }
+        })
         void (async () => {
             try {
                 const response = await fetch(`${base}/read?path=${encodeURIComponent(openPath)}`, { cache: 'no-store', signal: controller.signal })
@@ -115,7 +163,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             }
         })()
         return () => controller.abort()
-    }, [base, openPath])
+    }, [base, openPath, textIdentity])
 
     const fileInput = useRef<HTMLInputElement>(null)
     const [importing, setImporting] = useState(false)
@@ -140,7 +188,37 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         }
     }
 
-    const [editingPath, setEditingPath] = useState<string | null>(null)
+    const openListed = useCallback((name: string) => {
+        if (renamingNow.current || deletingNow.current) return
+        const entry = entries.find(item => item.type !== 'dir' && item.name === name)
+        if (!entry) return
+        const path = currentPath ? `${currentPath}/${name}` : name
+        setSelected(path)
+        const file = { path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }
+        setEditingPath(null)
+        if (isDesktopRasterName(entry.name)) {
+            setAudio(null); setVideo(null); setPreview(null); setImage(file)
+        } else if (isDesktopAudioName(entry.name)) {
+            setImage(null); setVideo(null); setPreview(null); setAudio(file)
+        } else if (isDesktopVideoName(entry.name)) {
+            setImage(null); setAudio(null); setPreview(null); setVideo(file)
+        } else {
+            setImage(null); setAudio(null); setVideo(null); setPreview({ path, loading: true })
+        }
+    }, [currentPath, entries])
+    const openPathname = image?.path ?? audio?.path ?? video?.path ?? preview?.path
+    const openEntry = openPathname && folderOf(openPathname) === currentPath
+        ? entries.find(entry => entry.type !== 'dir' && entry.name === nameOf(openPathname))
+        : undefined
+    const navigationLocked = renamePending || deletePending || renaming !== null || deleting !== null || editingPath !== null || (!!preview && 'conflict' in preview)
+    blockSiblingNav.current = navigationLocked
+    const openSibling = useCallback((name: string) => {
+        if (blockSiblingNav.current) return
+        openListed(name)
+    }, [openListed])
+    const siblings = useSiblingFiles({ entries, openName: openEntry?.name, onOpen: openSibling })
+    const shownSiblings = navigationLocked ? null : siblings
+    useFileSiblingKeys(shownSiblings, viewerRef)
     const childPath = (name: string) => currentPath ? `${currentPath}/${name}` : name
     const parentOf = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
     const selectedHere = selected && parentOf(selected) === currentPath ? selected.slice(selected.lastIndexOf('/') + 1) : null
@@ -189,6 +267,9 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             const covered = (value: string | null) => !!value && (value === path || value.startsWith(`${path}/`))
             setSelected(previous => covered(previous) ? null : previous)
             setPreview(previous => previous && covered(previous.path) ? null : previous)
+            setImage(previous => previous && covered(previous.path) ? null : previous)
+            setAudio(previous => previous && covered(previous.path) ? null : previous)
+            setVideo(previous => previous && covered(previous.path) ? null : previous)
             setEditingPath(previous => covered(previous) ? null : previous)
             setRenaming(previous => previous === target.name ? null : previous)
         } catch {
@@ -222,28 +303,29 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     if (image) {
         const params = new URLSearchParams({ path: image.path })
         if (image.identity) params.set('identity', image.identity)
-        return <DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => setImage(null)} />
+        return <DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => setImage(null)} siblings={shownSiblings} viewerRef={viewerRef} />
     }
 
     if (audio) {
         const params = new URLSearchParams({ path: audio.path })
         if (audio.identity) params.set('identity', audio.identity)
-        return <DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => setAudio(null)} />
+        return <DesktopFileAudioPreview name={audio.name} path={audio.path} identity={audio.identity} srcUrl={`${base}/audio?${params.toString()}`} onBack={() => setAudio(null)} siblings={shownSiblings} viewerRef={viewerRef} />
     }
 
     if (video) {
         const params = new URLSearchParams({ path: video.path })
         if (video.identity) params.set('identity', video.identity)
-        return <DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => setVideo(null)} />
+        return <DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => setVideo(null)} siblings={shownSiblings} viewerRef={viewerRef} />
     }
 
     if (preview) {
         const name = preview.path.split('/').pop()
         const editable = 'hash' in preview && !!preview.hash
-        return <div className="flex min-h-0 flex-1 flex-col gap-2">
+        return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col gap-2">
             <div className="flex items-center gap-2 text-sm">
                 <Button type="button" variant="ghost" size="sm" aria-label="Back to folder" onClick={() => setPreview(null)}><ArrowLeftIcon className="size-4" /></Button>
                 <span className="min-w-0 flex-1 truncate font-medium" title={preview.path}>{name}</span>
+                {shownSiblings && <div className="flex shrink-0 items-center gap-1"><FileSiblingControls siblings={shownSiblings} /></div>}
                 {'content' in preview && <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!editable}
                     title={editable ? undefined : 'Only UTF-8 .txt and .md files up to 256 KB can be edited here.'} onClick={() => setEditingPath(preview.path)}>Edit</Button>}
             </div>
@@ -294,12 +376,8 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                                         <RenameField name={entry.name} onSubmit={next => { setRenaming(null); void renameEntry(entry.name, next) }} onCancel={() => setRenaming(null)} />
                                     </div> : <button type="button" disabled={pending} aria-selected={selectedHere === entry.name} onContextMenu={() => setMenuName(entry.name)}
                                         onClick={() => {
-                                            setSelected(path)
-                                            if (entry.type === 'dir') enter(entry.name)
-                                            else if (isDesktopRasterName(entry.name)) { setAudio(null); setVideo(null); setPreview(null); setEditingPath(null); setImage({ path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }) }
-                                            else if (isDesktopAudioName(entry.name)) { setImage(null); setVideo(null); setPreview(null); setEditingPath(null); setAudio({ path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }) }
-                                            else if (isDesktopVideoName(entry.name)) { setImage(null); setAudio(null); setPreview(null); setEditingPath(null); setVideo({ path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }) }
-                                            else { setImage(null); setAudio(null); setVideo(null); setPreview({ path, loading: true }) }
+                                            if (entry.type === 'dir') { setSelected(path); enter(entry.name) }
+                                            else openListed(entry.name)
                                         }}
                                         className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50 ${selectedHere === entry.name ? 'bg-accent/60' : ''}`}>
                                         {glyph}

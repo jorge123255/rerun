@@ -2,7 +2,9 @@
 
 import { PanelEditorHeader } from '@/components/ui/panel-editor'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import type { SiblingFiles } from '@/components/files/useSiblingFiles'
+import { useCallback, useEffect, useRef, useState, type Ref } from 'react'
+import { FileSiblingControls } from './DesktopFileSiblingNav'
 
 const VIDEO_NAME = /^.+\.mp4$/i
 const VIDEO_TYPES = new Set(['video/mp4'])
@@ -21,15 +23,23 @@ export type DesktopFileVideoPreviewProps = {
     /** Same-origin `GET /api/desktop/agents/:agentId/files/video` URL for this path. */
     srcUrl: string
     onBack: () => void
+    siblings?: SiblingFiles | null
+    viewerRef?: Ref<HTMLDivElement>
 }
 
 type View = { loading: true } | { error: string } | { src: string }
 
 /** FileDetail header and FilePreview video controls, filled from the authenticated desktop route. */
-export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack }: DesktopFileVideoPreviewProps) {
+export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef }: DesktopFileVideoPreviewProps) {
     const videoRef = useRef<HTMLVideoElement | null>(null)
     const failed = useRef(false)
     const [view, setView] = useState<View>({ loading: true })
+    const requestKey = `${path}\0${identity ?? ''}\0${srcUrl}`
+    const [requestKeySeen, setRequestKeySeen] = useState(requestKey)
+    if (requestKeySeen !== requestKey) {
+        setRequestKeySeen(requestKey)
+        setView({ loading: true })
+    }
     const bindVideo = useCallback((node: HTMLVideoElement | null) => {
         if (videoRef.current && videoRef.current !== node) stopVideo(videoRef.current)
         videoRef.current = node
@@ -75,8 +85,10 @@ export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack }
         }
     }, [identity, path, srcUrl])
 
-    return <div className="flex min-h-0 flex-1 flex-col">
-        <PanelEditorHeader title={name} onBack={onBack} mono />
+    return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
+        <PanelEditorHeader title={name} onBack={onBack} mono>
+            <FileSiblingControls siblings={siblings} />
+        </PanelEditorHeader>
         <div key={path} className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {'src' in view ? <div className="flex h-full items-center justify-center overflow-auto bg-muted p-3">
                 <video ref={bindVideo} controls src={view.src} data-testid="file-video-preview" className="max-h-full max-w-full"

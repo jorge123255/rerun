@@ -2,7 +2,9 @@
 
 import { PanelEditorHeader } from '@/components/ui/panel-editor'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import type { SiblingFiles } from '@/components/files/useSiblingFiles'
+import { useCallback, useEffect, useRef, useState, type Ref } from 'react'
+import { FileSiblingControls } from './DesktopFileSiblingNav'
 
 const AUDIO_NAME = /^.+\.(?:wav|mp3)$/i
 const AUDIO_TYPES = new Set(['audio/wav', 'audio/mpeg'])
@@ -21,15 +23,23 @@ export type DesktopFileAudioPreviewProps = {
     /** Same-origin `GET /api/desktop/agents/:agentId/files/audio` URL for this path. */
     srcUrl: string
     onBack: () => void
+    siblings?: SiblingFiles | null
+    viewerRef?: Ref<HTMLDivElement>
 }
 
 type View = { loading: true } | { error: string } | { src: string }
 
 /** FileDetail header and FilePreview audio controls, filled from the authenticated desktop route. */
-export function DesktopFileAudioPreview({ name, path, identity, srcUrl, onBack }: DesktopFileAudioPreviewProps) {
+export function DesktopFileAudioPreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef }: DesktopFileAudioPreviewProps) {
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const failed = useRef(false)
     const [view, setView] = useState<View>({ loading: true })
+    const requestKey = `${path}\0${identity ?? ''}\0${srcUrl}`
+    const [requestKeySeen, setRequestKeySeen] = useState(requestKey)
+    if (requestKeySeen !== requestKey) {
+        setRequestKeySeen(requestKey)
+        setView({ loading: true })
+    }
     const bindAudio = useCallback((node: HTMLAudioElement | null) => {
         if (audioRef.current && audioRef.current !== node) stopAudio(audioRef.current)
         audioRef.current = node
@@ -75,8 +85,10 @@ export function DesktopFileAudioPreview({ name, path, identity, srcUrl, onBack }
         }
     }, [identity, path, srcUrl])
 
-    return <div className="flex min-h-0 flex-1 flex-col">
-        <PanelEditorHeader title={name} onBack={onBack} mono />
+    return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
+        <PanelEditorHeader title={name} onBack={onBack} mono>
+            <FileSiblingControls siblings={siblings} />
+        </PanelEditorHeader>
         <div key={path} className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {'src' in view ? <div className="flex h-full items-center justify-center p-4">
                 <audio ref={bindAudio} controls src={view.src} data-testid="file-audio-preview" className="w-full max-w-md"
