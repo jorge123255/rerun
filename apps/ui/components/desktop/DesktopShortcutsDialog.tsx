@@ -20,6 +20,10 @@ export function DesktopShortcutsDialog({ open, onOpenChange, onCloseAutoFocus }:
             { keys: ['Enter'], action: 'Send message' },
             { keys: ['Shift', 'Enter'], action: 'New line' },
         ] },
+        { title: 'Files', shortcuts: [
+            { keys: ['←'], action: 'Previous file' },
+            { keys: ['→'], action: 'Next file' },
+        ] },
     ]
     return <ShortcutsDialogView open={open} onOpenChange={onOpenChange} groups={groups} onCloseAutoFocus={onCloseAutoFocus} />
 }

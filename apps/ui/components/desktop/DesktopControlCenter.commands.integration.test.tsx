@@ -380,7 +380,9 @@ test('the /hotkeys command opens the original help view with only the six suppor
         { action: 'Send message', keys: ['Enter'] },
         { action: 'New line', keys: ['Shift', 'Enter'] },
     ])
-    expect(dialog.textContent).not.toMatch(/Ask Rerun|Hold to talk|Search in the page|Previous file|Next file|×2/)
+    expect(dialog.textContent).toContain('Previous file')
+    expect(dialog.textContent).toContain('Next file')
+    expect(dialog.textContent).not.toMatch(/Ask Rerun|Hold to talk|Search in the page|×2/)
     view.unchanged(true)
     await closeShortcutsWithEscape(dialog)
     expect(commandField()).toBeNull()
