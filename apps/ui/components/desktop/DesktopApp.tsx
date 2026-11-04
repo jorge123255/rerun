@@ -41,6 +41,7 @@ export type DesktopBootstrap = ConnectionsList & {
     profile: { id: number; displayName: string }
     workspace: { id: number; name: string }
     iconCatalogId?: string | null
+    iconUploadId?: string | null
     agents: DesktopAgentView[]
     recentCoworkers?: DesktopRecentCoworkers
 }
@@ -106,7 +107,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setProviders(snapshot)
     }, [])
     const [workspaceName, setWorkspaceName] = useState(initialData.workspace.name)
-    const [iconCatalogId, setIconCatalogId] = useState(initialData.iconCatalogId ?? null)
+    const [savedIcon, setSavedIcon] = useState({ iconCatalogId: initialData.iconCatalogId ?? null, iconUploadId: initialData.iconUploadId ?? null })
     const [workspaceSettings, setWorkspaceSettings] = useState(false)
     const [settings, setSettings] = useState(false)
     useEffect(() => {
@@ -327,7 +328,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const openSettings = () => { if (!themeSavingRef.current && !isDesktopQuitting()) setSettings(true) }
     const openShortcuts = () => { if (!controlCenterDisabled && !isDesktopQuitting()) setShortcutsOpen(true) }
     const modelLabel = defaultProvider ? providers.default?.model : undefined
-    const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} iconCatalogId={iconCatalogId} profileName={initialData.profile.displayName}
+    const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} {...savedIcon} profileName={initialData.profile.displayName}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
         modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings}
         onWorkspaceSettings={() => { if (!isDesktopQuitting()) setWorkspaceSettings(true) }}
@@ -394,7 +395,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 </DialogContent>}
             </Dialog>
             <DesktopWorkspaceSettings open={workspaceSettings} onOpenChange={setWorkspaceSettings} workspaceName={workspaceName}
-                onSaved={saved => { setWorkspaceName(saved.name); if (saved.iconCatalogId !== undefined) setIconCatalogId(saved.iconCatalogId) }} />
+                onSaved={saved => { setWorkspaceName(saved.name); setSavedIcon({ iconCatalogId: saved.iconCatalogId ?? null, iconUploadId: saved.iconUploadId ?? null }) }} />
             <DesktopShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} onCloseAutoFocus={event => {
                 const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }

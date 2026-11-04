@@ -8,7 +8,7 @@ import { Field } from '@/components/ui/field'
 import { FileDropzone } from '@rerun/ui/forms'
 import { Input } from '@/components/ui/input'
 import { CheckIcon, Loader2Icon, UploadIcon } from '@/lib/icons'
-import { DESKTOP_WORKSPACE_ICONS, DESKTOP_WORKSPACE_LOGO_ACCEPT, desktopWorkspaceIconSelectionUrl, desktopWorkspaceIconUrl, type DesktopWorkspaceIcon, type DesktopWorkspaceSavedIcon } from '@/lib/desktop/icon-catalog'
+import { DESKTOP_WORKSPACE_ICONS, DESKTOP_WORKSPACE_LOGO_ACCEPT, desktopWorkspaceIconSelectionUrl, desktopWorkspaceIconUrl, desktopWorkspaceUploadIconUrl, type DesktopWorkspaceIcon, type DesktopWorkspaceSavedIcon } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { cn } from '@/lib/utils'
@@ -21,7 +21,7 @@ const VISIBLE_ILLUSTRATIONS = 10
 export type DesktopWorkspaceIconSaved = {
     name: string
     iconCatalogId: string | null
-    iconUploadId?: string | null
+    iconUploadId: string | null
 }
 
 type Props = {
@@ -82,10 +82,15 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
     const savingRef = useRef(false)
     const readController = useRef<AbortController | null>(null)
     const readFinished = useRef(false)
+    const uploadPreview = useRef<string | null>(null)
+    const releaseUploadPreview = () => {
+        if (uploadPreview.current) URL.revokeObjectURL(uploadPreview.current)
+        uploadPreview.current = null
+    }
 
     useEffect(() => {
         mounted.current = true
-        return () => { mounted.current = false; readController.current?.abort() }
+        return () => { mounted.current = false; readController.current?.abort(); releaseUploadPreview() }
     }, [])
 
     useEffect(() => {
@@ -118,20 +123,26 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
         : draft.kind === 'current' ? currentUrl ?? undefined
         : undefined
 
-    const uploadPreviewUrl = draft.kind === 'upload' ? draft.previewUrl : null
-    useEffect(() => {
-        if (!uploadPreviewUrl) return
-        return () => URL.revokeObjectURL(uploadPreviewUrl)
-    }, [uploadPreviewUrl])
-
     const upload = (file: File | undefined) => {
-        if (!file || savingRef.current || isDesktopQuitting()) return
-        setDraft({ kind: 'upload', file, previewUrl: URL.createObjectURL(file) })
+        if (!file || !mounted.current || savingRef.current || isDesktopQuitting()) return
+        try {
+            const previewUrl = URL.createObjectURL(file)
+            // A second chooser/drop event may arrive before React commits the first draft. Own
+            // its URL immediately so replaced drafts are released even without an intervening render.
+            releaseUploadPreview()
+            uploadPreview.current = previewUrl
+            setDraft({ kind: 'upload', file, previewUrl })
+            setError('')
+        } catch {
+            setError('Could not preview this image. Try another file.')
+        }
     }
 
     const pickIllustration = (catalogId: string) => {
-        if (savingRef.current || isDesktopQuitting()) return
+        if (!mounted.current || savingRef.current || isDesktopQuitting() || !desktopWorkspaceIconUrl(catalogId)) return
+        releaseUploadPreview()
         setDraft({ kind: 'catalog', catalogId })
+        setError('')
     }
 
     const save = async () => {
@@ -152,10 +163,12 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
                 ? await saveLogoUpload(name.trim(), draft.file)
                 : await saveCatalogSelection(name.trim(), draft)
             if (!response.ok) throw new Error(await responseError(response, 'Could not save workspace settings. Try again.'))
-            const saved = desktopIconSaved.parse(await response.json())
+            const result = desktopIconSaved.safeParse(await response.json())
+            if (!result.success) throw new Error('Could not read the saved workspace settings. Reopen settings to check the saved name and logo.')
+            const saved = result.data
             if (mounted.current) {
                 onSaving(false)
-                onSaved({ name: saved.name, iconCatalogId: saved.catalogId, ...(saved.uploadId ? { iconUploadId: saved.uploadId } : {}) })
+                onSaved({ name: saved.name, iconCatalogId: saved.catalogId, iconUploadId: saved.uploadId ?? null })
                 onCancel()
             }
         } catch (cause) {
@@ -205,7 +218,7 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
                 </div>
             </ScrollFade>
             <DialogFooter className="m-0 shrink-0 px-6 py-4">
-                <Button type="button" variant="outline" disabled={saving || quitting} onClick={() => { if (!savingRef.current && !isDesktopQuitting()) onCancel() }}>
+                <Button type="button" variant="outline" disabled={saving || quitting} onClick={() => { if (mounted.current && !savingRef.current && !isDesktopQuitting()) onCancel() }}>
                     Cancel
                 </Button>
                 <Button type="submit" disabled={saving || quitting || !name.trim()}>
@@ -239,12 +252,14 @@ async function responseError(response: Response, fallback: string): Promise<stri
     return typeof body?.error === 'string' ? body.error : fallback
 }
 
-const desktopIconSelection = z.object({
+const desktopIconDescriptor = z.object({
     catalogId: z.string().refine(id => desktopWorkspaceIconUrl(id) !== null).nullable(),
-    uploadId: z.string().min(1).optional(),
+    // Older catalog-only responses omit uploadId. Explicit null is the equivalent empty value.
+    uploadId: z.string().refine(id => desktopWorkspaceUploadIconUrl(id) !== null).nullish(),
 })
-
-const desktopIconSaved = desktopIconSelection.extend({ name: z.string().trim().min(1).max(WORKSPACE_NAME_MAX) })
+const exclusiveIcon = (icon: { catalogId: string | null; uploadId?: string | null }) => icon.catalogId === null || icon.uploadId == null
+const desktopIconSelection = desktopIconDescriptor.refine(exclusiveIcon)
+const desktopIconSaved = desktopIconDescriptor.extend({ name: z.string().trim().min(1).max(WORKSPACE_NAME_MAX) }).refine(exclusiveIcon)
 
 function IllustrationGrid({ selectedUrl, onPick, disabled }: { selectedUrl: string | undefined; onPick: (catalogId: string) => void; disabled: boolean }) {
     const [expanded, setExpanded] = useState(false)

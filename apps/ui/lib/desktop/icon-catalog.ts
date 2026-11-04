@@ -107,10 +107,18 @@ export type DesktopWorkspaceSavedIcon = {
     iconUploadId?: string | null
 }
 
+// Uploads are named by the same opaque UUID accepted by the bytes route. An invalid persisted
+// descriptor must not turn into a request for an arbitrary path or an unbounded query value.
+export function desktopWorkspaceUploadIconUrl(uploadId: string | null | undefined): string | null {
+    return uploadId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uploadId)
+        ? `/api/desktop/workspace/icon/bytes?identity=${encodeURIComponent(uploadId)}`
+        : null
+}
+
 // Where a mounted surface renders the saved icon from: the bundled illustration, or the
 // authenticated local raster route. Both stay local and credential-free.
 export function desktopWorkspaceIconSelectionUrl(icon: DesktopWorkspaceSavedIcon): string | null {
-    if (icon.iconUploadId) return `/api/desktop/workspace/icon/bytes?identity=${encodeURIComponent(icon.iconUploadId)}`
+    if (icon.iconUploadId != null) return icon.iconCatalogId === null ? desktopWorkspaceUploadIconUrl(icon.iconUploadId) : null
     return desktopWorkspaceIconUrl(icon.iconCatalogId)
 }
 

@@ -2,7 +2,7 @@ import 'server-only'
 import type { Client } from '@libsql/client'
 import { z } from 'zod'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
-import { DESKTOP_IMAGE_MAX_BYTES, DesktopImageBytesError, desktopRasterKind, inspectDesktopImageBytes } from './image-bytes'
+import { DESKTOP_IMAGE_MAX_BYTES, DESKTOP_IMAGE_MAX_PIXELS, DesktopImageBytesError, desktopRasterKind, inspectDesktopImageBytes } from './image-bytes'
 import { DesktopHttpError } from './auth'
 import { desktopWorkspaceIconById, type DesktopWorkspaceSavedIcon } from '../icon-catalog'
 
@@ -123,11 +123,11 @@ export async function writeDesktopWorkspaceIcon(db: Client, input: DesktopWorksp
         if (updated.rowsAffected !== 1) throw new DesktopHttpError(404, 'Workspace not found')
         if (catalogId === null) {
             await transaction.execute('DELETE FROM desktop_workspace_icon WHERE workspace_id=1')
-            await transaction.execute('DELETE FROM desktop_workspace_icon_bytes WHERE identity NOT IN (SELECT upload_id FROM desktop_workspace_icon WHERE upload_id IS NOT NULL)')
         } else if (catalogId !== undefined) await transaction.execute({
             sql: 'INSERT INTO desktop_workspace_icon (workspace_id,catalog_id,upload_id,created_at,updated_at) VALUES (1,?,NULL,?,?) ON CONFLICT(workspace_id) DO UPDATE SET catalog_id=excluded.catalog_id,upload_id=NULL,updated_at=excluded.updated_at',
             args: [catalogId, now, now],
         })
+        if (catalogId !== undefined) await transaction.execute('DELETE FROM desktop_workspace_icon_bytes WHERE identity NOT IN (SELECT upload_id FROM desktop_workspace_icon WHERE upload_id IS NOT NULL)')
         const result = await committedDesktopWorkspaceIcon(transaction)
         await transaction.commit()
         return result
@@ -143,6 +143,8 @@ const DESKTOP_LOGO_KINDS: readonly string[] = ['png', 'jpeg', 'webp']
 // A failed commit rolls the bytes back, so a replaced or cancelled upload never leaks and the
 // previous icon survives.
 export async function writeDesktopWorkspaceLogoUpload(db: Client, input: { name: string; logo: File }): Promise<DesktopWorkspaceIconUpdateResult> {
+    const name = input.name.trim()
+    if (!name || name.length > WORKSPACE_NAME_MAX) throw new DesktopHttpError(400, `Enter a workspace name between 1 and ${WORKSPACE_NAME_MAX} characters.`)
     if (input.logo.size > DESKTOP_IMAGE_MAX_BYTES) throw new DesktopHttpError(413, 'Image is too large (max 8MB).')
     const kind = desktopRasterKind(input.logo.name)
     if (!kind || !DESKTOP_LOGO_KINDS.includes(kind)) throw new DesktopHttpError(415, 'Please choose a PNG, JPEG or WebP image.')
@@ -151,12 +153,12 @@ export async function writeDesktopWorkspaceLogoUpload(db: Client, input: { name:
         if (error instanceof DesktopImageBytesError) {
             if (error.reason === 'dimensions') throw new DesktopHttpError(413, 'This image is too large to use as the workspace icon.')
             if (error.reason === 'mismatch') throw new DesktopHttpError(415, 'This file is not a supported image.')
-            throw new DesktopHttpError(415, 'Animated images can’t be the workspace icon. Choose a static image.')
+            if (error.reason === 'animation') throw new DesktopHttpError(415, 'Animated images can’t be the workspace icon. Choose a static image.')
         }
         throw new DesktopHttpError(415, 'This image is damaged and can’t be used.')
     }
-    const name = input.name.trim()
-    if (!name || name.length > WORKSPACE_NAME_MAX) throw new DesktopHttpError(400, `Enter a workspace name between 1 and ${WORKSPACE_NAME_MAX} characters.`)
+    // Decode before taking SQLite's write lock; a bad image never begins a name/icon write.
+    const raster = await normalizeDesktopLogoRaster(bytes)
     await ensureDesktopWorkspaceIconStore(db)
     const transaction = await db.transaction('write')
     try {
@@ -164,7 +166,6 @@ export async function writeDesktopWorkspaceLogoUpload(db: Client, input: { name:
         const updated = await transaction.execute({ sql: 'UPDATE desktop_workspace SET name=?,updated_at=? WHERE id=1', args: [name, now] })
         if (updated.rowsAffected !== 1) throw new DesktopHttpError(404, 'Workspace not found')
         const identity = crypto.randomUUID()
-        const raster = await normalizeDesktopLogoRaster(bytes)
         await transaction.execute({
             sql: 'INSERT INTO desktop_workspace_icon_bytes (identity,content_type,bytes,created_at) VALUES (?,?,?,?)',
             args: [identity, 'image/webp', raster, now],
@@ -184,12 +185,16 @@ export async function writeDesktopWorkspaceLogoUpload(db: Client, input: { name:
 // and encode one WebP at the original's quality.
 async function normalizeDesktopLogoRaster(bytes: Uint8Array): Promise<Uint8Array> {
     const { default: sharp } = await import('sharp')
-    const webp = await sharp(Buffer.from(bytes))
-        .rotate()
-        .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 82, effort: 6 })
-        .toBuffer()
-    return new Uint8Array(webp)
+    try {
+        const webp = await sharp(Buffer.from(bytes), { limitInputPixels: DESKTOP_IMAGE_MAX_PIXELS })
+            .rotate()
+            .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
+            .webp({ quality: 82, effort: 6 })
+            .toBuffer()
+        return new Uint8Array(webp)
+    } catch {
+        throw new DesktopHttpError(415, 'This image is damaged and can’t be used.')
+    }
 }
 
 export type DesktopWorkspaceIconBytes = { contentType: string; bytes: Uint8Array }
@@ -199,7 +204,8 @@ export type DesktopWorkspaceIconBytes = { contentType: string; bytes: Uint8Array
 export async function readDesktopWorkspaceIconBytes(db: Client, identity: string): Promise<DesktopWorkspaceIconBytes | null> {
     await ensureDesktopWorkspaceIconStore(db)
     const result = await db.execute({
-        sql: 'SELECT content_type,bytes FROM desktop_workspace_icon_bytes WHERE identity=?',
+        sql: `SELECT b.content_type,b.bytes FROM desktop_workspace_icon_bytes b
+            JOIN desktop_workspace_icon i ON i.upload_id=b.identity WHERE i.workspace_id=1 AND b.identity=?`,
         args: [identity],
     })
     const row = result.rows[0]

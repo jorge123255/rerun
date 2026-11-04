@@ -22,8 +22,9 @@ export function GET(request: Request) {
             'x-content-type-options': 'nosniff',
             'content-security-policy': "default-src 'none'; sandbox",
             'cross-origin-resource-policy': 'same-origin',
-            // A random identity is never rewritten, so the original's immutable caching applies.
-            'cache-control': 'public, max-age=31536000, immutable',
+            // These are private local bytes, unlike the original's public hosted logo bucket.
+            // Recheck the session and current selection instead of retaining replaced rasters.
+            'cache-control': 'private, no-store',
         } })
     })
 }

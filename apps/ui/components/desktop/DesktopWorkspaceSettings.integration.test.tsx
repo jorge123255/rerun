@@ -4,6 +4,7 @@ import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { DESKTOP_WORKSPACE_ICONS } from '@/lib/desktop/icon-catalog'
+import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 import { DesktopApp, type DesktopBootstrap } from './DesktopApp'
@@ -36,6 +37,8 @@ const providers = { connections: [], default: null }
 const coworker = { id: 'workspace-reviewer', name: 'Reviewer', description: '', enabled: true, createdAt: date, updatedAt: date }
 const initialIcon = DESKTOP_WORKSPACE_ICONS[0]!
 const pickedIcon = DESKTOP_WORKSPACE_ICONS[3]!
+const uploadedIconId = 'b510d906-a07f-4a8a-a02f-878be6fedaf6'
+const uploadedIconUrl = (identity: string) => `/api/desktop/workspace/icon/bytes?identity=${encodeURIComponent(identity)}`
 const roots = new Set<ReturnType<typeof createRoot>>()
 const unexpected: string[] = []
 
@@ -44,6 +47,9 @@ beforeEach(() => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)')
+    let preview = 0
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:workspace-logo-preview-${++preview}`)
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
 })
 afterEach(async () => {
     await act(async () => { for (const root of roots) root.unmount() })
@@ -95,14 +101,37 @@ async function pickIllustration(dialog: HTMLElement) {
     await act(async () => { choice!.click() })
     expect(choice!.getAttribute('aria-pressed')).toBe('true')
 }
+const logoPreview = (dialog: HTMLElement) => dialog.querySelector<HTMLImageElement>('[aria-label="Upload a logo"] img')!
+async function chooseLogo(dialog: HTMLElement, file: File) {
+    const input = dialog.querySelector<HTMLInputElement>('input[type="file"]')!
+    expect(input).not.toBeNull()
+    await act(async () => {
+        Object.defineProperty(input, 'files', { value: [file], configurable: true })
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    return logoPreview(dialog).getAttribute('src')!
+}
+async function openReviewer(container: HTMLElement) {
+    const tile = container.querySelector<HTMLElement>('[aria-label="Open chat with Reviewer"]')!
+    await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })) })
+    return until(composer)
+}
+async function closedWorkspaceSettings() {
+    await until(() => !document.querySelector('[role="dialog"]') && document.activeElement === pill())
+}
 
-function fixture() {
+function fixture(savedUploadId?: string) {
     const drafts = createDesktopDraftFixture()
     const recent = createDesktopRecentFixture()
     const tabs = { revision: 0, activeIndex: 0, tabs: [{ uid: 'review-tab', id: 'review-chat', title: 'Saved review' }] }
     drafts.seedTabs(coworker.id, tabs.tabs)
-    let workspace = { name: 'Original studio', catalogId: initialIcon.id }
+    let workspace: { name: string; catalogId: string | null; uploadId?: string } = savedUploadId
+        ? { name: 'Original studio', catalogId: null, uploadId: savedUploadId }
+        : { name: 'Original studio', catalogId: initialIcon.id }
+    let uploadError: string | null = null
     const writes: { name: string; catalogId?: string }[] = []
+    const uploads: { name: string; file: File; form: FormData; contentType: string | null }[] = []
+    const iconReads: string[] = []
     const reads: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const raw = typeof input === 'string' || input instanceof URL ? String(input) : input.url
@@ -113,11 +142,27 @@ function fixture() {
         const recentResponse = recent.handle(input, init)
         if (recentResponse) return recentResponse
         if (url.pathname === '/api/desktop/workspace/icon') {
-            if (method === 'GET') return Response.json(workspace)
+            if (method === 'GET') {
+                iconReads.push(url.pathname)
+                return Response.json(workspace.uploadId ? { catalogId: null, uploadId: workspace.uploadId } : { catalogId: workspace.catalogId })
+            }
             if (method === 'PUT') {
+                if (init?.body instanceof FormData) {
+                    const file = init.body.get('logoFile')
+                    if (!(file instanceof File)) throw new Error('The workspace upload must contain its selected File')
+                    const name = String(init.body.get('name'))
+                    uploads.push({ name, file, form: init.body, contentType: new Headers(init.headers).get('content-type') })
+                    if (uploadError) return Response.json({ error: uploadError }, { status: 415 })
+                    workspace = { name, catalogId: null, uploadId: uploadedIconId }
+                    return Response.json(workspace)
+                }
                 const body = JSON.parse(String(init?.body)) as { name: string; catalogId?: string }
                 writes.push(body)
-                workspace = { name: body.name, catalogId: body.catalogId ?? workspace.catalogId }
+                // A name-only write preserves whichever icon is saved. An explicit catalog
+                // selection replaces an upload and returns the original catalog-only response.
+                workspace = Object.hasOwn(body, 'catalogId')
+                    ? { name: body.name, catalogId: body.catalogId! }
+                    : { ...workspace, name: body.name }
                 return Response.json(workspace)
             }
         }
@@ -138,7 +183,8 @@ function fixture() {
         throw new Error(`Unexpected request: ${method} ${raw}`)
     }))
     return {
-        writes, reads,
+        writes, reads, uploads, iconReads,
+        rejectUploads: (message: string | null) => { uploadError = message },
         saved: () => ({ ...workspace }),
         async mount() {
             const container = document.createElement('div')
@@ -146,7 +192,8 @@ function fixture() {
             const root = createRoot(container)
             roots.add(root)
             const initialData: DesktopBootstrap = { ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' },
-                workspace: { id: 1, name: workspace.name }, iconCatalogId: workspace.catalogId, agents: [coworker], recentCoworkers: recent.snapshot() }
+                workspace: { id: 1, name: workspace.name }, iconCatalogId: workspace.catalogId, iconUploadId: workspace.uploadId ?? null,
+                agents: [coworker], recentCoworkers: recent.snapshot() }
             await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
             return { container, async unmount() { await act(async () => { root.unmount() }); roots.delete(root); container.remove() } }
         },
@@ -223,4 +270,153 @@ test('Cancel discards both edits and Control center or Command-comma cannot repl
     expect(reopened.querySelector<HTMLInputElement>('#workspace-settings-name')!.value).toBe('Original studio')
     await until(() => reopened.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.querySelector('img')?.getAttribute('src') === initialIcon.url)
     expect(app.writes).toEqual([])
+})
+
+test('upload Save updates the real pill without remounting chat, and persisted bootstrap restores the logo and separate draft', async () => {
+    const app = fixture()
+    const first = await app.mount()
+    const board = first.container.querySelector('[aria-label="Team board"]')!
+    const tile = first.container.querySelector('[aria-label="Open chat with Reviewer"]')!
+    const originalComposer = await openReviewer(first.container)
+    const originalChat = originalComposer.closest('[data-desktop-tab-active="true"]')!
+    await until(() => originalChat.textContent?.includes('This coworker keeps its saved answer.'))
+    await enter(originalComposer, 'Keep this draft while I upload a logo')
+    const readsBefore = [...app.reads]
+
+    const dialog = await openWorkspaceSettings()
+    const logo = new File(['Workspace logo transport fixture'], 'studio.png', { type: 'image/png' })
+    const draftUrl = await chooseLogo(dialog, logo)
+    await enter(dialog.querySelector<HTMLInputElement>('#workspace-settings-name')!, '  Uploaded studio  ')
+    expect(draftUrl).toBe('blob:workspace-logo-preview-1')
+    expect(URL.createObjectURL).toHaveBeenCalledWith(logo)
+    expect(pill().querySelector('img')?.getAttribute('src')).toBe(initialIcon.url)
+    expect(app.uploads).toEqual([])
+    await click('Save', dialog)
+    await closedWorkspaceSettings()
+
+    expect(app.writes).toEqual([])
+    expect(app.uploads).toHaveLength(1)
+    expect(app.uploads[0]).toMatchObject({ name: 'Uploaded studio', file: logo, contentType: null })
+    expect(app.uploads[0].file).toBe(logo)
+    expect([...app.uploads[0].form.keys()].sort()).toEqual(['logoFile', 'name'])
+    expect(app.saved()).toEqual({ name: 'Uploaded studio', catalogId: null, uploadId: uploadedIconId })
+    expect(pill().getAttribute('aria-label')).toBe('Workspace menu, Uploaded studio')
+    expect(pill().querySelector('img')?.getAttribute('src')).toBe(uploadedIconUrl(uploadedIconId))
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(draftUrl)
+    expect(first.container.querySelector('[aria-label="Team board"]')).toBe(board)
+    expect(first.container.querySelector('[aria-label="Open chat with Reviewer"]')).toBe(tile)
+    expect(composer()).toBe(originalComposer)
+    expect(composer().closest('[data-desktop-tab-active="true"]')).toBe(originalChat)
+    expect(composer().value).toBe('Keep this draft while I upload a logo')
+    expect(originalChat.textContent).toContain('This coworker keeps its saved answer.')
+    expect(app.reads).toEqual(readsBefore)
+
+    await act(async () => { expect(await flushDesktopDrafts()).toBe(true) })
+    await first.unmount()
+    forgetCoworkerDrafts(coworker.id)
+    // A new renderer process starts outside the previous process's shutdown barrier.
+    cancelDraftShutdown()
+    const iconReadsBeforeRestart = app.iconReads.length
+    const restored = await app.mount()
+    expect(pill().getAttribute('aria-label')).toBe('Workspace menu, Uploaded studio')
+    expect(pill().querySelector('img')?.getAttribute('src')).toBe(uploadedIconUrl(uploadedIconId))
+    // The initial pill comes from saved bootstrap, without relying on opening Settings to repair it.
+    expect(app.iconReads).toHaveLength(iconReadsBeforeRestart)
+    const reopened = await openWorkspaceSettings()
+    expect(reopened.querySelector<HTMLInputElement>('#workspace-settings-name')!.value).toBe('Uploaded studio')
+    await until(() => logoPreview(reopened).getAttribute('src') === uploadedIconUrl(uploadedIconId))
+    expect(reopened.querySelector('button[aria-pressed="true"]')).toBeNull()
+    await click('Cancel', reopened)
+    await closedWorkspaceSettings()
+    const restoredComposer = await openReviewer(restored.container)
+    expect(restoredComposer).not.toBe(originalComposer)
+    await until(() => restoredComposer.value === 'Keep this draft while I upload a logo')
+    await until(() => restoredComposer.closest('[data-desktop-tab-active="true"]')?.textContent?.includes('This coworker keeps its saved answer.'))
+    expect(app.uploads).toHaveLength(1)
+    expect(app.writes).toEqual([])
+})
+
+test('name-only Save preserves an uploaded logo and choosing an illustration clears it through the actual App callback', async () => {
+    const app = fixture(uploadedIconId)
+    const first = await app.mount()
+    expect(pill().querySelector('img')?.getAttribute('src')).toBe(uploadedIconUrl(uploadedIconId))
+    const dialog = await openWorkspaceSettings()
+    await until(() => logoPreview(dialog).getAttribute('src') === uploadedIconUrl(uploadedIconId))
+    await enter(dialog.querySelector<HTMLInputElement>('#workspace-settings-name')!, '  Renamed uploaded studio  ')
+    await click('Save', dialog)
+    await closedWorkspaceSettings()
+    expect(app.writes).toEqual([{ name: 'Renamed uploaded studio' }])
+    expect(app.saved()).toEqual({ name: 'Renamed uploaded studio', catalogId: null, uploadId: uploadedIconId })
+    expect(pill().getAttribute('aria-label')).toBe('Workspace menu, Renamed uploaded studio')
+    expect(pill().querySelector('img')?.getAttribute('src')).toBe(uploadedIconUrl(uploadedIconId))
+
+    const catalog = await openWorkspaceSettings()
+    await until(() => logoPreview(catalog).getAttribute('src') === uploadedIconUrl(uploadedIconId))
+    await pickIllustration(catalog)
+    await click('Save', catalog)
+    await closedWorkspaceSettings()
+    expect(app.writes).toEqual([
+        { name: 'Renamed uploaded studio' },
+        { name: 'Renamed uploaded studio', catalogId: pickedIcon.id },
+    ])
+    expect(app.saved()).toEqual({ name: 'Renamed uploaded studio', catalogId: pickedIcon.id })
+    expect(pill().querySelector('img')?.getAttribute('src')).toBe(pickedIcon.url)
+    expect(app.uploads).toEqual([])
+
+    await first.unmount()
+    await app.mount()
+    expect(pill().getAttribute('aria-label')).toBe('Workspace menu, Renamed uploaded studio')
+    expect(pill().querySelector('img')?.getAttribute('src')).toBe(pickedIcon.url)
+})
+
+test('Cancel and a rejected upload preserve the saved pill, board and open chat draft without partial name changes', async () => {
+    const app = fixture(uploadedIconId)
+    const first = await app.mount()
+    const board = first.container.querySelector('[aria-label="Team board"]')!
+    const originalComposer = await openReviewer(first.container)
+    await enter(originalComposer, 'Do not replace this draft when upload fails')
+    const originalChat = originalComposer.closest('[data-desktop-tab-active="true"]')!
+    await until(() => originalChat.textContent?.includes('This coworker keeps its saved answer.'))
+    const readsBefore = [...app.reads]
+    const logo = new File(['Workspace logo transport fixture'], 'replacement.png', { type: 'image/png' })
+
+    const cancelled = await openWorkspaceSettings()
+    await enter(cancelled.querySelector<HTMLInputElement>('#workspace-settings-name')!, 'Cancelled name')
+    const cancelledUrl = await chooseLogo(cancelled, logo)
+    expect(pill().querySelector('img')?.getAttribute('src')).toBe(uploadedIconUrl(uploadedIconId))
+    await click('Cancel', cancelled)
+    await closedWorkspaceSettings()
+    expect(app.uploads).toEqual([])
+    expect(app.writes).toEqual([])
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(cancelledUrl)
+
+    app.rejectUploads('This image is damaged and can’t be used.')
+    const rejected = await openWorkspaceSettings()
+    await until(() => logoPreview(rejected).getAttribute('src') === uploadedIconUrl(uploadedIconId))
+    await enter(rejected.querySelector<HTMLInputElement>('#workspace-settings-name')!, 'Rejected name')
+    const rejectedUrl = await chooseLogo(rejected, logo)
+    await click('Save', rejected)
+    await until(() => rejected.querySelector('[role="alert"]')?.textContent?.includes('This image is damaged and can’t be used.'))
+    expect(workspaceDialog()).toBe(rejected)
+    expect(rejected.querySelector<HTMLInputElement>('#workspace-settings-name')!.value).toBe('Rejected name')
+    expect(logoPreview(rejected).getAttribute('src')).toBe(rejectedUrl)
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(rejectedUrl)
+    expect(app.uploads).toHaveLength(1)
+    expect(app.writes).toEqual([])
+    expect(app.saved()).toEqual({ name: 'Original studio', catalogId: null, uploadId: uploadedIconId })
+    expect(pill().getAttribute('aria-label')).toBe('Workspace menu, Original studio')
+    expect(pill().querySelector('img')?.getAttribute('src')).toBe(uploadedIconUrl(uploadedIconId))
+    expect(first.container.querySelector('[aria-label="Team board"]')).toBe(board)
+    expect(composer()).toBe(originalComposer)
+    expect(composer().closest('[data-desktop-tab-active="true"]')).toBe(originalChat)
+    expect(composer().value).toBe('Do not replace this draft when upload fails')
+    expect(app.reads).toEqual(readsBefore)
+    await click('Cancel', rejected)
+    await closedWorkspaceSettings()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(rejectedUrl)
+
+    await first.unmount()
+    await app.mount()
+    expect(pill().getAttribute('aria-label')).toBe('Workspace menu, Original studio')
+    expect(pill().querySelector('img')?.getAttribute('src')).toBe(uploadedIconUrl(uploadedIconId))
 })

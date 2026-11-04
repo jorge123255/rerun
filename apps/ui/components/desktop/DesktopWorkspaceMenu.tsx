@@ -6,11 +6,12 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
 import { useRef } from 'react'
-import { desktopWorkspaceIconUrl } from '@/lib/desktop/icon-catalog'
+import { desktopWorkspaceIconSelectionUrl } from '@/lib/desktop/icon-catalog'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts }: {
     workspaceName: string
     iconCatalogId?: string | null
+    iconUploadId?: string | null
     profileName: string
     agents: DesktopAgentView[]
     selected: string | null
@@ -27,7 +28,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, profileName
     return <nav aria-label="Workspace" className="flex min-w-0 flex-wrap items-center gap-1.5">
         <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-                <WorkspacePill name={workspaceName} iconUrl={desktopWorkspaceIconUrl(iconCatalogId ?? null) ?? '/pricing/solo.png'} aria-label={`Workspace menu, ${workspaceName}`} />
+                <WorkspacePill name={workspaceName} iconUrl={desktopWorkspaceIconSelectionUrl({ iconCatalogId: iconCatalogId ?? null, iconUploadId: iconUploadId ?? null }) ?? '/pricing/solo.png'} aria-label={`Workspace menu, ${workspaceName}`} />
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-64" onCloseAutoFocus={event => {
                 if (openingControlCenter.current) event.preventDefault()

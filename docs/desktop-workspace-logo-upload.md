@@ -38,19 +38,26 @@ Base: `49a224e75c2d6b76f441b24f41d813d2b382ee99`. Branch: `desktop/workspace-log
     `image-bytes.ts`'s structural limits plus the original 8 MB logo limit
     (`Image is too large (max 8MB).`), normalizes it to one ≤256px WebP raster with the existing
     `sharp` pipeline from `lib/images/upload.ts` (`rotate` → `resize 256 inside` →
-    `webp q82/effort 6`), and commits bytes + selection + name in one SQLite transaction.
+    `webp q82/effort 6`). Structural validation and image decoding finish before taking the
+    database write lock; invalid/undecodable images return 415, and byte/dimension limits return
+    413. Bytes + selection + name then commit in one SQLite transaction.
     Replaced selections delete their bytes inside that transaction, so a failed save can neither
     leak staged bytes nor erase the previous icon.
   - `readDesktopWorkspaceIconBytes` serves the committed raster for its identity and fails
     closed on unknown identities.
 - `apps/ui/app/api/desktop/workspace/icon/route.ts` — `GET` returns the saved-icon descriptor
   (`{ catalogId }` as before, plus `uploadId` only when an upload is the current icon);
-  `PUT` accepts the illustration slice's JSON payload and the upload's multipart payload, both
-  through `desktopRoute`'s session, host and same-origin checks.
+  `PUT` accepts the illustration slice's strict JSON payload and the upload's multipart payload,
+  both through `desktopRoute`'s session, host and same-origin checks. Multipart accepts exactly
+  one string `name` and one file `logoFile`, with duplicate/unknown fields rejected. The actual
+  request stream is counted before parsing: JSON is capped at 4 KiB, and multipart at 8 MiB plus
+  64 KiB for its envelope; the file itself still has the 8 MiB limit. Oversized streams are
+  cancelled even when Content-Length is missing or understated.
 - `apps/ui/app/api/desktop/workspace/icon/bytes/route.ts` — new isolated authenticated read: one
   committed raster by identity with the Files-image serving headers (`nosniff`, sandbox CSP,
-  `same-origin` resource policy) and the original's immutable cache lifetime
-  (`public, max-age=31536000, immutable`).
+  `same-origin` resource policy). Unlike the original public bucket, these authenticated local
+  bytes use `private, no-store`, and reads join the current workspace selection so orphaned or
+  replaced identities are unavailable.
 - `apps/ui/lib/desktop/icon-catalog.ts` — the backward-compatible saved-icon contract:
   `DesktopWorkspaceSavedIcon = { iconCatalogId: string | null; iconUploadId?: string | null }`
   and `desktopWorkspaceIconSelectionUrl(icon)`, which resolves the bundled illustration URL or
@@ -118,9 +125,10 @@ integration; this lane changed none of them. The exact wiring to adopt the uploa
    onSaved={saved => { setWorkspaceName(saved.name); setSavedIcon({ iconCatalogId: saved.iconCatalogId, iconUploadId: saved.iconUploadId ?? null }) }}
    ```
 
-   `onSaved` fires after both writes resolve — the name even when only the icon write failed —
-   so mounted surfaces refresh across the board, chat and settings without remounting, and the
-   persisted rows restore everything after restart.
+   `onSaved` fires only after the atomic save succeeds. A failed name, selection or byte cleanup
+   rolls the transaction back and does not report a partially saved name. Mounted surfaces can
+   refresh across the board, chat and settings without remounting; restart restoration remains
+   part of root's integration acceptance.
 
 ## Migration and lifecycle choices
 
@@ -128,9 +136,10 @@ integration; this lane changed none of them. The exact wiring to adopt the uploa
   lifetime is exactly the selection that references it, and one transaction can commit bytes,
   selection and name together — cancel can never stage anything, and a failed save rolls the
   raster back.
-- Identity is a random UUID and content is immutable, so a raster is written once and read by
-  address forever; replacements delete the previous row inside the committing transaction, and
-  the illustration-only migration clears any orphaned bytes.
+- Identity is a random UUID and its content is immutable while selected. Upload replacement,
+  switching to an illustration and reset delete the previous bytes inside the committing
+  transaction; the illustration-only migration clears any orphaned bytes. The bytes route
+  serves only the currently selected identity and does not retain a public browser cache.
 - The widened row's CHECK constraint keeps exactly one selection kind, so a corrupt or foreign
   value fails closed on read instead of rendering an untracked address.
 

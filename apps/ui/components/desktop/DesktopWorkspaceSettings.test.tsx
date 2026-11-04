@@ -1,14 +1,28 @@
 // @vitest-environment happy-dom
 // Source-only regressions; the integration owner runs validation.
-import { act, useState } from 'react'
+import { act, useState, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
-import { DESKTOP_WORKSPACE_ICONS } from '@/lib/desktop/icon-catalog'
+import { DESKTOP_WORKSPACE_ICONS, desktopWorkspaceIconSelectionUrl } from '@/lib/desktop/icon-catalog'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
+// Preserve the original choose/drop surface while retaining its callback for late chooser events.
+const dropzone = vi.hoisted(() => ({ files: undefined as ((files: File[]) => void) | undefined }))
+vi.mock('@rerun/ui/forms', async importOriginal => {
+    const actual = await importOriginal<typeof import('@rerun/ui/forms')>()
+    return {
+        ...actual,
+        FileDropzone(props: ComponentProps<typeof actual.FileDropzone>) {
+            dropzone.files = props.onFiles
+            return <actual.FileDropzone {...props} />
+        },
+    }
+})
+
+const uploadId = '11111111-1111-4111-8111-111111111111'
 const roots: Root[] = []
 const settleRequests: (() => void)[] = []
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')
@@ -32,8 +46,8 @@ const deferred = () => {
 type FixtureState = { name: string; catalogId: string | null; uploadId?: string | null }
 type PutInput = { name: string; catalogId?: string | null; uploadId?: string | null; file?: File }
 
-function fixture(catalogId: string | null = null) {
-    let saved: FixtureState = { name: 'Disposable', catalogId }
+function fixture(catalogId: string | null = null, initialUploadId?: string | null) {
+    let saved: FixtureState = { name: 'Disposable', catalogId, ...(initialUploadId !== undefined ? { uploadId: initialUploadId } : {}) }
     let get: (() => Promise<Response> | Response) | undefined
     let put: ((input: PutInput) => Promise<Response> | Response) | undefined
     const calls: { method: string; body?: unknown; file?: File }[] = []
@@ -53,8 +67,8 @@ function fixture(catalogId: string | null = null) {
             const file = init.body.get('logoFile')
             const input: PutInput = { name: String(init.body.get('name')), file: file instanceof File ? file : undefined }
             calls.push({ method, body: { name: input.name }, file: input.file })
-            const savedResponse = put ? await put(input) : Response.json({ name: input.name, catalogId: null, uploadId: 'fixture-upload-identity' })
-            if (!put) saved = { name: input.name, catalogId: null, uploadId: 'fixture-upload-identity' }
+            const savedResponse = put ? await put(input) : Response.json({ name: input.name, catalogId: null, uploadId })
+            if (!put) saved = { name: input.name, catalogId: null, uploadId }
             return savedResponse
         }
         const body = JSON.parse(String(init.body)) as { name: string; catalogId?: string | null }
@@ -88,7 +102,7 @@ async function mount() {
 
 afterEach(async () => {
     await act(async () => { for (const root of roots.splice(0)) root.unmount(); for (const settle of settleRequests.splice(0)) settle(); cancelDraftShutdown() })
-    document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.restoreAllMocks()
+    document.body.innerHTML = ''; dropzone.files = undefined; vi.unstubAllGlobals(); vi.restoreAllMocks()
 })
 
 test('keeps the original preview/name layout, ten illustrations and expandable full catalog', async () => {
@@ -117,7 +131,7 @@ test('one atomic Save persists trimmed name and picked catalog ID, publishes onc
     await click(button('Save'))
     expect(f.calls).toEqual([{ method: 'GET', body: undefined }, { method: 'PUT', body: { name: 'Renamed workspace', catalogId: pick.id } }])
     expect(h.saved).toHaveBeenCalledTimes(1)
-    expect(h.saved).toHaveBeenCalledWith({ name: 'Renamed workspace', iconCatalogId: pick.id })
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Renamed workspace', iconCatalogId: pick.id, iconUploadId: null })
     expect(dialog()).toBeNull()
 })
 
@@ -128,7 +142,7 @@ test('name-only save omits the icon field and uses the authoritative preserved i
     await click(button('Save'))
     expect(f.calls[1]).toEqual({ method: 'PUT', body: { name: 'Just renamed' } })
     expect(h.saved).toHaveBeenCalledTimes(1)
-    expect(h.saved).toHaveBeenCalledWith({ name: 'Just renamed', iconCatalogId: DESKTOP_WORKSPACE_ICONS[5].id })
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Just renamed', iconCatalogId: DESKTOP_WORKSPACE_ICONS[5].id, iconUploadId: null })
     expect(f.saved.name).toBe('Just renamed')
 })
 
@@ -144,7 +158,7 @@ test('a rejected atomic save reports no partial success and retains both edits f
     f.setPut(undefined)
     await click(button('Save'))
     expect(h.saved).toHaveBeenCalledTimes(1)
-    expect(h.saved).toHaveBeenCalledWith({ name: 'Draft name', iconCatalogId: DESKTOP_WORKSPACE_ICONS[3].id })
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Draft name', iconCatalogId: DESKTOP_WORKSPACE_ICONS[3].id, iconUploadId: null })
 })
 
 test('failed icon read offers Retry and permits name-only save that preserves the persisted icon', async () => {
@@ -156,7 +170,7 @@ test('failed icon read offers Retry and permits name-only save that preserves th
     await rename('Still saved'); await click(button('Save'))
     expect(f.calls[1]).toEqual({ method: 'PUT', body: { name: 'Still saved' } })
     expect(h.saved).toHaveBeenCalledTimes(1)
-    expect(h.saved).toHaveBeenCalledWith({ name: 'Still saved', iconCatalogId: DESKTOP_WORKSPACE_ICONS[2].id })
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Still saved', iconCatalogId: DESKTOP_WORKSPACE_ICONS[2].id, iconUploadId: null })
 })
 
 test('Retry and a delayed initial read cannot overwrite a chosen illustration or typed name', async () => {
@@ -195,7 +209,7 @@ test('Save admits once, blocks Cancel/Escape/editing and holds the quit barrier 
     await act(async () => { pending.resolve(Response.json({ name: 'Disposable', catalogId: null })); await quit })
     expect(quitSettled).toBe(true)
     expect(h.saved).toHaveBeenCalledTimes(1)
-    expect(h.saved).toHaveBeenCalledWith({ name: 'Disposable', iconCatalogId: null })
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Disposable', iconCatalogId: null, iconUploadId: null })
     expect(dialog()).toBeNull()
 })
 
@@ -268,7 +282,7 @@ test('choosing a file drafts the upload locally, and Save commits name and raste
     expect(f.calls[1]!.file).toBe(logo)
     expect(f.calls[1]!.body).toEqual({ name: 'Uploaded studio' })
     expect(h.saved).toHaveBeenCalledTimes(1)
-    expect(h.saved).toHaveBeenCalledWith({ name: 'Uploaded studio', iconCatalogId: null, iconUploadId: 'fixture-upload-identity' })
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Uploaded studio', iconCatalogId: null, iconUploadId: uploadId })
     expect(dialog()).toBeNull()
 })
 
@@ -327,6 +341,104 @@ test('a failed upload keeps the previous icon and retains the draft for retry', 
     f.setPut(undefined)
     await click(button('Save'))
     expect(h.saved).toHaveBeenCalledTimes(1)
-    expect(h.saved).toHaveBeenCalledWith({ name: 'Retry name', iconCatalogId: null, iconUploadId: 'fixture-upload-identity' })
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Retry name', iconCatalogId: null, iconUploadId: uploadId })
     expect(dialog()).toBeNull()
+})
+
+test.each(['omitted', 'null'] as const)('catalog descriptors with %s upload identity remain compatible and publish both fields', async shape => {
+    const catalogId = DESKTOP_WORKSPACE_ICONS[0].id
+    const descriptor = { catalogId, ...(shape === 'null' ? { uploadId: null } : {}) }
+    const f = fixture(catalogId)
+    f.setGet(() => Response.json(descriptor))
+    f.setPut(input => Response.json({ name: input.name, ...descriptor }))
+    const h = await mount()
+    expect(preview().getAttribute('src')).toBe(DESKTOP_WORKSPACE_ICONS[0].url)
+    expect(dialog()?.textContent).not.toContain('Could not load')
+    await rename('Renamed'); await click(button('Save'))
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Renamed', iconCatalogId: catalogId, iconUploadId: null })
+    expect(dialog()).toBeNull()
+})
+
+test('name-only Save preserves an uploaded icon from the authoritative response and reloads it on reopening', async () => {
+    const f = fixture(null, uploadId), h = await mount()
+    const url = desktopWorkspaceIconSelectionUrl({ iconCatalogId: null, iconUploadId: uploadId })
+    expect(preview().getAttribute('src')).toBe(url)
+    expect(choices().every(choice => choice.getAttribute('aria-pressed') === 'false')).toBe(true)
+    await rename('Same logo'); await click(button('Save'))
+    expect(f.calls[1]).toEqual({ method: 'PUT', body: { name: 'Same logo' } })
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Same logo', iconCatalogId: null, iconUploadId: uploadId })
+    await h.setOpen(true)
+    expect(preview().getAttribute('src')).toBe(url)
+})
+
+test('replacing a saved upload with an illustration explicitly clears the published upload identity', async () => {
+    const f = fixture(null, uploadId), h = await mount()
+    await click(choices()[1]); await click(button('Save'))
+    expect(f.calls[1]).toEqual({ method: 'PUT', body: { name: 'Disposable', catalogId: DESKTOP_WORKSPACE_ICONS[1].id } })
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Disposable', iconCatalogId: DESKTOP_WORKSPACE_ICONS[1].id, iconUploadId: null })
+    await h.setOpen(true)
+    expect(preview().getAttribute('src')).toBe(DESKTOP_WORKSPACE_ICONS[1].url)
+})
+
+test('replacing two upload drafts before a render releases both URLs when canceled', async () => {
+    const f = fixture(); await mount()
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:first').mockReturnValueOnce('blob:second')
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+    const onFiles = dropzone.files!
+    await act(async () => {
+        onFiles([new File(['first'], 'first.png', { type: 'image/png' })])
+        onFiles([new File(['second'], 'second.png', { type: 'image/png' })])
+    })
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(revoke.mock.calls).toEqual([['blob:first']])
+    expect(preview().getAttribute('src')).toBe('blob:second')
+    await click(button('Cancel'))
+    expect(revoke.mock.calls).toEqual([['blob:first'], ['blob:second']])
+    expect(f.calls).toHaveLength(1)
+})
+
+test('a late chooser callback from a closed form cannot allocate a URL or replace a reopened draft', async () => {
+    const f = fixture(), h = await mount()
+    const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:reopened')
+    const oldOnFiles = dropzone.files!
+    await h.setOpen(false); await h.setOpen(true)
+    await click(choices()[2])
+    await act(async () => { oldOnFiles([new File(['late'], 'late.png', { type: 'image/png' })]) })
+    expect(create).not.toHaveBeenCalled()
+    expect(preview().getAttribute('src')).toBe(DESKTOP_WORKSPACE_ICONS[2].url)
+    expect(f.calls.filter(call => call.method === 'PUT')).toEqual([])
+    await chooseLogo(new File(['current'], 'current.png', { type: 'image/png' }))
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(preview().getAttribute('src')).toBe('blob:reopened')
+})
+
+test('a failed preview keeps the current selection and reports the file problem', async () => {
+    const f = fixture(DESKTOP_WORKSPACE_ICONS[4].id); await mount()
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => { throw new Error('No preview') })
+    await chooseLogo(new File(['file'], 'logo.png', { type: 'image/png' }))
+    expect(dialog()?.textContent).toContain('Could not preview this image. Try another file.')
+    expect(preview().getAttribute('src')).toBe(DESKTOP_WORKSPACE_ICONS[4].url)
+    expect(f.calls).toHaveLength(1)
+})
+
+test('saved icon URLs accept only local catalog members or a single valid uploaded identity', () => {
+    const catalogId = DESKTOP_WORKSPACE_ICONS[0].id
+    expect(desktopWorkspaceIconSelectionUrl({ iconCatalogId: catalogId })).toBe(DESKTOP_WORKSPACE_ICONS[0].url)
+    expect(desktopWorkspaceIconSelectionUrl({ iconCatalogId: null, iconUploadId: uploadId })).toBe(`/api/desktop/workspace/icon/bytes?identity=${uploadId}`)
+    expect(desktopWorkspaceIconSelectionUrl({ iconCatalogId: null })).toBeNull()
+    expect(desktopWorkspaceIconSelectionUrl({ iconCatalogId: '../outside.png' })).toBeNull()
+    expect(desktopWorkspaceIconSelectionUrl({ iconCatalogId: null, iconUploadId: '../outside.png' })).toBeNull()
+    expect(desktopWorkspaceIconSelectionUrl({ iconCatalogId: catalogId, iconUploadId: uploadId })).toBeNull()
+})
+
+test.each([
+    { catalogId: null, uploadId: '../outside.png' },
+    { catalogId: DESKTOP_WORKSPACE_ICONS[0].id, uploadId },
+])('an invalid saved descriptor is not published into the workspace surfaces', async descriptor => {
+    const f = fixture(); f.setPut(input => Response.json({ name: input.name, ...descriptor }))
+    const h = await mount()
+    await click(button('Save'))
+    expect(h.saved).not.toHaveBeenCalled()
+    expect(dialog()?.textContent).toContain('Could not read the saved workspace settings.')
+    expect(dialog()?.textContent).not.toContain('Zod')
 })

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { DESKTOP_WORKSPACE_ICONS } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
-import { DESKTOP_IMAGE_MAX_BYTES } from '@/lib/desktop/server/image-bytes'
+import { DESKTOP_IMAGE_MAX_BYTES, inspectDesktopImageBytes } from '@/lib/desktop/server/image-bytes'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopWorkspaceIcon, readDesktopWorkspaceIconSelection } from '@/lib/desktop/server/workspace-icon'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
@@ -159,12 +159,17 @@ test('a failed lazy initializer is retried rather than poisoning the pooled clie
     expect(await retry.json()).toEqual({ catalogId: null })
 })
 
-async function committedLogo(): Promise<{ name: string; catalogId: string | null; uploadId: string | null }> {
+async function logoForm(name = '  Acme Studio  '): Promise<FormData> {
     const { default: sharp } = await import('sharp')
     const png = new Uint8Array(await sharp({ create: { width: 40, height: 64, channels: 3, background: { r: 255, g: 0, b: 0 } } }).png().toBuffer())
     const form = new FormData()
-    form.set('name', '  Acme Studio  ')
+    form.set('name', name)
     form.set('logoFile', new File([png], 'logo.png', { type: 'image/png' }))
+    return form
+}
+
+async function committedLogo(): Promise<{ name: string; catalogId: string | null; uploadId: string | null }> {
+    const form = await logoForm()
     const saved = await PUT(multipartRequest(form))
     expect(saved.status).toBe(200)
     return await saved.json()
@@ -199,25 +204,31 @@ test('the committed raster is served by identity, fails closed otherwise and ref
     expect(served.headers.get('content-type')).toBe('image/webp')
     expect(served.headers.get('x-content-type-options')).toBe('nosniff')
     expect(served.headers.get('content-security-policy')).toContain('sandbox')
-    expect(served.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
+    expect(served.headers.get('cache-control')).toBe('private, no-store')
     expect((await served.arrayBuffer()).byteLength).toBeGreaterThan(0)
     expect((await readIconBytes(bytesRequest(null))).status).toBe(404)
     expect((await readIconBytes(bytesRequest('not-a-uuid'))).status).toBe(404)
     expect((await readIconBytes(bytesRequest('00000000-0000-0000-0000-000000000000'))).status).toBe(404)
     const cross = bytesRequest(saved.uploadId); cross.headers.set('sec-fetch-site', 'cross-site')
     expect((await readIconBytes(cross)).status).toBe(403)
+    const anonymous = bytesRequest(saved.uploadId); anonymous.headers.delete('cookie')
+    expect((await readIconBytes(anonymous)).status).toBe(401)
 })
 
 test('replacing an upload deletes the previous raster, and a catalog selection or reset clears the byte store', async () => {
-    await committedLogo()
-    const second = await committedLogo()
-    expect(await byteRows()).toEqual([{ identity: second.uploadId, content_type: 'image/webp' }])
-    await put({ name: 'Illustrated', catalogId: second })
+    const originalUpload = await committedLogo()
+    const replacement = await committedLogo()
+    expect(await byteRows()).toEqual([{ identity: replacement.uploadId, content_type: 'image/webp' }])
+    expect((await readIconBytes(bytesRequest(originalUpload.uploadId))).status).toBe(404)
+    expect((await put({ name: 'Illustrated', catalogId: second })).status).toBe(200)
     expect(await byteRows()).toEqual([])
     expect((await iconRows())[0]!.catalog_id).toBe(second)
-    await put({ name: 'Back to default', catalogId: null })
+    expect((await readIconBytes(bytesRequest(replacement.uploadId))).status).toBe(404)
+    const resetUpload = await committedLogo()
+    expect((await put({ name: 'Back to default', catalogId: null })).status).toBe(200)
     expect(await iconRows()).toEqual([])
     expect(await byteRows()).toEqual([])
+    expect((await readIconBytes(bytesRequest(resetUpload.uploadId))).status).toBe(404)
 })
 
 test('an oversized, unsupported or damaged upload is rejected before mutating name, icon or byte store', async () => {
@@ -276,4 +287,137 @@ test('the illustration-only store read keeps its catalog-only contract after an 
     expect(await readDesktopWorkspaceIcon(await openDesktopDatabase(root))).toBeNull()
     await put({ name: 'Illustrated', catalogId: second })
     expect(await readDesktopWorkspaceIconSelection(await openDesktopDatabase(root))).toEqual({ iconCatalogId: second, iconUploadId: null })
+})
+
+test('name-only save preserves the uploaded bytes and identity across reopen', async () => {
+    const saved = await committedLogo()
+    const before = await iconRows(), bytesBefore = await byteRows()
+    const response = await put({ name: 'Renamed upload' })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ name: 'Renamed upload', catalogId: null, uploadId: saved.uploadId })
+    expect(await iconRows()).toEqual(before)
+    expect(await byteRows()).toEqual(bytesBefore)
+    await closeDesktopDatabase(root)
+    expect(await name()).toBe('Renamed upload')
+    expect(await (await GET(request())).json()).toEqual({ catalogId: null, uploadId: saved.uploadId })
+    expect((await readIconBytes(bytesRequest(saved.uploadId))).status).toBe(200)
+})
+
+test.each(['upload', 'catalog', 'reset'] as const)('failed byte cleanup rolls back name, selection and bytes for %s replacement', async replacement => {
+    const saved = await committedLogo()
+    const before = await iconRows(), bytesBefore = await byteRows(), db = await openDesktopDatabase(root)
+    await db.execute("CREATE TRIGGER reject_logo_cleanup BEFORE DELETE ON desktop_workspace_icon_bytes BEGIN SELECT RAISE(ABORT, 'fixture cleanup failure'); END")
+    const replace = async () => replacement === 'upload'
+        ? PUT(multipartRequest(await logoForm('Replacement')))
+        : put({ name: 'Replacement', catalogId: replacement === 'catalog' ? second : null })
+    expect((await replace()).status).toBe(500)
+    expect(await name()).toBe(saved.name)
+    expect(await iconRows()).toEqual(before)
+    expect(await byteRows()).toEqual(bytesBefore)
+    expect((await readIconBytes(bytesRequest(saved.uploadId))).status).toBe(200)
+    await db.execute('DROP TRIGGER reject_logo_cleanup')
+    expect((await replace()).status).toBe(200)
+    expect(await name()).toBe('Replacement')
+    expect((await readIconBytes(bytesRequest(saved.uploadId))).status).toBe(404)
+})
+
+test('multipart saves reject unexpected keys, duplicate claims and non-text names without changing the saved logo', async () => {
+    const saved = await committedLogo()
+    const before = await iconRows(), bytesBefore = await byteRows()
+    for (const variant of ['extra', 'catalog', 'duplicate-name', 'duplicate-logo', 'file-name', 'missing-name', 'text-logo']) {
+        const form = await logoForm('Must not save')
+        if (variant === 'extra') form.set('workspaceId', '2')
+        if (variant === 'catalog') form.set('catalogId', second)
+        if (variant === 'duplicate-name') form.append('name', 'Other name')
+        if (variant === 'duplicate-logo') form.append('logoFile', form.get('logoFile') as File)
+        if (variant === 'file-name') form.set('name', new File(['Not a name'], 'name.txt'))
+        if (variant === 'missing-name') form.delete('name')
+        if (variant === 'text-logo') form.set('logoFile', 'not an uploaded file')
+        expect((await PUT(multipartRequest(form))).status, variant).toBe(400)
+    }
+    expect(await name()).toBe(saved.name)
+    expect(await iconRows()).toEqual(before)
+    expect(await byteRows()).toEqual(bytesBefore)
+})
+
+test.each([undefined, '1', String(DESKTOP_IMAGE_MAX_BYTES + 64 * 1024 + 1)])('caps the actual upload stream and cancels it with Content-Length %s', async declaredLength => {
+    await put({ name: 'Keep me', catalogId: first })
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({
+        pull(controller) { controller.enqueue(new Uint8Array(4 * 1024 * 1024)) },
+        cancel,
+    })
+    const headers = request().headers
+    headers.set('content-type', 'multipart/form-data; boundary=oversized-fixture')
+    if (declaredLength !== undefined) headers.set('content-length', declaredLength)
+    const upload = new Request(`${runtime.app.origin}/api/desktop/workspace/icon`, {
+        method: 'PUT', headers, body, duplex: 'half',
+    } as RequestInit & { duplex: 'half' })
+    expect((await PUT(upload)).status).toBe(413)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(await name()).toBe('Keep me')
+    expect(await (await GET(request())).json()).toEqual({ catalogId: first })
+    expect(await byteRows()).toEqual([])
+})
+
+test('malformed bodies and unknown JSON fields are refused without replacing an upload', async () => {
+    const saved = await committedLogo()
+    const before = await iconRows(), bytesBefore = await byteRows()
+    expect((await put({ name: 'Wrong workspace', workspaceId: 2 })).status).toBe(400)
+    expect((await put({ name: 'Wrong identity', uploadId: saved.uploadId })).status).toBe(400)
+    expect((await put({ name: 'x'.repeat(4097) })).status).toBe(413)
+    const headers = request().headers
+    headers.set('content-type', 'multipart/form-data; boundary=missing-parts')
+    expect((await PUT(new Request(`${runtime.app.origin}/api/desktop/workspace/icon`, { method: 'PUT', headers, body: 'broken form' }))).status).toBe(400)
+    const wrongType = request({ name: 'Wrong type' }); wrongType.headers.set('content-type', 'text/plain')
+    expect((await PUT(wrongType)).status).toBe(415)
+    expect(await name()).toBe(saved.name)
+    expect(await iconRows()).toEqual(before)
+    expect(await byteRows()).toEqual(bytesBefore)
+})
+
+// Valid PNG chunk framing/CRCs with an invalid compressed image payload: structural admission
+// succeeds, so this exercises the real decoder error rather than the earlier signature check.
+function undecodablePng(): Uint8Array<ArrayBuffer> {
+    const chunk = (type: string, payload: Buffer) => {
+        const content = Buffer.concat([Buffer.from(type, 'ascii'), payload])
+        let crc = 0xffffffff
+        for (const byte of content) {
+            crc ^= byte
+            for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+        }
+        const length = Buffer.alloc(4), checksum = Buffer.alloc(4)
+        length.writeUInt32BE(payload.length); checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0)
+        return Buffer.concat([length, content, checksum])
+    }
+    const header = Buffer.alloc(13)
+    header.writeUInt32BE(1, 0); header.writeUInt32BE(1, 4); header[8] = 8; header[9] = 6
+    return new Uint8Array(Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        chunk('IHDR', header), chunk('IDAT', Buffer.from('invalid deflate payload')), chunk('IEND', Buffer.alloc(0))]))
+}
+
+test('decoder failures return 415 before a write transaction and preserve the previous name and upload', async () => {
+    const saved = await committedLogo()
+    const before = await iconRows(), bytesBefore = await byteRows(), db = await openDesktopDatabase(root)
+    const transactions = vi.spyOn(db, 'transaction')
+    const bytes = undecodablePng()
+    expect(inspectDesktopImageBytes('png', bytes)).toEqual({ width: 1, height: 1, contentType: 'image/png' })
+    const form = new FormData()
+    form.set('name', 'Must not save')
+    form.set('logoFile', new File([bytes], 'undecodable.png', { type: 'image/png' }))
+    const response = await PUT(multipartRequest(form))
+    expect(response.status).toBe(415)
+    expect(await response.json()).toEqual({ error: 'This image is damaged and can’t be used.' })
+    expect(transactions).not.toHaveBeenCalled()
+    expect(await name()).toBe(saved.name)
+    expect(await iconRows()).toEqual(before)
+    expect(await byteRows()).toEqual(bytesBefore)
+})
+
+test('unselected orphan bytes cannot be served as the workspace logo', async () => {
+    await committedLogo()
+    const db = await openDesktopDatabase(root), identity = crypto.randomUUID()
+    await db.execute({ sql: 'INSERT INTO desktop_workspace_icon_bytes(identity,content_type,bytes,created_at) VALUES (?,?,?,?)',
+        args: [identity, 'image/webp', new Uint8Array([1, 2, 3]), new Date().toISOString()] })
+    expect((await readIconBytes(bytesRequest(identity))).status).toBe(404)
 })
