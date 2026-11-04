@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// @vitest-environment-options {"happyDOM":{"settings":{"navigation":{"disableChildFrameNavigation":true}}}}
+// @vitest-environment-options {"settings":{"navigation":{"disableChildFrameNavigation":true}}}
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'

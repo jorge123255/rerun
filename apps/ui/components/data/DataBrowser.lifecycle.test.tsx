@@ -165,13 +165,15 @@ describe('DataBrowser durable preferred views', () => {
         expect(screen.getByLabelText('Active view').textContent).toBe('alpha-gallery')
     })
 
-    it('never lets delayed restoration override a newer user selection', async () => {
+    it('keeps view controls loading until restoration completes, then saves a new user selection', async () => {
         const f = fixture(), preference = deferred<string | null>()
         f.source.preferredView = { read: () => preference.promise, write: vi.fn(async () => {}) }
         await render(<DataBrowser source={f.source} />)
-        await waitFor(() => screen.getByRole('button', { name: 'All rows' }))
-        await click(screen.getByRole('button', { name: 'All rows' }))
+        expect([...document.querySelectorAll('button')].some(button => button.textContent === 'All rows')).toBe(false)
         await act(async () => preference.resolve('alpha-view'))
+        await screen.findByText('Owner alpha')
+        expect(screen.getByLabelText('Active view').textContent).toBe('alpha-view')
+        await click(screen.getByRole('button', { name: 'All rows' }))
         expect(screen.getByLabelText('Active view').textContent).toBe('__all')
         expect(f.source.preferredView.write).toHaveBeenCalledWith('alpha', '__all')
     })
