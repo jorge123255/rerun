@@ -1,28 +1,28 @@
 # Rerun Mac delivery checklist
 
-Updated November 4, 2026. Installed source: `220eeff3b7889f8481dc3a705d877ad68aad4cba`.
+Updated November 4, 2026. Installed source: `c41e83743cb969fc9814a2c64850d04cd762777f`.
 
-The parity catalog now has **29 unfinished capability groups**, down from 30 because **B2 Boxes is complete**. This is a scope count, not the number of individual tasks left. Several groups contain working features and multiple missing features. Use the concrete tasks below for delivery updates; retain the catalog as the full scope reference. Do not remove unfinished work or close an area just to reduce the count.
+The parity catalog has **28 unfinished capability groups**, down from 29 because **D7 private/shared data tables is complete**. Individual delivery tasks can complete part of a broader group; partial scope remains listed rather than being removed to reduce the count.
 
-## Current delivery — 1 of 9 tasks accepted
+## Current delivery — 5 of 9 tasks accepted
 
 All eight lane worktrees were prepared from `927c5e17da6b6db84657261695a98e0533b264de`. Root owns integration and every check, build, installation, live model call and Mac/restart test.
 
-**B, G and H have reviewed committed handoffs and are integrated into the coding branch, pending final root checks and Mac acceptance.** B: `c7db894fee5ae05553dde98006ec13e969bb9e57`; G: `925dead9ac7e30c41cd0f01bfb723f0b570cb69b`; H: `181d467cefcc2adfac0b5f6a40ce80bc3fd81e1a` and `406f35aac90e123021202741cecd790f101e9b6d`. Uncommitted alternate implementations remain excluded. Root has also reviewed A `6d2e177a9c6e4377935bf87479822873683c10c7`, E `7e67ce1907ede7e43acda346027835b1923a6a0b`, and F `7c69dd4e53ca0174b75be77553a2858109fcfacb`; these are not integrated or accepted. E needs the rest of its assigned schedule slice, and F needs lifecycle/credential corrections. The installed accepted build remains `220eeff`. Root alone runs all checks and Mac acceptance.
+**A, B, G and H are installed and accepted in `c41e837`, alongside root’s previously accepted Control Center Box work: 5 of 9 delivery tasks are accepted.** A’s blank iframe was replaced by root’s bundled macOS PDF page renderer after native failure; the original Files header, frame and sibling navigation remain. B supplies multiple existing text attachments; G supplies private/shared tables and original views; H supplies bounded public-page fetching. Root also corrected saved-view route identity, stale Board previews and selected-view persistence across changing local app origins. C is still working and its uncommitted work is untouched. D `a34f5ce`, E `267c832` and F `0df850c` remain outside acceptance and need the reviewed corrections/root integration. Uncommitted alternatives remain excluded. Root alone ran all checks, builds, installation and Mac acceptance.
 
-- [ ] **A — D5:** existing own PDF previews using the original Files frame.
-- [ ] **B — C3:** multiple existing text attachments through drafts, queues, send and history.
-- [ ] **C — C7:** local notifications/preferences and correct request age.
-- [ ] **D — E6:** local Skills and exact proposal review.
-- [ ] **E — E8:** schedules while Rerun is running, with durable chat adoption.
-- [ ] **F — E5:** HTTPS Streamable HTTP MCP connections and real tools.
-- [ ] **G — D7:** private/shared data tables and original views.
-- [ ] **H — E2:** bounded public-page web_fetch.
-- [x] **Root — B5:** original Control Center Box search/member drill, Move to another Box and New Box. Installed and accepted in `220eeff`; the full B5 group remains partial.
+- [x] **A — D5:** existing own PDF previews in the original Files frame, with root’s working macOS renderer.
+- [x] **B — C3:** multiple existing text attachments through drafts, queues, send and history. Native queued transition remains unobserved; queue/receipt regressions passed.
+- [ ] **C — C7:** local notifications/preferences and correct request age. Still working.
+- [ ] **D — E6:** local Skills and exact proposal review. Source corrections and root integration remain.
+- [ ] **E — E8:** schedules while Rerun is running, with durable chat adoption. Remaining receipt replay correction and root activation wiring.
+- [ ] **F — E5:** HTTPS Streamable HTTP MCP connections and real tools. Remaining list/admission corrections and root integration.
+- [x] **G — D7:** private/shared data tables and original views; complete D7 scope.
+- [x] **H — E2:** bounded public-page web_fetch; broader writeback/search scope remains.
+- [x] **Root — B5:** original Control Center Box search/member drill, Move to another Box and New Box. Accepted previously in `220eeff`; full B5 remains partial.
 
-Root passed **3,909 UI tests (39 existing skips; 436 test files passed and 14 skipped)**, UI typecheck, packaging and runtime verification for installed source `220eeff3b7889f8481dc3a705d877ad68aad4cba`. Native Control Center Box search/member selection, first-open camera framing, correct source/destination membership counts, Move to another Box, and New Box Cancel/Save passed while preserving the selected chat and draft. A real Codex reply of **42** before restart and **43** afterward, plus exact saved-state comparison, passed full-restart acceptance. Engine source was unchanged; the earlier **3,080-test engine pass** remains the last engine run and was not rerun. After the verified recovery backup at `work/control-boxes-completed-recovery/verified-manifest.json`, root removed the disposable coworker through the authenticated app API and both empty QA Boxes through the original native Delete dialogs. A full quit/reopen then passed `work/control-boxes-clean-after-restart.log` and `work/control-boxes-original-final-after-restart.log`: original Box geometry/membership, workspace and provider defaults, identities and all **2 coworkers / 23 chats / 88 messages** were preserved exactly, with no fixtures remaining. The final native board showed only My workspace and the two original tiles, with Codex connected using `gpt-6.1-sol`. Evidence: [Control Center Boxes acceptance](desktop-control-center-boxes-acceptance.md).
+Root passed **4,038 UI tests (39 existing skips; 449 test files passed and 14 skipped)**, UI typecheck, **16 shell tests**, **12 PDF helper/layout/provenance tests** and **9 installer/native-library tests**, plus production packaging and runtime verification. The **3,208-test engine pass** and engine typecheck apply to the unchanged final engine tree `e17381e565ecf69e2eed79df010a64afcfdd01a9`; PDF and view-preference follow-ups did not change that tree. Native PDF pages, zoom, errors and restart; multi-file chat/draft/history; private/shared data, editing/views/export; and public fetch passed. Final post-restart Codex replies returned **43 / 42 / HTTP 200** and **LANTERN, RIVER — 42**. Exact saved-state comparison passed after restart, including selected private Board and shared All rows views. After a verified full-quit recovery copy, root removed only the two disposable coworkers, QA shared table, their view preferences and identical QA exports. Another full quit/reopen preserved the original Box geometry, workspace/provider defaults and **2 coworkers / 23 chats / 88 messages** exactly. See [PDF, attachments, data and web acceptance](desktop-pdf-attachments-data-web-acceptance.md).
 
-See `desktop-next-round.md` for the exact worktrees, prompts and shared-file boundaries. These tasks do not add nine new scope groups. The catalog remains 29 until a whole group is completed.
+See `desktop-next-round.md` for worktrees, handoffs and correction prompts. D5, C3 and E2 retain their broader missing scope; completing these slices does not close those groups.
 
 ## Previous delivery — 3 of 3 tasks accepted
 
@@ -50,7 +50,7 @@ Evidence: `desktop-pending-inbox-acceptance.md` and `desktop-workspace-logo-acce
 | --- | --- | --- |
 | B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local logo upload; Box search/member drill, Move to another Box and New Box | Website logos; remaining contextual actions and unsupported coworker-panel commands as their features land. Board Boxes are complete under B2 |
 | C7: Actions and notifications | Pending and Done inbox; exact navigation; persistent individual/bulk read; live closed counts | Pending-request age/order from the request's timestamp; notifications; per-coworker notification preferences |
-| D5: Files | Text editing/conflicts; rename/Delete; static raster, WAV/MP3 and MP4 previews; previous/next navigation | PDF; additional media formats and animation |
+| D5: Files | Text editing/conflicts; rename/Delete; static raster, WAV/MP3/MP4 and PDF previews; previous/next navigation | Additional media formats and animation; remaining PDF interactions |
 | C8: Conversation activity and results | File steps; suggested replies; live compaction; text/static-image/audio/MP4 result cards | Child runs; tables; additional formats and request presentations |
 
 These rows explain partial completion; they are not four new tasks added to the scope. The full parity catalog retains the original source references and connected-workspace decisions. C5 and C6 currently describe overlapping credential/service/sign-in/takeover work; they must not be counted as two independent tasks in the delivery ledger.

@@ -1,6 +1,6 @@
 # Desktop PDF preview — CoreGraphics page rendering
 
-**Current status: source implementation pending root validation.** Root alone runs checks, builds, installation and Mac acceptance. This document makes no acceptance claim.
+**Accepted in installed source `c41e83743cb969fc9814a2c64850d04cd762777f`.** Root ran the full 4,038-test UI suite, typecheck, native renderer and packaging checks, and real Mac page/zoom/navigation/error/restart acceptance. See [combined acceptance](desktop-pdf-attachments-data-web-acceptance.md) for exact evidence and preserved original data.
 
 The initial Files PDF iframe came from A's reviewed commits `6d2e177a9c6e4377935bf87479822873683c10c7` and `fe69cc12ddca10d4f341f0f27d3be4d772efc6c6`, with shared recovery wiring integrated in `839027f`. Root's installed candidate `57a3a47fe5badbf64691758931b180b4cb579d6f` passed 4,000 UI tests but failed native PDF display: a valid two-page file showed a blank white iframe, and accessibility reported `chrome-error://chromewebdata/` on repeated observation. Passing fetch/DOM tests did not establish display. Root removed that iframe candidate before authorizing this bounded renderer replacement.
 
@@ -68,14 +68,14 @@ The parent validates requested page equality, page count, finite positive point 
 
 The UI must cancel and discard old requests on file/identity/coworker/page/zoom changes, Back, close and unmount, release Blob URLs, and display renderer errors instead of leaving a blank successful-looking page. Parsed page metadata and a downloaded PNG are not a native display acceptance result.
 
-## Authored evidence and remaining acceptance
+## Verification and acceptance
 
 `pdf-render.test.ts` authors a controlled child-process regression for bytes-only input, minimal environment, split metadata, output validation, bounded concurrency, timeout, abort/reaping, failed spawn and capped output/stderr. The PDF route regression retains actual filesystem confinement and recovery, with a stubbed raster helper, and covers page/scale forwarding, inert response headers, renderer refusal and stale coworker identity. Those route fixtures are not real rendering fixtures.
 
-Root must run the focused checks, full affected suites, typecheck/build/packaging checks and the actual native helper against a valid document. Mac acceptance must visibly show both pages of the owned two-page fixture, page changes, zoom, sibling navigation, Back/close, owner isolation and successful reopening after a full restart. The prior 4,000-test result belongs to the failed iframe candidate and cannot be reused as acceptance of this renderer.
+Root ran the focused checks (53 passes), full UI suite (4,038 passes, 39 existing skips), typecheck, native helper, shell, packaging and runtime verification. Mac acceptance visibly showed both fixture pages, page changes, zoom, sibling navigation, Back/close, owner isolation and reopening after full restart. The prior 4,000-test result belongs to the failed iframe candidate and was not reused as acceptance of this renderer.
 
 Use only root-owned disposable coworker fixtures and recovery-backed cleanup. Do not alter live source files or credentials while authoring this slice.
 
 ## Limits
 
-Existing own PDF preview only: no PDF import, chat result card, model input, print/download/public-link action, external app, embedded link navigation, browser-rendered fallback, text search/selection parity or password entry. Encrypted, malformed or unsupported documents receive a visible refusal. Native rendering, packaging and restart acceptance remain pending.
+Existing own PDF preview only: no PDF import, chat result card, model input, print/download/public-link action, external app, embedded link navigation, browser-rendered fallback, text search/selection parity or password entry. Encrypted, invalid or unsupported documents receive a visible refusal; CoreGraphics can recover some malformed PDFs, so this is not a PDF conformance validator. Native rendering, packaging and restart acceptance passed. Page/zoom state resets when a file is reopened; no saved reading-position claim is made.
