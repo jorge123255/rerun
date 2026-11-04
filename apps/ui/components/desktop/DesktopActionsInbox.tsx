@@ -328,7 +328,9 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
             change(false)
         }
         const onKeyDown = (event: globalThis.KeyboardEvent) => {
-            if (event.key !== 'Escape') return
+            // Radix may synchronously dismiss its portal during capture and attach this
+            // listener before the same Escape bubbles. Respect its consumed event.
+            if (event.key !== 'Escape' || event.defaultPrevented) return
             closeToPill()
         }
         document.addEventListener('pointerdown', onPointerDown)
