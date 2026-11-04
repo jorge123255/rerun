@@ -22,9 +22,12 @@ function setPages(pages: Record<string, unknown>) {
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-device-test-'))
     const cli = join(root, 'fixture-cli')
-    // App-bundled Node lives under "Rerun Desktop Preview.app". A shebang cannot
-    // represent an interpreter path containing spaces; inherit the test runner's PATH.
-    await writeFile(cli, `#!/usr/bin/env node
+    const script = join(root, 'fixture-cli.cjs')
+    const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
+    // Account operations deliberately have no inherited PATH. A shell launcher also
+    // supports the spaces in the bundled Node interpreter's application path.
+    await writeFile(cli, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`, { mode: 0o700 })
+    await writeFile(script, `
 const fs=require('node:fs'),path=require('node:path'),state=path.join(process.cwd(),'fixture-auth')
 const send=m=>console.log(JSON.stringify(m))
 require('node:readline').createInterface({input:process.stdin}).on('line', line=>{
