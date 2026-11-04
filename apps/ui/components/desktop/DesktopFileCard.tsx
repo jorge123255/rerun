@@ -230,7 +230,7 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
     }, [imageKey])
 
     const opened = openIndex === null ? null : files[openIndex]
-    return <div data-file-card="true">
+    return <div data-file-card="true" className="min-w-0 w-full">
         {allImages ? (
             <DesktopMediaAlbum items={images.map(withLoad)} onOpen={setOpenIndex} onError={failImage} />
         ) : (
