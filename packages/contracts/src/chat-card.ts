@@ -81,6 +81,8 @@ export const CARD_MAX_FILES = 12
 // 8 MiB per-image limit and add the total a single message may ask the Mac to preview at once.
 export const CARD_MAX_IMAGE_BYTES = 8 * 1024 * 1024
 export const CARD_MAX_IMAGE_TOTAL_BYTES = 24 * 1024 * 1024
+// The audio endpoint owns the byte authority. This mirrors its 16 MiB per-file cap.
+export const CARD_MAX_AUDIO_BYTES = 16 * 1024 * 1024
 
 export const fileCardEntrySchema = z.object({
     path: z.string(),
@@ -88,7 +90,7 @@ export const fileCardEntrySchema = z.object({
     size: z.number(),
     // A path is relative to the root it was resolved in: the agent's workspace or the shared space.
     scope: z.enum(['agent', 'shared']).default('agent'),
-    // The image endpoint's inode identity. Text cards do not carry one.
+    // The image/audio endpoint's inode identity. Text cards do not carry one.
     identity: z.string().regex(/^\d{1,24}:\d{1,24}$/).optional(),
 })
 export type FileCardEntry = z.infer<typeof fileCardEntrySchema>

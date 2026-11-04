@@ -1,5 +1,5 @@
 import {
-    CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES,
+    CARD_MAX_AUDIO_BYTES, CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES,
     fileCardSchema, isDesktopAttachmentPath, type FileCard, type FileCardEntry,
 } from '@rerun/contracts'
 
@@ -11,14 +11,22 @@ const visiblePath = (path: string) => path.length <= 4096 && !/[\\\p{Cc}]/u.test
     && path.split('/').every(segment => segment !== '' && segment !== '.' && segment !== '..' && !segment.startsWith('.'))
 const textPath = (path: string) => isDesktopAttachmentPath(path) && !path.includes('\\') && !hiddenSegment(path)
 const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
+const CARD_AUDIO = /\.(?:wav|mp3)$/i
 const imagePath = (path: string) => visiblePath(path) && CARD_IMAGE.test(path)
+const audioPath = (path: string) => visiblePath(path) && CARD_AUDIO.test(path)
 const validName = (name: string) => name.length > 0 && name.length <= 255 && !/[\\/\p{Cc}]/u.test(name)
-const IMAGE_IDENTITY = /^\d{1,24}:\d{1,24}$/
+const CARD_IDENTITY = /^\d{1,24}:\d{1,24}$/
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+const AUDIO_TYPES = new Set(['audio/wav', 'audio/mpeg'])
 
 /** A card's file is an image (not a document) when its path names a supported static raster. */
 export function isDesktopCardImage(path: string): boolean {
     return imagePath(path)
+}
+
+/** A card's file is audio when its path names a supported WAV or MP3. */
+export function isDesktopCardAudio(path: string): boolean {
+    return audioPath(path)
 }
 
 function candidate(value: unknown, depth = 0): unknown {
@@ -38,10 +46,11 @@ function candidate(value: unknown, depth = 0): unknown {
 /**
  * Validate one recorded card_file result for the Mac conversation. It accepts the live tool output
  * (a JSON string), a stored text/json wrapper, a parsed card, and the legacy single-file card. Every
- * file must still look like a visible reference of this coworker: a .txt/.md document or a static
- * PNG/JPEG/WebP/GIF image. Images carry the endpoint's inode identity and its 8 MiB / 24 MiB card
- * bounds; text keeps its 32 KiB bound. Anything else returns undefined so the reply can fall back to
- * the real tool result instead of drawing a fabricated, replaced or partial card.
+ * file must still look like a visible reference of this coworker: a .txt/.md document, a static
+ * PNG/JPEG/WebP/GIF image, or a WAV/MP3 audio file. Images carry the endpoint's inode identity and
+ * its 8 MiB / 24 MiB card bounds; audio carries the audio endpoint's identity and 16 MiB bound;
+ * text keeps its 32 KiB bound. Anything else returns undefined so the reply can fall back to the
+ * real tool result instead of drawing a fabricated, replaced or partial card.
  */
 export function desktopFileCardOf(value: unknown): FileCard | undefined {
     const parsed = fileCardSchema.safeParse(candidate(value))
@@ -56,9 +65,13 @@ export function desktopFileCardOf(value: unknown): FileCard | undefined {
         if (!Number.isSafeInteger(file.size) || file.size < 0) return undefined
         if (imagePath(file.path)) {
             if (file.size === 0 || file.size > CARD_MAX_IMAGE_BYTES) return undefined
-            if (!file.identity || !IMAGE_IDENTITY.test(file.identity)) return undefined
+            if (!file.identity || !CARD_IDENTITY.test(file.identity)) return undefined
             imageBytes += file.size
             if (imageBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return undefined
+            normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
+        } else if (audioPath(file.path)) {
+            if (file.size === 0 || file.size > CARD_MAX_AUDIO_BYTES) return undefined
+            if (!file.identity || !CARD_IDENTITY.test(file.identity)) return undefined
             normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
         } else if (textPath(file.path)) {
             if (file.size > DESKTOP_ATTACHMENT_MAX_BYTES) return undefined
@@ -84,7 +97,7 @@ export async function readDesktopCardFile(agentId: string, path: string, signal?
 /** Read a card's current image through the authenticated desktop Files image route. */
 export async function readDesktopCardImage(agentId: string, path: string, identity: string | undefined, signal?: AbortSignal): Promise<{ blob: Blob; contentType: string }> {
     if (!imagePath(path)) throw new DesktopCardError('This file is not a supported image.')
-    if (!identity || !IMAGE_IDENTITY.test(identity)) throw new DesktopCardError('Send this image to preview again.')
+    if (!identity || !CARD_IDENTITY.test(identity)) throw new DesktopCardError('Send this image to preview again.')
     const query = new URLSearchParams({ path, identity })
     const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/files/image?${query.toString()}`, { cache: 'no-store', ...(signal && { signal }) })
     if (!response.ok) {
@@ -95,6 +108,25 @@ export async function readDesktopCardImage(agentId: string, path: string, identi
     const contentType = (response.headers.get('content-type') ?? blob.type).split(';')[0]!.trim()
     if (!IMAGE_TYPES.has(contentType) || blob.size < 1 || blob.size > CARD_MAX_IMAGE_BYTES) {
         throw new DesktopCardError('This image can’t be displayed.')
+    }
+    return { blob, contentType }
+}
+
+
+/** Read a card's current audio through the authenticated desktop Files audio route. */
+export async function readDesktopCardAudio(agentId: string, path: string, identity: string | undefined, signal?: AbortSignal): Promise<{ blob: Blob; contentType: string }> {
+    if (!audioPath(path)) throw new DesktopCardError('This file is not a supported audio file.')
+    if (!identity || !CARD_IDENTITY.test(identity)) throw new DesktopCardError('Send this audio to preview again.')
+    const query = new URLSearchParams({ path, identity })
+    const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/files/audio?${query.toString()}`, { cache: 'no-store', ...(signal && { signal }) })
+    if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        throw new DesktopCardError(typeof body?.error === 'string' ? body.error : 'This audio is no longer available.')
+    }
+    const blob = await response.blob()
+    const contentType = (response.headers.get('content-type') ?? blob.type).split(';')[0]!.trim().toLowerCase()
+    if (!AUDIO_TYPES.has(contentType) || blob.size < 1 || blob.size > CARD_MAX_AUDIO_BYTES) {
+        throw new DesktopCardError('This audio file can’t be played.')
     }
     return { blob, contentType }
 }

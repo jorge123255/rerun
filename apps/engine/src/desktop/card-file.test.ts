@@ -3,7 +3,7 @@ import { link, mkdir, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES, fileCardSchema } from '@rerun/contracts'
+import { CARD_MAX_AUDIO_BYTES, CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES, fileCardSchema } from '@rerun/contracts'
 import type { RunContext } from '../runtime/context.js'
 
 const root = mkdtempSync(join(tmpdir(), 'rerun-mac-card-file-'))
@@ -37,6 +37,7 @@ beforeAll(async () => {
     for (const id of [alpha, bravo]) {
         await mkdir(join(workspaceDir(id), 'reports'), { recursive: true })
         await mkdir(join(workspaceDir(id), 'shots'), { recursive: true })
+        await mkdir(join(workspaceDir(id), 'voice'), { recursive: true })
         await writeAgentConfig(id, config(id))
         await writeFile(join(workspaceDir(id), 'reports', 'summary.md'), 'Summary')
         await writeFile(join(workspaceDir(id), 'reports', 'notes.txt'), 'Notes')
@@ -49,6 +50,12 @@ beforeAll(async () => {
             await truncate(join(workspaceDir(id), 'shots', `eight-${n}.png`), CARD_MAX_IMAGE_BYTES)
         }
         await writeFile(join(workspaceDir(id), 'shots', 'one-byte.png'), Buffer.from([1]))
+        await writeFile(join(workspaceDir(id), 'voice', 'tone.wav'), Buffer.alloc(1024, 7))
+        await writeFile(join(workspaceDir(id), 'voice', 'tone.mp3'), Buffer.alloc(1024, 7))
+        await writeFile(join(workspaceDir(id), 'voice', 'tone.ogg'), Buffer.alloc(1024, 7))
+        await writeFile(join(workspaceDir(id), 'voice', 'empty.wav'), '')
+        await writeFile(join(workspaceDir(id), 'voice', 'big.mp3'), '')
+        await truncate(join(workspaceDir(id), 'voice', 'big.mp3'), CARD_MAX_AUDIO_BYTES + 1)
     }
 })
 afterAll(async () => {
@@ -79,34 +86,51 @@ it('refuses shared, foreign, hidden, linked, directory, unsupported and oversize
     await link(join(other, 'reports', 'summary.md'), join(root, 'alias.md'))
     await symlink(join(other, 'shots', 'photo.png'), join(root, 'linked.png'))
     await link(join(other, 'shots', 'photo.png'), join(root, 'alias.png'))
+    await symlink(join(other, 'voice', 'tone.wav'), join(root, 'linked.wav'))
+    await link(join(other, 'voice', 'tone.wav'), join(root, 'alias.wav'))
     await mkdir(join(root, 'folder.md'))
     await mkdir(join(root, 'folder.png'))
+    await mkdir(join(root, 'folder.wav'))
     await writeFile(join(root, 'big.md'), Buffer.alloc(DESKTOP_ATTACHMENT_MAX_BYTES + 1, 65))
     const cases: [string, 'agent' | 'shared', RegExp][] = [
         ['reports/summary.md', 'shared', /Shared files are not available/],
         ['shots/photo.png', 'shared', /Shared files are not available/],
+        ['voice/tone.wav', 'shared', /Shared files are not available/],
         ['/etc/passwd.md', 'agent', /relative .* path/],
         ['/etc/passwd.png', 'agent', /relative .* path/],
+        ['/etc/passwd.wav', 'agent', /relative .* path/],
         ['../cards-bravo/workspace/reports/summary.md', 'agent', /relative .* path/],
         ['../cards-bravo/workspace/shots/photo.png', 'agent', /relative .* path/],
+        ['../cards-bravo/workspace/voice/tone.wav', 'agent', /relative .* path/],
         ['.secret/summary.md', 'agent', /relative .* path/],
         ['.secret/photo.png', 'agent', /relative .* path/],
+        ['.secret/tone.wav', 'agent', /relative .* path/],
         ['reports\\summary.md', 'agent', /relative .* path/],
         ['shots\\photo.png', 'agent', /relative .* path/],
+        ['voice\\tone.wav', 'agent', /relative .* path/],
         ['linked.md', 'agent', /unavailable/],
         ['alias.md', 'agent', /unavailable/],
         ['linked.png', 'agent', /unavailable/],
         ['alias.png', 'agent', /unavailable/],
+        ['linked.wav', 'agent', /unavailable/],
+        ['alias.wav', 'agent', /unavailable/],
         ['folder.md', 'agent', /folder, not a file/],
         ['folder.png', 'agent', /folder, not a file/],
+        ['folder.wav', 'agent', /folder, not a file/],
         ['reports/image.svg', 'agent', /relative .* path/],
         ['reports/image.pdf', 'agent', /relative .* path/],
         ['shots/clip.mp4', 'agent', /relative .* path/],
+        ['voice/tone.ogg', 'agent', /relative .* path/],
+        ['voice/tone.m4a', 'agent', /relative .* path/],
+        ['voice/tone.flac', 'agent', /relative .* path/],
         ['big.md', 'agent', /32 KiB/],
         ['shots/big.png', 'agent', /8 MB/],
         ['shots/empty.png', 'agent', /empty/],
+        ['voice/empty.wav', 'agent', /empty/],
+        ['voice/big.mp3', 'agent', /16 MB/],
         ['missing.md', 'agent', /unavailable/],
         ['shots/missing.png', 'agent', /unavailable/],
+        ['voice/missing.wav', 'agent', /unavailable/],
     ]
     for (const [path, scope, message] of cases) {
         const result = await show(tool, path, scope)
@@ -127,6 +151,16 @@ it('returns an image card with the authenticated endpoint identity and byte size
     expect(await show(tool, join(workspaceDir(alpha), 'shots', 'photo.png'))).toContain('shots/photo.png')
 })
 
+it('returns an audio card with the authenticated endpoint identity and byte size', async () => {
+    await grant(alpha, true)
+    const tool = await toolFor(alpha)
+    const card = fileCardSchema.parse(JSON.parse(await show(tool, 'voice/tone.wav')))
+    expect(card.files[0]).toMatchObject({ path: 'voice/tone.wav', name: 'tone.wav', size: 1024, scope: 'agent' })
+    expect(card.files[0]?.identity).toMatch(/^\d+:\d+$/)
+    expect(await show(tool, join(workspaceDir(alpha), 'voice', 'tone.wav'))).toContain('voice/tone.wav')
+    expect((await registry(alpha)).card_file!.description).toContain('16 MB per audio')
+})
+
 it('keeps mixed text and image files in the order the model asked for', async () => {
     await grant(alpha, true)
     const tool = await toolFor(alpha)
@@ -136,6 +170,17 @@ it('keeps mixed text and image files in the order the model asked for', async ()
     const card = fileCardSchema.parse(JSON.parse(result))
     expect(card.files.map(file => file.path)).toEqual(['reports/summary.md', 'shots/photo.png', 'reports/notes.txt'])
     expect(card.files[1]?.identity).toMatch(/^\d+:\d+$/)
+})
+
+it('keeps audio in a mixed card without charging it to the image-thumbnail budget', async () => {
+    await grant(alpha, true)
+    const tool = await toolFor(alpha)
+    const result = String(await tool.execute!({ files: [
+        { path: 'shots/eight-0.png' }, { path: 'shots/eight-1.png' }, { path: 'shots/eight-2.png' }, { path: 'voice/tone.wav' },
+    ] }, options))
+    const card = fileCardSchema.parse(JSON.parse(result))
+    expect(card.files.map(file => file.path)).toEqual(['shots/eight-0.png', 'shots/eight-1.png', 'shots/eight-2.png', 'voice/tone.wav'])
+    expect(card.files[3]?.identity).toMatch(/^\d+:\d+$/)
 })
 
 it('refuses images whose total exceeds the bounded card preview budget', async () => {

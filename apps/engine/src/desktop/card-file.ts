@@ -1,4 +1,4 @@
-import { CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath, type FileCard, type FileCardEntry } from '@rerun/contracts'
+import { CARD_MAX_AUDIO_BYTES, CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath, type FileCard, type FileCardEntry } from '@rerun/contracts'
 import { tool, type ToolSet } from 'ai'
 import { basename, isAbsolute, join, relative } from 'node:path'
 import { z } from 'zod'
@@ -15,13 +15,17 @@ const unavailable = 'That file is unavailable in this coworker’s workspace.'
 const tooLarge = 'Result card text files can only be up to 32 KiB.'
 const imageTooLarge = 'Result card images can only be up to 8 MB.'
 const imageEmpty = 'That image is empty and can’t be previewed.'
+const audioTooLarge = 'Result card audio files can only be up to 16 MB.'
+const audioEmpty = 'That audio file is empty and can’t be previewed.'
 const imageBudget = 'Those images would exceed the 24 MB result-card preview budget. Show fewer images.'
-const badPath = 'Use a visible .txt, .md, .png, .jpg, .jpeg, .webp or .gif relative file path inside this coworker’s workspace.'
+const badPath = 'Use a visible .txt, .md, .png, .jpg, .jpeg, .webp, .gif, .wav or .mp3 relative file path inside this coworker’s workspace.'
 const shared = 'Shared files are not available in a Mac result card.'
 
 const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
+const CARD_AUDIO = /\.(?:wav|mp3)$/i
 const isCardImage = (path: string) => CARD_IMAGE.test(path)
-const isCardPath = (path: string) => isDesktopAttachmentPath(path) || isCardImage(path)
+const isCardAudio = (path: string) => CARD_AUDIO.test(path)
+const isCardPath = (path: string) => isDesktopAttachmentPath(path) || isCardImage(path) || isCardAudio(path)
 
 function assertScope(scope: 'agent' | 'shared' | undefined) {
     // A card is only a reference to a file this coworker owns. The shared space has no desktop
@@ -58,8 +62,11 @@ async function entryFor(ctx: RunContext, path: string, scope: 'agent' | 'shared'
             if (info.isDirectory()) throw new CardFileError('That path is a folder, not a file.')
             if (!info.isFile() || info.nlink !== 1n) throw new CardFileError(unavailable)
             const image = isCardImage(rel)
+            const audio = isCardAudio(rel)
             if (image && info.size === 0n) throw new CardFileError(imageEmpty)
-            if (info.size > BigInt(image ? CARD_MAX_IMAGE_BYTES : DESKTOP_ATTACHMENT_MAX_BYTES)) throw new CardFileError(image ? imageTooLarge : tooLarge)
+            if (audio && info.size === 0n) throw new CardFileError(audioEmpty)
+            const max = image ? CARD_MAX_IMAGE_BYTES : audio ? CARD_MAX_AUDIO_BYTES : DESKTOP_ATTACHMENT_MAX_BYTES
+            if (info.size > BigInt(max)) throw new CardFileError(image ? imageTooLarge : audio ? audioTooLarge : tooLarge)
             // Pin the same inode twice: a path moved into another workspace, or replaced while this
             // card is being made, must not appear as this coworker's file.
             const current = await openWithoutLinks(target)
@@ -69,7 +76,7 @@ async function entryFor(ctx: RunContext, path: string, scope: 'agent' | 'shared'
                     || check.size !== info.size || check.ctimeNs !== info.ctimeNs) throw new CardFileError(unavailable)
             } finally { await current.close() }
             await requireDesktopToolGrant(ctx, 'cardFile')
-            return { path: rel, name: basename(rel), size: Number(info.size), scope: 'agent', ...(image ? { identity: `${info.dev}:${info.ino}` } : {}) }
+            return { path: rel, name: basename(rel), size: Number(info.size), scope: 'agent', ...(image || audio ? { identity: `${info.dev}:${info.ino}` } : {}) }
         } finally { await handle.close() }
     } catch (error) {
         ctx.abortSignal?.throwIfAborted()
@@ -84,7 +91,7 @@ export function desktopCardFileTools(ctx: RunContext): ToolSet {
     return {
         card_file: tool({
             description:
-                'Show existing .txt, .md, or static .png/.jpg/.jpeg/.webp/.gif files already saved in this coworker’s persistent Files workspace as preview tiles in chat. Pass visible paths relative to Files; up to 12 files, 32 KiB per text file, 8 MB per image, and 24 MB of images per card. Animated GIF/APNG/WebP, SVG, PDF, video and other formats are unavailable. This does not save, import or publish a file. Native Codex commands and edits use a separate temporary folder whose changes are discarded: never use this tool to deliver those changes, because a matching relative path here would show the persistent original instead. Use it before asking the user to review or choose among existing Files documents or images. Opening a tile reads the current persistent file, not frozen bytes; the image endpoint rechecks the bytes and dimensions when it opens. The tool does not read content back to you. Shared files, folders and links are unavailable.',
+                'Show existing .txt, .md, static .png/.jpg/.jpeg/.webp/.gif, or .wav/.mp3 files already saved in this coworker’s persistent Files workspace as preview tiles in chat. Pass visible paths relative to Files; up to 12 files, 32 KiB per text file, 8 MB per image, 16 MB per audio file, and 24 MB of images per card. Animated GIF/APNG/WebP, SVG, PDF, video, other audio formats and other formats are unavailable. Audio is fetched only when opened and plays only after the user presses play. This does not save, import or publish a file. Native Codex commands and edits use a separate temporary folder whose changes are discarded: never use this tool to deliver those changes, because a matching relative path here would show the persistent original instead. Use it before asking the user to review or choose among existing Files documents, images or audio. Opening a tile reads the current persistent file, not frozen bytes; the image endpoint rechecks the bytes and dimensions when it opens, and the audio endpoint rechecks the bytes when it opens. The tool does not read content back to you. Shared files, folders and links are unavailable.',
             inputSchema: z.object({
                 files: jsonTolerantArray(
                     z.array(z.object({

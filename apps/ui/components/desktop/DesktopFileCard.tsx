@@ -141,8 +141,9 @@ function DesktopMediaAlbum({ items, onOpen, onError }: {
 /**
  * A recorded card_file result on the Mac. Text keeps the original tile and text preview. Images
  * use the original single-image album, multi-image grid and captions; mixed cards keep the original
- * flex row of square tiles. Image bytes come only from this conversation's authenticated image
- * route, one released object URL per tile, with replaced, deleted and invalid images shown explicitly.
+ * flex row of square tiles. Audio keeps the original square waveform tile and is fetched only when
+ * its lightbox opens. Image bytes come only from this conversation's authenticated image route, one
+ * released object URL per tile, with replaced, deleted and invalid images shown explicitly.
  */
 export function DesktopFileCard({ agentId, card }: { agentId?: string; card: FileCard }) {
     const [openIndex, setOpenIndex] = useState<number | null>(null)
