@@ -5,11 +5,14 @@ import { DesktopHttpError } from './auth'
 import type { Client, InStatement, Row } from '@libsql/client'
 import { readDesktopRecentCoworkers } from './recent-coworkers'
 import { readDesktopWorkspaceIconSelection } from './workspace-icon'
+import { insertDesktopAgentWithPlacement, readDesktopBoardState } from './spaces'
+import { withRosterWrite } from './roster-writes'
 
 export type DesktopAgent = {
     id: string
     workspaceId: number
     position?: DesktopBoardPosition
+    spaceId?: string
     engineAgentId: string
     name: string
     description: string
@@ -34,6 +37,7 @@ function agentOf(row: Row): DesktopAgent {
         id: String(row.id),
         workspaceId: Number(row.workspace_id),
         ...(row.board_col == null || row.board_row == null ? {} : { position: { col: Number(row.board_col), row: Number(row.board_row) } }),
+        ...(row.space_id == null ? {} : { spaceId: String(row.space_id) }),
         engineAgentId: String(row.engine_agent_id),
         name: String(row.name),
         description: String(row.description),
@@ -60,10 +64,10 @@ export function sessionOf(row: Row): DesktopSession {
 }
 
 export async function readDesktopBootstrap(db: Client) {
-    const [profile, workspace, agents, appearance, recentCoworkers, savedIcon] = await Promise.all([
+    const [profile, workspace, roster, appearance, recentCoworkers, savedIcon] = await Promise.all([
         db.execute('SELECT id, display_name FROM desktop_profile WHERE id = 1'),
         db.execute('SELECT id, name FROM desktop_workspace WHERE id = 1'),
-        listDesktopAgents(db),
+        readDesktopRosterSnapshot(db),
         db.execute('SELECT theme FROM desktop_appearance WHERE workspace_id = 1'),
         readDesktopRecentCoworkers(db),
         readDesktopWorkspaceIconSelection(db),
@@ -71,17 +75,29 @@ export async function readDesktopBootstrap(db: Client) {
     return {
         profile: { id: 1, displayName: String(profile.rows[0].display_name) },
         workspace: { id: 1, name: String(workspace.rows[0].name) },
-        agents,
+        agents: roster.agents,
         theme: desktopTheme.parse(appearance.rows[0]?.theme ?? 'system'),
         recentCoworkers,
+        board: roster.board,
         ...savedIcon,
     }
 }
 
-const agentsWithPosition = `SELECT a.*, d.board_col, d.board_row FROM desktop_agents a
-    LEFT JOIN desktop_duplicates d ON d.agent_id = a.id`
+async function readDesktopRosterSnapshot(db: Client) {
+    const tx = await db.transaction('read')
+    try {
+        // One SQLite snapshot is essential: creating, deleting, or reconciling a
+        // coworker changes both tables and the revision in the same write transaction.
+        const agents = await listDesktopAgents(tx)
+        const board = await readDesktopBoardState(tx)
+        return { agents, board }
+    } finally { tx.close() }
+}
 
-export async function listDesktopAgents(db: Client): Promise<DesktopAgent[]> {
+const agentsWithPosition = `SELECT a.*, p.col AS board_col, p.row AS board_row, p.space_id FROM desktop_agents a
+    LEFT JOIN desktop_space_placements p ON p.agent_id = a.id`
+
+export async function listDesktopAgents(db: Pick<Client, 'execute'>): Promise<DesktopAgent[]> {
     const result = await db.execute(agentsWithPosition + ' ORDER BY a.created_at, a.id')
     return result.rows.map(agentOf)
 }
@@ -91,13 +107,17 @@ export async function findDesktopAgent(db: Client, id: string): Promise<DesktopA
     return result.rows[0] ? agentOf(result.rows[0]) : null
 }
 
-export async function createDesktopAgent(db: Client, input: { engineAgentId: string; name: string; description?: string }): Promise<DesktopAgent> {
+type CreateDesktopAgentInput = { engineAgentId: string; name: string; description?: string; spaceId?: string }
+
+export function createDesktopAgent(db: Client, input: CreateDesktopAgentInput): Promise<DesktopAgent> {
+    return withRosterWrite(() => createDesktopAgentWithinRosterWrite(db, input))
+}
+
+// Engine creation already owns the roster lock, so it calls this non-locking variant.
+export async function createDesktopAgentWithinRosterWrite(db: Client, input: CreateDesktopAgentInput): Promise<DesktopAgent> {
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
-    await db.execute({
-        sql: 'INSERT INTO desktop_agents (id, workspace_id, engine_agent_id, name, description, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?)',
-        args: [id, input.engineAgentId, input.name, input.description ?? '', now, now],
-    })
+    await insertDesktopAgentWithPlacement(db, { id, ...input, description: input.description ?? '', now })
     return (await findDesktopAgent(db, id))!
 }
 

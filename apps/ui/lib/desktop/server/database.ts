@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { initializeDesktopCompletions } from './completed-actions-db'
 import { initializeDesktopPendingInbox } from './pending-inbox-db'
+import { initializeDesktopSpaces } from './spaces'
 
 const opening = new Map<string, Promise<Client>>()
 
@@ -198,6 +199,7 @@ async function initialize(dataRoot: string): Promise<Client> {
     ], 'write')
     await initializeDesktopCompletions(client)
     await initializeDesktopPendingInbox(client)
+    await initializeDesktopSpaces(client)
     return client
 }
 

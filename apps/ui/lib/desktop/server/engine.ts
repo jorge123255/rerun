@@ -15,7 +15,9 @@ import { readCoworkerFile } from './coworker-files'
 import { openDesktopDatabase } from './database'
 import { discardTabStart, existingTabStart, recoverTabSession, reserveTabStart } from './tab-starts'
 import type { DesktopRuntime } from './runtime'
-import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession, regenerationRequestId } from './store'
+import { createDesktopAgentWithinRosterWrite, createDesktopSession, findDesktopAgent, findDesktopSession, regenerationRequestId } from './store'
+import { withRosterWrite } from './roster-writes'
+import { planDesktopAgentPlacement } from './spaces'
 
 // Compatibility endpoint for the original OpenAI setup form.
 export async function connectDesktopOpenAI(runtime: DesktopRuntime, apiKey: string) {
@@ -26,26 +28,31 @@ export async function connectDesktopOpenAI(runtime: DesktopRuntime, apiKey: stri
     return { id: connection.id, provider: connection.provider, name: connection.name }
 }
 
-export async function createDesktopCoworker(runtime: DesktopRuntime, input: { name: string; description?: string }) {
+export async function createDesktopCoworker(runtime: DesktopRuntime, input: { name: string; description?: string; spaceId?: string }) {
     const name = input.name.trim()
     if (!name || name.length > 60) throw new DesktopHttpError(400, 'Coworker name must be between 1 and 60 characters')
     const description = input.description?.trim() ?? ''
     if (description.length > 2000) throw new DesktopHttpError(400, 'Description is too long')
     const db = await openDesktopDatabase(runtime.dataRoot)
-    const { connection } = await desktopModel(runtime)
-    const handle = `${sanitizeIdentifier(name).replace(/^_+|_+$/g, '') || 'coworker'}-${crypto.randomUUID().slice(0, 8)}`
-    const created = await createAgent(engineOf(runtime), {
-        config: {
-            name: handle,
-            displayName: name,
-            description,
-            enabled: true,
-            connectionId: connection.id,
-            provider: connection.provider,
-            model: null,
-        },
+    return withRosterWrite(async () => {
+        // Reject a missing/full selected Box before making an engine coworker. Keep the
+        // roster lock across that call so a concurrent Box move/delete cannot orphan it.
+        await planDesktopAgentPlacement(db, input.spaceId)
+        const { connection } = await desktopModel(runtime)
+        const handle = `${sanitizeIdentifier(name).replace(/^_+|_+$/g, '') || 'coworker'}-${crypto.randomUUID().slice(0, 8)}`
+        const created = await createAgent(engineOf(runtime), {
+            config: {
+                name: handle,
+                displayName: name,
+                description,
+                enabled: true,
+                connectionId: connection.id,
+                provider: connection.provider,
+                model: null,
+            },
+        })
+        return createDesktopAgentWithinRosterWrite(db, { engineAgentId: created.id, name, description, spaceId: input.spaceId })
     })
-    return createDesktopAgent(db, { engineAgentId: created.id, name, description })
 }
 
 export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: string, patch?: DesktopCoworkerPatch): Promise<DesktopCoworkerSettings> {

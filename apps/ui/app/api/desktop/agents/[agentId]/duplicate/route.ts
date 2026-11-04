@@ -5,8 +5,9 @@ import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { engineOf } from '@/lib/desktop/server/settings'
 import { desktopAgentView } from '@/lib/desktop/server/views'
+import { desktopSpacePositionSchema } from '@/lib/desktop/spaces'
 
-const input = z.strictObject({ requestId: z.uuid(), position: z.strictObject({ col: z.int(), row: z.int() }) })
+const input = z.strictObject({ requestId: z.uuid(), position: desktopSpacePositionSchema, spaceId: z.uuid().optional() })
 type Context = { params: Promise<{ agentId: string }> }
 
 export function POST(request: Request, { params }: Context) {
@@ -14,8 +15,8 @@ export function POST(request: Request, { params }: Context) {
         const parsed = input.safeParse(await request.json().catch(() => null))
         if (!parsed.success) throw new DesktopHttpError(400, 'Choose a board position for this copy.')
         try {
-            const { requestId, position } = parsed.data
-            const agent = await duplicateDesktopCoworker(await openDesktopDatabase(runtime.dataRoot), engineOf(runtime), (await params).agentId, requestId, position)
+            const { requestId, position, spaceId } = parsed.data
+            const agent = await duplicateDesktopCoworker(await openDesktopDatabase(runtime.dataRoot), engineOf(runtime), (await params).agentId, requestId, position, spaceId)
             return Response.json({ agent: desktopAgentView(agent) }, { status: 201, headers: { 'cache-control': 'no-store' } })
         } catch (error) {
             if (error instanceof PositionOccupied) return Response.json({ error: error.message, code: 'position_occupied' }, { status: 409 })

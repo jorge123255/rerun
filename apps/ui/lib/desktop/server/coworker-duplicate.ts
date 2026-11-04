@@ -5,11 +5,13 @@ import { allocateHandle } from '@/lib/agent-handle'
 import { duplicateAgentName } from '@/lib/copy-name'
 import { duplicateAgent, EngineRequestError, getAgent, request } from '@/lib/engine/client'
 import type { EngineConnection } from '@/lib/engine/types'
-import { canPlaceDesktopCopy, desktopBoardLayout, type DesktopBoardPosition } from '../board-layout'
+import type { DesktopBoardPosition } from '../board-layout'
+import { desktopSpacePositionSchema } from '../spaces'
 import { DesktopHttpError } from './auth'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { withRosterWrite } from './roster-writes'
-import { findDesktopAgent, listDesktopAgents, type DesktopAgent } from './store'
+import { findDesktopAgent, type DesktopAgent } from './store'
+import { desktopBoardRevisionWrite, desktopDuplicateDestination, desktopPlacementInsert } from './spaces'
 
 export class PositionOccupied extends DesktopHttpError {
     constructor() { super(409, 'That spot is no longer available. Choose another.') }
@@ -22,6 +24,9 @@ async function publishCopy(db: Client, engine: EngineConnection, source: Desktop
     const existing = await findDesktopAgent(db, copyId)
     if (existing) return existing
     if (receipt.completed) throw new DesktopHttpError(404, 'Copied coworker not found')
+    // A legacy pending receipt may predate an implicit roster rearrangement. Preserve
+    // its requested cells, but do not publish an overlapping copy on reconciliation.
+    await desktopDuplicateDestination(db, { col: Number(receipt.board_col), row: Number(receipt.board_row) }, String(receipt.space_id), copyId)
     const requestId = String(receipt.request_id)
     const name = String(receipt.name)
     const handle = String(receipt.handle)
@@ -46,27 +51,31 @@ async function publishCopy(db: Client, engine: EngineConnection, source: Desktop
         { sql: 'INSERT INTO desktop_agents (id,workspace_id,engine_agent_id,name,description,enabled,created_at,updated_at) VALUES (?,1,?,?,?,?,?,?)',
           args: [copyId, copy.id, name, copy.description || source.description, Number(detail.config.enabled), now, now] },
         { sql: 'UPDATE desktop_duplicates SET completed = 1 WHERE request_id = ?', args: [requestId] },
+        desktopPlacementInsert({ agentId: copyId, spaceId: String(receipt.space_id), col: Number(receipt.board_col), row: Number(receipt.board_row) }),
+        desktopBoardRevisionWrite,
     ], 'write')
     return (await findDesktopAgent(db, copyId))!
 }
 
-export function duplicateDesktopCoworker(db: Client, engine: EngineConnection, sourceId: string, requestId: string, position: DesktopBoardPosition) {
+export function duplicateDesktopCoworker(db: Client, engine: EngineConnection, sourceId: string, requestId: string, position: DesktopBoardPosition, spaceId?: string) {
     return withRosterWrite(async () => {
+        if (!desktopSpacePositionSchema.safeParse(position).success) throw new PositionOccupied()
         await assertCoworkerNotDeleting(db, sourceId)
         const source = await findDesktopAgent(db, sourceId)
         if (!source) throw new DesktopHttpError(404, 'Source coworker not found')
         const previous = await db.execute({ sql: 'SELECT * FROM desktop_duplicates WHERE request_id = ?', args: [requestId] })
         const receipt = previous.rows[0]
         if (receipt) {
-            if (receipt.source_id !== sourceId || receipt.board_col !== position.col || receipt.board_row !== position.row)
+            if (receipt.source_id !== sourceId || receipt.board_col !== position.col || receipt.board_row !== position.row || (spaceId !== undefined && receipt.space_id !== spaceId))
                 throw new DesktopHttpError(409, 'This placement belongs to another duplicate request.')
             return publishCopy(db, engine, source, receipt)
         }
 
         const pending = await db.execute('SELECT * FROM desktop_duplicates WHERE completed = 0')
-        const layout = desktopBoardLayout(await listDesktopAgents(db))
-        for (const row of pending.rows) layout.positions.set(String(row.agent_id), { col: Number(row.board_col), row: Number(row.board_row) })
-        if (!canPlaceDesktopCopy(layout, position)) throw new PositionOccupied()
+        const destination = await desktopDuplicateDestination(db, position, spaceId).catch(error => {
+            if (error instanceof DesktopHttpError && error.status === 409) throw new PositionOccupied()
+            throw error
+        })
         const index = await request(engine, '/agents', { method: 'GET', cache: 'no-store' }, data => engineIndex.parse(data))
             .catch(() => { throw new DesktopHttpError(502, unavailable) })
         if (!index.agents.some(agent => agent.id === source.engineAgentId)) throw new DesktopHttpError(404, 'Source coworker not found')
@@ -75,9 +84,9 @@ export function duplicateDesktopCoworker(db: Client, engine: EngineConnection, s
         const renames = await db.execute('SELECT handle FROM desktop_rename_checks')
         for (const row of [...pending.rows, ...renames.rows]) taken.add(String(row.handle))
         const { rows } = await db.execute({
-            sql: `INSERT INTO desktop_duplicates (request_id,source_id,agent_id,name,handle,board_col,board_row)
-                  VALUES (?,?,?,?,?,?,?) RETURNING *`,
-            args: [requestId, sourceId, crypto.randomUUID(), name, allocateHandle(name, taken), position.col, position.row],
+            sql: `INSERT INTO desktop_duplicates (request_id,source_id,agent_id,name,handle,board_col,board_row,space_id)
+                  VALUES (?,?,?,?,?,?,?,?) RETURNING *`,
+            args: [requestId, sourceId, crypto.randomUUID(), name, allocateHandle(name, taken), position.col, position.row, destination],
         })
         return publishCopy(db, engine, source, rows[0])
     })

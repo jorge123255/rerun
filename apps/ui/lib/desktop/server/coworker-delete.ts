@@ -6,6 +6,7 @@ import type { EngineConnection } from '@/lib/engine/types'
 import { DesktopHttpError } from './auth'
 import { withRosterWrite } from './roster-writes'
 import { findDesktopAgent } from './store'
+import { desktopBoardRevisionWrite } from './spaces'
 
 const resultSchema = z.object({ deleted: z.string() })
 const uncertain = 'Could not confirm that this coworker was deleted. Retry Delete to finish.'
@@ -32,6 +33,7 @@ async function finish(db: Client, receipt: Row) {
         { sql: 'DELETE FROM desktop_sessions WHERE agent_id = ?', args: [id] },
         { sql: 'DELETE FROM desktop_agents WHERE id = ? AND engine_agent_id = ? AND workspace_id = 1', args: [id, String(receipt.engine_agent_id)] },
         { sql: 'UPDATE desktop_deletions SET completed = 1 WHERE agent_id = ?', args: [id] },
+        desktopBoardRevisionWrite,
     ], 'write')
     return { deletedAgentId: id }
 }

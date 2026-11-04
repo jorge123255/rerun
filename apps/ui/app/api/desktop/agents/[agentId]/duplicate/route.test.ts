@@ -7,6 +7,7 @@ import { desktopBoardLayout } from '@/lib/desktop/board-layout'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, createDesktopSession, listDesktopAgents, listDesktopSessions, type DesktopAgent } from '@/lib/desktop/server/store'
 import { GET } from '../../route'
+import { readDesktopBoardState, writeDesktopBoardState } from '@/lib/desktop/server/spaces'
 import { POST } from './route'
 
 const origin = 'http://127.0.0.1:3101'
@@ -130,11 +131,66 @@ it('keeps a disabled source disabled in its independent copy, including a lost a
 it('rejects invalid input, missing owners, occupied positions and unauthenticated requests before copying', async () => {
     expect((await duplicate('invalid')).status).toBe(400)
     expect((await duplicate(crypto.randomUUID(), position, 'missing')).status).toBe(404)
-    expect((await duplicate(crypto.randomUUID(), { col: 3, row: 3 })).status).toBe(409)
+    expect((await duplicate(crypto.randomUUID(), source.position!)).status).toBe(409)
     expect((await duplicate(crypto.randomUUID(), position, source.id, false)).status).toBe(403)
     expect(patches).toEqual([])
     fail = 'rejected'
     expect((await duplicate(crypto.randomUUID())).status).toBe(400)
     fail = null
     expect((await duplicate(crypto.randomUUID())).status).toBe(201)
+})
+
+it('keeps a pending copy attached to its Box and replays its completed receipt after the Box moves', async () => {
+    let db = await openDesktopDatabase(root)
+    const before = await readDesktopBoardState(db), space = before.spaces[0]!
+    const requestId = crypto.randomUUID()
+    fail = 'lost'
+    expect((await duplicate(requestId)).status).toBe(502)
+    const move = { kind: 'move-space' as const, spaceId: space.id, rect: {
+        col_start: space.col_start + 20, row_start: space.row_start,
+        col_end: space.col_end + 20, row_end: space.row_end,
+    } }
+    await expect(writeDesktopBoardState(db, { requestId: crypto.randomUUID(), expectedRevision: before.revision, command: move })).rejects.toMatchObject({ status: 409 })
+    fail = null
+    const copy = (await (await duplicate(requestId)).json()).agent
+    const completed = await readDesktopBoardState(db)
+    const moved = await writeDesktopBoardState(db, { requestId: crypto.randomUUID(), expectedRevision: completed.revision, command: move })
+    expect(moved.placements.find(item => item.agentId === copy.id)).toMatchObject({ col: position.col + 20, row: position.row, spaceId: space.id })
+    await closeDesktopDatabase(root); db = await openDesktopDatabase(root)
+    const replay = await duplicate(requestId)
+    expect(replay.status).toBe(201)
+    expect((await replay.json()).agent).toMatchObject({ id: copy.id, spaceId: space.id, position: { col: position.col + 20, row: position.row } })
+    expect(await readDesktopBoardState(db)).toEqual(moved)
+    expect(copies.size).toBe(1)
+})
+
+it('binds an explicit duplicate destination to its receipt and rejects a retry naming another Box', async () => {
+    const db = await openDesktopDatabase(root), before = await readDesktopBoardState(db)
+    const added = await writeDesktopBoardState(db, { requestId: crypto.randomUUID(), expectedRevision: before.revision, command: { kind: 'create', name: 'Copies' } })
+    const destination = added.spaces.find(space => space.name === 'Copies')!
+    const requestId = crypto.randomUUID(), at = { col: destination.col_start, row: destination.row_start }
+    const send = (spaceId: string) => POST(new Request(origin + '/api/desktop/agents/' + source.id + '/duplicate', { method: 'POST', headers,
+        body: JSON.stringify({ requestId, position: at, spaceId }) }), { params: Promise.resolve({ agentId: source.id }) })
+    expect((await send(destination.id)).status).toBe(201)
+    expect((await send(before.spaces[0]!.id)).status).toBe(409)
+    expect(copies.size).toBe(1)
+    expect((await readDesktopBoardState(db)).placements.filter(item => item.spaceId === destination.id)).toHaveLength(1)
+})
+
+it('does not publish a recovered legacy reservation over an existing coworker', async () => {
+    const db = await openDesktopDatabase(root), requestId = crypto.randomUUID()
+    fail = 'lost'
+    expect((await duplicate(requestId)).status).toBe(502)
+    // Simulate an old implicit layout rearrangement after the receipt was reserved.
+    await db.execute({ sql: 'UPDATE desktop_space_placements SET col = ?, row = ? WHERE agent_id = ?', args: [position.col, position.row, source.id] })
+    fail = null
+    expect((await duplicate(requestId)).status).toBe(409)
+    expect(await listDesktopAgents(db)).toHaveLength(1)
+    expect(patches).toEqual([requestId])
+    const state = await readDesktopBoardState(db)
+    await writeDesktopBoardState(db, { requestId: crypto.randomUUID(), expectedRevision: state.revision,
+        command: { kind: 'move-agent', agentId: source.id, spaceId: source.spaceId!, position: source.position! } })
+    expect((await duplicate(requestId)).status).toBe(201)
+    expect(await listDesktopAgents(db)).toHaveLength(2)
+    expect(copies.size).toBe(1)
 })

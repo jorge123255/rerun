@@ -2,7 +2,7 @@ import { createClient, type Client } from '@libsql/client'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from './database'
 import { createDesktopAgent, createDesktopSession, findDesktopAgent, findDesktopSession, listDesktopAgents, listDesktopSessions, readDesktopBootstrap, setDesktopSessionModel } from './store'
 
@@ -20,6 +20,62 @@ afterEach(async () => {
 })
 
 describe('desktop store', () => {
+    it.each(['create', 'delete'] as const)('reads roster and board from one snapshot when a concurrent %s commits between them', async change => {
+        const originalAgent = await createDesktopAgent(db, { engineAgentId: 'original-owner', name: 'Original' })
+        // Finish unrelated lazy icon migrations before installing the read barrier.
+        const before = await readDesktopBootstrap(db)
+        const writer = createClient({ url: `file:${join(root, 'app.db')}` })
+        await writer.execute('PRAGMA foreign_keys = ON')
+        let release!: () => void, arrived!: () => void
+        const barrier = new Promise<void>(resolve => { release = resolve })
+        const reachedRosterRead = new Promise<void>(resolve => { arrived = resolve })
+        const transaction = db.transaction.bind(db)
+        let armed = true
+        const intercept = (execute: Client['execute']): Client['execute'] => async statement => {
+            const sql = typeof statement === 'string' ? statement : statement.sql
+            // Also gate the old standalone board read, so reverting the transaction
+            // produces a deterministic mixed snapshot instead of a timing-dependent pass.
+            if (sql === 'SELECT revision FROM desktop_board_state WHERE workspace_id = 1') await barrier
+            const result = await execute(statement)
+            if (armed && sql.startsWith('SELECT a.*, p.col AS board_col')) {
+                armed = false
+                arrived()
+                await barrier
+            }
+            return result
+        }
+        const directSpy = vi.spyOn(db, 'execute').mockImplementation(intercept(db.execute.bind(db)))
+        const readSpy = vi.spyOn(db, 'transaction').mockImplementation(async mode => {
+            const tx = await transaction(mode)
+            if (mode === 'read') vi.spyOn(tx, 'execute').mockImplementation(intercept(tx.execute.bind(tx)))
+            return tx
+        })
+        let reading: ReturnType<typeof readDesktopBootstrap> | undefined
+        try {
+            reading = readDesktopBootstrap(db)
+            await reachedRosterRead
+            if (change === 'create') await createDesktopAgent(writer, { engineAgentId: 'concurrent-owner', name: 'Concurrent' })
+            else await writer.batch([
+                { sql: 'DELETE FROM desktop_agents WHERE id = ?', args: [originalAgent.id] },
+                'UPDATE desktop_board_state SET revision = revision + 1 WHERE workspace_id = 1',
+            ], 'write')
+            release()
+            const captured = await reading
+            expect(captured.agents).toEqual(before.agents)
+            expect(captured.board).toEqual(before.board)
+            const current = await readDesktopBootstrap(db)
+            expect(current.board.revision).toBe(before.board.revision + 1)
+            expect(current.agents).toHaveLength(change === 'create' ? 2 : 0)
+            expect(current.board.placements.map(item => item.agentId)).toEqual(current.agents.map(agent => agent.id))
+        } finally {
+            release()
+            await reading?.catch(() => {})
+            readSpy.mockRestore()
+            directSpy.mockRestore()
+            writer.close()
+        }
+    })
+
     it('reads the local profile and workspace without provider credentials', async () => {
         const bootstrap = await readDesktopBootstrap(db)
         expect(bootstrap.profile).toEqual({ id: 1, displayName: 'Local User' })

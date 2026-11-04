@@ -11,6 +11,7 @@ import { POST as chat } from '../../chat/route'
 import { POST as duplicate } from './duplicate/route'
 import { GET as roster } from '../route'
 import { DELETE } from './route'
+import { readDesktopBoardState, writeDesktopBoardState } from '@/lib/desktop/server/spaces'
 
 const origin = 'http://127.0.0.1:3101'
 const token = 'd'.repeat(40)
@@ -59,6 +60,27 @@ const params = (agentId: string) => ({ params: Promise.resolve({ agentId }) })
 const remove = (id: string, name: unknown, auth = true, extra = {}) => DELETE(new Request(`${origin}/api/desktop/agents/${id}`, {
     method: 'DELETE', headers: auth ? headers : { ...headers, cookie: '' }, body: JSON.stringify({ confirmationName: name, ...extra }),
 }), params(id))
+
+it('removes only a deleted coworker membership, invalidates old board writes, and leaves its now-empty Box deletable', async () => {
+    const { db, original, copy, originalChat } = await seed()
+    const initial = await readDesktopBoardState(db)
+    const added = await writeDesktopBoardState(db, { requestId: crypto.randomUUID(), expectedRevision: initial.revision, command: { kind: 'create', name: 'Copy Box' } })
+    const box = added.spaces.find(space => space.name === 'Copy Box')!
+    const moved = await writeDesktopBoardState(db, { requestId: crypto.randomUUID(), expectedRevision: added.revision, command: { kind: 'move-agent', agentId: copy.id, spaceId: box.id } })
+    expect((await remove(copy.id, copy.name)).status).toBe(200)
+    const removed = await readDesktopBoardState(db)
+    expect(removed.revision).toBe(moved.revision + 1)
+    expect(removed.placements).toEqual(initial.placements.filter(item => item.agentId === original.id))
+    await expect(writeDesktopBoardState(db, { requestId: crypto.randomUUID(), expectedRevision: moved.revision, command: { kind: 'rename', spaceId: box.id, name: 'Stale' } })).rejects.toMatchObject({ status: 409 })
+    const deleted = await writeDesktopBoardState(db, { requestId: crypto.randomUUID(), expectedRevision: removed.revision, command: { kind: 'delete', spaceId: box.id, confirmationName: box.name } })
+    expect(deleted.spaces.map(space => space.id)).not.toContain(box.id)
+    await closeDesktopDatabase(root)
+    const reopened = await openDesktopDatabase(root)
+    expect(await readDesktopBoardState(reopened)).toEqual(deleted)
+    expect(await listDesktopSessions(reopened, original.id)).toEqual([originalChat])
+    expect((await remove(copy.id, copy.name)).status).toBe(200)
+    expect(await readDesktopBoardState(reopened)).toEqual(deleted)
+})
 
 async function seed(legacy = false) {
     if (legacy) {

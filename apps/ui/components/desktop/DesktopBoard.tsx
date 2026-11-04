@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
-import type { GridPosition, TileStyle } from '@rerun/ui/iso-grid'
+import type { ContainerCellRect, GridPosition, ResizePatch, TileStyle } from '@rerun/ui/iso-grid'
 import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_AGENT_LABEL, type Container, type Tile } from '@rerun/ui/iso-grid'
 import { Plus } from 'lucide-react'
 import type { DesktopAgentView } from './DesktopApp'
@@ -13,6 +13,13 @@ import { DesktopActionsInbox } from './DesktopActionsInbox'
 import { Shimmer } from '@/components/ai-elements/shimmer'
 import { duplicateAgentName } from '@/lib/copy-name'
 import { canPlaceDesktopCopy, desktopBoardLayout } from '@/lib/desktop/board-layout'
+import { freeRectOnSide } from '@/lib/board/space-layout'
+import type { DesktopBoardState, DesktopSpaceCommand } from '@/lib/desktop/spaces'
+import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
+import { useBoardCoverStore } from '@/stores/board-cover.store'
+import { Button } from '@/components/ui/button'
+import { DesktopSpaceDialogs, type DesktopSpaceDialogTarget } from './DesktopSpaceDialogs'
+import { desktopSpaceAt, desktopSpaceLabel, desktopSpaceRectAllowed, firstDesktopSpacePosition, previewDesktopSpace } from './desktop-space-layout'
 
 const ACTIVITY_LABEL: Record<BoardActivityStatus, string> = { working: 'Working', waiting_human: 'Needs you', idle: 'Idle', unreachable: 'Activity unavailable', unknown: 'Checking activity' }
 
@@ -21,11 +28,12 @@ type CopyPlacement = {
     name: string
     requestId: string
     position?: GridPosition
+    spaceId?: string
     saving?: boolean
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange }: {
+export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard }: {
     activitySnapshot?: BoardActivitySnapshot
     agents: DesktopAgentView[]
     workspaceName: string
@@ -36,13 +44,20 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     recenterSignal?: number
     onOpen: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
-    onDuplicate?: (sourceId: string, requestId: string, position: GridPosition) => Promise<'created' | 'occupied'>
+    onDuplicate?: (sourceId: string, requestId: string, position: GridPosition, spaceId?: string) => Promise<'created' | 'occupied'>
     onSetEnabled?: (id: string, enabled: boolean) => Promise<void>
     onDelete?: (id: string, confirmationName: string) => Promise<void>
-    onCreate: () => void
+    onCreate: (spaceId?: string) => void
     onDismiss?: () => void
     onOpenConversation?: (hit: DesktopConversationHit) => void
     onPlacementChange?: (placing: boolean) => void
+    board?: DesktopBoardState
+    onBoardCommand?: (command: DesktopSpaceCommand) => Promise<void>
+    boardSaving?: boolean
+    boardError?: string
+    boardDisabled?: boolean
+    onBoardInteractionChange?: (active: boolean) => void
+    onRetryBoard?: () => Promise<void>
 }) {
     const localActivity = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]), !activitySnapshot)
     const { statuses: activity, attention } = activitySnapshot ?? localActivity
@@ -54,13 +69,71 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
         return counts
     }, [attention])
     const [placement, setPlacement] = useState<CopyPlacement | null>(null)
+    const [spaceDialog, setSpaceDialog] = useState<DesktopSpaceDialogTarget | null>(null)
+    const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null)
+    const [menuInteracting, setMenuInteracting] = useState(false)
+    const [resizing, setResizing] = useState<string | null>(null)
+    const [commandBusy, setCommandBusy] = useState(false)
+    const [commandError, setCommandError] = useState('')
+    type Preview = { revision: number; spaceId: string; rect: ContainerCellRect; moving: boolean }
+    const [preview, setPreview] = useState<Preview | null>(null)
+    const previewRef = useRef(preview)
+    const resizeCanceled = useRef(false)
+    const commandFlight = useRef<symbol | null>(null)
+    const retryCommand = useRef<DesktopSpaceCommand | null>(null)
+    const mounted = useRef(true)
+    const quitting = useSyncExternalStore(subscribeDraftShutdown, isDesktopQuitting, () => false)
+    const covered = useBoardCoverStore(state => state.covers > 0)
+    const latestBoard = useRef({ board, onBoardCommand, boardDisabled, boardSaving, placement, spaceDialog, covered })
+    latestBoard.current = { board, onBoardCommand, boardDisabled, boardSaving, placement, spaceDialog, covered }
+    const interaction = !!spaceDialog || !!resizing || menuInteracting || commandBusy
+    const interactionCallback = useRef(onBoardInteractionChange)
+    interactionCallback.current = onBoardInteractionChange
+    useEffect(() => { interactionCallback.current?.(interaction) }, [interaction])
+    useEffect(() => {
+        mounted.current = true
+        return () => { mounted.current = false; interactionCallback.current?.(false) }
+    }, [])
+    useEffect(() => {
+        if (previewRef.current && previewRef.current.revision !== board?.revision) { previewRef.current = null; setPreview(null); setResizing(null) }
+        if (board) {
+            if (selectedSpaceId && !board.spaces.some(space => space.id === selectedSpaceId)) setSelectedSpaceId(null)
+            if (spaceDialog && spaceDialog.kind !== 'create' && !board.spaces.some(space => space.id === spaceDialog.spaceId)) setSpaceDialog(null)
+            if (spaceDialog?.kind === 'create' && spaceDialog.sourceId && !board.spaces.some(space => space.id === spaceDialog.sourceId)) setSpaceDialog(null)
+        }
+        setCommandError('')
+    }, [board?.revision])
+    const baseBlocked = boardDisabled || boardSaving || commandBusy || quitting
+    const gridBlocked = baseBlocked || !!spaceDialog || covered
+    const boardRevision = board?.revision
+    const gestureScope = JSON.stringify([boardRevision, boardDisabled, boardSaving, !!spaceDialog, covered, !!placement])
+    const gestureIdentity = useRef({ scope: gestureScope, generation: 0 })
+    if (gestureIdentity.current.scope !== gestureScope) gestureIdentity.current = { scope: gestureScope, generation: gestureIdentity.current.generation + 1 }
+    const gestureGeneration = gestureIdentity.current.generation
     const placing = !!placement
     useEffect(() => { onPlacementChange?.(placing) }, [placing, onPlacementChange])
     const submitting = useRef(false)
     const section = useRef<HTMLElement>(null)
     const placeButton = useRef<HTMLButtonElement>(null)
     const layout = useMemo(() => desktopBoardLayout(agents), [agents])
-    const { tiles, box } = useMemo(() => {
+    const renderedBoard = useMemo(() => board && preview?.revision === board.revision ? previewDesktopSpace(board, preview.spaceId, preview.rect, preview.moving) : board, [board, preview])
+    const { tiles, containers } = useMemo(() => {
+        if (renderedBoard) {
+            const memberships = new Map(renderedBoard.placements.map(placed => [placed.agentId, placed]))
+            const tiles: Tile[] = agents.flatMap(agent => {
+                const placed = memberships.get(agent.id)
+                if (!placed || !renderedBoard.spaces.some(space => space.id === placed.spaceId)) return []
+                return [{ id: agent.id, position: { col: placed.col, row: placed.row }, span: 2, containerId: placed.spaceId,
+                    style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0),
+                    ariaLabel: `Open chat with ${agent.name}${attentionCounts.has(agent.id) ? ', Needs you' : ''}` }]
+            })
+            const containers: Container[] = renderedBoard.spaces.length ? renderedBoard.spaces.map((space, index) => ({
+                ...space, label: space.name, color: preview?.spaceId === space.id && board && !desktopSpaceRectAllowed(board, space.id, preview.rect, preview.moving) ? '#ef4444' : SPACE_COLOR,
+                ariaLabel: desktopSpaceLabel(space, index, renderedBoard.spaces.length),
+                ...(!renderedBoard.placements.some(placed => placed.spaceId === space.id) ? { cta: 'Add a coworker' } : {}),
+            })) : [{ id: 'desktop-empty-box', label: null, color: SPACE_COLOR, col_start: 0, row_start: 0, col_end: 7, row_end: 7, variant: 'placeholder', placeholderLabel: 'Create your first Box' }]
+            return { tiles, containers }
+        }
         const tiles: Tile[] = agents.map(agent => ({
             id: agent.id,
             position: layout.positions.get(agent.id)!,
@@ -75,8 +148,8 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             variant: agents.length ? 'default' : 'placeholder',
             placeholderLabel: 'Create your first coworker',
         }
-        return { tiles, box }
-    }, [agents, workspaceName, activity, attentionCounts, layout])
+        return { tiles, containers: [box] }
+    }, [agents, workspaceName, activity, attentionCounts, layout, renderedBoard, preview, board])
 
     useEffect(() => { if (placement?.requestId) placeButton.current?.focus({ preventScroll: true }) }, [placement?.requestId])
 
@@ -91,7 +164,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     }
 
     function beginCopy(agent: DesktopAgentView) {
-        if (placement) return
+        if (placement || baseBlocked || isDesktopQuitting()) return
         onDismiss?.()
         setPlacement({ sourceId: agent.id, requestId: crypto.randomUUID(), name: duplicateAgentName(agent.name) })
     }
@@ -104,50 +177,151 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     }
 
     async function placeCopy(position: GridPosition) {
-        if (!onDuplicate || !placement || submitting.current) return
+        if (!onDuplicate || !placement || submitting.current || boardDisabled || isDesktopQuitting()) return
         // A lost response can follow a successful copy. Retry the same operation at the
         // same position until the server confirms it or rejects the unreserved position.
         const anchor = placement.position ?? position
-        if (!placement.position && !canPlaceDesktopCopy(layout, anchor)) return
+        const destination = board ? desktopSpaceAt(board, anchor) : undefined
+        if (!placement.position && (board ? !destination : !canPlaceDesktopCopy(layout, anchor))) return
+        const targetSpace = placement.spaceId ?? destination?.id
         submitting.current = true
-        setPlacement({ ...placement, position: anchor, saving: true, error: undefined })
+        setPlacement({ ...placement, position: anchor, spaceId: targetSpace, saving: true, error: undefined })
         try {
-            const result = await onDuplicate(placement.sourceId, placement.requestId, anchor)
-            setPlacement(result === 'created' ? null : { ...placement, position: undefined, saving: false, error: 'That spot is no longer available. Choose another.' })
+            const result = targetSpace ? await onDuplicate(placement.sourceId, placement.requestId, anchor, targetSpace) : await onDuplicate(placement.sourceId, placement.requestId, anchor)
+            if (mounted.current) setPlacement(result === 'created' ? null : { ...placement, position: undefined, spaceId: undefined, saving: false, error: 'That spot is no longer available. Choose another.' })
         } catch (error) {
-            setPlacement({ ...placement, position: anchor, saving: false,
+            if (mounted.current) setPlacement({ ...placement, position: anchor, spaceId: targetSpace, saving: false,
                 error: error instanceof Error ? error.message : 'Could not confirm the copy. Try again.' })
         } finally {
             submitting.current = false
         }
     }
 
+    function gridCurrent() {
+        const live = latestBoard.current
+        return mounted.current && gestureIdentity.current.generation === gestureGeneration && live.board?.revision === boardRevision && !live.boardDisabled && !live.boardSaving && !commandFlight.current && !live.spaceDialog && !live.covered && !live.placement && !isDesktopQuitting()
+    }
+    async function command(value: DesktopSpaceCommand) {
+        const live = latestBoard.current
+        if (!mounted.current || !live.board || !live.onBoardCommand || live.boardDisabled || live.boardSaving || commandFlight.current || isDesktopQuitting()) throw new Error('Wait for the current board change to finish.')
+        const token = Symbol('board command')
+        commandFlight.current = token; retryCommand.current = value; setCommandBusy(true)
+        try {
+            await live.onBoardCommand(value)
+            if (mounted.current && commandFlight.current === token) { retryCommand.current = null; setCommandError('') }
+        } catch (error) {
+            if (mounted.current && commandFlight.current === token) setCommandError(error instanceof Error ? error.message : 'Could not save the board. Try again.')
+            throw error
+        } finally {
+            if (commandFlight.current === token) {
+                commandFlight.current = null
+                if (mounted.current) { setCommandBusy(false); previewRef.current = null; setPreview(null) }
+            }
+        }
+    }
+    function openBoxDialog(target: DesktopSpaceDialogTarget) {
+        if (!gridCurrent() || !onBoardCommand) return
+        setSpaceDialog(target)
+    }
+    function moveAgent(agentId: string, spaceId: string, position?: GridPosition) {
+        if (!gridCurrent() || !board || !board.placements.some(placed => placed.agentId === agentId)) return Promise.resolve()
+        const destination = position ? desktopSpaceAt(board, position, agentId) : firstDesktopSpacePosition(board, spaceId, agentId)
+        if (!destination || (position && 'id' in destination && destination.id !== spaceId)) return Promise.resolve()
+        return command({ kind: 'move-agent', agentId, spaceId, ...(position && { position }) })
+    }
+    function moveBox(spaceId: string, rect: ContainerCellRect) {
+        if (!gridCurrent() || !board) return
+        if (!desktopSpaceRectAllowed(board, spaceId, rect, true)) { setCommandError('That Box would overlap another Box. Choose another spot.'); return }
+        const next = { revision: board.revision, spaceId, rect, moving: true }
+        previewRef.current = next; setPreview(next)
+        void command({ kind: 'move-space', spaceId, rect }).catch(() => {})
+    }
+    function resizeBox(spaceId: string, patch: ResizePatch) {
+        if (!gridCurrent() || !board || resizeCanceled.current) return
+        const source = board.spaces.find(space => space.id === spaceId)
+        if (!source) return
+        const rect = { col_start: source.col_start, row_start: source.row_start, col_end: source.col_end, row_end: source.row_end, ...(previewRef.current?.spaceId === spaceId ? previewRef.current.rect : {}), ...patch }
+        const next = { revision: board.revision, spaceId, rect, moving: false }
+        previewRef.current = next; setPreview(next)
+    }
+    function commitResize(spaceId: string) {
+        const draft = previewRef.current
+        if (!gridCurrent() || resizeCanceled.current || !board || !draft || draft.spaceId !== spaceId || draft.revision !== board.revision) { previewRef.current = null; setPreview(null); return }
+        if (!desktopSpaceRectAllowed(board, spaceId, draft.rect, false)) {
+            previewRef.current = null; setPreview(null); setCommandError('This Box must keep its coworkers inside and leave room for the other Boxes.'); return
+        }
+        void command({ kind: 'resize-space', spaceId, rect: draft.rect }).catch(() => {})
+    }
+    async function retryBoard() {
+        if (baseBlocked || isDesktopQuitting()) return
+        try {
+            if (onRetryBoard) await onRetryBoard()
+            else if (retryCommand.current) await command(retryCommand.current)
+            if (mounted.current) setCommandError('')
+        } catch (error) { if (mounted.current) setCommandError(error instanceof Error ? error.message : 'Could not refresh the board. Try again.') }
+    }
+    const suggestion = board ? firstDesktopSpacePosition(board)?.position : layout.suggested
+    const canEditBoard = !!board && !!onBoardCommand && !gridBlocked && !placement
+    function restoreBoxFocus() {
+        if (!mounted.current || isDesktopQuitting()) return
+        const id = spaceDialog?.kind === 'create' ? spaceDialog.sourceId : spaceDialog?.spaceId
+        const spaces = latestBoard.current.board?.spaces ?? []
+        const index = spaces.findIndex(space => space.id === id)
+        const label = index >= 0 ? desktopSpaceLabel(spaces[index], index, spaces.length) : undefined
+        const box = [...section.current?.querySelectorAll<HTMLElement>('[aria-label]') ?? []].find(element => element.getAttribute('aria-label') === label)
+        const add = [...section.current?.querySelectorAll<HTMLButtonElement>('button') ?? []].find(button => button.textContent?.trim() === 'Add Box')
+        ;(box ?? add)?.focus({ preventScroll: true })
+    }
+
     return (
         <section ref={section} aria-label="Team board" className="relative isolate min-h-0 min-w-0 flex-1"
-            onKeyDown={event => { if (event.key === 'Escape' && placement) { event.preventDefault(); cancelCopy() } }}>
+            onPointerDownCapture={() => { resizeCanceled.current = false }} onPointerCancelCapture={() => { resizeCanceled.current = true }}
+            onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && placement) { event.preventDefault(); cancelCopy() } }}>
             <h1 className="sr-only">Team board</h1>
             <DesktopBoardMenu agents={agents} onOpen={openCoworker} onRename={onRename} onDuplicate={onDuplicate ? beginCopy : undefined}
-                onSetEnabled={onSetEnabled} onDelete={onDelete} disabled={!!placement}>{onTileContextMenu =>
+                onSetEnabled={onSetEnabled} onDelete={onDelete} disabled={!!placement || gridBlocked}
+                spaces={board} onRenameSpace={onBoardCommand ? spaceId => openBoxDialog({ kind: 'rename', spaceId }) : undefined}
+                onDeleteSpace={onBoardCommand ? spaceId => openBoxDialog({ kind: 'delete', spaceId }) : undefined}
+                onMoveAgent={onBoardCommand ? (agentId, spaceId) => moveAgent(agentId, spaceId) : undefined} onInteractionChange={setMenuInteracting}>
+                {(onTileContextMenu, onContainerContextMenu) =>
                 <IsoGrid
                     tiles={tiles}
-                    containers={[box]}
-                    onTileContextMenu={placement ? undefined : onTileContextMenu}
+                    containers={containers}
+                    onTileContextMenu={placement || gridBlocked ? undefined : onTileContextMenu}
+                    onContainerContextMenu={canEditBoard ? onContainerContextMenu : undefined}
+                    selectedContainerId={selectedSpaceId}
+                    onTileMove={canEditBoard ? (id, position, spaceId) => { if (spaceId) void moveAgent(id, spaceId, position).catch(() => {}) } : undefined}
+                    onContainerMove={canEditBoard ? moveBox : undefined}
+                    onResizeContainerLocal={canEditBoard ? resizeBox : undefined}
+                    onResizeContainerCommit={canEditBoard ? commitResize : undefined}
+                    onResizingContainerChange={id => { if (!id || gridCurrent()) setResizing(id) }}
+                    onContainerAdd={canEditBoard ? (sourceId, side) => openBoxDialog({ kind: 'create', sourceId, side }) : undefined}
+                    containerAddPreview={canEditBoard ? (sourceId, side) => { const source = board!.spaces.find(space => space.id === sourceId); return source ? freeRectOnSide(source, side, board!.spaces) : null } : undefined}
+                    containerAddLabel="Add a Box on this side"
+                    paused={gridBlocked || menuInteracting}
+                    locked={gridBlocked || !!placement?.saving}
                     placing={!!placement && !placement.position}
                     placingTile={placement ? { span: 2, style: agentTileStyle('idle', placement.name) } : undefined}
-                    onConfirmPlacement={placement && !placement.position ? placeCopy : undefined}
+                    onConfirmPlacement={placement && !placement.position && !gridBlocked ? placeCopy : undefined}
                     selectedTileId={selectedAgentId}
                     frameInset={{ left: 0, right: panelInsetRight }}
                     recenterSignal={recenterSignal}
                     fitToContent
                     canDraw={false}
-                    showViewControls={tiles.length > 0}
+                    showViewControls={tiles.length > 0 || !!board?.spaces.length}
                     viewControlsPlacement="top-right"
                     viewControlsClassName={selectedAgentId ? 'md:top-auto md:right-auto md:bottom-16 md:left-4' : undefined}
-                    onTileSelect={placement ? undefined : id => {
+                    onTileSelect={placement || gridBlocked ? undefined : id => {
+                        if (board && !gridCurrent()) return
                         if (id) openCoworker(id)
-                        else if (selectedAgentId) onDismiss?.()
+                        else if (selectedAgentId && !board) onDismiss?.()
                     }}
-                    onContainerSelect={tiles.length ? undefined : id => { if (id) onCreate() }}
+                    onContainerSelect={gridBlocked || placement ? undefined : board ? id => {
+                        if (!gridCurrent()) return
+                        if (id === 'desktop-empty-box') { openBoxDialog({ kind: 'create' }); return }
+                        setSelectedSpaceId(id)
+                        if (id && board.spaces.some(space => space.id === id) && !board.placements.some(placed => placed.spaceId === id)) onCreate(id)
+                    } : tiles.length ? undefined : id => { if (id) onCreate() }}
                 />
             }</DesktopBoardMenu>
             <div className="absolute top-4 left-4 z-40 flex items-start gap-2">{workspaceMenu}</div>
@@ -161,15 +335,24 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                         </Shimmer>
                         {placement.error && <p className="text-xs text-destructive" role="alert">{placement.error}</p>}
                     </div>
-                    <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : 'Place copy'} disabled={placement.saving}
-                        onClick={() => void placeCopy(layout.suggested)} />
+                    {!suggestion && !placement.position && <p className="text-xs text-muted-foreground">No free spot. Cancel and add or resize a Box.</p>}
+                    <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : 'Place copy'} disabled={placement.saving || (!suggestion && !placement.position)}
+                        onClick={() => { const position = placement.position ?? suggestion; if (position) void placeCopy(position) }} />
                     <ChromeButton label="Cancel" disabled={placement.saving} onClick={cancelCopy} />
                 </div> : <>
                     {onOpenConversation && <><DesktopFindChat onSelect={onOpenConversation} /><ChromeDivider /></>}
-                    <ChromeButton icon={Plus} label="Add coworker" onClick={onCreate} />
+                    <ChromeButton icon={Plus} label="Add coworker" disabled={baseBlocked || !!spaceDialog || covered} onClick={() => onCreate()} />
+                    {board && onBoardCommand && <><ChromeDivider /><ChromeButton icon={Plus} label="Add Box" disabled={gridBlocked} onClick={() => openBoxDialog({ kind: 'create' })} /></>}
                 </>}
             </ChromeBar>
             </div>
+            {!spaceDialog && (commandError || boardError) && <div role="alert" className="absolute bottom-20 left-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-2 rounded-xl border bg-background px-3 py-2 text-sm shadow-sm">
+                <p>{commandError || boardError}</p>{(onRetryBoard || retryCommand.current) && <Button variant="outline" size="sm" disabled={baseBlocked} onClick={() => void retryBoard()}>Retry</Button>}
+                {!boardError && <Button variant="ghost" size="sm" onClick={() => setCommandError('')}>Dismiss</Button>}
+            </div>}
+            {spaceDialog && board && <DesktopSpaceDialogs key={JSON.stringify(spaceDialog)} target={spaceDialog} spaces={board.spaces}
+                memberCount={spaceDialog.kind === 'create' ? 0 : board.placements.filter(placed => placed.spaceId === spaceDialog.spaceId).length}
+                onCommand={command} disabled={boardDisabled || boardSaving || quitting} onClose={() => setSpaceDialog(null)} onRestoreFocus={restoreBoxFocus} />}
             <ul aria-label="Coworker activity" className="sr-only" aria-live="polite">
                 {agents.map(agent => {
                     const status = agent.enabled === false ? 'inactive' : activity[agent.id] ?? 'unknown'

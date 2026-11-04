@@ -11,6 +11,7 @@ import { connectDesktopOpenAI, createDesktopCoworker, readDesktopHistory, startD
 import { createDesktopAgent, createDesktopSession } from './store'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
+import { readDesktopBoardState, writeDesktopBoardState } from './spaces'
 
 type SeenBody = {
     config?: { name: string; displayName?: string; description?: string; connectionId?: string; provider?: string; enabled?: boolean; tools?: unknown; mcpServers?: unknown }
@@ -26,6 +27,7 @@ const seen: SeenRequest[] = []
 let server: Server
 let root: string
 let runtime: DesktopRuntime
+let creationGate: Promise<void> | undefined, creationStarted: (() => void) | undefined, releaseCreation: (() => void) | undefined
 
 async function bodyOf(req: IncomingMessage) {
     let text = ''
@@ -38,6 +40,7 @@ function json(res: ServerResponse, value: unknown, status = 200, headers: Record
 }
 
 beforeEach(async () => {
+    creationGate = undefined; creationStarted = undefined; releaseCreation = undefined
     seen.length = 0
     root = await mkdtemp(join(tmpdir(), 'rerun-desktop-engine-'))
     const connections = connectionFixture()
@@ -46,6 +49,8 @@ beforeEach(async () => {
         seen.push({ method: req.method!, url: req.url!, authorization: req.headers.authorization ?? null, body })
         if (connections(req, res, body)) return
         if (req.method === 'POST' && req.url === '/agents') {
+            creationStarted?.()
+            await creationGate
             return json(res, { id: 'engine-agent-1', config: { name: body.config.name, model: null }, soul: '' }, 201)
         }
         if (req.method === 'GET' && req.url === '/agents/engine-agent-1') {
@@ -82,12 +87,47 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+    releaseCreation?.()
     await closeDesktopDatabase(root)
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
     await rm(root, { recursive: true, force: true })
 })
 
 describe('desktop engine workflows', () => {
+    it('rejects a full or missing selected Box before asking the engine to create a coworker', async () => {
+        const db = await openDesktopDatabase(root), initial = await readDesktopBoardState(db), box = initial.spaces[0]!
+        await writeDesktopBoardState(db, { requestId: crypto.randomUUID(), expectedRevision: initial.revision, command: { kind: 'resize-space', spaceId: box.id,
+            rect: { col_start: 1, row_start: 1, col_end: 4, row_end: 4 } } })
+        for (let index = 0; index < 4; index++) await createDesktopAgent(db, { engineAgentId: `existing-${index}`, name: 'Existing', spaceId: box.id })
+        await expect(createDesktopCoworker(runtime, { name: 'Full Box', spaceId: box.id })).rejects.toMatchObject({ status: 409 })
+        await expect(createDesktopCoworker(runtime, { name: 'Missing Box', spaceId: crypto.randomUUID() })).rejects.toMatchObject({ status: 404 })
+        expect(seen).toEqual([])
+        expect((await readDesktopBoardState(db)).placements).toHaveLength(4)
+    })
+
+    it('holds the Box stable across engine creation and commits membership before a competing delete', async () => {
+        await connectDesktopOpenAI(runtime, 'api-key')
+        const db = await openDesktopDatabase(root), before = await readDesktopBoardState(db), box = before.spaces[0]!
+        const reachedEngine = new Promise<void>(resolve => { creationStarted = resolve })
+        creationGate = new Promise<void>(resolve => { releaseCreation = resolve })
+        const creating = createDesktopCoworker(runtime, { name: 'Selected Box', spaceId: box.id })
+        await reachedEngine
+        const deleting = writeDesktopBoardState(db, { requestId: crypto.randomUUID(), expectedRevision: before.revision,
+            command: { kind: 'delete', spaceId: box.id, confirmationName: box.name } })
+        const rejected = expect(deleting).rejects.toMatchObject({ status: 409 })
+        releaseCreation!()
+        const agent = await creating
+        await rejected
+        const after = await readDesktopBoardState(db)
+        expect(after.spaces.map(space => space.id)).toContain(box.id)
+        expect(after.placements).toEqual([{ agentId: agent.id, spaceId: box.id, col: 1, row: 1 }])
+        expect(agent.spaceId).toBe(box.id)
+        const engineRequest = seen.find(request => request.method === 'POST' && request.url === '/agents')!
+        expect(engineRequest.body?.config).not.toHaveProperty('spaceId')
+        await closeDesktopDatabase(root)
+        expect(await readDesktopBoardState(await openDesktopDatabase(root))).toEqual(after)
+    })
+
     it('sends an OpenAI key only to the engine and reconnects without a duplicate connection', async () => {
         await expect(connectDesktopOpenAI(runtime, 'first-api-key')).resolves.toEqual({ id: 'connection-1', provider: 'openai', name: 'OpenAI' })
         await connectDesktopOpenAI(runtime, 'replacement-api-key')

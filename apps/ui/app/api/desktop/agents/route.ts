@@ -11,7 +11,7 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 import { listDesktopAgents } from '@/lib/desktop/server/store'
 import { desktopAgentView } from '@/lib/desktop/server/views'
 
-const inputSchema = z.object({ name: z.string().trim().min(1).max(60), description: z.string().trim().max(2000).optional() })
+const inputSchema = z.object({ name: z.string().trim().min(1).max(60), description: z.string().trim().max(2000).optional(), spaceId: z.string().uuid().optional() }).strict()
 
 export const dynamic = 'force-dynamic'
 

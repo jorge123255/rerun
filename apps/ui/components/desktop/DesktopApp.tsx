@@ -14,6 +14,8 @@ import { SIDE_PANEL_GAP } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
 import { DesktopBoard } from './DesktopBoard'
+import { useDesktopBoardState } from './useDesktopBoardState'
+import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import { useBoardActivity } from './useBoardActivity'
 import { DesktopControlCenter } from './DesktopControlCenter'
 import { DesktopShortcutsDialog } from './DesktopShortcutsDialog'
@@ -34,7 +36,7 @@ import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 
-export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; enabled?: boolean }
+export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; spaceId?: string; enabled?: boolean }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
 export type DesktopBootstrap = ConnectionsList & {
     theme: ThemePreference
@@ -43,6 +45,7 @@ export type DesktopBootstrap = ConnectionsList & {
     iconCatalogId?: string | null
     iconUploadId?: string | null
     agents: DesktopAgentView[]
+    board?: DesktopBoardState
     recentCoworkers?: DesktopRecentCoworkers
 }
 
@@ -53,6 +56,8 @@ async function json<T>(response: Response): Promise<T> {
 }
 
 export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
+    const boardState = useDesktopBoardState(initialData.board)
+    const [boardInteraction, setBoardInteraction] = useState(false)
     const [controlCenterOpen, setControlCenterOpen] = useState(false)
     const [shortcutsOpen, setShortcutsOpen] = useState(false)
     const [placingCopy, setPlacingCopy] = useState(false)
@@ -112,16 +117,17 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [settings, setSettings] = useState(false)
     useEffect(() => {
         const openSettings = (event: KeyboardEvent) => {
-            if (event.metaKey && event.key === ',' && !shortcutsOpen && !workspaceSettings && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
+            if (event.metaKey && event.key === ',' && !shortcutsOpen && !workspaceSettings && !boardInteraction && !boardState.saving && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
         }
         window.addEventListener('keydown', openSettings)
         return () => window.removeEventListener('keydown', openSettings)
-    }, [workspaceSettings, shortcutsOpen])
+    }, [workspaceSettings, shortcutsOpen, boardInteraction, boardState.saving])
     const [agents, setAgents] = useState(initialData.agents)
     const boardActivity = useBoardActivity(agents.map(agent => agent.id))
     // Responses already in flight cannot reintroduce a coworker after its confirmed deletion.
     const deletedAgents = useRef(new Set<string>())
     const [creating, setCreating] = useState(false)
+    const [creatingSpaceId, setCreatingSpaceId] = useState<string>()
     const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
     const selectedAgentRef = useRef(selectedAgentId)
     selectedAgentRef.current = selectedAgentId
@@ -151,7 +157,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const controlCenterDisabled = settings || workspaceSettings || shortcutsOpen || creating || !!busy || placingCopy || quitting || themeSaving
+    const controlCenterDisabled = settings || workspaceSettings || shortcutsOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardInteraction || boardState.saving
 
     useEffect(() => {
         if (panelOpen && !settings && !requestedPanel) panelContent.current?.focus({ preventScroll: true })
@@ -211,9 +217,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             const body = await json<{ agent: DesktopAgentView }>(await fetch('/api/desktop/agents', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ name, description }),
+                body: JSON.stringify({ name, description, ...(creatingSpaceId && { spaceId: creatingSpaceId }) }),
             }))
             setAgents(current => [...current, body.agent])
+            await boardState.refresh()
             setName('')
             setDescription('')
             selectCoworker(body.agent.id)
@@ -257,19 +264,22 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             setPanelOpen(false)
             setPanelInsetRight(0)
         }
+        await boardState.refresh()
     }
 
-    async function duplicateCoworker(id: string, requestId: string, position: GridPosition): Promise<'created' | 'occupied'> {
+    async function duplicateCoworker(id: string, requestId: string, position: GridPosition, spaceId?: string): Promise<'created' | 'occupied'> {
         const response = await fetch(`/api/desktop/agents/${encodeURIComponent(id)}/duplicate`, {
-            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ requestId, position }),
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ requestId, position, ...(spaceId && { spaceId }) }),
         })
         if (response.status === 409 && (await response.clone().json().catch(() => null))?.code === 'position_occupied') {
             const { agents: latest } = await json<{ agents: DesktopAgentView[] }>(await fetch('/api/desktop/agents', { cache: 'no-store' }))
             mergeBoardAgents(latest)
+            await boardState.refresh()
             return 'occupied'
         }
         const { agent } = await json<{ agent: DesktopAgentView }>(response)
         mergeBoardAgents([agent])
+        await boardState.refresh()
         selectCoworker(agent.id)
         return 'created'
     }
@@ -286,10 +296,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         })
     }
 
-    function showBoard(create = false) {
+    function showBoard(create = false, spaceId?: string) {
         setRequestedPanel(null)
         setSettings(false)
         setCreating(create)
+        setCreatingSpaceId(create ? spaceId : undefined)
         setPanelOpen(false)
         setError(null)
     }
@@ -344,11 +355,15 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
-                    visibleSessionId={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !creating && !controlCenterOpen && !busy && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
+                    board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
+                    boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
+                    boardDisabled={settings || workspaceSettings || shortcutsOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
+                    onBoardInteractionChange={setBoardInteraction}
+                    visibleSessionId={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
                     onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
-                    onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
-                {selectedAgent && <div inert={!panelOpen} aria-hidden={!panelOpen || undefined}>
+                    onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
+                {selectedAgent && <div inert={!panelOpen || boardInteraction} aria-hidden={!panelOpen || boardInteraction || undefined}>
                     <SidePanel isOpen={panelOpen} onDismiss={closePanel}>
                         <section ref={panelContent} tabIndex={-1} aria-label="Coworker chat" className="flex h-full min-h-0 flex-col outline-none"
                             onKeyDown={event => {
@@ -357,7 +372,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings && !workspaceSettings && !shortcutsOpen}
+                            <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
