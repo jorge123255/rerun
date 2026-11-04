@@ -84,6 +84,171 @@ beforeEach(() => {
 })
 
 describe('POST /agents/:id/chat', () => {
+    async function pendingQuestion(sessionId: string) {
+        const { appendMessage } = await import('../../db/repos/messages.js')
+        const { findDesktopQuestion } = await import('@rerun/contracts')
+        const ask = await appendMessage(id, sessionId, { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'question-call', toolName: 'ask_user', input: { questions: [{ question: 'Which color?', options: ['Blue', 'Green'] }] } }] })
+        const delivered = await appendMessage(id, sessionId, { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'question-call', toolName: 'ask_user', output: { type: 'json', value: { status: 'delivered' } } }] })
+        const { questions: _questions, ...guard } = findDesktopQuestion([ask, delivered])!
+        return guard
+    }
+
+    it('reserves a question answer once and replays the receipt after the question is no longer pending', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id)
+            const question = await pendingQuestion(session.id)
+            const input = { sessionId: session.id, message: 'Here are my answers:\n\n**Which color?**\nBlue', desktopQueuedTurn: { runId: crypto.randomUUID(), question } }
+            const responses = await Promise.all([chat(id, input), chat(id, input)])
+            for (const response of responses) {
+                expect([200, 204]).toContain(response.status)
+                await response.text()
+            }
+            const { listMessages } = await import('../../db/repos/messages.js')
+            expect((await listMessages(id, session.id)).filter(row => row.role === 'user')).toHaveLength(1)
+            expect(state.calls).toHaveLength(1)
+            const replay = await chat(id, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, replayOnly: true } })
+            expect([200, 204]).toContain(replay.status)
+            await replay.text()
+            expect(state.calls).toHaveLength(1)
+            expect((await chat(id, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, question: { ...question, toolCallId: 'another-call' } } })).status).toBe(409)
+            expect((await chat(id, { ...input, desktopQueuedTurn: { runId: input.desktopQueuedTurn.runId } })).status).toBe(409)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('rejects stale, altered or foreign question guards without reserving a run or keeping the claim', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id)
+            const other = await createSession(id)
+            const question = await pendingQuestion(session.id)
+            const { appendMessage, listMessages } = await import('../../db/repos/messages.js')
+            const send = (sessionId: string, guard = question) => {
+                const runId = crypto.randomUUID()
+                return { runId, response: chat(id, { sessionId, message: 'Blue', desktopQueuedTurn: { runId, question: guard } }) }
+            }
+            for (const attempt of [send(other.id), send(session.id, { ...question, fingerprint: question.fingerprint + ' ' })]) {
+                expect((await attempt.response).status).toBe(409)
+                expect(await getRun(id, attempt.runId)).toBeUndefined()
+            }
+            await appendMessage(id, session.id, { role: 'user', content: 'Never mind, a different request.' })
+            const stale = send(session.id)
+            expect((await stale.response).status).toBe(409)
+            expect(await getRun(id, stale.runId)).toBeUndefined()
+            expect((await listMessages(id, session.id)).filter(row => row.role === 'user')).toHaveLength(1)
+            expect(state.calls).toHaveLength(0)
+            expect(sessionClaimCount()).toBe(0)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('reconciles an accepted question after disable but cannot dispatch a missing receipt or new answer', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const enabled = (value: boolean) => app.request(`/agents/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: value }) })
+        try {
+            const session = await createSession(id)
+            const question = await pendingQuestion(session.id)
+            const input = { sessionId: session.id, message: 'Blue', desktopQueuedTurn: { runId: crypto.randomUUID(), question } }
+            await (await chat(id, input)).text()
+            expect(state.calls).toHaveLength(1)
+            expect((await enabled(false)).status).toBe(200)
+            const replay = await chat(id, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, replayOnly: true } })
+            expect([200, 204]).toContain(replay.status)
+            expect(replay.headers.get('x-run-id')).toBe(input.desktopQueuedTurn.runId)
+            await replay.text()
+            const missing = crypto.randomUUID()
+            expect((await chat(id, { ...input, desktopQueuedTurn: { runId: missing, question, replayOnly: true } })).status).toBe(403)
+            expect((await chat(id, { ...input, desktopQueuedTurn: { runId: missing, question } })).status).toBe(403)
+            expect((await chat(id, { ...input, message: 'Green', desktopQueuedTurn: { ...input.desktopQueuedTurn, replayOnly: true } })).status).toBe(409)
+            expect(await getRun(id, missing)).toBeUndefined()
+            expect(state.calls).toHaveLength(1)
+            expect(sessionClaimCount()).toBe(0)
+        } finally {
+            await enabled(true)
+            vi.unstubAllEnvs()
+        }
+    })
+
+    it('holds the session claim while validating a question so a normal send cannot race the answer', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const messages = await import('../../db/repos/messages.js')
+        let releaseRead!: () => void
+        const blocked = new Promise<void>(resolve => { releaseRead = resolve })
+        let observedRead!: () => void
+        const observed = new Promise<void>(resolve => { observedRead = resolve })
+        let restore = () => {}
+        try {
+            const session = await createSession(id)
+            const question = await pendingQuestion(session.id)
+            const original = messages.listMessages
+            const spy = vi.spyOn(messages, 'listMessages').mockImplementationOnce(async (...args) => {
+                const rows = await original(...args)
+                observedRead()
+                await blocked
+                return rows
+            })
+            restore = () => spy.mockRestore()
+            const answer = chat(id, { sessionId: session.id, message: 'Blue', desktopQueuedTurn: { runId: crypto.randomUUID(), question } })
+            await observed
+            const competing = await chat(id, { sessionId: session.id, message: 'A different request' })
+            expect(competing.status).toBe(409)
+            releaseRead()
+            const accepted = await answer
+            expect(accepted.status).toBe(200)
+            await accepted.text()
+            expect((await original(id, session.id)).filter(row => row.role === 'user')).toHaveLength(1)
+            expect(state.calls).toHaveLength(1)
+        } finally { releaseRead(); restore(); vi.unstubAllEnvs() }
+    })
+
+    it('holds a queued draft when a question was saved after the panel snapshot, without blocking accepted receipt replay', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id)
+            const first = { sessionId: session.id, message: 'Please ask me before continuing.', desktopQueuedTurn: { runId: crypto.randomUUID() } }
+            await (await chat(id, first)).text()
+            // The panel has already read question:null. The prior run now saves its question
+            // before the panel's first status check observes idle and tries to drain its queue.
+            const question = await pendingQuestion(session.id)
+            const queued = { sessionId: session.id, message: 'Saved follow-up', desktopQueuedTurn: { runId: crypto.randomUUID() } }
+            const blocked = await chat(id, queued)
+            expect(blocked.status).toBe(409)
+            expect(await blocked.json()).toMatchObject({ code: 'question_pending' })
+            expect(await getRun(id, queued.desktopQueuedTurn.runId)).toBeUndefined()
+            expect(sessionClaimCount()).toBe(0)
+            expect(state.calls).toHaveLength(1)
+            const replay = await chat(id, first)
+            expect([200, 204]).toContain(replay.status)
+            await replay.text()
+            expect(state.calls).toHaveLength(1)
+            await (await chat(id, { sessionId: session.id, message: 'Blue', desktopQueuedTurn: { runId: crypto.randomUUID(), question } })).text()
+            const retry = await chat(id, queued)
+            expect(retry.status).toBe(200)
+            await retry.text()
+            expect(state.calls.map(call => call.message)).toEqual([first.message, 'Blue', queued.message])
+            const { listMessages } = await import('../../db/repos/messages.js')
+            expect((await listMessages(id, session.id)).filter(row => row.role === 'user')).toHaveLength(3)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('refuses an ordinary desktop message while a saved question is pending, without creating a run or holding the session', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id)
+            await pendingQuestion(session.id)
+            const response = await chat(id, { sessionId: session.id, message: 'A message from a stale panel snapshot' })
+            expect(response.status).toBe(409)
+            expect(await response.json()).toMatchObject({ code: 'question_pending' })
+            expect(state.calls).toHaveLength(0)
+            expect(sessionClaimCount()).toBe(0)
+            const { getSystemDb } = await import('../../db/systemDb.js')
+            const { client } = await getSystemDb(id)
+            const runs = await client.execute({ sql: 'SELECT COUNT(*) AS total FROM runs WHERE session_id = ?', args: [session.id] })
+            expect(Number(runs.rows[0].total)).toBe(0)
+            const { listMessages } = await import('../../db/repos/messages.js')
+            expect((await listMessages(id, session.id)).filter(row => row.role === 'user')).toHaveLength(0)
+        } finally { vi.unstubAllEnvs() }
+    })
+
     it('reserves one queued run and durable user row for concurrent requests and lost acknowledgements', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         try {

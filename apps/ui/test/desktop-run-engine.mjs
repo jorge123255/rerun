@@ -6,8 +6,10 @@ import { resolve } from 'node:path'
 
 /** @type {(index: number) => string} */
 const defaultReply = () => 'A completed local run.'
+/** @type {(index: number) => Array<{ id: string; name: string; input: unknown }>} */
+const noToolCalls = () => []
 
-export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.1:3189', { replyForRequest = defaultReply } = {}) {
+export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.1:3189', { replyForRequest = defaultReply, toolCallsForRequest = noToolCalls } = {}) {
     const apiKey = randomBytes(32).toString('hex')
     const encryptionKey = randomBytes(32).toString('hex')
     const runtimeFile = resolve(dataRoot, 'runtime.json')
@@ -19,6 +21,7 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
     const providerStarted = new Promise(resolve => { notifyProvider = resolve })
     const providerMessages = []
     const providerModels = []
+    const providerTools = []
     const waiting = []
     const provider = createServer(async (req, res) => {
         if (req.url !== '/v1/chat/completions' || req.method !== 'POST') return res.writeHead(404).end()
@@ -27,6 +30,7 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
         const payload = JSON.parse(Buffer.concat(body))
         providerMessages.push(payload.messages)
         providerModels.push(payload.model ?? null)
+        providerTools.push(payload.tools ?? [])
         const requestNumber = providerMessages.length
         res.writeHead(200, { 'content-type': 'text/event-stream' })
         const chunk = (delta, finishReason = null, usage) => res.write(`data: ${JSON.stringify({ id: 'local-completion', object: 'chat.completion.chunk', created: 1, model: 'qa-local', choices: [{ index: 0, delta, finish_reason: finishReason }], ...(usage && { usage }) })}\n\n`)
@@ -35,7 +39,9 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
             releaseReply = undefined
             if (res.destroyed || res.writableEnded) return
             chunk({ content: replyForRequest(requestNumber) })
-            chunk({}, 'stop', { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 })
+            const calls = toolCallsForRequest(requestNumber)
+            if (calls.length) chunk({ tool_calls: calls.map((call, index) => ({ index, id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.input) } })) })
+            chunk({}, calls.length ? 'tool_calls' : 'stop', { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 })
             res.end('data: [DONE]\n\n')
         }
         notifyProvider()
@@ -80,7 +86,7 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
             active.send({ type: 'stop' })
         })
     }
-    return { start, stop, providerOrigin, providerStarted, providerMessages, providerModels,
+    return { start, stop, providerOrigin, providerStarted, providerMessages, providerModels, providerTools,
         waitForProviderRequest: count => providerMessages.length >= count ? Promise.resolve() : new Promise((resolve, reject) => {
             const timer = setTimeout(() => reject(new Error(`Local provider request ${count} did not arrive`)), 10000)
             waiting.push({ count, resolve: () => { clearTimeout(timer); resolve() } })

@@ -120,6 +120,22 @@ async function initialize(dataRoot: string): Promise<Client> {
             updated_at TEXT NOT NULL,
             UNIQUE (session_id, message_id)
         );
+        CREATE TABLE IF NOT EXISTS desktop_question_answers (
+            request_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+            question_id TEXT NOT NULL,
+            question_guard TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            answer_text TEXT NOT NULL,
+            accepted INTEGER NOT NULL DEFAULT 0 CHECK (accepted IN (0, 1)),
+            created_at TEXT NOT NULL,
+            UNIQUE (session_id, question_id)
+        );
+        CREATE TABLE IF NOT EXISTS desktop_question_requests (
+            request_id TEXT PRIMARY KEY,
+            answer_id TEXT NOT NULL REFERENCES desktop_question_answers(request_id) ON DELETE CASCADE
+        );
         PRAGMA user_version = 1;
     `)
     const columns = await client.execute('PRAGMA table_info(desktop_sessions)')

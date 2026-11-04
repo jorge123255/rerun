@@ -1,6 +1,6 @@
 import 'server-only'
 import { startQueuedChat } from './queued-chat'
-import { desktopRerunGrantsOf } from '@rerun/contracts'
+import { desktopRerunGrantsOf, type DesktopQuestionGuard } from '@rerun/contracts'
 import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
 import { publicDesktopHistory, transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
@@ -79,7 +79,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean }
+    | { sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -100,7 +100,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id, 'x-run-id': String(previousStart.run_id),
         } }) }
     }
-    const queued = !regenerate && input.requestId ? { runId: input.requestId, attachmentPath: input.attachmentPath } : undefined
+    const queued = !regenerate && input.requestId ? { runId: input.requestId, attachmentPath: input.attachmentPath, ...(input.question && { question: input.question }) } : undefined
     let replay: Response | undefined
     if (queued && existing && !regenerate) {
         const probe = await chat(engineOf(runtime), agent.engineAgentId, {

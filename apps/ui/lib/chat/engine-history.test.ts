@@ -302,3 +302,15 @@ it('returns the public desktop tool outcome without exposing the stored protocol
     expect(JSON.stringify(shown)).not.toContain('private metadata')
     expect(JSON.stringify(row)).toContain('private metadata')
 })
+
+
+it('preserves only bounded question fields for the original desktop form after restart', () => {
+    const question = { question: 'Which format?', options: ['Short', 'Detailed'], multiple: false }
+    const part = { type: 'tool-ask_user' as const, toolName: 'ask_user', toolCallId: 'q1', state: 'output-available' as const,
+        input: { questions: [{ ...question, unexpected: 'private transport value' }], cookie: 'transport cookie' }, output: { status: 'delivered' } }
+    const [result] = publicDesktopHistory([{ id: 'engine-q1', role: 'assistant', parts: [part] }])
+    expect(result.parts[0]).toMatchObject({ input: { questions: [question] } })
+    expect(JSON.stringify(result)).not.toMatch(/private transport value|transport cookie/)
+    const [invalid] = publicDesktopHistory([{ id: 'engine-q2', role: 'assistant', parts: [{ ...part, input: { questions: [{ question: 'x'.repeat(4001) }] } }] }])
+    expect(invalid.parts[0]).toMatchObject({ input: {} })
+})

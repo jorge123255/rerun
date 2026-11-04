@@ -1,4 +1,4 @@
-import { chatRequestSchema, desktopWorkspaceAttachmentSchema, type SessionSource } from '@rerun/contracts'
+import { chatRequestSchema, desktopQuestionGuardSchema, findDesktopQuestion, desktopWorkspaceAttachmentSchema, type SessionSource } from '@rerun/contracts'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { desktopApp } from '../../desktop/policy.js'
@@ -6,7 +6,7 @@ import { resolveRunModel } from '../../agents/availability.js'
 import { getAgent } from '../../agents/registry.js'
 import { claimInstallSession } from '../../agents/setup.js'
 import { createSession, getSession } from '../../db/repos/sessions.js'
-import { extractText, storedContent } from '../../db/repos/messages.js'
+import { extractText, listMessages, storedContent } from '../../db/repos/messages.js'
 import { forkReply, getRegeneration } from '../../db/repos/regenerations.js'
 import { startDesktopTabRun } from '../../db/repos/desktop-tab-runs.js'
 import { getDesktopQueuedTurn, reserveDesktopQueuedTurn } from '../../db/repos/desktop-queued-turns.js'
@@ -22,8 +22,9 @@ import { mergeRunStream } from '../../runtime/run-stream-merge.js'
 import { resumeStreamResponse, toResumableStreamResponse } from '../../runtime/stream.js'
 
 export const chatRoutes = new Hono()
+const questionPendingMessage = 'Answer or dismiss the coworker’s questions before sending another message.'
 const desktopFirstTurn = z.object({ sessionId: z.uuid(), runId: z.uuid() }).strict()
-const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), replayOnly: z.boolean().optional() }).strict()
+const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional() }).strict()
 const desktopChatRequest = chatRequestSchema.extend({
     workspaceAttachment: desktopWorkspaceAttachmentSchema.optional(),
     desktopFirstTurn: desktopFirstTurn.optional(),
@@ -84,8 +85,22 @@ async function resolveSession(agentId: string, sessionId: string | undefined, so
 chatRoutes.post('/chat', async c => {
     const agentId = c.req.param('id')!
     const agent = await getAgent(agentId)
-    if (!agent.config.enabled) throw agentDisabled()
     const input = await c.req.json()
+    if (!agent.config.enabled) {
+        // A disabled coworker cannot start work, but an exact read-only probe may still
+        // reconcile an answer accepted before it was disabled and its acknowledgement lost.
+        const parsed = desktopApp() ? desktopChatRequest.safeParse(input) : null
+        const body = parsed?.success ? parsed.data : null
+        const queued = body?.desktopQueuedTurn
+        if (body?.sessionId && queued?.replayOnly) {
+            const session = await getSession(agentId, body.sessionId)
+            if (session?.agentId === agentId && await getDesktopQueuedTurn(agentId, {
+                runId: queued.runId, sessionId: session.id, message: body.message,
+                attachmentPath: queued.attachmentPath, question: queued.question,
+            })) return identified(resumeStreamResponse(queued.runId), session.id, queued.runId)
+        }
+        throw agentDisabled()
+    }
     if (desktopApp() && input && typeof input === 'object' && 'regenerateMessageId' in input) return regenerateChat(agent, regenerateRequest.parse(input))
     const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), workspaceAttachment: undefined, desktopFirstTurn: undefined, desktopQueuedTurn: undefined }
     const runAgentView = agent.config.kind === 'foreman' && body.foreman ? { ...agent, brief: body.foreman } : agent
@@ -103,7 +118,7 @@ chatRoutes.post('/chat', async c => {
         const queued = body.desktopQueuedTurn!
         const session = await getSession(agentId, body.sessionId!)
         if (!session || session.agentId !== agentId) throw new HttpError(404, 'Session not found for this agent')
-        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, attachmentPath: queued.attachmentPath }
+        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, attachmentPath: queued.attachmentPath, question: queued.question }
         if (await getDesktopQueuedTurn(agentId, turn)) return identified(resumeStreamResponse(turn.runId), session.id, turn.runId)
         if (await getRun(agentId, turn.runId)) throw new HttpError(409, 'This queued message ID is already in use.')
         // The bridge can reconcile a lost acknowledgement before re-reading a moved file or
@@ -115,6 +130,20 @@ chatRoutes.post('/chat', async c => {
         const holder = claimSession(session.id, turn.runId, body.author?.id)
         if (holder) return c.json({ error: 'a run is already in flight on this session', code: 'run_in_flight', runId: holder, sessionId: session.id }, 409)
         try {
+            // Hold the session claim while checking the durable transcript: an ordinary chat
+            // cannot append a new turn between this check and the atomic answer reservation.
+            const pending = findDesktopQuestion(await listMessages(agentId, session.id))
+            if (queued.question) {
+                const expected = queued.question
+                if (!pending || pending.sourceMessageId !== expected.sourceMessageId || pending.toolCallId !== expected.toolCallId || pending.fingerprint !== expected.fingerprint) {
+                    throw new HttpError(409, 'This question is no longer waiting for an answer. Reload the conversation.')
+                }
+            } else if (pending) {
+                // The panel may have read an idle snapshot just before this question was saved.
+                // Its queued draft must remain unsent until the explicit answer is accepted.
+                releaseSession(turn.runId)
+                return c.json({ error: questionPendingMessage, code: 'question_pending' }, 409)
+            }
             const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, body.workspaceAttachment, body.author)
             return streamChat(agent, session.id, turn.runId, body.message, override, { provider, model }, {
                 source: 'chat', author: body.author, workspaceAttachment: body.workspaceAttachment, queuedUser,
@@ -140,6 +169,17 @@ chatRoutes.post('/chat', async c => {
         // stop it, instead of showing a dead end the user cannot act on.
         const claim = sessionClaim(session.id)
         return c.json({ error: 'a run is already in flight on this session', code: 'run_in_flight', runId: holder, sessionId: session.id, startedAt: claim ? new Date(claim.claimedAt).toISOString() : null, authorId: claim?.authorId ?? null }, 409)
+    }
+    if (desktopApp()) {
+        try {
+            if (findDesktopQuestion(await listMessages(agentId, session.id))) {
+                releaseSession(runId)
+                return c.json({ error: questionPendingMessage, code: 'question_pending' }, 409)
+            }
+        } catch (error) {
+            releaseSession(runId)
+            throw error
+        }
     }
     const run = await startRun(agent.id, session.id, runId).catch(err => {
         releaseSession(runId)

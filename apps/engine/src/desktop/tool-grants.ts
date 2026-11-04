@@ -12,7 +12,8 @@ export function hasDesktopToolGrant(config: AgentConfig, id: DesktopRerunGrantId
 export async function requireDesktopToolGrant(ctx: RunContext, id: DesktopRerunGrantId) {
     ctx.abortSignal?.throwIfAborted()
     const current = await readAgentConfig(ctx.agent.id).catch(() => null)
-    if (!current || !hasDesktopToolGrant(current, id)) throw new Error('This tool is turned off for this coworker.')
+    ctx.abortSignal?.throwIfAborted()
+    if (!current?.enabled || !hasDesktopToolGrant(current, id)) throw new Error('This tool is turned off for this coworker.')
 }
 
 export function desktopToolInstruction(config: AgentConfig): string {

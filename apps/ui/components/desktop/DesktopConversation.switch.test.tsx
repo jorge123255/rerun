@@ -18,6 +18,7 @@ test('switching, failed loads, retry, and New chat keep drafts and never show an
     let resolveSlow!: (value: Response) => void
     let sends = 0
     vi.stubGlobal('fetch', vi.fn((url: string) => {
+        if (url.endsWith('/questions')) return Response.json({ question: null })
         if (url.includes('/queue?')) return Response.json({ queued: null })
         if (url.includes('/first/messages')) return messages('First answer.')
         if (url.includes('/second/messages')) return failSecond ? Response.json({ error: 'History unavailable' }, { status: 502 }) : messages('Second answer.')

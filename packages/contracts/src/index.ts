@@ -1,4 +1,5 @@
 export * from './desktop-tool-grants.js'
+export * from './desktop-question.js'
 export * from './agent.js'
 export * from './connection.js'
 export * from './tool.js'

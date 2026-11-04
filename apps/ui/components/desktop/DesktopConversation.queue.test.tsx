@@ -26,6 +26,7 @@ beforeEach(() => {
     stopResponse = async () => { running = false; return Response.json({ canceled: 1, alreadyFinished: false }) }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) {
             if (init?.method === 'PUT') {
                 const body = JSON.parse(String(init.body)), key = body.scope.sessionId ?? body.scope.tabUid
