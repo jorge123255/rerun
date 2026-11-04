@@ -66,6 +66,43 @@ describe('GET /agents/:id/stats', () => {
         }
     })
 
+    it('returns every tool group in a bounded desktop chart while generic queries keep their cap', async () => {
+        const owner = 'busy-tool-owner'
+        mkdirSync(agentDir(owner), { recursive: true })
+        writeFileSync(configPath(owner), JSON.stringify({ name: owner }))
+        const { client } = await getSystemDb(owner)
+        await client.executeMultiple(`
+            WITH RECURSIVE days(d) AS (SELECT 1 UNION ALL SELECT d + 1 FROM days WHERE d < 84),
+                tools(t) AS (SELECT 1 UNION ALL SELECT t + 1 FROM tools WHERE t < 60)
+            INSERT INTO tool_calls (id, agent_id, run_id, session_id, step_number, tool_name, is_error, created_at)
+            SELECT printf('%d.%d', d, t), 'busy-tool-owner', 'run', 'session', 1, printf('tool-%d', t), t = 60,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now', printf('-%d days', d))
+            FROM days CROSS JOIN tools;
+            INSERT INTO tool_calls (id, agent_id, run_id, session_id, step_number, tool_name, is_error, created_at)
+            VALUES ('future', 'busy-tool-owner', 'run', 'session', 1, 'future', 1, '9999-01-01T00:00:00.000Z');
+        `)
+        async function chart(metric: 'count' | 'errorCount', range = '90d'): Promise<Point[]> {
+            const result = await app.request(`/agents/${owner}/stats?dataset=toolCalls&groupBy=toolName&metric=${metric}&range=${range}`)
+            expect(result.status).toBe(200)
+            return (await result.json()).points
+        }
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const calls = await chart('count')
+            expect(calls).toHaveLength(84 * 60)
+            expect(total(calls)).toBe(84 * 60)
+            expect(calls.some(point => point.group === 'future')).toBe(false)
+            const errors = await chart('errorCount')
+            expect(errors).toHaveLength(84 * 60)
+            expect(total(errors)).toBe(84)
+            expect(await chart('count', 'all')).toHaveLength(5000)
+            vi.stubEnv('RERUN_DESKTOP_APP', '0')
+            expect(await chart('count')).toHaveLength(5000)
+        } finally {
+            vi.unstubAllEnvs()
+        }
+    })
+
     it.each([
         ['no dataset', 'metric=count'],
         ['an unknown dataset', 'dataset=widgets&metric=count'],

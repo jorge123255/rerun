@@ -16,7 +16,8 @@ export const statsRoutes = new Hono()
 
 statsRoutes.get('/', async c => {
     const agentId = c.req.param('id')!
-    if (desktopApp() && !agentExists(agentId)) throw notFound('agent')
+    const desktop = desktopApp()
+    if (desktop && !agentExists(agentId)) throw notFound('agent')
     const parsed = statsQuerySchema.safeParse({
         dataset: c.req.query('dataset'),
         metric: c.req.query('metric'),
@@ -28,13 +29,16 @@ statsRoutes.get('/', async c => {
         return c.json({ error: 'invalid stats query' }, 400)
     }
     const { dataset, metric, groupBy, range, status } = parsed.data
-    const sinceIso = range === 'all' ? null : new Date(Date.now() - RANGE_MS[range]).toISOString()
+    const now = Date.now()
+    const sinceIso = range === 'all' ? null : new Date(now - RANGE_MS[range]).toISOString()
+    const completeToolChart = desktop && range !== 'all' && dataset === 'toolCalls' && groupBy === 'toolName' && (metric === 'count' || metric === 'errorCount')
     const bucket = range === '24h' ? 'hour' : 'day'
     const points = await aggregateStats(agentId, {
         dataset,
         metric,
         groupBy,
         sinceIso,
+        allGroupsThrough: completeToolChart ? new Date(now).toISOString() : undefined,
         bucket,
         status: dataset === 'runs' ? status : undefined,
     })

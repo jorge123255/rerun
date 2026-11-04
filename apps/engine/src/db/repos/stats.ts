@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, isNotNull, sql, type SQL } from 'drizzle-orm'
+import { and, asc, eq, gte, isNotNull, lte, sql, type SQL } from 'drizzle-orm'
 import type { SQLiteColumn, SQLiteTable } from 'drizzle-orm/sqlite-core'
 import type { StatsDataset, StatsGroupBy, StatsMetric, StatsPoint, StatsRunStatusFilter } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
@@ -117,6 +117,8 @@ export type StatsRepoQuery = {
     metric: StatsMetric
     groupBy: StatsGroupBy
     sinceIso: string | null
+    // Return every group inside the selected window when the consumer totals across tool names.
+    allGroupsThrough?: string
     bucket: 'hour' | 'day'
     status?: StatsRunStatusFilter
 }
@@ -135,6 +137,7 @@ export async function aggregateStats(agentId: string, query: StatsRepoQuery): Pr
 
     const conditions: SQL[] = [eq(def.agentId, agentId)]
     if (query.sinceIso) conditions.push(gte(def.timeColumn, query.sinceIso))
+    if (query.allGroupsThrough) conditions.push(lte(def.timeColumn, query.allGroupsThrough))
     if (query.dataset === 'runs' && query.status && query.status !== 'all') conditions.push(eq(runs.status, query.status))
     const extra = def.extraConditions?.[query.metric]
     if (extra) conditions.push(extra)
@@ -148,5 +151,6 @@ export async function aggregateStats(agentId: string, query: StatsRepoQuery): Pr
     }
     const base = db.select(selection).from(def.table).where(and(...conditions))
     const grouped = groupSql ? base.groupBy(bucket, groupSql) : base.groupBy(bucket)
-    return grouped.orderBy(asc(bucket)).limit(5000)
+    const ordered = grouped.orderBy(asc(bucket))
+    return query.allGroupsThrough ? ordered : ordered.limit(5000)
 }
