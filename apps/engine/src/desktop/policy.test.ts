@@ -54,3 +54,9 @@ test('desktop memories are scoped to recall, listing, creating and deleting one 
         for (const method of ['GET', 'POST', 'DELETE']) expect(desktopRouteAllowed(method, path)).toBe(false)
     }
 })
+
+test('desktop duplication only allows POST on the selected coworker', () => {
+    expect(desktopRouteAllowed('POST', '/agents/a/duplicate')).toBe(true)
+    for (const method of ['GET', 'PATCH', 'PUT', 'DELETE']) expect(desktopRouteAllowed(method, '/agents/a/duplicate')).toBe(false)
+    for (const path of ['/agents/foreman/duplicate', '/agents/a/duplicate/more']) expect(desktopRouteAllowed('POST', path)).toBe(false)
+})

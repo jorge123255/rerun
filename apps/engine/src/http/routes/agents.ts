@@ -1,5 +1,6 @@
 import { assertNativeChangeAllowed } from '../../desktop/native-grants.js'
 import { Hono } from 'hono'
+import { z } from 'zod'
 import { rm, writeFile, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { Readable } from 'node:stream'
@@ -83,9 +84,10 @@ agentRoutes.post('/:id/automations/activate', async c => {
 // the engine, so nothing has to be packed, redacted or re-authorized on the way.
 agentRoutes.post('/:id/duplicate', async c => {
     const id = c.req.param('id')
-    if (!agentExists(id)) return c.json({ error: 'agent not found' }, 404)
+    if (!desktopApp() && !agentExists(id)) return c.json({ error: 'agent not found' }, 404)
     const body = duplicateAgentSchema.parse(await c.req.json())
-    return c.json(await duplicateAgent(id, body), 201)
+    const requestId = desktopApp() ? z.uuid().parse(c.req.header('x-rerun-duplicate-id')) : undefined
+    return c.json(await duplicateAgent(id, body, requestId), 201)
 })
 
 agentRoutes.get('/:id/archive/plan', async c => {

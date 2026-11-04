@@ -172,13 +172,13 @@ async function readManifestMcpAuth(id: string): Promise<AgentArchiveMcpAuth[] | 
 // hold the request open long past the caller's budget.
 const REINDEX_BATCH = 8
 
-export async function reindexMemories(id: string): Promise<number> {
+export async function reindexMemories(id: string, { embed = true } = {}): Promise<number> {
     const files = await listMemoryFiles(id).catch(() => [])
     let indexed = 0
 
     for (let i = 0; i < files.length; i += REINDEX_BATCH) {
         const batch = files.slice(i, i + REINDEX_BATCH)
-        const embeddings = await Promise.all(batch.map(file => embedText(file.content).catch(() => null)))
+        const embeddings = await Promise.all(batch.map(file => embed ? embedText(file.content).catch(() => null) : null))
         for (const [offset, file] of batch.entries()) {
             try {
                 await indexMemory({ id: file.id, agentId: id, path: file.path, content: file.content, kind: file.kind, createdAt: file.createdAt, lastAccessedAt: file.createdAt, accessCount: 0 }, embeddings[offset])

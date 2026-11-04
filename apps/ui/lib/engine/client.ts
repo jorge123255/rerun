@@ -421,8 +421,8 @@ export async function importAgentArchive(conn: EngineConnection, archive: Blob, 
 // A copy of an agent onto the box it already lives on. Nothing is packed or uploaded: the source
 // folder never leaves the engine, so the copy keeps its keys, its connectors and the model it was
 // pinned to, none of which survive the archive round trip an import goes through.
-export async function duplicateAgent(conn: EngineConnection, id: string, params: { name: string; displayName?: string }): Promise<AgentDuplicateResult> {
-    return request(conn, `/agents/${encodeURIComponent(id)}/duplicate`, { method: 'POST', body: JSON.stringify(params), signal: AbortSignal.timeout(ARCHIVE_TIMEOUT_MS) }, d => agentDuplicateResultSchema.parse(d))
+export async function duplicateAgent(conn: EngineConnection, id: string, params: { name: string; displayName?: string }, desktopRequestId?: string): Promise<AgentDuplicateResult> {
+    return request(conn, `/agents/${encodeURIComponent(id)}/duplicate`, { method: 'POST', body: JSON.stringify(params), headers: desktopRequestId ? { 'x-rerun-duplicate-id': desktopRequestId } : {}, signal: AbortSignal.timeout(ARCHIVE_TIMEOUT_MS) }, d => agentDuplicateResultSchema.parse(d))
 }
 
 export async function deleteAgent(conn: EngineConnection, id: string): Promise<void> {

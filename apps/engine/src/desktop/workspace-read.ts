@@ -1,9 +1,9 @@
 import { DESKTOP_ATTACHMENT_MAX_BYTES, type DesktopRerunGrantId } from '@rerun/contracts'
 import { tool, type ToolSet } from 'ai'
-import { constants } from 'node:fs'
-import { mkdir, open, opendir, realpath, writeFile, type FileHandle } from 'node:fs/promises'
+import { mkdir, opendir, realpath, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { z } from 'zod'
+import { openWithoutLinks } from './open-without-links.js'
 import { hasDesktopToolGrant, requireDesktopToolGrant } from './tool-grants.js'
 import { dataDir, workspaceDir } from '../config/paths.js'
 import type { RunContext } from '../runtime/context.js'
@@ -21,28 +21,6 @@ async function workspacePath(id: string, path: string) {
     return join(root, relative(dataDir(), workspaceDir(id)), path)
 }
 
-// Open the original relative path without following links in any component. O_NONBLOCK
-// lets us reject a FIFO using fstat without waiting for a writer.
-async function openWorkspacePath(path: string, directory = false): Promise<FileHandle> {
-    const flags = constants.O_RDONLY | constants.O_NONBLOCK | (directory ? constants.O_DIRECTORY : 0)
-    if (process.platform === 'darwin') return open(path, flags | 0x20000000) // O_NOFOLLOW_ANY
-    if (process.platform !== 'linux') throw new WorkspaceReadError(unavailable)
-    let dir = await open('/', constants.O_RDONLY | constants.O_DIRECTORY)
-    try {
-        const parts = path.split('/').filter(Boolean)
-        for (const [index, part] of parts.entries()) {
-            const next = await open(`/proc/self/fd/${dir.fd}/${part}`, constants.O_NOFOLLOW |
-                (index === parts.length - 1 ? flags : constants.O_RDONLY | constants.O_DIRECTORY))
-            await dir.close()
-            dir = next
-        }
-        return dir
-    } catch (error) {
-        await dir.close()
-        throw error
-    }
-}
-
 type Access = DesktopRerunGrantId | (() => Promise<void>)
 const check = (ctx: RunContext, access: Access) => typeof access === 'function' ? access() : requireDesktopToolGrant(ctx, access)
 
@@ -51,7 +29,7 @@ async function readWorkspaceText(ctx: RunContext, path: string, grant: Access): 
     if (!validPath(path)) throw new WorkspaceReadError('Use a visible relative file path inside this coworker’s workspace.')
     try {
         const target = await workspacePath(ctx.agent.id, path)
-        const handle = await openWorkspacePath(target)
+        const handle = await openWithoutLinks(target)
         try {
             const info = await handle.stat({ bigint: true })
             if (!info.isFile() || info.nlink !== 1n) throw new WorkspaceReadError(unavailable)
@@ -68,7 +46,7 @@ async function readWorkspaceText(ctx: RunContext, path: string, grant: Access): 
             if (length > max) throw new WorkspaceReadError(tooLarge)
             // The open descriptor pins the data, but a directory could have moved into another
             // coworker's workspace during the read. Verify the original path still owns this inode.
-            const current = await openWorkspacePath(target)
+            const current = await openWithoutLinks(target)
             try {
                 const check = await current.stat({ bigint: true })
                 if (check.dev !== info.dev || check.ino !== info.ino || check.nlink !== 1n || check.size !== BigInt(length) || check.ctimeNs !== info.ctimeNs) throw new WorkspaceReadError(unavailable)
@@ -99,7 +77,7 @@ async function listDirectory(ctx: RunContext, path: string, grant: Access) {
     if (path !== '.' && !validPath(path)) throw new WorkspaceReadError('Use a visible relative directory in this coworker’s workspace.')
     try {
         const target = await workspacePath(ctx.agent.id, path)
-        const handle = await openWorkspacePath(target, true)
+        const handle = await openWithoutLinks(target, true)
         try {
             const original = await handle.stat({ bigint: true })
             const pinned = process.platform === 'darwin' ? `/.vol/${original.dev}/${original.ino}` : `/proc/self/fd/${handle.fd}`
@@ -111,7 +89,7 @@ async function listDirectory(ctx: RunContext, path: string, grant: Access) {
                     entries.push({ name: item.name, directory: item.isDirectory() })
                 }
             }
-            const current = await openWorkspacePath(target, true)
+            const current = await openWithoutLinks(target, true)
             try {
                 const check = await current.stat({ bigint: true })
                 if (check.dev !== original.dev || check.ino !== original.ino || check.ctimeNs !== original.ctimeNs) throw new WorkspaceReadError(unavailable)

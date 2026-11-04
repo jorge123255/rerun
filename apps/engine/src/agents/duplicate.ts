@@ -4,16 +4,19 @@ import { relative, resolve, sep } from 'node:path'
 import { agentDuplicateResultSchema, type AgentDuplicateResult, type DuplicateAgentInput, type McpServer } from '@rerun/contracts'
 import { agentDir, agentsDir, dataDir, skillsDir, soulPath, workspaceDir } from '../config/paths.js'
 import { newId } from '../lib/ids.js'
-import { badRequest } from '../lib/errors.js'
-import { deleteAgentIndex, insertAgentIndex } from '../db/repos/agents.js'
-import { checkpointAgentDb } from '../db/agentDb.js'
+import { badRequest, notFound } from '../lib/errors.js'
+import { deleteAgentIndex, getAgentIndex, insertAgentIndex } from '../db/repos/agents.js'
+import { closeSystemDb } from '../db/systemDb.js'
+import { withKeyedLock } from '../lib/lock.js'
+import { copyDesktopFiles, readCopyReceipt, writeCopyReceipt } from '../desktop/duplicate.js'
+import { checkpointAgentDb, closeAgentDb } from '../db/agentDb.js'
 import { withAgentLock } from './lock.js'
 import { agentConfigSchema, type AgentConfig } from './types.js'
 import { ARCHIVE_ROOTS, listPathsUnder } from './archive.js'
 import { rebaselineSchedules, reindexMemories, rotateTriggers } from './import.js'
 import { writeAgentConfig } from './config-write.js'
 import { parseEnvFile, writeAgentEnv } from './env.js'
-import { loadAgentFromDisk } from './loader.js'
+import { agentExists, loadAgentFromDisk } from './loader.js'
 import { defaultSoul } from './soul.js'
 
 // Copying an agent onto the box it already lives on. Deliberately not `importAgent`: that path
@@ -92,20 +95,41 @@ async function readStagedEnv(staging: string): Promise<Record<string, string>> {
     }
 }
 
-export async function duplicateAgent(sourceId: string, input: DuplicateAgentInput): Promise<AgentDuplicateResult> {
-    const id = newId()
+export async function duplicateAgent(sourceId: string, input: DuplicateAgentInput, desktopRequestId?: string): Promise<AgentDuplicateResult> {
+    if (!desktopRequestId) return makeCopy(newId(), sourceId, input, false)
+    const id = `copy-${desktopRequestId}`
+    return withKeyedLock(`desktop-duplicate:${id}`, async () => {
+        const previous = await readCopyReceipt(id, sourceId)
+        if (previous?.result) {
+            if (!await getAgentIndex(id)) await insertAgentIndex(id, previous.result.name)
+            return previous.result
+        }
+        if (!agentExists(sourceId)) throw notFound('agent')
+        if (previous) {
+            // Interrupted after publishing the staging directory, before finalizing the copy.
+            closeAgentDb(id)
+            closeSystemDb(id)
+            await rm(agentDir(id), { recursive: true, force: true })
+        }
+        return makeCopy(id, sourceId, input, true)
+    })
+}
+
+async function makeCopy(id: string, sourceId: string, input: DuplicateAgentInput, desktop: boolean): Promise<AgentDuplicateResult> {
     await mkdir(stagingRoot(), { recursive: true })
     const scratch = await mkdtemp(resolve(stagingRoot(), 'duplicate-'))
     const staging = resolve(scratch, 'agent')
 
+    let published = false
     try {
         // Held over the source for the whole copy: a config write or a key change landing halfway
         // through would be caught by one file and missed by the next.
         const config = await withAgentLock(sourceId, async () => {
-            await checkpointAgentDb(sourceId)
+            if (!desktop) await checkpointAgentDb(sourceId)
             const root = agentDir(sourceId)
             const { keep, keepDirs } = await copyPlan(sourceId)
-            await cp(root, staging, {
+            if (desktop) await copyDesktopFiles(sourceId, keep, staging)
+            else await cp(root, staging, {
                 recursive: true,
                 filter: source => {
                     const rel = relative(root, source).split(sep).join('/')
@@ -118,7 +142,9 @@ export async function duplicateAgent(sourceId: string, input: DuplicateAgentInpu
         const env = await readStagedEnv(staging)
 
         await mkdir(agentsDir(), { recursive: true })
+        if (desktop) await writeCopyReceipt(staging, sourceId)
         await rename(staging, agentDir(id))
+        published = true
 
         // A source that never had one of these leaves the copy without it too, and the rest of the
         // engine assumes all three exist.
@@ -147,16 +173,21 @@ export async function duplicateAgent(sourceId: string, input: DuplicateAgentInpu
             triggers,
             // The index lives in `data/system.db`, which is not one of the roots: without this pass
             // the copy holds memories it has no way to recall.
-            memoriesIndexed: await reindexMemories(id),
+            memoriesIndexed: await reindexMemories(id, { embed: !desktop }),
         })
 
         // Last, as in `createAgent` and `importAgent`: nothing may fail after the index row exists,
         // or the engine lists an agent whose folder the rollback has already removed.
+        if (desktop) await writeCopyReceipt(agentDir(id), sourceId, result)
         await insertAgentIndex(id, agent.config.name)
         return result
     } catch (err) {
-        await deleteAgentIndex(id).catch(() => {})
-        await rm(agentDir(id), { recursive: true, force: true })
+        if (published) {
+            closeSystemDb(id)
+            closeAgentDb(id)
+            await deleteAgentIndex(id).catch(() => {})
+            await rm(agentDir(id), { recursive: true, force: true })
+        }
         throw err
     } finally {
         await rm(scratch, { recursive: true, force: true })

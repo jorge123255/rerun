@@ -3,6 +3,7 @@ import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS } from
 import { createConnection, listConnections, patchConnection, setBoxDefault, updateConnectionKeys } from '@/lib/engine/client'
 import { desktopProvider, type SettingsChange } from '../settings'
 import { DesktopHttpError } from './auth'
+import { reconcileDesktopDuplicates } from '@/lib/desktop/server/coworker-duplicate'
 import { reconcileDesktopRenames } from './coworker-rename'
 import { openDesktopDatabase } from './database'
 import { readDesktopBootstrap } from './store'
@@ -23,6 +24,7 @@ export async function readDesktopWorkspace(runtime: DesktopRuntime) {
     const [bootstrap, providers] = await Promise.all([
         openDesktopDatabase(runtime.dataRoot).then(async db => {
             await reconcileDesktopRenames(db, engineOf(runtime), runtime.launchNonce)
+            await reconcileDesktopDuplicates(db, engineOf(runtime))
             return readDesktopBootstrap(db)
         }),
         readDesktopProviders(runtime),

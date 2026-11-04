@@ -46,6 +46,8 @@ Selecting a tile or a Find chat result opens the coworker in Rerun’s shared si
 
 Right-click a coworker’s tile, or focus the tile and press Shift+F10, then choose **Rename**. The Mac uses Rerun’s rename dialog and derives the @handle from the new display name. It keeps the same coworker and chat IDs. An open panel keeps its selected conversation and unsent text when the board label changes.
 
+Choose **Duplicate** on a coworker’s tile, then click an empty spot or use **Place copy**. Escape or Cancel ends placement before a copy is made. A placed copy retains its board position and gets an independent coworker ID, workspace files, and conversation history. Its first chat starts empty. A retried placement returns the same coworker.
+
 Open **Coworker card → Monitoring** to see that coworker’s run count, error rate, activity by status and runs by model. It opens on the last seven days and offers 24 hours, 30 days and 90 days. The view refreshes while visible. Cost and token totals appear only when all runs in that period have complete supporting measurements.
 
 The coworker panel uses Rerun’s **open chat tabs**. Select **+** to start a chat, or choose a saved conversation from Chats or Find chat to open it in the strip. Each conversation has its own messages, model choice and running reply. The Mac database remembers up to eight open tabs and the active tab per coworker across launches. Closing a tab keeps its conversation in Chats.

@@ -166,3 +166,57 @@ describe('duplicateAgent', () => {
         await expect(duplicateAgent('emptysource', { name: 'nothing' })).rejects.toThrow(/config\.json/)
     })
 })
+
+describe('desktop duplicate delivery', () => {
+    it('publishes one private clone for simultaneous calls and replays the original receipt after the copy changes', async () => {
+        const requestId = crypto.randomUUID()
+        const input = { name: 'desktop_copy', displayName: 'Source copy' }
+        const [a, b] = await Promise.all([duplicateAgent(SOURCE_ID, input, requestId), duplicateAgent(SOURCE_ID, input, requestId)])
+        expect(a).toEqual(b)
+        expect(a.id).toBe('copy-' + requestId)
+        expect((await listAgentIndex()).filter(row => row.id === a.id)).toHaveLength(1)
+        const ownFile = resolve(agentDir(a.id), 'workspace', 'after-copy.txt')
+        await writeFile(ownFile, 'the copy owns this', 'utf8')
+        expect(await duplicateAgent(SOURCE_ID, input, requestId)).toEqual(a)
+        expect(await readFile(ownFile, 'utf8')).toBe('the copy owns this')
+        expect(existsSync(resolve(agentDir(SOURCE_ID), 'workspace', 'after-copy.txt'))).toBe(false)
+    })
+
+    it('keeps committed private table rows that are still in the source WAL', async () => {
+        const { createClient } = await import('@libsql/client')
+        const id = 'source-with-data'
+        const root = agentDir(id)
+        await mkdir(resolve(root, 'data'), { recursive: true })
+        await writeFile(resolve(root, 'config.json'), JSON.stringify(config))
+        const source = createClient({ url: 'file:' + resolve(root, 'data/agent.db') })
+        try {
+            await source.executeMultiple("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE notes(body TEXT); INSERT INTO notes VALUES ('first')")
+            expect((await stat(resolve(root, 'data/agent.db-wal'))).size).toBeGreaterThan(0)
+            const { id: copy } = await duplicateAgent(id, { name: 'copy_with_data' }, crypto.randomUUID())
+            const target = createClient({ url: 'file:' + resolve(agentDir(copy), 'data/agent.db') })
+            try {
+                expect((await target.execute('SELECT body FROM notes')).rows[0].body).toBe('first')
+                await target.execute("UPDATE notes SET body = 'different'")
+                expect((await source.execute('SELECT body FROM notes')).rows[0].body).toBe('first')
+            } finally { target.close() }
+        } finally { source.close() }
+    })
+
+    it('refuses a linked source root and never publishes a link to another workspace', async () => {
+        const { symlink, link, rm } = await import('node:fs/promises')
+        const id = 'linksource', root = agentDir(id)
+        await mkdir(root, { recursive: true })
+        await writeFile(resolve(root, 'config.json'), JSON.stringify(config))
+        await symlink(resolve(agentDir(SOURCE_ID), 'workspace'), resolve(root, 'workspace'))
+        const first = crypto.randomUUID()
+        await expect(duplicateAgent(id, { name: 'unsafe' }, first)).rejects.toThrow()
+        expect(existsSync(agentDir('copy-' + first))).toBe(false)
+        await rm(resolve(root, 'workspace'))
+        await mkdir(resolve(root, 'workspace'))
+        await link(resolve(agentDir(SOURCE_ID), 'config.json'), resolve(root, 'workspace/another-owner.txt'))
+        const second = crypto.randomUUID()
+        await expect(duplicateAgent(id, { name: 'unsafe' }, second)).rejects.toThrow()
+        expect(existsSync(agentDir('copy-' + second))).toBe(false)
+        await rm(resolve(root, 'workspace/another-owner.txt'))
+    })
+})

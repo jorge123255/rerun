@@ -12,6 +12,7 @@ import { SidePanel } from '@/components/layout/SidePanel'
 import { SIDE_PANEL_GAP } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopBoard } from './DesktopBoard'
+import type { GridPosition } from '@rerun/ui/iso-grid'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -20,7 +21,7 @@ import { DesktopChatTabs } from './DesktopChatTabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 
-export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string }
+export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
 export type DesktopBootstrap = ConnectionsList & {
     theme: ThemePreference
@@ -148,6 +149,32 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setAgents(current => current.map(existing => existing.id === id ? agent : existing))
     }
 
+    async function duplicateCoworker(id: string, requestId: string, position: GridPosition): Promise<'created' | 'occupied'> {
+        const response = await fetch(`/api/desktop/agents/${encodeURIComponent(id)}/duplicate`, {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ requestId, position }),
+        })
+        if (response.status === 409 && (await response.clone().json().catch(() => null))?.code === 'position_occupied') {
+            const { agents: latest } = await json<{ agents: DesktopAgentView[] }>(await fetch('/api/desktop/agents', { cache: 'no-store' }))
+            mergeBoardAgents(latest)
+            return 'occupied'
+        }
+        const { agent } = await json<{ agent: DesktopAgentView }>(response)
+        mergeBoardAgents([agent])
+        selectCoworker(agent.id)
+        return 'created'
+    }
+
+    function mergeBoardAgents(incoming: DesktopAgentView[]) {
+        setAgents(current => {
+            const merged = new Map(current.map(agent => [agent.id, agent]))
+            for (const agent of incoming) {
+                const existing = merged.get(agent.id)
+                if (!existing || existing.updatedAt <= agent.updatedAt) merged.set(agent.id, agent)
+            }
+            return [...merged.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+        })
+    }
+
     function showBoard(create = false) {
         setSettings(false)
         setCreating(create)
@@ -183,7 +210,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
-                    onRename={renameCoworker} onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
+                    onRename={renameCoworker} onDuplicate={duplicateCoworker} onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
                 {selectedAgent && <div inert={!panelOpen} aria-hidden={!panelOpen || undefined}>
                     <SidePanel isOpen={panelOpen} onDismiss={closePanel}>
                         <section ref={panelContent} tabIndex={-1} aria-label="Coworker chat" className="flex h-full min-h-0 flex-col outline-none"

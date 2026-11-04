@@ -1,4 +1,5 @@
 import 'server-only'
+import type { DesktopBoardPosition } from '../board-layout'
 import { desktopTheme } from '../settings'
 import { DesktopHttpError } from './auth'
 import type { Client, InStatement, Row } from '@libsql/client'
@@ -6,6 +7,7 @@ import type { Client, InStatement, Row } from '@libsql/client'
 export type DesktopAgent = {
     id: string
     workspaceId: number
+    position?: DesktopBoardPosition
     engineAgentId: string
     name: string
     description: string
@@ -28,6 +30,7 @@ function agentOf(row: Row): DesktopAgent {
     return {
         id: String(row.id),
         workspaceId: Number(row.workspace_id),
+        ...(row.board_col == null || row.board_row == null ? {} : { position: { col: Number(row.board_col), row: Number(row.board_row) } }),
         engineAgentId: String(row.engine_agent_id),
         name: String(row.name),
         description: String(row.description),
@@ -67,13 +70,16 @@ export async function readDesktopBootstrap(db: Client) {
     }
 }
 
+const agentsWithPosition = `SELECT a.*, d.board_col, d.board_row FROM desktop_agents a
+    LEFT JOIN desktop_duplicates d ON d.agent_id = a.id`
+
 export async function listDesktopAgents(db: Client): Promise<DesktopAgent[]> {
-    const result = await db.execute('SELECT * FROM desktop_agents ORDER BY created_at, id')
+    const result = await db.execute(agentsWithPosition + ' ORDER BY a.created_at, a.id')
     return result.rows.map(agentOf)
 }
 
 export async function findDesktopAgent(db: Client, id: string): Promise<DesktopAgent | null> {
-    const result = await db.execute({ sql: 'SELECT * FROM desktop_agents WHERE id = ? AND workspace_id = 1', args: [id] })
+    const result = await db.execute({ sql: agentsWithPosition + ' WHERE a.id = ? AND a.workspace_id = 1', args: [id] })
     return result.rows[0] ? agentOf(result.rows[0]) : null
 }
 

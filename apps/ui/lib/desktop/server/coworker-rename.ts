@@ -4,21 +4,13 @@ import { z } from 'zod'
 import { allocateHandle } from '@/lib/agent-handle'
 import { EngineRequestError, getAgent, patchAgent, request } from '@/lib/engine/client'
 import type { EngineConnection } from '@/lib/engine/types'
+import { withRosterWrite } from './roster-writes'
 import { DesktopHttpError } from './auth'
 import { findDesktopAgent, type DesktopAgent } from './store'
 
 const indexSchema = z.object({ agents: z.array(z.object({ id: z.string(), name: z.string() })) })
 const unavailable = 'Could not confirm the coworker’s new name. Try again.'
 type Rename = { name: string; handle: string; operationId: string }
-
-// Route bundles share the supervised UI process. Serialize handle allocation and engine writes
-// across its endpoints, then guard each projection write by the operation that requested it.
-const queue = globalThis as typeof globalThis & { desktopRenamePending?: Promise<void> }
-function inOrder<T>(action: () => Promise<T>): Promise<T> {
-    const result = (queue.desktopRenamePending ?? Promise.resolve()).then(action)
-    queue.desktopRenamePending = result.then(() => {}, () => {})
-    return result
-}
 
 async function finish(db: Client, agent: DesktopAgent, desired: Rename) {
     const updatedAt = new Date().toISOString()
@@ -45,7 +37,7 @@ async function confirm(db: Client, engine: EngineConnection, agent: DesktopAgent
 }
 
 export function reconcileDesktopRenames(db: Client, engine: EngineConnection, launchNonce: string) {
-    return inOrder(async () => {
+    return withRosterWrite(async () => {
         const result = await db.execute('SELECT * FROM desktop_rename_checks')
         for (const row of result.rows) {
             const agent = await findDesktopAgent(db, String(row.agent_id))
@@ -55,7 +47,7 @@ export function reconcileDesktopRenames(db: Client, engine: EngineConnection, la
 }
 
 export function renameDesktopCoworker(db: Client, engine: EngineConnection, launchNonce: string, id: string, name: string) {
-    return inOrder(async () => {
+    return withRosterWrite(async () => {
         const agent = await findDesktopAgent(db, id)
         if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
         const checks = await db.execute('SELECT * FROM desktop_rename_checks')
@@ -71,6 +63,8 @@ export function renameDesktopCoworker(db: Client, engine: EngineConnection, laun
         if (!index.agents.some(item => item.id === agent.engineAgentId)) throw new DesktopHttpError(404, 'Coworker not found')
         const taken = new Set(index.agents.filter(item => item.id !== agent.engineAgentId).map(item => item.name))
         for (const row of checks.rows) if (row.agent_id !== id) taken.add(String(row.handle))
+        const reserved = await db.execute('SELECT handle FROM desktop_duplicates WHERE completed = 0')
+        for (const row of reserved.rows) taken.add(String(row.handle))
         const desired = { name, handle: allocateHandle(name, taken), operationId: crypto.randomUUID() }
 
         // If the engine commits and the response or UI process is lost, the next bootstrap

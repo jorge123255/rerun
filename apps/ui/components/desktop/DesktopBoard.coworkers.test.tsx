@@ -3,7 +3,8 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
-import { DesktopApp } from './DesktopApp'
+import { DesktopApp, type DesktopAgentView } from './DesktopApp'
+import type { GridPosition } from '@rerun/ui/iso-grid'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -18,9 +19,17 @@ afterEach(async () => {
     vi.unstubAllGlobals()
 })
 
-async function mount() {
+type DuplicateInput = { requestId: string; position: GridPosition }
+const copy = { ...researcher, id: 'independent', name: 'Researcher copy', createdAt: 'later' }
+async function mount(options: {
+    duplicate?: (input: DuplicateInput) => Response | Promise<Response>
+    refreshedAgents?: () => DesktopAgentView[]
+} = {}) {
     let rejectNext = false
     const requests = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === '/api/desktop/agents/researcher/duplicate' && init?.method === 'POST' && options.duplicate) return options.duplicate(JSON.parse(String(init.body)))
+        if (url === '/api/desktop/agents' && options.refreshedAgents) return Response.json({ agents: options.refreshedAgents() })
+        if (url === '/api/desktop/agents/independent/sessions') return Response.json({ sessions: [] })
         if (url === '/api/desktop/agents/researcher' && init?.method === 'PATCH') {
             if (rejectNext) {
                 rejectNext = false
@@ -45,6 +54,7 @@ async function mount() {
         root.render(<DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [researcher, editor], theme: 'system', connections: [], default: null }} />)
     })
     return {
+        duplicateRequests: () => requests.mock.calls.filter(([url]) => url.endsWith('/duplicate')).map(([, init]) => JSON.parse(String(init?.body)) as DuplicateInput),
         renameRequests: () => requests.mock.calls.filter(([, init]) => init?.method === 'PATCH').map(([url, init]) => [url, JSON.parse(String(init?.body))]),
         failNext: () => { rejectNext = true },
     }
@@ -65,7 +75,7 @@ const edit = (field: HTMLInputElement | HTMLTextAreaElement, value: string) => a
     field.dispatchEvent(new Event('change', { bubbles: true }))
 })
 
-async function openRename(name: string, gesture: 'keyboard' | 'pointer') {
+async function chooseAction(name: string, gesture: 'keyboard' | 'pointer', action: 'Duplicate' | 'Rename') {
     const item = tile(name)
     if (gesture === 'keyboard') {
         await key(item, 'F10', true)
@@ -77,9 +87,13 @@ async function openRename(name: string, gesture: 'keyboard' | 'pointer') {
         const y = Number(zoom) * (parseFloat(item.style.top) + parseFloat(item.style.height) / 2 + Number(panY))
         await act(async () => { item.dispatchEvent(new MouseEvent('contextmenu', { button: 2, clientX: x, clientY: y, bubbles: true, cancelable: true })) })
     }
-    const rename = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(entry => entry.textContent?.trim() === 'Rename')
-    expect(rename).toBeDefined()
-    await click(rename!)
+    const itemAction = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(entry => entry.textContent?.trim() === action)
+    expect(itemAction).toBeDefined()
+    await click(itemAction!)
+}
+
+async function openRename(name: string, gesture: 'keyboard' | 'pointer') {
+    await chooseAction(name, gesture, 'Rename')
     expect(dialog()?.textContent).toContain('Rename coworker')
     expect(nameField().value).toBe(name)
 }
@@ -131,4 +145,61 @@ it('opens from the keyboard, cancels unchanged edits and lets the user retry a f
     expect(api.renameRequests()).toHaveLength(2)
     expect(tile('Editor')).not.toBeNull()
     expect(document.querySelector('[aria-label="Coworker chat"]')).toBeNull()
+})
+
+const boardButton = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Board actions"] button')].find(button => button.textContent === label)!
+
+it('can cancel a pointer-started copy and retry a keyboard placement without duplicating twice or inheriting a chat', async () => {
+    let interrupt = true
+    const api = await mount({ duplicate: ({ position }) => {
+        if (interrupt) {
+            interrupt = false
+            return Response.json({ error: 'Could not confirm this copy.' }, { status: 502 })
+        }
+        return Response.json({ agent: { ...copy, position } })
+    } })
+    await key(tile(researcher.name), 'Enter')
+    expect(document.querySelector('[aria-label="Coworker chat"]')?.textContent).toContain('Original answer.')
+    await chooseAction(researcher.name, 'pointer', 'Duplicate')
+    expect(document.body.textContent).toContain('Tap a tile to place Researcher copy')
+    await click(boardButton('Cancel'))
+    expect(api.duplicateRequests()).toEqual([])
+    expect(tile(copy.name)).toBeNull()
+
+    await chooseAction(researcher.name, 'keyboard', 'Duplicate')
+    await click(boardButton('Place copy'))
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('Could not confirm this copy.')
+    await click(boardButton('Retry'))
+    const [first, retry] = api.duplicateRequests()
+    expect(first.requestId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(retry).toEqual(first)
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="Coworker chat"] h1')?.getAttribute('aria-label')).toBe(copy.name))
+    expect(document.querySelector('[aria-label="Coworker chat"]')?.textContent).not.toContain('Original answer.')
+    expect(document.querySelectorAll(`[data-tile-id="${copy.id}"]`)).toHaveLength(1)
+    expect(tile(researcher.name)).not.toBeNull()
+    expect(tile(editor.name)).not.toBeNull()
+})
+
+it('refreshes an occupied placement before offering another slot', async () => {
+    let occupied: GridPosition | undefined
+    const neighbor = { ...editor, id: 'neighbor', name: 'New coworker' }
+    const api = await mount({
+        duplicate: ({ position }) => {
+            if (!occupied) {
+                occupied = position
+                return Response.json({ code: 'position_occupied' }, { status: 409 })
+            }
+            return Response.json({ agent: { ...copy, position } })
+        },
+        refreshedAgents: () => [researcher, editor, { ...neighbor, position: occupied }],
+    })
+    await chooseAction(researcher.name, 'keyboard', 'Duplicate')
+    await click(boardButton('Place copy'))
+    expect(tile(neighbor.name)).not.toBeNull()
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('Choose another.')
+    await click(boardButton('Place copy'))
+    const [first, second] = api.duplicateRequests()
+    expect(second.position).not.toEqual(first.position)
+    expect(second.requestId).toBe(first.requestId)
+    expect(tile(copy.name)).not.toBeNull()
 })

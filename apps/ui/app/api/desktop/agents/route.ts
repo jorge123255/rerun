@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { reconcileDesktopDuplicates } from '@/lib/desktop/server/coworker-duplicate'
 import { reconcileDesktopRenames } from '@/lib/desktop/server/coworker-rename'
 import { engineOf } from '@/lib/desktop/server/settings'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
@@ -16,6 +17,7 @@ export async function GET(request: Request): Promise<Response> {
     return desktopRoute(request, async runtime => {
         const db = await openDesktopDatabase(runtime.dataRoot)
         await reconcileDesktopRenames(db, engineOf(runtime), runtime.launchNonce)
+        await reconcileDesktopDuplicates(db, engineOf(runtime))
         const agents = await listDesktopAgents(db)
         return Response.json({ agents: agents.map(desktopAgentView) })
     })
