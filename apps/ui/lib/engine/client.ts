@@ -450,10 +450,10 @@ export async function getSession(conn: EngineConnection, agentId: string, sessio
     return engineSessionSchema.parse(await res.json())
 }
 
-export async function getSessionMessages(conn: EngineConnection, agentId: string, sessionId: string, options: { requireSuccess?: boolean } = {}): Promise<EngineMessage[]> {
+export async function getSessionMessages(conn: EngineConnection, agentId: string, sessionId: string, options: { requireSuccess?: boolean; signal?: AbortSignal } = {}): Promise<EngineMessage[]> {
     const path = `/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/messages`
     try {
-        return await request(conn, path, { method: 'GET' }, body => engineMessagesListSchema.parse(body).messages)
+        return await request(conn, path, { method: 'GET', signal: options.signal }, body => engineMessagesListSchema.parse(body).messages)
     } catch (cause) {
         if (cause instanceof EngineRequestError && !options.requireSuccess) return []
         throw cause
@@ -847,13 +847,13 @@ export type RunFilter = { limit?: number; sessionId?: string; status?: EngineRun
 
 // An engine that predates `session` / `status` ignores them and returns its most recent runs, so
 // callers keep filtering what comes back.
-export async function listRuns(conn: EngineConnection, agentId: string, { limit, sessionId, status }: RunFilter = {}): Promise<EngineRun[]> {
+export async function listRuns(conn: EngineConnection, agentId: string, { limit, sessionId, status }: RunFilter = {}, options: { signal?: AbortSignal } = {}): Promise<EngineRun[]> {
     const params = new URLSearchParams()
     if (limit) params.set('limit', String(limit))
     if (sessionId) params.set('session', sessionId)
     if (status) params.set('status', status)
     const qs = params.size > 0 ? `?${params}` : ''
-    return request(conn, `/agents/${encodeURIComponent(agentId)}/runs${qs}`, { method: 'GET' }, d => engineRunsListSchema.parse(d).runs)
+    return request(conn, `/agents/${encodeURIComponent(agentId)}/runs${qs}`, { method: 'GET', signal: options.signal }, d => engineRunsListSchema.parse(d).runs)
 }
 
 export async function getRun(conn: EngineConnection, agentId: string, runId: string): Promise<EngineRunDetail> {

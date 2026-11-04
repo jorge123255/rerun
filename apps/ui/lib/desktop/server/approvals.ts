@@ -42,9 +42,9 @@ function identity(target: Target, approval: Approval): string {
     return createHash('sha256').update(JSON.stringify(['approval', target.agent.id, target.session.id, approval.sourceMessageId, approval.toolCallId, approval.fingerprint])).digest('hex')
 }
 
-async function pendingApproval(runtime: DesktopRuntime, target: Target): Promise<Approval | null> {
+async function pendingApproval(runtime: DesktopRuntime, target: Target, options: { signal?: AbortSignal } = {}): Promise<Approval | null> {
     try {
-        const messages = await getSessionMessages(engineOf(runtime), target.agent.engineAgentId, target.session.engineSessionId, { requireSuccess: true })
+        const messages = await getSessionMessages(engineOf(runtime), target.agent.engineAgentId, target.session.engineSessionId, { requireSuccess: true, ...(options.signal && { signal: options.signal }) })
         if (messages.some(message => message.sessionId !== target.session.engineSessionId)) throw new Error('Foreign conversation history')
         return findDesktopApproval(messages)
     } catch (cause) {
@@ -86,9 +86,9 @@ function answerText(approval: Approval, payload: DesktopApprovalPayload): string
 
 // History filters use the same read-only saved-history resolver. An approval completes its
 // original turn; its decision starts a later user turn, without changing any execution grant.
-export async function readDesktopApproval(runtime: DesktopRuntime, sessionId: string): Promise<DesktopApprovalView> {
+export async function readDesktopApproval(runtime: DesktopRuntime, sessionId: string, options: { signal?: AbortSignal } = {}): Promise<DesktopApprovalView> {
     const target = await targetOf(runtime, sessionId)
-    const pending = await pendingApproval(runtime, target)
+    const pending = await pendingApproval(runtime, target, options)
     if (!pending) return { approval: null }
     const id = identity(target, pending)
     const receipt = await byApproval(target.db, sessionId, id)

@@ -5,7 +5,7 @@ import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_
 import { Plus } from 'lucide-react'
 import type { DesktopAgentView } from './DesktopApp'
 import { useBoardActivity } from './useBoardActivity'
-import type { BoardActivityStatus } from '@/lib/desktop/board-activity'
+import { latestBoardAttention, type BoardActivityStatus } from '@/lib/desktop/board-activity'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { DesktopBoardMenu } from './DesktopBoardMenu'
 import { DesktopFindChat } from './DesktopFindChat'
@@ -13,7 +13,7 @@ import { Shimmer } from '@/components/ai-elements/shimmer'
 import { duplicateAgentName } from '@/lib/copy-name'
 import { canPlaceDesktopCopy, desktopBoardLayout } from '@/lib/desktop/board-layout'
 
-const ACTIVITY_LABEL: Record<BoardActivityStatus, string> = { working: 'Working', idle: 'Idle', unreachable: 'Activity unavailable', unknown: 'Checking activity' }
+const ACTIVITY_LABEL: Record<BoardActivityStatus, string> = { working: 'Working', waiting_human: 'Needs you', idle: 'Idle', unreachable: 'Activity unavailable', unknown: 'Checking activity' }
 
 type CopyPlacement = {
     sourceId: string
@@ -39,7 +39,14 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
     onDismiss?: () => void
     onOpenConversation?: (hit: DesktopConversationHit) => void
 }) {
-    const activity = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]))
+    const { statuses: activity, attention } = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]))
+    const openState = useRef({ agents, activity, attention, onOpen, onOpenConversation })
+    openState.current = { agents, activity, attention, onOpen, onOpenConversation }
+    const attentionCounts = useMemo(() => {
+        const counts = new Map<string, number>()
+        for (const item of attention.items) counts.set(item.agentId, (counts.get(item.agentId) ?? 0) + 1)
+        return counts
+    }, [attention])
     const [placement, setPlacement] = useState<CopyPlacement | null>(null)
     const submitting = useRef(false)
     const section = useRef<HTMLElement>(null)
@@ -51,8 +58,8 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
             position: layout.positions.get(agent.id)!,
             span: 2,
             containerId: 'team',
-            style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name),
-            ariaLabel: `Open chat with ${agent.name}`,
+            style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name, attentionCounts.get(agent.id) ?? 0),
+            ariaLabel: `Open chat with ${agent.name}${attentionCounts.has(agent.id) ? ', Needs you' : ''}`,
         }))
         const box: Container = {
             id: 'team', label: agents.length ? workspaceName : null, color: SPACE_COLOR,
@@ -61,9 +68,19 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
             placeholderLabel: 'Create your first coworker',
         }
         return { tiles, box }
-    }, [agents, workspaceName, activity, layout])
+    }, [agents, workspaceName, activity, attentionCounts, layout])
 
     useEffect(() => { if (placement?.requestId) placeButton.current?.focus({ preventScroll: true }) }, [placement?.requestId])
+
+    function openCoworker(id: string) {
+        const { agents, activity, attention, onOpen, onOpenConversation } = openState.current
+        const agent = agents.find(agent => agent.id === id)
+        if (!agent) return
+        const status = activity[id]
+        const target = status && status !== 'unknown' && status !== 'unreachable' ? latestBoardAttention(attention, id) : undefined
+        if (target && onOpenConversation) onOpenConversation({ id: target.sessionId, agentId: agent.id, agentName: agent.name, title: target.title })
+        else onOpen(id)
+    }
 
     function beginCopy(agent: DesktopAgentView) {
         if (placement) return
@@ -101,7 +118,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
         <section ref={section} aria-label="Team board" className="relative isolate min-h-0 min-w-0 flex-1"
             onKeyDown={event => { if (event.key === 'Escape' && placement) { event.preventDefault(); cancelCopy() } }}>
             <h1 className="sr-only">Team board</h1>
-            <DesktopBoardMenu agents={agents} onOpen={onOpen} onRename={onRename} onDuplicate={onDuplicate ? beginCopy : undefined}
+            <DesktopBoardMenu agents={agents} onOpen={openCoworker} onRename={onRename} onDuplicate={onDuplicate ? beginCopy : undefined}
                 onSetEnabled={onSetEnabled} onDelete={onDelete} disabled={!!placement}>{onTileContextMenu =>
                 <IsoGrid
                     tiles={tiles}
@@ -118,7 +135,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
                     viewControlsPlacement="top-right"
                     viewControlsClassName={selectedAgentId ? 'md:top-auto md:right-auto md:bottom-16 md:left-4' : undefined}
                     onTileSelect={placement ? undefined : id => {
-                        if (id) onOpen(id)
+                        if (id) openCoworker(id)
                         else if (selectedAgentId) onDismiss?.()
                     }}
                     onContainerSelect={tiles.length ? undefined : id => { if (id) onCreate() }}
@@ -144,7 +161,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
             <ul aria-label="Coworker activity" className="sr-only" aria-live="polite">
                 {agents.map(agent => {
                     const status = agent.enabled === false ? 'inactive' : activity[agent.id] ?? 'unknown'
-                    return <li key={agent.id} data-board-activity={agent.name} data-status={status}>{agent.name}: {status === 'inactive' ? DISABLED_AGENT_LABEL : ACTIVITY_LABEL[status]}</li>
+                    return <li key={agent.id} data-board-activity={agent.name} data-status={status}>{agent.name}: {status === 'inactive' ? DISABLED_AGENT_LABEL : ACTIVITY_LABEL[status]}{status !== 'waiting_human' && attentionCounts.has(agent.id) ? '; Needs you' : ''}</li>
                 })}
             </ul>
         </section>
@@ -152,11 +169,11 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
 }
 
 // Rerun's agentTileStyle: working shimmers amber, a failed read uses the offline tile with an honest label.
-function tileStyle(status: BoardActivityStatus, name: string): TileStyle {
-    if (status === 'working') return agentTileStyle('working', name)
-    if (status === 'unreachable') {
+function tileStyle(status: BoardActivityStatus, name: string, attentionCount: number): TileStyle {
+    if (status === 'working' || status === 'waiting_human') return agentTileStyle(status, name, attentionCount)
+    if (status === 'unreachable' || status === 'unknown') {
         const style = agentTileStyle('offline', name)
-        return { ...style, status: { label: ACTIVITY_LABEL.unreachable, tone: style.status?.tone ?? 'neutral' } }
+        return { ...style, status: { label: ACTIVITY_LABEL[status], tone: style.status?.tone ?? 'neutral' } }
     }
     return agentTileStyle('idle', name)
 }

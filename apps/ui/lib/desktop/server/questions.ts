@@ -41,9 +41,9 @@ function identity(target: Target, question: DesktopQuestion): string {
     return createHash('sha256').update(JSON.stringify([target.agent.id, target.session.id, question.sourceMessageId, question.toolCallId, question.fingerprint])).digest('hex')
 }
 
-async function pendingQuestion(runtime: DesktopRuntime, target: Target): Promise<DesktopQuestion | null> {
+async function pendingQuestion(runtime: DesktopRuntime, target: Target, options: { signal?: AbortSignal } = {}): Promise<DesktopQuestion | null> {
     try {
-        const messages = await getSessionMessages(engineOf(runtime), target.agent.engineAgentId, target.session.engineSessionId, { requireSuccess: true })
+        const messages = await getSessionMessages(engineOf(runtime), target.agent.engineAgentId, target.session.engineSessionId, { requireSuccess: true, ...(options.signal && { signal: options.signal }) })
         if (messages.some(message => message.sessionId !== target.session.engineSessionId)) throw new Error('Foreign conversation history')
         return findDesktopQuestion(messages)
     } catch (cause) {
@@ -86,9 +86,9 @@ function answerText(question: DesktopQuestion, payload: DesktopQuestionPayload):
 
 // Read-only by design: history filters can use this same resolver without creating a receipt,
 // starting a turn, or inventing an unfinished run when the original question turn is already done.
-export async function readDesktopQuestion(runtime: DesktopRuntime, sessionId: string): Promise<DesktopQuestionView> {
+export async function readDesktopQuestion(runtime: DesktopRuntime, sessionId: string, options: { signal?: AbortSignal } = {}): Promise<DesktopQuestionView> {
     const target = await targetOf(runtime, sessionId)
-    const pending = await pendingQuestion(runtime, target)
+    const pending = await pendingQuestion(runtime, target, options)
     if (!pending) return { question: null }
     const id = identity(target, pending)
     const receipt = await byQuestion(target.db, sessionId, id)

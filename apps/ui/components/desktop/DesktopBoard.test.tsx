@@ -69,3 +69,91 @@ test('does not poll while the window is hidden', async () => {
     expect(statusOf('Researcher')).toBe('unknown')
     await act(async () => { root.unmount() })
 })
+
+const attentionItem = (agentId: string, sessionId: string, updatedAt: string, kind: 'question' | 'approval' = 'question') => ({
+    id: `${kind}-${sessionId}`, agentId, sessionId, agentName: agentId, agentEnabled: true,
+    title: `Chat ${sessionId}`, summary: 'Please choose a version.', kind, updatedAt,
+})
+const withAttention = (statuses: Record<string, string>, items: ReturnType<typeof attentionItem>[]) => Response.json({
+    agents: statuses, attention: { items, unavailableAgentIds: [], checkedAt: '2026-11-04T12:00:00Z' },
+})
+
+test('Needs you uses the original hand state and tile/context Open chat both select the newest owned request', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.stubGlobal('fetch', vi.fn(async () => withAttention({ researcher: 'waiting_human', reviewer: 'working' }, [
+        attentionItem('researcher', 'older', '2026-11-03T12:00:00Z'),
+        attentionItem('researcher', 'newest-owned', '2026-11-04T11:00:00Z', 'approval'),
+        attentionItem('reviewer', 'foreign-newest', '2026-11-04T12:00:00Z'),
+    ])))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container), onOpen = vi.fn(), onOpenConversation = vi.fn()
+    await act(async () => { root.render(<DesktopBoard agents={agents} workspaceName="W" onOpen={onOpen} onOpenConversation={onOpenConversation} onCreate={() => {}} />) })
+    const tile = container.querySelector<HTMLElement>('[aria-label="Open chat with Researcher, Needs you"]')!
+    expect(tile).not.toBeNull()
+    expect(statusOf('Researcher')).toBe('waiting_human')
+    expect(statusOf('Reviewer')).toBe('working')
+    expect(container.textContent).toContain('Researcher: Needs you')
+    expect(tile.querySelector('.lucide-hand')).not.toBeNull()
+    await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    const target = { id: 'newest-owned', agentId: 'researcher', agentName: 'Researcher', title: 'Chat newest-owned' }
+    expect(onOpenConversation).toHaveBeenLastCalledWith(target)
+    expect(onOpen).not.toHaveBeenCalled()
+    await act(async () => {
+        tile.focus()
+        tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    const open = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === 'Open chat')!
+    expect(open).toBeDefined()
+    await act(async () => { open.click() })
+    expect(onOpenConversation).toHaveBeenCalledTimes(2)
+    expect(onOpenConversation).toHaveBeenLastCalledWith(target)
+    expect(container.querySelector('[data-tile-id="researcher"]')).toBe(tile)
+    const workingTile = container.querySelector<HTMLElement>('[aria-label="Open chat with Reviewer, Needs you"]')!
+    await act(async () => { workingTile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    expect(onOpenConversation).toHaveBeenLastCalledWith({ id: 'foreign-newest', agentId: 'reviewer', agentName: 'Reviewer', title: 'Chat foreign-newest' })
+    await act(async () => { root.unmount() })
+})
+
+test('an inactive coworker keeps its original inactive tile while opening known pending history without enabling', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.stubGlobal('fetch', vi.fn(async () => withAttention({ researcher: 'waiting_human', reviewer: 'idle' }, [
+        { ...attentionItem('researcher', 'pending-disabled', '2026-11-04T11:00:00Z'), agentEnabled: false },
+    ])))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container), onOpen = vi.fn(), onOpenConversation = vi.fn(), onSetEnabled = vi.fn()
+    await act(async () => { root.render(<DesktopBoard agents={agents.map(agent => ({ ...agent, enabled: agent.id !== 'researcher' }))}
+        workspaceName="W" onOpen={onOpen} onOpenConversation={onOpenConversation} onSetEnabled={onSetEnabled} onCreate={() => {}} />) })
+    expect(statusOf('Researcher')).toBe('inactive')
+    const tile = container.querySelector<HTMLElement>('[data-tile-id="researcher"]')!
+    expect(tile.querySelector('.lucide-lock')).not.toBeNull()
+    expect(tile.querySelector('.lucide-hand')).toBeNull()
+    await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    expect(onOpenConversation).toHaveBeenCalledWith({ id: 'pending-disabled', agentId: 'researcher', agentName: 'Researcher', title: 'Chat pending-disabled' })
+    expect(onSetEnabled).not.toHaveBeenCalled()
+    expect(onOpen).not.toHaveBeenCalled()
+    await act(async () => { root.unmount() })
+})
+
+test('a failed read clears the old target and foreign-only attention cannot route a coworker into another chat', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    let reply = () => withAttention({ researcher: 'waiting_human', reviewer: 'idle' }, [attentionItem('researcher', 'old-target', '2026-11-04T11:00:00Z')])
+    vi.stubGlobal('fetch', vi.fn(async () => reply()))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container), onOpen = vi.fn(), onOpenConversation = vi.fn()
+    await act(async () => { root.render(<DesktopBoard agents={agents} workspaceName="W" onOpen={onOpen} onOpenConversation={onOpenConversation} onCreate={() => {}} />) })
+    reply = () => Response.json({ error: 'Offline' }, { status: 503 })
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(statusOf('Researcher')).toBe('unreachable')
+    const tile = container.querySelector<HTMLElement>('[aria-label="Open chat with Researcher"]')!
+    await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    expect(onOpen).toHaveBeenCalledWith('researcher')
+    expect(onOpenConversation).not.toHaveBeenCalled()
+    reply = () => withAttention({ researcher: 'waiting_human', reviewer: 'idle' }, [attentionItem('deleted-owner', 'foreign', '2026-11-04T12:00:00Z')])
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(statusOf('Researcher')).toBe('unknown')
+    expect(container.textContent).toContain('Researcher: Checking activity')
+    await act(async () => { tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    expect(onOpenConversation).not.toHaveBeenCalled()
+    await act(async () => { root.unmount() })
+})
