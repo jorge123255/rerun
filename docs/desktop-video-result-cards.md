@@ -1,5 +1,7 @@
 # Desktop MP4 result cards (source handoff)
 
+**Integrated and accepted by root on November 4, 2026 in installed build `414e325`.** Handoff `d4693bd` was integrated as `61ba1f2`, with root review corrections in `17499a9` for failed-preview cleanup and the combined media budget. Automated checks, live Codex result cards, native playback/paging, stale-file refusal and full-restart checks passed. See [final acceptance](desktop-boxes-media-navigation-acceptance.md). The remaining text records the lane's original source-only handoff; it does not supersede root's final acceptance.
+
 This source extends the opt-in `card_file` tool so existing MP4 files in the same coworker's
 persistent Files workspace can be shown as result-card tiles and played from the paged lightbox. It
 keeps the original album and square-tile design. Tests, typecheck, lint, build, packaging,

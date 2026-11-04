@@ -1,5 +1,7 @@
 # Desktop file preview navigation (lane handoff)
 
+**Integrated and accepted by root on November 4, 2026 in installed build `414e325`.** Handoff `af0f050` was integrated once as `5797768`, including the identical handoff reported under A and C. Root added the original Files shortcut-help rows and protected unsaved edits against late listing refreshes. Automated checks, native file navigation and media seeking, and full-restart checks passed. See [final acceptance](desktop-boxes-media-navigation-acceptance.md). The remaining text records the original source-only handoff; its unrun checks and outstanding wiring notes describe the lane's submission, not the current installed app.
+
 Branch `desktop/file-preview-navigation`. Source only. The integration owner runs tests, typecheck, lint, build, packaging, installation, and native Mac QA. This handoff does not claim those results.
 
 No route was added. `apps/ui/AGENTS.md` points at `node_modules/next/dist/docs/`, which this worktree does not have. The client-entry note was read from `codex-login-build/apps/ui/node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md`: `'use client'` stays on the existing Files client entry, and the new helper is imported from that client tree. That worktree was not modified. No dependencies were installed.
