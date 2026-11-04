@@ -1,6 +1,6 @@
 # Desktop Control Center
 
-Installed in Mac build `b0d8c01` on November 4, 2026. C submitted `ace1be7605eefcda3191918af493f81b62dd20b9`; root integrated it as `7e6417e` and completed the app integration and fixes in `b0d8c01`. Only root executed checks, builds, installation and native QA. The external source worktree is preserved.
+Installed in Mac build `143bca3` on November 4, 2026, including durable Recent coworkers. The initial panel port was installed in `b0d8c01`. C submitted `ace1be7605eefcda3191918af493f81b62dd20b9`; root integrated it as `7e6417e` and completed the app integration and fixes in `b0d8c01`. Only root executed checks, builds, installation and native QA. The external source worktree is preserved.
 
 ## Original design and supported actions
 
@@ -30,9 +30,13 @@ Search matches title substrings, accepts 2–200 characters and orders by newest
 
 Saved chats, replies, selected tabs, ordinary text drafts and selected attachments continue to use the existing Mac database. The Control Center adds no alternate chat identity or draft store.
 
-The Recent coworker list is currently **session-only**: at most five unique coworkers, most recent first, retained across closing/reopening the center but reset on app restart. Original Rerun persists recent IDs in localStorage; the Mac's changing loopback origin requires a durable local adaptation. That work remains under B5 along with richer contextual commands, open-tab and recent-chat lists, boxes and workspace-icon customization. This release is the available local Control Center slice, not full B5 parity.
+The Recent coworker list now persists in the Mac database: at most five unique coworkers, most recent first, restored at bootstrap across app restarts and changed loopback ports. It follows original Rerun's `stores/control-center.store.ts` and `pushRecentAgent` behavior while replacing origin-bound localStorage. Restoring the list does not create a visit. New selections use an ordered writer, and pending selections stay visible over delayed acknowledgments.
 
-## Root acceptance
+The authenticated `/api/desktop/recent-coworkers` GET is read-only. POST accepts a local coworker ID, comparison revision and request UUID. The list and revision are read in one snapshot; writes, ordering and five-item pruning share one transaction. The last accepted request can be retried without duplicating it. A superseded request receives the newer snapshot and is discarded rather than promoted above a later visit. Foreign and deleted owners cannot be recorded. Temporary deletion remains retryable, and a refused deletion does not remove its old recent entry. Confirmed deletion cascades the entry away.
+
+A failed save keeps the session list and offers Try again in the original panel. Quit freezes ordinary drafts immediately while allowing up to 1.5 seconds for Recent writes to settle alongside the existing draft handshake. Recent remains best-effort during a service failure and never replaces the draft-save protection. Richer contextual commands, open-tab/recent-chat lists, boxes and workspace-icon customization remain under B5; the full group is still incomplete.
+
+## Root acceptance of the initial panel port
 
 - Full UI suite: **3,468 passed, 20 skipped** across 396 passing files and 13 skipped files. UI typecheck, production build, bundled-runtime verification and single-app installation passed. The engine was unchanged in this slice; its prior 3,030-pass release suite was not rerun.
 - Focused coverage includes 11 authenticated search-route cases, 16 adapter cases and 4 tests mounting the actual DesktopApp with its board, workspace menu, Settings, Files editor and confirmation dialogs. These overlap the full-suite count.
@@ -41,3 +45,9 @@ The Recent coworker list is currently **session-only**: at most five unique cowo
 - All three commands, board visibility, chat Command-K, focus return, editor Find, discard confirmation, Settings, creation and duplicate-placement guards passed in the installed app.
 - Full quit/reopen preserved both Codex replies, three independent drafts and the selected file. Both workspace files retained their original bytes after discarding the disposable editor change.
 - A byte-verified recovery copy was made before deleting the two disposable coworkers through the board. Final verification found their folders, chats, tabs and drafts removed; foreign keys were clean. Original coworkers retained exactly **23 chats and 88 messages**, including exact message contents. The Codex default was unchanged and the app was left open on the board.
+
+## Durable Recent acceptance
+
+Installed source: `143bca3e1aff32890c38c07097867924766f9c3f`. Root passed the final full UI suite: **3,488 tests, 20 skipped**, across 398 passing files and 13 skipped files. UI typecheck, production build, bundled-runtime verification and single-app installation passed. Coverage includes lost acknowledgments, stale conflicts, rapid selections, maximum-five ordering, owner/deletion boundaries, retry, shutdown and bootstrap restoration. The engine was unchanged and its suite was not rerun.
+
+Native Mac QA visited Settings QA, then Codex connection check; Recent showed that order reversed by recency. Selecting Settings QA from Recent moved it first and opened its existing chat. After a full Quit/reopen, the saved list and revision matched exactly, despite a changed loopback port. Opening the center alone did not record another visit. Selecting the restored Codex row opened its saved replies, and Close panel returned focus to its tile on the same board. No new model request was needed for this navigation-only change. Original identities and all **23 chats / 88 messages** remained exactly unchanged; foreign keys were clean. The app was left connected and open on the board.
