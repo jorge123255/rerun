@@ -18,10 +18,12 @@ let root: string, server: Server, connected: boolean, loseReply: boolean
 const engine = new Map<string, boolean>()
 const patches: { id: string; enabled: boolean }[] = []
 const requests: string[] = []
+let patchGate: Promise<void> | undefined
 
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-enabled-'))
     connected = true
+    patchGate = undefined
     loseReply = false
     patches.length = 0
     requests.length = 0
@@ -44,6 +46,7 @@ beforeEach(async () => {
             for await (const chunk of req) raw += chunk
             const body = JSON.parse(raw)
             patches.push({ id, ...body })
+            await patchGate
             engine.set(id, body.enabled)
             if (loseReply) { connected = false; res.destroy(); return }
         }
@@ -123,6 +126,7 @@ it('recovers canonical engine state after a lost acknowledgement and keeps failu
     expect(engine.get('owner')).toBe(false)
     await closeDesktopDatabase(root)
     connected = true
+    patchGate = undefined
     loseReply = false
     const response = await roster(new Request(origin + '/api/desktop/agents', { headers }))
     expect((await response.json()).agents[0]).toMatchObject({ id: owner.id, enabled: false })
@@ -164,7 +168,15 @@ it('validates ownership and boolean input, then orders rapid off/on writes', asy
     expect((await toggle('owner', false)).status).toBe(404)
     expect((await toggle(owner.id, false, false)).status).toBe(403)
     expect(patches).toEqual([])
-    const results = await Promise.all([toggle(owner.id, false), toggle(owner.id, true)])
+    // Establish arrival order at the write boundary, not by the creation order of two
+    // asynchronous HTTP/auth/body reads. Hold the first write while queuing the second.
+    let release!: () => void
+    patchGate = new Promise<void>(resolve => { release = resolve })
+    const off = toggle(owner.id, false)
+    await expect.poll(() => patches.length).toBe(1)
+    const on = toggle(owner.id, true)
+    release()
+    const results = await Promise.all([off, on])
     expect(results.map(response => response.status)).toEqual([200, 200])
     expect(patches).toEqual([{ id: 'owner', enabled: false }, { id: 'owner', enabled: true }])
     expect((await findDesktopAgent(db, owner.id))?.enabled).toBe(true)
