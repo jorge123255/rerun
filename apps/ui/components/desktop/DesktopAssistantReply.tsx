@@ -9,6 +9,7 @@ import { MessageAction, MessageResponse } from '@/components/ai-elements/message
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
 import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
+import { CompactionStep } from '@/components/chat/CompactionBlock'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
 import { DesktopToolStep } from './DesktopToolStep'
 import { DesktopQuickReplies } from './DesktopQuickReplies'
@@ -16,6 +17,7 @@ import type { DesktopQuickReplySend } from '@/lib/desktop/quick-replies'
 import { Button } from '@/components/ui/button'
 import { CheckIcon, CopyIcon, RefreshCcwIcon, ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
+import { desktopCompactionSteps } from '@/lib/desktop/compaction'
 import { useCopy } from '@/lib/use-copy'
 import { splitIntoBubbles } from '@/lib/chat/message-bubbles'
 import { cn } from '@/lib/utils'
@@ -120,6 +122,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
     quickReplies?: { show: boolean; disabled: boolean; pending: boolean; onSend: DesktopQuickReplySend }
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
+    const compactions = desktopCompactionSteps(message.parts, streaming)
     const blocks: ReactNode[] = []
     let text = '', paragraph = ''
     for (const [index, part] of message.parts.entries()) {
@@ -135,6 +138,9 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
         } else if (isToolUIPart(part)) {
             if (part.toolCallId === pendingRequestToolCallId || stripBridgePrefix(getToolName(part)) === QUICK_REPLIES_TOOL) continue
             blocks.push(<DesktopToolStep key={part.toolCallId} part={part} restored={message.id.startsWith('engine-')} />)
+        } else if (part.type === 'data-compaction') {
+            const step = compactions.get(index)
+            if (step) blocks.push(<CompactionStep key={step.key} data={step.data} />)
         } else if (part.type === 'reasoning' && isDesktopSummaryMetadata(part.providerMetadata) && (part.text || live)) {
             blocks.push(<ReasoningStep key={index} text={part.text} isStreaming={live} renderText={replyMarkdown} />)
         }

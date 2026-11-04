@@ -106,6 +106,68 @@ test('copies each draft verbatim and keeps the whole reply and ordinary code sep
     expect(data.getData('text/plain')).toBe(first + next)
 })
 
+test('draws a live compaction step with the original wording and settles it in place', async () => {
+    const running = { type: 'data-compaction' as const, id: 'checkpoint-1', data: { status: 'running' } }
+    await render([running], true)
+    expect(container.textContent).toContain('Compacting context…')
+    expect(container.textContent).not.toContain('earlier messages summarized')
+
+    const done = { type: 'data-compaction' as const, id: 'checkpoint-1', data: { status: 'done', messagesCompacted: 12, tokensRecovered: 900 } }
+    await render([
+        { type: 'reasoning', text: 'Compared the options.', providerMetadata: desktopSummaryMetadata },
+        running,
+        done,
+        { type: 'text', text: 'Final answer.' },
+    ])
+    expect(container.textContent).toContain('Thought')
+    expect(container.textContent).toContain('Compared the options.')
+    expect(container.textContent).toContain('Context compacted')
+    expect(container.textContent).toContain('12 earlier messages summarized')
+    expect(container.textContent).toContain('~900 tokens recovered')
+    expect(container.textContent).toContain('Final answer.')
+    const settled = [...container.querySelectorAll('button')].filter(button => button.textContent?.includes('Context compacted'))
+    expect(settled).toHaveLength(1)
+    expect(container.textContent).not.toContain('Compacting context…')
+})
+
+test('an interrupted compaction stops running and keeps the rest of the reply', async () => {
+    await render([
+        { type: 'data-compaction' as const, id: 'checkpoint-1', data: { status: 'running' } },
+        { type: 'text', text: 'Partial answer.' },
+    ])
+    const failed = [...container.querySelectorAll('button')].filter(button => button.textContent?.includes('Context compaction failed'))
+    expect(failed).toHaveLength(1)
+    expect(container.textContent).not.toContain('Compacting context…')
+    expect(container.textContent).not.toContain('earlier messages summarized')
+    expect(container.textContent).toContain('Partial answer.')
+})
+
+test('a completed compaction with invalid metrics keeps its wording without a count', async () => {
+    await render([{ type: 'data-compaction' as const, id: 'checkpoint-1', data: { status: 'done', messagesCompacted: Number.NaN, tokensRecovered: -1 } }])
+    expect(container.textContent).toContain('Context compacted')
+    expect(container.textContent).not.toContain('earlier messages summarized')
+    expect(container.textContent).not.toContain('tokens recovered')
+})
+
+test('a compaction row leaves reasoning, sources and feedback in place', async () => {
+    const onRate = vi.fn()
+    await act(async () => root.render(<DesktopAssistantReply message={{ id: 'engine-reply', role: 'assistant', parts: [
+        { type: 'data-compaction', id: 'checkpoint-1', data: { status: 'done', messagesCompacted: 3 } },
+        { type: 'reasoning', text: 'Kept thought.', providerMetadata: desktopSummaryMetadata },
+        { type: 'text', text: 'Answer.' },
+        { type: 'source-url', sourceId: 's1', url: 'https://example.org/report', title: 'Report' },
+    ] }} streaming={false} feedbackRating="up" onRate={onRate} />))
+    expect(container.textContent).toContain('Context compacted')
+    expect(container.textContent).toContain('3 earlier messages summarized')
+    expect(container.textContent).toContain('Thought')
+    expect(container.textContent).toContain('Answer.')
+    expect(container.textContent).toContain('Used 1 source')
+    const up = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Good response'))!
+    expect(up.getAttribute('aria-pressed')).toBe('true')
+    await act(async () => up.click())
+    expect(onRate).toHaveBeenCalledOnce()
+})
+
 test('withholds draft copying until the closing fence arrives and excludes reasoning drafts', async () => {
     const summary = { type: 'reasoning' as const, text: '```draft\nSummary only\n```', providerMetadata: desktopSummaryMetadata }
     const draft = '```draft Letter\nWork in progress'
