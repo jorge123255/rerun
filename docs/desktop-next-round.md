@@ -1,4 +1,4 @@
-# Next desktop port round — Files navigation and MP4 result cards
+# Next desktop port round — Boxes, Files navigation and MP4 result cards
 
 Prepared A/B base: `f8375b73191ad55ce88bf0ada19b83dfc4fab2ee`. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
@@ -8,7 +8,7 @@ Prepared A/B base: `f8375b73191ad55ce88bf0ada19b83dfc4fab2ee`. Original Rerun re
 | B | C8: existing own MP4 result cards, original media albums and paged playback | `file-video-cards` / `desktop/file-video-cards` | Prompt prepared; start not confirmed |
 | C | B5: local workspace logo upload from its existing base | `workspace-logo-upload` / `desktop/workspace-logo-upload` | Installed and accepted in `b85926c` |
 | D | C7: exact pending-request inbox read receipts | `pending-inbox-read` / `desktop/pending-inbox-read` | Installed and accepted in `c6fa087` |
-| Root | Pending-read corrections and live collapsed inbox counts; all integration and QA | coding worktree `rerun-desktop` / `desktop/m1` | Inbox accepted in `c6fa087`; C integration and packaging accepted in `b85926c` |
+| Root | B2: complete Boxes on the board; all integration and QA | coding worktree `rerun-desktop` / `desktop/m1` | Assigned next; inbox and logo integration already accepted |
 
 A/B worktree paths are under `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/`. C's handoff at `8f031fe` was cherry-picked as `1385329` and accepted with root's integration in `b85926c`; its original worktree remains untouched at its own base/history. Prior lane worktrees remain preserved. Prepared prompts do not imply that A or B has started, finished or passed acceptance.
 
@@ -21,6 +21,8 @@ A follows original `AgentPanelFiles.tsx`, `useSiblingFiles.ts` and `FileDetail.t
 B follows original `cards.ts`, `chat-card.ts`, `FileCard.tsx`, `MediaAlbum.tsx`, `ChatVideoTile.tsx`, `AttachmentTile.tsx`, `AttachmentLightbox.tsx` and `FilePreview.tsx`. B owns card contracts, the cardFile catalog description, desktop engine card admission and its system-prompt wording, the UI card parser/read adapter, `DesktopFileCard.tsx`, `DesktopFileLightbox.tsx` and isolated desktop video-card helpers. The installed authenticated `/files/video` route, `readCoworkerVideo` and `video-bytes.ts` are consumed unchanged. All-image/video groups use the original album; groups containing text/audio use mixed square tiles. Playback requires a user action.
 
 B keeps 12 files per card, 32 KiB per text file, 8 MiB per image and 16 MiB per audio file. MP4 is limited to 16 MiB per file, with a 24 MiB combined image/video budget per card. Validate recorded and fetched byte bounds, trusted owner, visible persistent paths and inode identities. Preserve all-or-nothing card admission, at most four visible album previews, lazy hidden-media reads and lazy audio. Paging, owner/card changes, close, errors and unmount stop players and revoke URLs; late responses cannot restore old media. Shared files, other video formats, PDF, recording, uploads, publication, model video input and temporary Codex output stay excluded.
+
+Root's next feature is **B2 Boxes**, following original `IsoBoard.tsx`, `BoardContextMenu.tsx`, `RenameBoxDialog.tsx`, `DeleteSpaceDialog.tsx` and the original space layout helpers. This covers creation, rename, dragging/menu moves between Boxes, moving/resizing Boxes with their coworkers, retained placement, refusal to delete an occupied Box, and confirmed empty-Box deletion. It must preserve coworker chats/files/settings and exact layout after restart before the full B2 area is closed. See `desktop-progress.md` for completed versus remaining delivery tasks.
 
 Root retains `DesktopApp`, `DesktopBoard`, `DesktopConversation`, chat/tab/draft state, central database/bootstrap, shell and global shortcut/help wiring. Root will update the video-route consumer comment when B is integrated. A/B do not alter the pending-inbox work. PDF remains a future Files slice requiring a renderer decision.
 
