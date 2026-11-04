@@ -180,7 +180,7 @@ function fixture(initialTheme: ThemePreference = 'system') {
         if (url.pathname === '/api/desktop/workspace/icon' && method === 'GET') return Response.json({ catalogId: null })
         if (url.pathname === '/api/desktop/board-activity') return Response.json({ agents: { [coworker.id]: 'idle' } })
         if (url.pathname === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: date, checkedAt: date, nextCursor: null })
-        if (url.pathname === '/api/desktop/attention') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
+        if (url.pathname === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
         if (url.pathname === `/api/desktop/agents/${coworker.id}/sessions`) return Response.json({ sessions: [{ id: 'command-chat', agentId: coworker.id, title: 'Saved review', createdAt: date, updatedAt: date }], tabs })
         if (url.pathname === `/api/desktop/agents/${coworker.id}/tabs` && method === 'PUT') return Response.json({ tabs: { ...JSON.parse(String(init?.body)), revision: JSON.parse(String(init?.body)).baseRevision + 1 } })
         if (url.pathname.endsWith('/queue') && method === 'GET') return Response.json({ queued: null })

@@ -52,13 +52,13 @@ function canAcknowledgeVisibleConversation() {
         && !document.body.closest('[inert]') && !document.activeElement?.closest('[inert]')
 }
 
-export function useDesktopCompletions(active = true, agentIds?: readonly string[], visibleSessionId?: string | null): DesktopCompletionsController {
+export function useDesktopCompletions(active = true, agentIds?: readonly string[], visibleSessionId?: string | null, observeWhileClosed = false): DesktopCompletionsController {
     const scope = agentIds ? JSON.stringify([...new Set(agentIds)].sort()) : '*'
     const lifecycle = JSON.stringify([active, scope, visibleSessionId ?? null])
     const identity = useRef({ lifecycle, generation: 0 })
     if (identity.current.lifecycle !== lifecycle) identity.current = { lifecycle, generation: identity.current.generation + 1 }
     const generation = identity.current.generation
-    const enabled = active || !!visibleSessionId
+    const enabled = active || !!visibleSessionId || observeWhileClosed
     const [state, setState] = useState<DesktopCompletionsState & { scope: string; pages: number }>({ ...empty(), scope, pages: 0 })
     const stateRef = useRef(state)
     stateRef.current = state

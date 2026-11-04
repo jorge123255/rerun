@@ -7,7 +7,7 @@ import type { Message } from '@rerun/contracts'
 import { desktopPendingInboxSchema, type DesktopPendingReadTarget } from '@/lib/desktop/pending-inbox'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopApproval } from '@/lib/desktop/server/approvals'
-import { readDesktopQuestion } from '@/lib/desktop/server/questions'
+import * as questionResolvers from '@/lib/desktop/server/questions'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { createDesktopAgent, createDesktopSession, type DesktopAgent, type DesktopSession } from '@/lib/desktop/server/store'
 import { GET } from './route'
@@ -44,7 +44,7 @@ async function read() {
     return desktopPendingInboxSchema.parse(await response.json())
 }
 const seen = async () => (await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_pending_inbox_seen')).rows
-const questionId = async () => (await readDesktopQuestion(runtime, question.id)).question!.id
+const questionId = async () => (await questionResolvers.readDesktopQuestion(runtime, question.id)).question!.id
 const approvalId = async () => (await readDesktopApproval(runtime, approval.id)).approval!.id
 
 beforeEach(async () => {
@@ -110,6 +110,18 @@ test('GET projects the shared attention minus the inbox receipts, and mark-read 
     expect(after.every(result => result.rows.length === 0)).toBe(true)
 })
 
+test('database startup creates the receipt table and reopening preserves the exact read request', async () => {
+    // No pending-inbox route has run yet: startup, rather than lazy route setup, owns the table.
+    expect(await seen()).toEqual([])
+    const q1 = await questionId()
+    expect(await (await mark([{ id: q1, kind: 'question', agentId: alice.id, sessionId: question.id }])).json()).toEqual({ marked: 1, failedIds: [] })
+    await closeDesktopDatabase(root)
+    expect((await seen()).map(row => String(row.item_id))).toEqual([q1])
+    expect((await read()).items.map(item => item.sessionId)).toEqual([approval.id, bobChat.id])
+    // Reading the inbox never resolves the underlying request.
+    expect(await questionId()).toBe(q1)
+})
+
 test('a new request in the same chat reappears, and the earlier receipt cannot block it', async () => {
     const q1 = await questionId()
     expect(await (await mark([{ id: q1, kind: 'question', agentId: alice.id, sessionId: question.id }])).json()).toEqual({ marked: 1, failedIds: [] })
@@ -167,7 +179,7 @@ test('an unreachable engine read stays in failedIds, never a complete success, a
 })
 
 test('receipts cascade with their chat and coworker while other owners stay readable', async () => {
-    const q1 = await questionId(), a1 = await approvalId(), b1 = (await readDesktopQuestion(runtime, bobChat.id)).question!.id
+    const q1 = await questionId(), a1 = await approvalId(), b1 = (await questionResolvers.readDesktopQuestion(runtime, bobChat.id)).question!.id
     const db = await openDesktopDatabase(root)
     await mark([
         { id: q1, kind: 'question', agentId: alice.id, sessionId: question.id },
@@ -200,10 +212,11 @@ test('requires authenticated same-origin reads and exact mark-read bodies', asyn
 })
 
 test('the mark-read deadline cancels stalled engine reads without acknowledging, and a later retry recovers', async () => {
-    const q1 = await questionId(), a1 = await approvalId(), b1 = (await readDesktopQuestion(runtime, bobChat.id)).question!.id
+    const q1 = await questionId(), a1 = await approvalId(), b1 = (await questionResolvers.readDesktopQuestion(runtime, bobChat.id)).question!.id
     for (const id of histories.keys()) stalled.add(id)
     const controller = new AbortController()
     const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+    calls.length = 0
     const pending = mark([
         { id: q1, kind: 'question', agentId: alice.id, sessionId: question.id },
         { id: a1, kind: 'approval', agentId: alice.id, sessionId: approval.id },
@@ -215,11 +228,59 @@ test('the mark-read deadline cancels stalled engine reads without acknowledging,
         controller.abort(new DOMException('Pending-inbox deadline', 'TimeoutError'))
         const response = await pending
         expect(response.status).toBe(200)
-        expect(await response.json()).toEqual({ marked: 0, failedIds: [q1, a1, b1].sort() })
+        const body = await response.json() as { marked: number; failedIds: string[] }
+        expect(body.marked).toBe(0)
+        expect(body.failedIds.slice().sort()).toEqual([q1, a1, b1].sort())
         expect(await seen()).toEqual([])
     } finally {
         controller.abort(); timeout.mockRestore(); stalled.clear()
     }
     expect(await (await mark([{ id: q1, kind: 'question', agentId: alice.id, sessionId: question.id }])).json()).toEqual({ marked: 1, failedIds: [] })
     expect((await read()).items.map(item => item.sessionId)).toEqual([approval.id, bobChat.id])
+})
+
+test('a later timeout in the same chat does not report an already confirmed receipt as failed', async () => {
+    const q1 = await questionId()
+    const controller = new AbortController()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+    const originalRead = questionResolvers.readDesktopQuestion
+    const reader = vi.spyOn(questionResolvers, 'readDesktopQuestion')
+        .mockImplementationOnce(originalRead)
+        .mockImplementationOnce(async (_runtime, _sessionId, options) => {
+            const signal = options!.signal!
+            return new Promise<never>((_resolve, reject) => {
+                signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+            })
+        })
+    const pending = mark([
+        { id: q1, kind: 'question', agentId: alice.id, sessionId: question.id },
+        { id: 'stale-request-in-the-same-chat', kind: 'question', agentId: alice.id, sessionId: question.id },
+    ])
+    try {
+        await vi.waitFor(() => expect(reader).toHaveBeenCalledTimes(2))
+        controller.abort(new DOMException('Pending-inbox deadline', 'TimeoutError'))
+        expect(await (await pending).json()).toEqual({ marked: 1, failedIds: ['stale-request-in-the-same-chat'] })
+        expect((await seen()).map(row => String(row.item_id))).toEqual([q1])
+    } finally {
+        controller.abort(); timeout.mockRestore(); reader.mockRestore()
+    }
+})
+
+test('a resolver finishing after the deadline cannot create a read receipt', async () => {
+    const q1 = await questionId()
+    const controller = new AbortController()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+    const originalRead = questionResolvers.readDesktopQuestion
+    const reader = vi.spyOn(questionResolvers, 'readDesktopQuestion').mockImplementationOnce(async (...args) => {
+        const result = await originalRead(...args)
+        // Model the deadline expiring after history arrived, while local receipt reads finish.
+        controller.abort(new DOMException('Pending-inbox deadline', 'TimeoutError'))
+        return result
+    })
+    try {
+        expect(await (await mark([{ id: q1, kind: 'question', agentId: alice.id, sessionId: question.id }])).json()).toEqual({ marked: 0, failedIds: [q1] })
+        expect(await seen()).toEqual([])
+    } finally {
+        controller.abort(); timeout.mockRestore(); reader.mockRestore()
+    }
 })

@@ -166,7 +166,7 @@ test('the loading label never claims no pending', async () => {
     await act(async () => { root.unmount() })
 })
 
-test('closing cancels an in-flight read and reopening reads immediately', async () => {
+test('closing replaces in-flight reads with collapsed observation and reopening refreshes immediately', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     const pending = new Map<string, Array<(response: Response) => void>>()
@@ -190,15 +190,15 @@ test('closing cancels an in-flight read and reopening reads immediately', async 
     await act(async () => { renderIt() })
     await act(async () => { await Promise.resolve() }) // let the aborted reads settle
     await act(async () => { await vi.advanceTimersByTimeAsync(9000) })
-    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher).toHaveBeenCalledTimes(4)
 
     open = true
     await act(async () => { renderIt() })
-    expect(fetcher).toHaveBeenCalledTimes(4)
+    expect(fetcher).toHaveBeenCalledTimes(6)
 
-    // The reopened reads are the second request per endpoint: resolve them both.
-    await act(async () => { pending.get('/api/desktop/pending-inbox')?.[1]?.(Response.json({ items: [], unavailableAgentIds: [], checkedAt })) })
-    await act(async () => { pending.get('/api/desktop/completions')?.[1]?.(completionsEmpty()) })
+    // The reopened reads are the third request per endpoint: resolve them both.
+    await act(async () => { pending.get('/api/desktop/pending-inbox')?.[2]?.(Response.json({ items: [], unavailableAgentIds: [], checkedAt })) })
+    await act(async () => { pending.get('/api/desktop/completions')?.[2]?.(completionsEmpty()) })
     expect(container.textContent).toContain('No pending')
     await act(async () => { root.unmount() })
 })
@@ -435,7 +435,7 @@ test('a completion read failure shows its own Retry note and never a done count'
 test('an empty completion page with a cursor offers older runs instead of a false empty inbox', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-        if (url === '/api/desktop/attention') return Response.json({ items: [], unavailableAgentIds: [], checkedAt })
+        if (url === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt })
         if (url === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt, checkedAt, nextCursor: 'after seen' })
         expect(url).toBe('/api/desktop/completions?before=after+seen')
         return completionsWith([doneChat])()

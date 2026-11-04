@@ -143,7 +143,7 @@ async function mount(completed: DesktopCompletionItem[] = []) {
         }
         if (url.pathname === '/api/desktop/settings' && method === 'GET') return Response.json(providers)
         if (url.pathname === '/api/desktop/board-activity') return Response.json({ agents: Object.fromEntries(agents.map(owner => [owner.id, 'idle'])) })
-        if (url.pathname === '/api/desktop/attention') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
+        if (url.pathname === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
         if (url.pathname === '/api/desktop/completions') return Response.json({ items: completed.filter(item => !item.completionIds.every(id => seen.has(id))), unavailableAgentIds: [], enabledAt: date, checkedAt: date, nextCursor: null })
         if (url.pathname === '/api/desktop/completions/read' && method === 'POST') {
             const { completionIds } = JSON.parse(String(init?.body)) as { completionIds: string[] }

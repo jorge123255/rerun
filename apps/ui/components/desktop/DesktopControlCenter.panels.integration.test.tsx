@@ -138,7 +138,7 @@ function fixture(runStatus?: () => Promise<Response>) {
         if (url.pathname === '/api/desktop/settings' && method === 'GET') return Response.json(providers)
         if (url.pathname === '/api/desktop/board-activity') return Response.json({ agents: Object.fromEntries(coworkers.map(agent => [agent.id, 'idle'])) })
         if (url.pathname === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: date, checkedAt: date, nextCursor: null })
-        if (url.pathname === '/api/desktop/attention') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
+        if (url.pathname === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
         if (url.pathname === '/api/desktop/conversations/search') return Response.json({ hits: [], hasMore: false })
         const agentRoute = url.pathname.match(/^\/api\/desktop\/agents\/([^/]+)\/(.+)$/)
         if (agentRoute) {

@@ -53,7 +53,8 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
     const failed = new Set<string>()
     const confirmed: DesktopPendingReadTarget[] = []
     const signal = AbortSignal.timeout(DESKTOP_PENDING_INBOX_DEADLINE_MS)
-    // A session holds at most one pending request, so one engine re-read serves all of its targets.
+    // Group by session so no two workers revalidate the same chat concurrently. A submitted
+    // batch can include stale identities alongside the current request; each keeps its own result.
     const bySession = new Map<string, DesktopPendingReadTarget[]>()
     for (const item of targets) {
         const list = bySession.get(item.sessionId) ?? []
@@ -73,13 +74,21 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
                 if (!session) { for (const item of items) failed.add(item.id); continue }
                 for (const item of items) {
                     if (item.agentId !== session.agentId) { failed.add(item.id); continue }
-                    signal.throwIfAborted()
-                    const current = item.kind === 'question'
-                        ? await readDesktopQuestion(runtime, session.id, { signal })
-                        : await readDesktopApproval(runtime, session.id, { signal })
-                    const currentId = item.kind === 'question' ? current.question?.id ?? null : current.approval?.id ?? null
-                    if (currentId === item.id) confirmed.push(item)
-                    else failed.add(item.id)
+                    try {
+                        signal.throwIfAborted()
+                        const currentId = item.kind === 'question'
+                            ? (await readDesktopQuestion(runtime, session.id, { signal })).question?.id ?? null
+                            : (await readDesktopApproval(runtime, session.id, { signal })).approval?.id ?? null
+                        // The resolver also reads local answer receipts after history arrives.
+                        // A result that finishes after the scan deadline is still unknown.
+                        signal.throwIfAborted()
+                        if (currentId === item.id) confirmed.push(item)
+                        else failed.add(item.id)
+                    } catch {
+                        // A later timeout in this chat must not report an earlier confirmed
+                        // target as failed while its receipt is committed below.
+                        failed.add(item.id)
+                    }
                 }
             } catch { for (const item of items) failed.add(item.id) }
         }

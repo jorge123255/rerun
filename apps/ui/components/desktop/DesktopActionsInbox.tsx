@@ -13,6 +13,7 @@ import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { DesktopPendingInboxItem } from '@/lib/desktop/pending-inbox'
 import { AlertCircleIcon, BellIcon, CheckCheckIcon, InboxIcon, Loader2Icon, RefreshCcwIcon, TriangleAlertIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import type { DesktopAgentView } from './DesktopApp'
 import { useDesktopCompletions } from './useDesktopCompletions'
 import { useDesktopPendingInbox, type DesktopPendingInboxRead } from './useDesktopPendingInbox'
@@ -44,7 +45,7 @@ export type DesktopActionsInboxProps = {
     className?: string
 }
 
-// The row mirrors @rerun/ui/inbox InboxRow without its hover-revealed Mark-as-read button:
+// The row mirrors @rerun/ui/inbox InboxRow with its hover-revealed Mark-as-read button:
 // marking read is an explicit, per-request acknowledgment that never answers, approves or opens.
 function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem; onOpen: (item: DesktopPendingInboxItem) => void; onMarkRead: (item: DesktopPendingInboxItem) => void }) {
     const status = KIND_STATUS[item.kind]
@@ -217,8 +218,9 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
         },
         [onOpenChange]
     )
-    // Polling runs only while the card is open and the window is visible; closing cancels a read in flight.
-    const pendingInbox = useDesktopPendingInbox(open, agents?.map(agent => agent.id))
+    // Original WorkspaceInbox keeps its collapsed pill current. Observe while visible even when
+    // folded; each hook still requires an open panel for an explicit mark-read action.
+    const pendingInbox = useDesktopPendingInbox(open, agents?.map(agent => agent.id), true)
     const { status, items: received, unavailableAgentIds: unavailable, retry, readError: pendingReadError, markRead, markAllRead: markPendingAllRead } = pendingInbox
     const roster = useMemo(() => agents ? new Map(agents.map(agent => [agent.id, agent])) : null, [agents])
     const items = useMemo(() => received.flatMap(item => {
@@ -229,7 +231,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     const unavailableAgentIds = unavailable.filter(id => !roster || roster.has(id))
     // Finished runs: a separate bounded read that marks itself read through the explicit mutation.
     // Root's visible conversation applies the original read-on-visible semantics.
-    const completions = useDesktopCompletions(open, agents?.map(agent => agent.id), visibleSessionId)
+    const completions = useDesktopCompletions(open, agents?.map(agent => agent.id), visibleSessionId, true)
     const doneItems = useMemo(() => completions.items.flatMap(item => {
         if (!roster) return [item]
         const agent = roster.get(item.agentId)
@@ -252,7 +254,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
 
     const openItem = useCallback(
         (item: DesktopPendingInboxItem) => {
-            if (!open || !lifetime.current.mounted || lifetime.current.generation !== generation) return
+            if (!open || isDesktopQuitting() || !lifetime.current.mounted || lifetime.current.generation !== generation) return
             const current = latest.current.items.find(row => row.id === item.id && row.agentId === item.agentId && row.sessionId === item.sessionId)
             if (!current) return
             // Navigation only. Retained handlers cannot revive a deleted owner or old request.
@@ -264,7 +266,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
 
     const openDone = useCallback(
         (item: DesktopCompletionItem) => {
-            if (!open || !lifetime.current.mounted || lifetime.current.generation !== generation) return
+            if (!open || isDesktopQuitting() || !lifetime.current.mounted || lifetime.current.generation !== generation) return
             const current = latest.current.doneItems.find(row => row.id === item.id && row.agentId === item.agentId && row.sessionId === item.sessionId)
             if (!current) return
             // Navigation only: no sending, no approving, no executing. The row is acknowledged with
@@ -280,21 +282,28 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     // and the done completion ids alike — never a newer arrival. Like the original inbox, the
     // whole-list mark asks first, with the original copy.
     const [confirmAllOpen, setConfirmAllOpen] = useState(false)
-    const markAllTargets = useRef<{ pending: DesktopPendingInboxItem[]; done: DesktopCompletionItem[] } | null>(null)
+    const markAllTargets = useRef<{ generation: number; pending: DesktopPendingInboxItem[]; done: DesktopCompletionItem[] } | null>(null)
     const openMarkAllConfirm = useCallback(() => {
-        if (!open || !lifetime.current.mounted || lifetime.current.generation !== generation) return
+        if (!open || isDesktopQuitting() || !lifetime.current.mounted || lifetime.current.generation !== generation) return
         if (items.length + doneItems.length === 0) return
-        markAllTargets.current = { pending: items, done: doneItems }
+        markAllTargets.current = { generation, pending: items, done: doneItems }
         setConfirmAllOpen(true)
     }, [doneItems, generation, items, open])
+    const capturedTargets = markAllTargets.current
     const confirmMarkAll = useCallback(() => {
-        const targets = markAllTargets.current
+        const targets = capturedTargets
+        if (!open || isDesktopQuitting() || !targets || targets !== markAllTargets.current || targets.generation !== generation || !lifetime.current.mounted || lifetime.current.generation !== generation) return
         markAllTargets.current = null
         setConfirmAllOpen(false)
-        if (!targets || !lifetime.current.mounted || lifetime.current.generation !== generation) return
         markPendingAllRead(targets.pending)
         completions.markAllRead(targets.done.flatMap(item => item.completionIds))
-    }, [completions.markAllRead, generation, markPendingAllRead])
+    }, [capturedTargets, completions.markAllRead, generation, markPendingAllRead, open])
+    useEffect(() => {
+        if (!open || markAllTargets.current?.generation !== generation) {
+            markAllTargets.current = null
+            setConfirmAllOpen(false)
+        }
+    }, [open, generation])
     const confirmCount = markAllTargets.current ? markAllTargets.current.pending.length + markAllTargets.current.done.length : 0
 
     // Only an explicit Close or Escape folds the card back onto the pill and takes the focus
@@ -313,7 +322,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
 
     // An outside press or Escape folds the card; the card's own clicks stay its own.
     useEffect(() => {
-        if (!open) return
+        if (!open || confirmAllOpen) return
         const onPointerDown = (event: globalThis.PointerEvent) => {
             if (rootRef.current?.contains(event.target as Node)) return
             change(false)
@@ -328,10 +337,10 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
             document.removeEventListener('pointerdown', onPointerDown)
             document.removeEventListener('keydown', onKeyDown)
         }
-    }, [open, change, closeToPill])
+    }, [open, confirmAllOpen, change, closeToPill])
 
     const failed = status === 'failed'
-    const doneCount = doneItems.length
+    const doneCount = doneItems.reduce((sum, item) => sum + item.count, 0)
     const checking = status === 'loading' || completions.status === 'loading'
     const anyFailed = failed || doneFailed || completions.readError
     const anyPartial = partial || doneUnavailable.length > 0
@@ -497,7 +506,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
             </ChromePill>
             <ConfirmDialog
                 open={confirmAllOpen}
-                onOpenChange={setConfirmAllOpen}
+                onOpenChange={next => { if (!next) markAllTargets.current = null; setConfirmAllOpen(next) }}
                 title="Mark everything as read?"
                 description={`${confirmCount} item${confirmCount !== 1 ? 's' : ''} will leave this list. Requests still waiting on an answer are cleared too, without being answered.`}
                 confirmLabel="Mark all as read"
