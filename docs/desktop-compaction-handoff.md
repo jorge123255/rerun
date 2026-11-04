@@ -42,11 +42,14 @@ and, when summarising throws:
 - An invalid status drops the event. An invalid metric is omitted; the event keeps its real
   status and wording, with no count printed.
 - The checkpoint `id` is the React key. A repeated id settles the first occurrence in place, so
-  a running row becomes done or failed without a duplicate. The AI SDK already folds same-id data
-  parts; this adapter also handles a replay or a direct stream fixture that carries both events.
-- A `running` event seen when its reply is no longer streaming uses the existing failure wording.
-  The original block has three states and no fourth "interrupted" label, so this avoids a shimmer
-  that would never stop while keeping the actual event.
+  a received `done` or `error` event replaces the running row without a duplicate. The AI SDK
+  already folds same-id data parts; this adapter also handles a replay or a direct stream fixture
+  that carries both events.
+- A `running` event seen when its reply is no longer streaming is suppressed. A stop or disconnect
+  can lose the final event after the engine already saved a successful checkpoint, so there is no
+  honest way to call it complete or failed. The original block has three states and no fourth
+  "interrupted" label; suppressing the unconfirmed row avoids both a forever shimmer and a false
+  failure. Its error wording is reserved for an error event the engine actually sent.
 
 Parts without an id cannot be proven to be the same checkpoint, so each is drawn separately.
 No other part type is interpreted here.
@@ -76,11 +79,13 @@ from the checkpoint.
 
 Authored, not executed by this lane (the integration owner runs all validation):
 
-- `lib/desktop/compaction.test.ts` — status validation, finite/non-negative metrics, interruption
-  fallback, first-position in-place update, duplicate suppression and id-less events.
+- `lib/desktop/compaction.test.ts` — status validation, finite/non-negative metrics, unconfirmed
+  running suppression, in-place first-position update, duplicate suppression, id-less events, and
+  a received error event surviving the end of its stream.
 - `components/desktop/DesktopAssistantReply.test.tsx` — running → done wording and counts on one
-  row, interrupted running row without a forever spinner, invalid metrics without invented counts,
-  with reasoning, sources and feedback preserved alongside.
+  row, an interrupted running row leaving no row, a received error keeping the original failure
+  wording, invalid metrics without invented counts, with reasoning, sources and feedback preserved
+  alongside.
 
 Not verified here: the Vitest runs, `tsc`, lint, a packaged Mac build, a real engine compaction of a
 live history, and any Mac UI acceptance. The existing engine's `compact.test.ts` already covers the

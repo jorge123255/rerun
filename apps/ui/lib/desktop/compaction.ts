@@ -21,20 +21,17 @@ const count = (value: unknown): number | undefined => {
 /**
  * Validate the data of a live `data-compaction` part. The engine emits only an id, a status and,
  * on success, two metrics. Anything else is dropped rather than printed: a missing metric leaves
- * the settled row without that count instead of showing an invented one.
- *
- * The original block has three states. A `running` event seen when its stream is no longer live
- * can never settle, so it takes the block's existing failure wording instead of a spinner which
- * would never stop. The event itself is kept; only its presentation falls back.
+ * the settled row without that count instead of showing an invented one. The status is returned
+ * as received; an interrupted stream is a projection concern, not a failure this adapter invents.
  */
-export function desktopCompactionData(part: unknown, streaming: boolean): CompactionData | undefined {
+export function desktopCompactionData(part: unknown): CompactionData | undefined {
     if (!isRecord(part) || part.type !== 'data-compaction' || !isRecord(part.data)) return undefined
     const status = part.data.status
     if (status !== 'running' && status !== 'done' && status !== 'error') return undefined
     const messagesCompacted = count(part.data.messagesCompacted)
     const tokensRecovered = metric(part.data.tokensRecovered)
     return {
-        status: status === 'running' && !streaming ? 'error' : status,
+        status,
         ...(messagesCompacted !== undefined && { messagesCompacted }),
         ...(tokensRecovered !== undefined && { tokensRecovered }),
     }
@@ -45,12 +42,17 @@ export function desktopCompactionData(part: unknown, streaming: boolean): Compac
  * re-emitted part with the same id into one, but a replay or a direct stream fixture can carry
  * both events: the last valid event wins, in the position of the first, so a running row settles
  * in place and never duplicates. Parts without an id cannot be proven identical and each stay.
+ *
+ * A stop or disconnect can lose the final event after the engine already saved a successful
+ * checkpoint. An event still at `running` when the reply is no longer live is therefore
+ * unconfirmed: it is suppressed rather than shown as complete or failed. Its error wording stays
+ * reserved for an error event the engine actually sent.
  */
 export function desktopCompactionSteps(parts: readonly unknown[], streaming: boolean): Map<number, DesktopCompactionStep> {
     const steps = new Map<number, DesktopCompactionStep>()
     const firstIndexById = new Map<string, number>()
     parts.forEach((part, index) => {
-        const data = desktopCompactionData(part, streaming)
+        const data = desktopCompactionData(part)
         if (!data) return
         const id = isRecord(part) && typeof part.id === 'string' && part.id.length > 0 ? part.id : undefined
         if (!id) {
@@ -65,5 +67,10 @@ export function desktopCompactionSteps(parts: readonly unknown[], streaming: boo
         }
         steps.set(first, { key: `compaction-${id}`, data })
     })
+    if (!streaming) {
+        for (const [index, step] of steps) {
+            if (step.data.status === 'running') steps.delete(index)
+        }
+    }
     return steps
 }

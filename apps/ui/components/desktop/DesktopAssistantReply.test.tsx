@@ -130,16 +130,27 @@ test('draws a live compaction step with the original wording and settles it in p
     expect(container.textContent).not.toContain('Compacting context…')
 })
 
-test('an interrupted compaction stops running and keeps the rest of the reply', async () => {
+test('an interrupted compaction leaves no unconfirmed row and keeps the rest of the reply', async () => {
     await render([
         { type: 'data-compaction' as const, id: 'checkpoint-1', data: { status: 'running' } },
         { type: 'text', text: 'Partial answer.' },
     ])
+    expect(container.textContent).not.toContain('Compacting context…')
+    expect(container.textContent).not.toContain('Context compaction failed')
+    expect(container.textContent).not.toContain('Context compacted')
+    expect(container.textContent).not.toContain('earlier messages summarized')
+    expect(container.textContent).toContain('Partial answer.')
+})
+
+test('a received error event still shows the original failure wording', async () => {
+    await render([
+        { type: 'data-compaction' as const, id: 'checkpoint-1', data: { status: 'error' } },
+        { type: 'text', text: 'Answer after a failed compaction.' },
+    ])
     const failed = [...container.querySelectorAll('button')].filter(button => button.textContent?.includes('Context compaction failed'))
     expect(failed).toHaveLength(1)
     expect(container.textContent).not.toContain('Compacting context…')
-    expect(container.textContent).not.toContain('earlier messages summarized')
-    expect(container.textContent).toContain('Partial answer.')
+    expect(container.textContent).toContain('Answer after a failed compaction.')
 })
 
 test('a completed compaction with invalid metrics keeps its wording without a count', async () => {
