@@ -4,10 +4,12 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { DESKTOP_WORKSPACE_ICONS } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
+import { DESKTOP_IMAGE_MAX_BYTES } from '@/lib/desktop/server/image-bytes'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
-import { readDesktopWorkspaceIcon } from '@/lib/desktop/server/workspace-icon'
+import { readDesktopWorkspaceIcon, readDesktopWorkspaceIconSelection } from '@/lib/desktop/server/workspace-icon'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET, PUT } from './route'
+import { GET as readIconBytes } from './bytes/route'
 
 const originalEnv = { ...process.env }
 const first = DESKTOP_WORKSPACE_ICONS[0].id, second = DESKTOP_WORKSPACE_ICONS[1].id
@@ -19,9 +21,23 @@ function request(body?: unknown) {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
 }
+function multipartRequest(form: FormData) {
+    return new Request(`${runtime.app.origin}/api/desktop/workspace/icon`, {
+        method: 'PUT', headers: { host: new URL(runtime.app.origin).host,
+            origin: runtime.app.origin, cookie: `rerun-desktop-session=${runtime.app.sessionToken}` },
+        body: form,
+    })
+}
+function bytesRequest(identity: string | null) {
+    const url = new URL(`${runtime.app.origin}/api/desktop/workspace/icon/bytes`)
+    if (identity !== null) url.searchParams.set('identity', identity)
+    return new Request(url, { headers: { host: new URL(runtime.app.origin).host,
+        origin: runtime.app.origin, cookie: `rerun-desktop-session=${runtime.app.sessionToken}` } })
+}
 const put = (body: unknown) => PUT(request(body))
 const name = async () => String((await (await openDesktopDatabase(root)).execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0]?.name)
 const iconRows = async () => (await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_workspace_icon')).rows
+const byteRows = async () => (await (await openDesktopDatabase(root)).execute('SELECT identity,content_type FROM desktop_workspace_icon_bytes')).rows
 
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-workspace-icon-'))
@@ -141,4 +157,123 @@ test('a failed lazy initializer is retried rather than poisoning the pooled clie
     const retry = await GET(request())
     expect(retry.status).toBe(200)
     expect(await retry.json()).toEqual({ catalogId: null })
+})
+
+async function committedLogo(): Promise<{ name: string; catalogId: string | null; uploadId: string | null }> {
+    const { default: sharp } = await import('sharp')
+    const png = new Uint8Array(await sharp({ create: { width: 40, height: 64, channels: 3, background: { r: 255, g: 0, b: 0 } } }).png().toBuffer())
+    const form = new FormData()
+    form.set('name', '  Acme Studio  ')
+    form.set('logoFile', new File([png], 'logo.png', { type: 'image/png' }))
+    const saved = await PUT(multipartRequest(form))
+    expect(saved.status).toBe(200)
+    return await saved.json()
+}
+
+test('a multipart upload normalizes one static PNG and commits name, bytes and selection in one transaction', async () => {
+    const saved = await committedLogo()
+    expect(saved.name).toBe('Acme Studio')
+    expect(saved.catalogId).toBeNull()
+    expect(saved.uploadId).toMatch(/^[0-9a-f-]{36}$/i)
+    expect(await name()).toBe('Acme Studio')
+    const rows = await iconRows()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.catalog_id).toBeNull()
+    expect(rows[0]!.upload_id).toBe(saved.uploadId)
+    const bytes = await byteRows()
+    expect(bytes).toEqual([{ identity: saved.uploadId, content_type: 'image/webp' }])
+    // The committed payload is one bounded raster, not the original file's bytes.
+    const { default: sharp } = await import('sharp')
+    const stored = (await (await openDesktopDatabase(root)).execute(`SELECT bytes FROM desktop_workspace_icon_bytes WHERE identity='${saved.uploadId}'`)).rows[0]!.bytes
+    const raster = Buffer.from(stored instanceof Uint8Array ? stored : new Uint8Array(stored as ArrayBuffer))
+    const meta = await sharp(raster).metadata()
+    expect(meta.format).toBe('webp')
+    expect(Math.max(meta.width!, meta.height!)).toBeLessThanOrEqual(256)
+    expect(await (await GET(request())).json()).toEqual({ catalogId: null, uploadId: saved.uploadId })
+})
+
+test('the committed raster is served by identity, fails closed otherwise and refuses cross-site reads', async () => {
+    const saved = await committedLogo()
+    const served = await readIconBytes(bytesRequest(saved.uploadId))
+    expect(served.status).toBe(200)
+    expect(served.headers.get('content-type')).toBe('image/webp')
+    expect(served.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(served.headers.get('content-security-policy')).toContain('sandbox')
+    expect(served.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
+    expect((await served.arrayBuffer()).byteLength).toBeGreaterThan(0)
+    expect((await readIconBytes(bytesRequest(null))).status).toBe(404)
+    expect((await readIconBytes(bytesRequest('not-a-uuid'))).status).toBe(404)
+    expect((await readIconBytes(bytesRequest('00000000-0000-0000-0000-000000000000'))).status).toBe(404)
+    const cross = bytesRequest(saved.uploadId); cross.headers.set('sec-fetch-site', 'cross-site')
+    expect((await readIconBytes(cross)).status).toBe(403)
+})
+
+test('replacing an upload deletes the previous raster, and a catalog selection or reset clears the byte store', async () => {
+    await committedLogo()
+    const second = await committedLogo()
+    expect(await byteRows()).toEqual([{ identity: second.uploadId, content_type: 'image/webp' }])
+    await put({ name: 'Illustrated', catalogId: second })
+    expect(await byteRows()).toEqual([])
+    expect((await iconRows())[0]!.catalog_id).toBe(second)
+    await put({ name: 'Back to default', catalogId: null })
+    expect(await iconRows()).toEqual([])
+    expect(await byteRows()).toEqual([])
+})
+
+test('an oversized, unsupported or damaged upload is rejected before mutating name, icon or byte store', async () => {
+    await put({ name: 'Keep me', catalogId: first })
+    const { default: sharp } = await import('sharp')
+    const png = new Uint8Array(await sharp({ create: { width: 2, height: 2, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer())
+    const oversized = new FormData()
+    oversized.set('name', 'Oversized')
+    oversized.set('logoFile', new File([new Uint8Array(DESKTOP_IMAGE_MAX_BYTES + 1)], 'logo.png', { type: 'image/png' }))
+    expect((await PUT(multipartRequest(oversized))).status).toBe(413)
+    const animatedKind = new FormData()
+    animatedKind.set('name', 'Animated')
+    animatedKind.set('logoFile', new File([png], 'logo.gif', { type: 'image/gif' }))
+    expect((await PUT(multipartRequest(animatedKind))).status).toBe(415)
+    const damaged = new FormData()
+    damaged.set('name', 'Damaged')
+    damaged.set('logoFile', new File([new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])], 'logo.png', { type: 'image/png' }))
+    expect((await PUT(multipartRequest(damaged))).status).toBe(415)
+    const missing = new FormData()
+    missing.set('name', 'Missing file')
+    expect((await PUT(multipartRequest(missing))).status).toBe(400)
+    expect(await name()).toBe('Keep me')
+    expect(await iconRows()).toHaveLength(1)
+    expect((await iconRows())[0]!.catalog_id).toBe(first)
+    expect(await byteRows()).toEqual([])
+})
+
+test('a committed upload survives a full database reopen and the illustration-only schema migrates in place', async () => {
+    const saved = await committedLogo()
+    await closeDesktopDatabase(root)
+    const reopened = await (await GET(request())).json()
+    expect(reopened).toEqual({ catalogId: null, uploadId: saved.uploadId })
+    await closeDesktopDatabase(root)
+
+    const db = await openDesktopDatabase(root)
+    await db.execute('DROP TABLE desktop_workspace_icon')
+    await db.execute(`CREATE TABLE desktop_workspace_icon (
+        workspace_id INTEGER PRIMARY KEY REFERENCES desktop_workspace(id),
+        catalog_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL )`)
+    await db.execute({ sql: 'INSERT INTO desktop_workspace_icon (workspace_id,catalog_id,created_at,updated_at) VALUES (1,?,?,?)', args: [first, '2026-11-04T00:00:00.000Z', '2026-11-04T00:00:00.000Z'] })
+    await closeDesktopDatabase(root)
+    expect(await (await GET(request())).json()).toEqual({ catalogId: first })
+    const columns = (await (await openDesktopDatabase(root)).execute(`PRAGMA table_info(desktop_workspace_icon)`)).rows.map(row => String(row.name))
+    for (const column of ['workspace_id', 'catalog_id', 'upload_id', 'created_at', 'updated_at']) expect(columns).toContain(column)
+    expect(await iconRows()).toHaveLength(1)
+    expect((await iconRows())[0]!.catalog_id).toBe(first)
+    const migrated = await openDesktopDatabase(root)
+    await expect(migrated.execute(`INSERT INTO desktop_workspace_icon (workspace_id,catalog_id,upload_id,created_at,updated_at) VALUES (1,'${first}','${first}','x','y')`)).rejects.toThrow()
+    await closeDesktopDatabase(root)
+})
+
+test('the illustration-only store read keeps its catalog-only contract after an upload replaces it', async () => {
+    const saved = await committedLogo()
+    expect(await readDesktopWorkspaceIcon(await openDesktopDatabase(root))).toBeNull()
+    await put({ name: 'Illustrated', catalogId: second })
+    expect(await readDesktopWorkspaceIconSelection(await openDesktopDatabase(root))).toEqual({ iconCatalogId: second, iconUploadId: null })
 })

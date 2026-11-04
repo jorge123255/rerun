@@ -5,9 +5,10 @@ import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field } from '@/components/ui/field'
+import { FileDropzone } from '@rerun/ui/forms'
 import { Input } from '@/components/ui/input'
-import { CheckIcon, Loader2Icon } from '@/lib/icons'
-import { DESKTOP_WORKSPACE_ICONS, desktopWorkspaceIconUrl, type DesktopWorkspaceIcon } from '@/lib/desktop/icon-catalog'
+import { CheckIcon, Loader2Icon, UploadIcon } from '@/lib/icons'
+import { DESKTOP_WORKSPACE_ICONS, DESKTOP_WORKSPACE_LOGO_ACCEPT, desktopWorkspaceIconSelectionUrl, desktopWorkspaceIconUrl, type DesktopWorkspaceIcon, type DesktopWorkspaceSavedIcon } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { cn } from '@/lib/utils'
@@ -15,7 +16,13 @@ import { ScrollFade } from '@rerun/ui/primitives'
 
 const VISIBLE_ILLUSTRATIONS = 10
 
-export type DesktopWorkspaceIconSaved = { name: string; iconCatalogId: string | null }
+// The saved-icon descriptor keeps the illustration slice's shape and adds the uploaded raster's
+// opaque identity, so existing readers keep working.
+export type DesktopWorkspaceIconSaved = {
+    name: string
+    iconCatalogId: string | null
+    iconUploadId?: string | null
+}
 
 type Props = {
     open: boolean
@@ -26,9 +33,10 @@ type Props = {
     onSaved: (saved: DesktopWorkspaceIconSaved) => void
 }
 
-// The original workspace settings dialog, carrying only its built-in illustration picker: the
-// same preview, naming behavior, grid, selection treatment and Save/Cancel footer. Uploading,
-// logo links, workspace switching and account or member features stay out of the Mac slice.
+// The original workspace settings dialog, carrying its built-in illustration picker and its
+// choose/drop logo upload: the same preview, naming behavior, grid, selection treatment and
+// Save/Cancel footer. Website-logo links, workspace switching and account or member features
+// stay out of the Mac slice.
 export function DesktopWorkspaceSettings({ open, onOpenChange, workspaceName, onSaved }: Props) {
     const [saving, setSaving] = useState(false)
     const quitting = useSyncExternalStore(subscribeDraftShutdown, isDesktopQuitting, () => false)
@@ -57,11 +65,15 @@ export function DesktopWorkspaceSettings({ open, onOpenChange, workspaceName, on
     </Dialog>
 }
 
+// The original form's logo draft: the workspace's current icon, a catalog illustration or the
+// chosen upload with its local object URL.
+type LogoDraft = { kind: 'current' } | { kind: 'catalog'; catalogId: string } | { kind: 'upload'; file: File; previewUrl: string }
+
 function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quitting }: { workspaceName: string; onSaved: Props['onSaved']; onCancel: () => void; onSaving: (saving: boolean) => void; quitting: boolean }) {
     const [name, setName] = useState(workspaceName)
     // Null keeps the workspace's current icon, like the original form's `current` draft.
-    const [picked, setPicked] = useState<string | null>(null)
-    const [savedIcon, setSavedIcon] = useState<string | null>(null)
+    const [draft, setDraft] = useState<LogoDraft>({ kind: 'current' })
+    const [savedIcon, setSavedIcon] = useState<DesktopWorkspaceSavedIcon>({ iconCatalogId: null, iconUploadId: null })
     const [readAttempt, setReadAttempt] = useState(0)
     const [readError, setReadError] = useState(false)
     const [saving, setSaving] = useState(false)
@@ -88,7 +100,7 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
                 const result = desktopIconSelection.parse(await response.json())
                 if (mounted.current && !controller.signal.aborted && !savingRef.current) {
                     readFinished.current = true
-                    setSavedIcon(result.catalogId)
+                    setSavedIcon({ iconCatalogId: result.catalogId, iconUploadId: result.uploadId ?? null })
                 }
             } catch {
                 if (mounted.current && !controller.signal.aborted && !savingRef.current) { readFinished.current = true; setReadError(true) }
@@ -97,9 +109,30 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
         return () => controller.abort()
     }, [readAttempt])
 
-    const currentUrl = desktopWorkspaceIconUrl(savedIcon)
-    const previewSrc = (picked ? desktopWorkspaceIconUrl(picked) : currentUrl) ?? ''
-    const selectedUrl = picked ? desktopWorkspaceIconUrl(picked) ?? undefined : currentUrl ?? undefined
+    // The original's logoDraftSrc: the draft's own preview, else the workspace's current icon.
+    const currentUrl = desktopWorkspaceIconSelectionUrl(savedIcon)
+    const previewSrc = draft.kind === 'upload' ? draft.previewUrl
+        : draft.kind === 'catalog' ? desktopWorkspaceIconUrl(draft.catalogId)
+        : currentUrl ?? ''
+    const selectedUrl = draft.kind === 'catalog' ? desktopWorkspaceIconUrl(draft.catalogId) ?? undefined
+        : draft.kind === 'current' ? currentUrl ?? undefined
+        : undefined
+
+    const uploadPreviewUrl = draft.kind === 'upload' ? draft.previewUrl : null
+    useEffect(() => {
+        if (!uploadPreviewUrl) return
+        return () => URL.revokeObjectURL(uploadPreviewUrl)
+    }, [uploadPreviewUrl])
+
+    const upload = (file: File | undefined) => {
+        if (!file || savingRef.current || isDesktopQuitting()) return
+        setDraft({ kind: 'upload', file, previewUrl: URL.createObjectURL(file) })
+    }
+
+    const pickIllustration = (catalogId: string) => {
+        if (savingRef.current || isDesktopQuitting()) return
+        setDraft({ kind: 'catalog', catalogId })
+    }
 
     const save = async () => {
         if (!mounted.current || savingRef.current || isDesktopQuitting() || !name.trim()) return
@@ -113,17 +146,16 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
         const release = holdDraftAdmission()
         readController.current?.abort()
         try {
-            const response = await fetch('/api/desktop/workspace/icon', {
-                method: 'PUT',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ name: name.trim(), ...(picked ? { catalogId: picked } : {}) }),
-                cache: 'no-store',
-            })
+            // One original workspace-settings save: the name rides with the selected icon, whether
+            // that is an illustration or the chosen upload's raster.
+            const response = draft.kind === 'upload'
+                ? await saveLogoUpload(name.trim(), draft.file)
+                : await saveCatalogSelection(name.trim(), draft)
             if (!response.ok) throw new Error(await responseError(response, 'Could not save workspace settings. Try again.'))
-            const saved = desktopIconSelection.extend({ name: z.string().trim().min(1).max(WORKSPACE_NAME_MAX) }).parse(await response.json())
+            const saved = desktopIconSaved.parse(await response.json())
             if (mounted.current) {
                 onSaving(false)
-                onSaved({ name: saved.name, iconCatalogId: saved.catalogId })
+                onSaved({ name: saved.name, iconCatalogId: saved.catalogId, ...(saved.uploadId ? { iconUploadId: saved.uploadId } : {}) })
                 onCancel()
             }
         } catch (cause) {
@@ -142,21 +174,28 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
         <form className="flex max-h-full min-h-0 flex-1 flex-col" onSubmit={event => { event.preventDefault(); void save() }}>
             <DialogHeader className="px-6 pt-6 pb-4">
                 <DialogTitle>Workspace settings</DialogTitle>
-                <DialogDescription>Choose a name and illustration for your workspace.</DialogDescription>
+                <DialogDescription>Choose a name and logo for your workspace.</DialogDescription>
             </DialogHeader>
             <ScrollFade className="min-h-0 flex-1 px-6 pt-1 pb-6">
                 <div className="space-y-6">
                     <div className="flex items-end gap-4">
-                        <div aria-hidden className="relative block size-16 shrink-0 overflow-hidden rounded-2xl bg-muted">
-                            <img src={previewSrc || undefined} alt="" className="size-full object-cover" />
-                        </div>
+                        <FileDropzone onFiles={files => upload(files[0])} accept={DESKTOP_WORKSPACE_LOGO_ACCEPT} overlayLabel="" disabled={saving || quitting} className="shrink-0">
+                            {({ inputId }) => (
+                                <label htmlFor={inputId} aria-label="Upload a logo" className="group relative block size-16 cursor-pointer">
+                                    <img src={previewSrc || undefined} alt="" className="size-full rounded-2xl bg-muted object-cover" />
+                                    <span className="absolute -right-1 -bottom-1 flex size-6 items-center justify-center rounded-full border bg-background shadow-sm transition-colors group-hover:bg-muted">
+                                        <UploadIcon className="size-3.5" />
+                                    </span>
+                                </label>
+                            )}
+                        </FileDropzone>
                         <div className="min-w-0 flex-1">
                             <Input id="workspace-settings-name" label="Name" required placeholder="e.g. Acme Inc."
                                 maxLength={WORKSPACE_NAME_MAX} value={name} disabled={saving || quitting} onChange={event => setName(event.target.value)} />
                         </div>
                     </div>
                     <Field label="Or pick an illustration">
-                        <IllustrationGrid selectedUrl={selectedUrl} onPick={setPicked} disabled={saving || quitting} />
+                        <IllustrationGrid selectedUrl={selectedUrl} onPick={pickIllustration} disabled={saving || quitting} />
                     </Field>
                     {readError && <div role="alert" className="space-y-2 text-sm text-destructive">
                         <p>Could not load the workspace icon. You can still save the name or pick an illustration.</p>
@@ -178,12 +217,34 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
     )
 }
 
+async function saveCatalogSelection(name: string, draft: LogoDraft): Promise<Response> {
+    return fetch('/api/desktop/workspace/icon', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, ...(draft.kind === 'catalog' ? { catalogId: draft.catalogId } : {}) }),
+        cache: 'no-store',
+    })
+}
+
+async function saveLogoUpload(name: string, file: File): Promise<Response> {
+    // The original uploads the chosen file with the name in one form submission.
+    const formData = new FormData()
+    formData.set('name', name)
+    formData.set('logoFile', file)
+    return fetch('/api/desktop/workspace/icon', { method: 'PUT', body: formData, cache: 'no-store' })
+}
+
 async function responseError(response: Response, fallback: string): Promise<string> {
     const body = await response.json().catch(() => null) as { error?: string } | null
     return typeof body?.error === 'string' ? body.error : fallback
 }
 
-const desktopIconSelection = z.object({ catalogId: z.string().refine(id => desktopWorkspaceIconUrl(id) !== null).nullable() })
+const desktopIconSelection = z.object({
+    catalogId: z.string().refine(id => desktopWorkspaceIconUrl(id) !== null).nullable(),
+    uploadId: z.string().min(1).optional(),
+})
+
+const desktopIconSaved = desktopIconSelection.extend({ name: z.string().trim().min(1).max(WORKSPACE_NAME_MAX) })
 
 function IllustrationGrid({ selectedUrl, onPick, disabled }: { selectedUrl: string | undefined; onPick: (catalogId: string) => void; disabled: boolean }) {
     const [expanded, setExpanded] = useState(false)

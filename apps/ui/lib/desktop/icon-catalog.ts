@@ -98,3 +98,21 @@ export function desktopWorkspaceIconById(catalogId: string | null | undefined): 
 export function desktopWorkspaceIconUrl(catalogId: string | null | undefined): string | null {
     return desktopWorkspaceIconById(catalogId)?.url ?? null
 }
+
+// The saved workspace icon after either slice: a validated built-in illustration, or the uploaded
+// raster's opaque identity. Backward compatible — the illustration slice's descriptor carried
+// only `iconCatalogId`, and an upload can never be confused with one.
+export type DesktopWorkspaceSavedIcon = {
+    iconCatalogId: string | null
+    iconUploadId?: string | null
+}
+
+// Where a mounted surface renders the saved icon from: the bundled illustration, or the
+// authenticated local raster route. Both stay local and credential-free.
+export function desktopWorkspaceIconSelectionUrl(icon: DesktopWorkspaceSavedIcon): string | null {
+    if (icon.iconUploadId) return `/api/desktop/workspace/icon/bytes?identity=${encodeURIComponent(icon.iconUploadId)}`
+    return desktopWorkspaceIconUrl(icon.iconCatalogId)
+}
+
+// The picker accepts the original's static logo kinds, minus the hosted-only SVG rasterizing.
+export const DESKTOP_WORKSPACE_LOGO_ACCEPT = 'image/png,image/jpeg,image/webp'

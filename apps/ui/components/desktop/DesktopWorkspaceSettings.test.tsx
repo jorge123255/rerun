@@ -29,20 +29,43 @@ const deferred = () => {
     return { promise, resolve }
 }
 
+type FixtureState = { name: string; catalogId: string | null; uploadId?: string | null }
+type PutInput = { name: string; catalogId?: string | null; uploadId?: string | null; file?: File }
+
 function fixture(catalogId: string | null = null) {
-    let saved = { name: 'Disposable', catalogId }
+    let saved: FixtureState = { name: 'Disposable', catalogId }
     let get: (() => Promise<Response> | Response) | undefined
-    let put: ((body: { name: string; catalogId?: string | null }) => Promise<Response> | Response) | undefined
-    const calls: { method: string; body?: { name: string; catalogId?: string | null } }[] = []
+    let put: ((input: PutInput) => Promise<Response> | Response) | undefined
+    const calls: { method: string; body?: unknown; file?: File }[] = []
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
         expect(url).toBe('/api/desktop/workspace/icon')
         const method = init?.method ?? 'GET'
-        const body = init?.body ? JSON.parse(String(init.body)) : undefined
-        calls.push({ method, body })
-        if (method === 'GET') return get ? get() : Response.json({ catalogId: saved.catalogId })
+        if (method === 'GET') {
+            calls.push({ method, body: undefined })
+            return get ? get() : Response.json(saved.uploadId
+                ? { catalogId: null, uploadId: saved.uploadId }
+                : { catalogId: saved.catalogId })
+        }
         expect(method).toBe('PUT')
+        // The illustration slice submits name and selection as one JSON payload; the upload slice
+        // submits name and file as one multipart payload, exactly like the original form.
+        if (init?.body instanceof FormData) {
+            const file = init.body.get('logoFile')
+            const input: PutInput = { name: String(init.body.get('name')), file: file instanceof File ? file : undefined }
+            calls.push({ method, body: { name: input.name }, file: input.file })
+            const savedResponse = put ? await put(input) : Response.json({ name: input.name, catalogId: null, uploadId: 'fixture-upload-identity' })
+            if (!put) saved = { name: input.name, catalogId: null, uploadId: 'fixture-upload-identity' }
+            return savedResponse
+        }
+        const body = JSON.parse(String(init.body)) as { name: string; catalogId?: string | null }
+        calls.push({ method, body })
         if (put) return put(body)
-        saved = { name: body.name, catalogId: Object.hasOwn(body, 'catalogId') ? body.catalogId : saved.catalogId }
+        // Mirrors the route: a committed catalog selection or reset replaces any uploaded icon.
+        saved = {
+            name: body.name,
+            catalogId: Object.hasOwn(body, 'catalogId') ? body.catalogId : saved.catalogId,
+            uploadId: Object.hasOwn(body, 'catalogId') ? null : saved.uploadId,
+        }
         return Response.json(saved)
     })
     vi.stubGlobal('fetch', fetcher)
@@ -215,4 +238,95 @@ test('shutdown blocks a new save even through a retained form submit handler', a
     expect(button('Save').disabled).toBe(true)
     await act(async () => { cancelDraftShutdown() })
     expect(button('Save').disabled).toBe(false)
+})
+
+const chooseLogo = async (file: File) => act(async () => {
+    const input = dialog()!.querySelector<HTMLInputElement>('input[type="file"]')!
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+})
+
+// happy-dom's object URLs are not stable across environments; the draft's own preview must be
+// one fixed address whose revoke the test can observe.
+function mockPreviewUrl() {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fixture-upload-preview')
+    return 'blob:fixture-upload-preview'
+}
+
+test('choosing a file drafts the upload locally, and Save commits name and raster as one multipart payload', async () => {
+    const f = fixture(); const h = await mount()
+    const draftUrl = mockPreviewUrl()
+    const logo = new File([new Uint8Array([8, 8, 8, 8])], 'logo.png', { type: 'image/png' })
+    await chooseLogo(logo)
+    expect(preview().getAttribute('src')).toBe(draftUrl)
+    expect(choices().every(choice => choice.getAttribute('aria-pressed') !== 'true')).toBe(true)
+    expect(f.calls).toHaveLength(1)
+    await rename(' Uploaded studio ')
+    await click(button('Save'))
+    expect(f.calls).toHaveLength(2)
+    expect(f.calls[1]!.method).toBe('PUT')
+    expect(f.calls[1]!.file).toBe(logo)
+    expect(f.calls[1]!.body).toEqual({ name: 'Uploaded studio' })
+    expect(h.saved).toHaveBeenCalledTimes(1)
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Uploaded studio', iconCatalogId: null, iconUploadId: 'fixture-upload-identity' })
+    expect(dialog()).toBeNull()
+})
+
+test('Cancel discards an upload draft, revokes its object URL and writes nothing', async () => {
+    const f = fixture(); const h = await mount()
+    const draftUrl = mockPreviewUrl()
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+    await chooseLogo(new File([new Uint8Array([8, 8, 8, 8])], 'logo.webp', { type: 'image/webp' }))
+    await click(button('Cancel'))
+    expect(dialog()).toBeNull()
+    expect(revoke).toHaveBeenCalledWith(draftUrl)
+    expect(f.calls).toHaveLength(1)
+    expect(h.saved).not.toHaveBeenCalled()
+})
+
+test('picking an illustration replaces an upload draft, revokes its object URL and saves through the catalog ID', async () => {
+    const f = fixture(); await mount()
+    const draftUrl = mockPreviewUrl()
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+    await chooseLogo(new File([new Uint8Array([8, 8, 8, 8])], 'logo.png', { type: 'image/png' }))
+    await click(choices()[2])
+    expect(choices()[2].getAttribute('aria-pressed')).toBe('true')
+    expect(preview().getAttribute('src')).toBe(DESKTOP_WORKSPACE_ICONS[2].url)
+    expect(revoke).toHaveBeenCalledWith(draftUrl)
+    await rename('Catalog choice')
+    await click(button('Save'))
+    expect(f.calls[1]!.body).toEqual({ name: 'Catalog choice', catalogId: DESKTOP_WORKSPACE_ICONS[2].id })
+})
+
+test('choosing a file replaces a picked illustration in the draft', async () => {
+    const f = fixture(); await mount()
+    const draftUrl = mockPreviewUrl()
+    const logo = new File([new Uint8Array([8, 8, 8, 8])], 'logo.jpeg', { type: 'image/jpeg' })
+    await click(choices()[1])
+    expect(choices()[1].getAttribute('aria-pressed')).toBe('true')
+    await chooseLogo(logo)
+    expect(preview().getAttribute('src')).toBe(draftUrl)
+    expect(choices().every(choice => choice.getAttribute('aria-pressed') !== 'true')).toBe(true)
+    await click(button('Save'))
+    expect(f.calls[1]!.file).toBe(logo)
+    expect(f.calls[1]!.body).toEqual({ name: 'Disposable' })
+})
+
+test('a failed upload keeps the previous icon and retains the draft for retry', async () => {
+    const f = fixture(); const h = await mount()
+    const draftUrl = mockPreviewUrl()
+    f.setPut(() => Response.json({ error: 'This image is damaged and can’t be used.' }, { status: 415 }))
+    const logo = new File([new Uint8Array([8, 8, 8, 8])], 'logo.png', { type: 'image/png' })
+    await chooseLogo(logo)
+    await rename('Retry name')
+    await click(button('Save'))
+    expect(dialog()?.textContent).toContain('This image is damaged and can’t be used.')
+    expect(h.saved).not.toHaveBeenCalled()
+    expect(f.saved).toEqual({ name: 'Disposable', catalogId: null })
+    expect(preview().getAttribute('src')).toBe(draftUrl)
+    f.setPut(undefined)
+    await click(button('Save'))
+    expect(h.saved).toHaveBeenCalledTimes(1)
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Retry name', iconCatalogId: null, iconUploadId: 'fixture-upload-identity' })
+    expect(dialog()).toBeNull()
 })
