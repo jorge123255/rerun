@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core'
 import type { TableView } from '@rerun/contracts'
 import { BoardColumnHeader, BoardItem, type CellContext } from '@rerun/ui/chat'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 const PER_COLUMN = 25
@@ -38,6 +38,18 @@ export function ViewBoard({ source, table, view, query, refreshKey, context, onO
     const [lanes, setLanes] = useState<Lane[] | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [dragged, setDragged] = useState<DbRow | null>(null)
+    const [reloadKey, setReloadKey] = useState(0)
+    const [moving, setMoving] = useState(false)
+    const [loadingLanes, setLoadingLanes] = useState<Set<string>>(new Set())
+    const owner = useMemo(() => ({ source, table }), [source, table, view, query, refreshKey, reloadKey])
+    const ownerRef = useRef(owner)
+    ownerRef.current = owner
+    const loadedOwner = useRef(owner)
+    const mounted = useRef(false)
+    useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+    const isCurrent = () => mounted.current && ownerRef.current === owner
+    const pendingMove = useRef<object | null>(null)
+    const pendingLanes = useRef(new Map<string, { owner: typeof owner; token: object }>())
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor))
 
     const readLane = useCallback(
@@ -48,36 +60,55 @@ export function ViewBoard({ source, table, view, query, refreshKey, context, onO
 
     useEffect(() => {
         let cancelled = false
+        setLanes(null)
+        setError(null)
+        setDragged(null)
+        setMoving(false)
+        setLoadingLanes(new Set())
         ;(async () => {
             const result = await source.readGroups(table, { groupBy, sum: sumColumn, q: query || undefined, where })
-            if (cancelled) return
+            if (cancelled || !isCurrent()) return
             if (!result.success) {
                 setError(result.error)
+                loadedOwner.current = owner
                 setLanes([])
                 return
             }
             const columns = boardColumns(result.groups, tones)
             const reads = await Promise.all(columns.map(column => (column.total > 0 ? readLane(column.value, PER_COLUMN) : Promise.resolve(null))))
-            if (cancelled) return
+            if (cancelled || !isCurrent()) return
             setError(null)
+            loadedOwner.current = owner
             setLanes(columns.map((column, i) => ({ ...column, rows: (reads[i]?.rows ?? []) as DbRow[], limit: PER_COLUMN })))
         })()
         return () => {
             cancelled = true
         }
-    }, [source, table, groupBy, sumColumn, query, where, tones, readLane, refreshKey])
+    }, [source, table, groupBy, sumColumn, query, where, tones, readLane, owner])
 
     const showMore = async (lane: Lane) => {
+        if (!isCurrent() || pendingMove.current === owner || pendingLanes.current.get(lane.key)?.owner === owner) return
+        const token = {}
+        pendingLanes.current.set(lane.key, { owner, token })
+        setLoadingLanes(current => new Set(current).add(lane.key))
         const limit = lane.limit + PER_COLUMN
-        const result = await readLane(lane.value, limit)
-        if (result) setLanes(current => current?.map(l => (l.key === lane.key ? { ...l, rows: result.rows as DbRow[], limit } : l)) ?? null)
+        try {
+            const result = await readLane(lane.value, limit)
+            if (isCurrent() && result) setLanes(current => current?.map(l => (l.key === lane.key ? { ...l, rows: result.rows as DbRow[], limit } : l)) ?? null)
+        } finally {
+            if (pendingLanes.current.get(lane.key)?.token === token) pendingLanes.current.delete(lane.key)
+            if (isCurrent()) setLoadingLanes(current => { const next = new Set(current); next.delete(lane.key); return next })
+        }
     }
 
     const move = async (row: DbRow, from: string, to: string) => {
         const target = lanes?.find(lane => lane.key === to)
         const id = rowKey(row)
-        if (!lanes || !target || id === null) return
-        const previous = lanes
+        // Reserve before awaiting. No second move or lane read may publish an older snapshot
+        // over this optimistic move; the drag affordance stays disabled until it settles.
+        if (!isCurrent() || !lanes || !target || id === null || pendingMove.current === owner || [...pendingLanes.current.values()].some(read => read.owner === owner)) return
+        pendingMove.current = owner
+        setMoving(true)
         const amount = sumColumn ? Number(row[sumColumn]) || 0 : 0
         const moved = { ...row, [groupBy]: target.value }
         setLanes(
@@ -87,10 +118,24 @@ export function ViewBoard({ source, table, view, query, refreshKey, context, onO
                 return lane
             }),
         )
-        const result = await source.updateRow(table, id, { [groupBy]: target.value })
-        if (!result.success) {
-            setLanes(previous)
-            toast.error('Could not move this row', { description: result.error })
+        try {
+            const result = await source.updateRow(table, id, { [groupBy]: target.value })
+            if (isCurrent()) {
+                if (!result.success) toast.error('Could not move this row', { description: result.error })
+                // Read current durable state instead of rolling back an obsolete lanes array.
+                setReloadKey(key => key + 1)
+            } else if (result.success && mounted.current && ownerRef.current.source === source && ownerRef.current.table === table) {
+                // The person may have returned to this table before its old mutation finished.
+                setReloadKey(key => key + 1)
+            }
+        } catch (error) {
+            if (isCurrent()) {
+                toast.error('Could not move this row', { description: error instanceof Error ? error.message : 'The update failed.' })
+                setReloadKey(key => key + 1)
+            }
+        } finally {
+            if (pendingMove.current === owner) pendingMove.current = null
+            if (isCurrent()) setMoving(false)
         }
     }
 
@@ -103,7 +148,7 @@ export function ViewBoard({ source, table, view, query, refreshKey, context, onO
         void move(data.row, data.from, String(over.id))
     }
 
-    if (lanes === null) {
+    if (lanes === null || loadedOwner.current !== owner) {
         return (
             <div className="flex gap-3 p-3">
                 {[0, 1, 2].map(i => (
@@ -120,9 +165,9 @@ export function ViewBoard({ source, table, view, query, refreshKey, context, onO
         <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragged(null)}>
             <div className="flex h-full items-start gap-3 overflow-x-auto p-3">
                 {lanes.map(lane => (
-                    <BoardLane key={lane.key} lane={lane} valueFormat={valueFormat} context={context} onShowMore={() => showMore(lane)}>
+                    <BoardLane key={lane.key} lane={lane} valueFormat={valueFormat} context={context} loading={moving || loadingLanes.has(lane.key)} onShowMore={() => showMore(lane)}>
                         {lane.rows.map((row, i) => (
-                            <BoardCard key={rowKey(row) ?? i} row={row} from={lane.key} onOpen={onOpenRow && (() => onOpenRow(row))}>
+                            <BoardCard key={rowKey(row) ?? i} row={row} from={lane.key} disabled={moving || loadingLanes.size > 0} onOpen={onOpenRow && (() => onOpenRow(row))}>
                                 <BoardItem row={row} fields={fields} formats={formats} context={context} />
                             </BoardCard>
                         ))}
@@ -134,7 +179,7 @@ export function ViewBoard({ source, table, view, query, refreshKey, context, onO
     )
 }
 
-function BoardLane({ lane, valueFormat, context, onShowMore, children }: { lane: Lane; valueFormat?: string; context: CellContext; onShowMore: () => void; children: React.ReactNode }) {
+function BoardLane({ lane, valueFormat, context, loading, onShowMore, children }: { lane: Lane; valueFormat?: string; context: CellContext; loading: boolean; onShowMore: () => void; children: React.ReactNode }) {
     const { setNodeRef, isOver } = useDroppable({ id: lane.key })
     const hidden = lane.total - lane.rows.length
 
@@ -143,7 +188,7 @@ function BoardLane({ lane, valueFormat, context, onShowMore, children }: { lane:
             <BoardColumnHeader value={lane.label} total={lane.total} sum={lane.sum} valueFormat={valueFormat} context={context} />
             <div className="flex min-h-8 flex-col gap-1.5 overflow-y-auto">{children}</div>
             {hidden > 0 && (
-                <Button type="button" variant="ghost" size="xs" onClick={onShowMore} className="justify-start text-muted-foreground">
+                <Button type="button" variant="ghost" size="xs" disabled={loading} onClick={onShowMore} className="justify-start text-muted-foreground">
                     Show {Math.min(hidden, PER_COLUMN)} more
                 </Button>
             )}
@@ -151,9 +196,9 @@ function BoardLane({ lane, valueFormat, context, onShowMore, children }: { lane:
     )
 }
 
-function BoardCard({ row, from, onOpen, children }: { row: DbRow; from: string; onOpen?: () => void; children: React.ReactNode }) {
+function BoardCard({ row, from, disabled, onOpen, children }: { row: DbRow; from: string; disabled: boolean; onOpen?: () => void; children: React.ReactNode }) {
     const id = rowKey(row)
-    const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `${from}:${id}`, data: { row, from } satisfies DragData, disabled: id === null })
+    const { setNodeRef, listeners, attributes, isDragging } = useDraggable({ id: `${from}:${id}`, data: { row, from } satisfies DragData, disabled: disabled || id === null })
 
     return (
         <div ref={setNodeRef} {...listeners} {...attributes} onClick={onOpen} className={cn(onOpen ? 'cursor-pointer' : 'cursor-grab', 'rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50', isDragging && 'opacity-40')}>
