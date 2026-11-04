@@ -2,6 +2,8 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
+import { forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
 import { DesktopConversation } from './DesktopConversation'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -24,6 +26,7 @@ async function click(label: string) {
     expect(button(label), label).toBeDefined()
     await act(async () => { button(label)!.click() })
 }
+const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 const render = (agentId: string, sessionId: string | null) => act(async () => {
     const agent = { id: agentId, name: agentId, description: '', createdAt: '', updatedAt: '' }
     root.render(<DesktopConversation key={agentId} agent={agent} sessionId={sessionId} sessions={[]} onSelectSession={() => {}} onChatSession={() => {}} />)
@@ -34,7 +37,7 @@ const writeDraft = (text: string) => act(async () => {
     el.dispatchEvent(new Event('input', { bubbles: true }))
 })
 
-test('a scoped picker supports retry, folders, removal, and rejects a second or unsupported attachment', async () => {
+test('a scoped picker supports retry, folders, ordered multi-selection, removal, and unsupported files', async () => {
     let fail = true
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), 'http://local')
@@ -58,18 +61,21 @@ test('a scoped picker supports retry, folders, removal, and rejects a second or 
     expect(button('long.txtToo large')?.disabled).toBe(true)
     await click('docs')
     await click('notes.md')
+    await click('Done')
     expect(button('Remove attachment notes.md')).toBeDefined()
     expect(button('Send')!.disabled).toBe(true)
     await click('Attach from Files')
     await click('docs')
     await click('new.txt')
+    await click('Done')
+    const picks = [...container.querySelectorAll<HTMLElement>('span[title]')].map(node => node.title).filter(path => path.startsWith('docs/'))
+    expect(picks).toEqual(['docs/notes.md', 'docs/new.txt'])
+    await render('alice','second')
+    expect(button('Remove attachment notes.md')).toBeUndefined()
+    await render('alice','first')
+    await click('Remove attachment notes.md')
     expect(button('Remove attachment notes.md')).toBeUndefined()
     expect(button('Remove attachment new.txt')).toBeDefined()
-    await render('alice','second')
-    expect(button('Remove attachment new.txt')).toBeUndefined()
-    await render('alice','first')
-    await click('Remove attachment new.txt')
-    expect(button('Remove attachment new.txt')).toBeUndefined()
 })
 
 test('sending a workspace file keeps the draft for retry and renders only its saved filename', async () => {
@@ -94,6 +100,7 @@ test('sending a workspace file keeps the draft for retry and renders only its sa
     await click('Attach from Files')
     await click('docs')
     await click('notes.md')
+    await click('Done')
     await writeDraft(text)
     await click('Send')
     expect(document.querySelector('[role="alert"]')?.textContent).toContain('The selected file is no longer available.')
@@ -159,7 +166,7 @@ test('a follow-up attachment can be removed while streaming without changing the
         return Response.json({ running: false })
     }))
     await render('alice', 'saved')
-    await click('Attach from Files'); await click('original.md')
+    await click('Attach from Files'); await click('original.md'); await click('Done')
     await writeDraft('Read the original file'); await click('Send')
     expect(button('Remove attachment original.md')!.disabled).toBe(true)
     expect(posts).toEqual([{ agentId: 'alice', sessionId: 'saved', text: 'Read the original file', attachmentPath: 'original.md' }])
@@ -173,7 +180,7 @@ test('a follow-up attachment can be removed while streaming without changing the
             }
         } }), { headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': 'saved', 'x-run-id': 'run-original' } }))
     })
-    await click('Attach from Files'); await click('followup.md')
+    await click('Attach from Files'); await click('followup.md'); await click('Done')
     expect(button('Remove attachment followup.md')!.disabled).toBe(false)
     await click('Remove attachment followup.md')
     expect(button('Remove attachment followup.md')).toBeUndefined()
@@ -182,4 +189,110 @@ test('a follow-up attachment can be removed while streaming without changing the
     expect(queued).not.toHaveProperty('attachmentPath')
     expect(posts).toEqual([{ agentId: 'alice', sessionId: 'saved', text: 'Read the original file', attachmentPath: 'original.md' }])
     await act(async () => { finish() })
+})
+
+test('three ordered files travel as one immutable set, persist per tab, and render from history', async () => {
+    const files = [entry('a.md'), entry('b.md'), entry('c.md')]
+    const posts: Record<string, unknown>[] = []
+    const draftWrites: Record<string, unknown>[] = []
+    const draftFixture = createDesktopDraftFixture()
+    draftFixture.seedTabs('alice', [{ uid: 'tab', id: 'saved' }])
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://local')
+        const fixture = draftFixture.handle(input, init)
+        if (fixture) {
+            if (init?.method === 'PUT') draftWrites.push(JSON.parse(String(init.body)))
+            return fixture
+        }
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
+        if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
+        if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
+        if (url.pathname.endsWith('/files')) return Response.json({ entries: url.searchParams.get('path') === 'docs' ? files : [entry('docs', 'dir')] })
+        if (url.pathname.endsWith('/chat')) {
+            posts.push(JSON.parse(String(init?.body)))
+            return new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'saved' } })
+        }
+        if (url.pathname.endsWith('/messages')) return Response.json({ messages: posts.length ? [{
+            id: 'multi-user', role: 'user', parts: [{ type: 'text', text: 'Compare the three files' }],
+            metadata: { attachmentPaths: ['docs/a.md', 'docs/b.md', 'docs/c.md'] },
+        }] : [] })
+        return Response.json({ running: false })
+    }))
+    const agent = { id: 'alice', name: 'alice', description: '', createdAt: '', updatedAt: '' }
+    const renderTab = () => act(async () => root.render(
+        <DesktopConversation key={`${Date.now()}`} agent={agent} sessionId="saved" sessions={[]} tabUid="tab"
+            onSelectSession={() => {}} onChatSession={() => {}} />,
+    ))
+    await renderTab()
+    await flush()
+    await click('Attach from Files')
+    await click('docs')
+    await click('a.md')
+    await click('b.md')
+    await click('c.md')
+    await click('Done')
+    expect([...container.querySelectorAll<HTMLElement>('span[title^="docs/"]')].map(node => node.title))
+        .toEqual(['docs/a.md', 'docs/b.md', 'docs/c.md'])
+    expect(draftWrites.at(-1)).toMatchObject({ text: '', attachmentPaths: ['docs/a.md', 'docs/b.md', 'docs/c.md'] })
+    expect(draftWrites.at(-1)).not.toHaveProperty('attachmentPath')
+
+    // A remount reads the persisted ordered set from the same coworker/tab.
+    await act(async () => root.unmount())
+    forgetCoworkerDrafts('alice')
+    root = createRoot(container)
+    await renderTab()
+    await flush()
+    expect([...container.querySelectorAll<HTMLElement>('span[title^="docs/"]')].map(node => node.title))
+        .toEqual(['docs/a.md', 'docs/b.md', 'docs/c.md'])
+
+    await writeDraft('Compare the three files')
+    await click('Send')
+    expect(posts).toEqual([{ agentId: 'alice', sessionId: 'saved', text: 'Compare the three files', attachmentPaths: ['docs/a.md', 'docs/b.md', 'docs/c.md'] }])
+    expect(posts[0]).not.toHaveProperty('attachmentPath')
+    expect([...container.querySelectorAll<HTMLElement>('span[title^="docs/"]')].map(node => node.title))
+        .toEqual(['docs/a.md', 'docs/b.md', 'docs/c.md'])
+})
+
+test('the picker stops at ten files and at the shared 128 KiB total', async () => {
+    const ten = Array.from({ length: 11 }, (_, index) => entry(`${index}.md`))
+    const heavy = Array.from({ length: 5 }, (_, index) => entry(`big-${index}.md`, 'file', 32768))
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
+        if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
+        if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
+        if (url.pathname.endsWith('/files')) return Response.json({ entries: url.searchParams.get('path') === 'many' ? ten : url.searchParams.get('path') === 'heavy' ? heavy : [entry('many', 'dir'), entry('heavy', 'dir')] })
+        return Response.json(url.pathname.endsWith('/messages') ? { messages: [] } : { running: false })
+    }))
+    const agent = { id: 'alice', name: 'alice', description: '', createdAt: '', updatedAt: '' }
+    await act(async () => root.render(<DesktopConversation agent={agent} sessionId="saved" sessions={[]} onSelectSession={() => {}} onChatSession={() => {}} />))
+    await click('Attach from Files'); await click('many')
+    for (let index = 0; index < 10; index++) await click(`${index}.md`)
+    expect(button('10.mdUp to 10 files')?.disabled).toBe(true)
+    await click('Cancel')
+
+    await click('Attach from Files'); await click('heavy')
+    await click('big-0.md'); await click('big-1.md'); await click('big-2.md'); await click('big-3.md')
+    expect(button('big-4.mdOver 128 KiB total')?.disabled).toBe(true)
+})
+
+test('a failing multi-file send keeps every chip and the typed text', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
+        if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
+        if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
+        if (url.pathname.endsWith('/chat')) return Response.json({ error: '“docs/b.md” was renamed or replaced.' }, { status: 409 })
+        if (url.pathname.endsWith('/messages')) return Response.json({ messages: [] })
+        return Response.json({ running: false })
+    }))
+    const agent = { id: 'alice', name: 'alice', description: '', createdAt: '', updatedAt: '' }
+    await act(async () => root.render(<DesktopConversation agent={agent} sessionId="saved" sessions={[]}
+        initialDraft={{ text: 'Compare both files', attachments: ['docs/a.md', 'docs/b.md'] }}
+        onSelectSession={() => {}} onChatSession={() => {}} />))
+    await click('Send')
+    expect(container.textContent).toContain('renamed or replaced')
+    expect(container.querySelector('textarea')!.value).toBe('Compare both files')
+    expect(button('Remove attachment a.md')).toBeDefined()
+    expect(button('Remove attachment b.md')).toBeDefined()
 })

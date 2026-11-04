@@ -1,11 +1,12 @@
 'use client'
 
+import { desktopAttachmentFieldsOf, desktopAttachmentPathsOf, type DesktopAttachmentFields } from '@rerun/contracts'
 import { flushTabWrites, pendingTabWrite } from './tab-writes'
 import { desktopComposerDraftSchema as savedSchema, type DesktopComposerDraft as Saved } from './composer-draft'
 
-export type ComposerValue = { text: string; attachmentPath?: string }
+export type ComposerValue = DesktopAttachmentFields & { text: string }
 export type DraftState = ComposerValue & { loaded: boolean; saving: boolean; version: number; error?: string; conflict: boolean }
-type Attempt = { tabUid: string; baseRevision: number; requestId: string; text: string; attachmentPath?: string }
+type Attempt = { tabUid: string; baseRevision: number; requestId: string; text: string } & DesktopAttachmentFields
 type Record = {
     agentId: string; uid: string; state: DraftState; saved: Saved; dirty: boolean; forgotten: boolean;
     listeners: Set<() => void>; work?: Promise<void>; attempt?: Attempt;
@@ -18,7 +19,8 @@ export const isDesktopQuitting = () => quitting
 export function subscribeDraftShutdown(listener: () => void) { shutdownListeners.add(listener); return () => { shutdownListeners.delete(listener) } }
 export function cancelDraftShutdown() { quitting = false; for (const listener of shutdownListeners) listener() }
 const empty = (): DraftState => ({ text: '', loaded: false, saving: false, version: 0, conflict: false })
-const same = (a: ComposerValue, b: ComposerValue) => a.text === b.text && a.attachmentPath === b.attachmentPath
+const pathsOf = (value: ComposerValue | Saved) => desktopAttachmentPathsOf(value as DesktopAttachmentFields)
+const same = (a: ComposerValue | Saved, b: ComposerValue | Saved) => a.text === b.text && JSON.stringify(pathsOf(a)) === JSON.stringify(pathsOf(b))
 const url = (r: Record) => `/api/desktop/agents/${encodeURIComponent(r.agentId)}/draft`
 function publish(r: Record, patch: Partial<DraftState>) {
     r.state = { ...r.state, ...patch }
@@ -48,7 +50,10 @@ async function read(r: Record) {
     if (r.forgotten) return
     r.saved = saved
     // A local edit made while restoring is newer than the read, even if its text is empty.
-    publish(r, { ...(r.dirty ? {} : { text: saved.text, attachmentPath: saved.attachmentPath }), loaded: true, error: undefined, conflict: false })
+    const fields = desktopAttachmentFieldsOf(pathsOf(saved))
+    publish(r, r.dirty
+        ? { loaded: true, error: undefined, conflict: false }
+        : { text: saved.text, ...fields, attachmentPath: fields.attachmentPath, attachmentPaths: fields.attachmentPaths, loaded: true, error: undefined, conflict: false })
 }
 
 async function drain(r: Record) {
@@ -57,7 +62,7 @@ async function drain(r: Record) {
         await pendingTabWrite(r.agentId)
         if (r.forgotten) return
         const version = r.state.version
-        const attempt = r.attempt ?? { tabUid: r.uid, baseRevision: r.saved.revision, requestId: crypto.randomUUID(), text: r.state.text, ...(r.state.attachmentPath && { attachmentPath: r.state.attachmentPath }) }
+        const attempt = r.attempt ?? { tabUid: r.uid, baseRevision: r.saved.revision, requestId: crypto.randomUUID(), text: r.state.text, ...desktopAttachmentFieldsOf(pathsOf(r.state)) }
         r.attempt = attempt
         publish(r, { saving: true, error: undefined })
         const response = await fetch(url(r), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(attempt) })
@@ -100,7 +105,8 @@ export function saveDesktopDraft(r: Record): Promise<void> {
 export function updateDesktopDraft(r: Record, value: ComposerValue) {
     if (r.forgotten || same(r.state, value)) return
     r.dirty = true
-    publish(r, { ...value, attachmentPath: value.attachmentPath, version: r.state.version + 1, saving: true })
+    const fields = desktopAttachmentFieldsOf(pathsOf(value))
+    publish(r, { text: value.text, ...fields, attachmentPath: fields.attachmentPath, attachmentPaths: fields.attachmentPaths, version: r.state.version + 1, saving: true })
     if (!r.state.error) void saveDesktopDraft(r)
 }
 

@@ -265,6 +265,21 @@ describe('desktop API routes', () => {
         await writeFile(join(dirs[0], 'limit.txt'), Buffer.alloc(DESKTOP_ATTACHMENT_MAX_BYTES, 65))
         expect((await send(agents[0].id, { sessionId, attachmentPath: 'limit.txt' })).status).toBe(200)
         expect(sentChats[3]).toMatchObject({ workspaceAttachment: { content: 'A'.repeat(DESKTOP_ATTACHMENT_MAX_BYTES) } })
+
+        // Two or more files travel in their picked order and are snapshotted together.
+        await writeFile(join(dirs[0], 'second.md'), 'Second file')
+        expect((await send(agents[0].id, { sessionId, attachmentPaths: [path, 'second.md'] })).status).toBe(200)
+        expect(sentChats[4]).toMatchObject({ workspaceAttachments: [
+            { path, content: 'Summary.\r\nAnswer 0 🙂' },
+            { path: 'second.md', content: 'Second file' },
+        ] })
+        expect(sentChats[4]).not.toHaveProperty('workspaceAttachment')
+        expect((await send(agents[0].id, { sessionId, attachmentPaths: [path, path] })).status).toBe(400)
+        expect((await send(agents[0].id, { sessionId, attachmentPaths: Array.from({ length: 11 }, () => path) })).status).toBe(400)
+        // The total is enforced from the actual bytes, not the picker's listing.
+        const heavy = Array.from({ length: 5 }, (_, index) => `heavy-${index}.txt`)
+        for (const name of heavy) await writeFile(join(dirs[0], name), Buffer.alloc(DESKTOP_ATTACHMENT_MAX_BYTES, 66))
+        expect((await send(agents[0].id, { sessionId, attachmentPaths: heavy })).status).toBe(413)
     })
 
     it('looks up memories by local coworker and keeps an empty list distinct from a missing coworker', async () => {

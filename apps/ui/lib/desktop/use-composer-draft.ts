@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { desktopAttachmentFieldsOf, desktopAttachmentPathsOf, type DesktopAttachmentFields } from '@rerun/contracts'
 import { clearDesktopDraft, desktopDraftRecord, invalidateDesktopDraft, isDesktopQuitting, keepDesktopDraft, reloadDesktopDraft, saveDesktopDraft, subscribeDraftShutdown, updateDesktopDraft, type ComposerValue, type DraftState } from './draft-writes'
 
 const noState: DraftState = { text: '', loaded: true, saving: false, version: 0, conflict: false }
@@ -24,8 +25,8 @@ export function useDesktopComposerDraft(agentId: string, tabUid: string | undefi
         if (!record || !state.loaded) { restored.current = null; return }
         if (restored.current === record) return
         restored.current = record
-        restoreRef.current({ text: state.text, attachmentPath: state.attachmentPath })
-    }, [record, state.loaded, state.text, state.attachmentPath])
+        restoreRef.current({ text: state.text, ...desktopAttachmentFieldsOf(desktopAttachmentPathsOf(state as DesktopAttachmentFields)) })
+    }, [record, state.loaded, state.text, state.attachmentPath, state.attachmentPaths])
     const update = useCallback((draft: ComposerValue) => { if (record) updateDesktopDraft(record, draft) }, [record])
     const clear = useCallback((version: number) => !record || clearDesktopDraft(record, version), [record])
     const flush = useCallback(async () => {

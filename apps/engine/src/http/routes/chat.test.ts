@@ -474,6 +474,24 @@ describe('POST /agents/:id/chat', () => {
         } finally { vi.unstubAllEnvs() }
     })
 
+    it('forwards an ordered multi-file snapshot and refuses more than 128 KiB combined', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const first = { path: 'folder/a.md', content: 'Alpha' }
+            const second = { path: 'folder/b.txt', content: 'Beta' }
+            const response = await chat(id, { message: 'Compare both', workspaceAttachments: [first, second] })
+            expect(response.status).toBe(200)
+            await response.text()
+            expect(state.calls[0]).toMatchObject({ message: 'Compare both', trigger: { workspaceAttachments: [first, second] } })
+            expect(state.calls[0].trigger).not.toHaveProperty('workspaceAttachment')
+            expect((await chat(id, { message: 'Twice', workspaceAttachments: [first, first] })).status).toBe(400)
+            const heavy = Array.from({ length: 5 }, (_, index) => ({ path: `folder/h${index}.md`, content: 'A'.repeat(32 * 1024) }))
+            expect((await chat(id, { message: 'Too much', workspaceAttachments: heavy })).status).toBe(400)
+            expect((await chat(id, { message: 'Eleven', workspaceAttachments: Array.from({ length: 11 }, () => first) })).status).toBe(400)
+            expect(state.calls).toHaveLength(1)
+        } finally { vi.unstubAllEnvs() }
+    })
+
     it('404s on an unknown agent', async () => {
         const res = await chat('ghost', { message: 'hi' })
         expect(res.status).toBe(404)

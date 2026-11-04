@@ -9,7 +9,7 @@ import { parseVoiceMessage } from '@/lib/voice/marker'
 import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
 import { desktopFileCardOf } from '@/lib/desktop/file-card'
 import { hitlKindOf } from '@/lib/chat-hitl'
-import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPath, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
+import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, desktopAttachmentFieldsOf, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPaths, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
 type TextPart = { type: 'text'; text: string }
 type ToolInvocationPart = {
@@ -23,7 +23,7 @@ type ToolInvocationPart = {
     output?: unknown
 }
 type UIMessagePart = TextPart | ToolInvocationPart | DesktopSourcePart | { type: 'step-start' } | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
-export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: { authorId?: string; createdAt?: string; attachmentPath?: string } }
+export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: { authorId?: string; createdAt?: string; attachmentPath?: string; attachmentPaths?: string[] } }
 
 function safeParse(json: string | null | undefined): unknown {
     if (!json) return null
@@ -81,8 +81,8 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
         const content = safeParse(m.contentJson)
 
         if (m.role === 'user') {
-            const attachmentPath = workspaceAttachmentPath(content)
-            result.push({ id: `engine-${m.id}`, role: 'user', parts: [{ type: 'text', text: extractText(content) }], metadata: { createdAt: m.createdAt, ...(m.authorId && { authorId: m.authorId }), ...(attachmentPath && { attachmentPath }) } })
+            const attachment = desktopAttachmentFieldsOf(workspaceAttachmentPaths(content))
+            result.push({ id: `engine-${m.id}`, role: 'user', parts: [{ type: 'text', text: extractText(content) }], metadata: { createdAt: m.createdAt, ...(m.authorId && { authorId: m.authorId }), ...attachment } })
             continue
         }
 

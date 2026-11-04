@@ -183,3 +183,13 @@ test('an uncertain enqueue blocks ordinary Send before any recovery read, then s
     expect(sent[0]).toMatchObject({ requestId: queued.id, text: queued.text })
     expect(saved.has('one')).toBe(false)
 })
+
+test('a queued multi-file draft keeps its order and sends the same immutable set once', async () => {
+    await render('one', { text: 'Compare the files', attachments: ['docs/a.md', 'docs/b.md'] })
+    await click('Send')
+    const queued = saved.get('one')!
+    expect(queued).toMatchObject({ text: 'Compare the files', attachmentPaths: ['docs/a.md', 'docs/b.md'], behindRunId: firstRun })
+    expect(queued).not.toHaveProperty('attachmentPath')
+    await finishRun()
+    expect(sent).toEqual([{ agentId: 'agent', sessionId: 'one', text: 'Compare the files', requestId: queued.id, attachmentPaths: ['docs/a.md', 'docs/b.md'] }])
+})

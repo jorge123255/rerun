@@ -1,6 +1,6 @@
 import 'server-only'
 import { startQueuedChat } from './queued-chat'
-import { desktopRerunGrantsOf, type DesktopQuestionGuard, type DesktopApprovalGuard } from '@rerun/contracts'
+import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentPathsOf, desktopRerunGrantsOf, type DesktopQuestionGuard, type DesktopApprovalGuard } from '@rerun/contracts'
 import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
 import { publicDesktopHistory, transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
@@ -88,9 +88,17 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; attachmentPath?: string; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard }
+    | { sessionId?: string; text: string; attachmentPath?: string; attachmentPaths?: string[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
+
+/** Read the ordered set a send asked for, enforcing the shared total before any turn is reserved. */
+async function readDesktopAttachments(runtime: DesktopRuntime, agentId: string, paths: readonly string[]) {
+    const files = await Promise.all(paths.map(path => readCoworkerFile(runtime, agentId, path, 'attach')))
+    const total = files.reduce((sum, file) => sum + file.size, 0)
+    if (total > DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 128 KiB or smaller in total.')
+    return files
+}
 
 export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput): Promise<{ response: Response; sessionId: string }> {
     const db = await openDesktopDatabase(runtime.dataRoot)
@@ -101,6 +109,8 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
     const regenerate = 'regenerateMessageId' in input
+    const attachmentPaths = regenerate ? [] : desktopAttachmentPathsOf(input)
+    const attachmentFields = desktopAttachmentFieldsOf(attachmentPaths)
     const uid = !regenerate && !existing ? input.tabUid : undefined
     const previousStart = !regenerate && uid ? await existingTabStart(db, agent, uid, input) : null
     if (previousStart) {
@@ -109,7 +119,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id, 'x-run-id': String(previousStart.run_id),
         } }) }
     }
-    const queued = !regenerate && input.requestId ? { runId: input.requestId, attachmentPath: input.attachmentPath, ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }) } : undefined
+    const queued = !regenerate && input.requestId ? { runId: input.requestId, ...attachmentFields, ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }) } : undefined
     let replay: Response | undefined
     if (queued && existing && !regenerate) {
         const probe = await chat(engineOf(runtime), agent.engineAgentId, {
@@ -120,7 +130,12 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             if (input.reconcileOnly) throw new DesktopHttpError(404, 'This queued message has not been sent. Review it before sending.')
         } else replay = probe
     }
-    const file = !replay && !regenerate && input.attachmentPath !== undefined ? await readCoworkerFile(runtime, agent.id, input.attachmentPath, 'attach') : undefined
+    const files = !replay && !regenerate && attachmentPaths.length ? await readDesktopAttachments(runtime, agent.id, attachmentPaths) : []
+    const attachmentBody = files.length === 1
+        ? { workspaceAttachment: { path: files[0]!.path, content: files[0]!.content } }
+        : files.length > 1
+            ? { workspaceAttachments: files.map(file => ({ path: file.path, content: file.content })) }
+            : {}
     // Existing chats resolve their own saved model. Only a first send can carry an unsaved choice.
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
     const { connectionId, model } = replay ? {} : await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
@@ -135,7 +150,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             sessionId: existing?.engineSessionId, message: input.text,
             ...(start && { desktopFirstTurn: { sessionId: String(start.engine_session_id), runId: String(start.run_id) } }),
             ...(queued && { desktopQueuedTurn: queued }),
-            workspaceAttachment: file && { path: file.path, content: file.content },
+            ...attachmentBody,
         }),
         connectionId,
         model,

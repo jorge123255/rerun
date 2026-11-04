@@ -24,15 +24,15 @@ import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
-import { AttachmentChip, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
+import { AttachmentChips, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { DesktopModelSelector } from './DesktopModelSelector'
 import type { DesktopModelPick } from '@/lib/desktop/chat-model'
 import { QueuedMessagePill } from '@/components/chat/QueuedMessagePill'
 import { shouldFlush, shouldKeepQueued } from '@/lib/chat/queued-message'
-import { desktopQueuedPreview, type DesktopQueuedMessage } from '@/lib/desktop/queued-message'
+import { desktopQueuedAttachmentPaths, desktopQueuedPreview, type DesktopQueuedMessage } from '@/lib/desktop/queued-message'
 import { useDesktopQueuedMessage } from '@/lib/desktop/use-queued-message'
-import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions } from '@rerun/contracts'
+import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, desktopAttachmentFieldsOf, desktopAttachmentPathsOf, type DesktopAttachmentFields } from '@rerun/contracts'
 import { desktopQuestionViewSchema, type DesktopPendingQuestion, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import { DesktopQuestionCard } from './DesktopQuestionCard'
 import { desktopApprovalViewSchema, type DesktopPendingApproval, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
@@ -68,8 +68,13 @@ async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMes
 const stopUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/stop`
 const RUN_POLL_MS = 3000
 
-export type ComposerDraft = { text: string; attachment?: string }
+export type ComposerDraft = { text: string; attachment?: string; attachments?: string[] }
 export type TabActivity = { busy: boolean; dirty: boolean; readableSessionId?: string | null }
+
+const draftPaths = (draft: ComposerDraft | undefined) => draft ? (draft.attachments?.length ? draft.attachments : draft.attachment ? [draft.attachment] : []) : []
+const samePaths = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((path, index) => path === b[index])
+const messageAttachmentPaths = (metadata: unknown): string[] =>
+    metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? desktopAttachmentPathsOf(metadata as DesktopAttachmentFields) : []
 
 export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onClosePanel, modelLabel, onOpenModelSettings }: {
     agent: DesktopAgentView
@@ -116,48 +121,52 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         },
     })
     const draftKey = JSON.stringify([agent.id, sessionId])
+    const initialPaths = draftPaths(initialDraft)
     const [inputs, setInputs] = useState<ReadonlyMap<string, string>>(() => new Map(initialDraft ? [[draftKey, initialDraft.text]] : []))
-    const [attachments, setAttachments] = useState<ReadonlyMap<string, string>>(() => new Map(initialDraft?.attachment ? [[draftKey, initialDraft.attachment]] : []))
+    const [attachments, setAttachments] = useState<ReadonlyMap<string, readonly string[]>>(() => new Map(initialPaths.length ? [[draftKey, initialPaths]] : []))
     // Ordinary navigation carries the current composer. An alternate and its original keep independent drafts.
     const inputKey = inputs.has(draftKey) ? draftKey : ''
-    const composer = useRef<ComposerDraft>(initialDraft ?? { text: '' })
+    const composer = useRef<ComposerDraft>({ text: initialDraft?.text ?? '', attachments: initialPaths })
     const draft = useDesktopComposerDraft(agent.id, tabUid, value => {
+        const paths = desktopAttachmentPathsOf(value)
         setInputs(current => new Map(current).set(draftKey, value.text))
         setAttachments(current => {
             const next = new Map(current)
-            if (value.attachmentPath) next.set(draftKey, value.attachmentPath)
+            if (paths.length) next.set(draftKey, paths)
             else next.delete(draftKey)
             return next
         })
-        composer.current = { text: value.text, attachment: value.attachmentPath }
+        composer.current = { text: value.text, attachments: paths }
     })
     // The tab UID remains stable when the first accepted message receives its session ID.
     // Production reads the durable record directly, so newer typing cannot fall off that bind.
     const input = tabUid ? draft.text : inputs.get(inputKey) ?? ''
-    const attachment = tabUid ? draft.attachmentPath : attachments.get(draftKey)
+    const attachmentPaths = tabUid ? desktopAttachmentPathsOf(draft) : attachments.get(draftKey) ?? []
+    const attachmentSignature = attachmentPaths.join('\u0000')
     const setInput = (value: string) => {
         if (!draft.loaded || draft.error || regenerating.current || isDesktopQuitting()) return
         setInputs(current => new Map(current).set(inputKey, value))
-        composer.current = { text: value, attachment }
-        draft.update({ text: value, attachmentPath: attachment })
+        composer.current = { text: value, attachments: [...attachmentPaths] }
+        draft.update({ text: value, ...desktopAttachmentFieldsOf(attachmentPaths) })
     }
-    useEffect(() => { composer.current = { text: input, attachment } }, [input, attachment])
-    const pendingAttachment = useRef<{ key: string; inputKey: string; input: string; attachment?: string; version: number; release: () => void } | null>(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the path signature covers inline arrays
+    useEffect(() => { composer.current = { text: input, attachments: [...attachmentPaths] } }, [input, attachmentSignature])
+    const pendingAttachment = useRef<{ key: string; inputKey: string; input: string; attachments: readonly string[]; version: number; release: () => void } | null>(null)
     const preparingSubmit = useRef(false)
     const regenerationIds = useRef(new Map<string, string>())
     const regenerating = useRef<{ key: string; agentId: string; sessionId: string; draftKey: string; release: () => void } | null>(null)
     const [regenerationSource, setRegenerationSource] = useState<string | null>(null)
-    const setDraftAttachment = useCallback((key: string, path?: string) => {
+    const setDraftAttachments = useCallback((key: string, paths: readonly string[]) => {
         if (!draft.loaded || draft.error || regenerating.current || isDesktopQuitting()) return
         setAttachments(current => {
             const next = new Map(current)
-            if (path) next.set(key, path)
+            if (paths.length) next.set(key, [...paths])
             else next.delete(key)
             return next
         })
         if (key === draftKey) {
-            composer.current = { ...composer.current, attachment: path }
-            draft.update({ text: composer.current.text, attachmentPath: path })
+            composer.current = { ...composer.current, attachments: [...paths] }
+            draft.update({ text: composer.current.text, ...desktopAttachmentFieldsOf(paths) })
         }
     }, [draft.loaded, draft.error, draft.update, draftKey])
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null })
@@ -233,7 +242,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             if (pending && draft.clear(pending.version)) {
                 setInputs(current => current.get(pending.inputKey) === pending.input ? new Map(current).set(pending.inputKey, '') : current)
                 setAttachments(current => {
-                    if (current.get(pending.key) !== pending.attachment) return current
+                    if (!samePaths(current.get(pending.key) ?? [], pending.attachments)) return current
                     const next = new Map(current); next.delete(pending.key); return next
                 })
             }
@@ -262,7 +271,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         }
         return response
         } finally { pending?.release(); alternate?.release() }
-    }, [agent.id, tabUid, onChatSession, setDraftAttachment, draft.clear, draft.reload, draft.invalidate])
+    }, [agent.id, tabUid, onChatSession, draft.clear, draft.reload, draft.invalidate])
 
     // The constructor saves the callback; only a submitted request reads the pending draft.
     // eslint-disable-next-line react-hooks/refs
@@ -322,7 +331,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         conversationRoot.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
         setPanelFocus(null)
     }, [panelFocus, active, detailPanel, cardOpen])
-    const dirty = !draft.loaded || !!(input || attachment || queue.queued)
+    const dirty = !draft.loaded || !!(input || attachmentPaths.length || queue.queued)
     const readable = active && !cardOpen && !detailPanel && ready && !generating && history.loadedGeneration === historyGeneration
         && !!history.transcript && history.question !== undefined && history.approval !== undefined
         && engineRunning.id === sessionId
@@ -422,12 +431,13 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         try {
             if (!await draft.flush() || isDesktopQuitting()) return
             if (generating || (queue.queued && draftQueues.current.has(queue.queued.id))) {
-                const sameDraft = !generating && queue.queued && queue.queued.text === text && queue.queued.attachmentPath === attachment
-                const item = sameDraft ? queue.queued : await queue.enqueue(text, attachment, busy ? liveRunId : engineRunning.runId ?? null)
+                const queuedPaths = queue.queued ? desktopQueuedAttachmentPaths(queue.queued) : []
+                const sameDraft = !generating && queue.queued && queue.queued.text === text && samePaths(queuedPaths, attachmentPaths)
+                const item = sameDraft ? queue.queued : await queue.enqueue(text, attachmentPaths, busy ? liveRunId : engineRunning.runId ?? null)
                 if (!item) return
                 if (draft.clear(version)) {
                     setInputs(current => current.get(inputKey) === input ? new Map(current).set(inputKey, '') : current)
-                    setAttachments(current => { const next = new Map(current); if (next.get(draftKey) === attachment) next.delete(draftKey); return next })
+                    setAttachments(current => { const next = new Map(current); if (samePaths(current.get(draftKey) ?? [], attachmentPaths)) next.delete(draftKey); return next })
                 }
                 draftQueues.current.delete(item.id)
                 setQueueNotice(undefined)
@@ -436,12 +446,13 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             }
             setLiveSessionId(null)
             setLiveRunId(null)
-            const pending = { key: draftKey, inputKey, input, attachment, version, release }
+            const pending = { key: draftKey, inputKey, input, attachments: [...attachmentPaths], version, release }
             pendingAttachment.current = pending
             const pick = !sessionId && conversationChoice.current?.session === null ? conversationChoice.current.pick : undefined
-            const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(!sessionId && tabUid && { tabUid }), ...(pick && { modelChoice: pick }), ...(attachment && { attachmentPath: attachment }) }
+            const attachmentFields = desktopAttachmentFieldsOf(attachmentPaths)
+            const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(!sessionId && tabUid && { tabUid }), ...(pick && { modelChoice: pick }), ...attachmentFields }
             handedOff = true
-            void sendMessage({ text, ...(attachment && { metadata: { attachmentPath: attachment } }) }, { body }).finally(() => {
+            void sendMessage({ text, ...(attachmentPaths.length && { metadata: attachmentFields }) }, { body }).finally(() => {
                 if (pendingAttachment.current === pending) pendingAttachment.current = null
                 release()
             })
@@ -461,8 +472,10 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             setLiveSessionId(null)
             setLiveRunId(null)
             clearError?.()
-            await sendMessage({ text: item.text, ...(item.attachmentPath && { metadata: { attachmentPath: item.attachmentPath } }) }, {
-                body: { agentId: agent.id, sessionId, text: item.text, requestId: item.id, ...(item.attachmentPath && { attachmentPath: item.attachmentPath }) },
+            const paths = desktopQueuedAttachmentPaths(item)
+            const attachmentFields = desktopAttachmentFieldsOf(paths)
+            await sendMessage({ text: item.text, ...(paths.length && { metadata: attachmentFields }) }, {
+                body: { agentId: agent.id, sessionId, text: item.text, requestId: item.id, ...attachmentFields },
             })
         } catch (cause) {
             setQueueNotice(cause instanceof Error ? cause.message : 'Could not send the queued message. It is still saved.')
@@ -498,16 +511,17 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         restoredQueues.current.add(key)
         const isCurrent = () => queueScope.current === queue.key && !isDesktopQuitting()
         const restoreDraft = async () => {
+            const paths = desktopQueuedAttachmentPaths(item)
             await queue.action('review', item.id)
             if (!isCurrent()) return
-            if (composer.current.text.trim() === item.text && composer.current.attachment === item.attachmentPath) draftQueues.current.add(item.id)
+            if (composer.current.text.trim() === item.text && samePaths(draftPaths(composer.current), paths)) draftQueues.current.add(item.id)
             // An older waiting message must not replace a newer draft already in the composer.
-            if (!composer.current.text && !composer.current.attachment) {
+            if (!composer.current.text && draftPaths(composer.current).length === 0) {
                 draftQueues.current.add(item.id)
                 setInputs(current => new Map(current).set(draftKey, item.text))
-                setAttachments(current => { const next = new Map(current); if (item.attachmentPath) next.set(draftKey, item.attachmentPath); else next.delete(draftKey); return next })
-                composer.current = { text: item.text, attachment: item.attachmentPath }
-                draft.update({ text: item.text, attachmentPath: item.attachmentPath })
+                setAttachments(current => { const next = new Map(current); if (paths.length) next.set(draftKey, paths); else next.delete(draftKey); return next })
+                composer.current = { text: item.text, attachments: paths }
+                draft.update({ text: item.text, ...desktopAttachmentFieldsOf(paths) })
             }
             setQueueNotice('Your saved queued message is ready to review before sending.')
         }
@@ -517,7 +531,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 // request before offering its draft again; this probe can never create a run.
                 const response = await fetch('/api/desktop/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
                     agentId: agent.id, sessionId, text: item.text, requestId: item.id, reconcileOnly: true,
-                    ...(item.attachmentPath && { attachmentPath: item.attachmentPath }),
+                    ...desktopAttachmentFieldsOf(desktopQueuedAttachmentPaths(item)),
                 }) })
                 if (response.ok && response.headers.get('x-session-id') === sessionId && response.headers.get('x-run-id') === item.id) {
                     await response.body?.cancel()
@@ -529,7 +543,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             }
             await restoreDraft()
         })().catch(cause => { if (isCurrent()) setQueueNotice(cause instanceof Error ? cause.message : 'Could not restore the queued message.') })
-    }, [active, activeRunId, agent.id, draftKey, queue, queueStatusKnown, ready, sessionId, setDraftAttachment, stopping, draft.loaded, draft.error, draft.quitting, draft.update])
+    }, [active, activeRunId, agent.id, draftKey, queue, queueStatusKnown, ready, sessionId, stopping, draft.loaded, draft.error, draft.quitting, draft.update])
 
     const queued = queue.queued
     const queuedBehindFailure = !!queued?.behindRunId && queued.behindRunId === engineRunning.failedRunId
@@ -716,8 +730,10 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         <div key={message.id} className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
                             <Message from={message.role} className="min-w-0">
                                 <MessageContent className={cn(message.role === 'user' ? [USER_BUBBLE_SHAPE, USER_BUBBLE_INK, 'whitespace-pre-wrap wrap-anywhere'] : 'overflow-visible')}>
-                                    {message.role === 'user' && message.metadata && typeof message.metadata === 'object' && 'attachmentPath' in message.metadata && typeof message.metadata.attachmentPath === 'string' ?
-                                        <div className="mb-1"><AttachmentChip path={message.metadata.attachmentPath} /></div> : null}
+                                    {message.role === 'user' && (() => {
+                                        const paths = messageAttachmentPaths(message.metadata)
+                                        return paths.length ? <div className="mb-1"><AttachmentChips paths={paths} /></div> : null
+                                    })()}
                                     {message.role === 'assistant'
                                         ? <DesktopAssistantReply message={message} agentId={agent.id} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
                                             pendingRequestToolCallId={pendingRequest?.toolCallId}
@@ -751,19 +767,20 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         <span>{draft.error}</span>
                         {draft.conflict ? <><Button type="button" size="sm" variant="outline" onClick={() => void draft.keep()}>Keep this draft</Button><Button type="button" size="sm" variant="outline" onClick={() => void draft.reload()}>Use saved draft</Button></>
                             : <Button type="button" size="sm" variant="outline" onClick={() => void draft.retry()}>Retry saving draft</Button>}
-                    </div> : tabUid && (!draft.loaded || draft.saving || input || attachment) ? <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">{!draft.loaded ? 'Restoring draft…' : draft.saving ? 'Saving draft…' : 'Draft saved'}</p> : null}
+                    </div> : tabUid && (!draft.loaded || draft.saving || input || attachmentPaths.length) ? <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">{!draft.loaded ? 'Restoring draft…' : draft.saving ? 'Saving draft…' : 'Draft saved'}</p> : null}
                 {inactive && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">This coworker is inactive. Enable it from the board to send a message. Your chats are kept.</p>}
                 {(queue.error || queueNotice) && <p role={queue.error ? 'alert' : 'status'} className="mb-2 px-1 text-xs text-muted-foreground">{queue.error || queueNotice}</p>}
                 {queuedBehindFailure && !queueNotice && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">The previous reply failed. Your queued message is kept; use Send now when you are ready.</p>}
-                <QueuedMessagePill text={queued && !(draftQueues.current.has(queued.id) && input.trim() === queued.text && attachment === queued.attachmentPath) ? desktopQueuedPreview(queued) : null}
+                <QueuedMessagePill text={queued && !(draftQueues.current.has(queued.id) && input.trim() === queued.text && samePaths(attachmentPaths, desktopQueuedAttachmentPaths(queued))) ? desktopQueuedPreview(queued) : null}
                     busy={generating} pending={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || queue.pending || stopping || inactive || !!flushingQueue.current}
                     onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued && !isDesktopQuitting()) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
                 {question && <DesktopQuestionCard key={question.id} question={question} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
                 {approval && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
                 <form onSubmit={submit} hidden={!!pendingRequest} className={cn('min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest ? 'hidden' : 'flex')}>
-                    {attachment && <div className="px-2.5 pt-2"><AttachmentChip path={attachment}
-                        disabled={draft.quitting || !!regenerationSource || stopping || queue.pending || (pendingAttachment.current?.key === draftKey && pendingAttachment.current.attachment === attachment)}
-                        onRemove={() => setDraftAttachment(draftKey)} /></div>}
+                    {attachmentPaths.length > 0 && <div className="px-2.5 pt-2"><AttachmentChips paths={attachmentPaths}
+                        disabled={draft.quitting || !!regenerationSource || stopping || queue.pending}
+                        locked={pendingAttachment.current?.key === draftKey ? pendingAttachment.current.attachments : undefined}
+                        onRemove={path => setDraftAttachments(draftKey, attachmentPaths.filter(item => item !== path))} /></div>}
                     <label htmlFor={composerId} className="sr-only">Message {agent.name}</label>
                     <Textarea
                         id={composerId}
@@ -771,7 +788,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         className="min-h-12 w-full resize-none rounded-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
                         maxLength={20_000}
                         disabled={inactive || !draft.loaded || !!draft.error || draft.quitting}
-                        readOnly={!!regenerationSource || !!attachment && status === 'submitted'}
+                        readOnly={!!regenerationSource || !!attachmentPaths.length && status === 'submitted'}
                         placeholder="Send a message…"
                         value={input}
                         onChange={event => setInput(event.target.value)}
@@ -787,7 +804,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             workspaceModel={modelLabel} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} onReady={setModelReady} />
                         <div className="flex shrink-0 items-center gap-1">
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={inactive || stopping || !ready || queue.pending || !draft.loaded || !!draft.error || !!regenerationSource || draft.quitting}
-                                onSelect={path => setDraftAttachment(draftKey, path)} />
+                                paths={attachmentPaths} onChange={paths => setDraftAttachments(draftKey, paths)} />
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
                             <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || !input.trim() || stopping || !ready || !queue.loaded || queue.pending || !!queue.error}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>

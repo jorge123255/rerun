@@ -1,6 +1,6 @@
 import { afterEach } from 'vitest'
+import { desktopAttachmentFieldsOf, desktopAttachmentPathsOf } from '@rerun/contracts'
 import { cancelDraftShutdown, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
-import type { DesktopComposerDraft } from '@/lib/desktop/composer-draft'
 
 type Tab = { uid: string; id: string | null }
 const owners = new Set<string>()
@@ -17,8 +17,9 @@ export function createDesktopDraftFixture() {
     const receipts = new Map<string, string>()
     const key = (agent: string, uid: string) => JSON.stringify([agent, uid])
     const read = (agent: string, uid: string): DesktopComposerDraft => saved.get(key(agent, uid)) ?? { revision: 0, text: '' }
-    const write = (agent: string, uid: string, value: Pick<DesktopComposerDraft, 'text' | 'attachmentPath'>) => {
-        const next = { revision: read(agent, uid).revision + 1, ...value }
+    const write = (agent: string, uid: string, value: { text: string; attachmentPath?: string; attachmentPaths?: string[] }) => {
+        const fields = desktopAttachmentFieldsOf(desktopAttachmentPathsOf(value))
+        const next = { revision: read(agent, uid).revision + 1, text: value.text, ...fields }
         saved.set(key(agent, uid), next)
         return next
     }
@@ -41,7 +42,7 @@ export function createDesktopDraftFixture() {
                     if (!before.id || before.id === after.id) continue
                     const original = next.find(tab => tab.uid !== before.uid && tab.id === before.id)
                     const source = read(agent, before.uid)
-                    if (original) write(agent, original.uid, { text: source.text, ...(source.attachmentPath && { attachmentPath: source.attachmentPath }) })
+                    if (original) write(agent, original.uid, { text: source.text, ...desktopAttachmentFieldsOf(desktopAttachmentPathsOf(source)) })
                     write(agent, before.uid, { text: '' })
                 }
                 layouts.set(agent, next)
@@ -49,19 +50,20 @@ export function createDesktopDraftFixture() {
                 return
             }
             if (method === 'GET') return Response.json({ draft: read(agent, url.searchParams.get('tabUid')!) })
-            const body = JSON.parse(String(init?.body)) as { tabUid: string; requestId: string; baseRevision?: number; revision?: number; text: string; attachmentPath?: string }
+            const body = JSON.parse(String(init?.body)) as { tabUid: string; requestId: string; baseRevision?: number; revision?: number; text: string; attachmentPath?: string; attachmentPaths?: string[] }
             const current = read(agent, body.tabUid)
             const fingerprint = JSON.stringify([agent, method, body])
             const receipt = receipts.get(body.requestId)
             if (receipt) return receipt === fingerprint ? Response.json({ draft: current }) : Response.json({ error: 'Changed draft request', draft: current }, { status: 409 })
             if (method === 'PUT') {
                 if (body.baseRevision !== current.revision) return Response.json({ error: 'Changed draft', draft: current }, { status: 409 })
-                const draft = write(agent, body.tabUid, { text: body.text, ...(body.attachmentPath && { attachmentPath: body.attachmentPath }) })
+                const draft = write(agent, body.tabUid, { text: body.text, ...desktopAttachmentFieldsOf(desktopAttachmentPathsOf(body)) })
                 receipts.set(body.requestId, fingerprint)
                 return Response.json({ draft })
             }
             if (method === 'DELETE') {
-                const cleared = body.revision === current.revision && body.text === current.text && body.attachmentPath === current.attachmentPath
+                const cleared = body.revision === current.revision && body.text === current.text
+                    && JSON.stringify(desktopAttachmentPathsOf(body)) === JSON.stringify(desktopAttachmentPathsOf(current))
                 const draft = cleared ? write(agent, body.tabUid, { text: '' }) : current
                 receipts.set(body.requestId, fingerprint)
                 return Response.json({ draft, cleared })

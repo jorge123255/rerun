@@ -1,15 +1,14 @@
 import { createHash } from 'node:crypto'
-import type { DesktopApprovalGuard, DesktopQuestionGuard, DesktopWorkspaceAttachment, MessageAuthor } from '@rerun/contracts'
-import { workspaceAttachmentPart } from '@rerun/contracts'
+import { desktopAttachmentFingerprintOf, desktopAttachmentPathsOf, workspaceAttachmentParts, type DesktopApprovalGuard, type DesktopQuestionGuard, type DesktopWorkspaceAttachment, type MessageAuthor } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
 import type { MessageRow } from '../schema.js'
 import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
 
-export type QueuedTurn = { runId: string; sessionId: string; message: string; attachmentPath?: string; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard }
+export type QueuedTurn = { runId: string; sessionId: string; message: string; attachmentPath?: string; attachmentPaths?: string[]; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard }
 
 function fingerprint(turn: QueuedTurn) {
-    const parts: unknown[] = [turn.sessionId, turn.message, turn.attachmentPath ?? null]
+    const parts: unknown[] = [turn.sessionId, turn.message, desktopAttachmentFingerprintOf(desktopAttachmentPathsOf(turn))]
     // Old queue receipts keep their original fingerprint. A question answer also binds the
     // immutable source call, so its run ID cannot be replayed for a different question.
     if (turn.question) parts.push([turn.question.sourceMessageId, turn.question.toolCallId, turn.question.fingerprint])
@@ -27,12 +26,12 @@ export async function getDesktopQueuedTurn(agentId: string, turn: QueuedTurn): P
 
 // The receipt, run and user text commit together before an HTTP acknowledgement. Even a crash
 // during provider preparation leaves the accepted prompt in history, and retries never resend it.
-export async function reserveDesktopQueuedTurn(agentId: string, turn: QueuedTurn, attachment?: DesktopWorkspaceAttachment, author?: MessageAuthor): Promise<MessageRow> {
+export async function reserveDesktopQueuedTurn(agentId: string, turn: QueuedTurn, attachments?: DesktopWorkspaceAttachment[], author?: MessageAuthor): Promise<MessageRow> {
     const { client } = await getSystemDb(agentId)
     const now = nowIso()
     const user: MessageRow = {
         id: newId(), sessionId: turn.sessionId, role: 'user',
-        contentJson: JSON.stringify([{ type: 'text', text: turn.message }, ...(attachment ? [workspaceAttachmentPart(attachment)] : [])]),
+        contentJson: JSON.stringify([{ type: 'text', text: turn.message }, ...workspaceAttachmentParts(attachments ?? [])]),
         toolCallsJson: null, sourcesJson: null, createdAt: now, authorId: author?.id ?? null, authorName: author?.name ?? null,
     }
     await client.batch([

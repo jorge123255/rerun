@@ -56,6 +56,7 @@ test('regenerates the selected saved reply in a separate chat and retries a lost
         expect(buttons('Regenerate reply')[0].title).toContain('keeps the original')
         await click('Attach from Files')
         await click('pending.md')
+        await click('Done')
         await writeDraft('Draft for the original')
         const firstButton = buttons('Regenerate reply')[0]
         await act(async () => { firstButton.click(); firstButton.click() })

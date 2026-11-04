@@ -7,7 +7,7 @@ import type { Logger } from '../lib/logger.js'
 import type { HostBreaker } from '../tools/host-breaker.js'
 import type { ScreenshotStore } from './screenshots.js'
 
-export type RunTrigger = { source: 'chat'; author?: MessageAuthor; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; savedUser?: MessageRow; queuedUser?: MessageRow } | { source: 'schedule'; slug: string; name: string } | { source: 'trigger'; slug: string; name: string }
+export type RunTrigger = { source: 'chat'; author?: MessageAuthor; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; workspaceAttachments?: DesktopWorkspaceAttachment[]; savedUser?: MessageRow; queuedUser?: MessageRow } | { source: 'schedule'; slug: string; name: string } | { source: 'trigger'; slug: string; name: string }
 
 export type PartialResult = { label: string; text: string }
 

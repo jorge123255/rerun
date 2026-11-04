@@ -16,8 +16,8 @@ vi.mock('@ai-sdk/react', () => ({ useChat: ({ transport }: { transport: { fetch:
 vi.mock('./DesktopModelSelector', () => ({ DesktopModelSelector: ({ onReady }: { onReady?: (ready: boolean) => void }) => { useEffect(() => onReady?.(true), [onReady]); return null } }))
 vi.mock('./DesktopAttachmentPicker', async original => ({
     ...await original<typeof import('./DesktopAttachmentPicker')>(),
-    DesktopAttachmentPicker: ({ disabled, onSelect }: { disabled: boolean; onSelect: (path: string) => void }) =>
-        <button type="button" disabled={disabled} onClick={() => onSelect('second.md')}>Choose second.md</button>,
+    DesktopAttachmentPicker: ({ disabled, onChange }: { disabled: boolean; paths: readonly string[]; onChange: (paths: string[]) => void }) =>
+        <button type="button" disabled={disabled} onClick={() => onChange(['second.md'])}>Choose second.md</button>,
 }))
 vi.mock('motion/react', async original => {
     const actual = await original<typeof import('motion/react')>()

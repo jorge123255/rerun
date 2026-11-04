@@ -118,7 +118,7 @@ test('regeneration stays on its own transport while another tab is active, and k
     try {
         await act(async () => { root.render(<DesktopChatTabs agent={agent} sessions={sessions} initialLayout={{ tabs, activeIndex: 0, revision: 1 }}
             requested={null} selected refreshSessions={async () => {}} reload={() => {}} onClosePanel={() => {}} onOpenModelSettings={() => {}} />) })
-        await click('Attach from Files'); await click('original.txt')
+        await click('Attach from Files'); await click('original.txt'); await click('Done')
         await act(async () => {
             const composer = visible().querySelector('textarea')!
             Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(composer, 'A draft for the original')

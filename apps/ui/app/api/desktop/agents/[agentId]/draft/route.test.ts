@@ -64,7 +64,27 @@ test('GET is read-only and drafts persist exact text and a selected own file thr
     expect(JSON.stringify((await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_composer_drafts')).rows)).not.toContain('alice-engine file bytes')
 })
 
-test('authentication, owned tab membership, payload bounds and physical attachment confinement are required', async () => {
+test('drafts keep an ordered multi-file set and validate each file before storing it', async () => {
+    for (const name of ['a.md', 'b.txt']) await writeFile(join(workspace('alice-engine'), name), name)
+    const body = { tabUid: 'live', baseRevision: 0, requestId: crypto.randomUUID(), text: 'Compare them', attachmentPaths: ['a.md', 'b.txt'] }
+    const response = await put(body)
+    expect(response.status).toBe(200)
+    const saved = (await response.json()).draft
+    expect(saved).toMatchObject({ revision: 1, text: 'Compare them', attachmentPaths: ['a.md', 'b.txt'] })
+    expect(saved).not.toHaveProperty('attachmentPath')
+    const db = await openDesktopDatabase(root)
+    const row = (await db.execute('SELECT attachment_path, attachment_paths FROM desktop_composer_drafts')).rows[0]
+    expect(String(row.attachment_path)).toBe('a.md')
+    expect(JSON.parse(String(row.attachment_paths))).toEqual(['a.md', 'b.txt'])
+
+    expect((await put({ ...body, baseRevision: 1, requestId: crypto.randomUUID(), attachmentPaths: ['a.md', 'missing.md'] })).status).toBe(404)
+    expect((await put({ ...body, baseRevision: 1, requestId: crypto.randomUUID(), attachmentPaths: ['a.md', 'a.md'] })).status).toBe(400)
+    for (let index = 0; index < 5; index++) await writeFile(join(workspace('alice-engine'), `heavy-${index}.md`), Buffer.alloc(32 * 1024, 65))
+    expect((await put({ ...body, baseRevision: 1, requestId: crypto.randomUUID(), attachmentPaths: Array.from({ length: 5 }, (_, index) => `heavy-${index}.md`) })).status).toBe(413)
+    expect(await read()).toEqual(saved)
+})
+
+
     const body = input('Draft')
     expect((await PUT(request(alice, '', 'PUT', body, { cookie: '' }), params(alice))).status).toBe(401)
     expect((await PUT(request(alice, '', 'PUT', body, { origin: 'https://example.com' }), params(alice))).status).toBe(403)

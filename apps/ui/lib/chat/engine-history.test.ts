@@ -242,6 +242,15 @@ describe('a user turn stored as parts', () => {
         expect(attached.parts).toEqual([{ type: 'text', text }])
         expect(JSON.stringify(attached)).not.toContain('Saved private body.')
     })
+
+    it('keeps the ordered set of several attached files and never their bodies', () => {
+        const paths = ['folder/first.md', 'folder/second.txt']
+        const parts = paths.map(path => workspaceAttachmentPart({ path, content: `Private body for ${path}` }))
+        const [attached] = transformEngineMessages([row([{ type: 'text', text: 'Compare them' }, ...parts])], { desktopSummaries: true })
+        expect(attached.metadata?.attachmentPaths).toEqual(paths)
+        expect(attached.metadata).not.toHaveProperty('attachmentPath')
+        expect(JSON.stringify(attached)).not.toContain('Private body')
+    })
 })
 
 describe('message author', () => {
