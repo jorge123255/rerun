@@ -124,6 +124,8 @@ export function mergeRunStream(writer: UIMessageStreamWriter, run: AgentRun, met
             withQuickReplies(
                 normalizeRunStream(
                     run.result.toUIMessageStream({
+                        // registerRun already starts desktop turns before history preparation.
+                        sendStart: !desktopApp(),
                         sendSources: desktopApp(),
                         messageMetadata: ({ part }) => {
                             if (part.type === 'finish-step') {

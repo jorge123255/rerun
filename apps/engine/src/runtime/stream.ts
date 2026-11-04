@@ -1,4 +1,5 @@
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessageStreamWriter } from 'ai'
+import { desktopApp } from '../desktop/policy.js'
 import { registerRunStream, subscribeRunStream } from './run-streams.js'
 
 const HEARTBEAT_MS = 15_000
@@ -7,7 +8,12 @@ const HEARTBEAT_MS = 15_000
 // buffer on its own: the run therefore advances even with no HTTP consumer attached.
 export function registerRun(runId: string, execute: (writer: UIMessageStreamWriter) => Promise<void>): Response {
     const stream = createUIMessageStream({
-        execute: ({ writer }) => execute(writer),
+        execute: ({ writer }) => {
+            // History preparation can emit compaction before the provider starts. Give those
+            // events the turn's final identity so the SDK never creates a second assistant row.
+            if (desktopApp()) writer.write({ type: 'start', messageId: runId })
+            return execute(writer)
+        },
         onError: error => (error instanceof Error ? error.message : String(error)),
     })
     const base = createUIMessageStreamResponse({ stream })
