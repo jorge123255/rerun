@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { STATS_TIME_RANGE_META } from '@rerun/contracts'
-import { MonitorCard, StatsChart } from '@rerun/ui/monitoring'
+import { MonitorCard, StatsChart, TokenUsageChart } from '@rerun/ui/monitoring'
 import type { StatsChartType, StatsGroupBy, StatsMetric, StatsPoint } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
-import { desktopMonitoringSchema, MONITORING_RANGES, type DesktopMonitoring, type MonitoringRange } from '@/lib/desktop/monitoring'
+import { dailyTokenUsage, desktopMonitoringSchema, MONITORING_RANGES, type DesktopMonitoring, type MonitoringRange } from '@/lib/desktop/monitoring'
 import { ActivityIcon, AlertTriangleIcon, BarChart3Icon, CircleDollarSignIcon, CoinsIcon, CpuIcon, GaugeIcon, HashIcon, Maximize2Icon, TimerIcon, WrenchIcon } from '@/lib/icons'
 import type { DesktopAgentView } from './DesktopApp'
 
@@ -76,7 +76,13 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
         points !== null && points.length === 0
             ? chartMessage('No recorded tool calls in this period.')
             : <StatsChart dataset="toolCalls" metric={metric} groupBy="toolName" chartType="bar" points={points} />
-    const chartPanels: { key: string; title: string; icon: ComponentType<{ className?: string }>; node: ReactNode }[] = [
+    const tokenUsageNode = data === null
+        ? <TokenUsageChart metric="tokens" breakdown="total" chartType="area" days={null} />
+        : data.totalTokens === null
+            ? chartMessage('Tokens were not recorded for every run in this period.')
+            : <TokenUsageChart metric="tokens" breakdown="total" chartType="area" days={dailyTokenUsage(data.totalTokens)} />
+    const chartPanels: { key: string; title: string; subtitle?: string; icon: ComponentType<{ className?: string }>; node: ReactNode }[] = [
+        { key: 'tokenUsage', title: 'Token usage', subtitle: 'Tokens per day', icon: CoinsIcon, node: tokenUsageNode },
         { key: 'runsOverTime', title: 'Runs over time', icon: ActivityIcon, node: <StatsChart dataset="runs" metric="count" groupBy="status" chartType="bar" points={data?.runsByStatus ?? null} /> },
         { key: 'costOverTime', title: 'Cost over time', icon: CircleDollarSignIcon, node: data?.cost === null ? chartMessage('Cost was not recorded for every run in this period.') : <StatsChart dataset="runs" metric="cost" groupBy="none" chartType="area" points={data?.cost ?? null} /> },
         { key: 'avgDuration', title: 'Avg run duration', icon: TimerIcon, node: <StatsChart dataset="runs" metric="avgDurationMs" groupBy="none" chartType="line" points={data?.avgDuration ?? null} /> },
@@ -136,6 +142,7 @@ export function DesktopCoworkerMonitoringBody({ agent }: { agent: DesktopAgentVi
                                 key={panel.key}
                                 className="h-56"
                                 title={panel.title}
+                                subtitle={panel.subtitle}
                                 icon={panel.icon}
                                 action={
                                     <button
@@ -176,7 +183,7 @@ function MonitoringSkeleton() {
                 ))}
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                {Array.from({ length: 6 }).map((_, i) => (
+                {Array.from({ length: 7 }).map((_, i) => (
                     <Skeleton key={i} className="h-56" />
                 ))}
             </div>

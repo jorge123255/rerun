@@ -20,18 +20,20 @@ function dayShort(day: string): string {
 
 type Series = { key: string; label: string; color: string }
 
-export type TokenUsageChartProps = {
-    metric?: 'tokens' | 'cost'
-    breakdown?: 'total' | 'inputOutput' | 'model'
-    chartType?: 'area' | 'bar' | 'donut' | 'stat'
-    buckets: EngineUsageBucket[] | null
+export type TokenUsageDay = { day: string; totalTokens: number; runCount: number }
+
+type CommonProps = {
     className?: string
     // Recharts draws itself over ~1.5s in JS, which no CSS lever stops: a screenshot taken while the
     // area is still growing shows a half-drawn chart. Off for anything captured by rerun-shot.
     animated?: boolean
 }
 
-export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartType = 'area', buckets, className, animated = true }: TokenUsageChartProps) {
+export type TokenUsageChartProps =
+    | (CommonProps & { metric?: 'tokens' | 'cost'; breakdown?: 'total' | 'inputOutput' | 'model'; chartType?: 'area' | 'bar' | 'donut' | 'stat'; buckets: EngineUsageBucket[] | null; days?: undefined })
+    | (CommonProps & { metric?: 'tokens'; breakdown?: 'total'; chartType?: 'area' | 'bar' | 'stat'; days: TokenUsageDay[] | null; buckets?: undefined })
+
+export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartType = 'area', buckets, days, className, animated = true }: TokenUsageChartProps) {
     const formatValue = useCallback((n: number) => (metric === 'cost' ? formatCost(n) : compactFmt.format(n)), [metric])
 
     const daily = useMemo(() => {
@@ -48,6 +50,11 @@ export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartT
         }
         return [...map.values()].sort((a, b) => a.day.localeCompare(b.day))
     }, [buckets])
+
+    const measuredDays: { day: string; tokens: number; cost?: number; runCount: number }[] = useMemo(() => {
+        if (days === undefined) return daily
+        return (days ?? []).map(d => ({ day: d.day, tokens: d.totalTokens, runCount: d.runCount })).sort((a, b) => a.day.localeCompare(b.day))
+    }, [daily, days])
 
     const effectiveBreakdown = breakdown === 'inputOutput' && metric === 'cost' ? 'total' : breakdown
 
@@ -89,9 +96,9 @@ export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartT
             return { rows: r, series: s }
         }
         const s: Series[] = [{ key: 'value', label: metric === 'cost' ? 'Cost' : 'Tokens', color: CHART_PALETTE[0] }]
-        const r = daily.map(d => ({ day: dayShort(d.day), value: metric === 'cost' ? d.cost : d.tokens }))
+        const r = measuredDays.map(d => ({ day: dayShort(d.day), value: metric === 'cost' ? (d.cost ?? 0) : d.tokens }))
         return { rows: r, series: s }
-    }, [buckets, daily, models, metric, effectiveBreakdown])
+    }, [buckets, daily, measuredDays, models, metric, effectiveBreakdown])
 
     const chartConfig = useMemo<ChartConfig>(() => Object.fromEntries(series.map(s => [s.key, { label: s.label, color: s.color }])), [series])
 
@@ -110,25 +117,26 @@ export function TokenUsageChart({ metric = 'tokens', breakdown = 'total', chartT
     }, [daily, models, effectiveBreakdown])
 
     const stat = useMemo(() => {
-        const total = daily.reduce((sum, d) => sum + (metric === 'cost' ? d.cost : d.tokens), 0)
-        const runCount = daily.reduce((sum, d) => sum + d.runCount, 0)
-        const sparkRows = daily.map(d => ({ v: metric === 'cost' ? d.cost : d.tokens }))
+        const total = measuredDays.reduce((sum, d) => sum + (metric === 'cost' ? (d.cost ?? 0) : d.tokens), 0)
+        const runCount = measuredDays.reduce((sum, d) => sum + d.runCount, 0)
+        const sparkRows = measuredDays.map(d => ({ v: metric === 'cost' ? (d.cost ?? 0) : d.tokens }))
         let delta: number | null = null
-        if (daily.length >= 2) {
-            const mid = Math.floor(daily.length / 2)
+        if (measuredDays.length >= 2) {
+            const mid = Math.floor(measuredDays.length / 2)
             const first = sparkRows.slice(0, mid).reduce((s, r) => s + r.v, 0)
             const second = sparkRows.slice(mid).reduce((s, r) => s + r.v, 0)
             if (first > 0) delta = ((second - first) / first) * 100
         }
         return { total, runCount, sparkRows, delta }
-    }, [daily, metric])
+    }, [measuredDays, metric])
 
-    const isEmpty = daily.length === 0
+    const isEmpty = measuredDays.length === 0
+    const loading = days !== undefined ? days === null : buckets === null
 
     return (
         <div className={cn('h-full w-full p-1', className)}>
             {isEmpty ? (
-                <div className="flex h-full items-center justify-center text-center text-[12px] text-muted-foreground">{buckets === null ? 'Loading...' : 'No usage in this period.'}</div>
+                <div className="flex h-full items-center justify-center text-center text-[12px] text-muted-foreground">{loading ? 'Loading...' : 'No usage in this period.'}</div>
             ) : chartType === 'stat' ? (
                 <div className="flex h-full flex-col justify-center gap-1 px-2">
                     <div className="text-3xl font-semibold leading-none text-foreground">{formatValue(stat.total)}</div>

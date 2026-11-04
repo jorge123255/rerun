@@ -60,6 +60,9 @@ test('shows the skeleton then the monitoring cards for the coworker', async () =
         expect(dialogText()).toContain('$2.50')
         expect(dialogText()).toContain('Total tokens')
         expect(dialogText()).toContain('320')
+        expect(dialogText()).toContain('Token usage')
+        expect(dialogText()).toContain('Tokens per day')
+        expect(dialogText().indexOf('Token usage')).toBeLessThan(dialogText().indexOf('Runs over time'))
         expect(dialogText()).toContain('Runs over time')
         expect(dialogText()).toContain('Cost over time')
         expect(dialogText()).toContain('Avg run duration')
@@ -105,6 +108,7 @@ test('names the empty period and hides cost and token cards when not recorded', 
         expect(dialogText()).toContain('Runs')
         expect(dialogText()).not.toContain('Total cost')
         expect(dialogText()).not.toContain('Total tokens')
+        expect(dialogText()).toContain('Tokens were not recorded for every run in this period.')
         expect(dialogText()).toContain('Cost was not recorded for every run in this period.')
         expect(dialogText()).toContain('No recorded tool calls in this period.')
     } finally { await act(async () => { root.unmount() }) }

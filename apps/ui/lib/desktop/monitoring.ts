@@ -1,4 +1,5 @@
-import { statsPointSchema } from '@rerun/contracts'
+import { statsPointSchema, type StatsPoint } from '@rerun/contracts'
+import type { TokenUsageDay } from '@rerun/ui/monitoring'
 import { z } from 'zod'
 
 export const MONITORING_RANGES = ['24h', '7d', '30d', '90d'] as const
@@ -19,3 +20,15 @@ export const desktopMonitoringSchema = z.object({
     toolErrors: z.array(statsPointSchema),
 })
 export type DesktopMonitoring = z.infer<typeof desktopMonitoringSchema>
+
+export function dailyTokenUsage(points: StatsPoint[]): TokenUsageDay[] {
+    const days = new Map<string, TokenUsageDay>()
+    for (const point of points) {
+        const key = point.bucket.slice(0, 10)
+        const day = days.get(key) ?? { day: key, totalTokens: 0, runCount: 0 }
+        day.totalTokens += point.value
+        day.runCount += point.count
+        days.set(key, day)
+    }
+    return [...days.values()].sort((a, b) => a.day.localeCompare(b.day))
+}
