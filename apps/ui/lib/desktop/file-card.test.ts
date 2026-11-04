@@ -110,7 +110,7 @@ test('bounds the text edge, image edge, video edge and aggregate media preview b
     expect(desktopFileCardOf(card(overBudget))).toBeUndefined()
     // Video is charged to the same combined budget as images.
     expect(desktopFileCardOf(card([...withinBudget, video({ size: 1 })]))).toBeUndefined()
-    // Two full-size videos fit; images and videos share the same ceiling.
+    // One full-size image and one full-size video fit the shared ceiling.
     expect(desktopFileCardOf(card([image({ size: CARD_MAX_IMAGE_BYTES }), video({ size: CARD_MAX_VIDEO_BYTES })]))?.files).toHaveLength(2)
     const ten = 10 * 1024 * 1024
     expect(desktopFileCardOf(card([

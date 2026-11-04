@@ -84,7 +84,7 @@ test('an all-video album fetches only four visible first-frame previews and page
     expect([...document.querySelectorAll('figcaption')].map(node => node.textContent)).toEqual(['1.mp4', '2.mp4', '3.mp4', '4.mp4'])
     const tiles = [...document.querySelectorAll<HTMLVideoElement>('[data-file-card] video')]
     expect(tiles).toHaveLength(4)
-    expect(tiles.every(tile => tile.hasAttribute('autoplay'))).toBe(false)
+    expect(tiles.some(tile => tile.hasAttribute('autoplay'))).toBe(false)
     expect(tiles.every(tile => tile.getAttribute('preload') === 'metadata')).toBe(true)
     expect(tiles.map(tile => tile.getAttribute('src'))).toEqual([
         'blob:card-video-1#t=0.1', 'blob:card-video-2#t=0.1', 'blob:card-video-3#t=0.1', 'blob:card-video-4#t=0.1',
@@ -171,7 +171,9 @@ test('a playback error removes the player and releases its object URL', async ()
     const root = mount()
     await act(async () => root.render(<DesktopFileCard agentId="owner a" card={cardOf([video(1)])} />))
     await flush()
-    await click('Open 1.mp4')
+    const tile = document.querySelector<HTMLVideoElement>('[data-file-card] video')!
+    await act(async () => { tile.dispatchEvent(new Event('loadeddata')) })
+    await click('Open 1.mp4 full screen')
     const player = dialog()?.querySelector<HTMLVideoElement>('video')!
     const url = player.getAttribute('src')
     await act(async () => { player.dispatchEvent(new Event('error')) })
@@ -180,45 +182,130 @@ test('a playback error removes the player and releases its object URL', async ()
     expect(urls.revoke).toHaveBeenCalledWith(url)
 })
 
-test('paging, owner changes and unmount stop the player, abort its read and never revive a late video', async () => {
+test.each([false, true])('a failed video preview releases only its own URL, including mixed cards: %s', async mixed => {
     const urls = objectUrls()
     const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause')
-    const pending = new Map<string, (response: Response) => void>()
-    const requests = mediaReads(request => request.owner === 'alpha' && request.path === 'clips/1.mp4'
-        ? videoResponse()
-        : new Promise(resolve => { pending.set(`${request.owner}:${request.path}`, resolve) }))
+    const load = vi.spyOn(HTMLMediaElement.prototype, 'load')
+    mediaReads(() => videoResponse())
+    const root = mount()
+    const files = mixed ? [textFile(), video(1), video(2)] : [video(1), video(2)]
+    await act(async () => root.render(<DesktopFileCard agentId="owner a" card={cardOf(files)} />))
+    await flush()
+    const [failed, sibling] = [...document.querySelectorAll<HTMLVideoElement>('[data-file-card] video')]
+    expect(failed?.getAttribute('src')).toBe('blob:card-video-1#t=0.1')
+    expect(sibling?.getAttribute('src')).toBe('blob:card-video-2#t=0.1')
+
+    await act(async () => { failed!.dispatchEvent(new Event('error')) })
+    expect(failed!.getAttribute('src')).toBeNull()
+    expect(pause.mock.contexts).toContain(failed)
+    expect(load.mock.contexts).toContain(failed)
+    expect(urls.revoke.mock.calls).toEqual([['blob:card-video-1']])
+    expect([...document.querySelectorAll('[data-file-card] video')]).toEqual([sibling])
+    expect(sibling!.getAttribute('src')).toBe('blob:card-video-2#t=0.1')
+    expect(document.querySelector('button[aria-label="Open 1.mp4"]')?.textContent)
+        .toContain(mixed ? 'Video unavailable' : 'This video can’t be played.')
+
+    await unmount(root)
+    expect(urls.revoke.mock.calls).toEqual([['blob:card-video-1'], ['blob:card-video-2']])
+})
+
+test('paging and owner changes stop loaded players and ignore late page, owner and unmounted responses', async () => {
+    const urls = objectUrls()
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause')
+    const pending: ((response: Response) => void)[] = []
+    // These responses deliberately ignore AbortSignal so the component must reject late results.
+    const requests = mediaReads(() => new Promise(resolve => { pending.push(resolve) }))
     const root = mount()
     const files = [video(1), image(2)]
     const render = (owner: string, index: number) => act(async () => root.render(
         <DesktopFileLightbox agentId={owner} files={files} index={index} onIndexChange={() => {}} onClose={() => {}} />,
     ))
+    const resolve = async (index: number, response: Response) => {
+        expect(pending[index]).toBeDefined()
+        await act(async () => { pending[index]!(response) })
+        await flush()
+    }
     await render('alpha', 0)
-    await flush()
+    await resolve(0, videoResponse())
     const alphaPlayer = dialog()?.querySelector<HTMLVideoElement>('video')!
     const alphaUrl = alphaPlayer.getAttribute('src')
-    expect(alphaUrl).toMatch(/^blob:/)
+    expect(alphaUrl).toBe('blob:card-video-1')
 
     await render('alpha', 1)
-    await flush()
     expect(alphaPlayer.getAttribute('src')).toBeNull()
-    expect(pause).toHaveBeenCalled()
+    expect(pause.mock.contexts).toContain(alphaPlayer)
     expect(urls.revoke).toHaveBeenCalledWith(alphaUrl)
     expect(requests[0].signal.aborted).toBe(true)
 
     await render('bravo', 0)
-    expect(requests[1].signal.aborted).toBe(false)
-    await act(async () => { pending.get('bravo:clips/1.mp4')!(videoResponse()) })
-    await flush()
+    expect(requests[1].signal.aborted).toBe(true)
+    expect(requests[2].signal.aborted).toBe(false)
+    await resolve(2, videoResponse())
     const bravoPlayer = dialog()?.querySelector<HTMLVideoElement>('video')!
     const bravoUrl = bravoPlayer.getAttribute('src')
+    expect(bravoUrl).toBe('blob:card-video-2')
+    await resolve(1, imageResponse())
+    expect(dialog()?.querySelector('img')).toBeNull()
+    expect(dialog()?.querySelector('video')).toBe(bravoPlayer)
+    expect(urls.create).toHaveBeenCalledTimes(2)
 
-    await render('alpha', 0)
-    expect(pause).toHaveBeenCalled()
+    await render('charlie', 0)
+    expect(bravoPlayer.getAttribute('src')).toBeNull()
+    expect(pause.mock.contexts).toContain(bravoPlayer)
     expect(urls.revoke).toHaveBeenCalledWith(bravoUrl)
-    await act(async () => { pending.get('alpha:clips/1.mp4')!(videoResponse()) })
-    await flush()
-    await unmount(root)
     expect(requests[2].signal.aborted).toBe(true)
+    await render('delta', 0)
+    expect(requests[3].signal.aborted).toBe(true)
+    await resolve(3, videoResponse())
+    expect(dialog()?.querySelector('video')).toBeNull()
+    expect(urls.create).toHaveBeenCalledTimes(2)
+    await resolve(4, videoResponse())
+    const deltaPlayer = dialog()?.querySelector<HTMLVideoElement>('video')!
+    expect(deltaPlayer.getAttribute('src')).toBe('blob:card-video-3')
+
+    await render('echo', 0)
+    expect(deltaPlayer.getAttribute('src')).toBeNull()
+    expect(pause.mock.contexts).toContain(deltaPlayer)
+    expect(urls.revoke).toHaveBeenCalledWith('blob:card-video-3')
+    await unmount(root)
+    expect(requests.every(request => request.signal.aborted)).toBe(true)
+    await resolve(5, videoResponse())
+    expect(dialog()).toBeNull()
+    expect(urls.create).toHaveBeenCalledTimes(3)
+    expect(urls.revoke.mock.calls).toEqual([
+        ['blob:card-video-1'], ['blob:card-video-2'], ['blob:card-video-3'],
+    ])
+})
+
+test('late album responses cannot replace the current owner or allocate a URL after unmount', async () => {
+    const urls = objectUrls()
+    const pending: ((response: Response) => void)[] = []
+    const requests = mediaReads(() => new Promise(resolve => { pending.push(resolve) }))
+    const root = mount()
+    const render = (owner: string) => act(async () => root.render(
+        <DesktopFileCard agentId={owner} card={cardOf([video(1)])} />,
+    ))
+    await render('alpha')
+    await render('bravo')
+    expect(requests[0].signal.aborted).toBe(true)
+    await act(async () => { pending[1]!(videoResponse()) })
+    await flush()
+    const bravoPlayer = document.querySelector<HTMLVideoElement>('[data-file-card] video')!
+    expect(bravoPlayer.getAttribute('src')).toBe('blob:card-video-1#t=0.1')
+    await act(async () => { pending[0]!(videoResponse()) })
+    await flush()
+    expect(document.querySelector('[data-file-card] video')).toBe(bravoPlayer)
+    expect(urls.create).toHaveBeenCalledTimes(1)
+
+    await render('charlie')
+    expect(bravoPlayer.getAttribute('src')).toBeNull()
+    expect(urls.revoke.mock.calls).toEqual([['blob:card-video-1']])
+    await unmount(root)
+    expect(requests.every(request => request.signal.aborted)).toBe(true)
+    await act(async () => { pending[2]!(videoResponse()) })
+    await flush()
+    expect(document.querySelector('[data-file-card]')).toBeNull()
+    expect(urls.create).toHaveBeenCalledTimes(1)
 })
 
 test('the video tile stops and detaches its element when the card is replaced', async () => {
@@ -235,13 +322,13 @@ test('the video tile stops and detaches its element when the card is replaced', 
     await flush()
     expect(tile.getAttribute('src')).toBeNull()
     expect(pause).toHaveBeenCalled()
-    expect(urls.revoke).toHaveBeenCalledWith(first)
+    expect(urls.revoke).toHaveBeenCalledWith('blob:card-video-1')
     expect(document.querySelector('[data-file-card] video')?.getAttribute('src')).toBe('blob:card-video-2#t=0.1')
     expect(requests[0].signal.aborted).toBe(true)
     await unmount(root)
 })
 
-test('combined image and video previews stop before the 24 MB budget using fetched bytes', async () => {
+test('combined image and video previews make no fourth fetch once actual bytes reach 24 MB', async () => {
     const urls = objectUrls()
     const requests = mediaReads(request => request.kind === 'video' ? videoResponse(CARD_MAX_IMAGE_BYTES) : imageResponse(CARD_MAX_IMAGE_BYTES))
     const root = mount()

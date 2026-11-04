@@ -52,6 +52,7 @@ type DesktopCardVideoTileProps = {
     name: string
     shape: MediaTileShape
     onOpen: () => void
+    onError: () => void
 }
 
 /**
@@ -60,8 +61,9 @@ type DesktopCardVideoTileProps = {
  * paged lightbox. It never autoplays, and its element is stopped and detached on unmount, before
  * the card releases the object URL.
  */
-export function DesktopCardVideoTile({ src, name, shape, onOpen }: DesktopCardVideoTileProps) {
+export function DesktopCardVideoTile({ src, name, shape, onOpen, onError }: DesktopCardVideoTileProps) {
     const videoRef = useRef<HTMLVideoElement | null>(null)
+    const failedSrc = useRef<string | null>(null)
     const [meta, setMeta] = useState<VideoMeta | null>(null)
     const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
     const [playback, setPlayback] = useState<'idle' | 'playing' | 'paused'>('idle')
@@ -74,14 +76,22 @@ export function DesktopCardVideoTile({ src, name, shape, onOpen }: DesktopCardVi
 
     useEffect(() => () => stopDesktopCardVideo(videoRef.current), [])
 
+    const failVideo = useCallback(() => {
+        if (failedSrc.current === src) return
+        failedSrc.current = src
+        stopDesktopCardVideo(videoRef.current)
+        setStatus('error')
+        onError()
+    }, [onError, src])
+
     // The metadata can land before React attaches the element's handlers.
     useEffect(() => {
         const video = videoRef.current
         if (!video) return
-        if (video.error) return setStatus('error')
+        if (video.error) return failVideo()
         if (video.readyState >= HTMLMediaElement.HAVE_METADATA) setMeta(readMeta(video))
         if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) setStatus('ready')
-    }, [src])
+    }, [failVideo, src])
 
     useEffect(() => {
         const pauseIfOther = (event: Event) => {
@@ -129,7 +139,7 @@ export function DesktopCardVideoTile({ src, name, shape, onOpen }: DesktopCardVi
                         className="size-full object-cover"
                         onLoadedMetadata={event => setMeta(readMeta(event.currentTarget))}
                         onLoadedData={() => setStatus('ready')}
-                        onError={() => setStatus('error')}
+                        onError={failVideo}
                         onTimeUpdate={event => setCurrentTime(event.currentTarget.currentTime)}
                         onPlay={() => setPlayback('playing')}
                         onPause={event => setPlayback(event.currentTarget.ended ? 'idle' : 'paused')}
@@ -181,14 +191,16 @@ type DesktopCardVideoFrameProps = {
     name: string
     disabled?: boolean
     onOpen: () => void
+    onError: () => void
 }
 
 /**
  * The original mixed-card square tile for a video: its first frame with the play disc, opening the
  * lightbox instead of playing inline. The element is stopped and detached on unmount.
  */
-export function DesktopCardVideoFrame({ src, name, disabled = false, onOpen }: DesktopCardVideoFrameProps) {
+export function DesktopCardVideoFrame({ src, name, disabled = false, onOpen, onError }: DesktopCardVideoFrameProps) {
     const videoRef = useRef<HTMLVideoElement | null>(null)
+    const failedSrc = useRef<string | null>(null)
     const [failed, setFailed] = useState(false)
     const bindVideo = useCallback((node: HTMLVideoElement | null) => {
         if (videoRef.current && videoRef.current !== node) stopDesktopCardVideo(videoRef.current)
@@ -196,6 +208,14 @@ export function DesktopCardVideoFrame({ src, name, disabled = false, onOpen }: D
     }, [])
 
     useEffect(() => () => stopDesktopCardVideo(videoRef.current), [])
+
+    const failVideo = () => {
+        if (failedSrc.current === src) return
+        failedSrc.current = src
+        stopDesktopCardVideo(videoRef.current)
+        setFailed(true)
+        onError()
+    }
 
     return (
         <button
@@ -221,7 +241,7 @@ export function DesktopCardVideoFrame({ src, name, disabled = false, onOpen }: D
                         muted
                         playsInline
                         className="pointer-events-none size-full object-cover"
-                        onError={() => setFailed(true)}
+                        onError={failVideo}
                     />
                     <span className="pointer-events-none absolute inset-0 grid place-items-center">
                         <span className="grid size-8 place-items-center rounded-full bg-white/90 text-black shadow-sm">

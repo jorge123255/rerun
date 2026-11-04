@@ -59,7 +59,7 @@ function DesktopMediaTile({ item, shape, onOpen, onError }: {
     const { file, index, kind } = item
     const load = item.load
     if (load.status === 'ready') {
-        if (kind === 'video') return <DesktopCardVideoTile src={load.src} name={file.name} shape={shape} onOpen={onOpen} />
+        if (kind === 'video') return <DesktopCardVideoTile src={load.src} name={file.name} shape={shape} onOpen={onOpen} onError={() => onError(index, load.src)} />
         const natural = shape === 'natural'
         return (
             <button
@@ -111,15 +111,16 @@ function DesktopMixedImageTile({ item, disabled, onOpen, onError }: {
     )
 }
 
-function DesktopMixedVideoTile({ item, disabled, onOpen }: {
+function DesktopMixedVideoTile({ item, disabled, onOpen, onError }: {
     item: LoadedMediaItem
     disabled: boolean
     onOpen: () => void
+    onError: (index: number, src: string) => void
 }) {
-    const { file } = item
+    const { file, index } = item
     const load = item.load
     if (load.status === 'ready') {
-        return <DesktopCardVideoFrame src={load.src} name={file.name} disabled={disabled} onOpen={onOpen} />
+        return <DesktopCardVideoFrame src={load.src} name={file.name} disabled={disabled} onOpen={onOpen} onError={() => onError(index, load.src)} />
     }
     const failed = load.status === 'error'
     return (
@@ -198,6 +199,7 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
     const thumbnails = allMedia ? media.slice(0, MAX_ALBUM_TILES) : media
     const mediaKey = `${agentId ?? ''}\u0000${thumbnails.map(({ index, file, kind }) => `${index}:${kind}:${file.path}:${file.identity ?? ''}`).join('\u0000')}`
     const mediaRef = useRef(thumbnails)
+    const ownedUrls = useRef(new Map<number, string>())
     mediaRef.current = thumbnails
     const [state, setState] = useState<MediaState>({ key: '', items: EMPTY_MEDIA })
 
@@ -210,6 +212,7 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
         const controller = new AbortController()
         let active = true
         const urls = new Map<number, string>()
+        ownedUrls.current = urls
         const loadingItems = new Map<number, MediaLoad>()
         for (const { index } of current) loadingItems.set(index, { status: 'loading' })
         setState({ key: mediaKey, items: loadingItems })
@@ -224,7 +227,7 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
             let overBudget = false
             for (const { index, file, kind } of current) {
                 if (!active) return
-                if (overBudget) {
+                if (overBudget || total >= CARD_MAX_IMAGE_TOTAL_BYTES) {
                     setState(previous => previous.key === mediaKey
                         ? { key: mediaKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: MEDIA_BUDGET_MESSAGE }) }
                         : previous)
@@ -269,11 +272,18 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
     const withLoad = (item: MediaItem): LoadedMediaItem => ({ ...item, load: loadOf(item.index) })
 
     const failMedia = useCallback((index: number, src: string) => {
+        // The failing element may belong to a previous owner or card. Only release the exact
+        // object URL still owned by this preview, and remove it so cleanup cannot release it twice.
+        if (ownedUrls.current.get(index) !== src) return
+        ownedUrls.current.delete(index)
         URL.revokeObjectURL(src)
         const item = media.find(candidate => candidate.index === index)
-        setState(previous => previous.key === mediaKey
-            ? { key: mediaKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: item?.kind === 'video' ? 'This video can’t be played.' : 'This image can’t be displayed.' }) }
-            : previous)
+        setState(previous => {
+            const load = previous.items.get(index)
+            return previous.key === mediaKey && load?.status === 'ready' && load.src === src
+                ? { key: mediaKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: item?.kind === 'video' ? 'This video can’t be played.' : 'This image can’t be displayed.' }) }
+                : previous
+        })
     }, [media, mediaKey])
 
     const opened = openIndex === null ? null : files[openIndex]
@@ -296,6 +306,7 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
                         item={withLoad({ index, file, kind: 'video' })}
                         disabled={!agentId}
                         onOpen={() => setOpenIndex(index)}
+                        onError={failMedia}
                     />
                 ) : (
                     <AttachmentTile
