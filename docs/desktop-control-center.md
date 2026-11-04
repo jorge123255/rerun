@@ -1,68 +1,43 @@
-# Desktop control center (lane handoff)
+# Desktop Control Center
 
-Port of the original Rerun Control Center for the actions the Mac app already supports. Source-only lane: the integration owner runs all validation and Mac testing.
+Installed in Mac build `b0d8c01` on November 4, 2026. C submitted `ace1be7605eefcda3191918af493f81b62dd20b9`; root integrated it as `7e6417e` and completed the app integration and fixes in `b0d8c01`. Only root executed checks, builds, installation and native QA. The external source worktree is preserved.
 
-Base: `22a40524067ec8f36267a802e35ad5ca63dcad47`. Branch: `desktop/control-center-next`.
+## Original design and supported actions
 
-## What was ported
+The adapter reuses Rerun's `ControlCenterView`, types, query parser, rows, avatars, keyboard selection, Tab/right-arrow drill, Backspace return, loading and empty states. It is centered with `anchorToOrb={false}` because the Mac has no Foreman orb. Optional description, close hint, results hint and focus callback props preserve the hosted view's defaults while giving the Mac accurate copy and focus handling.
 
-- `apps/ui/components/desktop/DesktopControlCenter.tsx` — the adapter component. It reuses the original view (`ControlCenterView`, unchanged) with `anchorToOrb={false}`, so the panel renders centered over whatever is on screen, with the original rows, keyboard selection, Tab/→ drill, Backspace return, skeletons, empty state and footer. No Supabase, session, hosted-store or billing dependency is imported.
-- `apps/ui/lib/desktop/control-center.ts` — local helpers:
-  - `buildDesktopControlCommands()` — the three commands the Mac supports, mirroring the original command shape (`add_coworker` → **Add coworker**, `team_board` → **Team board**, `model_settings` → **Model settings**). No fake billing, templates, Foreman, shared-files, members or account screens.
-  - `useDesktopConversationSearch(text, enabled)` — the local title-search (`/api/desktop/conversations/search`) with the original debounce, aborting stale reads, and distinct loading / no-results / unavailable states. An answer only counts while it is still about the query on screen; the failed read surfaces as a **Try again** row that re-runs the search.
-  - `pushRecentCoworker` — the original recent-list behavior (max 5, most recent first, each once).
-  - `useDesktopControlCenterKeys({ open, setOpen, conversationOpen })` — the original ⌘F/⌘K capture listener, adapted.
-- `apps/ui/components/desktop/DesktopControlCenter.test.tsx` — authored regression cases (not executed in this lane): shortcut behavior, scope prefixes, recent list, the three actions, search states, stale-read cancellation, retry, drill/scoping and exact-conversation selection.
+Original reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`, principally `apps/ui/components/control-center/ControlCenter.tsx`, `ControlCenterView.tsx`, `types.ts`, `useConversationSearch.ts`, and `apps/ui/lib/control-center/commands.ts` and `search.ts`.
 
-Upstream reviewed at `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`:
+The installed commands are **Add coworker**, **Team board** and **Model settings**. Team board closes the panel without recentering; Model settings opens the existing AI provider settings. `@` limits results to coworkers; `/` limits them to commands. Ordinary text searches saved conversation titles. Enter on a coworker opens its chat; Tab or right arrow drills into that coworker's conversation search. Selecting a saved conversation opens that exact local conversation through the same handler as Find chat. The board stays mounted and existing tab and draft persistence is reused. Disabled coworkers' history remains reachable without enabling them or sending a message.
 
-- `apps/ui/components/control-center/ControlCenter.tsx`
-- `apps/ui/components/control-center/ControlCenterView.tsx` (reused verbatim)
-- `apps/ui/components/control-center/types.ts` (reused verbatim)
-- `apps/ui/components/control-center/useConversationSearch.ts`
-- `apps/ui/lib/control-center/commands.ts` and `search.ts` (search primitives come from `@rerun/contracts`)
-- `apps/ui/app/api/desktop/conversations/search/route.ts` and `lib/desktop/chat-search.ts` (the existing local API, unchanged)
+## App integration and keyboard behavior
 
-## Minimal mounting and shortcut patch (root owns DesktopApp)
+`DesktopApp` mounts one controlled `DesktopControlCenter`. The workspace menu opens it and preserves the intended focus return target. Current roster membership is checked again before opening a coworker or conversation. The adapter is disabled while Settings, coworker creation, a busy app operation, duplicate placement or quitting is active.
 
-Mounting the component is the whole patch — the component binds its own capture listener, exactly like the original control center did:
+- **Command-F** opens or closes the center; modified Shift/Alt combinations and Mac Control-F are preserved.
+- **Command-K** opens it from the board, while the existing open-chat shortcut still creates a new chat. It does not take over editing fields.
+- A closed center does not open over another dialog or alert dialog, including Files, the original code editor or its discard confirmation. The editor retains its own Find shortcut.
+- Escape returns focus after Radix has removed the focus scope. Reopening the center, a newer overlay, a disconnected/inert target, quitting or focus moved elsewhere prevents stale restoration. Navigation actions intentionally do not restore the old target.
+- The existing quit bridge flushes drafts while the center closes and blocks new navigation. Cancelling quit restores the existing draft lifecycle.
 
-```tsx
-// apps/ui/components/desktop/DesktopApp.tsx
-import { DesktopControlCenter } from './DesktopControlCenter'
+## Search and stale navigation
 
-// inside DesktopApp's returned <main>, after the board/panel block:
-<DesktopControlCenter
-    coworkers={agents}
-    selectedCoworkerId={panelOpen ? selectedAgentId : null}
-    onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)}
-    onAddCoworker={() => showBoard(true)}
-    onModelSettings={() => setSettings(true)}
-    onBackToBoard={() => showBoard()}
-/>
-```
+The authenticated local conversation-title search accepts an optional `agentId`. It resolves that local coworker and applies the owner condition before the 50-result cap. An older matching chat cannot disappear from coworker search just because another coworker has 50 newer matches. Invalid scope returns 400; unknown, foreign or deleted scope returns 404 without falling back to workspace search. Unscoped Find chat keeps its existing behavior.
 
-`selectedCoworkerId` follows the same convention as `DesktopBoard`'s `selectedAgentId`: null while the board shows, the open coworker otherwise. `onOpenConversation` must be the same handler `DesktopBoard` already uses for `DesktopFindChat`, so opening a result selects that exact session and keeps the existing chat drafts (per-tab writes and the quit flush) and the board layout/camera untouched — the center itself holds no draft and never touches the board.
+Search matches title substrings, accepts 2–200 characters and orders by newest creation. It does not search message bodies, files, memories or unsent drafts. The hook keys reads by query, scope, open cycle and retry. Closing and reopening even the same query requires a fresh result. Removed coworkers are filtered, and retained callbacks revalidate the current open cycle, page, query, result ID, owner, roster and quit/disabled state before navigation. Loading, empty and unavailable results remain distinct; unavailable results offer Retry. Capped results display a refinement hint.
 
-`onModelSettings` maps to the existing settings overlay (the workspace menu's "Open model settings" button); `onAddCoworker` maps to `showBoard(true)` (the board with the create-coworker dialog); `onBackToBoard` maps to `showBoard()`. All three are real supplied callbacks; the center renders no other actions.
+## Persistence and remaining parity
 
-## Shortcut behavior
+Saved chats, replies, selected tabs, ordinary text drafts and selected attachments continue to use the existing Mac database. The Control Center adds no alternate chat identity or draft store.
 
-- **⌘F on a Mac, Ctrl+F elsewhere** (the original rule): opens the centered panel. Pressed while open it only closes it and claims nothing else. Shift/Alt never trigger it, and on a Mac Ctrl+F is left to the caret.
-- **⌘K** toggles the center where nothing else holds it, following the original's "without an assistant it toggles as ⌘F does" rule, with the lane's two guards: it is never taken from an open coworker chat (`conversationOpen`) — `DesktopChatTabs` binds ⌘K to start a new conversation there — and never from an editing field (`input`, `textarea`, contenteditable). With the center open, ⌘K still just closes it.
-- The listener sits on `window` in the capture phase, before every local handler, and ignores keyless autofill events like the original.
+The Recent coworker list is currently **session-only**: at most five unique coworkers, most recent first, retained across closing/reopening the center but reset on app restart. Original Rerun persists recent IDs in localStorage; the Mac's changing loopback origin requires a durable local adaptation. That work remains under B5 along with richer contextual commands, open-tab and recent-chat lists, boxes and workspace-icon customization. This release is the available local Control Center slice, not full B5 parity.
 
-## Structure
+## Root acceptance
 
-- Pages: root and per-coworker only. The original's Box and move pages have no Mac equivalent and were dropped; ⌘K/⌘F scope prefixes (`@`, `/`) and the root's Recent/others cap (8), Actions and Settings sections follow the original layout.
-- Coworker rows show the name, the description as detail and an **Off** badge for `enabled === false`, and drill into a per-coworker page (Enter or Tab) whose only content is that coworker's saved chats — opening a coworker's chat remains the board tile's action, so the center claims no callback for it. Per-coworker results filter the workspace-wide search by `hit.agentId` on the client.
-- Conversation rows carry the exact `DesktopConversationHit` (local coworker and session IDs) to `onOpenConversation`; on the root they show the coworker's name as detail. The 50-hit refinement hint from `DesktopFindChat` is not reproduced (the shared view has no footnote slot; the API still caps at 50).
-
-## Unverified limitations
-
-- The lane ran nothing: tests, type checks and builds are the integration owner's. The authored cases live in `DesktopControlCenter.test.tsx`.
-- The reused view's footer hints "⌘F again to search in the page", which describes the web browser; in the Mac shell pressing ⌘F again just closes the center. The copy is inherited unchanged from the original view to keep the reuse verbatim; root may want a desktop variant of that hint later.
-- The centered layout never anchors to an orb (the Mac has no Foreman orb), so `anchorToOrb` stays false.
-- The ⌘K editing-field guard is a deliberate desktop addition on top of the original rules; on the web the original opens the center from any field.
-- `hasMore` from the search hook is carried but unused in the UI, as above.
-- The component assumes it is mounted once per app root; the recent list lives in its own state and resets on unmount.
+- Full UI suite: **3,468 passed, 20 skipped** across 396 passing files and 13 skipped files. UI typecheck, production build, bundled-runtime verification and single-app installation passed. The engine was unchanged in this slice; its prior 3,030-pass release suite was not rerun.
+- Focused coverage includes 11 authenticated search-route cases, 16 adapter cases and 4 tests mounting the actual DesktopApp with its board, workspace menu, Settings, Files editor and confirmation dialogs. These overlap the full-suite count.
+- Root's initial run caught the focus-return defect, which was fixed before packaging. Two integration fixture mistakes were corrected to use the original lowercase query normalization and `/` command prefix.
+- Native QA opened coworkers and exact saved chats through the original panel, verified scoped search against 52 newer sibling matches, and checked the global 50-result hint. Signed-in Codex returned **108** and **210** in separate coworkers.
+- All three commands, board visibility, chat Command-K, focus return, editor Find, discard confirmation, Settings, creation and duplicate-placement guards passed in the installed app.
+- Full quit/reopen preserved both Codex replies, three independent drafts and the selected file. Both workspace files retained their original bytes after discarding the disposable editor change.
+- A byte-verified recovery copy was made before deleting the two disposable coworkers through the board. Final verification found their folders, chats, tabs and drafts removed; foreign keys were clean. Original coworkers retained exactly **23 chats and 88 messages**, including exact message contents. The Codex default was unchanged and the app was left open on the board.
