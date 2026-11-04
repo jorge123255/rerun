@@ -84,7 +84,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
     }, [agent.id, save])
 
     // A directly requested conversation starts active without loading an unrelated newer chat.
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (initialLayout !== current.current) save(current.current)
     }, [initialLayout, save])
 

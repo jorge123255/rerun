@@ -9,6 +9,71 @@ import { DesktopChatTabs } from './DesktopChatTabs'
 let drafts: ReturnType<typeof createDesktopDraftFixture>
 beforeEach(() => { drafts = createDesktopDraftFixture() })
 
+test('a first-mounted blank tab is registered before its draft is read', async () => {
+    const agent = { id: 'first-mount-owner', name: 'Writer', description: '', createdAt: '', updatedAt: '' }
+    const registered = new Set<string>()
+    const order: string[] = []
+    let tabUid = ''
+    let prematureReads = 0
+    let acceptTabs!: () => void
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+        const url = new URL(String(input), 'http://127.0.0.1')
+        if (url.pathname.endsWith('/tabs') && options?.method === 'PUT') {
+            const body = JSON.parse(String(options.body)) as { tabs: { uid: string; id: string | null }[]; baseRevision: number }
+            order.push('tabs:start')
+            expect(body.tabs).toHaveLength(1)
+            expect(body.tabs[0].id).toBeNull()
+            tabUid = body.tabs[0].uid
+            return new Promise<Response>(resolve => {
+                acceptTabs = () => {
+                    for (const tab of body.tabs) registered.add(tab.uid)
+                    drafts.handle(input, options)
+                    order.push('tabs:accepted')
+                    resolve(Response.json({ tabs: { revision: body.baseRevision + 1 } }))
+                }
+            })
+        }
+        if (url.pathname.endsWith('/draft') && (options?.method ?? 'GET') === 'GET') {
+            const uid = url.searchParams.get('tabUid')!
+            order.push(`draft:${uid}`)
+            if (!registered.has(uid)) {
+                prematureReads++
+                return Response.json({ error: 'This conversation tab is closed. Reopen it before saving a draft.' }, { status: 404 })
+            }
+        }
+        const draftResponse = drafts.handle(input, options)
+        if (draftResponse) return draftResponse
+        if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
+        if (url.pathname.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        throw new Error(`Unexpected request: ${url.pathname}`)
+    }))
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    try {
+        await act(async () => { root.render(<DesktopChatTabs agent={agent} sessions={[]} initialLayout={null}
+            requested={null} selected refreshSessions={async () => {}} reload={() => {}} onClosePanel={() => {}} onOpenModelSettings={() => {}} />) })
+        expect(tabUid).not.toBe('')
+        expect(order).toEqual(['tabs:start'])
+        expect(prematureReads).toBe(0)
+        expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true)
+        await act(async () => { acceptTabs() })
+        expect(order).toEqual(['tabs:start', 'tabs:accepted', `draft:${tabUid}`])
+        expect(prematureReads).toBe(0)
+        expect(container.querySelector('[role="alert"]')).toBeNull()
+        expect(container.textContent).not.toContain('Retry saving draft')
+        const composer = container.querySelector<HTMLTextAreaElement>('textarea')!
+        expect(composer.disabled).toBe(false)
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(composer, 'A draft on the first opening')
+            composer.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        expect(composer.value).toBe('A draft on the first opening')
+        const saved = await drafts.handle(`/api/desktop/agents/${agent.id}/draft?tabUid=${encodeURIComponent(tabUid)}`)!.json()
+        expect(saved.draft.text).toBe('A draft on the first opening')
+    } finally { await act(async () => { root.unmount() }); vi.unstubAllGlobals(); container.remove() }
+})
+
 test('regeneration stays on its own transport while another tab is active, and keeps the source draft in its original conversation', async () => {
     const agent = { id: 'a', name: 'Writer', description: '', createdAt: '', updatedAt: '' }
     const sessions = ['Source', 'Other', 'Alternate'].map(title => ({ id: title.toLowerCase(), agentId: agent.id, title, createdAt: '', updatedAt: '' }))
