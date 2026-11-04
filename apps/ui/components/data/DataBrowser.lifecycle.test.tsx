@@ -91,6 +91,7 @@ vi.mock('@/components/data/DataViewBar', () => ({ DataViewBar: ({ views, activeI
     <button onClick={() => onSelect('__all')}>All rows</button>
     {views.map(view => <div key={view.id}>
         <span>{view.name}</span>
+        <button onClick={() => onSelect(view.id)}>Select {view.name}</button>
         <button onClick={() => onEdit(view)}>Edit {view.name}</button>
         <button onClick={() => onDelete(view)}>Delete {view.name}</button>
     </div>)}
@@ -146,6 +147,83 @@ beforeEach(() => {
     Object.defineProperty(window, 'localStorage', { configurable: true, value: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value) } })
 })
 afterEach(async () => { await cleanup(); vi.clearAllMocks() })
+
+describe('DataBrowser durable preferred views', () => {
+    it('restores a desktop choice after remount despite a different browser-origin preference', async () => {
+        const f = fixture()
+        f.views.alpha.push({ ...view('alpha', 'Gallery choice'), id: 'alpha-gallery' })
+        let saved: string | null = null
+        f.source.preferredView = { read: vi.fn(async () => saved), write: vi.fn(async (_table, id) => { saved = id }) }
+        const mounted = await render(<DataBrowser source={f.source} />)
+        await screen.findByText('Owner alpha')
+        await click(screen.getByRole('button', { name: 'Select Gallery choice' }))
+        expect(saved).toBe('alpha-gallery')
+        await mounted.unmount()
+        window.localStorage.setItem(`rerun:data-view:${f.source.storageKey}:alpha`, 'alpha-view')
+        await render(<DataBrowser source={f.source} />)
+        await screen.findByText('Owner alpha')
+        expect(screen.getByLabelText('Active view').textContent).toBe('alpha-gallery')
+    })
+
+    it('never lets delayed restoration override a newer user selection', async () => {
+        const f = fixture(), preference = deferred<string | null>()
+        f.source.preferredView = { read: () => preference.promise, write: vi.fn(async () => {}) }
+        await render(<DataBrowser source={f.source} />)
+        await waitFor(() => screen.getByRole('button', { name: 'All rows' }))
+        await click(screen.getByRole('button', { name: 'All rows' }))
+        await act(async () => preference.resolve('alpha-view'))
+        expect(screen.getByLabelText('Active view').textContent).toBe('__all')
+        expect(f.source.preferredView.write).toHaveBeenCalledWith('alpha', '__all')
+    })
+
+    it.each(['table', 'source'] as const)('ignores delayed preference responses after switching %s', async destination => {
+        const f = fixture(), preference = deferred<string | null>()
+        f.source.preferredView = { read: table => table === 'alpha' ? preference.promise : Promise.resolve('__all'), write: vi.fn(async () => {}) }
+        const mounted = await render(<DataBrowser source={f.source} />)
+        await waitFor(() => screen.getByRole('button', { name: 'Beta' }))
+        if (destination === 'table') await click(screen.getByRole('button', { name: 'Beta' }))
+        else {
+            const other = fixture('Second')
+            other.source.preferredView = { read: async () => '__all', write: vi.fn(async () => {}) }
+            await mounted.rerender(<DataBrowser source={other.source} />)
+        }
+        const content = destination === 'table' ? 'Owner beta' : 'Second alpha'
+        await screen.findByText(content)
+        await act(async () => preference.resolve('alpha-view'))
+        expect(screen.getByLabelText('Active view').textContent).toBe('__all')
+        expect(screen.getByText(content)).toBeTruthy()
+    })
+
+    it('honors an explicit requested view ahead of the durable preference', async () => {
+        const f = fixture()
+        f.views.alpha.push({ ...view('alpha', 'Requested choice'), id: 'requested-view' })
+        f.source.preferredView = { read: async () => '__all', write: vi.fn(async () => {}) }
+        await render(<DataBrowser source={f.source} initial={{ table: 'alpha', view: 'requested-view' }} />)
+        await screen.findByText('Owner alpha')
+        expect(screen.getByLabelText('Active view').textContent).toBe('requested-view')
+    })
+
+    it('falls back safely when the preferred view was removed and remembers All rows after deleting the current view', async () => {
+        const f = fixture()
+        f.source.preferredView = { read: async () => 'removed-view', write: vi.fn(async () => {}) }
+        await render(<DataBrowser source={f.source} />)
+        await screen.findByText('Owner alpha')
+        expect(screen.getByLabelText('Active view').textContent).toBe('alpha-view')
+        await click(screen.getByRole('button', { name: 'Delete alpha view' }))
+        expect(screen.getByLabelText('Active view').textContent).toBe('__all')
+        expect(f.source.preferredView.write).toHaveBeenCalledWith('alpha', '__all')
+    })
+
+    it('keeps the current view usable but truthfully reports a failed durable save', async () => {
+        const f = fixture()
+        f.source.preferredView = { read: async () => null, write: vi.fn(async () => { throw new Error('disk error') }) }
+        await render(<DataBrowser source={f.source} />)
+        await screen.findByText('Owner alpha')
+        await click(screen.getByRole('button', { name: 'All rows' }))
+        expect(screen.getByLabelText('Active view').textContent).toBe('__all')
+        expect(await screen.findByText('Could not remember this view. Your current view is still open; select it again to retry.')).toBeTruthy()
+    })
+})
 
 describe('DataBrowser mutation ownership', () => {
     it('refreshes the parent settings preview after a real board move without another board reload loop', async () => {

@@ -21,6 +21,8 @@ export type DataSource = {
     scope: DataScope['kind']
     /** Distinguishes this database when the last view opened on each table is remembered. */
     storageKey: string
+    /** Desktop shells persist this outside their changing loopback browser origin. */
+    preferredView?: { read: (table: string) => Promise<string | null>; write: (table: string, viewId: string | null) => Promise<void> }
     /** Hosted sources support table cards by default; limited clients can hide that promise. */
     supportsTableCards?: boolean
     listTables: () => Promise<EngineDbTable[]>

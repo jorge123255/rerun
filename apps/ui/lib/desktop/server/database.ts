@@ -5,6 +5,7 @@ import { createClient, type Client } from '@libsql/client'
 import { initializeDesktopCompletions } from './completed-actions-db'
 import { initializeDesktopPendingInbox } from './pending-inbox-db'
 import { initializeDesktopSpaces } from './spaces'
+import { initializeDesktopDataPreferences } from './data-preferences-db'
 
 const opening = new Map<string, Promise<Client>>()
 
@@ -203,6 +204,7 @@ async function initialize(dataRoot: string): Promise<Client> {
     await initializeDesktopCompletions(client)
     await initializeDesktopPendingInbox(client)
     await initializeDesktopSpaces(client)
+    await initializeDesktopDataPreferences(client)
     return client
 }
 

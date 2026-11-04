@@ -69,6 +69,8 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
     useEffect(() => () => { exportRequest.current?.abort(); exportRequest.current = null }, [source, selected])
     const [views, setViews] = useState<TableView[]>([])
     const [viewsError, setViewsError] = useState<string | null>(null)
+    const [preferenceError, setPreferenceError] = useState<string | null>(null)
+    const viewSelection = useRef(0)
     // Null until the views of the selected table are in: the rows wait for them, since the view
     // picks their order.
     const [activeId, setActiveId] = useState<string | null>(null)
@@ -147,6 +149,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
         setQuery('')
         setSelectedRowIds(new Set())
         setActionError(null)
+        setPreferenceError(null)
         setBusy(false)
         setAddingView(false)
         setData(null)
@@ -157,15 +160,22 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
     useEffect(() => {
         if (!selected) return
         let cancelled = false
+        const selection = viewSelection.current
         setActiveId(null)
-        source.listViews(selected).then(result => {
-            if (cancelled) return
+        const remembered = source.preferredView
+            ? source.preferredView.read(selected).then(viewId => ({ viewId, error: null as string | null }), () => ({ viewId: null, error: 'Could not restore your preferred view. Choose a view to try saving it again.' }))
+            : Promise.resolve({ viewId: readLastView(source.storageKey, selected), error: null as string | null })
+        source.listViews(selected).then(async result => {
+            if (cancelled || !currentScope()) return
             const list = result.success ? result.views : []
             setViews(list)
             setViewsError(result.success ? null : result.error)
+            const preference = await remembered
+            if (cancelled || !currentScope() || viewSelection.current !== selection) return
+            setPreferenceError(preference.error)
             const wanted = requestedViewRef.current
             requestedViewRef.current = undefined
-            const remembered = readLastView(source.storageKey, selected)
+            const remembered = preference.viewId
             const picked = findView(list, wanted) ?? (remembered && remembered !== ALL_ROWS ? findView(list, remembered) : undefined)
             setActiveId(picked?.id ?? (remembered === ALL_ROWS ? ALL_ROWS : (list[0]?.id ?? ALL_ROWS)))
         })
@@ -404,7 +414,16 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
     )
 
     const selectView = (id: string) => {
-        if (selected) writeLastView(source.storageKey, selected, id)
+        if (!currentScope()) return
+        const selection = ++viewSelection.current
+        setPreferenceError(null)
+        if (selected) {
+            if (source.preferredView) {
+                void source.preferredView.write(selected, id).catch(() => {
+                    if (currentScope() && viewSelection.current === selection) setPreferenceError('Could not remember this view. Your current view is still open; select it again to retry.')
+                })
+            } else writeLastView(source.storageKey, selected, id)
+        }
         setActiveId(id)
     }
 
@@ -524,6 +543,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
                 )}
             </div>
             {actionError && <div className="mx-4 mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive @3xl:mx-12">{actionError}</div>}
+            {preferenceError && <div role="alert" className="mx-4 mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive @3xl:mx-12">{preferenceError}</div>}
             <div className={cn('min-h-0 flex-1 overflow-auto', !boardView && '@3xl:px-12')}>
                 {boardView && selected ? (
                     <ViewBoard source={source} table={selected} view={boardView} query={query} refreshKey={refreshKey} context={cellContext} onRowsChanged={onBoardRowsChanged} />

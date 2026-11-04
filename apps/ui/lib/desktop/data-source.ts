@@ -3,6 +3,7 @@ import type { EngineDbRows, EngineDbTable } from '@rerun/contracts'
 import { desktopViewActions } from './data-views'
 import { desktopDataBase, desktopDataExportUrl, desktopDataStorageKey, type DesktopDataScope } from './data-scope'
 import { saveDesktopDataExport } from './data-export'
+import { desktopPreferredView } from './data-preferences'
 
 type DeleteResult = { success: boolean; error?: string; deleted?: number }
 type ChangeResult = { success: boolean; error?: string }
@@ -49,6 +50,7 @@ export function desktopDataSource(scope: DesktopDataScope): DataSource {
     return {
         scope: scope.kind,
         storageKey: desktopDataStorageKey(scope),
+        preferredView: desktopPreferredView(scope),
         supportsTableCards: false,
         listTables: async (): Promise<EngineDbTable[]> => {
             const { tables } = await readJson<{ tables: EngineDbTable[] }>(base, { method: 'GET' }, 'Could not reach this database.')
