@@ -13,6 +13,7 @@ import { getToolMeta } from '@/lib/tool-meta'
 import { ChevronDownIcon, FolderIcon, PencilIcon, TerminalIcon, GlobeIcon, WrenchIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from './DesktopApp'
+import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 
 async function requestTools(url: string, init: RequestInit): Promise<CoworkerTools> {
     const response = await fetch(url, init)
@@ -111,8 +112,8 @@ function ToolsPanel({ agent, saving, setSaving }: { agent: DesktopAgentView; sav
     </PanelScroller>
 }
 
-export function DesktopCoworkerTools({ agent }: { agent: DesktopAgentView }) {
-    const [open, setOpen] = useState(false)
+export function DesktopCoworkerTools({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
+    const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const [saving, setSaving] = useState(false)
     return <Dialog open={open} onOpenChange={next => { if (!saving) setOpen(next) }} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Tools</Button></DialogTrigger>

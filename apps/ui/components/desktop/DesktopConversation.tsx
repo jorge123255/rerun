@@ -22,6 +22,8 @@ import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
+import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
+import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 import { AttachmentChip, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { DesktopModelSelector } from './DesktopModelSelector'
@@ -69,7 +71,7 @@ const RUN_POLL_MS = 3000
 export type ComposerDraft = { text: string; attachment?: string }
 export type TabActivity = { busy: boolean; dirty: boolean; readableSessionId?: string | null }
 
-export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onClosePanel, modelLabel, onOpenModelSettings }: {
+export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onClosePanel, modelLabel, onOpenModelSettings }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
@@ -78,6 +80,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     onFinishFork?: (uid: string) => void
     tabUid?: string
     active?: boolean
+    requestedPanel?: DesktopCoworkerPanelRequest | null
+    onPanelRequestHandled?: (request: DesktopCoworkerPanelRequest) => void
     tabStrip?: ReactNode
     initialDraft?: ComposerDraft
     onTabActivity?: (uid: string, state: TabActivity) => void
@@ -89,6 +93,28 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     onOpenModelSettings?: () => void
 }) {
     const [cardOpen, setCardOpen] = useState(false)
+    const [detailPanel, setDetailPanel] = useState<Exclude<DesktopCoworkerPanel, 'chat'> | null>(null)
+    const [panelNotice, setPanelNotice] = useState('')
+    const handledPanel = useRef<DesktopCoworkerPanelRequest | null>(null)
+    const conversationRoot = useRef<HTMLDivElement>(null)
+    const [panelFocus, setPanelFocus] = useState<'chat' | 'card' | null>(null)
+    const dismissCard = () => {
+        if (requestedPanel) { handledPanel.current = requestedPanel; onPanelRequestHandled?.(requestedPanel) }
+        setCardOpen(false)
+        setPanelNotice('')
+        setPanelFocus('chat')
+    }
+    const dialogControl = (panel: Exclude<DesktopCoworkerPanel, 'chat'>) => ({
+        open: detailPanel === panel,
+        onOpenChange: (open: boolean) => {
+            // An explicit choice supersedes a pending Settings status read. Its delayed answer
+            // must never replace another dialog or bypass that dialog's unsaved-change guard.
+            if (open && requestedPanel) { handledPanel.current = requestedPanel; onPanelRequestHandled?.(requestedPanel) }
+            setPanelFocus(null)
+            setPanelNotice('')
+            setDetailPanel(open ? panel : null)
+        },
+    })
     const draftKey = JSON.stringify([agent.id, sessionId])
     const [inputs, setInputs] = useState<ReadonlyMap<string, string>>(() => new Map(initialDraft ? [[draftKey, initialDraft.text]] : []))
     const [attachments, setAttachments] = useState<ReadonlyMap<string, string>>(() => new Map(initialDraft?.attachment ? [[draftKey, initialDraft.attachment]] : []))
@@ -266,8 +292,38 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const ready = history.id === sessionId && !history.error
     const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
     const generating = busy || runInFlight
+    useEffect(() => {
+        if (!requestedPanel || !active || requestedPanel.agentId !== agent.id || handledPanel.current === requestedPanel) return
+        if (isDesktopQuitting()) return
+        // A freshly restored chat has not yet checked whether its engine is still replying.
+        // Keep Settings closed until that read belongs to this session; Back/Close cancels it.
+        if (requestedPanel.panel === 'settings' && sessionId && !busy && engineRunning.id !== sessionId) {
+            setCardOpen(true)
+            setPanelNotice('Checking this chat’s reply status before opening settings…')
+            setPanelFocus('card')
+            return
+        }
+        handledPanel.current = requestedPanel
+        onPanelRequestHandled?.(requestedPanel)
+        setPanelNotice('')
+        if (requestedPanel.panel === 'chat') { setDetailPanel(null); setCardOpen(false); setPanelFocus('chat'); return }
+        setCardOpen(true)
+        if (requestedPanel.panel === 'settings' && generating) {
+            setPanelNotice('Wait for this reply to finish before editing the coworker.')
+            setPanelFocus('card')
+            return
+        }
+        setPanelFocus(null)
+        setDetailPanel(requestedPanel.panel)
+    }, [requestedPanel, active, agent.id, sessionId, busy, engineRunning.id, generating, onPanelRequestHandled])
+    useEffect(() => {
+        if (!panelFocus || !active || detailPanel) return
+        const selector = panelFocus === 'chat' ? 'textarea' : '[aria-label="Coworker card"]'
+        conversationRoot.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
+        setPanelFocus(null)
+    }, [panelFocus, active, detailPanel, cardOpen])
     const dirty = !draft.loaded || !!(input || attachment || queue.queued)
-    const readable = active && ready && !generating && history.loadedGeneration === historyGeneration
+    const readable = active && !cardOpen && !detailPanel && ready && !generating && history.loadedGeneration === historyGeneration
         && !!history.transcript && history.question !== undefined && history.approval !== undefined
         && engineRunning.id === sessionId
     useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty, readableSessionId: readable ? sessionId : null }) }, [tabUid, generating, dirty, readable, sessionId, onTabActivity])
@@ -590,12 +646,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const composerId = !active && tabUid ? `desktop-message-${tabUid}` : 'desktop-message'
     const currentTitle = sessions.find(session => session.id === sessionId)?.title ?? 'New conversation'
     return (
-        <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background" onKeyDown={event => {
+        <div ref={conversationRoot} className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background" onKeyDown={event => {
             if (cardOpen && event.key === 'Escape' && !event.defaultPrevented && !(event.target as HTMLElement).closest('[role="dialog"]')) {
                 event.preventDefault()
                 event.stopPropagation()
-                setCardOpen(false)
-                event.currentTarget.querySelector<HTMLButtonElement>('[aria-label="Coworker card"]')?.focus()
+                dismissCard()
+                setPanelFocus('card')
             }
         }}>
             <header className="relative z-40 grid shrink-0 grid-cols-[minmax(2.5rem,1fr)_minmax(0,max-content)_minmax(2.5rem,1fr)] items-center gap-1 px-3 pt-3">
@@ -614,7 +670,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     )}
                 </div>
                 <h1 aria-label={agent.name} className="min-w-0">
-                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => setCardOpen(open => !open)} className="max-w-full pl-1.5">
+                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => cardOpen ? dismissCard() : setCardOpen(true)} className="max-w-full pl-1.5">
                         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
                             <AgentBuddy agentId={agent.id} mood={inactive ? 'asleep' : generating ? 'working' : 'idle'} size={20} facing="right" />
                         </span>
@@ -624,16 +680,17 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 </h1>
                 {onClosePanel && <Button type="button" aria-label="Close panel" variant="ghost" size="icon-sm" className="justify-self-end" onClick={onClosePanel}><XIcon className="size-4" /></Button>}
             </header>
-            {cardOpen && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => setCardOpen(false)} />}
+            {cardOpen && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={dismissCard} />}
             <section aria-label="Coworker details" hidden={!cardOpen} className="absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl">
                 <p className="text-sm text-muted-foreground">{agent.description || 'Local coworker'}</p>
+                {panelNotice && <p role="status" className="mt-2 text-sm text-muted-foreground">{panelNotice}</p>}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <DesktopCoworkerFiles agent={agent} />
-                    <DesktopCoworkerTools agent={agent} />
-                    <DesktopCoworkerMemories agent={agent} />
+                    <DesktopCoworkerFiles agent={agent} dialogControl={dialogControl('files')} />
+                    <DesktopCoworkerTools agent={agent} dialogControl={dialogControl('tools')} />
+                    <DesktopCoworkerMemories agent={agent} dialogControl={dialogControl('memories')} />
                     {renderRunHistory}
-                    <DesktopCoworkerMonitoring agent={agent} />
-                    <DesktopCoworkerSettings agent={agent} disabled={busy} />
+                    <DesktopCoworkerMonitoring agent={agent} dialogControl={dialogControl('monitoring')} />
+                    <DesktopCoworkerSettings agent={agent} disabled={generating || !!sessionId && engineRunning.id !== sessionId} dialogControl={dialogControl('settings')} />
                 </div>
             </section>
             {tabStrip ?? <div className="flex shrink-0 items-center gap-1 px-3 pt-2 pb-1">

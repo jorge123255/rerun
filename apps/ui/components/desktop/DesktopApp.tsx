@@ -29,6 +29,8 @@ import { flushDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 import type { DesktopOpenChat } from '@/lib/desktop/control-center-chats'
 import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
+import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
+import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; enabled?: boolean }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
@@ -127,6 +129,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const boardFrame = useRef<HTMLDivElement>(null)
     const panelContent = useRef<HTMLElement>(null)
     const [requestedSession, setRequestedSession] = useState<DesktopChatRequest | null>(null)
+    const [requestedPanel, setRequestedPanel] = useState<DesktopCoworkerPanelRequest | null>(null)
+    const panelRequestNonce = useRef(0)
+    const panelRequestHandled = useCallback((request: DesktopCoworkerPanelRequest) => {
+        setRequestedPanel(current => current === request ? null : current)
+    }, [])
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
     const [busy, setBusy] = useState<string | null>(null)
@@ -141,7 +148,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const controlCenterDisabled = settings || workspaceSettings || creating || !!busy || placingCopy || quitting || themeSaving
 
     useEffect(() => {
-        if (panelOpen && !settings) panelContent.current?.focus({ preventScroll: true })
+        if (panelOpen && !settings && !requestedPanel) panelContent.current?.focus({ preventScroll: true })
     }, [panelOpen, selectedAgentId, requestedSession, settings])
 
     useEffect(() => {
@@ -274,6 +281,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
 
     function showBoard(create = false) {
+        setRequestedPanel(null)
         setSettings(false)
         setCreating(create)
         setPanelOpen(false)
@@ -281,6 +289,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
 
     function closePanel() {
+        setRequestedPanel(null)
         setPanelOpen(false)
         const tile = Array.from(boardFrame.current?.querySelectorAll<HTMLElement>('[data-tile-id]') ?? [])
             .find(element => element.dataset.tileId === selectedAgentId)
@@ -289,6 +298,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
     function selectCoworker(agentId: string, sessionId: string | null = null, openChat?: DesktopOpenChat) {
         if (isDesktopQuitting() || deletedAgents.current.has(agentId)) return
+        setRequestedPanel(null)
         setSettings(false)
         setCreating(false)
         selectedAgentRef.current = agentId
@@ -296,6 +306,13 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setPanelOpen(true)
         setRequestedSession(openChat ? { tabUid: openChat.tabUid, sessionId: openChat.sessionId } : sessionId ? { id: sessionId } : null)
         setError(null)
+    }
+
+    function openCoworkerPanel(agentId: string, panel: DesktopCoworkerPanel) {
+        if (controlCenterDisabled || isDesktopQuitting() || deletedAgents.current.has(agentId)
+            || !currentAgents.current.some(agent => agent.id === agentId)) return
+        selectCoworker(agentId)
+        setRequestedPanel({ agentId, panel, nonce: ++panelRequestNonce.current })
     }
 
     function openSavedConversation(hit: DesktopConversationHit) {
@@ -333,6 +350,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                 }
                             }}>
                             <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings && !workspaceSettings}
+                                requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
                         </section>
@@ -374,6 +392,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
                 onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) selectCoworker(id) }}
                 onOpenChat={chat => { if (currentAgents.current.some(agent => agent.id === chat.agentId)) selectCoworker(chat.agentId, null, chat) }}
+                onOpenCoworkerPanel={openCoworkerPanel}
                 onOpenConversation={openSavedConversation} onAddCoworker={() => showBoard(true)}
                 onWorkspaceSettings={() => { if (!isDesktopQuitting()) setWorkspaceSettings(true) }}
                 onRecenterBoard={() => { if (!isDesktopQuitting()) setRecenterSignal(signal => signal + 1) }}
@@ -384,9 +403,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     )
 }
 
-function CoworkerChat({ agent, requested, selected, modelLabel, onOpenModelSettings, onClosePanel, onVisibleSession }: {
+function CoworkerChat({ agent, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, onOpenModelSettings, onClosePanel, onVisibleSession }: {
     agent: DesktopAgentView
     requested: DesktopChatRequest | null
+    requestedPanel: DesktopCoworkerPanelRequest | null
+    onPanelRequestHandled: (request: DesktopCoworkerPanelRequest) => void
     selected: boolean
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
     modelLabel?: string
@@ -432,7 +453,7 @@ function CoworkerChat({ agent, requested, selected, modelLabel, onOpenModelSetti
         </div>}
         {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
         {missing || !bootstrap || !sessions ? dismiss : <DesktopChatTabs
-            agent={agent} selected={selected} requested={requested} sessions={sessions} initialLayout={bootstrap.layout}
+            agent={agent} selected={selected} requested={requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
             refreshSessions={readSessions} reload={reload} modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
     </>

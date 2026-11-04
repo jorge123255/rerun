@@ -11,6 +11,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Switch } from '@/components/ui/switch'
 import type { DesktopCoworkerSettings as Settings } from '@/lib/desktop/coworker-settings'
 import type { DesktopAgentView } from './DesktopApp'
+import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 
 const replyLengths = VERBOSITY_LEVELS.map(value => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))
 const recallHelp = 'Include relevant saved notes when this coworker answers in chat.'
@@ -30,9 +31,9 @@ async function requestSettings(url: string, init: RequestInit): Promise<Settings
     return response.json()
 }
 
-export function DesktopCoworkerSettings({ agent, disabled }: { agent: DesktopAgentView; disabled: boolean }) {
+export function DesktopCoworkerSettings({ agent, disabled, dialogControl }: { agent: DesktopAgentView; disabled: boolean; dialogControl?: DesktopDialogControl }) {
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/settings`
-    const [open, setOpen] = useState(false)
+    const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const [settings, setSettings] = useState<Settings | null>(null)
     const [draft, setDraft] = useState<Settings | null>(null)
     const [error, setError] = useState('')
@@ -41,6 +42,9 @@ export function DesktopCoworkerSettings({ agent, disabled }: { agent: DesktopAge
 
     useEffect(() => {
         if (!open) return
+        setSettings(null)
+        setDraft(null)
+        setError('')
         const controller = new AbortController()
         void requestSettings(url, { cache: 'no-store', signal: controller.signal }).then(result => {
             if (!controller.signal.aborted) {

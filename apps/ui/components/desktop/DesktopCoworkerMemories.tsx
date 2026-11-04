@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { BrainIcon, PlusIcon, Trash2Icon } from '@/lib/icons'
 import type { EngineMemory } from '@/lib/engine/types'
 import type { DesktopAgentView } from './DesktopApp'
+import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 
 type Result = { memories: EngineMemory[] } | { error: string }
 type Draft = { content: string; kind: string; tags: string }
@@ -166,8 +167,8 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
     </DialogContent>
 }
 
-export function DesktopCoworkerMemories({ agent }: { agent: DesktopAgentView }) {
-    const [open, setOpen] = useState(false)
+export function DesktopCoworkerMemories({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
+    const [open, setOpen] = useDesktopDialogControl(dialogControl)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Memories</Button></DialogTrigger>
         {open && <MemoryPanel key={agent.id} agent={agent} />}

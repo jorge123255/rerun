@@ -13,6 +13,7 @@ import { useDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 import { useDesktopControlCenterChats } from '@/lib/desktop/use-control-center-chats'
 import type { DesktopOpenChat } from '@/lib/desktop/control-center-chats'
+import { DESKTOP_COWORKER_PANEL_TABS, type DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopAgentView } from './DesktopApp'
 
 type Page = { kind: 'root' } | { kind: 'coworker'; coworkerId: string }
@@ -46,6 +47,7 @@ export type DesktopControlCenterProps = {
     selectedCoworkerId: string | null
     onOpenConversation: (hit: DesktopConversationHit) => void
     onOpenCoworker?: (agentId: string) => void
+    onOpenCoworkerPanel?: (agentId: string, panel: DesktopCoworkerPanel) => void
     onOpenChat?: (target: DesktopOpenChat) => void
     onAddCoworker: () => void
     onModelSettings: () => void
@@ -57,7 +59,7 @@ export type DesktopControlCenterProps = {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -102,8 +104,8 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
     const chats = useDesktopControlCenterChats(pageCoworker?.id ?? null, showCoworkerChats, selectionScope)
     const [chatNotice, setChatNotice] = useState<{ scope: string; text: string } | null>(null)
     const selectingChat = useRef<{ scope: string } | null>(null)
-    const latest = useRef({ open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
-    latest.current = { open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
+    const latest = useRef({ open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
+    latest.current = { open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
     const available = () => latest.current.open && !latest.current.disabled && !isDesktopQuitting() && latest.current.selectionScope === selectionScope
 
     const close = () => {
@@ -247,7 +249,31 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
         },
     })
 
+    const coworkerPanelSection = (coworkerId: string): ControlSection[] => onOpenCoworkerPanel ? [{
+        id: 'coworker-open', heading: 'Open',
+        rows: searchItems(DESKTOP_COWORKER_PANEL_TABS, text).map(tab => ({
+            id: `tab-${tab.id}`, label: tab.label, detail: tab.description,
+            leading: { kind: 'icon', icon: tab.icon },
+            onSelect: () => {
+                const current = latest.current
+                if (!available() || !current.onOpenCoworkerPanel || !current.coworkers.some(owner => owner.id === coworkerId)) return
+                const action = current.onOpenCoworkerPanel
+                close()
+                action(coworkerId, tab.id)
+            },
+        })),
+    }] : []
+
     function sections(): ControlSection[] {
+        // A drill stays scoped to its coworker even when its query starts with / or @. Those
+        // prefixes cannot turn "Settings" here into a workspace/provider navigation action.
+        if (page.kind === 'coworker') {
+            if (!pageCoworker) return []
+            return [...coworkerPanelSection(page.coworkerId), ...(query.trim() === ''
+                ? coworkerChatSections()
+                : conversationSection('coworker-conversations', 'Conversations', page.coworkerId))]
+        }
+
         const commands = buildDesktopControlCommands({ workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme })
         const commandSections: ControlSection[] = [
             { id: 'actions', heading: 'Actions', rows: searchItems(commands.filter(command => command.group === 'actions'), text).map(commandRow) },
@@ -257,12 +283,6 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
 
         if (scope === 'commands') return commandSections
         if (scope === 'agents') return [{ id: 'coworkers', heading: 'Coworkers', rows: searchItems(searchableCoworkers, text).map(entry => coworkerRow(entry.coworker, 'coworkers')) }]
-
-        if (page.kind === 'coworker') {
-            if (!pageCoworker) return []
-            if (query.trim() === '') return coworkerChatSections()
-            return conversationSection('coworker-conversations', 'Conversations', page.coworkerId)
-        }
 
         if (!text) {
             const recentIds = new Set(recent)

@@ -13,6 +13,7 @@ import { DesktopFileImagePreview, isDesktopRasterName } from './DesktopFileImage
 import { applyEol, splitEol } from '@/lib/files/editable'
 import { Badge } from '@rerun/ui/primitives'
 import type { DesktopAgentView } from './DesktopApp'
+import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 
 type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string }
 type Preview = { path: string; content: string; truncated: boolean; hash?: string; identity?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
@@ -423,8 +424,8 @@ function FileEditor({ base, path, content, hash, identity, initialConflict = nul
     </Dialog>
 }
 
-export function DesktopCoworkerFiles({ agent }: { agent: DesktopAgentView }) {
-    const [open, setOpen] = useState(false)
+export function DesktopCoworkerFiles({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
+    const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const closeGuard = useRef<CloseGuard | null>(null)
     const registerCloseGuard = useCallback((guard: CloseGuard | null) => { closeGuard.current = guard }, [])
     const changeOpen = (next: boolean) => {

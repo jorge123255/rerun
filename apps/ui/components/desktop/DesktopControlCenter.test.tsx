@@ -79,6 +79,7 @@ type Overrides = {
     selectedCoworkerId?: string | null
     onOpenConversation?: (hit: DesktopConversationHit) => void
     onOpenCoworker?: (agentId: string) => void
+    onOpenCoworkerPanel?: Parameters<typeof DesktopControlCenter>[0]['onOpenCoworkerPanel']
     onOpenChat?: (target: DesktopOpenChat) => void
     onAddCoworker?: () => void
     onModelSettings?: () => void
@@ -128,6 +129,7 @@ const render = (root: ReturnType<typeof createRoot>, overrides: Overrides = {}) 
         selectedCoworkerId={overrides.selectedCoworkerId ?? null}
         onOpenConversation={overrides.onOpenConversation ?? (() => {})}
         onOpenCoworker={overrides.onOpenCoworker}
+        onOpenCoworkerPanel={overrides.onOpenCoworkerPanel}
         onOpenChat={overrides.onOpenChat}
         onAddCoworker={overrides.onAddCoworker ?? (() => {})}
         onModelSettings={overrides.onModelSettings ?? (() => {})}
@@ -314,6 +316,129 @@ test('workspace navigation uses the latest callback and stale command search row
     expect(onRecenterBoard).not.toHaveBeenCalled()
     expect(onOpenChange).not.toHaveBeenCalled()
     expect(dialog()).not.toBeNull()
+})
+
+test('coworker drill lists only the supported original Open tabs before its saved chats', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(chatList('ada', {
+        openChats: [openChat('draft-tab', null)],
+        recentChats: [hit('saved-chat', 'ada', 'Ada', 'Saved reply')],
+    }))))
+    const { root } = mount()
+    const onOpenCoworkerPanel = vi.fn()
+    await render(root, { onOpenCoworkerPanel })
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    await settle()
+    const sections = rendered.view!.sections
+    expect(sections[0]!.heading).toBe('Open')
+    expect(sections[0]!.rows.map(row => [row.id, row.label, row.detail])).toEqual([
+        ['tab-chat', 'Chat', 'Talk with this coworker'],
+        ['tab-memories', 'Knowledge', 'What this coworker remembers'],
+        ['tab-files', 'Files', "This coworker's files"],
+        ['tab-tools', 'Capabilities', 'Tools this coworker can use'],
+        ['tab-monitoring', 'Monitoring', 'Usage, cost and activity for this coworker'],
+        ['tab-settings', 'Settings', 'Configure this coworker'],
+    ])
+    expect(sections[0]!.rows.every(row => row.leading.kind === 'icon')).toBe(true)
+    expect(sections.slice(1).map(section => section.heading)).toEqual(['Open chats', 'Recent conversations'])
+    for (const absent of ['Logs', 'Routines', 'Triggers', 'Apps', 'MCP', 'Skills', 'Database', 'To handle', 'Install']) {
+        expect(sections[0]!.rows.some(row => row.label === absent)).toBe(false)
+    }
+    await clickRow('Knowledge')
+    expect(onOpenCoworkerPanel).toHaveBeenCalledExactlyOnceWith('ada', 'memories')
+    expect(dialog()).toBeNull()
+})
+
+test('coworker query prefixes keep Files and Settings scoped instead of exposing workspace commands', async () => {
+    const { root } = mount()
+    const onOpenCoworkerPanel = vi.fn()
+    const onWorkspaceSettings = vi.fn()
+    const onModelSettings = vi.fn()
+    const fetcher = vi.fn(async (url: string) => url.includes('/control-center-chats')
+        ? Response.json(chatList())
+        : Response.json({ hits: [], hasMore: false }))
+    vi.stubGlobal('fetch', fetcher)
+    await render(root, { onOpenCoworkerPanel, onWorkspaceSettings, onModelSettings })
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    await type('/settings')
+    await settle()
+    expect(rendered.view!.sections[0]!.rows.map(row => row.id)).toEqual(['tab-settings'])
+    expect(dialog()!.textContent).not.toContain('Workspace settings')
+    expect(dialog()!.textContent).not.toContain('Model settings')
+    await clickRow('Settings')
+    expect(onOpenCoworkerPanel).toHaveBeenLastCalledWith('ada', 'settings')
+    expect(onWorkspaceSettings).not.toHaveBeenCalled()
+    expect(onModelSettings).not.toHaveBeenCalled()
+
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    await type('@files')
+    await settle()
+    expect(rendered.view!.sections[0]!.rows.map(row => row.id)).toEqual(['tab-files'])
+    expect(rows().some(row => row.textContent?.includes('Bob'))).toBe(false)
+    await clickRow('Files')
+    expect(onOpenCoworkerPanel).toHaveBeenLastCalledWith('ada', 'files')
+    expect(onOpenCoworkerPanel).toHaveBeenCalledTimes(2)
+    const searches = fetcher.mock.calls.map(([url]) => url).filter(url => url.startsWith('/api/desktop/conversations/search'))
+    expect(searches).toHaveLength(2)
+    expect(searches.every(url => new URL(url, 'http://local').searchParams.get('agentId') === 'ada')).toBe(true)
+})
+
+test.each(['callback removed', 'owner removed', 'center disabled'] as const)('retained coworker Open rows cannot navigate after %s', async condition => {
+    const { root } = mount()
+    const onOpenCoworkerPanel = vi.fn()
+    const onOpenChange = vi.fn()
+    await render(root, { open: true, onOpenChange, onOpenCoworkerPanel })
+    await clickRow('Ada')
+    const selected = rendered.view!.sections[0]!.rows.find(row => row.id === 'tab-files')!.onSelect
+    await render(root, {
+        open: true, onOpenChange,
+        onOpenCoworkerPanel: condition === 'callback removed' ? undefined : onOpenCoworkerPanel,
+        coworkers: condition === 'owner removed' ? [coworker('bob', 'Bob')] : undefined,
+        disabled: condition === 'center disabled',
+    })
+    if (condition === 'callback removed') expect(rendered.view!.sections.some(section => section.id === 'coworker-open')).toBe(false)
+    onOpenChange.mockClear()
+    await act(async () => { selected() })
+    expect(onOpenCoworkerPanel).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalled()
+})
+
+test('coworker Open rows use the current callback and cannot jump back to a previous owner', async () => {
+    const { root } = mount()
+    const oldOpen = vi.fn()
+    const currentOpen = vi.fn()
+    await render(root, { onOpenCoworkerPanel: oldOpen })
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    const oldAdaFiles = rendered.view!.sections[0]!.rows.find(row => row.id === 'tab-files')!.onSelect
+    await act(async () => { field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })) })
+    await clickRow('Bob')
+    const bobFiles = rendered.view!.sections[0]!.rows.find(row => row.id === 'tab-files')!.onSelect
+    await render(root, { onOpenCoworkerPanel: currentOpen })
+    await act(async () => { oldAdaFiles() })
+    expect(oldOpen).not.toHaveBeenCalled()
+    expect(currentOpen).not.toHaveBeenCalled()
+    expect(dialog()).not.toBeNull()
+    await act(async () => { bobFiles() })
+    expect(oldOpen).not.toHaveBeenCalled()
+    expect(currentOpen).toHaveBeenCalledExactlyOnceWith('bob', 'files')
+    expect(dialog()).toBeNull()
+})
+
+test('a quit that begins while a coworker drill is open blocks its retained panel row', async () => {
+    const { root } = mount()
+    const onOpenCoworkerPanel = vi.fn()
+    const onOpenChange = vi.fn()
+    await render(root, { open: true, onOpenChange, onOpenCoworkerPanel })
+    await clickRow('Ada')
+    const selected = rendered.view!.sections[0]!.rows.find(row => row.id === 'tab-monitoring')!.onSelect
+    const drafts = await import('@/lib/desktop/draft-writes')
+    vi.spyOn(drafts, 'isDesktopQuitting').mockReturnValue(true)
+    await act(async () => { selected() })
+    expect(onOpenCoworkerPanel).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalled()
 })
 
 test('searching ranks coworkers, keeps a disabled coworker’s Off badge, and narrows on @ and /', async () => {

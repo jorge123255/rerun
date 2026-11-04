@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { MAX_REMEMBERED_TABS, closeSessionTab, newSessionTab, openSessionTab, type SessionTabsState } from '@/lib/chat/session-tabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
+import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 import { queueTabWrite } from '@/lib/desktop/tab-writes'
 import { forgetDesktopDraft, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
@@ -19,6 +20,8 @@ type Props = {
     sessions: DesktopSessionView[]
     initialLayout: DesktopTabLayout | null
     requested: DesktopChatRequest | null
+    requestedPanel?: DesktopCoworkerPanelRequest | null
+    onPanelRequestHandled?: (request: DesktopCoworkerPanelRequest) => void
     selected: boolean
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
     refreshSessions: () => Promise<void>
@@ -39,7 +42,7 @@ function initialTabs(layout: DesktopTabLayout | null, sessions: DesktopSessionVi
     return id && session?.id === id ? openSessionTab(initial, id, session.title) : initial
 }
 
-export function DesktopChatTabs({ agent, sessions, initialLayout, requested, selected, onVisibleSession, refreshSessions, reload, onClosePanel, modelLabel, onOpenModelSettings }: Props) {
+export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, reload, onClosePanel, modelLabel, onOpenModelSettings }: Props) {
     const [layout, setLayout] = useState(() => initialTabs(initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() =>
         requested && 'tabUid' in requested && !initialLayout?.tabs.some(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null)
@@ -266,6 +269,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
             if (!visible && !visited.includes(tab.uid)) return null
             return <div key={tab.uid} data-desktop-tab-active={visible} hidden={!visible} className={visible ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
                 <DesktopConversation agent={agent} sessionId={tab.id} sessions={sessions} tabUid={tab.uid} active={selected && visible}
+                    requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
                     tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={uid => pendingForks.current.delete(uid)}
                     onSelectSession={id => open(id, sessions.find(s => s.id === id)?.title ?? 'New conversation')}
                     onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
