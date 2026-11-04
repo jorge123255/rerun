@@ -2,6 +2,7 @@
 
 import { act, type ComponentProps, type MouseEvent as ReactMouseEvent } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 import { readTargetOf, type DesktopPendingInboxItem, type DesktopPendingReadTarget } from '@/lib/desktop/pending-inbox'
@@ -116,6 +117,28 @@ test.each(['Cancel', 'Escape'] as const)('%s dismisses only the confirmation and
     expect(panel(h.container)).not.toBeNull()
     expect(f.pendingWrites).toEqual([]); expect(f.doneWrites).toEqual([])
     // Once the confirmation is gone, Escape resumes the inbox's normal close behavior.
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    expect(panel(h.container)).toBeNull()
+})
+
+test('an Escape consumed by a synchronously dismissed portal cannot reach the newly attached inbox listener', async () => {
+    const f = fixture(), h = await mount()
+    await click(pill(h.container)); await click(markAll(h.container))
+    const cancel = dialogButton('Cancel')
+    // Native discrete events can commit the Radix dismissal during capture, before document
+    // bubbling. Reproduce that ordering instead of relying on act's end-of-event batch.
+    const dismissDuringCapture = (event: KeyboardEvent) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        flushSync(() => { cancel.click() })
+    }
+    document.addEventListener('keydown', dismissDuringCapture, true)
+    try {
+        await act(async () => { cancel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+        expect(dialog()).toBeNull()
+        expect(panel(h.container)).not.toBeNull()
+        expect(f.pendingWrites).toEqual([]); expect(f.doneWrites).toEqual([])
+    } finally { document.removeEventListener('keydown', dismissDuringCapture, true) }
     await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
     expect(panel(h.container)).toBeNull()
 })
