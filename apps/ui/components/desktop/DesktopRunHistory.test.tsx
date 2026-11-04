@@ -22,7 +22,8 @@ afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.useRea
 test('opens from a board coworker, updates a running entry, isolates coworkers, and preserves the transcript and typed draft', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     let runs = [running], reads = 0
-    const fetcher = vi.fn(async (url: string) => {
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })
         if (url === '/api/desktop/board-activity') return Response.json({ agents: { alice: 'idle', bob: 'idle' } })
         if (url === '/api/desktop/agents/alice/runs') { reads++; return Response.json({ runs }) }

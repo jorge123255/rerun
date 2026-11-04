@@ -17,6 +17,7 @@ function mockDesktopFetch(reply: (url: string, init?: RequestInit) => Response |
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
         const response = reply(url, init)
         if (response) return response
+        if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (url.endsWith('/tabs') && init?.method === 'PUT') return Response.json({ tabs: { revision: JSON.parse(String(init.body)).baseRevision + 1 } })
         if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url) && (init?.method ?? 'GET') === 'GET') return Response.json({ queued: null })
         // The Team board polls its own activity route; tests that do not exercise it see everyone idle.

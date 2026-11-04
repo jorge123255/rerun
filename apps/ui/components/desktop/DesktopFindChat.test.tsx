@@ -32,7 +32,8 @@ test('same-title results open their exact older transcripts, preserve Chats sele
     const agents = ['Alice', 'Bob'].map(name => ({ id: name.toLowerCase(), name, description: '', createdAt: '', updatedAt: '' }))
     const initial = { theme: 'system' as const, connections: [], default: null, agents, profile: { id: 1, displayName: 'Test' }, workspace: { id: 1, name: 'Disposable' } }
     const reads: string[] = []
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })
         if (url === '/api/desktop/board-activity') return Response.json({ agents: { alice: 'idle', bob: 'idle' } })
         if (url.startsWith('/api/desktop/conversations/search')) return Response.json({ hits: new URL(url, 'http://local').searchParams.get('q') === 'Shared' ? hits : [], hasMore: false })
@@ -106,7 +107,8 @@ test('debounces, aborts stale queries, reports failures distinctly and retries',
 })
 
 test('a stale search selection never falls back to the coworker’s newest conversation', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })
         if (url === '/api/desktop/board-activity') return Response.json({ agents: { alice: 'idle' } })
         if (url.includes('/search?')) return Response.json({ hits: [hits[0]], hasMore: false })

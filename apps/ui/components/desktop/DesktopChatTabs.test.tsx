@@ -15,6 +15,7 @@ test('regeneration stays on its own transport while another tab is active, and k
     const writes: { activeIndex: number; tabs: { id: string }[] }[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
         const url = String(input)
+        if (url.endsWith('/questions') && (options?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url) && (options?.method ?? 'GET') === 'GET') return Response.json({ queued: null })
         if (url.endsWith('/tabs')) {
             const body = JSON.parse(String(options?.body))
@@ -79,6 +80,7 @@ test('keeps an unaccepted first send open, then allows its bound running tab to 
     let sent: unknown
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
         const url = String(input)
+        if (url.endsWith('/questions') && (options?.method ?? 'GET') === 'GET') return Response.json({ question: null })
         if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url) && (options?.method ?? 'GET') === 'GET') return Response.json({ queued: null })
         if (url.endsWith('/tabs')) return Response.json({ tabs: { revision: JSON.parse(String(options?.body)).baseRevision + 1 } })
         if (url.endsWith('/chat')) { sent = JSON.parse(String(options?.body)); return new Promise<Response>(r => { accept = r }) }
