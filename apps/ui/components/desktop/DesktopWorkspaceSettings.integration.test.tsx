@@ -411,7 +411,7 @@ test('Cancel and a rejected upload preserve the saved pill, board and open chat 
     expect(originalChat.isConnected).toBe(true)
     expect(first.container.contains(originalChat)).toBe(true)
     expect(originalComposer.isConnected).toBe(true)
-    expect(originalChat.querySelector('#desktop-message')).toBe(originalComposer)
+    expect(originalChat.querySelector('textarea')).toBe(originalComposer)
     expect(originalComposer.closest('[data-desktop-tab-active]')).toBe(originalChat)
     expect(originalComposer.value).toBe('Do not replace this draft when upload fails')
     expect(originalChat.textContent).toContain('This coworker keeps its saved answer.')
