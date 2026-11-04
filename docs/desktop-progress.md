@@ -4,6 +4,22 @@ Updated November 4, 2026. Installed source: `414e325aad073f281aebfed273a785c410f
 
 The parity catalog now has **29 unfinished capability groups**, down from 30 because **B2 Boxes is complete**. This is a scope count, not the number of individual tasks left. Several groups contain working features and multiple missing features. Use the concrete tasks below for delivery updates; retain the catalog as the full scope reference. Do not remove unfinished work or close an area just to reduce the count.
 
+## Next delivery — 0 of 9 tasks accepted
+
+All eight lane worktrees start at `927c5e17da6b6db84657261695a98e0533b264de`. Prompts are prepared for user dispatch; source submission is not acceptance. Root owns integration and every check, build, installation, live model call and Mac/restart test.
+
+- [ ] **A — D5:** existing own PDF previews using the original Files frame.
+- [ ] **B — C3:** multiple existing text attachments through drafts, queues, send and history.
+- [ ] **C — C7:** local notifications/preferences and correct request age.
+- [ ] **D — E6:** local Skills and exact proposal review.
+- [ ] **E — E8:** schedules while Rerun is running, with durable chat adoption.
+- [ ] **F — E5:** HTTPS Streamable HTTP MCP connections and real tools.
+- [ ] **G — D7:** private/shared data tables and original views.
+- [ ] **H — E2:** bounded public-page web_fetch.
+- [ ] **Root — B5:** original Control Center Box search/drill, Move to another Box and New Box. Implementation and root checks in progress.
+
+See `desktop-next-round.md` for the exact worktrees, prompts and shared-file boundaries. These tasks do not add nine new scope groups. The catalog remains 29 until a whole group is completed.
+
 ## Current delivery — 3 of 3 tasks accepted
 
 Evidence: [Boxes, media and navigation acceptance](desktop-boxes-media-navigation-acceptance.md).

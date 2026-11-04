@@ -1,3 +1,25 @@
+# Next Rerun Mac agent assignments
+
+Prepared base: `927c5e17da6b6db84657261695a98e0533b264de`. Original Rerun: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+
+The eight worktrees below are prepared. Prompts are ready for user dispatch; this does not claim the agents have started. Root alone runs all checks and acceptance.
+
+| Owner | Task | Prompt |
+| --- | --- | --- |
+| A | D5 — Preview existing PDF files | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent A next prompt.md>) |
+| B | C3 — Multiple existing text attachments in chat | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent B next prompt.md>) |
+| C | C7 — Local notification preferences and request age | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent C next prompt.md>) |
+| D | E6 — Local skills and proposal review | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent D next prompt.md>) |
+| E | E8 — Scheduled routines while the Mac app is running | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent E next prompt.md>) |
+| F | E5 — Remote MCP connections and real tool use | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent F next prompt.md>) |
+| G | D7 — Private and shared data tables | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent G next prompt.md>) |
+| H | E2 — Read public web pages with web_fetch | [Copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent H next prompt.md>) |
+| Root | B5 — original Control Center Box search/member drill, Move to another Box and New Box command; all integration and acceptance | Coding worktree desktop/m1 |
+
+These are nine concrete tasks, currently 0 accepted. The scope catalog remains 29 unfinished capability groups until an entire group is accepted. Some tasks close slices only. Root will retain the current chat and drafts, then check navigation/moves/creation and saved state in the installed Mac app after a full restart.
+
+---
+
 # Accepted desktop port round — Boxes, Files navigation and MP4 result cards
 
 Installed source: `414e325aad073f281aebfed273a785c410f54d03`; installed build ID: `414e325-desktop-0.1.0`. Prepared A/B base: `f8375b73191ad55ce88bf0ada19b83dfc4fab2ee`. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.

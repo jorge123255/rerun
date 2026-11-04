@@ -33,7 +33,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard }: {
+export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, newBoxSignal = 0, focusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard }: {
     activitySnapshot?: BoardActivitySnapshot
     agents: DesktopAgentView[]
     workspaceName: string
@@ -42,6 +42,8 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     visibleSessionId?: string | null
     panelInsetRight?: number
     recenterSignal?: number
+    newBoxSignal?: number
+    focusRequest?: { tileId: string; nonce: number; insetRight: number } | null
     onOpen: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
     onDuplicate?: (sourceId: string, requestId: string, position: GridPosition, spaceId?: string) => Promise<'created' | 'occupied'>
@@ -103,6 +105,16 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
         }
         setCommandError('')
     }, [board?.revision])
+    const newBoxSeen = useRef(newBoxSignal)
+    useEffect(() => {
+        if (newBoxSeen.current === newBoxSignal) return
+        // Let the command palette finish releasing its cover before opening the same
+        // New Box form. A request is consumed once and cannot reopen after Cancel.
+        if (covered && !quitting) return
+        newBoxSeen.current = newBoxSignal
+        if (!board || !onBoardCommand || boardDisabled || boardSaving || commandBusy || quitting || placement || spaceDialog) return
+        setSpaceDialog({ kind: 'create' })
+    }, [newBoxSignal, covered, board, onBoardCommand, boardDisabled, boardSaving, commandBusy, quitting, placement, spaceDialog])
     const baseBlocked = boardDisabled || boardSaving || commandBusy || quitting
     const gridBlocked = baseBlocked || !!spaceDialog || covered
     const boardRevision = board?.revision
@@ -306,6 +318,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                     selectedTileId={selectedAgentId}
                     frameInset={{ left: 0, right: panelInsetRight }}
                     recenterSignal={recenterSignal}
+                    focusRequest={focusRequest}
                     fitToContent
                     canDraw={false}
                     showViewControls={tiles.length > 0 || !!board?.spaces.length}

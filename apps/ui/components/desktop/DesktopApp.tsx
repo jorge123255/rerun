@@ -10,7 +10,7 @@ import type { SettingsChange } from '@/lib/desktop/settings'
 import { DesktopSettings } from './DesktopSettings'
 import { ArrowLeft, X } from 'lucide-react'
 import { SidePanel } from '@/components/layout/SidePanel'
-import { SIDE_PANEL_GAP } from '@/lib/side-panel-width'
+import { SIDE_PANEL_GAP, loadSidePanelWidth } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
 import { DesktopBoard } from './DesktopBoard'
@@ -86,6 +86,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const themeSavingRef = useRef(false)
     const themeErrorToast = useRef<string | number | undefined>(undefined)
     const [recenterSignal, setRecenterSignal] = useState(0)
+    const [newBoxSignal, setNewBoxSignal] = useState(0)
+    const [boardFocus, setBoardFocus] = useState<{ tileId: string; nonce: number; insetRight: number } | null>(null)
     useEffect(() => {
         if (theme !== preference) setTheme(preference)
     }, [theme, preference, setTheme])
@@ -325,6 +327,13 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setError(null)
     }
 
+    function focusFromControlCenter(agentId: string) {
+        if (currentAgents.current.some(agent => agent.id === agentId) && !isDesktopQuitting())
+            setBoardFocus(current => ({ tileId: agentId, nonce: (current?.nonce ?? 0) + 1,
+                // Match the original IsoBoard: the first opening has no measured panel yet.
+                insetRight: window.matchMedia('(min-width: 768px)').matches ? loadSidePanelWidth(window.innerWidth) + SIDE_PANEL_GAP : 0 }))
+    }
+
     function openCoworkerPanel(agentId: string, panel: DesktopCoworkerPanel) {
         if (controlCenterDisabled || isDesktopQuitting() || deletedAgents.current.has(agentId)
             || !currentAgents.current.some(agent => agent.id === agentId)) return
@@ -355,6 +364,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
+                    newBoxSignal={newBoxSignal} focusRequest={boardFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
                     boardDisabled={settings || workspaceSettings || shortcutsOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
@@ -417,10 +427,16 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             }} />
             <DesktopControlCenter activity={boardActivity} onRefreshActivity={boardActivity.refresh} coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null} initialRecent={initialData.recentCoworkers}
                 open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
-                onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) selectCoworker(id) }}
-                onOpenChat={chat => { if (currentAgents.current.some(agent => agent.id === chat.agentId)) selectCoworker(chat.agentId, null, chat) }}
-                onOpenCoworkerPanel={openCoworkerPanel}
-                onOpenConversation={openSavedConversation} onAddCoworker={() => showBoard(true)}
+                board={boardState.board}
+                onAddBox={initialData.board && !boardState.error ? () => { if (!controlCenterDisabled && !isDesktopQuitting()) setNewBoxSignal(signal => signal + 1) } : undefined}
+                onMoveCoworker={initialData.board && !boardState.error ? (agentId, spaceId) => {
+                    if (!controlCenterDisabled && !isDesktopQuitting() && currentAgents.current.some(agent => agent.id === agentId))
+                        void boardState.command({ kind: 'move-agent', agentId, spaceId }).catch(() => {})
+                } : undefined}
+                onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) { focusFromControlCenter(id); selectCoworker(id) } }}
+                onOpenChat={chat => { if (currentAgents.current.some(agent => agent.id === chat.agentId)) { focusFromControlCenter(chat.agentId); selectCoworker(chat.agentId, null, chat) } }}
+                onOpenCoworkerPanel={(agentId, panel) => { focusFromControlCenter(agentId); openCoworkerPanel(agentId, panel) }}
+                onOpenConversation={hit => { focusFromControlCenter(hit.agentId); openSavedConversation(hit) }} onAddCoworker={() => showBoard(true)}
                 onWorkspaceSettings={() => { if (!isDesktopQuitting()) setWorkspaceSettings(true) }}
                 onRecenterBoard={() => { if (!isDesktopQuitting()) setRecenterSignal(signal => signal + 1) }}
                 darkTheme={resolvedTheme === 'dark'}
