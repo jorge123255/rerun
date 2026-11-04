@@ -2,7 +2,7 @@ import { desktopCodexToolCatalog, desktopRerunToolCatalog } from '@rerun/contrac
 import { z } from 'zod'
 
 export type DesktopToolGroup = 'rerun' | 'codex'
-export type CoworkerToolRow = { id: string; label: string; description: string; tools: readonly string[]; available: boolean; unavailableReason?: string; enabled: boolean }
+export type CoworkerToolRow = { id: string; label: string; description: string; tools: readonly string[]; available: boolean; unavailableReason?: string; parent?: string; enabled: boolean }
 export type CoworkerTools = Record<DesktopToolGroup, CoworkerToolRow[]>
 
 export const coworkerToolPatch = z.strictObject({ group: z.enum(['rerun', 'codex']), id: z.string(), enabled: z.boolean() })

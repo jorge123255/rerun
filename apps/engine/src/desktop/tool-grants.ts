@@ -6,6 +6,9 @@ export function hasDesktopToolGrant(config: AgentConfig, id: DesktopRerunGrantId
     if (!desktopRerunGrantsOf(config.tools)[id]) return false
     if (id === 'memoryRecall') return config.tools.memory
     if (id === 'memoryWrite') return config.selfImprovement.enabled && config.selfImprovement.autoMemory
+    // The self-instruction permissions sit under the same master switch the Tools settings
+    // show: the grant alone is never enough while Improve itself is off.
+    if (id === 'selfInstruction' || id === 'verbositySet') return config.selfImprovement.enabled
     return true
 }
 

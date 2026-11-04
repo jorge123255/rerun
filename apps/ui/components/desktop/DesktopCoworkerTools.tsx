@@ -10,7 +10,7 @@ import { PANEL_CARD } from '@/components/ui/panel-row'
 import { Switch } from '@/components/ui/switch'
 import type { CoworkerTools, CoworkerToolPatch, CoworkerToolRow, DesktopToolGroup } from '@/lib/desktop/coworker-tools'
 import { getToolMeta } from '@/lib/tool-meta'
-import { ChevronDownIcon, FolderIcon, PencilIcon, TerminalIcon, GlobeIcon, WrenchIcon } from '@/lib/icons'
+import { ChevronDownIcon, FolderIcon, PencilIcon, TerminalIcon, GlobeIcon, WandSparklesIcon, WrenchIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from './DesktopApp'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
@@ -45,6 +45,36 @@ function CapabilityCard({ group, row, saving, toggle }: { group: DesktopToolGrou
     </div>
 }
 
+function SelfImprovementCard({ row, nested, saving, toggle }: {
+    row: CoworkerToolRow; nested: CoworkerToolRow[]; saving: boolean; toggle: (patch: CoworkerToolPatch) => void
+}) {
+    const id = useId()
+    const masterId = `${id}-master`
+    return <div className={cn('flex flex-col gap-2 p-3', PANEL_CARD)}>
+        <div className="flex items-start justify-between gap-2">
+            <Icon icon={WandSparklesIcon} size="md" />
+            <Switch id={masterId} checked={row.enabled} disabled={saving || (!row.available && !row.enabled)} aria-describedby={`${masterId}-info`}
+                onCheckedChange={enabled => toggle({ group: 'rerun', id: row.id, enabled })} />
+        </div>
+        <div>
+            <label htmlFor={masterId} className="text-sm font-medium">{row.label}</label>
+            <div id={`${masterId}-info`} className="text-xs text-muted-foreground">
+                <p>{row.description}</p>
+            </div>
+        </div>
+        {row.enabled && nested.length > 0 && <div className="mt-1 flex flex-col border-t border-border pt-1">
+            {nested.map(child => <label key={child.id} className="flex items-center gap-2 py-1.5 px-1 rounded-md hover:bg-accent/40 transition-colors cursor-pointer">
+                <span className="flex-1 min-w-0">
+                    <span className="text-sm block truncate">{child.label}</span>
+                    <span className="text-xs text-muted-foreground block">{child.description}</span>
+                </span>
+                <Switch id={`${masterId}-${child.id}`} checked={child.enabled} disabled={saving || !child.available} aria-describedby={`${masterId}-${child.id}-info`}
+                    onCheckedChange={enabled => toggle({ group: 'rerun', id: child.id, enabled })} />
+            </label>)}
+        </div>}
+    </div>
+}
+
 function ToolSections({ tools, unavailable = false, saving, toggle }: {
     tools: CoworkerTools; unavailable?: boolean; saving: boolean; toggle: (patch: CoworkerToolPatch) => void
 }) {
@@ -52,11 +82,18 @@ function ToolSections({ tools, unavailable = false, saving, toggle }: {
         // A previously granted tool whose prerequisite changed stays visible so it can be revoked.
         const rows = tools[group].filter(row => unavailable === (!row.available && !row.enabled))
         if (!rows.length) return null
+        const selfRow = rows.find(row => row.id === 'self')
+        const selfNested = rows.filter(row => row.parent === 'self')
+        const grid = rows.filter(row => !row.parent && row.id !== 'self')
         return <PanelSection key={group} label={group === 'rerun' ? 'Rerun tools' : 'Native Codex tools'}>
             {group === 'codex' && !unavailable && <p className="text-xs text-muted-foreground">These permissions apply when this coworker uses ChatGPT (Codex).</p>}
             <PanelGrid className="grid-cols-1 sm:grid-cols-2">
-                {rows.map(row => <CapabilityCard key={row.id} group={group} row={row} saving={saving} toggle={toggle} />)}
+                {grid.map(row => <CapabilityCard key={row.id} group={group} row={row} saving={saving} toggle={toggle} />)}
+                {group === 'rerun' && !selfRow && selfNested.map(row => <CapabilityCard key={row.id} group={group} row={row} saving={saving} toggle={toggle} />)}
             </PanelGrid>
+            {group === 'rerun' && selfRow && <div className="mt-3">
+                <SelfImprovementCard row={selfRow} nested={selfNested} saving={saving} toggle={toggle} />
+            </div>}
         </PanelSection>
     })
 }

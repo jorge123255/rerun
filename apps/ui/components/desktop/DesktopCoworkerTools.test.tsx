@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopAgentView } from './DesktopApp'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
-import type { CoworkerToolRow } from '@/lib/desktop/coworker-tools'
+import type { CoworkerToolPatch, CoworkerToolRow } from '@/lib/desktop/coworker-tools'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -55,6 +55,46 @@ it('grants only the selected coworker, rolls back a failed revoke, and reloads t
         await click(unavailable)
         expect(unavailable.getAttribute('aria-expanded')).toBe('false')
         expect(document.activeElement).toBe(unavailable)
+    } finally { await act(async () => root.unmount()) }
+})
+
+it('shows the Improve itself master with its nested own-instruction and reply-length permissions', async () => {
+    const row = (id: string, enabled: boolean, parent?: string, available = true): CoworkerToolRow => ({
+        id, label: id, description: '', tools: [], available, enabled, parent,
+        ...(!available && { unavailableReason: 'Turn on Improve itself to change this permission.' }),
+    })
+    let master = true, own = false, length = false
+    const patches: CoworkerToolPatch[] = []
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+        if (init.method === 'PATCH') {
+            const patch = JSON.parse(String(init.body))
+            patches.push(patch)
+            if (patch.id === 'self') master = patch.enabled
+            if (patch.id === 'selfInstruction') own = patch.enabled
+            if (patch.id === 'verbositySet') length = patch.enabled
+        }
+        const nested = master
+            ? [row('selfInstruction', own, 'self'), row('verbositySet', length, 'self')]
+            : [row('selfInstruction', false, 'self', false), row('verbositySet', false, 'self', false)]
+        return Response.json({ rerun: [row('self', master), ...nested], codex: [] })
+    })
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    try {
+        await act(async () => root.render(<DesktopCoworkerTools agent={{ id: 'first', name: 'First' } as DesktopAgentView} />))
+        await act(async () => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(b => b.textContent === 'Tools')!.click())
+        const switches = () => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="switch"]'))
+        expect(switches()).toHaveLength(3)
+        expect(switches()[0].getAttribute('aria-checked')).toBe('true')
+        expect(document.body.textContent).toContain('Edit own instructions')
+        expect(document.body.textContent).toContain('Change reply length')
+        await act(async () => switches()[1].click())
+        expect(patches).toEqual([{ group: 'rerun', id: 'selfInstruction', enabled: true }])
+        await act(async () => switches()[0].click())
+        expect(patches.at(-1)).toEqual({ group: 'rerun', id: 'self', enabled: false })
+        expect(document.querySelectorAll('[role="switch"]')).toHaveLength(1)
+        const disclosure = Array.from(document.querySelectorAll('button')).find(el => el.textContent === 'Unavailable tools (2)')!
+        await act(async () => disclosure.click())
+        expect(document.body.textContent).toContain('Turn on Improve itself to change this permission.')
     } finally { await act(async () => root.unmount()) }
 })
 

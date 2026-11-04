@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile'] as const
+export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'selfInstruction', 'verbositySet'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -20,9 +20,11 @@ export function desktopCodexGrantsOf(tools: StoredGrants): Record<DesktopCodexGr
     return Object.fromEntries(desktopCodexGrantIds.map(id => [id, tools.desktopCodexGrants?.[id] === true])) as Record<DesktopCodexGrantId, boolean>
 }
 
-export type DesktopToolCatalogEntry = { id: string; label: string; description: string; tools: string[]; available: boolean; unavailableReason?: string }
+export type DesktopToolCatalogEntry = { id: string; label: string; description: string; tools: string[]; available: boolean; unavailableReason?: string; parent?: string }
 const supported = (id: string, label: string, description: string, ...tools: string[]): DesktopToolCatalogEntry =>
     ({ id, label, description, tools, available: true })
+const nested = (parent: string, id: string, label: string, description: string, ...tools: string[]): DesktopToolCatalogEntry =>
+    ({ id, label, description, tools, available: true, parent })
 const pending = (id: string, label: string, description: string, unavailableReason: string, ...tools: string[]): DesktopToolCatalogEntry =>
     ({ id, label, description, tools, available: false, unavailableReason })
 
@@ -57,7 +59,9 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     pending('cards', 'Table cards', 'Show saved table views in chat.', 'Requires saved table views in the desktop app.', 'card_table'),
     pending('suggestService', 'Suggest services', 'Suggest a connection for the user to configure.', 'Requires the service connection flow.'),
     pending('requestSecret', 'Request a secret', 'Request a credential through a secure field.', 'Requires a secure entry and credential storage flow.'),
-    pending('self', 'Self-improvement', 'Update instructions or install tools.', 'Requires a review flow and isolated installation.'),
+    supported('self', 'Improve itself', 'Let this coworker refine its own instructions and how long its answers are over time.', 'soul_update', 'verbosity_set'),
+    nested('self', 'selfInstruction', 'Edit own instructions', 'Let this coworker rewrite its own instructions — the identity at the top of its prompt — and have them take effect from the next message.', 'soul_update'),
+    nested('self', 'verbositySet', 'Change reply length', 'Let this coworker durably change how long its answers are, from minimal to detailed.', 'verbosity_set'),
     pending('mcp', 'Custom MCP servers', 'Add external tool servers.', 'Requires credential management and scoped server execution.'),
     pending('foreman', 'Foreman', 'Build a team and work across coworkers.', 'Requires the board’s Foreman runtime and workspace authorization.'),
 ]

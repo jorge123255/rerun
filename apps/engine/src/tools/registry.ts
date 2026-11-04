@@ -35,10 +35,11 @@ import { desktopWorkspaceReadTools } from '../desktop/workspace-read.js'
 import { desktopQuestionTools } from '../desktop/question-tool.js'
 import { desktopApprovalTools } from '../desktop/approval-tool.js'
 import { desktopCardFileTools } from '../desktop/card-file.js'
+import { desktopSelfInstructionTools } from '../desktop/self-instruction.js'
 import { desktopApp } from '../desktop/policy.js'
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
-    if (desktopApp()) return { tools: { ...desktopWorkspaceReadTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx) }, close: async () => {} }
+    if (desktopApp()) return { tools: { ...desktopWorkspaceReadTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx), ...desktopSelfInstructionTools(ctx) }, close: async () => {} }
     const cfg = ctx.agent.config.tools
     const tools: ToolSet = {}
     if (ctx.agent.config.kind === 'foreman') Object.assign(tools, foremanTools(ctx), agentFilesTools())

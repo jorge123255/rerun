@@ -306,7 +306,7 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         offersQuickReplies(agent.config) ? section('quick_replies', QUICK_REPLIES_NOTE) : '',
         conversational ? turnOrderSection(order, turnClosers(agent, takeover)) : '',
         conversational ? section('language', LANGUAGE_NOTE) : '',
-        section('verbosity', verbosityNote(agent.config.verbosity, agent.config.selfImprovement.enabled)),
+        section('verbosity', verbosityNote(agent.config.verbosity, desktop ? hasDesktopToolGrant(agent.config, 'verbositySet') : agent.config.selfImprovement.enabled)),
         conversational ? section('shared_conversation', SHARED_CONVERSATION_NOTE) : section('sub_agent_rules', SUB_AGENT_RULES),
         unattended ? section('unattended_run', unattendedRunNote(trigger.source === 'schedule' ? 'a scheduled routine' : 'an incoming webhook call')) : '',
     ]
