@@ -13,7 +13,6 @@ import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, Fol
 import { DesktopFileAudioPreview, isDesktopAudioName } from './DesktopFileAudioPreview'
 import { DesktopFileImagePreview, isDesktopRasterName } from './DesktopFileImagePreview'
 import { FileSiblingControls, useFileSiblingKeys } from './DesktopFileSiblingNav'
-import { DesktopFilePdfPreview, isDesktopPdfName } from './DesktopFilePdfPreview'
 import { DesktopFileVideoPreview, isDesktopVideoName } from './DesktopFileVideoPreview'
 import { applyEol, splitEol } from '@/lib/files/editable'
 import { Badge } from '@rerun/ui/primitives'
@@ -67,7 +66,7 @@ async function errorOf(response: Response, fallback: string) {
     return typeof body?.error === 'string' ? body.error : fallback
 }
 
-/** Port of AgentPanelFiles: breadcrumb folder navigation, previous and next file, text, raster, audio, video, and PDF previews, and a single .txt/.md import, scoped to one coworker. */
+/** Port of AgentPanelFiles: breadcrumb folder navigation, previous and next file, text, raster, audio, and video previews, and a single .txt/.md import, scoped to one coworker. */
 function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; registerCloseGuard: (guard: CloseGuard | null) => void }) {
     const base = `/api/desktop/agents/${encodeURIComponent(agent.id)}/files`
     const [error, setError] = useState('')
@@ -75,7 +74,6 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const [image, setImage] = useState<{ path: string; name: string; identity?: string } | null>(null)
     const [audio, setAudio] = useState<{ path: string; name: string; identity?: string } | null>(null)
     const [video, setVideo] = useState<{ path: string; name: string; identity?: string } | null>(null)
-    const [pdf, setPdf] = useState<{ path: string; name: string; identity?: string } | null>(null)
     const [renaming, setRenaming] = useState<string | null>(null)
     const [menuName, setMenuName] = useState<string | null>(null)
     const renameAfterMenu = useRef<string | null>(null)
@@ -114,12 +112,11 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         if (away(image?.path)) setImage(null)
         if (away(audio?.path)) setAudio(null)
         if (away(video?.path)) setVideo(null)
-        if (away(pdf?.path)) setPdf(null)
         if (away(preview?.path)) {
             setPreview(null)
             setEditingPath(null)
         }
-    }, [currentPath, image, audio, video, pdf, preview])
+    }, [currentPath, image, audio, video, preview])
 
     useEffect(() => {
         // A replaced listing identity must not keep the previous bytes. A missing name stays put.
@@ -136,8 +133,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         adopt(image, identity => { if (image) applyMedia(identity, image, setImage) })
         adopt(audio, identity => { if (audio) applyMedia(identity, audio, setAudio) })
         adopt(video, identity => { if (video) applyMedia(identity, video, setVideo) })
-        adopt(pdf, identity => { if (pdf) applyMedia(identity, pdf, setPdf) })
-    }, [currentPath, entries, image, audio, video, pdf])
+    }, [currentPath, entries, image, audio, video])
 
     previewNow.current = preview
     const openPath = preview?.path
@@ -206,18 +202,16 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         const file = { path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }
         setEditingPath(null)
         if (isDesktopRasterName(entry.name)) {
-            setAudio(null); setVideo(null); setPdf(null); setPreview(null); setImage(file)
+            setAudio(null); setVideo(null); setPreview(null); setImage(file)
         } else if (isDesktopAudioName(entry.name)) {
-            setImage(null); setVideo(null); setPdf(null); setPreview(null); setAudio(file)
+            setImage(null); setVideo(null); setPreview(null); setAudio(file)
         } else if (isDesktopVideoName(entry.name)) {
-            setImage(null); setAudio(null); setPdf(null); setPreview(null); setVideo(file)
-        } else if (isDesktopPdfName(entry.name)) {
-            setImage(null); setAudio(null); setVideo(null); setPreview(null); setPdf(file)
+            setImage(null); setAudio(null); setPreview(null); setVideo(file)
         } else {
-            setImage(null); setAudio(null); setVideo(null); setPdf(null); setPreview({ path, loading: true })
+            setImage(null); setAudio(null); setVideo(null); setPreview({ path, loading: true })
         }
     }, [currentPath, entries])
-    const openPathname = image?.path ?? audio?.path ?? video?.path ?? pdf?.path ?? preview?.path
+    const openPathname = image?.path ?? audio?.path ?? video?.path ?? preview?.path
     const openEntry = openPathname && folderOf(openPathname) === currentPath
         ? entries.find(entry => entry.type !== 'dir' && entry.name === nameOf(openPathname))
         : undefined
@@ -281,7 +275,6 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             setImage(previous => previous && covered(previous.path) ? null : previous)
             setAudio(previous => previous && covered(previous.path) ? null : previous)
             setVideo(previous => previous && covered(previous.path) ? null : previous)
-            setPdf(previous => previous && covered(previous.path) ? null : previous)
             setEditingPath(previous => covered(previous) ? null : previous)
             setRenaming(previous => previous === target.name ? null : previous)
         } catch {
@@ -328,12 +321,6 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         const params = new URLSearchParams({ path: video.path })
         if (video.identity) params.set('identity', video.identity)
         return <DesktopFileVideoPreview name={video.name} path={video.path} identity={video.identity} srcUrl={`${base}/video?${params.toString()}`} onBack={() => setVideo(null)} siblings={shownSiblings} viewerRef={viewerRef} />
-    }
-
-    if (pdf) {
-        const params = new URLSearchParams({ path: pdf.path })
-        if (pdf.identity) params.set('identity', pdf.identity)
-        return <DesktopFilePdfPreview name={pdf.name} path={pdf.path} identity={pdf.identity} srcUrl={`${base}/pdf?${params.toString()}`} onBack={() => setPdf(null)} siblings={shownSiblings} viewerRef={viewerRef} />
     }
 
     if (preview) {
@@ -562,7 +549,7 @@ export function DesktopCoworkerFiles({ agent, dialogControl }: { agent: DesktopA
         }}>
             <DialogHeader>
                 <DialogTitle>Files</DialogTitle>
-                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file. PNG, JPEG, WebP, and GIF files already in the folder can be previewed. WAV and MP3 files already in the folder can be played. MP4 files already in the folder can be played. PDF files already in the folder can be previewed.</DialogDescription>
+                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file. PNG, JPEG, WebP, and GIF files already in the folder can be previewed. WAV and MP3 files already in the folder can be played. MP4 files already in the folder can be played.</DialogDescription>
             </DialogHeader>
             <FilesPanel key={agent.id} agent={agent} registerCloseGuard={registerCloseGuard} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
