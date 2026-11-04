@@ -37,7 +37,7 @@ beforeEach(() => {
                     if (loseEnqueueAck) { loseEnqueueAck = false; throw new Error('Enqueue acknowledgement lost') }
                 }
                 else if (current?.id === body.id && body.action === 'remove') saved.delete(key)
-                else if (current?.id === body.id) saved.set(key, { ...current, state: body.action === 'attempt' ? 'sending' : 'review' })
+                else if (current && current.id === body.id) saved.set(key, { ...current, state: body.action === 'attempt' ? 'sending' : 'review' })
                 return Response.json({ queued: saved.get(key) ?? null })
             }
             queueReads++

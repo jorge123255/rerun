@@ -472,8 +472,15 @@ async function recoverRenameHops(directory: string, pinned: string, names: strin
         const tempStat = await fileStat(tempPath)
         let recoveredName: string | undefined
         await assertUnmoved()
-        if (tempStat && (!sameFile(tempStat, identity) || tempStat.isSymbolicLink())) continue
-        if (tempStat) {
+        if (tempStat && (tempStat.isSymbolicLink() || (!tempStat.isFile() && !tempStat.isDirectory()))) continue
+        if (tempStat && !sameFile(tempStat, identity)) {
+            // A writer replaced the source between native preflight and its rename, and a
+            // crash prevented the caller from surfacing that staged replacement. It cannot
+            // complete the original rename: preserve its actual inode under a visible name.
+            recoveredName = `rename-recovery-${randomBytes(12).toString('hex')}${tempStat.isFile() ? hop.from.match(/\.[^.]+$/)?.[0] ?? '' : ''}`
+            await assertUnmoved()
+            await renameWithoutReplace(directory, parent, hop.temp, tempStat, recoveredName)
+        } else if (tempStat) {
             try {
                 await assertUnmoved()
                 await renameWithoutReplace(directory, parent, hop.temp, identity, hop.to)

@@ -35,7 +35,7 @@ function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (ne
         if (next && next !== name) onSubmit(next)
         else onCancel()
     }
-    return <Input ref={ref} value={value} aria-label="New name" onChange={event => setValue(event.target.value)} onBlur={submit}
+    return <Input ref={ref} value={value} aria-label="New name" data-desktop-file-rename onChange={event => setValue(event.target.value)} onBlur={submit}
         onClick={event => event.stopPropagation()}
         onKeyDown={event => {
             event.stopPropagation()
@@ -58,6 +58,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const [preview, setPreview] = useState<Preview | null>(null)
     const [renaming, setRenaming] = useState<string | null>(null)
     const [menuName, setMenuName] = useState<string | null>(null)
+    const renameAfterMenu = useRef<string | null>(null)
     const [selected, setSelected] = useState<string | null>(null)
     const [renamePending, setRenamePending] = useState(false)
     const renamingNow = useRef(false)
@@ -235,9 +236,17 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                             {entries.length === 0 && <li className="px-2 py-6 text-center text-sm text-muted-foreground">This is your coworker’s workspace. Files it downloads, creates or edits during its runs are stored here.</li>}
                         </ul>
                     </ContextMenuTrigger>
-                    {menuEntry && <ContextMenuContent>
+                    {menuEntry && <ContextMenuContent onCloseAutoFocus={event => {
+                        const name = renameAfterMenu.current
+                        if (!name) return
+                        // Mount the inline editor after the menu releases its focus trap. Mounting
+                        // in onSelect lets that trap blur and immediately cancel the new field.
+                        event.preventDefault()
+                        renameAfterMenu.current = null
+                        setRenaming(name)
+                    }}>
                         <ContextMenuLabel className="max-w-56 truncate">{menuEntry.name}</ContextMenuLabel>
-                        <ContextMenuItem disabled={renamePending} onSelect={() => setRenaming(menuEntry.name)}>
+                        <ContextMenuItem disabled={renamePending} onSelect={() => { renameAfterMenu.current = menuEntry.name }}>
                             <PencilIcon className="size-4" />
                             Rename
                         </ContextMenuItem>
@@ -367,7 +376,11 @@ export function DesktopCoworkerFiles({ agent }: { agent: DesktopAgentView }) {
     }
     return <Dialog open={open} onOpenChange={changeOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Files</Button></DialogTrigger>
-        {open && <DialogContent className="flex h-[75dvh] flex-col sm:max-w-2xl">
+        {open && <DialogContent className="flex h-[75dvh] flex-col sm:max-w-2xl" onEscapeKeyDown={event => {
+            // Radix handles Escape at document capture before the field can stop propagation.
+            // Let the inline field cancel its name edit without dismissing the Files dialog.
+            if (event.target instanceof HTMLElement && event.target.hasAttribute('data-desktop-file-rename')) event.preventDefault()
+        }}>
             <DialogHeader>
                 <DialogTitle>Files</DialogTitle>
                 <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, or import a .txt or .md file.</DialogDescription>

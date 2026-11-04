@@ -55,7 +55,7 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
         await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve))
         const port = reservation.address().port
         await new Promise(resolve => reservation.close(resolve))
-        runtime = { protocolVersion: 1, launchNonce: randomUUID(), buildId: 'run-history-acceptance', workspaceId: 1, dataRoot,
+        runtime = { protocolVersion: /** @type {1} */ (1), launchNonce: randomUUID(), buildId: 'run-history-acceptance', workspaceId: /** @type {1} */ (1), dataRoot,
             app: { origin: appOrigin, sessionToken: randomBytes(32).toString('hex') }, engine: { origin: `http://127.0.0.1:${port}`, apiKey } }
         await writeFile(runtimeFile, JSON.stringify(runtime), { mode: 0o600 })
         const env = Object.fromEntries(['PATH', 'TMPDIR', 'LANG'].filter(k => process.env[k]).map(k => [k, process.env[k]]))

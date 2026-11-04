@@ -67,6 +67,17 @@ static int exclusive_rename(int fd, const char *from, const char *to) {
     return -1;
 #endif
 }
+/* Deterministic race witnesses exist only in the separately compiled test binary. */
+#ifdef RERUN_RENAME_TESTING
+static void test_barrier(const char *phase) {
+    if (!getenv("RERUN_RENAME_TEST_BARRIERS")) return;
+    fprintf(stderr, "%s\n", phase);
+    fflush(stderr);
+    (void)getchar();
+}
+#else
+#define test_barrier(phase) ((void)0)
+#endif
 int main(int argc, char **argv) {
     uintmax_t parent_dev, parent_ino, source_dev, source_ino;
     if (argc != 8 || argv[1][0] != '/' || !number(argv[2], &parent_dev) || !number(argv[3], &parent_ino) ||
@@ -84,6 +95,7 @@ int main(int argc, char **argv) {
     if (fstatat(fd, argv[4], &source, AT_SYMLINK_NOFOLLOW)) { int error = errno; close(fd); return failure(error); }
     if (!is_identity(&source, source_dev, source_ino) || (!S_ISREG(source.st_mode) && !S_ISDIR(source.st_mode))) { close(fd); return failure(ESTALE); }
     if (!owner_matches(fd, argv[1], parent_dev, parent_ino)) { close(fd); return failure(ESTALE); }
+    test_barrier("before-rename");
     if (exclusive_rename(fd, argv[4], argv[7])) { int error = errno; close(fd); return failure(error); }
     struct stat moved;
     const int have_moved = !fstatat(fd, argv[7], &moved, AT_SYMLINK_NOFOLLOW);
@@ -93,6 +105,7 @@ int main(int argc, char **argv) {
          * actually moved, without replacing an arrival at the old name. Otherwise preserve
          * both entries for the app's journal; ESTALE never means that nothing moved. */
         struct stat current;
+        test_barrier("before-rollback");
         if (have_moved && (S_ISREG(moved.st_mode) || S_ISDIR(moved.st_mode)) &&
             !fstatat(fd, argv[7], &current, AT_SYMLINK_NOFOLLOW) &&
             is_identity(&current, (uintmax_t)moved.st_dev, (uintmax_t)moved.st_ino)) (void)exclusive_rename(fd, argv[7], argv[4]);
