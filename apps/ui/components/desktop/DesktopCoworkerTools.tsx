@@ -66,7 +66,7 @@ function SelfImprovementCard({ row, nested, saving, toggle }: {
             {nested.map(child => <label key={child.id} className="flex items-center gap-2 py-1.5 px-1 rounded-md hover:bg-accent/40 transition-colors cursor-pointer">
                 <span className="flex-1 min-w-0">
                     <span className="text-sm block truncate">{child.label}</span>
-                    <span className="text-xs text-muted-foreground block">{child.description}</span>
+                    <span id={`${masterId}-${child.id}-info`} className="text-xs text-muted-foreground block">{child.description}</span>
                 </span>
                 <Switch id={`${masterId}-${child.id}`} checked={child.enabled} disabled={saving || !child.available} aria-describedby={`${masterId}-${child.id}-info`}
                     onCheckedChange={enabled => toggle({ group: 'rerun', id: child.id, enabled })} />

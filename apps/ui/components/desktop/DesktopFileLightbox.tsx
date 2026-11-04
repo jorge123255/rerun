@@ -16,8 +16,10 @@ type PreviewState =
 
 const loading = (key: string): PreviewState => ({ key, status: 'loading' })
 
-function messageOf(error: unknown): string {
-    return error instanceof DesktopCardError ? error.message : 'This file is no longer available.'
+function messageOf(error: unknown, image: boolean): string {
+    // Preserve the text preview's generic failure; filesystem error details are not UI copy.
+    if (!image) return 'This file could not be read.'
+    return error instanceof DesktopCardError ? error.message : 'This image is no longer available.'
 }
 
 /**
@@ -60,7 +62,7 @@ export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onCl
                 if (active) setPreview({ key, status: 'text' as const, content, truncated })
             })
         request.catch(error => {
-            if (active && !controller.signal.aborted) setPreview({ key, status: 'error', message: messageOf(error) })
+            if (active && !controller.signal.aborted) setPreview({ key, status: 'error', message: messageOf(error, image) })
         })
         return () => {
             active = false

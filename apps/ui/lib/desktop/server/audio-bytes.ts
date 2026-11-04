@@ -71,7 +71,8 @@ function readWav(bytes: Uint8Array): void {
     while (offset < bytes.length) {
         if (offset + 8 > bytes.length) corrupt()
         const id = ascii(bytes, offset, 4)
-        if (!/^[A-Za-z0-9 ]{4}$/.test(id)) corrupt()
+        // Unknown RIFF chunks are skipped by their bounded size. Metadata identifiers such
+        // as Adobe's _PMX are valid FourCCs and need not be alphanumeric.
         const size = u32le(bytes, offset + 4)
         const dataAt = offset + 8
         const padded = size + (size & 1)
@@ -163,14 +164,19 @@ function frameSync(bytes: Uint8Array, offset: number): boolean {
 function skipId3v2(bytes: Uint8Array): number {
     if (bytes.length < 10) corrupt()
     const major = bytes[3]!
-    if (major < 2 || major > 4) corrupt()
+    if (major < 2 || major > 4 || bytes[4] === 0xff) corrupt()
     const flags = bytes[5]!
-    // v2.2 allows only unsync and compression. v2.3/v2.4 also allow an extended header,
-    // the experimental bit, and a 10-byte footer that sits outside the sync-safe size.
-    if (major === 2 ? (flags & 0x3f) !== 0 : (flags & 0x0f) !== 0) corrupt()
+    // Only v2.4 permits a footer, outside the declared body size. Its mirrored header
+    // prevents silently accepting arbitrary bytes as a declared footer.
+    const reserved = major === 2 ? 0x3f : major === 3 ? 0x1f : 0x0f
+    if (flags & reserved) corrupt()
     const size = syncsafe(bytes, 6)
     let offset = 10 + size
-    if (major !== 2 && flags & 0x10) offset += 10
+    if (major === 4 && flags & 0x10) {
+        if (offset + 10 > bytes.length || ascii(bytes, offset, 3) !== '3DI') corrupt()
+        for (let index = 3; index < 10; index++) if (bytes[offset + index] !== bytes[index]) corrupt()
+        offset += 10
+    }
     if (offset > bytes.length) corrupt()
     return offset
 }

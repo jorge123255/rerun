@@ -59,8 +59,9 @@ it('grants only the selected coworker, rolls back a failed revoke, and reloads t
 })
 
 it('shows the Improve itself master with its nested own-instruction and reply-length permissions', async () => {
+    const labels: Record<string, string> = { self: 'Improve itself', selfInstruction: 'Edit own instructions', verbositySet: 'Change reply length' }
     const row = (id: string, enabled: boolean, parent?: string, available = true): CoworkerToolRow => ({
-        id, label: id, description: '', tools: [], available, enabled, parent,
+        id, label: labels[id] ?? id, description: '', tools: [], available, enabled, parent,
         ...(!available && { unavailableReason: 'Turn on Improve itself to change this permission.' }),
     })
     let master = true, own = false, length = false

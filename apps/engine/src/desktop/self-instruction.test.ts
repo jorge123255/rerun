@@ -12,7 +12,9 @@ const { agentDir, soulPath } = await import('../config/paths.js')
 const { buildTools } = await import('../tools/registry.js')
 const { agentConfigSchema } = await import('../agents/types.js')
 const { writeAgentConfig } = await import('../agents/config-write.js')
-const { readAgentConfig } = await import('../agents/loader.js')
+const loader = await import('../agents/loader.js')
+const { readAgentConfig } = loader
+const { withAgentLock } = await import('../agents/lock.js')
 const { createServer } = await import('../http/server.js')
 const alpha = 'self-alpha', bravo = 'self-bravo'
 const app = createServer()
@@ -100,4 +102,46 @@ it('switching the master off and on preserves the autoMemory preference and the 
     expect(current.selfImprovement.enabled).toBe(true)
     expect(current.selfImprovement.autoMemory).toBe(true)
     expect(Object.keys(await registry(alpha)).sort()).toEqual(['fs_read', 'soul_update', 'verbosity_set'])
+})
+
+it.each([
+    ['soul_update', 'selfInstruction', 'master'],
+    ['soul_update', 'selfInstruction', 'permission'],
+    ['verbosity_set', 'verbositySet', 'master'],
+    ['verbosity_set', 'verbositySet', 'permission'],
+] as const)('%s cannot commit after a queued %s %s revocation', async (name, permission, revoke) => {
+    await setMaster(alpha, true)
+    await grant(alpha, { selfInstruction: true, verbositySet: true })
+    const tools = await registry(alpha)
+    const previousSoul = await readFile(soulPath(alpha), 'utf8')
+    let current = await readAgentConfig(alpha)
+    const previousVerbosity = current.verbosity
+
+    // Snapshot the config at each grant-read invocation. This makes the old check-before-
+    // lock race deterministic without depending on the OS readFile completion order.
+    const configRead = vi.spyOn(loader, 'readAgentConfig').mockImplementation(async id =>
+        id === alpha ? structuredClone(current) : readAgentConfig(id))
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const revocation = withAgentLock(alpha, async () => {
+        await gate
+        if (revoke === 'master') current.selfImprovement.enabled = false
+        else current.tools.desktopToolGrants = { ...current.tools.desktopToolGrants, [permission]: false }
+        await writeAgentConfig(alpha, current)
+    })
+    const mutation = call(tools[name]!, name === 'soul_update'
+        ? { soul: '# This delayed rewrite must not commit', reason: 'Queued test call' }
+        : { level: previousVerbosity === 'detailed' ? 'minimal' : 'detailed', reason: 'Queued test call' })
+        .then(value => ({ value, error: null }), error => ({ value: null, error }))
+    try {
+        release()
+        await revocation
+        expect((await mutation).error).toMatchObject({ message: 'This tool is turned off for this coworker.' })
+        expect(await readFile(soulPath(alpha), 'utf8')).toBe(previousSoul)
+        expect((await readAgentConfig(alpha)).verbosity).toBe(previousVerbosity)
+    } finally {
+        release()
+        await Promise.allSettled([revocation, mutation])
+        configRead.mockRestore()
+    }
 })

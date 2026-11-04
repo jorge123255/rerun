@@ -24,9 +24,13 @@ export function desktopSelfInstructionTools(ctx: RunContext): ToolSet {
                 reason: z.string().describe('One sentence on what changed and why, for the user to see'),
             }),
             execute: async ({ soul, reason }) => {
-                await requireDesktopToolGrant(ctx, 'selfInstruction')
-                await writeFile(soulPath(ctx.agent.id), `${soul.trim()}\n`, 'utf8')
-                await reloadAgent(ctx.agent.id)
+                // Permission changes and mutations share the lock: a waiting call must read
+                // the grant again after an earlier revoke (or Stop) has taken effect.
+                await withAgentLock(ctx.agent.id, async () => {
+                    await requireDesktopToolGrant(ctx, 'selfInstruction')
+                    await writeFile(soulPath(ctx.agent.id), `${soul.trim()}\n`, 'utf8')
+                    await reloadAgent(ctx.agent.id)
+                })
                 return `Instructions updated (${reason}). It takes effect from your next message onward.`
             },
         })
@@ -40,8 +44,8 @@ export function desktopSelfInstructionTools(ctx: RunContext): ToolSet {
                 reason: z.string().describe('One sentence on why it changed, for the user to see'),
             }),
             execute: async ({ level, reason }) => {
-                await requireDesktopToolGrant(ctx, 'verbositySet')
                 await withAgentLock(ctx.agent.id, async () => {
+                    await requireDesktopToolGrant(ctx, 'verbositySet')
                     const config = agentConfigSchema.parse(JSON.parse(await readFile(configPath(ctx.agent.id), 'utf8')))
                     config.verbosity = level
                     await writeAgentConfig(ctx.agent.id, config)

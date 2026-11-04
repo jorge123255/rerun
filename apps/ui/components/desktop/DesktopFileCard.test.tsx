@@ -32,7 +32,7 @@ function fileReads(reply: (path: string) => Response | Promise<Response>) {
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
         const request = new URL(url, 'http://127.0.0.1')
         expect(request.pathname).toBe('/api/desktop/agents/agent%201/files/read')
-        expect(init).toEqual({ cache: 'no-store' })
+        expect(init).toMatchObject({ cache: 'no-store', signal: expect.any(AbortSignal) })
         expect([...request.searchParams.keys()]).toEqual(['path'])
         const path = request.searchParams.get('path')!
         expect(card.files.some(file => file.path === path)).toBe(true)
