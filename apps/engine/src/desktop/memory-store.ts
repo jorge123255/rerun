@@ -30,7 +30,15 @@ async function inDirectory<T>(path: string, action: (pinned: string) => Promise<
 
 // A hidden marker bridges each atomic SQLite batch with its Markdown rename. If the
 // process stopped between them, the committed index tells us whether to publish or roll back.
-async function recover(agentId: string, dir: string, hasIndex: boolean) {
+async function recover(agentId: string, dir: string, hasIndex: boolean, data: string) {
+    const clearing = await lstat(join(dir, '.clearing')).catch((cause: NodeJS.ErrnoException) => {
+        if (cause.code !== 'ENOENT') throw cause
+        return null
+    })
+    if (clearing) {
+        if (!clearing.isFile()) throw new HttpError(403, 'Unsafe coworker memory location.')
+        await finishClear(agentId, dir, data, hasIndex)
+    }
     const pending = (await readdir(dir, { withFileTypes: true })).filter(entry => /^\.(adding|deleting|writing|updating)-[A-Za-z0-9_-]+$/.test(entry.name))
     if (!pending.length) return
     const indexed = new Map(hasIndex ? (await listMemories(agentId)).map(row => [row.id, row]) : [])
@@ -67,8 +75,9 @@ function withMemoryStore<T>(agentId: string, mode: 'list' | 'create' | 'update' 
             const memory = join(parent, 'memory')
             if (!paths.hasMemory) await mkdir(memory, { mode: 0o700 })
             return inDirectory(memory, async dir => {
-                if (mode !== 'recall') await recover(agentId, dir, paths.hasIndex)
-                return action({ ...paths, dir, data: join(parent, 'data') })
+                const data = join(parent, 'data')
+                if (mode !== 'recall') await recover(agentId, dir, paths.hasIndex, data)
+                return action({ ...paths, dir, data })
             })
         })
     })
@@ -231,21 +240,52 @@ export function removeDesktopMemory(agentId: string, id: string, expectedContent
     })
 }
 
-// Clearing every note repeats the single-delete sequence per file inside one locked store: rename
-// under a marker, drop the note's rows in the engine transaction, then publish the removal. The
-// marker is named after the listed file, so a tampered frontmatter ID cannot redirect the rename,
-// and only this coworker's directory is touched: a sibling's notes and any learning or recall
-// preferences survive untouched.
+async function clearMemoryIndex(agentId: string, data: string, hasIndex: boolean) {
+    if (!hasIndex) return
+    await withRecallIndex(data, 'rw', async db => {
+        const schema = await db.execute("SELECT name FROM sqlite_schema WHERE name IN ('memories', 'memories_fts')")
+        const tables = new Set(schema.rows.map(row => row.name))
+        const statements = []
+        if (tables.has('memories_fts')) statements.push({
+            // The index is stored in this coworker's database. Clear its owned rows and orphaned
+            // FTS entries, retaining any rows that still belong to another agent in a legacy DB.
+            sql: tables.has('memories')
+                ? 'DELETE FROM memories_fts WHERE memory_id IN (SELECT id FROM memories WHERE agent_id = ?) OR NOT EXISTS (SELECT 1 FROM memories WHERE memories.id = memories_fts.memory_id)'
+                : 'DELETE FROM memories_fts',
+            args: tables.has('memories') ? [agentId] : [],
+        })
+        if (tables.has('memories')) statements.push({ sql: 'DELETE FROM memories WHERE agent_id = ?', args: [agentId] })
+        if (statements.length) await db.batch(statements, 'write')
+    })
+}
+
+async function clearableFiles(dir: string) {
+    // Select regular Markdown files directly. Neither legacy names nor frontmatter IDs determine
+    // a mutation path, and links, directories, and non-memory files remain untouched.
+    const entries = (await readdir(dir, { withFileTypes: true })).filter(entry => entry.isFile() && entry.name.endsWith('.md'))
+    const paths = entries.map(entry => join(dir, entry.name))
+    for (const path of paths) {
+        if (!(await lstat(path)).isFile()) throw new HttpError(403, 'Unsafe coworker memory location.')
+    }
+    return paths
+}
+
+async function finishClear(agentId: string, dir: string, data: string, hasIndex: boolean) {
+    for (const path of await clearableFiles(dir)) await unlink(path)
+    await clearMemoryIndex(agentId, data, hasIndex)
+    await unlink(join(dir, '.clearing'))
+}
+
+// A confirmed clear is durable intent: after an interrupted request, finish the same clear before
+// allowing another write. A single marker also covers legacy filenames and index-only remnants.
 export function clearDesktopMemories(agentId: string) {
-    return withMemoryStore(agentId, 'delete', async ({ dir, hasIndex }) => {
-        if (!dir) return
-        for (const note of await listMemoryFiles(agentId, dir)) {
-            const stem = basename(note.path).replace(/\.md$/, '')
-            if (!noteId.test(stem)) continue
-            const marker = join(dir, '.deleting-' + stem)
-            await rename(note.path, marker)
-            if (hasIndex) await deleteMemory(agentId, stem)
-            await unlink(marker)
-        }
+    return withMemoryStore(agentId, 'delete', async ({ dir, data, memory, hasIndex }) => {
+        const index = data ?? join(dirname(memory), 'data')
+        if (!dir) return clearMemoryIndex(agentId, index, hasIndex)
+        await clearableFiles(dir)
+        const intent = await open(join(dir, '.clearing'), 'wx', 0o600)
+        try { await intent.sync() }
+        finally { await intent.close() }
+        await finishClear(agentId, dir, index, hasIndex)
     })
 }

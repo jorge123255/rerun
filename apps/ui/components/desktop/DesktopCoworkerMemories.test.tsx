@@ -369,6 +369,37 @@ test('cancel keeps every note and the search, and confirming clears all notes be
     } finally { await act(async () => { root.unmount() }) }
 })
 
+test('clear-all stays available for zero recall results and removes notes outside the search', async () => {
+    const root = mount()
+    const url = '/api/desktop/agents/reviewer/memories'
+    let stored = [note('outside', 'Vacation dates in July')]
+    let clears = 0
+    vi.stubGlobal('fetch', async (target: string, init: RequestInit) => {
+        if (init.method === 'DELETE') {
+            expect(target).toBe(url)
+            clears++
+            stored = []
+            return new Response(null, { status: 204 })
+        }
+        return Response.json({ memories: target.endsWith('/recall') ? [] : stored })
+    })
+    try {
+        await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
+        await click('Memories')
+        await enter('desktop-memory-search', 'unmatched')
+        await act(async () => { dialog()!.querySelector<HTMLFormElement>('form[role="search"]')!.requestSubmit() })
+        expect(dialog()?.textContent).toContain('No matches')
+        const trash = document.querySelector<HTMLButtonElement>('[aria-label="Clear all memories"]')
+        expect(trash).not.toBeNull()
+        await act(async () => { trash!.click() })
+        await click('Clear all')
+        expect(clears).toBe(1)
+        expect(stored).toEqual([])
+        expect(dialog()?.textContent).toContain('No memories yet')
+        expect(document.querySelector('[aria-label="Clear all memories"]')).toBeNull()
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('a failed clear keeps every note and the search intact, and retrying the confirmation succeeds', async () => {
     const root = mount()
     const url = '/api/desktop/agents/reviewer/memories'
@@ -402,6 +433,40 @@ test('a failed clear keeps every note and the search intact, and retrying the co
         expect(stored.map(n => n.id)).toEqual(['outside', 'apples'])
         expect(dialog()?.textContent).toContain('Buys apples weekly')
         expect(dialog()?.textContent).toContain('1 recalled for “apples”')
+        expect((document.getElementById('desktop-memory-search') as HTMLInputElement).value).toBe('apples')
+        expect(trash()).not.toBeNull()
+        await act(async () => { trash()!.click() })
+        await click('Clear all')
+        expect(clears).toBe(2)
+        expect(stored).toEqual([])
+        expect(dialog()?.textContent).toContain('No memories yet')
+        expect(dialog()?.querySelector('[role="alert"]')).toBeNull()
+    } finally { await act(async () => { root.unmount() }) }
+})
+
+test('a partial clear failure refreshes the remaining notes and retains its error, search, and retry control', async () => {
+    const root = mount()
+    const url = '/api/desktop/agents/reviewer/memories'
+    let stored = [note('outside', 'Vacation dates'), note('apples', 'Buys apples weekly')]
+    let clears = 0
+    vi.stubGlobal('fetch', async (target: string, init: RequestInit) => {
+        if (init.method === 'DELETE') {
+            stored = clears++ === 0 ? [stored[0]] : []
+            return clears === 1 ? Response.json({ error: 'Could not finish clearing memories' }, { status: 503 }) : new Response(null, { status: 204 })
+        }
+        return Response.json({ memories: target.endsWith('/recall') ? stored.filter(n => n.content.includes('apples')) : stored })
+    })
+    const trash = () => document.querySelector<HTMLButtonElement>('[aria-label="Clear all memories"]')
+    try {
+        await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
+        await click('Memories')
+        await enter('desktop-memory-search', 'apples')
+        await act(async () => { dialog()!.querySelector<HTMLFormElement>('form[role="search"]')!.requestSubmit() })
+        await act(async () => { trash()!.click() })
+        await click('Clear all')
+        expect(dialog()?.querySelector('[role="alert"]')?.textContent).toBe('Could not finish clearing memories')
+        expect(dialog()?.textContent).not.toContain('Buys apples weekly')
+        expect(dialog()?.textContent).toContain('0 recalled for “apples”')
         expect((document.getElementById('desktop-memory-search') as HTMLInputElement).value).toBe('apples')
         expect(trash()).not.toBeNull()
         await act(async () => { trash()!.click() })

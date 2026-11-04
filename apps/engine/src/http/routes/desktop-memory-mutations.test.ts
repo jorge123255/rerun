@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs'
-import { mkdir, readFile, readdir, rename, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -140,9 +140,89 @@ describe('desktop memory mutations', () => {
         await symlink(join(agentDir(owner), 'memory'), join(agentDir(alias), 'memory'), 'dir')
         expect((await send(alias, 'DELETE')).status).toBe(403)
         expect(await readFile(note.path, 'utf8')).toContain('Guarded note')
+        const marker = join(agentDir(owner), 'memory', '.clearing')
+        await symlink(note.path, marker)
+        expect((await send(owner, 'DELETE')).status).toBe(403)
+        expect(await readFile(note.path, 'utf8')).toContain('Guarded note')
+        await unlink(marker)
         expect((await send(owner, 'DELETE')).status).toBe(204)
         closeSystemDb(owner)
         expect(await listMemoryFiles(owner)).toEqual([])
+    })
+
+    it('clears legacy filenames and stale owned indexes while preserving other files and coworkers', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const owner = 'clear-legacy', sibling = 'clear-legacy-sibling'
+        await Promise.all([owner, sibling].map(makeAgent))
+        const kept = await writeMemoryFile(sibling, 'Sibling content stays')
+        const root = join(agentDir(owner), 'memory')
+        await mkdir(root)
+        for (const name of ['meeting notes.md', 'preferences.v1.md', 'x'.repeat(240) + '.md']) {
+            await writeFile(join(root, name), `---\nid: '../../outside'\n---\nLegacy note\n`)
+        }
+        await writeFile(join(root, 'README.txt'), 'Keep this non-memory file')
+        await symlink(kept.path, join(root, 'linked.md'))
+        await mkdir(join(root, 'archive'))
+        await writeFile(join(root, 'archive', 'old.md'), 'Archived content')
+        const { client } = await getSystemDb(owner)
+        for (const [id, agent] of [['orphan-owned', owner], ['foreign-owned', sibling]]) {
+            await client.execute({
+                sql: 'INSERT INTO memories(id, agent_id, path, content, created_at) VALUES (?, ?, ?, ?, ?)',
+                args: [id, agent, 'missing.md', id, '2026-11-03T00:00:00Z'],
+            })
+            await client.execute({ sql: 'INSERT INTO memories_fts(content, memory_id) VALUES (?, ?)', args: [id, id] })
+        }
+        await client.execute("INSERT INTO memories_fts(content, memory_id) VALUES ('stale entry', 'fts-only')")
+        expect((await (await send(owner, 'GET')).json()).memories).toHaveLength(3)
+        expect((await send(owner, 'DELETE')).status).toBe(204)
+        expect(await listMemoryFiles(owner)).toEqual([])
+        expect((await client.execute('SELECT id, agent_id FROM memories')).rows).toEqual([{ id: 'foreign-owned', agent_id: sibling }])
+        expect((await client.execute('SELECT memory_id FROM memories_fts')).rows).toEqual([{ memory_id: 'foreign-owned' }])
+        expect((await readdir(root)).sort()).toEqual(['README.txt', 'archive', 'linked.md'])
+        expect(await readFile(join(root, 'README.txt'), 'utf8')).toBe('Keep this non-memory file')
+        expect(await readFile(join(root, 'archive', 'old.md'), 'utf8')).toBe('Archived content')
+        expect(await readFile(kept.path, 'utf8')).toContain('Sibling content stays')
+    })
+
+    it('finishes an interrupted confirmed clear after reopening, including remaining legacy notes', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const owner = 'clear-interrupted'
+        await makeAgent(owner)
+        await send(owner, 'POST', { content: 'Indexed note being cleared' })
+        const root = join(agentDir(owner), 'memory')
+        const { client } = await getSystemDb(owner)
+        await client.execute("CREATE TRIGGER block_clear BEFORE DELETE ON memories BEGIN SELECT RAISE(ABORT, 'fixture'); END")
+        expect((await send(owner, 'DELETE')).status).toBe(500)
+        expect(await readdir(root)).toEqual(['.clearing'])
+        // The failed index transaction keeps both tables intact until the accepted clear resumes.
+        expect((await client.execute('SELECT id FROM memories')).rows).toHaveLength(1)
+        expect((await client.execute('SELECT memory_id FROM memories_fts')).rows).toHaveLength(1)
+        await client.execute('DROP TRIGGER block_clear')
+        // Represents a crash earlier in the file loop, before all legacy files were removed.
+        await writeFile(join(root, 'remaining note.v2.md'), 'Remaining legacy note')
+        closeSystemDb(owner)
+        expect((await (await send(owner, 'GET')).json()).memories).toEqual([])
+        expect(await readdir(root)).toEqual([])
+        const reopened = (await getSystemDb(owner)).client
+        expect((await reopened.execute('SELECT id FROM memories')).rows).toEqual([])
+        expect((await reopened.execute('SELECT memory_id FROM memories_fts')).rows).toEqual([])
+        expect((await send(owner, 'DELETE')).status).toBe(204)
+    })
+
+    it('clears an index-only coworker without creating a memory directory', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const owner = 'clear-index-only'
+        await makeAgent(owner)
+        const { client } = await getSystemDb(owner)
+        await client.execute({
+            sql: 'INSERT INTO memories(id, agent_id, path, content, created_at) VALUES (?, ?, ?, ?, ?)',
+            args: ['missing-file', owner, 'missing-file.md', 'Missing file', '2026-11-03T00:00:00Z'],
+        })
+        await client.execute("INSERT INTO memories_fts(content, memory_id) VALUES ('Missing file', 'missing-file'), ('Orphan', 'no-row')")
+        expect((await send(owner, 'DELETE')).status).toBe(204)
+        expect((await client.execute('SELECT id FROM memories')).rows).toEqual([])
+        expect((await client.execute('SELECT memory_id FROM memories_fts')).rows).toEqual([])
+        expect(await readdir(agentDir(owner))).not.toContain('memory')
     })
 
     it('names the removal marker after the listed file, so a tampered frontmatter id cannot redirect the delete', async () => {

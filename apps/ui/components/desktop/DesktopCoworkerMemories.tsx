@@ -20,6 +20,7 @@ type Draft = { content: string; kind: string; tags: string }
 function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/memories`
     const [result, setResult] = useState<Result | null>(null)
+    const [hasMemories, setHasMemories] = useState(false)
     const [revision, setRevision] = useState(0)
     const [query, setQuery] = useState('')
     const [activeQuery, setActiveQuery] = useState('')
@@ -39,7 +40,12 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
                     : await fetch(url, options)
                 if (!response.ok) throw new Error('Could not load coworker memories.')
                 const data = memoriesListSchema.parse(await response.json())
-                if (!controller.signal.aborted) setResult(data)
+                if (!controller.signal.aborted) {
+                    setResult(data)
+                    // Like Rerun's separate memories/recall lists, an empty search does not hide
+                    // clear-all when the unfiltered list already showed saved notes.
+                    if (!activeQuery || data.memories.length > 0) setHasMemories(data.memories.length > 0)
+                }
             } catch {
                 if (!controller.signal.aborted) setResult({ error: activeQuery ? 'Could not search memories. Try again.' : 'Could not load coworker memories. Try again.' })
             }
@@ -94,11 +100,13 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
     }
 
     // The original panel retires the active recall search with the confirmed clear, so the refreshed
-    // list is what remains. A failure keeps every note and the search exactly as they were.
+    // list is what remains. A failed or lost response may follow partial progress: refresh the
+    // remaining notes while keeping the search and error available for a retry.
     async function clearAll() {
         setConfirmClear(false)
         const cleared = await changeMemory(url, { method: 'DELETE' }, 'Could not clear these memories. Try again.')
-        if (cleared) { setQuery(''); setActiveQuery('') }
+        if (cleared) { setHasMemories(false); setQuery(''); setActiveQuery('') }
+        else refresh()
     }
 
     return <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-xl" showCloseButton={!writing}
@@ -120,7 +128,7 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
                 </div>
                 <Button type="submit" size="sm" variant="outline" disabled={!query.trim()}>Search</Button>
                 {(activeQuery || query) && <Button type="button" size="sm" variant="ghost" onClick={() => { setQuery(''); search('') }}>Clear search</Button>}
-                {result && 'memories' in result && result.memories.length > 0 && (
+                {hasMemories && (
                     <Button type="button" size="icon-sm" variant="destructive" title="Clear all memories" aria-label="Clear all memories" onClick={() => setConfirmClear(true)}>
                         <Trash2Icon />
                     </Button>
