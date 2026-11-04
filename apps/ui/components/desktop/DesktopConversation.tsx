@@ -23,6 +23,7 @@ import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { DesktopCoworkerData } from './DesktopCoworkerData'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
+import type { DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 import { AttachmentChips, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
@@ -93,7 +94,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     onTabActivity?: (uid: string, state: TabActivity) => void
     onChatSession: (id: string, sourceDraft?: ComposerDraft) => void | boolean | Promise<boolean>
     renderHistory?: (busy: boolean) => ReactNode
-    renderRunHistory?: ReactNode
+    renderRunHistory?: (control: DesktopDialogControl) => ReactNode
     onClosePanel?: () => void
     modelLabel?: string
     onOpenModelSettings?: () => void
@@ -704,7 +705,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     <DesktopCoworkerData agent={agent} dialogControl={dialogControl('data')} />
                     <DesktopCoworkerTools agent={agent} dialogControl={dialogControl('tools')} />
                     <DesktopCoworkerMemories agent={agent} dialogControl={dialogControl('memories')} />
-                    {renderRunHistory}
+                    {renderRunHistory?.(dialogControl('logs'))}
                     <DesktopCoworkerMonitoring agent={agent} dialogControl={dialogControl('monitoring')} />
                     <DesktopCoworkerSettings agent={agent} disabled={generating || !!sessionId && engineRunning.id !== sessionId} dialogControl={dialogControl('settings')} />
                 </div>

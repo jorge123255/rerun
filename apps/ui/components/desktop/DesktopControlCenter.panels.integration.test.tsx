@@ -158,9 +158,10 @@ function fixture(runStatus?: () => Promise<Response>) {
             if (route === 'control-center-chats') return Response.json({ agentId, openChats: layouts.get(agentId)!.tabs.map(tab => ({
                 agentId, tabUid: tab.uid, sessionId: tab.id, title: tab.title,
             })), recentChats: [], recentStatus: 'ok', hasMore: false })
-            if (['files', 'files/read', 'memories', 'tools', 'monitoring', 'settings'].includes(route)) {
+            if (['files', 'files/read', 'memories', 'tools', 'monitoring', 'runs', 'settings'].includes(route)) {
                 panelReads.push(url.pathname)
                 if (method !== 'GET') contentWrites.push(`${method} ${url.pathname}`)
+                if (route === 'runs') return Response.json({ runs: [] })
                 if (route === 'files') return Response.json({ path: '', entries: [{ name: 'notes.md', type: 'file', size: 32, modifiedAt: date }] })
                 if (route === 'files/read') return Response.json({ path: 'notes.md', content: `# ${agent.name} private file`, size: 32, truncated: false })
                 if (route === 'memories') return Response.json({ memories: [{ id: `${agentId}-note`, content: `${agent.name} private memory`, kind: 'fact', tags: [], createdAt: date, strength: 1, status: 'active' }] })
@@ -222,6 +223,7 @@ test('original coworker Open rows use existing dialogs without remounting the cu
         ['Files', 'Files', 'notes.md'],
         ['Capabilities', 'Tools', 'Reviewer file access'],
         ['Monitoring', 'Monitoring', 'No runs in the last 7 days'],
+        ['Logs', 'Recent runs', 'No runs yet for this coworker.'],
         ['Settings', 'Edit coworker', 'Reply length'],
         ['Files', 'Files', 'notes.md'],
     ]

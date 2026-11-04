@@ -338,11 +338,12 @@ test('coworker drill lists only the supported original Open tabs before its save
         ['tab-files', 'Files', "This coworker's files"],
         ['tab-tools', 'Capabilities', 'Tools this coworker can use'],
         ['tab-monitoring', 'Monitoring', 'Usage, cost and activity for this coworker'],
+        ['tab-logs', 'Logs', 'Activity and run logs'],
         ['tab-settings', 'Settings', 'Configure this coworker'],
     ])
     expect(sections[0]!.rows.every(row => row.leading.kind === 'icon')).toBe(true)
     expect(sections.slice(1).map(section => section.heading)).toEqual(['Open chats', 'Recent conversations'])
-    for (const absent of ['Logs', 'Routines', 'Triggers', 'Apps', 'MCP', 'Skills', 'To handle', 'Install']) {
+    for (const absent of ['Routines', 'Triggers', 'Apps', 'MCP', 'Skills', 'To handle', 'Install']) {
         expect(sections[0]!.rows.some(row => row.label === absent)).toBe(false)
     }
     await clickRow('Knowledge')

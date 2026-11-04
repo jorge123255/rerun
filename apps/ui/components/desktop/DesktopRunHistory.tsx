@@ -11,6 +11,7 @@ import type { DesktopAgentView } from './DesktopApp'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { ChevronRightIcon } from '@/lib/icons'
 import { DesktopRunDetails } from './DesktopRunDetails'
+import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 
 function RecordedTime({ value, fallback = 'Not recorded' }: { value: string | null; fallback?: string }) {
     return value && Number.isFinite(Date.parse(value)) ? <time dateTime={value}>{fullDateTime(value)}</time> : <span>{fallback}</span>
@@ -73,8 +74,8 @@ function RunList({ agentId }: { agentId: string }) {
     </>
 }
 
-export function DesktopRunHistory({ agent }: { agent: DesktopAgentView }) {
-    const [open, setOpen] = useState(false)
+export function DesktopRunHistory({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
+    const [open, setOpen] = useDesktopDialogControl(dialogControl)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Runs</Button></DialogTrigger>
         <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-xl">
