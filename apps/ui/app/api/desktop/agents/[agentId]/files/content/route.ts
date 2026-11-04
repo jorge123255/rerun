@@ -18,7 +18,7 @@ export function PUT(request: Request, { params }: Context) {
             return Response.json(saved, { headers: { 'cache-control': 'no-store' } })
         } catch (error) {
             if (error instanceof CoworkerFileConflict) {
-                return Response.json({ error: error.message, conflict: true, current: error.current }, { status: 409, headers: { 'cache-control': 'no-store' } })
+                return Response.json({ error: error.message, conflict: true, current: error.current, ...(error.recovery && { recovery: error.recovery }) }, { status: 409, headers: { 'cache-control': 'no-store' } })
             }
             throw error
         }

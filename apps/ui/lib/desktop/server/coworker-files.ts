@@ -1,8 +1,10 @@
 import 'server-only'
 import { DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath } from '@rerun/contracts'
 import { constants } from 'node:fs'
+import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { link, lstat, mkdir, open, readdir, realpath, rename, unlink, type FileHandle } from 'node:fs/promises'
+import { promisify } from 'node:util'
+import { link, lstat, mkdir, open, readFile, readdir, realpath, rename, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { hashText, looksBinary } from '@/lib/files/editable'
 import { DesktopHttpError } from './auth'
@@ -86,6 +88,7 @@ export async function listCoworkerFiles(runtime: DesktopRuntime, agentId: string
     const { root, target, rel } = await containedPath(await coworkerWorkspace(runtime, agentId), path)
     if (!root) return { path: rel, entries: [] }
     if (!target) throw new DesktopHttpError(404, 'Folder not found')
+    await recoverInterruptedCoworkerEdits(target)
     const handle = await openResolved(target, true)
     const entries: CoworkerFileEntry[] = []
     try {
@@ -113,9 +116,30 @@ export async function listCoworkerFiles(runtime: DesktopRuntime, agentId: string
 
 export async function readCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, mode: 'preview' | 'attach' = 'preview'): Promise<CoworkerFilePreview> {
     if (mode === 'attach' && !isDesktopAttachmentPath(path)) throw new DesktopHttpError(400, 'Choose a .txt or .md file from this coworker’s workspace.')
-    const { target, rel } = await containedPath(await coworkerWorkspace(runtime, agentId), path)
-    if (!rel) throw new DesktopHttpError(400, 'Choose a file to preview.')
-    if (!target) throw new DesktopHttpError(404, 'File not found')
+    const workspace = await coworkerWorkspace(runtime, agentId)
+    const located = await containedPath(workspace, path)
+    if (!located.rel) throw new DesktopHttpError(400, 'Choose a file to preview.')
+    const slash = located.rel.lastIndexOf('/')
+    const folder = await containedPath(workspace, slash === -1 ? '' : located.rel.slice(0, slash))
+    if (!folder.target) throw new DesktopHttpError(404, 'File not found')
+    const fileName = located.rel.slice(slash + 1)
+    // Wait out an in-process publish, then heal a crash before deciding the file is gone.
+    return withSaveLock(join(folder.target, fileName), async () => {
+        const recoveries = await recoverInterruptedCoworkerEdits(folder.target!)
+        const { target } = await containedPath(workspace, path)
+        if (!target) throw new DesktopHttpError(404, 'File not found')
+        const interrupted = recoveries.find(item => item.final === fileName)
+        if (interrupted && mode === 'preview') {
+            const current = await readResolvedFile(target, located.rel, mode)
+            const prefix = located.rel.slice(0, -fileName.length)
+            const recovery = { draft: prefix + interrupted.recovery.draft, external: prefix + interrupted.recovery.external }
+            throw new CoworkerFileConflict(current.hash ? { content: current.content, hash: current.hash } : null, recovery)
+        }
+        return readResolvedFile(target, located.rel, mode)
+    })
+}
+
+async function readResolvedFile(target: string, rel: string, mode: 'preview' | 'attach'): Promise<CoworkerFilePreview> {
     const handle = await openResolved(target)
     try {
         const info = await handle.stat()
@@ -176,6 +200,7 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
     }
     const { target, rel } = resolved
     if (!target) throw new DesktopHttpError(404, 'Folder not found')
+    await recoverInterruptedCoworkerEdits(target)
     const path = rel ? `${rel}/${name}` : name
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace or is not a folder.')
     const exists = () => new DesktopHttpError(409, `This folder already has a file named “${name}”. The existing file was kept; rename yours and import it again.`)
@@ -277,9 +302,158 @@ function editableText(bytes: Uint8Array): string | null {
 }
 
 export type SaveCoworkerFileResult = { path: string; hash: string; size: number }
+export type CoworkerFileRecovery = { draft: string; external: string }
 /** Thrown when the file on disk is not what the editor opened; carries the newer text so neither version is lost. */
 export class CoworkerFileConflict extends Error {
-    constructor(readonly current: { content: string; hash: string } | null) { super('This file changed on disk since you opened it.') }
+    constructor(readonly current: { content: string; hash: string } | null, readonly recovery?: CoworkerFileRecovery) { super('This file changed on disk since you opened it.') }
+}
+
+const EDIT_PREFIX = '.rerun-edit-'
+const BACKUP_PREFIX = '.rerun-backup-'
+const PUBLISH_PREFIX = '.rerun-publish-'
+/** Crash steps for the publication interruption test. Unset in the app, so these never fire. */
+export const COWORKER_PUBLISH_CRASH_STEPS = ['temp', 'prepared', 'renamed', 'uncommitted', 'linked'] as const
+const activeNames = new Set<string>()
+const claimKey = (directory: string, name: string) => `${directory}\0${name}`
+const claim = (directory: string, name: string) => activeNames.add(claimKey(directory, name))
+const unclaim = (directory: string, name: string) => activeNames.delete(claimKey(directory, name))
+const claimed = (directory: string, name: string) => activeNames.has(claimKey(directory, name))
+
+function crashPublish(step: (typeof COWORKER_PUBLISH_CRASH_STEPS)[number]) {
+    if (process.env.RERUN_FILE_PUBLISH_CRASH === step) process.kill(process.pid, 'SIGKILL')
+}
+
+async function fileStat(path: string) {
+    try { return await lstat(path, { bigint: true }) }
+    catch (error) { if (missing(error)) return null; throw error }
+}
+
+async function removeName(path: string) {
+    try { await unlink(path) } catch (error) { if (!missing(error)) throw error }
+}
+
+type FileIdentity = { dev: bigint; ino: bigint }
+const sameFile = (left: FileIdentity | null, right: FileIdentity | null) => !!left && !!right && left.dev === right.dev && left.ino === right.ino
+
+async function retireName(path: string, expected: FileIdentity): Promise<boolean> {
+    const retirement = join(dirname(path), `.rerun-retire-${randomBytes(12).toString('hex')}`)
+    try { await rename(path, retirement) } catch (error) { if (missing(error)) return true; throw error }
+    const moved = await fileStat(retirement)
+    if (sameFile(moved, expected)) {
+        await removeName(retirement)
+        return true
+    }
+    if (moved) {
+        try {
+            await link(retirement, path)
+            await removeName(retirement)
+        } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+    }
+    return false
+}
+
+const execFileAsync = promisify(execFile)
+async function inodeMayBeHeld(path: string): Promise<boolean> {
+    if (process.platform !== 'darwin') return true
+    try {
+        const { stdout, stderr } = await execFileAsync('/usr/sbin/lsof', ['-nP', '-F', 'p', '--', path], { encoding: 'utf8', timeout: 5000 })
+        return stdout.trim().length > 0 || stderr.trim().length > 0
+    } catch (error) {
+        const result = error as { code?: number; stdout?: string; stderr?: string }
+        if (result.code === 1 && !result.stdout && !result.stderr) return false
+        return true
+    }
+}
+
+async function recoveryLinks(directory: string, finalName: string, tempPath: string, backupPath: string): Promise<CoworkerFileRecovery> {
+    const extension = finalName.toLowerCase().endsWith('.md') ? '.md' : '.txt'
+    const stem = finalName.slice(0, -extension.length)
+    const token = randomBytes(6).toString('hex')
+    const draftName = `${stem}.draft-${token}${extension}`
+    const externalName = `${stem}.external-${token}${extension}`
+    const externalPath = join(directory, externalName)
+    await link(backupPath, externalPath)
+    try { await link(tempPath, join(directory, draftName)) } catch (error) {
+        await removeName(externalPath)
+        throw error
+    }
+    return { draft: draftName, external: externalName }
+}
+
+const simpleName = (name: unknown): name is string => typeof name === 'string' && name.length > 0 && !name.includes('/') && !name.includes('\\') && !name.includes('\0') && name !== '.' && name !== '..'
+
+type PublishJournal = { v: 1, final: string, temp: string, backup: string, phase: 'prepared' | 'linked', baseHash: string }
+export type InterruptedCoworkerRecovery = { final: string; recovery: CoworkerFileRecovery }
+
+function parseJournal(raw: string): PublishJournal | null {
+    try {
+        const value = JSON.parse(raw) as Partial<PublishJournal>
+        if (value.v !== 1 || (value.phase !== 'prepared' && value.phase !== 'linked')) return null
+        if (!simpleName(value.final) || value.final.startsWith('.')) return null
+        if (!simpleName(value.temp) || !value.temp.startsWith(EDIT_PREFIX)) return null
+        if (!simpleName(value.backup) || !value.backup.startsWith(BACKUP_PREFIX)) return null
+        if (typeof value.baseHash !== 'string' || !value.baseHash) return null
+        return { v: 1, final: value.final, temp: value.temp, backup: value.backup, phase: value.phase, baseHash: value.baseHash }
+    } catch { return null }
+}
+
+/** A name this process is publishing is left alone. Every mutation is safe to repeat. */
+export async function recoverInterruptedCoworkerEdits(directory: string, own = false): Promise<InterruptedCoworkerRecovery[]> {
+    const recoveries: InterruptedCoworkerRecovery[] = []
+    let names: string[]
+    try { names = await readdir(directory) } catch (error) { if (missing(error)) return recoveries; throw error }
+    const journals = names.filter(name => name.startsWith(PUBLISH_PREFIX))
+    const referenced = new Set<string>()
+    for (const journalName of journals) {
+        const journalPath = join(directory, journalName)
+        const raw = await readFile(journalPath, 'utf8').catch(error => { if (missing(error)) return null; throw error })
+        const journal = raw === null ? null : parseJournal(raw)
+        if (!journal) continue
+        referenced.add(journal.temp)
+        referenced.add(journal.backup)
+        if (!own && [journalName, journal.final, journal.temp, journal.backup].some(name => claimed(directory, name))) continue
+        const finalPath = join(directory, journal.final)
+        const tempPath = join(directory, journal.temp)
+        const backupPath = join(directory, journal.backup)
+        const [finalStat, tempStat, backupStat] = await Promise.all([fileStat(finalPath), fileStat(tempPath), fileStat(backupPath)])
+        if (finalStat && !finalStat.isFile()) continue
+        const draftIsPublished = !!tempStat?.isFile() && sameFile(finalStat, tempStat) && !sameFile(finalStat, backupStat)
+        if (journal.phase === 'linked') {
+            if (!finalStat && backupStat?.isFile()) {
+                try { await link(backupPath, finalPath) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+            }
+        } else if (draftIsPublished && backupStat?.isFile()) {
+            if (finalStat) await retireName(finalPath, finalStat)
+            try { await link(backupPath, finalPath) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+        } else if (!finalStat && backupStat?.isFile()) {
+            try { await link(backupPath, finalPath) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+        }
+        const kept = await fileStat(finalPath)
+        if (backupStat && kept) {
+            const bytes = await readFile(backupPath).catch(() => null)
+            const text = bytes ? editableText(bytes) : null
+            if (text === null || hashText(text) !== journal.baseHash || await inodeMayBeHeld(backupPath)) {
+                if (journal.phase === 'linked' && sameFile(finalStat, tempStat)) {
+                    await retireName(finalPath, finalStat!)
+                    await link(backupPath, finalPath)
+                }
+                recoveries.push({ final: journal.final, recovery: await recoveryLinks(directory, journal.final, tempPath, backupPath) })
+            }
+            await retireName(backupPath, backupStat)
+        }
+        if (tempStat && kept) await retireName(tempPath, tempStat)
+        if (kept || !backupStat) await removeName(journalPath)
+    }
+    let again: string[]
+    try { again = await readdir(directory) } catch (error) { if (missing(error)) return recoveries; throw error }
+    for (const name of again) {
+        if (!name.startsWith(EDIT_PREFIX) || referenced.has(name) || claimed(directory, name)) continue
+        if (again.some(entry => entry.startsWith(PUBLISH_PREFIX))) continue
+        const path = join(directory, name)
+        const info = await fileStat(path)
+        if (info) await retireName(path, info)
+    }
+    return recoveries
 }
 
 const saveLocks = new Map<string, Promise<void>>()
@@ -297,7 +471,17 @@ async function withSaveLock<T>(key: string, run: () => Promise<T>): Promise<T> {
     }
 }
 
-/** Serialize our own saves, then publish without replacing any writer that landed in the meantime. */
+/**
+ * Publish a draft without giving another coworker the text or dropping a writer who won the race.
+ * `rename` can replace a name atomically and `renamex_np(RENAME_SWAP)` can exchange two names, but
+ * neither call can see a writer that already holds the file open, or a parent that moves during the
+ * call. A path check before `link` is too early for that. The previous bytes stay under a hidden
+ * backup until the open folder and those bytes are checked again. A held or uncertain inode gets
+ * visible recovery links before retirement, and retirement verifies identity after an atomic move.
+ * If the app stops while the normal name is aside, the next list or read of the folder puts the
+ * backup back, or keeps the name when the draft was already committed. A hidden draft is not a
+ * second copy to edit.
+ */
 export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string): Promise<SaveCoworkerFileResult> {
     const bytes = Buffer.from(content, 'utf8')
     if (bytes.byteLength > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
@@ -312,6 +496,13 @@ export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string,
     const finalName = basename(target)
     if (!inside(root, folder)) throw outside()
     return withSaveLock(target, async () => {
+        claim(folder, finalName)
+        try {
+        const interrupted = (await recoverInterruptedCoworkerEdits(folder, true)).find(item => item.final === finalName)
+        const interruptedRecovery = interrupted ? {
+            draft: rel.slice(0, -finalName.length) + interrupted.recovery.draft,
+            external: rel.slice(0, -finalName.length) + interrupted.recovery.external,
+        } : undefined
         let dir: FileHandle
         try { dir = await openResolved(folder, true) } catch (error) {
             if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new DesktopHttpError(404, 'File not found')
@@ -351,16 +542,23 @@ export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string,
                     return { content: text, hash: hashText(text), mode: opened.mode & 0o777 }
                 } finally { await handle.close() }
             }
+            // Folder identity is checked after the read. A moved directory is rejected with no file bytes.
             const check = async () => {
                 const current = await readCurrent()
+                await assertFolderUnmoved()
                 if (!current) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
-                if (current.hash !== baseHash) throw new CoworkerFileConflict({ content: current.content, hash: current.hash })
+                if (current.hash !== baseHash) throw new CoworkerFileConflict({ content: current.content, hash: current.hash }, interruptedRecovery)
                 return current
             }
             const { mode } = await check()
             const tempName = `.rerun-edit-${randomBytes(12).toString('hex')}`
             const backupName = `.rerun-backup-${randomBytes(12).toString('hex')}`
+            const journalName = `.rerun-publish-${randomBytes(12).toString('hex')}.json`
+            claim(folder, tempName)
+            claim(folder, backupName)
+            claim(folder, journalName)
             const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+            try {
             let handle: FileHandle
             try {
                 handle = process.platform === 'darwin'
@@ -373,16 +571,74 @@ export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string,
             const tempPath = join(pinned, tempName)
             const backupPath = join(pinned, backupName)
             const finalPath = join(pinned, finalName)
+            const journalPath = join(pinned, journalName)
             let backupCreated = false
+            let backupIdentity: FileIdentity | null = null
             let published = false
+            let committed = false
+            let keepWinner = false
+            let recoveryCreated = false
+            let publishedDev: bigint | null = null
+            let publishedIno: bigint | null = null
+            const openHidden = (hiddenName: string, openFlags: number, openMode: number) => process.platform === 'darwin'
+                ? open(join(folder, hiddenName), openFlags | 0x20000000, openMode)
+                : open(`${pinned}/${hiddenName}`, openFlags | constants.O_NOFOLLOW, openMode)
+            const writeJournal = async (phase: 'prepared' | 'linked') => {
+                const openFlags = phase === 'prepared'
+                    ? constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+                    : constants.O_WRONLY | constants.O_TRUNC
+                const journal = await openHidden(journalName, openFlags, 0o600)
+                try {
+                    await journal.writeFile(JSON.stringify({ v: 1, final: finalName, temp: tempName, backup: backupName, phase, baseHash }))
+                    await journal.sync()
+                } finally { await journal.close() }
+            }
+            const preserveRecovery = async (): Promise<CoworkerFileRecovery> => {
+                const linked = await recoveryLinks(pinned, finalName, tempPath, backupPath)
+                recoveryCreated = true
+                const prefix = rel.slice(0, -finalName.length)
+                return { draft: prefix + linked.draft, external: prefix + linked.external }
+            }
+            const retireBackup = async (currentName = backupName) => {
+                if (!backupCreated) return
+                if (!backupIdentity) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+                if (await inodeMayBeHeld(backupPath)) {
+                    const latest = await readCurrent(currentName)
+                    await assertFolderUnmoved()
+                    const recovery = await preserveRecovery()
+                    throw new CoworkerFileConflict(latest ? { content: latest.content, hash: latest.hash } : null, recovery)
+                }
+                if (!await retireName(backupPath, backupIdentity)) {
+                    const competing = await readCurrent(currentName)
+                    await assertFolderUnmoved()
+                    const recovery = await preserveRecovery()
+                    throw new CoworkerFileConflict(competing ? { content: competing.content, hash: competing.hash } : null, recovery)
+                }
+                backupCreated = false
+            }
+            // Drop our draft only. A different inode at the final name is the winner and stays.
             const restoreBackup = async () => {
+                if (!keepWinner && published && publishedDev !== null && publishedIno !== null) {
+                    const drafted = await fileStat(finalPath)
+                    if (drafted && drafted.dev === publishedDev && drafted.ino === publishedIno) await removeName(finalPath)
+                    published = false
+                }
+                if (keepWinner) {
+                    if (!recoveryCreated && (await fileStat(finalPath))?.isFile()) await retireBackup(finalName)
+                    backupCreated = false
+                    return
+                }
                 if (!backupCreated) return
                 try {
                     await link(backupPath, finalPath)
-                    await unlink(backupPath)
+                    if (!recoveryCreated) await retireBackup()
                     backupCreated = false
                 } catch (error) {
                     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+                    if ((await fileStat(finalPath))?.isFile()) {
+                        if (!recoveryCreated) await retireBackup()
+                        backupCreated = false
+                    }
                 }
             }
             try {
@@ -394,39 +650,76 @@ export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string,
                 } finally {
                     await handle.close()
                 }
+                crashPublish('temp')
                 await check()
                 await assertFolderUnmoved()
+                await writeJournal('prepared')
+                crashPublish('prepared')
+                const displaced = await fileStat(finalPath)
+                if (!displaced) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
                 try { await rename(finalPath, backupPath) } catch (error) {
                     if (missing(error)) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
                     throw error
                 }
                 backupCreated = true
-                try {
+                backupIdentity = displaced
+                crashPublish('renamed')
+                await assertFolderUnmoved()
+                const preserved = await readCurrent(backupName)
+                await assertFolderUnmoved()
+                if (!preserved) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+                if (preserved.hash !== baseHash) throw new CoworkerFileConflict({ content: preserved.content, hash: preserved.hash })
+                try { await link(tempPath, finalPath) } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+                    keepWinner = true
+                    const competing = await readCurrent()
                     await assertFolderUnmoved()
-                    const current = await readCurrent(backupName)
-                    if (!current) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
-                    if (current.hash !== baseHash) throw new CoworkerFileConflict({ content: current.content, hash: current.hash })
-                    await assertFolderUnmoved()
-                    try { await link(tempPath, finalPath) } catch (error) {
-                        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-                        const competing = await readCurrent()
-                        if (!competing) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
-                        throw new CoworkerFileConflict({ content: competing.content, hash: competing.hash })
-                    }
-                    published = true
-                    await unlink(tempPath).catch(() => {})
-                    await unlink(backupPath).catch(() => {})
-                    backupCreated = false
-                } catch (error) {
-                    await restoreBackup()
-                    throw error
+                    if (!competing) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+                    throw new CoworkerFileConflict({ content: competing.content, hash: competing.hash })
                 }
+                const linked = await fileStat(finalPath)
+                const drafted = await fileStat(tempPath)
+                if (!linked || !drafted || linked.dev !== drafted.dev || linked.ino !== drafted.ino) {
+                    keepWinner = true
+                    const competing = await readCurrent()
+                    await assertFolderUnmoved()
+                    if (!competing) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+                    throw new CoworkerFileConflict({ content: competing.content, hash: competing.hash })
+                }
+                published = true
+                publishedDev = linked.dev
+                publishedIno = linked.ino
+                crashPublish('uncommitted')
+                await assertFolderUnmoved()
+                const after = await readCurrent(backupName)
+                await assertFolderUnmoved()
+                if (!after || after.hash !== baseHash) throw new CoworkerFileConflict(after ? { content: after.content, hash: after.hash } : null)
+                await writeJournal('linked')
+                crashPublish('linked')
+                await retireBackup()
+                committed = true
+                await removeName(tempPath)
+                await removeName(journalPath)
+            } catch (error) {
+                if (!committed) {
+                    await restoreBackup()
+                    await removeName(journalPath)
+                }
+                throw error
             } finally {
-                if (!published) await unlink(tempPath).catch(() => {})
+                if (!committed) await removeName(tempPath)
+            }
+            } finally {
+                unclaim(folder, tempName)
+                unclaim(folder, backupName)
+                unclaim(folder, journalName)
             }
         } finally {
             await dir.close()
         }
         return { path: rel, hash: hashText(content), size: bytes.byteLength }
+        } finally {
+            unclaim(folder, finalName)
+        }
     })
 }

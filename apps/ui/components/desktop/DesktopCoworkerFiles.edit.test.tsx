@@ -164,3 +164,41 @@ test('files without an edit hash cannot be edited', async () => {
     expect(button('Edit')?.disabled).toBe(true)
     act(() => root.unmount())
 })
+
+test('a late-writer conflict names both durable recovery copies in the original dialog', async () => {
+    const files = { alice: 'opened' }
+    const { fetcher } = disk(files, () => Response.json({
+        error: 'changed', conflict: true,
+        current: { content: 'external late edit', hash: hashText('external late edit') },
+        recovery: { draft: 'docs/brief.draft-late.md', external: 'docs/brief.external-late.md' },
+    }, { status: 409 }))
+    vi.stubGlobal('fetch', fetcher)
+    const root = mount()
+    await openFile(root, 'alice')
+    await click('Edit')
+    await type('editor draft')
+    await click('Save changes')
+    await flush()
+    expect(document.querySelector('[data-testid="conflict-disk"]')?.textContent).toBe('external late edit')
+    expect(document.querySelector<HTMLTextAreaElement>('[data-testid="file-editor"] textarea')!.value).toBe('editor draft')
+    const recovery = document.querySelector('[data-testid="edit-recovery"]')?.textContent
+    expect(recovery).toContain('docs/brief.draft-late.md')
+    expect(recovery).toContain('docs/brief.external-late.md')
+    act(() => root.unmount())
+})
+
+test('reopening an interrupted save shows the recovered conflict in the original dialog', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).includes('/read')
+        ? Response.json({ error: 'changed', conflict: true,
+            current: { content: 'external after crash', hash: hashText('external after crash') },
+            recovery: { draft: 'docs/brief.draft-crash.md', external: 'docs/brief.external-crash.md' } }, { status: 409 })
+        : Response.json({ path: '', entries: [entry('brief.md')] })))
+    const root = mount()
+    await openFile(root, 'alice')
+    expect(document.querySelector('[data-testid="file-editor"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="conflict-disk"]')?.textContent).toBe('external after crash')
+    const recovery = document.querySelector('[data-testid="edit-recovery"]')?.textContent
+    expect(recovery).toContain('docs/brief.draft-crash.md')
+    expect(recovery).toContain('docs/brief.external-crash.md')
+    act(() => root.unmount())
+})

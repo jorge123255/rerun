@@ -9,7 +9,7 @@ import { applyEol, splitEol } from '@/lib/files/editable'
 import type { DesktopAgentView } from './DesktopApp'
 
 type Entry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
-type Preview = { path: string; content: string; truncated: boolean; hash?: string } | { path: string; error: string } | { path: string; loading: true }
+type Preview = { path: string; content: string; truncated: boolean; hash?: string } | { path: string; error: string } | { path: string; loading: true } | { path: string; conflict: FileConflict }
 
 async function errorOf(response: Response, fallback: string) {
     const body = await response.json().catch(() => null)
@@ -41,7 +41,10 @@ function FilesPanel({ agent }: { agent: DesktopAgentView }) {
         void (async () => {
             try {
                 const response = await fetch(`${base}/read?path=${encodeURIComponent(openPath)}`, { cache: 'no-store', signal: controller.signal })
-                const next: Preview = response.ok ? await response.json() : { path: openPath, error: await errorOf(response, 'Could not preview this file.') }
+                const body = await response.json().catch(() => null)
+                const next: Preview = response.ok ? body : body?.conflict && body.current
+                    ? { path: openPath, conflict: { ...body.current, ...(body.recovery && { recovery: body.recovery }) } }
+                    : { path: openPath, error: typeof body?.error === 'string' ? body.error : 'Could not preview this file.' }
                 if (!controller.signal.aborted) setPreview(next)
             } catch {
                 if (!controller.signal.aborted) setPreview({ path: openPath, error: 'Could not preview this file.' })
@@ -78,6 +81,12 @@ function FilesPanel({ agent }: { agent: DesktopAgentView }) {
     // Keyed on the path (as FileDetail does), so opening another file leaves the editor by itself.
     const [editingPath, setEditingPath] = useState<string | null>(null)
     const editing = !!preview && editingPath === preview.path
+
+    if (preview && 'conflict' in preview) {
+        return <FileEditor base={base} path={preview.path} content={preview.conflict.content} hash={preview.conflict.hash} initialConflict={preview.conflict}
+            onClose={() => setPreview(null)}
+            onSaved={(content, hash) => { setPreview({ path: preview.path, content, truncated: false, hash }); setEditingPath(null) }} />
+    }
 
     if (preview && editing && 'hash' in preview && preview.hash) {
         return <FileEditor base={base} path={preview.path} content={preview.content} hash={preview.hash}
@@ -142,7 +151,8 @@ function FilesPanel({ agent }: { agent: DesktopAgentView }) {
     </div>
 }
 
-type SaveResponse = { path: string; hash: string } | { error: string; conflict?: true; current?: { content: string; hash: string } | null }
+type FileConflict = { content: string; hash: string; recovery?: { draft: string; external: string } }
+type SaveResponse = { path: string; hash: string } | { error: string; conflict?: true; current?: { content: string; hash: string } | null; recovery?: { draft: string; external: string } }
 
 /**
  * Port of FileDetail's FileEditorDialog/useFileDraft. Cancel discards only after asking when there
@@ -151,12 +161,12 @@ type SaveResponse = { path: string; hash: string } | { error: string; conflict?:
  * (take the disk version, keeping the draft visible to copy) or Save mine anyway (retry against the
  * version now shown, so a third change is still caught).
  */
-function FileEditor({ base, path, content, hash, onClose, onSaved }: { base: string; path: string; content: string; hash: string; onClose: () => void; onSaved: (content: string, hash: string) => void }) {
+function FileEditor({ base, path, content, hash, initialConflict = null, onClose, onSaved }: { base: string; path: string; content: string; hash: string; initialConflict?: FileConflict | null; onClose: () => void; onSaved: (content: string, hash: string) => void }) {
     const [opened, setOpened] = useState(() => ({ ...splitEol(content), hash }))
     const [draft, setDraft] = useState(opened.text)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState('')
-    const [conflict, setConflict] = useState<{ content: string; hash: string } | null>(null)
+    const [conflict, setConflict] = useState<FileConflict | null>(initialConflict)
     const [setAside, setSetAside] = useState<string | null>(null)
     const [confirmingDiscard, setConfirmingDiscard] = useState(false)
     const dirty = draft !== opened.text
@@ -177,7 +187,7 @@ function FileEditor({ base, path, content, hash, onClose, onSaved }: { base: str
             const response = await fetch(`${base}/content`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, content: next, baseHash }) })
             const body = await response.json().catch(() => ({ error: 'Could not save this file.' })) as SaveResponse
             if (response.ok && 'hash' in body) { onSaved(next, body.hash); return }
-            if ('conflict' in body && body.conflict && body.current) setConflict(body.current)
+            if ('conflict' in body && body.conflict && body.current) setConflict({ ...body.current, ...(body.recovery && { recovery: body.recovery }) })
             else setError('error' in body && body.error ? `${body.error} Your edits are still here; try again.` : 'Could not save this file. Your edits are still here; try again.')
         } catch {
             setError('Could not save this file. Your edits are still here; try again.')
@@ -206,8 +216,13 @@ function FileEditor({ base, path, content, hash, onClose, onSaved }: { base: str
             onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 's') { event.preventDefault(); if (dirty && !saving && !conflict) void save(opened.hash) } }}
             className="min-h-0 flex-1 resize-none rounded-md border bg-background p-3 font-mono text-xs" />
         {conflict && <div role="alert" data-testid="edit-conflict" className="space-y-2 rounded-md border border-orange-500/40 bg-orange-500/5 p-2 text-xs">
-            <p className="font-medium">{name} changed on disk after you opened it. Your edits are still in the editor; the newer version is below. Nothing was saved.</p>
+            <p className="font-medium">{initialConflict
+                ? `${name} was recovered after an interrupted save. Your draft is in the named recovery copy; the external version is below.`
+                : `${name} changed on disk after you opened it. Your edits are still in the editor; the newer version is below. Nothing was saved.`}</p>
             <pre data-testid="conflict-disk" className="max-h-32 overflow-auto rounded border bg-muted/30 p-2 font-mono whitespace-pre-wrap break-words">{conflict.content}</pre>
+            {conflict.recovery && <p data-testid="edit-recovery" className="break-words text-muted-foreground">
+                Recovery copies in Files: <code>{conflict.recovery.draft}</code> holds your draft; <code>{conflict.recovery.external}</code> holds the external version. The external version is also back at its original path.
+            </p>}
             <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={reload} disabled={saving}>Keep theirs</Button>
                 <Button type="button" size="sm" onClick={() => void save(conflict.hash)} disabled={saving}>Overwrite</Button>
