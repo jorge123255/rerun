@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { EditorView } from '@codemirror/view'
-import { act } from 'react'
+import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { hashText } from '@/lib/files/editable'
@@ -11,6 +11,27 @@ import { resetDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import { DesktopApp } from './DesktopApp'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+// Keep real App, board, Control Center and chat behavior while excluding happy-dom's
+// incomplete Web Animation cancellation, which rejects when a panel switches rapidly.
+vi.mock('motion/react', async original => {
+    const actual = await original<typeof import('motion/react')>()
+    const { createElement, forwardRef } = await import('react')
+    const plain = (tag: string) => forwardRef<HTMLElement, Record<string, unknown>>(({ children, ...props }, ref) =>
+        createElement(tag, { ...Object.fromEntries(Object.entries(props).filter(([name]) => !actual.isValidMotionProp(name))), ref }, children as ReactNode))
+    const elements = new Map<string, ReturnType<typeof plain>>()
+    const element = (tag: string) => {
+        if (!elements.has(tag)) elements.set(tag, plain(tag))
+        return elements.get(tag)!
+    }
+    return { ...actual,
+        AnimatePresence: ({ children }: { children: ReactNode }) => <>{children}</>,
+        motion: new Proxy(actual.motion, { get(target, key, receiver) {
+            if (key === 'create') return (tag: unknown) => typeof tag === 'string' ? element(tag) : tag
+            return typeof key === 'string' && key !== 'then' ? element(key) : Reflect.get(target, key, receiver)
+        } }),
+    }
+})
 
 const date = '2026-11-04T12:00:00.000Z'
 const agent = (id: string, name: string) => ({ id, name, description: '', enabled: true, createdAt: date, updatedAt: date })
@@ -41,7 +62,7 @@ afterEach(async () => {
 })
 
 const center = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]')]
-    .find(dialog => dialog.querySelector('input[placeholder="Search coworkers, settings, conversations…"]'))
+    .find(dialog => dialog.querySelector('input[cmdk-input]'))
 const activeChat = () => document.querySelector<HTMLElement>('[data-desktop-tab-active="true"]')!
 const composer = () => activeChat()?.querySelector<HTMLTextAreaElement>('#desktop-message')!
 const settle = (ms = 0) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)) })
@@ -128,10 +149,16 @@ async function mount() {
             agents.push(coworker)
             return Response.json({ agent: coworker }, { status: 201 })
         }
-        const ownerRoute = url.pathname.match(/^\/api\/desktop\/agents\/([^/]+)\/(sessions|tabs|model|queue|files(?:\/read|\/content)?)$/)
+        const ownerRoute = url.pathname.match(/^\/api\/desktop\/agents\/([^/]+)\/(sessions|tabs|control-center-chats|model|queue|files(?:\/read|\/content)?)$/)
         if (ownerRoute) {
             const [, owner, resource] = ownerRoute
             if (resource === 'sessions') return Response.json({ sessions: sessionsFor(owner), tabs: layouts.get(owner) ?? null })
+            if (resource === 'control-center-chats') {
+                const openChats = (layouts.get(owner)?.tabs ?? []).map(tab => ({ agentId: owner, tabUid: tab.uid, sessionId: tab.id, title: tab.title }))
+                const recentChats = sessionsFor(owner).filter(session => !openChats.some(tab => tab.sessionId === session.id))
+                    .map(session => ({ id: session.id, agentId: owner, agentName: agents.find(agent => agent.id === owner)!.name, title: session.title }))
+                return Response.json({ agentId: owner, openChats, recentChats, recentStatus: 'ok', hasMore: false })
+            }
             if (resource === 'tabs' && method === 'PUT') {
                 const body = JSON.parse(String(init?.body))
                 const layout = { revision: body.baseRevision + 1, activeIndex: body.activeIndex,
@@ -220,6 +247,58 @@ test('Enter opens the coworker and Cmd K inside its chat creates a separate draf
     expect(composer().value).toBe('Keep the first chat draft')
     await shortcut('f', composer())
     expect(center()).toBeDefined()
+})
+
+test('coworker drill opens the exact unsent draft and moves recent chats into open tabs without cross-owner replies or duplicates', async () => {
+    const app = await mount()
+    const board = app.container.querySelector('[aria-label="Team board"]')
+    async function drill(name: string) {
+        await shortcut('f')
+        await query(`@${name}`)
+        const input = center()!.querySelector<HTMLInputElement>('input')!
+        await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })) })
+        await until(() => center()?.querySelector('[data-value^="open-chat-"]'))
+    }
+    await openCoworker()
+    await enterText(composer(), 'Alice saved chat draft')
+    await shortcut('k', composer())
+    const blankUid = app.layouts.get('alice')!.tabs.find(tab => tab.id === null)!.uid
+    await enterText(composer(), 'Alice unsent new chat draft')
+    await click('Draft chat', app.container.querySelector('[aria-label="Open conversations"]')!)
+    await drill('Alice')
+    expect(center()!.textContent).toContain('Open chats')
+    expect(center()!.textContent).toContain('Recent conversations')
+    await pick(`open-chat-${blankUid}`)
+    await until(() => !center())
+    expect(composer().value).toBe('Alice unsent new chat draft')
+    expect(activeChat().textContent).not.toContain('Reply for alice-draft')
+    expect(app.layouts.get('alice')!.tabs).toHaveLength(2)
+    await drill('Alice')
+    await pick('recent-chat-alice-shared')
+    await until(() => activeChat()?.textContent?.includes('Reply for alice-shared'))
+    expect(composer().value).toBe('')
+    expect(app.layouts.get('alice')!.tabs).toHaveLength(3)
+    await drill('Alice')
+    expect(center()!.querySelector('[data-value="recent-chat-alice-shared"]')).toBeNull()
+    const shared = app.layouts.get('alice')!.tabs.find(tab => tab.id === 'alice-shared')!
+    await pick(`open-chat-${shared.uid}`)
+    await until(() => !center())
+    expect(app.layouts.get('alice')!.tabs).toHaveLength(3)
+    await drill('Bob')
+    await pick('recent-chat-bob-shared')
+    await until(() => activeChat()?.textContent?.includes('Reply for bob-shared'))
+    expect(activeChat().textContent).not.toContain('Reply for alice-shared')
+    expect(app.reads).not.toContain('bob-draft')
+    await drill('Alice')
+    await pick(`open-chat-${blankUid}`)
+    await until(() => !center())
+    expect(composer().value).toBe('Alice unsent new chat draft')
+    await drill('Alice')
+    await pick('open-chat-alice-draft-tab')
+    await until(() => !center())
+    expect(composer().value).toBe('Alice saved chat draft')
+    await click('Close panel')
+    expect(app.container.querySelector('[aria-label="Team board"]')).toBe(board)
 })
 
 test('Control center commands reach real model settings, the board, and coworker creation', async () => {

@@ -146,9 +146,12 @@ test('a visit queued at the acknowledgment boundary automatically starts its own
         }
     })
     recent.observeSelection('a')
-    await tick(); await tick()
-    expect(fetcher).toHaveBeenCalledTimes(2)
-    expect(recent.getSnapshot()).toEqual({ recentAgentIds: ['b', 'a'], saving: false })
+    // Response.json finishes on different event-loop turns across supported Node versions.
+    // Observe automatic completion without flush(), which would itself start a stalled save.
+    await vi.waitFor(() => {
+        expect(fetcher).toHaveBeenCalledTimes(2)
+        expect(recent.getSnapshot()).toEqual({ recentAgentIds: ['b', 'a'], saving: false })
+    })
 })
 
 test('quit flush is bounded, ignores late aborted acknowledgment and leaves an exact manual retry', async () => {

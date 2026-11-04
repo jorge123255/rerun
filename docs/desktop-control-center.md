@@ -28,6 +28,14 @@ Search matches title substrings, accepts 2–200 characters and orders by newest
 
 ## Persistence and remaining parity
 
+### Open chats and Recent conversations
+
+An empty coworker drill page shows **Open chats**, then **Recent conversations**, using the original Control Center view, section headings, rows, keyboard selection and breadcrumb navigation. Original Rerun puts recent conversations inside a coworker drill and limits them to eight by `updated_at`; its section called **Open** links to coworker panels. The Mac's **Open chats** list is an explicit adaptation for its persisted conversation tabs, including the actual unsent draft tab. The root page keeps Recent coworkers and commands; typed searches retain their existing behavior.
+
+The authenticated, no-store `GET /api/desktop/agents/:agentId/control-center-chats` is read-only. Open rows retain their persisted tab UID and exact saved-session binding, including the existing first-send mapping. Missing or invalid old tabs never manufacture a selectable draft. Recent rows join owned local conversations to the engine's activity timestamps, exclude all open saved sessions before taking eight, and use stable ties. Local creation timestamps do not substitute for actual recent activity. A bounded or incomplete engine read makes recents unavailable while preserving genuine open rows; a malformed saved layout fails visibly. Ownership, deletion and the current tab/session snapshot are checked again after the engine read.
+
+Before loading or selecting, the client waits for pending tab writes. Selection refreshes and verifies the exact owner, UID and session binding, plus the current page/query/open cycle. Closed or rebound tabs show a refresh notice rather than navigating to another chat. Selecting a recent conversation that is already open selects its existing tab. Cold draft navigation selects the requested UID before any unrelated history or draft mounts. A rejected later target preserves already-mounted replies and drafts. The existing database remains the only store for chat tabs, replies and drafts.
+
 Saved chats, replies, selected tabs, ordinary text drafts and selected attachments continue to use the existing Mac database. The Control Center adds no alternate chat identity or draft store.
 
 The Recent coworker list now persists in the Mac database: at most five unique coworkers, most recent first, restored at bootstrap across app restarts and changed loopback ports. It follows original Rerun's `stores/control-center.store.ts` and `pushRecentAgent` behavior while replacing origin-bound localStorage. Restoring the list does not create a visit. New selections use an ordered writer, and pending selections stay visible over delayed acknowledgments.

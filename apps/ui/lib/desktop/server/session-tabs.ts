@@ -7,7 +7,7 @@ import { assertCoworkerNotDeleting } from './coworker-delete'
 import { withRosterWrite } from './roster-writes'
 
 type StoredLayout = Pick<DesktopTabWrite, 'tabs' | 'activeIndex'>
-function layoutOf(row: Row, sessions: Row[]): DesktopTabLayout {
+export function layoutOf(row: Row, sessions: Row[]): DesktopTabLayout {
     const stored: StoredLayout = JSON.parse(String(row.layout))
     const titles = new Map(sessions.map(s => [String(s.id), String(s.title)]))
     const first = new Map(sessions.filter(s => s.first_tab_uid !== null).map(s => [String(s.first_tab_uid), String(s.id)]))

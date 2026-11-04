@@ -7,6 +7,7 @@ import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { DesktopControlCenter } from './DesktopControlCenter'
 import { flushDesktopRecentCoworkers, resetDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
+import type { DesktopControlCenterChats, DesktopOpenChat } from '@/lib/desktop/control-center-chats'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -43,6 +44,8 @@ const coworker = (id: string, name = id, description = '', enabled?: boolean) =>
     ({ id, name, description, createdAt: '', updatedAt: '', ...(enabled === undefined ? {} : { enabled }) })
 const hit = (id: string, agentId: string, agentName: string, title: string): DesktopConversationHit =>
     ({ id, agentId, agentName, title })
+const openChat = (tabUid: string, sessionId: string | null, title = 'New conversation', agentId = 'ada'): DesktopOpenChat => ({ agentId, tabUid, sessionId, title })
+const chatList = (agentId = 'ada', overrides: Partial<DesktopControlCenterChats> = {}): DesktopControlCenterChats => ({ agentId, openChats: [], recentChats: [], recentStatus: 'ok', hasMore: false, ...overrides })
 
 const dialog = () => document.querySelector('[role="dialog"]')
 const rows = () => [...document.querySelectorAll<HTMLElement>('[cmdk-item]')]
@@ -76,6 +79,7 @@ type Overrides = {
     selectedCoworkerId?: string | null
     onOpenConversation?: (hit: DesktopConversationHit) => void
     onOpenCoworker?: (agentId: string) => void
+    onOpenChat?: (target: DesktopOpenChat) => void
     onAddCoworker?: () => void
     onModelSettings?: () => void
     onBackToBoard?: () => void
@@ -92,7 +96,15 @@ function mount() {
     return { container, root }
 }
 
-beforeEach(() => { resetDesktopRecentCoworkers(); vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X)') })
+beforeEach(() => {
+    resetDesktopRecentCoworkers()
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X)')
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        const match = url.match(/^\/api\/desktop\/agents\/([^/]+)\/control-center-chats$/)
+        if (match) return Response.json(chatList(decodeURIComponent(match[1])))
+        throw new Error(`Unexpected request ${url}`)
+    }))
+})
 afterEach(async () => {
     for (const root of roots) await act(async () => { root.unmount() })
     document.body.innerHTML = ''
@@ -112,6 +124,7 @@ const render = (root: ReturnType<typeof createRoot>, overrides: Overrides = {}) 
         selectedCoworkerId={overrides.selectedCoworkerId ?? null}
         onOpenConversation={overrides.onOpenConversation ?? (() => {})}
         onOpenCoworker={overrides.onOpenCoworker}
+        onOpenChat={overrides.onOpenChat}
         onAddCoworker={overrides.onAddCoworker ?? (() => {})}
         onModelSettings={overrides.onModelSettings ?? (() => {})}
         onBackToBoard={overrides.onBackToBoard ?? (() => {})} />)
@@ -306,6 +319,7 @@ test('a standalone coworker drill scopes the request and results, and Backspace 
     const { root } = mount()
     const onOpenConversation = vi.fn()
     const fetcher = vi.fn(async (url: string) => {
+        if (url.endsWith('/control-center-chats')) return Response.json(chatList('ada'))
         const query = new URL(url, 'http://local').searchParams.get('q')
         if (query === 'plan') return Response.json({ hits: [hit('ada-1', 'ada', 'Ada', 'Shared plan'), hit('bob-1', 'bob', 'Bob', 'Shared plan')], hasMore: false })
         return Response.json({ hits: [], hasMore: false })
@@ -316,7 +330,7 @@ test('a standalone coworker drill scopes the request and results, and Backspace 
         await press('f', { metaKey: true })
         await clickRow('Ada')
         expect(field().getAttribute('placeholder')).toBe('Search in Ada…')
-        expect(dialog()!.textContent).toContain('Type at least 2 characters to search this coworker’s saved chats.')
+        expect(dialog()!.textContent).toContain('No open chats or recent conversations yet.')
         await type('plan')
         await settle()
         expect(new URL(fetcher.mock.calls.at(-1)![0], 'http://local').searchParams.get('agentId')).toBe('ada')
@@ -568,4 +582,130 @@ test('a failed Recent save shows an original-style Retry row while coworker navi
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[0][1].body)
     expect(dialog()!.textContent).not.toContain('Could not save recent coworkers.')
+})
+
+test('blank coworker drill lists actual open tabs and recent conversations and opens the exact unsent tab after verification', async () => {
+    const { root } = mount()
+    const blank = openChat('draft-tab', null)
+    const saved = openChat('saved-tab', 'saved-session', 'Saved open chat')
+    const response = chatList('ada', { openChats: [blank, saved], recentChats: [hit('recent-session', 'ada', 'Ada', 'Earlier discussion')], hasMore: true })
+    const fetcher = vi.fn(async () => Response.json(response))
+    vi.stubGlobal('fetch', fetcher)
+    const onOpenChat = vi.fn(), onOpenConversation = vi.fn()
+    await render(root, { onOpenChat, onOpenConversation })
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    expect(dialog()!.textContent).toContain('Open chats')
+    expect(dialog()!.textContent).toContain('Recent conversations')
+    expect(rows().map(row => row.textContent)).toEqual(['New conversation', 'Saved open chat', 'Earlier discussion'])
+    expect(dialog()!.textContent).toContain('Showing 8 recent conversations. Type to search older chats.')
+    await clickRow('New conversation')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(onOpenChat).toHaveBeenCalledExactlyOnceWith(blank)
+    expect(onOpenConversation).not.toHaveBeenCalled()
+    expect(dialog()).toBeNull()
+})
+
+test('a formerly blank tab that acquired a session is refreshed with an honest notice instead of opening the stale blank', async () => {
+    const { root } = mount()
+    const blank = openChat('draft-tab', null)
+    const bound = openChat('draft-tab', 'new-session', 'Now a saved chat')
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(chatList('ada', { openChats: [++reads === 1 ? blank : bound] }))))
+    const onOpenChat = vi.fn()
+    await render(root, { onOpenChat })
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    await clickRow('New conversation')
+    expect(onOpenChat).not.toHaveBeenCalled()
+    expect(dialog()!.textContent).toContain('This chat changed. Choose it again from the refreshed list.')
+    expect(dialog()!.textContent).toContain('Now a saved chat')
+    expect(dialog()!.textContent).not.toContain('New conversation')
+    await clickRow('Now a saved chat')
+    expect(onOpenChat).toHaveBeenCalledExactlyOnceWith(bound)
+})
+
+test('a retained row and a late verification cannot navigate after the query or open cycle changes', async () => {
+    const { root } = mount()
+    const snapshot = chatList('ada', { openChats: [openChat('draft-tab', null)] })
+    let finish!: (response: Response) => void
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json(snapshot))
+        .mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve }))
+    vi.stubGlobal('fetch', fetcher)
+    const onOpenChat = vi.fn()
+    await render(root, { onOpenChat })
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    const select = rendered.view!.sections.flatMap(section => section.rows).find(row => row.id === 'open-chat-draft-tab')!.onSelect
+    await act(async () => { select(); select() })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    await type('x')
+    await act(async () => { select() })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    await press('f', { metaKey: true })
+    await press('f', { metaKey: true })
+    await act(async () => { finish(Response.json(snapshot)) })
+    expect(onOpenChat).not.toHaveBeenCalled()
+    expect(field().placeholder).toBe('Search coworkers, settings, conversations…')
+})
+
+test('recent-history unavailability keeps open tabs usable and Retry refreshes only the lists', async () => {
+    const { root } = mount()
+    const blank = openChat('draft-tab', null)
+    let recovered = false
+    const fetcher = vi.fn(async () => Response.json(chatList('ada', {
+        openChats: [blank], recentStatus: recovered ? 'ok' : 'unavailable',
+        recentChats: recovered ? [hit('recent', 'ada', 'Ada', 'Recovered discussion')] : [],
+    })))
+    vi.stubGlobal('fetch', fetcher)
+    const onOpenChat = vi.fn()
+    await render(root, { onOpenChat })
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    expect(dialog()!.textContent).toContain('New conversation')
+    expect(dialog()!.textContent).toContain('Could not load recent conversations')
+    expect(dialog()!.textContent).not.toContain('No open chats or recent conversations yet.')
+    await clickRow('New conversation')
+    expect(onOpenChat).toHaveBeenCalledExactlyOnceWith(blank)
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    recovered = true
+    await clickRow('Could not load recent conversations')
+    expect(dialog()!.textContent).toContain('Recovered discussion')
+    expect(dialog()!.textContent).not.toContain('Could not load recent conversations')
+})
+
+test('a recent conversation that became open uses the existing exact tab instead of creating another', async () => {
+    const { root } = mount()
+    const recent = hit('session-a', 'ada', 'Ada', 'Same title')
+    const existing = openChat('existing-tab', 'session-a', 'Same title')
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(++reads === 1
+        ? chatList('ada', { recentChats: [recent] }) : chatList('ada', { openChats: [existing] }))))
+    const onOpenChat = vi.fn(), onOpenConversation = vi.fn()
+    await render(root, { onOpenChat, onOpenConversation })
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    await clickRow('Same title')
+    expect(onOpenChat).toHaveBeenCalledExactlyOnceWith(existing)
+    expect(onOpenConversation).not.toHaveBeenCalled()
+})
+
+test('full chat-list failure is retryable rather than empty, and deleted owners cannot be opened by retained rows', async () => {
+    const { root } = mount()
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: 'Unavailable' }, { status: 503 }))
+        .mockImplementation(async () => Response.json(chatList('ada', { openChats: [openChat('draft-tab', null)] })))
+    vi.stubGlobal('fetch', fetcher)
+    const onOpenChat = vi.fn()
+    await render(root, { onOpenChat })
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    expect(dialog()!.textContent).toContain('Could not load chats')
+    expect(dialog()!.textContent).not.toContain('No open chats or recent conversations yet.')
+    await clickRow('Could not load chats')
+    const select = rendered.view!.sections.flatMap(section => section.rows).find(row => row.id === 'open-chat-draft-tab')!.onSelect
+    await render(root, { onOpenChat, coworkers: [coworker('bob', 'Bob')] })
+    await act(async () => { select() })
+    expect(onOpenChat).not.toHaveBeenCalled()
+    expect(fetcher).toHaveBeenCalledTimes(2)
 })

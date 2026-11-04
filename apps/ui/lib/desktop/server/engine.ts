@@ -166,7 +166,10 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     })
     const runId = engineResponse.headers.get('x-run-id')
     if (runId) headers.set('x-run-id', runId)
-    return { response: new Response(completedReplay ? 'data: [DONE]\n\n' : engineResponse.body, { status: 200, headers }), sessionId: session.id }
+    // Transfer ownership through a reader. Rewrapping the raw fetch body leaves it unlocked;
+    // Undici can cancel that body when its original Response is collected before we send it.
+    const body = completedReplay ? 'data: [DONE]\n\n' : engineResponse.body!.pipeThrough(new TransformStream())
+    return { response: new Response(body, { status: 200, headers }), sessionId: session.id }
 }
 
 export async function readDesktopHistory(runtime: DesktopRuntime, sessionId: string): Promise<HistoryMessage[]> {

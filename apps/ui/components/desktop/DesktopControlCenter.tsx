@@ -11,6 +11,8 @@ import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { useDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
+import { useDesktopControlCenterChats } from '@/lib/desktop/use-control-center-chats'
+import type { DesktopOpenChat } from '@/lib/desktop/control-center-chats'
 import type { DesktopAgentView } from './DesktopApp'
 
 type Page = { kind: 'root' } | { kind: 'coworker'; coworkerId: string }
@@ -41,12 +43,13 @@ export type DesktopControlCenterProps = {
     selectedCoworkerId: string | null
     onOpenConversation: (hit: DesktopConversationHit) => void
     onOpenCoworker?: (agentId: string) => void
+    onOpenChat?: (target: DesktopOpenChat) => void
     onAddCoworker: () => void
     onModelSettings: () => void
     onBackToBoard: () => void
 }
 
-export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onAddCoworker, onModelSettings, onBackToBoard }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard }: DesktopControlCenterProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -87,8 +90,12 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
     const searchesConversations = open && (page.kind === 'coworker' ? !!pageCoworker : scope === 'all' && text.length >= MIN_CONVERSATION_QUERY)
     const search = useDesktopConversationSearch(text, searchesConversations, page.kind === 'coworker' ? page.coworkerId : null)
     const selectionScope = JSON.stringify([openCycle, pageKey(page), query])
-    const latest = useRef({ open, disabled, selectionScope, coworkers, search, onOpenConversation, onOpenCoworker, onAddCoworker, onModelSettings, onBackToBoard })
-    latest.current = { open, disabled, selectionScope, coworkers, search, onOpenConversation, onOpenCoworker, onAddCoworker, onModelSettings, onBackToBoard }
+    const showCoworkerChats = open && !!pageCoworker && query.trim() === ''
+    const chats = useDesktopControlCenterChats(pageCoworker?.id ?? null, showCoworkerChats, selectionScope)
+    const [chatNotice, setChatNotice] = useState<{ scope: string; text: string } | null>(null)
+    const selectingChat = useRef<{ scope: string } | null>(null)
+    const latest = useRef({ open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard })
+    latest.current = { open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard }
     const available = () => latest.current.open && !latest.current.disabled && !isDesktopQuitting() && latest.current.selectionScope === selectionScope
 
     const close = () => {
@@ -154,6 +161,65 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
         return rows.length > 0 || loading ? [{ id: section, heading, rows, loading }] : []
     }
 
+    const selectCoworkerChat = async (target: { kind: 'open'; chat: DesktopOpenChat } | { kind: 'recent'; chat: DesktopConversationHit }) => {
+        const ownerId = target.chat.agentId
+        if (!available() || selectingChat.current?.scope === selectionScope || !latest.current.coworkers.some(coworker => coworker.id === ownerId)) return
+        const shown = latest.current.chats.data
+        if (shown?.agentId !== ownerId) return
+        if (target.kind === 'open' ? !shown.openChats.some(chat => chat.tabUid === target.chat.tabUid && chat.sessionId === target.chat.sessionId)
+            : !shown.recentChats.some(chat => chat.id === target.chat.id)) return
+        const attempt = { scope: selectionScope }
+        selectingChat.current = attempt
+        setChatNotice(null)
+        try {
+            const fresh = await latest.current.chats.refresh()
+            const current = latest.current
+            const owner = current.coworkers.find(coworker => coworker.id === ownerId)
+            if (!fresh || !available() || selectingChat.current !== attempt || !owner || fresh.agentId !== ownerId) return
+            if (target.kind === 'open') {
+                const found = fresh.openChats.find(chat => chat.agentId === ownerId && chat.tabUid === target.chat.tabUid && chat.sessionId === target.chat.sessionId)
+                if (found && (current.onOpenChat || found.sessionId !== null)) {
+                    close()
+                    if (current.onOpenChat) current.onOpenChat(found)
+                    else current.onOpenConversation({ id: found.sessionId!, agentId: ownerId, agentName: owner.name, title: found.title })
+                    return
+                }
+            } else {
+                const openChat = fresh.openChats.find(chat => chat.agentId === ownerId && chat.sessionId === target.chat.id)
+                const found = fresh.recentStatus === 'ok' ? fresh.recentChats.find(chat => chat.agentId === ownerId && chat.id === target.chat.id) : undefined
+                if (openChat || found) {
+                    close()
+                    if (openChat && current.onOpenChat) current.onOpenChat(openChat)
+                    else current.onOpenConversation({ id: target.chat.id, agentId: ownerId, agentName: owner.name, title: openChat?.title ?? found!.title })
+                    return
+                }
+            }
+            setChatNotice({ scope: selectionScope, text: 'This chat changed. Choose it again from the refreshed list.' })
+        } finally {
+            if (selectingChat.current === attempt) selectingChat.current = null
+        }
+    }
+
+    const coworkerChatSections = (): ControlSection[] => {
+        const retry = () => { if (available()) { setChatNotice(null); void latest.current.chats.refresh() } }
+        if (chats.failed) return [{ id: 'coworker-chats-error', heading: 'Chats', rows: [{
+            id: 'coworker-chats-retry', label: 'Could not load chats', detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: retry,
+        }] }]
+        if (!chats.data) return [{ id: 'open-chats', heading: 'Open chats', rows: [], loading: chats.loading }]
+        const openRows: ControlRow[] = chats.data.openChats.map(chat => ({
+            id: `open-chat-${chat.tabUid}`, label: chat.title, leading: { kind: 'icon', icon: MessageCircle },
+            disabledReason: !onOpenChat && chat.sessionId === null ? 'Open this chat from the coworker panel.' : undefined,
+            onSelect: () => { void selectCoworkerChat({ kind: 'open', chat }) },
+        }))
+        const recentRows: ControlRow[] = chats.data.recentStatus === 'unavailable' ? [{
+            id: 'recent-chats-retry', label: 'Could not load recent conversations', detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: retry,
+        }] : chats.data.recentChats.map(chat => ({
+            id: `recent-chat-${chat.id}`, label: chat.title, leading: { kind: 'icon', icon: MessageCircle },
+            onSelect: () => { void selectCoworkerChat({ kind: 'recent', chat }) },
+        }))
+        return [{ id: 'open-chats', heading: 'Open chats', rows: openRows }, { id: 'recent-chats', heading: 'Recent conversations', rows: recentRows }]
+    }
+
     const commandRow = (command: DesktopControlCommand): ControlRow => ({
         id: `command-${command.id}`,
         label: command.label,
@@ -180,6 +246,7 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
 
         if (page.kind === 'coworker') {
             if (!pageCoworker) return []
+            if (query.trim() === '') return coworkerChatSections()
             return conversationSection('coworker-conversations', 'Conversations', page.coworkerId)
         }
 
@@ -207,7 +274,7 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
 
     const crumbs = page.kind === 'coworker' ? [pageCoworker?.name ?? ''] : []
     const placeholder = page.kind === 'coworker' ? `Search in ${pageCoworker?.name ?? 'this coworker'}…` : 'Search coworkers, settings, conversations…'
-    const emptyLabel = page.kind === 'coworker' && text.length < MIN_CONVERSATION_QUERY
+    const emptyLabel = showCoworkerChats ? 'No open chats or recent conversations yet.' : page.kind === 'coworker' && text.length < MIN_CONVERSATION_QUERY
         ? 'Type at least 2 characters to search this coworker’s saved chats.'
         : 'Nothing matches.'
 
@@ -218,7 +285,9 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
             anchorToOrb={false}
             description="Jump to a coworker, model settings or a saved conversation."
             closeHint="to close"
-            resultsHint={search.hasMore ? 'Showing the first 50 matches. Refine your search for more.' : undefined}
+            resultsHint={showCoworkerChats
+                ? chatNotice?.scope === selectionScope ? chatNotice.text : chats.loading && chats.data ? 'Refreshing chats…' : chats.data?.hasMore ? 'Showing 8 recent conversations. Type to search older chats.' : undefined
+                : search.hasMore ? 'Showing the first 50 matches. Refine your search for more.' : undefined}
             onCloseAutoFocus={event => {
                 event.preventDefault()
                 if (latest.current.open) return

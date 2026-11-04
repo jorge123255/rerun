@@ -22,9 +22,11 @@ import { Textarea } from '@/components/ui/textarea'
 import { DesktopChatTabs } from './DesktopChatTabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
-import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
+import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { flushDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
+import type { DesktopOpenChat } from '@/lib/desktop/control-center-chats'
+import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
 
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; enabled?: boolean }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
@@ -110,7 +112,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [panelInsetRight, setPanelInsetRight] = useState(0)
     const boardFrame = useRef<HTMLDivElement>(null)
     const panelContent = useRef<HTMLElement>(null)
-    const [requestedSession, setRequestedSession] = useState<{ id: string } | null>(null)
+    const [requestedSession, setRequestedSession] = useState<DesktopChatRequest | null>(null)
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
     const [busy, setBusy] = useState<string | null>(null)
@@ -249,14 +251,14 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         tile?.focus({ preventScroll: true })
     }
 
-    function selectCoworker(agentId: string, sessionId: string | null = null) {
-        if (deletedAgents.current.has(agentId)) return
+    function selectCoworker(agentId: string, sessionId: string | null = null, openChat?: DesktopOpenChat) {
+        if (isDesktopQuitting() || deletedAgents.current.has(agentId)) return
         setSettings(false)
         setCreating(false)
         selectedAgentRef.current = agentId
         setSelectedAgentId(agentId)
         setPanelOpen(true)
-        setRequestedSession(sessionId ? { id: sessionId } : null)
+        setRequestedSession(openChat ? { tabUid: openChat.tabUid, sessionId: openChat.sessionId } : sessionId ? { id: sessionId } : null)
         setError(null)
     }
 
@@ -330,6 +332,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <DesktopControlCenter coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null} initialRecent={initialData.recentCoworkers}
                 open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
                 onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) selectCoworker(id) }}
+                onOpenChat={chat => { if (currentAgents.current.some(agent => agent.id === chat.agentId)) selectCoworker(chat.agentId, null, chat) }}
                 onOpenConversation={openSavedConversation} onAddCoworker={() => showBoard(true)}
                 onModelSettings={openSettings} onBackToBoard={() => showBoard()} />
         </main>
@@ -338,7 +341,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
 function CoworkerChat({ agent, requested, selected, modelLabel, onOpenModelSettings, onClosePanel }: {
     agent: DesktopAgentView
-    requested: { id: string } | null
+    requested: DesktopChatRequest | null
     selected: boolean
     modelLabel?: string
     onOpenModelSettings: () => void
@@ -373,7 +376,7 @@ function CoworkerChat({ agent, requested, selected, modelLabel, onOpenModelSetti
         return () => sessionRead.current?.abort()
     }, [readSessions])
 
-    const missing = !!requested && !!sessions && !sessions.some(s => s.id === requested.id)
+    const missing = !!requested && 'id' in requested && !!sessions && !sessions.some(s => s.id === requested.id)
     const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label="Close panel" className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
     const reload = () => { setBootstrap(null); void readSessions(true) }
     return <>

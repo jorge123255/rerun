@@ -6,6 +6,7 @@ import { CloseRunningTabDialog } from '@/components/dialogs/CloseRunningTabDialo
 import { Button } from '@/components/ui/button'
 import { MAX_REMEMBERED_TABS, closeSessionTab, newSessionTab, openSessionTab, type SessionTabsState } from '@/lib/chat/session-tabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
+import type { DesktopChatRequest } from '@/lib/desktop/chat-request'
 import { queueTabWrite } from '@/lib/desktop/tab-writes'
 import { forgetDesktopDraft, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
@@ -17,7 +18,7 @@ type Props = {
     agent: DesktopAgentView
     sessions: DesktopSessionView[]
     initialLayout: DesktopTabLayout | null
-    requested: { id: string } | null
+    requested: DesktopChatRequest | null
     selected: boolean
     refreshSessions: () => Promise<void>
     reload: () => void
@@ -26,14 +27,22 @@ type Props = {
     modelLabel?: string
 }
 
-function initialTabs(layout: DesktopTabLayout | null, sessions: DesktopSessionView[], id?: string): SessionTabsState {
+function initialTabs(layout: DesktopTabLayout | null, sessions: DesktopSessionView[], requested: DesktopChatRequest | null): SessionTabsState {
+    if (requested && 'tabUid' in requested && layout) {
+        const index = layout.tabs.findIndex(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId)
+        if (index >= 0) return index === layout.activeIndex ? layout : { ...layout, activeIndex: index }
+    }
+    const id = requested && 'id' in requested ? requested.id : undefined
     const session = (id && sessions.find(s => s.id === id)) || sessions[0]
     const initial = layout ?? { tabs: [newSessionTab(session?.id ?? null, session?.title)], activeIndex: 0 }
     return id && session?.id === id ? openSessionTab(initial, id, session.title) : initial
 }
 
 export function DesktopChatTabs({ agent, sessions, initialLayout, requested, selected, refreshSessions, reload, onClosePanel, modelLabel, onOpenModelSettings }: Props) {
-    const [layout, setLayout] = useState(() => initialTabs(initialLayout, sessions, requested?.id))
+    const [layout, setLayout] = useState(() => initialTabs(initialLayout, sessions, requested))
+    const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() =>
+        requested && 'tabUid' in requested && !initialLayout?.tabs.some(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null)
+    const [canMountChats, setCanMountChats] = useState(!rejectedRequest)
     const current = useRef(layout)
     const revision = useRef(initialLayout?.revision ?? 0)
     const conflicted = useRef(false)
@@ -85,7 +94,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
 
     // A directly requested conversation starts active without loading an unrelated newer chat.
     useLayoutEffect(() => {
-        if (initialLayout !== current.current) save(current.current)
+        if (!rejectedRequest && initialLayout !== current.current) save(current.current)
     }, [initialLayout, save])
 
     const protectedUids = useCallback(() => new Set(current.current.tabs.filter(t => !t.id || !activityRef.current[t.uid] || activityRef.current[t.uid]?.busy || activityRef.current[t.uid]?.dirty).map(t => t.uid)), [])
@@ -102,11 +111,26 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
     }, [change, protectedUids])
 
     useLayoutEffect(() => {
-        if (!requested || lastRequest.current === requested) return
+        if (lastRequest.current === requested) return
         lastRequest.current = requested
+        if (!requested) {
+            setRejectedRequest(null)
+            if (!canMountChats) { setCanMountChats(true); void save(current.current) }
+            return
+        }
+        if ('tabUid' in requested) {
+            const index = current.current.tabs.findIndex(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId)
+            if (index < 0) { setRejectedRequest(requested); return }
+            setRejectedRequest(null)
+            setCanMountChats(true)
+            if (!isDesktopQuitting() && index !== current.current.activeIndex) void change({ ...current.current, activeIndex: index })
+            return
+        }
+        setRejectedRequest(null)
+        setCanMountChats(true)
         const target = sessions.find(s => s.id === requested.id)
         if (target) open(target.id, target.title)
-    }, [requested, sessions, open])
+    }, [requested, sessions, open, change, canMountChats, save])
 
     const report = useCallback((uid: string, info: TabActivity) => {
         const old = activityRef.current[uid]
@@ -219,14 +243,19 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, sel
         onSelect={index => { if (!isDesktopQuitting() && index !== current.current.activeIndex) change({ ...current.current, activeIndex: index }) }}
         onClose={requestClose} onCreate={() => open(null, 'New conversation')} />
     return <>
+        {rejectedRequest && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
+            This open chat has changed or closed. Choose it again from Control center.
+            <Button type="button" size="sm" variant="outline" onClick={reload}>Reload open chats</Button>
+            <Button type="button" size="sm" variant="ghost" onClick={onClosePanel}>Close panel</Button>
+        </div>}
         {(saveError || notice) && <div role="alert" className="flex items-center gap-2 px-3 py-1 text-xs text-destructive">
             {saveError?.message || notice}
             {saveError && <Button type="button" size="sm" variant="outline" onClick={() => saveError.conflict ? reload() : save(current.current)}>
                 {saveError.conflict ? 'Reload open tabs' : 'Retry saving tabs'}
             </Button>}
         </div>}
-        {layout.tabs.map(tab => {
-            const visible = active.uid === tab.uid
+        {canMountChats && layout.tabs.map(tab => {
+            const visible = !rejectedRequest && active.uid === tab.uid
             if (!visible && !visited.includes(tab.uid)) return null
             return <div key={tab.uid} data-desktop-tab-active={visible} hidden={!visible} className={visible ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
                 <DesktopConversation agent={agent} sessionId={tab.id} sessions={sessions} tabUid={tab.uid} active={selected && visible}
