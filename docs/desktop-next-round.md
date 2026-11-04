@@ -6,11 +6,11 @@ Prepared A/B base: `f8375b73191ad55ce88bf0ada19b83dfc4fab2ee`. Original Rerun re
 | --- | --- | --- | --- |
 | A | D5: original Previous file / Next file navigation in Files previews | `file-preview-navigation` / `desktop/file-preview-navigation` | Prompt prepared; start not confirmed |
 | B | C8: existing own MP4 result cards, original media albums and paged playback | `file-video-cards` / `desktop/file-video-cards` | Prompt prepared; start not confirmed |
-| C | B5: local workspace logo upload from its existing base | `workspace-logo-upload` / `desktop/workspace-logo-upload` | Reported finished at `8f031fe`; review in progress |
+| C | B5: local workspace logo upload from its existing base | `workspace-logo-upload` / `desktop/workspace-logo-upload` | Installed and accepted in `b85926c` |
 | D | C7: exact pending-request inbox read receipts | `pending-inbox-read` / `desktop/pending-inbox-read` | Installed and accepted in `c6fa087` |
-| Root | Pending-read corrections and live collapsed inbox counts; all integration and QA | coding worktree `rerun-desktop` / `desktop/m1` | Installed and accepted in `c6fa087`; reviewing C next |
+| Root | Pending-read corrections and live collapsed inbox counts; all integration and QA | coding worktree `rerun-desktop` / `desktop/m1` | Inbox accepted in `c6fa087`; C integration and packaging accepted in `b85926c` |
 
-A/B worktree paths are under `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/`. C retains its existing base `49a224e`; its active worktree is not rebased, integrated or accepted by this round. Prior lane worktrees remain preserved. Prepared prompts do not imply that A or B has started, finished or passed acceptance.
+A/B worktree paths are under `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/`. C's handoff at `8f031fe` was cherry-picked as `1385329` and accepted with root's integration in `b85926c`; its original worktree remains untouched at its own base/history. Prior lane worktrees remain preserved. Prepared prompts do not imply that A or B has started, finished or passed acceptance.
 
 Copyable prompts are [Agent A next prompt.md](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent A next prompt.md>) and [Agent B next prompt.md](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent B next prompt.md>). These Markdown prompts are the current assignments; older text prompts describe previous rounds.
 
@@ -24,7 +24,7 @@ B keeps 12 files per card, 32 KiB per text file, 8 MiB per image and 16 MiB per 
 
 Root retains `DesktopApp`, `DesktopBoard`, `DesktopConversation`, chat/tab/draft state, central database/bootstrap, shell and global shortcut/help wiring. Root will update the video-route consumer comment when B is integrated. A/B do not alter the pending-inbox work. PDF remains a future Files slice requiring a renderer decision.
 
-D and root's inbox follow-up passed root-run acceptance in `c6fa087`: 3,793 UI checks (20 existing skips), typecheck, packaging and native board/restart checks. Exact read receipts survived restart without answering requests, a new request in the same chat appeared unread, and Cancel/Escape preserved state. A native Escape propagation defect was corrected before acceptance. Backed-up cleanup preserved the original 23 chats / 88 messages and defaults. See `desktop-pending-inbox-acceptance.md`. C's logo upload is being reviewed separately; it is not included in that installed source. Historical release results below apply only to those earlier releases.
+D and root's inbox follow-up passed root-run acceptance in `c6fa087`: 3,793 UI checks (20 existing skips), typecheck, packaging and native board/restart checks. Exact read receipts survived restart without answering requests, a new request in the same chat appeared unread, and Cancel/Escape preserved state. A native Escape propagation defect was corrected before acceptance. Backed-up cleanup preserved the original 23 chats / 88 messages and defaults. See `desktop-pending-inbox-acceptance.md`. C's logo upload was subsequently accepted in `b85926c`: 3,828 UI checks (20 existing skips), typecheck, 12 packaging checks, actual bundled image conversion and native Save/Cancel/rejection/replacement/restart checks passed. Root fixed the missing UI image-library packaging exposed by native QA. Backed-up cleanup and final restart preserved all original data and defaults. See `desktop-workspace-logo-acceptance.md`. Historical release results below apply only to those earlier releases.
 
 ---
 
