@@ -23,6 +23,8 @@ import { DesktopChatTabs } from './DesktopChatTabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
+import { flushDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
+import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 
 export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; enabled?: boolean }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
@@ -31,6 +33,7 @@ export type DesktopBootstrap = ConnectionsList & {
     profile: { id: number; displayName: string }
     workspace: { id: number; name: string }
     agents: DesktopAgentView[]
+    recentCoworkers?: DesktopRecentCoworkers
 }
 
 async function json<T>(response: Response): Promise<T> {
@@ -51,7 +54,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         const stop = bridge?.onBeforeQuit?.(async () => {
             setQuitting(true)
             setControlCenterOpen(false)
-            const ready = await flushDesktopDrafts()
+            // Freeze chat admissions synchronously, then let best-effort navigation history
+            // settle alongside the existing durable draft handshake.
+            const [ready] = await Promise.all([flushDesktopDrafts(), flushDesktopRecentCoworkers()])
             if (!ready) setQuitting(false)
             return ready
         })
@@ -322,7 +327,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     </form>
                 </DialogContent>}
             </Dialog>
-            <DesktopControlCenter coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null}
+            <DesktopControlCenter coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null} initialRecent={initialData.recentCoworkers}
                 open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
                 onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) selectCoworker(id) }}
                 onOpenConversation={openSavedConversation} onAddCoworker={() => showBoard(true)}

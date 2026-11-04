@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { DesktopApp, type DesktopAgentView } from './DesktopApp'
 import type { GridPosition } from '@rerun/ui/iso-grid'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
+import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -30,8 +31,11 @@ async function mount(options: {
     remove?: (id: string, confirmationName: string) => Response | Promise<Response>
 } = {}) {
     const drafts = createDesktopDraftFixture()
+    const recent = createDesktopRecentFixture()
     let rejectNext = false
     const requests = vi.fn(async (url: string, init?: RequestInit) => {
+        const recentResponse = recent.handle(url, init)
+        if (recentResponse) return recentResponse
         const draftResponse = drafts.handle(url, init)
         if (draftResponse) return draftResponse
         if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })

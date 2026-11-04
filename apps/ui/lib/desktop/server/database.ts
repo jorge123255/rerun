@@ -63,6 +63,16 @@ async function initialize(dataRoot: string): Promise<Client> {
             name TEXT NOT NULL,
             completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1))
         );
+        CREATE TABLE IF NOT EXISTS desktop_recent_state (
+            workspace_id INTEGER PRIMARY KEY REFERENCES desktop_workspace(id),
+            revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+            request_id TEXT,
+            agent_id TEXT
+        );
+        CREATE TABLE IF NOT EXISTS desktop_recent_coworkers (
+            agent_id TEXT PRIMARY KEY REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            visit_order INTEGER NOT NULL CHECK (visit_order > 0)
+        );
         CREATE TABLE IF NOT EXISTS desktop_sessions (
             id TEXT PRIMARY KEY,
             agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,

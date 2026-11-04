@@ -6,9 +6,11 @@ import type { ControlRow, ControlSection } from '@/components/control-center/typ
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
 import { CirclePlusIcon, LayoutGridIcon, LockKeyholeIcon, MessageCircle, RefreshCwIcon } from '@/lib/icons'
 import { parseQuery, searchItems } from '@/lib/control-center/search'
-import { buildDesktopControlCommands, pushRecentCoworker, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
+import { buildDesktopControlCommands, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { useDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
+import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 import type { DesktopAgentView } from './DesktopApp'
 
 type Page = { kind: 'root' } | { kind: 'coworker'; coworkerId: string }
@@ -33,6 +35,7 @@ export type DesktopControlCenterProps = {
     open?: boolean
     onOpenChange?: (open: boolean) => void
     disabled?: boolean
+    initialRecent?: DesktopRecentCoworkers
     coworkers: DesktopAgentView[]
     // The coworker whose chat is open on the board, or null while the board shows.
     selectedCoworkerId: string | null
@@ -43,7 +46,7 @@ export type DesktopControlCenterProps = {
     onBackToBoard: () => void
 }
 
-export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onAddCoworker, onModelSettings, onBackToBoard }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onAddCoworker, onModelSettings, onBackToBoard }: DesktopControlCenterProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -54,7 +57,8 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
     }, [controlledOpen, disabled, onOpenChange])
     const [pages, setPages] = useState<Page[]>([ROOT])
     const [query, setQuery] = useState('')
-    const [recent, setRecent] = useState<string[]>([])
+    const recentState = useDesktopRecentCoworkers(initialRecent, selectedCoworkerId, coworkers.map(coworker => coworker.id))
+    const recent = recentState.recentAgentIds
     const [wasOpen, setWasOpen] = useState(false)
     const [openCycle, setOpenCycle] = useState(0)
     const returnFocus = useRef<HTMLElement | null>(null)
@@ -74,10 +78,6 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
 
     // The component owns its shortcut like the original: mounting it is the whole patch.
     useDesktopControlCenterKeys({ open, setOpen, conversationOpen: !!selectedCoworkerId, disabled })
-
-    useEffect(() => {
-        if (selectedCoworkerId) setRecent(current => pushRecentCoworker(current, selectedCoworkerId))
-    }, [selectedCoworkerId])
 
     const mod = useModKeyLabel()
     const page = pages[pages.length - 1]
@@ -187,8 +187,13 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
             const recentIds = new Set(recent)
             const recentCoworkers = recent.map(id => coworkers.find(coworker => coworker.id === id)).filter((coworker): coworker is DesktopAgentView => !!coworker)
             const others = coworkers.filter(coworker => !recentIds.has(coworker.id)).slice(0, COWORKER_RESULTS)
+            const retryRows: ControlRow[] = recentState.error ? [{
+                id: 'recent-retry', label: recentState.error, detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon },
+                onSelect: () => { if (available()) recentState.retry() },
+            }] : []
             return [
-                recentCoworkers.length > 0 ? { id: 'recent', heading: 'Recent', rows: recentCoworkers.map(coworker => coworkerRow(coworker, 'recent')) } : { id: 'coworkers', heading: 'Coworkers', rows: others.map(coworker => coworkerRow(coworker, 'coworkers')) },
+                recentCoworkers.length > 0 ? { id: 'recent', heading: 'Recent', rows: [...recentCoworkers.map(coworker => coworkerRow(coworker, 'recent')), ...retryRows] } : { id: 'coworkers', heading: 'Coworkers', rows: others.map(coworker => coworkerRow(coworker, 'coworkers')) },
+                ...(!recentCoworkers.length && retryRows.length ? [{ id: 'recent-save', heading: 'Recent', rows: retryRows }] : []),
                 ...commandSections,
             ]
         }

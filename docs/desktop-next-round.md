@@ -1,4 +1,26 @@
-# Next desktop port round — November 4, 2026
+# Next desktop port round — navigation, files and completed activity
+
+Prepared base: `18b7e32fee452237ce1e7d5b79ea7cd5d0b18429`. The prior A/B/C/D ports are accepted below. Original Rerun reference remains `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+
+| Owner | Current slice | Prepared worktree / branch |
+| --- | --- | --- |
+| A | D5: original raster image previews for existing own files | `rerun-desktop-worktrees/file-image-previews` · `desktop/file-image-previews` |
+| B | C8: actual opt-in card_file tool and original file-result cards for own text/Markdown | `rerun-desktop-worktrees/file-result-cards` · `desktop/file-result-cards` |
+| C | B5: original built-in workspace illustration picker with local assets | `rerun-desktop-worktrees/workspace-icons` · `desktop/workspace-icons` |
+| D | C7: original unread Done items from genuine terminal completions | `rerun-desktop-worktrees/completed-actions` · `desktop/completed-actions` |
+| Integration owner | B5: durable Recent coworkers; all integration, testing and native acceptance | coding worktree `rerun-desktop` · `desktop/m1` |
+
+All worktree paths are under `/Users/gszulc/OpenBot/Shared/`. These four worktrees are prepared at the base above, with prompts supplied to the user for dispatch; preparation does not imply external work has started. Only root runs tests, checks, builds, installation, live requests and native QA. No external lane changes the app installation, live workspace data or credentials, pushes or merges.
+
+Root owns DesktopApp, DesktopBoard, DesktopConversation and central desktop database/bootstrap wiring. Lanes export typed callbacks/props and isolated schema initializers or migration definitions for root integration. A owns Files/image preview routes; B owns the card tool and assistant renderer; C owns the icon picker/assets/local icon API; D owns the completion receipt/inbox path. Keep the existing pending attention endpoint unchanged.
+
+A follows FilePreview/FileDetail without adding model vision. B follows cards.ts/card_file and FileCard without inventing table cards; database-backed table views remain a prerequisite. C must vendor original illustration bytes: the upstream catalog URLs are hosted assets, not bundled resources. D must capture non-cancelled terminal done events rather than treating all run rows with status done as completions: original HITL turns also have that status. D starts at an explicit persisted activation cutoff, with no ambiguous historical backfill. Durable read state acknowledges only displayed completion identities.
+
+Root is implementing the original five-item Recent order using the local database instead of origin-bound localStorage. The original rows and keyboard behavior remain. Full parity groups remain open until their other missing slices are accepted.
+
+---
+
+# Previous round — accepted November 4, 2026
 
 Source base for the four external lanes: `22a40524067ec8f36267a802e35ad5ca63dcad47`. This contains the accepted draft release plus the shared attention response schema. Original Rerun reference remains `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 

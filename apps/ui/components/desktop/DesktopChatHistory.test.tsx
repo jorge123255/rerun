@@ -4,13 +4,15 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
+import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 import { DesktopApp, type DesktopBootstrap, type DesktopSessionView } from './DesktopApp'
 import { DesktopChatHistory } from './DesktopChatHistory'
 import { groupDesktopChats, type DesktopChatHistoryConversation } from '@/lib/desktop/chat-history'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let drafts: ReturnType<typeof createDesktopDraftFixture>
-beforeEach(() => { drafts = createDesktopDraftFixture() })
+let recent: ReturnType<typeof createDesktopRecentFixture>
+beforeEach(() => { drafts = createDesktopDraftFixture(); recent = createDesktopRecentFixture() })
 
 const createdAt = '2026-01-01T12:00:00.000Z'
 const openTile = (name: string) => act(async () => {
@@ -176,6 +178,8 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
     const sent: Record<string, string>[] = []
     let finish!: () => void
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        const recentResponse = recent.handle(url, init)
+        if (recentResponse) return recentResponse
         const draftResponse = drafts.handle(url, init)
         if (draftResponse) return draftResponse
         if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
@@ -268,6 +272,8 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
 test('history read failure can be retried without turning it into an empty saved history', async () => {
     let reads = 0
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        const recentResponse = recent.handle(url, init)
+        if (recentResponse) return recentResponse
         const draftResponse = drafts.handle(url, init)
         if (draftResponse) return draftResponse
         if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })

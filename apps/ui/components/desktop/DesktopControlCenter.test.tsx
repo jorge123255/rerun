@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { DesktopControlCenter } from './DesktopControlCenter'
+import { flushDesktopRecentCoworkers, resetDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
+import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -66,6 +68,7 @@ const clickRow = async (text: string) => {
 const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
 
 type Overrides = {
+    initialRecent?: DesktopRecentCoworkers
     open?: boolean
     onOpenChange?: (open: boolean) => void
     disabled?: boolean
@@ -89,17 +92,19 @@ function mount() {
     return { container, root }
 }
 
-beforeEach(() => { vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X)') })
+beforeEach(() => { resetDesktopRecentCoworkers(); vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X)') })
 afterEach(async () => {
     for (const root of roots) await act(async () => { root.unmount() })
     document.body.innerHTML = ''
     rendered.view = undefined
+    resetDesktopRecentCoworkers()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
 })
 
 const render = (root: ReturnType<typeof createRoot>, overrides: Overrides = {}) => act(async () => {
     root.render(<DesktopControlCenter
+        initialRecent={overrides.initialRecent}
         open={overrides.open}
         onOpenChange={overrides.onOpenChange}
         disabled={overrides.disabled}
@@ -173,7 +178,7 @@ test('the root page remembers a selection as Recent and exposes only the three s
         throw new Error(`Unexpected request ${url}`)
     }))
     try {
-        await render(root, { selectedCoworkerId: 'ada', ...actions })
+        await render(root, { initialRecent: { revision: 1, recentAgentIds: ['ada'] }, selectedCoworkerId: 'ada', ...actions })
         await press('f', { metaKey: true })
         expect(dialog()!.textContent).toContain('Recent')
         expect(rows()[0]!.textContent).toContain('Ada')
@@ -516,4 +521,51 @@ test('the shared view retains its original web description and footer when overr
     expect(dialog()!.textContent).toContain('Jump to an agent, a setting or a conversation, or ask Rerun.')
     expect(dialog()!.textContent).toContain('again to search in the page')
     expect(dialog()!.textContent).not.toContain('Showing the first 50 matches.')
+})
+
+test('bootstrap Recent restores the original rows without a read or write and remounting does not duplicate a visit', async () => {
+    const first = mount()
+    const fetcher = vi.fn(async (_url: string, options?: RequestInit) => {
+        const payload = JSON.parse(String(options?.body))
+        return Response.json({ revision: payload.baseRevision + 1, recentAgentIds: ['ada', 'bob'] })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const initialRecent = { revision: 7, recentAgentIds: ['bob', 'ada'] }
+    await render(first.root, { initialRecent })
+    await press('f', { metaKey: true })
+    expect(rows()[0].textContent).toContain('Bob')
+    expect(fetcher).not.toHaveBeenCalled()
+    await press('f', { metaKey: true })
+    await render(first.root, { initialRecent, selectedCoworkerId: 'ada' })
+    await act(async () => { await flushDesktopRecentCoworkers() })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toMatchObject({ agentId: 'ada', baseRevision: 7, requestId: expect.any(String) })
+    await act(async () => { first.root.unmount() })
+    const second = mount()
+    await render(second.root, { initialRecent, selectedCoworkerId: 'ada' })
+    await press('f', { metaKey: true })
+    expect(rows()[0].textContent).toContain('Ada')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+})
+
+test('a failed Recent save shows an original-style Retry row while coworker navigation stays available', async () => {
+    const { root } = mount()
+    const fetcher = vi.fn().mockRejectedValueOnce(new Error('Lost ACK'))
+        .mockResolvedValueOnce(Response.json({ revision: 1, recentAgentIds: ['ada'] }))
+    vi.stubGlobal('fetch', fetcher)
+    const onOpenCoworker = vi.fn()
+    await render(root, { onOpenCoworker })
+    await render(root, { onOpenCoworker, selectedCoworkerId: 'ada' })
+    await act(async () => { await flushDesktopRecentCoworkers() })
+    await press('f', { metaKey: true })
+    expect(dialog()!.textContent).toContain('Could not save recent coworkers.')
+    expect(rows()[0].textContent).toContain('Ada')
+    await clickRow('Ada')
+    expect(onOpenCoworker).toHaveBeenCalledExactlyOnceWith('ada')
+    await press('f', { metaKey: true })
+    await clickRow('Could not save recent coworkers.')
+    await act(async () => { await flushDesktopRecentCoworkers() })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[0][1].body)
+    expect(dialog()!.textContent).not.toContain('Could not save recent coworkers.')
 })

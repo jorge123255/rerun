@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { hashText } from '@/lib/files/editable'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
+import { resetDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import { DesktopApp } from './DesktopApp'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -24,6 +25,7 @@ const roots: ReturnType<typeof createRoot>[] = []
 const unexpected: string[] = []
 
 beforeEach(() => {
+    resetDesktopRecentCoworkers()
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)')
@@ -31,6 +33,7 @@ beforeEach(() => {
 afterEach(async () => {
     await act(async () => { for (const root of roots.splice(0)) root.unmount() })
     document.body.innerHTML = ''
+    resetDesktopRecentCoworkers()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
     vi.useRealTimers()
@@ -92,6 +95,7 @@ async function mount() {
     const agents = [agent('alice', 'Alice'), agent('bob', 'Bob')]
     const layouts = new Map<string, DesktopTabLayout>()
     const reads: string[] = [], created: unknown[] = [], fileWrites: unknown[] = []
+    let recent = { revision: 0, recentAgentIds: [] as string[] }
     for (const owner of agents) {
         const tabs = [{ uid: `${owner.id}-draft-tab`, id: `${owner.id}-draft`, title: 'Draft chat' }]
         layouts.set(owner.id, { revision: 0, activeIndex: 0, tabs })
@@ -107,6 +111,12 @@ async function mount() {
         const method = init?.method ?? 'GET'
         const draft = drafts.handle(input, init)
         if (draft) return draft
+        if (url.pathname === '/api/desktop/recent-coworkers' && method === 'POST') {
+            const body = JSON.parse(String(init?.body))
+            if (body.baseRevision !== recent.revision) return Response.json({ error: 'Changed', recent }, { status: 409 })
+            recent = { revision: recent.revision + 1, recentAgentIds: [body.agentId, ...recent.recentAgentIds.filter(id => id !== body.agentId)].slice(0, 5) }
+            return Response.json(recent)
+        }
         if (url.pathname === '/api/desktop/settings' && method === 'GET') return Response.json(providers)
         if (url.pathname === '/api/desktop/board-activity') return Response.json({ agents: Object.fromEntries(agents.map(owner => [owner.id, 'idle'])) })
         if (url.pathname === '/api/desktop/attention') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })

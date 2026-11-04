@@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopApp } from './DesktopApp'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
+import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -16,7 +17,10 @@ const disconnected: ConnectionsList = { connections: [], default: null }
 const unexpectedRequests: string[] = []
 function mockDesktopFetch(reply: (url: string, init?: RequestInit) => Response | Promise<Response> | undefined) {
     const drafts = createDesktopDraftFixture()
+    const recent = createDesktopRecentFixture()
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        const recentResponse = recent.handle(url, init)
+        if (recentResponse) return recentResponse
         const draftResponse = drafts.handle(url, init)
         if (draftResponse) return draftResponse
         const response = reply(url, init)
