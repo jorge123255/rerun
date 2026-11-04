@@ -16,7 +16,7 @@ A owns Files/video preview and its separate authenticated reader with a 16 MiB b
 
 The scope follows original code and design. A adds no recording, model video input, conversion, imports, PDF or other video formats. B adds no audio input, recording, transcription, generation or publication. D marks only captured, exact inbox request identities; it never answers, approves, declines or bypasses a pending chat. Shared attention and board Needs you remain intact. New arrivals are not included in an older bulk confirmation. The original inbox has no full archive/history view, so that is not a parity requirement. Root's shortcuts list omits unsupported Foreman voice, page-find and file-arrow commands.
 
-Root's shortcuts implementation is in progress. None of the three new lane slices is installed or accepted yet. D5/C8/C7/B5 remain partial.
+Root's shortcuts slice is installed and accepted in `ae4da91`: 3,680 distinct UI checks passed (20 existing skips), plus typecheck, production packaging and runtime verification. Native menu/command entry, listed shortcuts, real Codex reply of 73, exact chat/tab/draft restart persistence and backed-up cleanup passed. Original 23 chats / 88 messages and defaults are unchanged. Engine source was unchanged and its suite was not rerun. See `desktop-shortcuts-acceptance.md`. None of the three new lane slices is installed or accepted yet. D5/C8/C7/B5 remain partial.
 
 ---
 
