@@ -15,7 +15,8 @@ test('desktop HTTP scope permits chat/history but denies filesystem, updater, MC
     for (const path of ['/update', '/tools', '/shared/files', '/agents/a/files', '/agents/import', '/agents/a/automations/activate', '/agents/a/mcp-servers', '/agents/a/schedules', '/agents/a/triggers', '/desktop']) {
         for (const method of ['GET', 'POST', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, path)).toBe(false)
     }
-    expect(desktopRouteAllowed('DELETE', '/agents/a')).toBe(false)
+    expect(desktopRouteAllowed('DELETE', '/agents/a')).toBe(true)
+    for (const path of ['/agents', '/agents/foreman', '/agents/a/more', '/agents/a%2Fb', '/agents/..']) expect(desktopRouteAllowed('DELETE', path)).toBe(false)
 })
 
 test('run details permit only the existing authenticated step and tool reads', () => {

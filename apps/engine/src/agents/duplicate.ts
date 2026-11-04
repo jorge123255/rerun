@@ -9,6 +9,7 @@ import { deleteAgentIndex, getAgentIndex, insertAgentIndex } from '../db/repos/a
 import { closeSystemDb } from '../db/systemDb.js'
 import { withKeyedLock } from '../lib/lock.js'
 import { copyDesktopFiles, readCopyReceipt, writeCopyReceipt } from '../desktop/duplicate.js'
+import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
 import { checkpointAgentDb, closeAgentDb } from '../db/agentDb.js'
 import { withAgentLock } from './lock.js'
 import { agentConfigSchema, type AgentConfig } from './types.js'
@@ -98,21 +99,26 @@ async function readStagedEnv(staging: string): Promise<Record<string, string>> {
 export async function duplicateAgent(sourceId: string, input: DuplicateAgentInput, desktopRequestId?: string): Promise<AgentDuplicateResult> {
     if (!desktopRequestId) return makeCopy(newId(), sourceId, input, false)
     const id = `copy-${desktopRequestId}`
-    return withKeyedLock(`desktop-duplicate:${id}`, async () => {
-        const previous = await readCopyReceipt(id, sourceId)
-        if (previous?.result) {
-            if (!await getAgentIndex(id)) await insertAgentIndex(id, previous.result.name)
-            return previous.result
-        }
-        if (!agentExists(sourceId)) throw notFound('agent')
-        if (previous) {
-            // Interrupted after publishing the staging directory, before finalizing the copy.
-            closeAgentDb(id)
-            closeSystemDb(id)
-            await rm(agentDir(id), { recursive: true, force: true })
-        }
-        return makeCopy(id, sourceId, input, true)
-    })
+    const releaseCopy = beginDesktopAgentWork(id)
+    let releaseSource: (() => void) | undefined
+    try {
+        if (agentExists(sourceId)) releaseSource = beginDesktopAgentWork(sourceId)
+        return await withKeyedLock(`desktop-duplicate:${id}`, async () => {
+            const previous = await readCopyReceipt(id, sourceId)
+            if (previous?.result) {
+                if (!await getAgentIndex(id)) await insertAgentIndex(id, previous.result.name)
+                return previous.result
+            }
+            if (!agentExists(sourceId)) throw notFound('agent')
+            if (previous) {
+                // Interrupted after publishing the staging directory, before finalizing the copy.
+                closeAgentDb(id)
+                closeSystemDb(id)
+                await rm(agentDir(id), { recursive: true, force: true })
+            }
+            return makeCopy(id, sourceId, input, true)
+        })
+    } finally { releaseSource?.(); releaseCopy() }
 }
 
 async function makeCopy(id: string, sourceId: string, input: DuplicateAgentInput, desktop: boolean): Promise<AgentDuplicateResult> {

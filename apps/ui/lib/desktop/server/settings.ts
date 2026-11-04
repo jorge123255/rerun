@@ -6,6 +6,7 @@ import { DesktopHttpError } from './auth'
 import { reconcileDesktopDuplicates } from '@/lib/desktop/server/coworker-duplicate'
 import { reconcileDesktopRenames } from './coworker-rename'
 import { reconcileDesktopEnabled } from './coworker-enabled'
+import { reconcileDesktopDeletions } from './coworker-delete'
 import { openDesktopDatabase } from './database'
 import { readDesktopBootstrap } from './store'
 import { desktopAgentView } from './views'
@@ -24,6 +25,7 @@ export async function readDesktopProviders(runtime: DesktopRuntime) {
 export async function readDesktopWorkspace(runtime: DesktopRuntime) {
     const [bootstrap, providers] = await Promise.all([
         openDesktopDatabase(runtime.dataRoot).then(async db => {
+            await reconcileDesktopDeletions(db, engineOf(runtime))
             await reconcileDesktopRenames(db, engineOf(runtime), runtime.launchNonce)
             await reconcileDesktopDuplicates(db, engineOf(runtime))
             await reconcileDesktopEnabled(db, engineOf(runtime))

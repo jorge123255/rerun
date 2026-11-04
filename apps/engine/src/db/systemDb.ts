@@ -4,6 +4,7 @@ import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql'
 import { agentDataDir, systemDbPath } from '../config/paths.js'
 import { sessions, messages, runs, runSteps, toolCalls, compactionCheckpoints, skillProposals } from './schema.js'
 import { latestVersion, migrateSqlite, type SqliteMigration } from './ladder.js'
+import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
 
 const schema = { sessions, messages, runs, runSteps, toolCalls, compactionCheckpoints, skillProposals }
 
@@ -252,13 +253,16 @@ async function open(id: string): Promise<SystemDb> {
 }
 
 export async function getSystemDb(id: string): Promise<SystemDb> {
-    const cached = pool.get(id)
-    if (cached) return cached
-    const inflight = opening.get(id)
-    if (inflight) return inflight
-    const promise = open(id).finally(() => opening.delete(id))
-    opening.set(id, promise)
-    return promise
+    const release = beginDesktopAgentWork(id)
+    try {
+        const cached = pool.get(id)
+        if (cached) return cached
+        const inflight = opening.get(id)
+        if (inflight) return await inflight
+        const promise = open(id).finally(() => opening.delete(id))
+        opening.set(id, promise)
+        return await promise
+    } finally { release() }
 }
 
 export function systemDbExists(id: string): boolean {

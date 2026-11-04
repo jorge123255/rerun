@@ -24,7 +24,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled }: {
+export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete }: {
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
@@ -34,6 +34,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
     onRename?: (id: string, name: string) => Promise<void>
     onDuplicate?: (sourceId: string, requestId: string, position: GridPosition) => Promise<'created' | 'occupied'>
     onSetEnabled?: (id: string, enabled: boolean) => Promise<void>
+    onDelete?: (id: string, confirmationName: string) => Promise<void>
     onCreate: () => void
     onDismiss?: () => void
     onOpenConversation?: (hit: DesktopConversationHit) => void
@@ -101,7 +102,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
             onKeyDown={event => { if (event.key === 'Escape' && placement) { event.preventDefault(); cancelCopy() } }}>
             <h1 className="sr-only">Team board</h1>
             <DesktopBoardMenu agents={agents} onOpen={onOpen} onRename={onRename} onDuplicate={onDuplicate ? beginCopy : undefined}
-                onSetEnabled={onSetEnabled} disabled={!!placement}>{onTileContextMenu =>
+                onSetEnabled={onSetEnabled} onDelete={onDelete} disabled={!!placement}>{onTileContextMenu =>
                 <IsoGrid
                     tiles={tiles}
                     containers={[box]}

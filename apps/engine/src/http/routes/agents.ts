@@ -1,7 +1,8 @@
 import { assertNativeChangeAllowed } from '../../desktop/native-grants.js'
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { rm, writeFile, readFile } from 'node:fs/promises'
+import { rm, writeFile, readFile, mkdir, rename, lstat } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { existsSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { createAgentSchema, duplicateAgentSchema, mcpTokenSchema, updateAgentKeysSchema, updateAgentMcpServersSchema } from '@rerun/contracts'
@@ -14,6 +15,7 @@ import { readAgentEnv, writeAgentEnv } from '../../agents/env.js'
 import { reloadAgent, unloadAgent } from '../../agents/registry.js'
 import { agentExists, loadAgentFromDisk, loadAgentView, readAgentConfig } from '../../agents/loader.js'
 import { withAgentLock } from '../../agents/lock.js'
+import { withDesktopAgentDeletion, desktopDeletionPath, desktopDeletionPending, persistDesktopAgentDeletion } from '../../desktop/agent-lifecycle.js'
 import { noteLearningChange } from '../../desktop/learning.js'
 import { desktopApp } from '../../desktop/policy.js'
 import { buildArchive, planArchive } from '../../agents/archive.js'
@@ -21,7 +23,7 @@ import { importAgent } from '../../agents/import.js'
 import { duplicateAgent } from '../../agents/duplicate.js'
 import { activateAutomations } from '../../agents/automations.js'
 import { replaceDisplayName, rewriteRenamedAgentReferences } from '../../agents/rename-references.js'
-import { badRequest } from '../../lib/errors.js'
+import { badRequest, notFound, HttpError } from '../../lib/errors.js'
 import { writeAgentConfig, mergeMcpServers, ReservedMcpServerNameError, InvalidMcpServerNameError } from '../../agents/config-write.js'
 import { deleteAgentIndex, listAgentIndex, updateAgentIndex } from '../../db/repos/agents.js'
 import { closeSystemDb } from '../../db/systemDb.js'
@@ -235,13 +237,54 @@ agentRoutes.patch('/:id/keys', async c => {
 
 agentRoutes.delete('/:id', async c => {
     const id = c.req.param('id')
-    if (!agentExists(id)) return c.json({ error: 'agent not found' }, 404)
-    await finishTakeover(id)
-    await stopDesktop(id)
-    unloadAgent(id)
-    closeSystemDb(id)
-    closeAgentDb(id)
-    await deleteAgentIndex(id)
-    await rm(agentDir(id), { recursive: true, force: true })
-    return c.json({ deleted: id })
+    if (desktopApp()) return withAgentLock(id, () => withDesktopAgentDeletion(id, async () => {
+        const original = agentDir(id)
+        const pending = desktopDeletionPath(id)
+        const live = await lstat(original).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return null
+            throw error
+        })
+        const holdingRoot = await lstat(dirname(pending)).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return null
+            throw error
+        })
+        if (holdingRoot && (!holdingRoot.isDirectory() || holdingRoot.isSymbolicLink()))
+            throw new HttpError(409, 'Could not safely prepare coworker deletion.')
+        if (!live && !desktopDeletionPending(id)) throw notFound('agent')
+        if (live && (!live.isDirectory() || live.isSymbolicLink() || desktopDeletionPending(id)))
+            throw new HttpError(409, 'This coworker’s files changed. Could not safely delete it.')
+        if (!live) {
+            const held = await lstat(pending)
+            if (!held.isDirectory() || held.isSymbolicLink()) throw new HttpError(409, 'Could not safely finish coworker deletion.')
+        }
+        await finishTakeover(id)
+        await stopDesktop(id)
+        unloadAgent(id)
+        closeSystemDb(id)
+        closeAgentDb(id)
+        if (live) {
+            await mkdir(dirname(pending), { recursive: true, mode: 0o700 })
+            const parent = await lstat(dirname(pending))
+            if (!parent.isDirectory() || parent.isSymbolicLink()) throw new HttpError(409, 'Could not safely prepare coworker deletion.')
+            await rename(original, pending)
+        }
+        // A crash or removal failure leaves the owned pending folder. Reads return409 and a
+        // retry resumes this cleanup, so a missing config is never mistaken for deleted data.
+        await persistDesktopAgentDeletion(id)
+        await deleteAgentIndex(id)
+        await rm(pending, { recursive: true, force: true })
+        return c.json({ deleted: id })
+    }))
+    const remove = async () => {
+        if (!agentExists(id)) throw notFound('agent')
+        await finishTakeover(id)
+        await stopDesktop(id)
+        unloadAgent(id)
+        closeSystemDb(id)
+        closeAgentDb(id)
+        await deleteAgentIndex(id)
+        await rm(agentDir(id), { recursive: true, force: true })
+        return c.json({ deleted: id })
+    }
+    return remove()
 })

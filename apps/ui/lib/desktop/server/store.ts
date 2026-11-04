@@ -135,8 +135,11 @@ export async function createDesktopSession(db: Client, input: { agentId: string;
     const now = new Date().toISOString()
     const id = crypto.randomUUID()
     const statements: InStatement[] = [{
-        sql: 'INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at, model_connection_id, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(engine_session_id) DO NOTHING',
-        args: [id, input.agentId, input.engineSessionId, input.title.slice(0, 80) || 'New conversation', now, now, input.model?.connectionId ?? null, input.model?.model ?? null],
+        sql: `INSERT INTO desktop_sessions (id, agent_id, engine_session_id, title, created_at, updated_at, model_connection_id, model)
+              SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM desktop_agents WHERE id = ? AND workspace_id = 1)
+                AND NOT EXISTS (SELECT 1 FROM desktop_deletions WHERE agent_id = ?)
+              ON CONFLICT(engine_session_id) DO NOTHING`,
+        args: [id, input.agentId, input.engineSessionId, input.title.slice(0, 80) || 'New conversation', now, now, input.model?.connectionId ?? null, input.model?.model ?? null, input.agentId, input.agentId],
     }]
     if (input.regenerationRequestId) statements.push({
         sql: `UPDATE desktop_regeneration_requests SET alternate_session_id =

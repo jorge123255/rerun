@@ -7,6 +7,7 @@ import { duplicateAgent, EngineRequestError, getAgent, request } from '@/lib/eng
 import type { EngineConnection } from '@/lib/engine/types'
 import { canPlaceDesktopCopy, desktopBoardLayout, type DesktopBoardPosition } from '../board-layout'
 import { DesktopHttpError } from './auth'
+import { assertCoworkerNotDeleting } from './coworker-delete'
 import { withRosterWrite } from './roster-writes'
 import { findDesktopAgent, listDesktopAgents, type DesktopAgent } from './store'
 
@@ -51,6 +52,7 @@ async function publishCopy(db: Client, engine: EngineConnection, source: Desktop
 
 export function duplicateDesktopCoworker(db: Client, engine: EngineConnection, sourceId: string, requestId: string, position: DesktopBoardPosition) {
     return withRosterWrite(async () => {
+        await assertCoworkerNotDeleting(db, sourceId)
         const source = await findDesktopAgent(db, sourceId)
         if (!source) throw new DesktopHttpError(404, 'Source coworker not found')
         const previous = await db.execute({ sql: 'SELECT * FROM desktop_duplicates WHERE request_id = ?', args: [requestId] })

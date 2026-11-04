@@ -39,6 +39,7 @@ import { partialResultsNote } from './partial-results.js'
 import { beginDesktopCodexRun, endDesktopCodexRun } from '../desktop/native-grants.js'
 import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-control.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
+import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
 import { runCurator } from './curator.js'
 import { repairToolCall } from './tool-repair.js'
 import { stepWithScreenshots } from './screenshots.js'
@@ -205,7 +206,9 @@ async function recordStepTelemetry(agentId: string, sessionId: string, runId: st
 }
 
 export async function runAgent(agent: LoadedAgent, sessionId: string, userText: string, override?: ModelOverride, writer?: UIMessageStreamWriter, runId?: string, trigger: RunTrigger = { source: 'chat' }): Promise<AgentRun> {
-    return runTurn(agent, sessionId, userText, override, writer, runId, trigger)
+    const release = beginDesktopAgentWork(agent.id)
+    try { return await runTurn(agent, sessionId, userText, override, writer, runId, trigger, release) }
+    catch (error) { release(); throw error }
 }
 
 // How a turn ends. Everything terminal about a run is expressed as one of these three and handed to
@@ -215,7 +218,7 @@ type Settlement =
     | { kind: 'error'; error: unknown; errorCode?: RunErrorCode | null; messages?: ModelMessage[] }
     | { kind: 'cancelled' }
 
-async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: string, override: ModelOverride | undefined, writer: UIMessageStreamWriter | undefined, runId: string | undefined, trigger: RunTrigger): Promise<AgentRun> {
+async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: string, override: ModelOverride | undefined, writer: UIMessageStreamWriter | undefined, runId: string | undefined, trigger: RunTrigger, releaseAgentWork: () => void): Promise<AgentRun> {
     // The run row and its abort controller exist before any preparation step can throw: for chat
     // and headless callers the row was already inserted, and a throw in `resolveRunModel` or the
     // tool/MCP setup would otherwise leave it `running` forever with no terminal event for the hub.
@@ -280,10 +283,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     // `onError` is ever called -- a CLI provider that wedges on an expired token simply stops
     // streaming -- so every way a turn can end funnels here, and the guard makes a second arrival
     // a no-op instead of a duplicate row write and a duplicate hub event.
-    const settle = async (settlement: Settlement): Promise<RunOutcome> => {
-        if (settled) return settledPromise
-        settled = true
-
+    const performSettlement = async (settlement: Settlement): Promise<RunOutcome> => {
         await appendP.catch(() => {})
 
         let outcome: RunOutcome
@@ -373,6 +373,12 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         }
 
         return outcome
+    }
+
+    const settle = async (settlement: Settlement): Promise<RunOutcome> => {
+        if (settled) return settledPromise
+        settled = true
+        return performSettlement(settlement).finally(releaseAgentWork)
     }
 
     // The thread is only worth resuming once it holds the same turns as the session: the marker is
@@ -510,14 +516,19 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                 }
             },
             onStepFinish: async step => {
-                steps += 1
-                const now = Date.now()
-                const durationMs = now - lastStepAt
-                lastStepAt = now
-                const stepCostMicros = costMicrosFrom(step.providerMetadata)
-                if (stepCostMicros !== null) runCostMicros = (runCostMicros ?? 0) + stepCostMicros
-                await bumpRunStep(agent.id, run.id, steps).catch(() => {})
-                await recordStepTelemetry(agent.id, sessionId, run.id, provider, model, steps, durationMs, step, stepCostMicros).catch(err => logger.warn({ err: String(err), agent: agent.id }, 'record step telemetry failed'))
+                // A provider may emit a late step after Stop has settled and deletion is allowed.
+                if (desktopApp() && settled) return
+                const releaseStep = beginDesktopAgentWork(agent.id)
+                try {
+                    steps += 1
+                    const now = Date.now()
+                    const durationMs = now - lastStepAt
+                    lastStepAt = now
+                    const stepCostMicros = costMicrosFrom(step.providerMetadata)
+                    if (stepCostMicros !== null) runCostMicros = (runCostMicros ?? 0) + stepCostMicros
+                    await bumpRunStep(agent.id, run.id, steps).catch(() => {})
+                    await recordStepTelemetry(agent.id, sessionId, run.id, provider, model, steps, durationMs, step, stepCostMicros).catch(err => logger.warn({ err: String(err), agent: agent.id }, 'record step telemetry failed'))
+                } finally { releaseStep() }
             },
             onError: async ({ error }) => {
                 if (controller.signal.aborted) {

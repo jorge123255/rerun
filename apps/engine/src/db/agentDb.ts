@@ -3,13 +3,16 @@ import type { Client } from '@libsql/client'
 import { agentDataDir, agentDataDbPath } from '../config/paths.js'
 import { checkpointStore, closeStore, formatSchema, listTables, openStore } from './sqlStore.js'
 import { VIEWS_TABLE, viewNamesByTable } from './tableViews.js'
+import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
 
 const storeKey = (id: string) => `agent:${id}`
 
 export const AGENT_HIDDEN_TABLES = [VIEWS_TABLE]
 
-export function getAgentDb(id: string): Promise<Client> {
-    return openStore(storeKey(id), agentDataDbPath(id), agentDataDir(id))
+export async function getAgentDb(id: string): Promise<Client> {
+    const release = beginDesktopAgentWork(id)
+    try { return await openStore(storeKey(id), agentDataDbPath(id), agentDataDir(id)) }
+    finally { release() }
 }
 
 export function agentDbExists(id: string): boolean {

@@ -9,6 +9,7 @@ import type { DesktopModelPick } from '../chat-model'
 import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } from './settings'
 import { DesktopHttpError } from './auth'
 import { disabledCoworkerMessage } from './coworker-enabled'
+import { assertCoworkerNotDeleting } from './coworker-delete'
 import { readCoworkerFile } from './coworker-files'
 import { openDesktopDatabase } from './database'
 import { discardTabStart, existingTabStart, recoverTabSession, reserveTabStart } from './tab-starts'
@@ -83,6 +84,7 @@ type DesktopChatInput = { agentId: string } & (
 
 export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput): Promise<{ response: Response; sessionId: string }> {
     const db = await openDesktopDatabase(runtime.dataRoot)
+    await assertCoworkerNotDeleting(db, input.agentId)
     const agent = await findDesktopAgent(db, input.agentId)
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     if (!agent.enabled) throw new DesktopHttpError(403, disabledCoworkerMessage)

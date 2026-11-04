@@ -1,29 +1,32 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { CopyPlusIcon, MessageCircle, PencilIcon, PowerIcon, PowerOffIcon } from 'lucide-react'
+import { CopyPlusIcon, MessageCircle, PencilIcon, PowerIcon, PowerOffIcon, Trash2Icon } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { RenameAgentDialog } from '@/components/dialogs/RenameAgentDialog'
+import { DeleteCoworkerConfirmation } from '@/components/dialogs/DeleteCoworkerConfirmation'
 import { Button } from '@/components/ui/button'
 import type { DesktopAgentView } from './DesktopApp'
 
-export function DesktopBoardMenu({ agents, onOpen, onRename, onDuplicate, onSetEnabled, disabled, children }: {
+export function DesktopBoardMenu({ agents, onOpen, onRename, onDuplicate, onSetEnabled, onDelete, disabled, children }: {
     agents: DesktopAgentView[]
     onOpen: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
     onDuplicate?: (agent: DesktopAgentView) => void
     onSetEnabled?: (id: string, enabled: boolean) => Promise<void>
+    onDelete?: (id: string, confirmationName: string) => Promise<void>
     disabled?: boolean
     children: (onTileContextMenu: (id: string) => void) => ReactNode
 }) {
     const [targetId, setTargetId] = useState<string | null>(null)
     const [renaming, setRenaming] = useState<DesktopAgentView>()
+    const [deleting, setDeleting] = useState<DesktopAgentView>()
     const board = useRef<HTMLDivElement>(null)
     const startingPlacement = useRef(false)
     const saving = useRef(false)
     const [activation, setActivation] = useState<{ id: string; name: string; enabled: boolean; error?: string } | null>(null)
     const target = agents.find(agent => agent.id === targetId)
     function focusTile(id: string) {
-        Array.from(board.current?.querySelectorAll<HTMLElement>('[data-tile-id]') ?? [])
-            .find(tile => tile.dataset.tileId === id)?.focus({ preventScroll: true })
+        const tiles = Array.from(board.current?.querySelectorAll<HTMLElement>('[data-tile-id]') ?? [])
+        ;(tiles.find(tile => tile.dataset.tileId === id) ?? tiles[0])?.focus({ preventScroll: true })
     }
     async function setEnabled(agent: { id: string; name: string }, enabled: boolean) {
         if (!onSetEnabled || saving.current) return
@@ -72,9 +75,13 @@ export function DesktopBoardMenu({ agents, onOpen, onRename, onDuplicate, onSetE
                         {target.enabled === false ? 'Enable' : 'Disable'}
                     </ContextMenuItem>
                 </>}
+                {onDelete && <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem variant="destructive" onSelect={() => setDeleting(target)}><Trash2Icon className="size-4" />Delete</ContextMenuItem>
+                </>}
             </ContextMenuContent>}
         </ContextMenu>
-        {activation && <div role={activation.error ? 'alert' : 'status'} className="absolute bottom-20 left-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-2 rounded-xl border bg-background px-3 py-2 text-sm shadow-sm">
+        {activation && agents.some(agent => agent.id === activation.id) && <div role={activation.error ? 'alert' : 'status'} className="absolute bottom-20 left-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-2 rounded-xl border bg-background px-3 py-2 text-sm shadow-sm">
             <p>{activation.error || `${activation.enabled ? 'Enabling' : 'Disabling'} ${activation.name}…`}</p>
             {activation.error && <>
                 <Button type="button" variant="outline" size="sm" onClick={() => void setEnabled(activation, activation.enabled)}>Retry</Button>
@@ -83,5 +90,9 @@ export function DesktopBoardMenu({ agents, onOpen, onRename, onDuplicate, onSetE
         </div>}
         {onRename && renaming && <RenameAgentDialog agent={renaming} open onRename={onRename}
             onOpenChange={open => { if (!open) setRenaming(undefined) }} onRestoreFocus={() => focusTile(renaming.id)} />}
+        {onDelete && deleting && <DeleteCoworkerConfirmation key={deleting.id} agentName={deleting.name} open
+            description="This will permanently delete the coworker and its chats, files and memories from this Mac. This action cannot be undone."
+            onDelete={confirmationName => onDelete(deleting.id, confirmationName)}
+            onOpenChange={open => { if (!open) setDeleting(undefined) }} onRestoreFocus={() => focusTile(deleting.id)} />}
     </>
 }

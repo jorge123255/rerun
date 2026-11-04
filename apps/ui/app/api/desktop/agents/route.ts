@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { reconcileDesktopDuplicates } from '@/lib/desktop/server/coworker-duplicate'
 import { reconcileDesktopRenames } from '@/lib/desktop/server/coworker-rename'
 import { reconcileDesktopEnabled } from '@/lib/desktop/server/coworker-enabled'
+import { reconcileDesktopDeletions } from '@/lib/desktop/server/coworker-delete'
 import { engineOf } from '@/lib/desktop/server/settings'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
@@ -17,6 +18,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request): Promise<Response> {
     return desktopRoute(request, async runtime => {
         const db = await openDesktopDatabase(runtime.dataRoot)
+        await reconcileDesktopDeletions(db, engineOf(runtime))
         await reconcileDesktopRenames(db, engineOf(runtime), runtime.launchNonce)
         await reconcileDesktopDuplicates(db, engineOf(runtime))
         await reconcileDesktopEnabled(db, engineOf(runtime))

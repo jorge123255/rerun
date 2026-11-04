@@ -57,6 +57,12 @@ async function initialize(dataRoot: string): Promise<Client> {
             operation_id TEXT NOT NULL,
             launch_nonce TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS desktop_deletions (
+            agent_id TEXT PRIMARY KEY,
+            engine_agent_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1))
+        );
         CREATE TABLE IF NOT EXISTS desktop_sessions (
             id TEXT PRIMARY KEY,
             agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,

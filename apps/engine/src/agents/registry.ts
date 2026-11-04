@@ -2,10 +2,12 @@ import { agentExists, loadAgentFromDisk } from './loader.js'
 import type { LoadedAgent } from './types.js'
 import { notFound } from '../lib/errors.js'
 import { releaseAgentMcp } from '../tools/mcp-pool.js'
+import { assertDesktopAgentNotDeleted } from '../desktop/agent-lifecycle.js'
 
 const cache = new Map<string, LoadedAgent>()
 
 export async function getAgent(id: string): Promise<LoadedAgent> {
+    assertDesktopAgentNotDeleted(id)
     const cached = cache.get(id)
     if (cached) return cached
     if (!agentExists(id)) throw notFound('agent')

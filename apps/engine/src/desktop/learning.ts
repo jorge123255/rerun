@@ -1,6 +1,7 @@
 import type { AgentConfig } from '../agents/types.js'
 import { readAgentConfig } from '../agents/loader.js'
 import { withAgentLock } from '../agents/lock.js'
+import { beginDesktopAgentWork } from './agent-lifecycle.js'
 
 const reviews = new Set<{ id: string; stop: AbortController }>()
 
@@ -15,16 +16,19 @@ export function noteLearningChange(id: string, before: AgentConfig, after: Agent
 }
 
 export async function withDesktopLearning(id: string, review: (signal: AbortSignal) => Promise<void>) {
-    const job = await withAgentLock(id, async () => {
-        if (!enabled(await readAgentConfig(id))) return null
-        const job = { id, stop: new AbortController() }
-        reviews.add(job)
-        return job
-    })
-    if (!job) return
-    try { await review(job.stop.signal) }
-    catch (error) { if (!job.stop.signal.aborted) throw error }
-    finally { reviews.delete(job) }
+    const release = beginDesktopAgentWork(id)
+    try {
+        const job = await withAgentLock(id, async () => {
+            if (!enabled(await readAgentConfig(id))) return null
+            const job = { id, stop: new AbortController() }
+            reviews.add(job)
+            return job
+        })
+        if (!job) return
+        try { await review(job.stop.signal) }
+        catch (error) { if (!job.stop.signal.aborted) throw error }
+        finally { reviews.delete(job) }
+    } finally { release() }
 }
 
 export function applyDesktopLearning(id: string, signal: AbortSignal, write: () => Promise<void>) {

@@ -74,8 +74,12 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         return () => window.removeEventListener('keydown', openSettings)
     }, [])
     const [agents, setAgents] = useState(initialData.agents)
+    // Responses already in flight cannot reintroduce a coworker after its confirmed deletion.
+    const deletedAgents = useRef(new Set<string>())
     const [creating, setCreating] = useState(false)
     const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+    const selectedAgentRef = useRef(selectedAgentId)
+    selectedAgentRef.current = selectedAgentId
     const [panelOpen, setPanelOpen] = useState(false)
     const [panelInsetRight, setPanelInsetRight] = useState(0)
     const boardFrame = useRef<HTMLDivElement>(null)
@@ -158,6 +162,22 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         mergeBoardAgents([agent])
     }
 
+    async function deleteCoworker(id: string, confirmationName: string) {
+        const result = await json<{ deletedAgentId: string }>(await fetch(`/api/desktop/agents/${encodeURIComponent(id)}`, {
+            method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirmationName }),
+        }))
+        if (result.deletedAgentId !== id) throw new Error('Could not confirm this coworker was deleted. Try again.')
+        deletedAgents.current.add(id)
+        setAgents(current => current.filter(agent => agent.id !== id))
+        if (selectedAgentRef.current === id) {
+            selectedAgentRef.current = null
+            setSelectedAgentId(null)
+            setRequestedSession(null)
+            setPanelOpen(false)
+            setPanelInsetRight(0)
+        }
+    }
+
     async function duplicateCoworker(id: string, requestId: string, position: GridPosition): Promise<'created' | 'occupied'> {
         const response = await fetch(`/api/desktop/agents/${encodeURIComponent(id)}/duplicate`, {
             method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ requestId, position }),
@@ -177,6 +197,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setAgents(current => {
             const merged = new Map(current.map(agent => [agent.id, agent]))
             for (const agent of incoming) {
+                if (deletedAgents.current.has(agent.id)) continue
                 const existing = merged.get(agent.id)
                 if (!existing || existing.updatedAt <= agent.updatedAt) merged.set(agent.id, agent)
             }
@@ -199,8 +220,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
 
     function selectCoworker(agentId: string, sessionId: string | null = null) {
+        if (deletedAgents.current.has(agentId)) return
         setSettings(false)
         setCreating(false)
+        selectedAgentRef.current = agentId
         setSelectedAgentId(agentId)
         setPanelOpen(true)
         setRequestedSession(sessionId ? { id: sessionId } : null)
@@ -219,7 +242,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
-                    onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled}
+                    onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
                 {selectedAgent && <div inert={!panelOpen} aria-hidden={!panelOpen || undefined}>
                     <SidePanel isOpen={panelOpen} onDismiss={closePanel}>

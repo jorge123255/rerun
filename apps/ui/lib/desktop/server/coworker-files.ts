@@ -8,6 +8,8 @@ import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { findDesktopAgent } from './store'
+import { withRosterWrite } from './roster-writes'
+import { assertCoworkerNotDeleting } from './coworker-delete'
 
 export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
 export type CoworkerFilePreview = { path: string; content: string; size: number; truncated: boolean }
@@ -149,6 +151,15 @@ const IMPORTABLE = /\.(txt|md)$/i
  * the create itself refuses symlinks in any component, so a swapped folder cannot redirect the write.
  */
 export async function importCoworkerFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array): Promise<{ path: string; name: string }> {
+    // Imports can create a previously absent workspace. Keep that whole mutation ordered with
+    // deletion so an old file picker cannot recreate the removed coworker's folder.
+    return withRosterWrite(async () => {
+        await assertCoworkerNotDeleting(await openDesktopDatabase(runtime.dataRoot), agentId)
+        return importFile(runtime, agentId, folder, name, bytes)
+    })
+}
+
+async function importFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array): Promise<{ path: string; name: string }> {
     if (!name || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.')) throw new DesktopHttpError(400, 'That file name can’t be imported.')
     if (!IMPORTABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be imported.')
     if (bytes.byteLength > IMPORT_BYTES) throw new DesktopHttpError(413, 'Files can be up to 1 MB.')

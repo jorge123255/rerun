@@ -30,6 +30,8 @@ import { workspaceDir, sharedDir } from '../config/paths.js'
 import { AGENT_HIDDEN_TABLES, getAgentDb } from '../db/agentDb.js'
 import { getSharedDb, SHARED_HIDDEN_TABLES } from '../db/sharedDb.js'
 import { logger } from '../lib/logger.js'
+import { desktopApp } from '../desktop/policy.js'
+import { beginDesktopAgentWork } from '../desktop/agent-lifecycle.js'
 
 export function createServer(): Hono {
     const app = new Hono()
@@ -38,6 +40,20 @@ export function createServer(): Hono {
 
     const api = new Hono()
     api.use('*', auth)
+    api.use('*', async (c, next) => {
+        if (!desktopApp()) return next()
+        const match = /^\/agents\/([A-Za-z0-9_-]+)(?:\/|$)/.exec(c.req.path)
+        if (!match || ['import', 'foreman', 'default'].includes(match[1])) return next()
+        if (c.req.method === 'DELETE' && c.req.path === `/agents/${match[1]}`) return next()
+        // The duplicate operation leases both identities itself. Its completed receipt can be
+        // replayed even after the original has gone; requiring the source here would break it.
+        if (c.req.method === 'POST' && c.req.path === `/agents/${match[1]}/duplicate`) return next()
+        const release = beginDesktopAgentWork(match[1])
+        try {
+            if (!agentExists(match[1])) throw notFound('agent')
+            await next()
+        } finally { release() }
+    })
     api.use('/agents/:id', foremanGuard)
     api.use('/agents/:id/*', foremanGuard)
     api.route('/update', updateRoutes)

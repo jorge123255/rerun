@@ -26,9 +26,11 @@ async function mount(options: {
     refreshedAgents?: () => DesktopAgentView[]
     agents?: DesktopAgentView[]
     enabled?: (id: string, enabled: boolean) => Response | Promise<Response>
+    remove?: (id: string, confirmationName: string) => Response | Promise<Response>
 } = {}) {
     let rejectNext = false
     const requests = vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === 'DELETE' && options.remove) return options.remove(url.split('/').at(-1)!, JSON.parse(String(init.body)).confirmationName)
         if (url.endsWith('/enabled') && init?.method === 'PATCH' && options.enabled) return options.enabled(url.split('/').at(-2)!, JSON.parse(String(init.body)).enabled)
         if (url === '/api/desktop/agents/researcher/duplicate' && init?.method === 'POST' && options.duplicate) return options.duplicate(JSON.parse(String(init.body)))
         if (url === '/api/desktop/agents' && options.refreshedAgents) return Response.json({ agents: options.refreshedAgents() })
@@ -60,6 +62,7 @@ async function mount(options: {
         duplicateRequests: () => requests.mock.calls.filter(([url]) => url.endsWith('/duplicate')).map(([, init]) => JSON.parse(String(init?.body)) as DuplicateInput),
         renameRequests: () => requests.mock.calls.filter(([, init]) => init?.method === 'PATCH').map(([url, init]) => [url, JSON.parse(String(init?.body))]),
         enabledRequests: () => requests.mock.calls.filter(([url]) => url.endsWith('/enabled')).map(([url, init]) => [url, JSON.parse(String(init?.body))]),
+        deleteRequests: () => requests.mock.calls.filter(([, init]) => init?.method === 'DELETE').map(([url, init]) => [url, JSON.parse(String(init?.body))]),
         chatRequests: () => requests.mock.calls.filter(([url]) => url.endsWith('/chat')),
         failNext: () => { rejectNext = true },
     }
@@ -80,7 +83,7 @@ const edit = (field: HTMLInputElement | HTMLTextAreaElement, value: string) => a
     field.dispatchEvent(new Event('change', { bubbles: true }))
 })
 
-async function chooseAction(name: string, gesture: 'keyboard' | 'pointer', action: 'Duplicate' | 'Rename' | 'Disable' | 'Enable' | 'Open chat') {
+async function chooseAction(name: string, gesture: 'keyboard' | 'pointer', action: 'Duplicate' | 'Rename' | 'Disable' | 'Enable' | 'Delete' | 'Open chat') {
     const item = tile(name)
     if (gesture === 'keyboard') {
         await key(item, 'F10', true)
@@ -265,4 +268,93 @@ it('opens a saved inactive coworker and retries its failed enable without losing
     expect(api.enabledRequests()).toHaveLength(2)
     expect(panel.textContent).toContain('Original conversation')
     expect(panel.textContent).toContain('Original answer.')
+})
+
+const deleteDialog = () => document.querySelector<HTMLElement>('[role="alertdialog"]')
+const confirmation = () => deleteDialog()!.querySelector<HTMLInputElement>('input')!
+const deleteButton = (label: string) => [...deleteDialog()!.querySelectorAll('button')].find(button => button.textContent?.trim() === label)!
+
+it('requires the coworker name, cancels safely, and deletes only the copy while the original chat stays open', async () => {
+    const api = await mount({ agents: [researcher, editor, { ...copy, position: { col: 1, row: 1 } }],
+        remove: id => Response.json({ deletedAgentId: id }),
+    })
+    await key(tile(researcher.name), 'Enter')
+    const panel = document.querySelector<HTMLElement>('[aria-label="Coworker chat"]')!
+    const composer = panel.querySelector<HTMLTextAreaElement>('textarea')!
+    const originalTile = tile(researcher.name)
+    const originalPosition = [originalTile.style.left, originalTile.style.top]
+    await edit(composer, 'Keep the original draft')
+    await chooseAction(copy.name, 'pointer', 'Delete')
+    expect(deleteDialog()?.textContent).toContain('Delete this coworker?')
+    expect(deleteDialog()?.textContent).toContain('This action cannot be undone.')
+    expect(deleteButton('Delete').disabled).toBe(true)
+    await edit(confirmation(), researcher.name)
+    await key(confirmation(), 'Enter')
+    expect(api.deleteRequests()).toEqual([])
+    await edit(confirmation(), copy.name)
+    await click(deleteButton('Cancel'))
+    expect(deleteDialog()).toBeNull()
+    expect(api.deleteRequests()).toEqual([])
+    expect(tile(copy.name)).not.toBeNull()
+
+    await chooseAction(copy.name, 'keyboard', 'Delete')
+    expect(confirmation().value).toBe('')
+    await edit(confirmation(), `  ${copy.name}  `)
+    await click(deleteButton('Delete'))
+    await vi.waitFor(() => expect(tile(copy.name)).toBeNull())
+    expect(deleteDialog()).toBeNull()
+    expect(api.deleteRequests()).toEqual([['/api/desktop/agents/independent', { confirmationName: copy.name }]])
+    expect(tile(researcher.name)).toBe(originalTile)
+    expect([originalTile.style.left, originalTile.style.top]).toEqual(originalPosition)
+    expect(tile(editor.name)).not.toBeNull()
+    expect(document.querySelector('[aria-label="Coworker chat"]')).toBe(panel)
+    expect(panel.querySelector('textarea')).toBe(composer)
+    expect(composer.value).toBe('Keep the original draft')
+    expect(panel.textContent).toContain('Original answer.')
+    expect(panel.textContent).toContain('Original conversation')
+})
+
+it('waits for deletion, retains a failed confirmation for retry, and closes only the deleted coworker panel', async () => {
+    let finish: (response: Response) => void = () => {}
+    const api = await mount({ remove: () => new Promise<Response>(resolve => { finish = resolve }) })
+    await key(tile(researcher.name), 'Enter')
+    await chooseAction(researcher.name, 'keyboard', 'Delete')
+    await edit(confirmation(), researcher.name)
+    await click(deleteButton('Delete'))
+    expect(deleteButton('Deleting…').disabled).toBe(true)
+    expect(deleteButton('Cancel').disabled).toBe(true)
+    expect(confirmation().disabled).toBe(true)
+    await key(confirmation(), 'Enter')
+    expect(api.deleteRequests()).toHaveLength(1)
+    expect(tile(researcher.name)).not.toBeNull()
+    expect(document.querySelector('[aria-label="Coworker chat"]')?.textContent).toContain('Original answer.')
+    await act(async () => finish(Response.json({ error: 'Stop the current reply before deleting this coworker.' }, { status: 409 })))
+    expect(deleteDialog()?.textContent).toContain('Stop the current reply')
+    expect(confirmation().value).toBe(researcher.name)
+    expect(deleteButton('Delete').disabled).toBe(false)
+    await click(deleteButton('Delete'))
+    await act(async () => finish(Response.json({ deletedAgentId: researcher.id })))
+    expect(api.deleteRequests()).toHaveLength(2)
+    expect(deleteDialog()).toBeNull()
+    expect(tile(researcher.name)).toBeNull()
+    expect(tile(editor.name)).not.toBeNull()
+    expect(document.querySelector('[aria-label="Coworker chat"]')).toBeNull()
+})
+
+it('ignores a late enabled response after that coworker has been deleted', async () => {
+    let enabledReply: (response: Response) => void = () => {}
+    const api = await mount({
+        enabled: () => new Promise<Response>(resolve => { enabledReply = resolve }),
+        remove: id => Response.json({ deletedAgentId: id }),
+    })
+    await chooseAction(researcher.name, 'keyboard', 'Disable')
+    await chooseAction(researcher.name, 'keyboard', 'Delete')
+    await edit(confirmation(), researcher.name)
+    await click(deleteButton('Delete'))
+    expect(tile(researcher.name)).toBeNull()
+    await act(async () => enabledReply(Response.json({ agent: { ...researcher, enabled: false, updatedAt: 'future' } })))
+    expect(api.deleteRequests()).toHaveLength(1)
+    expect(tile(researcher.name)).toBeNull()
+    expect(tile(editor.name)).not.toBeNull()
+    expect(document.querySelector('[aria-label="Coworker chat"]')).toBeNull()
 })
