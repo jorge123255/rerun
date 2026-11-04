@@ -9,7 +9,7 @@ beforeEach(() => {
     vi.useFakeTimers()
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:export')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function () { clicks.push({ href: this.href, name: this.download }) })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { clicks.push({ href: this.href, name: this.download }) })
 })
 afterEach(() => { vi.runAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 

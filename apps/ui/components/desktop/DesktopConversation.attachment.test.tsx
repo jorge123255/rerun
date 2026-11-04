@@ -323,7 +323,7 @@ test('a rejected attachment draft keeps its text and permits removing the reject
     await click('Attach from Files'); await click('good.md'); await click('bad.md'); await click('Done')
     expect(container.textContent).toContain('This file is no longer available.')
     expect(container.querySelector('textarea')!.value).toBe('Please preserve this message')
-    expect(button('Attach from Files').disabled).toBe(false)
+    expect(button('Attach from Files')!.disabled).toBe(false)
     const rejected = writes.at(-1)!
     await click('Remove attachment bad.md'); await flush()
     expect(container.textContent).not.toContain('This file is no longer available.')

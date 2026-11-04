@@ -60,6 +60,7 @@ beforeEach(async () => {
         const agentId = /^\/agents\/([^/]+)\/data/.exec(path)?.[1]
         if (agentId && path.endsWith('/tables')) return send(res, 200, TABLES[agentId as keyof typeof TABLES] ?? { tables: [] })
         if (path === '/shared/data/tables') return send(res, 200, { tables: [{ name: 'catalog', columns: [] }] })
+        if (path.includes('/tables/missing')) return send(res, 500, { error: 'no such table: missing' })
         if (path.endsWith('/rows') && req.method === 'GET') return send(res, 200, { columns: ['body'], rows: [{ body: 'one' }], total: 1 })
         if (path.endsWith('/rows') && req.method === 'DELETE') return send(res, 200, { deleted: 2 })
         if (/\/rows\/[^/]+$/.test(path) && req.method === 'PATCH') return send(res, 200, { row: { body: 'changed' } })
@@ -67,8 +68,6 @@ beforeEach(async () => {
         if (path.endsWith('/views')) return send(res, 200, { views: [] })
         if (path.endsWith('/export')) return send(res, 200, 'body\none', 'text/csv')
         if (path.endsWith('/tables/notes') && req.method === 'DELETE') { res.writeHead(204).end(); return }
-        // The engine's untried table routes answer a bare 500 for a table that does not exist.
-        if (path.includes('/tables/missing')) return send(res, 500, { error: 'no such table: missing' })
         send(res, 404, { error: 'not found' })
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

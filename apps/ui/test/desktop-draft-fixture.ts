@@ -1,6 +1,7 @@
 import { afterEach } from 'vitest'
 import { desktopAttachmentFieldsOf, desktopAttachmentPathsOf } from '@rerun/contracts'
 import { cancelDraftShutdown, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
+import type { DesktopComposerDraft } from '@/lib/desktop/composer-draft'
 
 type Tab = { uid: string; id: string | null }
 const owners = new Set<string>()
