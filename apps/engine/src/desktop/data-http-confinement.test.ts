@@ -13,6 +13,7 @@ const { agentConfigSchema } = await import('../agents/types.js')
 const { writeAgentConfig } = await import('../agents/config-write.js')
 const { agentDir, agentDataDbPath, sharedDbPath } = await import('../config/paths.js')
 const { closeStore } = await import('../db/sqlStore.js')
+const { getAgentDb } = await import('../db/agentDb.js')
 const app = createServer()
 const ids: string[] = []
 async function coworker(id: string) {
@@ -67,4 +68,22 @@ it('checks the shared database before its first initializer and still permits a 
     const own = await app.request('/agents/ordinary/data/tables')
     expect(own.status).toBe(200)
     expect(await own.json()).toEqual({ tables: [] })
+})
+
+it('edits and deletes the view ID under a real coworker ID route without confusing the two owners', async () => {
+    await coworker('views-owner')
+    const db = await getAgentDb('views-owner')
+    await db.execute('CREATE TABLE notes (title TEXT, status TEXT)')
+    const base = '/agents/views-owner/data/tables/notes/views'
+    const send = (url: string, method: string, body?: unknown) => app.request(url, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
+    const created = await send(base, 'POST', { name: 'Board', layout: 'board', fields: { title: 'title' }, groupBy: 'status' })
+    expect(created.status).toBe(200)
+    const { view } = await created.json() as { view: { id: string } }
+    const edited = await send(`${base}/${view.id}`, 'PUT', { name: 'Restart board', layout: 'board', fields: { title: 'title' }, groupBy: 'status' })
+    expect(edited.status).toBe(200)
+    expect(await edited.json()).toMatchObject({ view: { id: view.id, name: 'Restart board' } })
+    expect(await (await app.request(base)).json()).toMatchObject({ views: [{ id: view.id, name: 'Restart board' }] })
+    expect((await send(`${base}/${view.id}`, 'DELETE')).status).toBe(204)
+    expect(await (await app.request(base)).json()).toEqual({ views: [] })
+    expect((await db.execute("SELECT name FROM sqlite_master WHERE name='notes'")).rows).toHaveLength(1)
 })

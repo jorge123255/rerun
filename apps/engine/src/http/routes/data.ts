@@ -118,19 +118,19 @@ export function createDataRouter(getClient: (c: Context) => Promise<Client>, hid
         }
     })
 
-    routes.put('/tables/:name/views/:id', async c => {
+    routes.put('/tables/:name/views/:viewId', async c => {
         const client = await getClient(c)
         const input = tableViewInputSchema.parse(await c.req.json())
         try {
-            return c.json({ view: await saveView(client, c.req.param('name')!, input, { id: c.req.param('id')!, hidden }) })
+            return c.json({ view: await saveView(client, c.req.param('name')!, input, { id: c.req.param('viewId')!, hidden }) })
         } catch (err) {
             return failure(c, err, 'Could not save the view')
         }
     })
 
-    routes.delete('/tables/:name/views/:id', async c => {
+    routes.delete('/tables/:name/views/:viewId', async c => {
         const client = await getClient(c)
-        await deleteView(client, c.req.param('name')!, c.req.param('id')!)
+        await deleteView(client, c.req.param('name')!, c.req.param('viewId')!)
         return c.body(null, 204)
     })
 
