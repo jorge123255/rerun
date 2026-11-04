@@ -9,6 +9,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, Con
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, FolderIcon, HomeIcon, PencilIcon, RefreshCwIcon, Trash2Icon, XIcon } from '@/lib/icons'
+import { DesktopFileImagePreview, isDesktopRasterName } from './DesktopFileImagePreview'
 import { applyEol, splitEol } from '@/lib/files/editable'
 import { Badge } from '@rerun/ui/primitives'
 import type { DesktopAgentView } from './DesktopApp'
@@ -51,11 +52,12 @@ async function errorOf(response: Response, fallback: string) {
     return typeof body?.error === 'string' ? body.error : fallback
 }
 
-/** Port of AgentPanelFiles: breadcrumb folder navigation, a text preview, and a single .txt/.md import, scoped to one coworker. */
+/** Port of AgentPanelFiles: breadcrumb folder navigation, text and raster previews, and a single .txt/.md import, scoped to one coworker. */
 function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; registerCloseGuard: (guard: CloseGuard | null) => void }) {
     const base = `/api/desktop/agents/${encodeURIComponent(agent.id)}/files`
     const [error, setError] = useState('')
     const [preview, setPreview] = useState<Preview | null>(null)
+    const [image, setImage] = useState<{ path: string; name: string; identity?: string } | null>(null)
     const [renaming, setRenaming] = useState<string | null>(null)
     const [menuName, setMenuName] = useState<string | null>(null)
     const renameAfterMenu = useRef<string | null>(null)
@@ -205,6 +207,12 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
             onSaved={(content, hash, identity) => { setPreview({ path: preview.path, content, truncated: false, hash, identity }); setEditingPath(null) }} />
     }
 
+    if (image) {
+        const params = new URLSearchParams({ path: image.path })
+        if (image.identity) params.set('identity', image.identity)
+        return <DesktopFileImagePreview name={image.name} path={image.path} identity={image.identity} srcUrl={`${base}/image?${params.toString()}`} onBack={() => setImage(null)} />
+    }
+
     if (preview) {
         const name = preview.path.split('/').pop()
         const editable = 'hash' in preview && !!preview.hash
@@ -261,7 +269,12 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                                         {glyph}
                                         <RenameField name={entry.name} onSubmit={next => { setRenaming(null); void renameEntry(entry.name, next) }} onCancel={() => setRenaming(null)} />
                                     </div> : <button type="button" disabled={pending} aria-selected={selectedHere === entry.name} onContextMenu={() => setMenuName(entry.name)}
-                                        onClick={() => { setSelected(path); if (entry.type === 'dir') enter(entry.name); else setPreview({ path, loading: true }) }}
+                                        onClick={() => {
+                                            setSelected(path)
+                                            if (entry.type === 'dir') enter(entry.name)
+                                            else if (isDesktopRasterName(entry.name)) { setPreview(null); setEditingPath(null); setImage({ path, name: entry.name, ...(entry.identity && { identity: entry.identity }) }) }
+                                            else { setImage(null); setPreview({ path, loading: true }) }
+                                        }}
                                         className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50 ${selectedHere === entry.name ? 'bg-accent/60' : ''}`}>
                                         {glyph}
                                         <span className="truncate">{entry.name}</span>
@@ -427,7 +440,7 @@ export function DesktopCoworkerFiles({ agent }: { agent: DesktopAgentView }) {
         }}>
             <DialogHeader>
                 <DialogTitle>Files</DialogTitle>
-                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file.</DialogDescription>
+                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file. PNG, JPEG, WebP, and GIF files already in the folder can be previewed.</DialogDescription>
             </DialogHeader>
             <FilesPanel key={agent.id} agent={agent} registerCloseGuard={registerCloseGuard} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
