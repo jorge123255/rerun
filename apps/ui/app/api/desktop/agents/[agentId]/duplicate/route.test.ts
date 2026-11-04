@@ -15,25 +15,31 @@ const headers = { origin, host: '127.0.0.1:3101', cookie: `rerun-desktop-session
 const originalEnv = { ...process.env }
 let root: string, server: Server, source: DesktopAgent, patches: string[], fail: 'lost' | 'rejected' | null
 let position: { col: number; row: number }
-const copies = new Map<string, { id: string; name: string; displayName: string }>()
+const copies = new Map<string, { id: string; name: string; displayName: string; enabled: boolean }>()
+let sourceEnabled = true
 
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-duplicate-route-'))
     copies.clear()
     patches = []
     fail = null
+    sourceEnabled = true
     server = createServer(async (req, res) => {
         const reply = (code: number, body: unknown) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body))
         if (req.method === 'GET' && req.url === '/agents') return reply(200, { agents: [
             { id: 'owner', name: 'source' }, { id: 'peer', name: 'source_copy' }, ...copies.values(),
         ] })
+        if (req.method === 'GET' && req.url?.startsWith('/agents/copy-')) {
+            const copy = [...copies.values()].find(item => '/agents/' + item.id === req.url)
+            if (copy) return reply(200, { id: copy.id, config: copy, soul: '' })
+        }
         if (req.method !== 'POST' || req.url !== '/agents/owner/duplicate') return reply(404, {})
         const id = String(req.headers['x-rerun-duplicate-id'])
         patches.push(id)
         if (fail === 'rejected') return reply(400, {})
         let raw = ''
         for await (const chunk of req) raw += chunk
-        const copy = copies.get(id) ?? { ...JSON.parse(raw), id: 'copy-' + id }
+        const copy = copies.get(id) ?? { ...JSON.parse(raw), id: 'copy-' + id, enabled: sourceEnabled }
         copies.set(id, copy)
         if (fail === 'lost') { res.destroy(); return }
         return reply(201, copy)
@@ -105,6 +111,20 @@ it('repairs a lost engine response on the next roster read and cannot reuse the 
     expect((await duplicate(requestId, position, copy.id)).status).toBe(409)
     expect((await duplicate(requestId)).status).toBe(201)
     expect(patches).toEqual([requestId, requestId])
+})
+
+it('keeps a disabled source disabled in its independent copy, including a lost acknowledgement', async () => {
+    sourceEnabled = false
+    const requestId = crypto.randomUUID()
+    fail = 'lost'
+    expect((await duplicate(requestId)).status).toBe(502)
+    sourceEnabled = true
+    fail = null
+    const response = await duplicate(requestId)
+    expect(response.status).toBe(201)
+    const { agent } = await response.json()
+    expect(agent.enabled).toBe(false)
+    expect(await listDesktopSessions(await openDesktopDatabase(root), agent.id)).toEqual([])
 })
 
 it('rejects invalid input, missing owners, occupied positions and unauthenticated requests before copying', async () => {

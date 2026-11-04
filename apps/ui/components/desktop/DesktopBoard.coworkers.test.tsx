@@ -8,8 +8,8 @@ import type { GridPosition } from '@rerun/ui/iso-grid'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const researcher = { id: 'researcher', name: 'Researcher', description: '', createdAt: '', updatedAt: '' }
-const editor = { ...researcher, id: 'editor', name: 'Editor' }
+const researcher = { id: 'researcher', name: 'Researcher', description: '', createdAt: '2026-01-01', updatedAt: '' }
+const editor = { ...researcher, id: 'editor', name: 'Editor', createdAt: '2026-01-02' }
 const session = { id: 'saved', agentId: researcher.id, title: 'Original conversation', createdAt: '', updatedAt: '' }
 let root: Root
 
@@ -24,9 +24,12 @@ const copy = { ...researcher, id: 'independent', name: 'Researcher copy', create
 async function mount(options: {
     duplicate?: (input: DuplicateInput) => Response | Promise<Response>
     refreshedAgents?: () => DesktopAgentView[]
+    agents?: DesktopAgentView[]
+    enabled?: (id: string, enabled: boolean) => Response | Promise<Response>
 } = {}) {
     let rejectNext = false
     const requests = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/enabled') && init?.method === 'PATCH' && options.enabled) return options.enabled(url.split('/').at(-2)!, JSON.parse(String(init.body)).enabled)
         if (url === '/api/desktop/agents/researcher/duplicate' && init?.method === 'POST' && options.duplicate) return options.duplicate(JSON.parse(String(init.body)))
         if (url === '/api/desktop/agents' && options.refreshedAgents) return Response.json({ agents: options.refreshedAgents() })
         if (url === '/api/desktop/agents/independent/sessions') return Response.json({ sessions: [] })
@@ -51,11 +54,13 @@ async function mount(options: {
     vi.stubGlobal('fetch', requests)
     root = createRoot(document.body.appendChild(document.createElement('div')))
     await act(async () => {
-        root.render(<DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [researcher, editor], theme: 'system', connections: [], default: null }} />)
+        root.render(<DesktopApp initialData={{ profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: options.agents ?? [researcher, editor], theme: 'system', connections: [], default: null }} />)
     })
     return {
         duplicateRequests: () => requests.mock.calls.filter(([url]) => url.endsWith('/duplicate')).map(([, init]) => JSON.parse(String(init?.body)) as DuplicateInput),
         renameRequests: () => requests.mock.calls.filter(([, init]) => init?.method === 'PATCH').map(([url, init]) => [url, JSON.parse(String(init?.body))]),
+        enabledRequests: () => requests.mock.calls.filter(([url]) => url.endsWith('/enabled')).map(([url, init]) => [url, JSON.parse(String(init?.body))]),
+        chatRequests: () => requests.mock.calls.filter(([url]) => url.endsWith('/chat')),
         failNext: () => { rejectNext = true },
     }
 }
@@ -75,7 +80,7 @@ const edit = (field: HTMLInputElement | HTMLTextAreaElement, value: string) => a
     field.dispatchEvent(new Event('change', { bubbles: true }))
 })
 
-async function chooseAction(name: string, gesture: 'keyboard' | 'pointer', action: 'Duplicate' | 'Rename') {
+async function chooseAction(name: string, gesture: 'keyboard' | 'pointer', action: 'Duplicate' | 'Rename' | 'Disable' | 'Enable' | 'Open chat') {
     const item = tile(name)
     if (gesture === 'keyboard') {
         await key(item, 'F10', true)
@@ -202,4 +207,62 @@ it('refreshes an occupied placement before offering another slot', async () => {
     expect(second.position).not.toEqual(first.position)
     expect(second.requestId).toBe(first.requestId)
     expect(tile(copy.name)).not.toBeNull()
+})
+
+it('disables and enables from the board while preserving the selected chat, draft and board position', async () => {
+    const api = await mount({ enabled: (id, enabled) => Response.json({ agent: { ...(id === researcher.id ? researcher : editor), enabled, updatedAt: new Date().toISOString() } }) })
+    const originalTile = tile(researcher.name)
+    const originalPosition = [originalTile.style.left, originalTile.style.top]
+    await key(originalTile, 'Enter')
+    const panel = document.querySelector<HTMLElement>('[aria-label="Coworker chat"]')!
+    const composer = panel.querySelector<HTMLTextAreaElement>('textarea')!
+    await edit(composer, 'Keep my follow-up')
+    expect(panel.querySelector('[aria-description="Opens a new chat and keeps the original"]')).not.toBeNull()
+    await chooseAction(researcher.name, 'pointer', 'Disable')
+    await vi.waitFor(() => expect(composer.disabled).toBe(true))
+    expect(tile(researcher.name)).toBe(originalTile)
+    expect([originalTile.style.left, originalTile.style.top]).toEqual(originalPosition)
+    expect(panel.querySelector('textarea')).toBe(composer)
+    expect(composer.value).toBe('Keep my follow-up')
+    expect(panel.textContent).toContain('Original answer.')
+    expect(panel.textContent).toContain('Original conversation')
+    expect(panel.textContent).toContain('This coworker is inactive.')
+    expect(panel.querySelector('[aria-description="Opens a new chat and keeps the original"]')).toBeNull()
+    expect(document.querySelector('[data-board-activity="Researcher"]')?.getAttribute('data-status')).toBe('inactive')
+    expect(document.querySelector('[data-board-activity="Editor"]')?.getAttribute('data-status')).toBe('idle')
+    // Even a submitted form must not begin a request while disabled.
+    await act(async () => { composer.form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
+    expect(api.chatRequests()).toHaveLength(0)
+    await chooseAction(researcher.name, 'keyboard', 'Enable')
+    await vi.waitFor(() => expect(composer.disabled).toBe(false))
+    expect(panel.textContent).not.toContain('This coworker is inactive.')
+    expect(composer.value).toBe('Keep my follow-up')
+    expect(panel.textContent).toContain('Original answer.')
+    expect(panel.querySelector('[aria-description="Opens a new chat and keeps the original"]')).not.toBeNull()
+    expect(api.enabledRequests()).toEqual([
+        ['/api/desktop/agents/researcher/enabled', { enabled: false }],
+        ['/api/desktop/agents/researcher/enabled', { enabled: true }],
+    ])
+})
+
+it('opens a saved inactive coworker and retries its failed enable without losing history', async () => {
+    let fail = true
+    const api = await mount({ agents: [{ ...researcher, enabled: false }, editor], enabled: (id, enabled) => {
+        if (fail) { fail = false; return Response.json({ error: 'Could not confirm the change. Try again.' }, { status: 502 }) }
+        return Response.json({ agent: { ...researcher, enabled, updatedAt: '2026-11-03' } })
+    } })
+    await chooseAction(researcher.name, 'keyboard', 'Open chat')
+    const panel = document.querySelector<HTMLElement>('[aria-label="Coworker chat"]')!
+    expect(panel.querySelector('textarea')!.disabled).toBe(true)
+    expect(panel.textContent).toContain('Original answer.')
+    await chooseAction(researcher.name, 'keyboard', 'Enable')
+    const alert = document.querySelector<HTMLElement>('[role="alert"]')!
+    expect(alert.textContent).toContain('Could not confirm the change.')
+    expect(panel.querySelector('textarea')!.disabled).toBe(true)
+    expect(panel.textContent).toContain('Original answer.')
+    await click([...alert.querySelectorAll('button')].find(button => button.textContent === 'Retry')!)
+    await vi.waitFor(() => expect(panel.querySelector('textarea')!.disabled).toBe(false))
+    expect(api.enabledRequests()).toHaveLength(2)
+    expect(panel.textContent).toContain('Original conversation')
+    expect(panel.textContent).toContain('Original answer.')
 })

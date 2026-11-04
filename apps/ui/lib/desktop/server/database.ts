@@ -36,6 +36,7 @@ async function initialize(dataRoot: string): Promise<Client> {
             engine_agent_id TEXT NOT NULL UNIQUE,
             name TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -111,6 +112,9 @@ async function initialize(dataRoot: string): Promise<Client> {
     const names = new Set(columns.rows.map(row => String(row.name)))
     if (!names.has('model_connection_id')) await client.execute('ALTER TABLE desktop_sessions ADD COLUMN model_connection_id TEXT')
     if (!names.has('model')) await client.execute('ALTER TABLE desktop_sessions ADD COLUMN model TEXT')
+    const agentColumns = await client.execute('PRAGMA table_info(desktop_agents)')
+    if (!agentColumns.rows.some(row => row.name === 'enabled'))
+        await client.execute('ALTER TABLE desktop_agents ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))')
     const now = new Date().toISOString()
     await client.batch([
         { sql: 'INSERT OR IGNORE INTO desktop_profile (id, display_name, created_at, updated_at) VALUES (1, ?, ?, ?)', args: ['Local User', now, now] },

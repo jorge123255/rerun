@@ -153,13 +153,14 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     })
 
     const busy = status === 'submitted' || status === 'streaming'
+    const inactive = agent.enabled === false
 
     const ready = history.id === sessionId && !history.error
     const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
     const generating = busy || runInFlight
     const dirty = !!(input || attachment)
     useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty }) }, [tabUid, generating, dirty, onTabActivity])
-    const canRegenerate = !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping
+    const canRegenerate = !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
     const historyError = history.id === sessionId ? history.error : undefined
@@ -236,7 +237,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if (!text || generating || stopping || !ready || pendingAttachment.current || regenerating.current) return
+        if (inactive || !text || generating || stopping || !ready || pendingAttachment.current || regenerating.current) return
         // Wait for this send's engine-backed session ID before enabling Stop.
         setLiveSessionId(null)
         // A file can change or disappear after selection. Keep both drafts until the server accepts it.
@@ -296,7 +297,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 <h1 aria-label={agent.name} className="min-w-0">
                     <FloatingPill label="Coworker card" active={cardOpen} onClick={() => setCardOpen(open => !open)} className="max-w-full pl-1.5">
                         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
-                            <AgentBuddy agentId={agent.id} mood={generating ? 'working' : 'idle'} size={20} facing="right" />
+                            <AgentBuddy agentId={agent.id} mood={inactive ? 'asleep' : generating ? 'working' : 'idle'} size={20} facing="right" />
                         </span>
                         <span className="truncate font-medium">{agent.name}</span>
                         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -366,6 +367,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
 
             <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} notice="Feedback is stored on this Mac." onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
             <div className="shrink-0 border-t p-2.5">
+                {inactive && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">This coworker is inactive. Enable it from the board to send a message. Your chats are kept.</p>}
                 <form onSubmit={submit} className="flex min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring">
                     {attachment && <div className="px-2.5 pt-2"><AttachmentChip path={attachment} disabled={generating || stopping} onRemove={() => setDraftAttachment(draftKey)} /></div>}
                     <label htmlFor={composerId} className="sr-only">Message {agent.name}</label>
@@ -374,6 +376,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         rows={2}
                         className="min-h-12 w-full resize-none rounded-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
                         maxLength={20_000}
+                        disabled={inactive}
                         readOnly={!!attachment && status === 'submitted'}
                         placeholder="Send a message…"
                         value={input}
@@ -389,10 +392,10 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
                             workspaceModel={modelLabel} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} />
                         <div className="flex shrink-0 items-center gap-1">
-                            <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={generating || stopping || !ready}
+                            <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={inactive || generating || stopping || !ready}
                                 onSelect={path => setDraftAttachment(draftKey, path)} />
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
-                            <Button type="submit" size="icon-sm" className="rounded-full" disabled={!input.trim() || generating || stopping || !ready}>
+                            <Button type="submit" size="icon-sm" className="rounded-full" disabled={inactive || !input.trim() || generating || stopping || !ready}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
                             </Button>
                         </div>

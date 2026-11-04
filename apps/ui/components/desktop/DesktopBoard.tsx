@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
 import type { GridPosition, TileStyle } from '@rerun/ui/iso-grid'
-import { IsoGrid, SPACE_COLOR, agentTileStyle, type Container, type Tile } from '@rerun/ui/iso-grid'
+import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_AGENT_LABEL, type Container, type Tile } from '@rerun/ui/iso-grid'
 import { Plus } from 'lucide-react'
 import type { DesktopAgentView } from './DesktopApp'
 import { useBoardActivity } from './useBoardActivity'
@@ -24,7 +24,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate }: {
+export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, panelInsetRight = 0, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled }: {
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
@@ -33,6 +33,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
     onOpen: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
     onDuplicate?: (sourceId: string, requestId: string, position: GridPosition) => Promise<'created' | 'occupied'>
+    onSetEnabled?: (id: string, enabled: boolean) => Promise<void>
     onCreate: () => void
     onDismiss?: () => void
     onOpenConversation?: (hit: DesktopConversationHit) => void
@@ -49,7 +50,7 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
             position: layout.positions.get(agent.id)!,
             span: 2,
             containerId: 'team',
-            style: tileStyle(activity[agent.id] ?? 'unknown', agent.name),
+            style: agent.enabled === false ? disabledAgentTileStyle(agent.name) : tileStyle(activity[agent.id] ?? 'unknown', agent.name),
             ariaLabel: `Open chat with ${agent.name}`,
         }))
         const box: Container = {
@@ -99,7 +100,8 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
         <section ref={section} aria-label="Team board" className="relative isolate min-h-0 min-w-0 flex-1"
             onKeyDown={event => { if (event.key === 'Escape' && placement) { event.preventDefault(); cancelCopy() } }}>
             <h1 className="sr-only">Team board</h1>
-            <DesktopBoardMenu agents={agents} onOpen={onOpen} onRename={onRename} onDuplicate={onDuplicate ? beginCopy : undefined} disabled={!!placement}>{onTileContextMenu =>
+            <DesktopBoardMenu agents={agents} onOpen={onOpen} onRename={onRename} onDuplicate={onDuplicate ? beginCopy : undefined}
+                onSetEnabled={onSetEnabled} disabled={!!placement}>{onTileContextMenu =>
                 <IsoGrid
                     tiles={tiles}
                     containers={[box]}
@@ -140,8 +142,8 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
             </ChromeBar>
             <ul aria-label="Coworker activity" className="sr-only" aria-live="polite">
                 {agents.map(agent => {
-                    const status = activity[agent.id] ?? 'unknown'
-                    return <li key={agent.id} data-board-activity={agent.name} data-status={status}>{agent.name}: {ACTIVITY_LABEL[status]}</li>
+                    const status = agent.enabled === false ? 'inactive' : activity[agent.id] ?? 'unknown'
+                    return <li key={agent.id} data-board-activity={agent.name} data-status={status}>{agent.name}: {status === 'inactive' ? DISABLED_AGENT_LABEL : ACTIVITY_LABEL[status]}</li>
                 })}
             </ul>
         </section>

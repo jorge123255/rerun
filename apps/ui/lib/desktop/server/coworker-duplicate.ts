@@ -3,7 +3,7 @@ import type { Client, Row } from '@libsql/client'
 import { z } from 'zod'
 import { allocateHandle } from '@/lib/agent-handle'
 import { duplicateAgentName } from '@/lib/copy-name'
-import { duplicateAgent, EngineRequestError, request } from '@/lib/engine/client'
+import { duplicateAgent, EngineRequestError, getAgent, request } from '@/lib/engine/client'
 import type { EngineConnection } from '@/lib/engine/types'
 import { canPlaceDesktopCopy, desktopBoardLayout, type DesktopBoardPosition } from '../board-layout'
 import { DesktopHttpError } from './auth'
@@ -36,10 +36,14 @@ async function publishCopy(db: Client, engine: EngineConnection, source: Desktop
         throw new DesktopHttpError(502, unavailable)
     }
     if (copy.id !== `copy-${requestId}` || copy.name !== handle || copy.displayName !== name) throw new DesktopHttpError(502, unavailable)
+    // The original duplicate preserves enabled along with the rest of its configuration. Read
+    // the completed copy itself, since its source may have changed while a lost reply recovered.
+    const detail = await getAgent(engine, copy.id).catch(() => { throw new DesktopHttpError(502, unavailable) })
+    if (detail.id !== copy.id) throw new DesktopHttpError(502, unavailable)
     const now = new Date().toISOString()
     await db.batch([
-        { sql: 'INSERT INTO desktop_agents (id,workspace_id,engine_agent_id,name,description,created_at,updated_at) VALUES (?,1,?,?,?,?,?)',
-          args: [copyId, copy.id, name, copy.description || source.description, now, now] },
+        { sql: 'INSERT INTO desktop_agents (id,workspace_id,engine_agent_id,name,description,enabled,created_at,updated_at) VALUES (?,1,?,?,?,?,?,?)',
+          args: [copyId, copy.id, name, copy.description || source.description, Number(detail.config.enabled), now, now] },
         { sql: 'UPDATE desktop_duplicates SET completed = 1 WHERE request_id = ?', args: [requestId] },
     ], 'write')
     return (await findDesktopAgent(db, copyId))!

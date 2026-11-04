@@ -21,7 +21,7 @@ import { DesktopChatTabs } from './DesktopChatTabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 
-export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null }
+export type DesktopAgentView = { id: string; name: string; description: string; createdAt: string; updatedAt: string; position?: GridPosition | null; enabled?: boolean }
 export type DesktopSessionView = { id: string; agentId: string; title: string; createdAt: string; updatedAt: string }
 export type DesktopBootstrap = ConnectionsList & {
     theme: ThemePreference
@@ -146,7 +146,16 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ name }),
         }))
-        setAgents(current => current.map(existing => existing.id === id ? agent : existing))
+        mergeBoardAgents([agent])
+    }
+
+    async function setCoworkerEnabled(id: string, enabled: boolean) {
+        const { agent } = await json<{ agent: DesktopAgentView }>(await fetch(`/api/desktop/agents/${encodeURIComponent(id)}/enabled`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ enabled }),
+        }))
+        mergeBoardAgents([agent])
     }
 
     async function duplicateCoworker(id: string, requestId: string, position: GridPosition): Promise<'created' | 'occupied'> {
@@ -210,7 +219,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
-                    onRename={renameCoworker} onDuplicate={duplicateCoworker} onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
+                    onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled}
+                    onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={hit => selectCoworker(hit.agentId, hit.id)} />
                 {selectedAgent && <div inert={!panelOpen} aria-hidden={!panelOpen || undefined}>
                     <SidePanel isOpen={panelOpen} onDismiss={closePanel}>
                         <section ref={panelContent} tabIndex={-1} aria-label="Coworker chat" className="flex h-full min-h-0 flex-col outline-none"

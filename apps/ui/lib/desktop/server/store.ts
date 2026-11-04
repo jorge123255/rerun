@@ -11,6 +11,7 @@ export type DesktopAgent = {
     engineAgentId: string
     name: string
     description: string
+    enabled: boolean
     createdAt: string
     updatedAt: string
 }
@@ -34,6 +35,7 @@ function agentOf(row: Row): DesktopAgent {
         engineAgentId: String(row.engine_agent_id),
         name: String(row.name),
         description: String(row.description),
+        enabled: Number(row.enabled) !== 0,
         createdAt: String(row.created_at),
         updatedAt: String(row.updated_at),
     }

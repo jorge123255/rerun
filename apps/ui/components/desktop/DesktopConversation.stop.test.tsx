@@ -47,7 +47,7 @@ beforeEach(() => {
 })
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals() })
 
-const render = (sessionId: string | null = 'session-1') => act(async () => { root.render(<DesktopConversation agent={agent} sessionId={sessionId} sessions={sessions} onSelectSession={vi.fn()} onChatSession={vi.fn()} />) })
+const render = (sessionId: string | null = 'session-1', enabled = true) => act(async () => { root.render(<DesktopConversation agent={{ ...agent, enabled }} sessionId={sessionId} sessions={sessions} onSelectSession={vi.fn()} onChatSession={vi.fn()} />) })
 const button = (name: string) => [...container.querySelectorAll('button')].find(b => b.textContent === name)
 async function type(text: string) {
     const composer = container.querySelector('textarea')!
@@ -84,6 +84,29 @@ test('a reopened conversation with a run still in flight offers Stop and cancels
     expect(requests).toContain('POST /api/desktop/sessions/session-1/stop')
     expect(button('Stop')).toBeUndefined()
     expect(container.textContent).toContain('Saved question')
+})
+
+test('disabling a coworker keeps the running reply and Stop while blocking new sends', async () => {
+    await render()
+    await type('Keep this draft')
+    await act(async () => { await acceptResponse('/reply/session-1') })
+    chat.status = 'streaming'
+    await render('session-1', false)
+    expect(chat.stop).not.toHaveBeenCalled()
+    expect(button('Stop')!.disabled).toBe(false)
+    expect(button('Send')!.disabled).toBe(true)
+    expect(container.querySelector('textarea')!.value).toBe('Keep this draft')
+    expect(container.querySelector('textarea')!.disabled).toBe(true)
+    await act(async () => { button('Stop')!.click() })
+    expect(chat.stop).toHaveBeenCalledTimes(1)
+    expect(requests).toContain('POST /api/desktop/sessions/session-1/stop')
+    chat.status = 'ready'
+    await render('session-1', false)
+    expect(container.textContent).toContain('Saved question')
+    expect(button('Send')!.disabled).toBe(true)
+    await render('session-1', true)
+    expect(button('Send')!.disabled).toBe(false)
+    expect(container.querySelector('textarea')!.value).toBe('Keep this draft')
 })
 
 test('a failed stop is surfaced without losing the draft or the saved conversation', async () => {

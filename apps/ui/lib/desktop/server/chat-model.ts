@@ -3,6 +3,7 @@ import { EngineRequestError, getAgent, patchAgent } from '@/lib/engine/client'
 import type { ConnectionSummary } from '@rerun/contracts'
 import { buildDesktopModelView, offeredModelIds, usableConnection, type DesktopModelPick, type DesktopModelSource, type DesktopModelView } from '../chat-model'
 import { DesktopHttpError } from './auth'
+import { disabledCoworkerMessage } from './coworker-enabled'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { desktopModel, engineOf, readDesktopProviders } from './settings'
@@ -29,7 +30,7 @@ async function sessionFor(runtime: DesktopRuntime, agent: DesktopAgent, sessionI
 async function engineCoworker(runtime: DesktopRuntime, agent: DesktopAgent) {
     try {
         const detail = await getAgent(engineOf(runtime), agent.engineAgentId)
-        return { connectionId: detail.config.connectionId, provider: detail.config.provider, model: detail.config.model }
+        return { connectionId: detail.config.connectionId, provider: detail.config.provider, model: detail.config.model, enabled: detail.config.enabled }
     } catch (error) {
         if (error instanceof EngineRequestError && error.status === 404) throw new DesktopHttpError(404, 'Coworker not found')
         throw new DesktopHttpError(502, 'Could not read this coworker’s model. Try again.')
@@ -85,13 +86,16 @@ export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: De
     // override then replaces it for this send without writing the workspace choice back.
     const workspace = await desktopModel(runtime)
     const { connections } = workspace
+    // Check the canonical config even for a conversation override. A lost disable reply must
+    // not create a first-turn reservation or an alternate-chat intent in the UI database.
+    const coworker = await engineCoworker(runtime, agent)
+    if (!coworker.enabled) throw new DesktopHttpError(403, disabledCoworkerMessage)
     const conversation = requested ?? savedChoice(session)
     if (conversation) {
         if (requested) offered(connections, requested)
         else if (!usableConnection(connections, conversation)) throw new DesktopHttpError(409, 'This conversation’s model is no longer available. Choose another model or follow the coworker default.')
         return { ...conversation, source: 'conversation' }
     }
-    const coworker = await engineCoworker(runtime, agent)
     if (coworker.model) {
         const pick = coworker.connectionId ? { connectionId: coworker.connectionId, model: coworker.model } : null
         if (!usableConnection(connections, pick)) throw new DesktopHttpError(409, 'This coworker’s default model is no longer available. Choose another model or follow the workspace default.')

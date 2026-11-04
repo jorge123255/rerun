@@ -1,7 +1,7 @@
 import type { DesktopAgent, DesktopSession } from './store'
 
 export function desktopAgentView(agent: DesktopAgent) {
-    return { id: agent.id, ...(agent.position && { position: agent.position }), name: agent.name, description: agent.description, createdAt: agent.createdAt, updatedAt: agent.updatedAt }
+    return { id: agent.id, ...(agent.position && { position: agent.position }), name: agent.name, description: agent.description, enabled: agent.enabled, createdAt: agent.createdAt, updatedAt: agent.updatedAt }
 }
 
 export function desktopSessionView(session: DesktopSession) {

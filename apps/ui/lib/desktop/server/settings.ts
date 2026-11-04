@@ -5,6 +5,7 @@ import { desktopProvider, type SettingsChange } from '../settings'
 import { DesktopHttpError } from './auth'
 import { reconcileDesktopDuplicates } from '@/lib/desktop/server/coworker-duplicate'
 import { reconcileDesktopRenames } from './coworker-rename'
+import { reconcileDesktopEnabled } from './coworker-enabled'
 import { openDesktopDatabase } from './database'
 import { readDesktopBootstrap } from './store'
 import { desktopAgentView } from './views'
@@ -25,6 +26,7 @@ export async function readDesktopWorkspace(runtime: DesktopRuntime) {
         openDesktopDatabase(runtime.dataRoot).then(async db => {
             await reconcileDesktopRenames(db, engineOf(runtime), runtime.launchNonce)
             await reconcileDesktopDuplicates(db, engineOf(runtime))
+            await reconcileDesktopEnabled(db, engineOf(runtime))
             return readDesktopBootstrap(db)
         }),
         readDesktopProviders(runtime),
