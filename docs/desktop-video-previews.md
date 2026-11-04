@@ -2,7 +2,7 @@
 
 Branch `desktop/file-video-previews`. Source only. The integration owner runs tests, typecheck, lint, build, packaging, installation, and native Mac QA, including MP4 playback from the board and after restart. This handoff does not claim those results.
 
-The bundled Next docs directory was not present, so the route follows the existing desktop file routes: `dynamic = 'force-dynamic'` and `params` as a Promise. No dependencies were installed.
+This worktree has no `node_modules`. The route matches the Next route-handler reference read from `codex-login-build/apps/ui/node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/route.md`: `GET(request, { params })`, with `params` a Promise that is awaited. `export const dynamic = 'force-dynamic'` is the same segment config the other desktop file routes use, and it is still listed in `02-guides/caching-without-cache-components.md`. That worktree was not modified. No dependencies were installed.
 
 ## Upstream
 
