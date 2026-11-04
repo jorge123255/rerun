@@ -1,4 +1,4 @@
-import { createClient, type Client } from '@libsql/client'
+import { createClient, type Client, type TransactionMode } from '@libsql/client'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,10 +44,14 @@ describe('desktop store', () => {
             }
             return result
         }
-        const directSpy = vi.spyOn(db, 'execute').mockImplementation(intercept(db.execute.bind(db)))
-        const readSpy = vi.spyOn(db, 'transaction').mockImplementation(async mode => {
+        const directExecute = db.execute.bind(db)
+        const directSpy = vi.spyOn(db, 'execute').mockImplementation(intercept(directExecute))
+        const readSpy = vi.spyOn(db, 'transaction').mockImplementation(async (mode?: TransactionMode) => {
             const tx = await transaction(mode)
-            if (mode === 'read') vi.spyOn(tx, 'execute').mockImplementation(intercept(tx.execute.bind(tx)))
+            if (mode === 'read') {
+                const execute = tx.execute.bind(tx)
+                vi.spyOn(tx, 'execute').mockImplementation(intercept(execute))
+            }
             return tx
         })
         let reading: ReturnType<typeof readDesktopBootstrap> | undefined

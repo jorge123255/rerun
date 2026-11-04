@@ -139,7 +139,9 @@ it('retains the completed duplicate receipt so a stale placement cannot recreate
 it('deleting an original preserves its completed copy, placement and independent chat', async () => {
     const { db, original, copy, copyChat } = await seed()
     expect((await remove(original.id, original.name)).status).toBe(200)
-    expect(await findDesktopAgent(db, copy.id)).toMatchObject({ id: copy.id, engineAgentId: 'copy', position: { col: 1, row: 1 } })
+    // Current placement is authoritative; a historical duplicate receipt must not
+    // move the surviving copy back when its original coworker is deleted.
+    expect(await findDesktopAgent(db, copy.id)).toEqual(copy)
     expect(await listDesktopSessions(db, copy.id)).toEqual([copyChat])
     expect((await db.execute('SELECT * FROM desktop_duplicates')).rows).toHaveLength(1)
     expect(deletes).toEqual(['original'])
