@@ -238,7 +238,9 @@ async function readImage(runtime: DesktopRuntime, agentId: string, path: string,
     if (listed.size === BigInt(0)) throw new DesktopHttpError(415, 'This image is damaged and can’t be previewed.')
     if (listed.size > BigInt(DESKTOP_IMAGE_MAX_BYTES)) throw new DesktopHttpError(413, 'Images can be up to 8 MB.')
     if (claimed(parentPath, name)) throw new DesktopHttpError(409, 'This file is being saved. Try the preview again once that finishes.')
-    const canonical = await realpath(located).catch(() => null)
+    // This is a runtime coworker path. Tracing a dynamic realpath at build time
+    // otherwise sweeps the source tree into Next's standalone application.
+    const canonical = await realpath(/* turbopackIgnore: true */ located).catch(() => null)
     if (canonical !== located || !inside(root.root, canonical)) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
     const dir = await openResolved(parentPath, true)
     try {
