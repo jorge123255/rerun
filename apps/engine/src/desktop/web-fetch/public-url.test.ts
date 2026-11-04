@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isPublicAddress, publicUrl } from './public-url'
+import { isPublicAddress, publicUrl } from './public-url.js'
 
 describe('public destination policy (offline)', () => {
     it.each(['127.1', '2130706433', '0x7f000001', '[::1]', '[::ffff:127.0.0.1]'])('rejects normalized loopback %s', host => {

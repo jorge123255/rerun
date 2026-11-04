@@ -20,6 +20,7 @@ import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
+import { DesktopCoworkerData } from './DesktopCoworkerData'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
@@ -157,7 +158,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const regenerating = useRef<{ key: string; agentId: string; sessionId: string; draftKey: string; release: () => void } | null>(null)
     const [regenerationSource, setRegenerationSource] = useState<string | null>(null)
     const setDraftAttachments = useCallback((key: string, paths: readonly string[]) => {
-        if (!draft.loaded || draft.error || regenerating.current || isDesktopQuitting()) return
+        if (!draft.loaded || (draft.error && !draft.attachmentRejected) || regenerating.current || isDesktopQuitting()) return
         setAttachments(current => {
             const next = new Map(current)
             if (paths.length) next.set(key, [...paths])
@@ -168,7 +169,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             composer.current = { ...composer.current, attachments: [...paths] }
             draft.update({ text: composer.current.text, ...desktopAttachmentFieldsOf(paths) })
         }
-    }, [draft.loaded, draft.error, draft.update, draftKey])
+    }, [draft.loaded, draft.error, draft.attachmentRejected, draft.update, draftKey])
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
@@ -700,6 +701,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 {panelNotice && <p role="status" className="mt-2 text-sm text-muted-foreground">{panelNotice}</p>}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                     <DesktopCoworkerFiles agent={agent} dialogControl={dialogControl('files')} />
+                    <DesktopCoworkerData agent={agent} dialogControl={dialogControl('data')} />
                     <DesktopCoworkerTools agent={agent} dialogControl={dialogControl('tools')} />
                     <DesktopCoworkerMemories agent={agent} dialogControl={dialogControl('memories')} />
                     {renderRunHistory}
@@ -803,7 +805,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
                             workspaceModel={modelLabel} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} onReady={setModelReady} />
                         <div className="flex shrink-0 items-center gap-1">
-                            <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={inactive || stopping || !ready || queue.pending || !draft.loaded || !!draft.error || !!regenerationSource || draft.quitting}
+                            <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={inactive || stopping || !ready || queue.pending || !draft.loaded || (!!draft.error && !draft.attachmentRejected) || !!regenerationSource || draft.quitting}
                                 paths={attachmentPaths} onChange={paths => setDraftAttachments(draftKey, paths)} />
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
                             <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || !input.trim() || stopping || !ready || !queue.loaded || queue.pending || !!queue.error}>

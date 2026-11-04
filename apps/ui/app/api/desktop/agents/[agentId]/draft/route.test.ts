@@ -1,7 +1,9 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { DesktopHttpError } from '@/lib/desktop/server/auth'
+import * as coworkerFiles from '@/lib/desktop/server/coworker-files'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, createDesktopSession } from '@/lib/desktop/server/store'
 import { writeDesktopTabs } from '@/lib/desktop/server/session-tabs'
@@ -83,8 +85,7 @@ test('drafts keep an ordered multi-file set and validate each file before storin
     expect((await put({ ...body, baseRevision: 1, requestId: crypto.randomUUID(), attachmentPaths: Array.from({ length: 5 }, (_, index) => `heavy-${index}.md`) })).status).toBe(413)
     expect(await read()).toEqual(saved)
 })
-
-
+test('draft writes require authentication, ownership, and safe own-file paths', async () => {
     const body = input('Draft')
     expect((await PUT(request(alice, '', 'PUT', body, { cookie: '' }), params(alice))).status).toBe(401)
     expect((await PUT(request(alice, '', 'PUT', body, { origin: 'https://example.com' }), params(alice))).status).toBe(403)
@@ -96,6 +97,65 @@ test('drafts keep an ordered multi-file set and validate each file before storin
     expect((await put({ ...body, attachmentPath: 'foreign.md' })).status).toBe(400)
     expect((await put({ ...body, attachmentPath: 'missing.md' })).status).toBe(404)
     expect(await read()).toEqual({ revision: 0, text: '' })
+})
+
+test('attachment validation refusals are typed, unaccepted, and can be corrected without losing text', async () => {
+    const body = { ...input('Keep this exact text'), attachmentPaths: ['notes.md', 'missing.md'] }
+    const rejected = await put(body)
+    expect(rejected.status).toBe(404)
+    expect(await rejected.json()).toMatchObject({ code: 'draft_attachment_rejected', error: 'File not found' })
+    const db = await openDesktopDatabase(root)
+    expect((await db.execute({ sql: 'SELECT request_id FROM desktop_composer_draft_writes WHERE request_id = ?', args: [body.requestId] })).rows).toHaveLength(0)
+    expect(await read()).toEqual({ revision: 0, text: '' })
+    const corrected = { ...input(body.text), attachmentPath: 'notes.md' }
+    expect((await put(corrected)).status).toBe(200)
+    expect(await read()).toMatchObject({ revision: 1, text: body.text, attachmentPath: 'notes.md' })
+    const stale = await put({ ...body, requestId: crypto.randomUUID() })
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).not.toHaveProperty('code')
+    await closeDesktopDatabase(root)
+    expect(await read()).toMatchObject({ revision: 1, text: body.text, attachmentPath: 'notes.md' })
+})
+
+test.each([false, true])('a late attachment refusal reconciles an identical accepted request before rejecting (newer draft: %s)', async newerDraft => {
+    let entered!: () => void, release!: () => void
+    const validating = new Promise<void>(resolve => { entered = resolve })
+    const released = new Promise<void>(resolve => { release = resolve })
+    const readFile = coworkerFiles.readCoworkerFile
+    let held = false
+    const spy = vi.spyOn(coworkerFiles, 'readCoworkerFile').mockImplementation(async (...args) => {
+        if (!held) {
+            held = true
+            entered()
+            await released
+            throw new DesktopHttpError(404, 'File not found')
+        }
+        return readFile(...args)
+    })
+    const body = input('An accepted attachment draft', 0, 'live', 'notes.md')
+    const first = put(body)
+    try {
+        // The first request has passed receipt/CAS admission but is still validating its file.
+        await validating
+        const duplicate = await put(body)
+        expect(duplicate.status).toBe(200)
+        if (newerDraft) expect((await put(input('A newer saved draft', 1, 'live', 'notes.md'))).status).toBe(200)
+        const latest = await read()
+        release()
+        const reconciled = await first
+        expect(reconciled.status).toBe(200)
+        const result = await reconciled.json()
+        expect(result).not.toHaveProperty('code')
+        expect(result.draft).toEqual(latest)
+        expect(result.draft).toMatchObject({ revision: newerDraft ? 2 : 1, text: newerDraft ? 'A newer saved draft' : body.text, attachmentPath: 'notes.md' })
+        expect(await read()).toEqual(latest)
+        const db = await openDesktopDatabase(root)
+        expect((await db.execute({ sql: 'SELECT request_id FROM desktop_composer_draft_writes WHERE request_id = ?', args: [body.requestId] })).rows).toHaveLength(1)
+    } finally {
+        release()
+        await first
+        spy.mockRestore()
+    }
 })
 
 test('one concurrent CAS writer wins; immutable UUID retries reconcile without replaying old text', async () => {
@@ -160,6 +220,46 @@ test('regeneration atomically moves the original draft to its new UID and invali
     expect((await get('source-new')).status).toBe(404)
     expect((await put(input('Closed source must stay gone', 0, 'source-new'))).status).toBe(404)
     expect(await read()).toEqual(alternateDraft)
+})
+
+test('regeneration transfers every ordered attachment and clears both fields on the alternate through retry and restart', async () => {
+    await writeFile(join(workspace('alice-engine'), 'second.txt'), 'second attachment')
+    const paths = ['second.txt', 'notes.md']
+    expect((await put({ ...input('Multi-file source draft'), attachmentPaths: paths })).status).toBe(200)
+    const source = await read()
+    const layout = { baseRevision: 1, activeIndex: 1, tabs: [{ uid: 'source-new', id: original }, { uid: 'live', id: alternate }, { uid: 'blank', id: null }] }
+    expect((await tabs(layout)).status).toBe(200)
+    const transferred = await read('source-new')
+    expect(transferred).toMatchObject({ text: source.text, attachmentPaths: paths })
+    expect(transferred).not.toHaveProperty('attachmentPath')
+    const cleared = await read()
+    expect(cleared).toMatchObject({ text: '', revision: source.revision + 1 })
+    expect(cleared).not.toHaveProperty('attachmentPath')
+    expect(cleared).not.toHaveProperty('attachmentPaths')
+    const db = await openDesktopDatabase(root)
+    const stored = (await db.execute({ sql: 'SELECT attachment_path,attachment_paths FROM desktop_composer_drafts WHERE agent_id=? AND tab_uid=?', args: [alice, 'live'] })).rows[0]
+    expect(stored.attachment_path).toBeNull()
+    expect(stored.attachment_paths).toBeNull()
+    expect((await put({ ...input('Delayed original draft', source.revision), attachmentPaths: paths })).status).toBe(409)
+    expect((await put(input('Alternate’s new draft', cleared.revision, 'live', 'notes.md'))).status).toBe(200)
+    const alternateDraft = await read()
+    expect((await tabs(layout)).status).toBe(200)
+    await closeDesktopDatabase(root)
+    expect(await read('source-new')).toEqual(transferred)
+    expect(await read()).toEqual(alternateDraft)
+    expect(alternateDraft).not.toHaveProperty('attachmentPaths')
+})
+
+test('fork transfer refuses a destination whose attachment set differs after the same first file', async () => {
+    for (const name of ['second.txt', 'third.txt']) await writeFile(join(workspace('alice-engine'), name), name)
+    expect((await put({ ...input('Same text'), attachmentPaths: ['notes.md', 'second.txt'] })).status).toBe(200)
+    expect((await tabs({ baseRevision: 1, activeIndex: 0, tabs: [{ uid: 'live', id: original }, { uid: 'occupied', id: alternate }] })).status).toBe(200)
+    expect((await put({ ...input('Same text', 0, 'occupied'), attachmentPaths: ['notes.md', 'third.txt'] })).status).toBe(200)
+    const source = await read(), destination = await read('occupied')
+    expect((await tabs({ baseRevision: 2, activeIndex: 0, tabs: [{ uid: 'live', id: alternate }, { uid: 'occupied', id: original }] })).status).toBe(409)
+    await closeDesktopDatabase(root)
+    expect(await read()).toEqual(source)
+    expect(await read('occupied')).toEqual(destination)
 })
 
 test('a failed layout commit rolls back draft transfer and an occupied destination does not lose either draft', async () => {

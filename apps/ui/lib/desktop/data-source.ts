@@ -2,6 +2,7 @@ import type { DataExportParams, DataReadParams, DataSource } from '@/lib/data/so
 import type { EngineDbRows, EngineDbTable } from '@rerun/contracts'
 import { desktopViewActions } from './data-views'
 import { desktopDataBase, desktopDataExportUrl, desktopDataStorageKey, type DesktopDataScope } from './data-scope'
+import { saveDesktopDataExport } from './data-export'
 
 type DeleteResult = { success: boolean; error?: string; deleted?: number }
 type ChangeResult = { success: boolean; error?: string }
@@ -78,6 +79,7 @@ export function desktopDataSource(scope: DesktopDataScope): DataSource {
         },
         purgeTable: (table: string): Promise<DeleteResult> => change(`${tableUrl(table)}/purge`, { method: 'POST' }, 'Could not purge this table.'),
         exportUrl: (table: string, params: DataExportParams) => desktopDataExportUrl(scope, table, params),
+        exportFile: (table, params, signal) => saveDesktopDataExport(desktopDataExportUrl(scope, table, params), table, params.format, signal),
         ...desktopViewActions(scope),
         ...(scope.kind === 'agent' ? { fileUrl: (path: string) => desktopFileUrl(scope, path) } : {}),
         unreachableMessage: scope.kind === 'agent' ? 'Could not reach this coworker’s database.' : 'Could not reach the workspace database.',

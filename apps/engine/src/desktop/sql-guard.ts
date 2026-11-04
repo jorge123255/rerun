@@ -53,13 +53,19 @@ export function assertNoPragma(sql: string): void {
         if (/^vacuum$/i.test(token.value)) throw new Error('VACUUM is not available here.')
     }
 }
-const FUNCTIONS = new Set(('abs avg cast char coalesce concat concat_ws count date datetime format glob group_concat hex ifnull iif instr json json_array json_array_length json_extract json_group_array json_group_object json_insert json_object json_patch json_quote json_remove json_replace json_set json_type json_valid julianday length like likelihood likely lower ltrim max min nullif printf quote random replace round rtrim sign strftime string_agg substr substring sum time total trim typeof unicode unixepoch unlikely upper ' +
+// No size-controlled allocation or growing string aggregation functions: printf/format,
+// randomblob/zeroblob, replace and group_concat/string_agg/json_group_* can allocate huge native
+// buffers before a row cap or the parent deadline can help. Use ordinary bounded rows instead.
+const FUNCTIONS = new Set(('abs avg cast char coalesce count date datetime glob ifnull iif instr json_array_length json_extract json_type json_valid julianday length like likelihood likely lower ltrim max min nullif random round rtrim sign strftime substr substring sum time total trim typeof unicode unixepoch unlikely upper ' +
     // SQL grammar preceding parentheses, not extension/function calls.
     'as in exists values select over partition filter check default unique primary key foreign references integer real text blob numeric decimal varchar from join inner left right outer cross using group and or not on where having by order when then else union all distinct case between collate escape set limit offset generated always conflict do nothing update').split(' '))
 export function assertSafeFunctions(sql: string): void {
     const tokens = sqlTokens(sql)
     for (let i = 0; i < tokens.length - 1; i++) {
         const token = tokens[i]
+        // Recursive concatenation can double a native buffer repeatedly before the deadline.
+        // Build display strings in the caller; quoted text containing || is still ordinary data.
+        if (!token.quoted && token.value === '|' && !tokens[i + 1].quoted && tokens[i + 1].value === '|') throw new Error('SQL string concatenation is unavailable. Read or write bounded values instead.')
         if ((tokens[i + 1].quoted || tokens[i + 1].value !== '(') || !/^[\p{L}_]/u.test(token.value)) continue
         if (FUNCTIONS.has(token.value.toLowerCase())) continue
         const previous = tokens[i - 1]?.value.toLowerCase()

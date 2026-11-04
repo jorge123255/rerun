@@ -17,7 +17,7 @@ function deferred<T>() {
 function commit(key: string, body: DesktopComposerDraftWrite) {
     const previous = saved.get(key) ?? empty()
     if (body.baseRevision !== previous.revision) return Response.json({ draft: previous }, { status: 409 })
-    const draft = { revision: previous.revision + 1, text: body.text, ...(body.attachmentPath && { attachmentPath: body.attachmentPath }) }
+    const draft = { revision: previous.revision + 1, text: body.text, ...(body.attachmentPath && { attachmentPath: body.attachmentPath }), ...(body.attachmentPaths && { attachmentPaths: [...body.attachmentPaths] }) }
     saved.set(key, draft)
     return Response.json({ draft })
 }
@@ -130,6 +130,48 @@ test('a lost save acknowledgement retries the exact UUID and CAS before saving a
     expect(writes[2].requestId).not.toBe(writes[0].requestId)
     expect(record.state.error).toBeUndefined()
     expect(saved.get(keyOf('alice', 'one'))?.text).toBe('Newer local draft')
+})
+
+test.each([404, 409, 413, 415])('an explicit attachment refusal (%s) permits correction with unchanged text and a fresh request', async status => {
+    const record = drafts.desktopDraftRecord('alice', 'one')
+    await drafts.saveDesktopDraft(record)
+    write = async (key, body) => writes.length === 1
+        ? Response.json({ error: 'Remove unavailable attachment', code: 'draft_attachment_rejected' }, { status })
+        : commit(key, body)
+    drafts.updateDesktopDraft(record, { text: 'Keep all my text', attachmentPaths: ['good.md', 'bad.md'] })
+    await drafts.saveDesktopDraft(record)
+    expect(record.state).toMatchObject({ text: 'Keep all my text', attachmentRejected: true, conflict: false, saving: false })
+    expect(saved.has(keyOf('alice', 'one'))).toBe(false)
+    drafts.updateDesktopDraft(record, { text: record.state.text, attachmentPath: 'good.md' })
+    await vi.waitFor(() => expect(saved.get(keyOf('alice', 'one'))).toEqual({ revision: 1, text: 'Keep all my text', attachmentPath: 'good.md' }))
+    expect(writes).toHaveLength(2)
+    expect(writes[1].requestId).not.toBe(writes[0].requestId)
+    expect(writes.map(value => value.baseRevision)).toEqual([0, 0])
+    expect(record.state).toMatchObject({ attachmentRejected: false, conflict: false, attachmentPaths: undefined })
+    expect(record.state.error).toBeUndefined()
+})
+
+test.each([404, 413, 500])('an untyped HTTP %s failure still replays the exact multi-file attempt before a newer edit', async status => {
+    const record = drafts.desktopDraftRecord('alice', 'one')
+    await drafts.saveDesktopDraft(record)
+    let receipt: DesktopComposerDraft | undefined
+    write = async (key, body) => {
+        if (writes.length === 1) {
+            commit(key, body); receipt = saved.get(key)
+            return Response.json({ error: 'Uncertain response' }, { status })
+        }
+        if (writes.length === 2) return Response.json({ draft: receipt })
+        return commit(key, body)
+    }
+    drafts.updateDesktopDraft(record, { text: 'Preserve this', attachmentPaths: ['first.md', 'second.md'] })
+    await drafts.saveDesktopDraft(record)
+    expect(record.state.attachmentRejected).not.toBe(true)
+    drafts.updateDesktopDraft(record, { text: 'Newer edit', attachmentPath: 'first.md' })
+    await drafts.saveDesktopDraft(record)
+    expect(writes).toHaveLength(3)
+    expect(writes[1]).toEqual(writes[0])
+    expect(writes[2]).toMatchObject({ baseRevision: 1, text: 'Newer edit', attachmentPath: 'first.md' })
+    expect(writes[2].requestId).not.toBe(writes[0].requestId)
 })
 
 test('accepting an older send never clears a newer composer edit or its attachment', async () => {

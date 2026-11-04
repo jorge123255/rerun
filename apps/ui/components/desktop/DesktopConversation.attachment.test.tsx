@@ -296,3 +296,43 @@ test('a failing multi-file send keeps every chip and the typed text', async () =
     expect(button('Remove attachment a.md')).toBeDefined()
     expect(button('Remove attachment b.md')).toBeDefined()
 })
+
+test('a rejected attachment draft keeps its text and permits removing the rejected file before saving again', async () => {
+    const fixture = createDesktopDraftFixture()
+    fixture.seedTabs('alice', [{ uid: 'repair-tab', id: 'saved' }])
+    const writes: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/draft') && init?.method === 'PUT') {
+            const body = JSON.parse(String(init.body))
+            writes.push(body)
+            if (body.attachmentPaths?.includes('bad.md')) return Response.json({ code: 'draft_attachment_rejected', error: 'This file is no longer available.' }, { status: 404 })
+        }
+        const response = fixture.handle(input, init)
+        if (response) return response
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
+        if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
+        if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
+        if (url.pathname.endsWith('/files')) return Response.json({ entries: [entry('good.md'), entry('bad.md')] })
+        return Response.json(url.pathname.endsWith('/messages') ? { messages: [] } : { running: false })
+    }))
+    const agent = { id: 'alice', name: 'Alice', description: '', createdAt: '', updatedAt: '' }
+    const renderTab = () => act(async () => root.render(<DesktopConversation agent={agent} sessionId="saved" tabUid="repair-tab" sessions={[]} onSelectSession={() => {}} onChatSession={() => {}} />))
+    await renderTab(); await flush()
+    await writeDraft('Please preserve this message')
+    await click('Attach from Files'); await click('good.md'); await click('bad.md'); await click('Done')
+    expect(container.textContent).toContain('This file is no longer available.')
+    expect(container.querySelector('textarea')!.value).toBe('Please preserve this message')
+    expect(button('Attach from Files').disabled).toBe(false)
+    const rejected = writes.at(-1)!
+    await click('Remove attachment bad.md'); await flush()
+    expect(container.textContent).not.toContain('This file is no longer available.')
+    expect(writes.at(-1)).toMatchObject({ text: 'Please preserve this message', attachmentPath: 'good.md', baseRevision: rejected.baseRevision })
+    expect(writes.at(-1)!.requestId).not.toBe(rejected.requestId)
+    expect(button('Remove attachment bad.md')).toBeUndefined()
+    await act(async () => root.unmount()); forgetCoworkerDrafts('alice'); root = createRoot(container)
+    await renderTab(); await flush()
+    expect(container.querySelector('textarea')!.value).toBe('Please preserve this message')
+    expect(button('Remove attachment good.md')).toBeDefined()
+    expect(button('Remove attachment bad.md')).toBeUndefined()
+})

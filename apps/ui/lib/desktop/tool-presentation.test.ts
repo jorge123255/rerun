@@ -3,6 +3,12 @@ import { desktopToolPresentation as show } from './tool-presentation'
 import { desktopRunDetailsView } from './run-details'
 
 describe('public tool activity', () => {
+    it('shows sanitized web fetch URLs and text with the same real failure state after restore', () => {
+        expect(show('web_fetch', { url: 'https://example.org/page?token=private-value', headers: { authorization: 'secret' } }, 'Page facts'))
+            .toEqual({ input: { preview: 'https://example.org/page?token=[redacted]' }, output: 'Page facts' })
+        expect(show('mcp__rerun__web_fetch', { url: 'https://example.org/' }, { type: 'error-text', value: 'HTTP 404' }))
+            .toEqual({ input: { preview: 'https://example.org/' }, errorText: 'HTTP 404' })
+    })
     it('selects bounded native terminal output and exit code from the real SDK envelope, live and restored', () => {
         const item = { type: 'commandExecution', command: 'printf test', cwd: '/private/profile', commandActions: [{ private: 'private-actions' }],
             status: 'completed', exitCode: 0, aggregatedOutput: 'ok\nTOKEN=abc123\nAuthorization: Bearer hidden\n'.repeat(100), _meta: { cookie: 'private-cookie' } }

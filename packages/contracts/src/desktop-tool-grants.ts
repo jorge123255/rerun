@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'selfInstruction', 'verbositySet'] as const
+export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -41,9 +41,10 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     pending('filesystem', 'Edit workspace files', 'Create and change workspace documents.', 'Requires conflict-safe writes in the workspace editor.', 'fs_write', 'fs_edit'),
     pending('shared', 'Shared files', 'Work on files visible to multiple coworkers.', 'Requires a shared workspace and its access controls.', 'shared_read', 'shared_write'),
     pending('shell', 'Run commands', 'Run Rerun shell commands in a workspace.', 'Requires a confined engine command runner.', 'shell_exec'),
-    pending('web', 'Use the web', 'Search, fetch or download content.', 'Requires outbound request controls and a configured search provider.', 'web_search', 'web_fetch', 'download'),
-    pending('db', 'Private database', 'Work with structured records in a coworker database.', 'Requires confined database access and bounded queries.', 'db_query', 'db_execute'),
-    pending('sharedDb', 'Shared database', 'Work on records accessible across coworkers.', 'Requires shared table ownership and permissions.', 'shared_db_query'),
+    supported('webFetch', 'Read public web pages', 'Read public HTTP(S) text and HTML pages without cookies or saved files.', 'web_fetch'),
+    pending('web', 'Use the web', 'Search or download content.', 'Rerun web search needs a search provider; downloads and saved pages are unavailable.', 'web_search', 'download'),
+    supported('db', 'Private database', 'Read and change structured records in this coworker’s private database.', 'db_query', 'db_execute', 'db_schema'),
+    supported('sharedDb', 'Shared database', 'Read and change workspace shared records.', 'shared_db_query', 'shared_db_execute', 'shared_db_schema'),
     pending('brain', 'Company brain', 'Search or propose changes to the team’s knowledge.', 'Requires a team knowledge store and proposal review.'),
     pending('skills', 'Skills', 'Create and use reusable procedures.', 'Requires a scoped skills store and a proposal review flow.'),
     pending('schedule', 'Schedules', 'Run coworker routines on a schedule.', 'Requires a local scheduling and restart policy.'),

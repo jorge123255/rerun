@@ -18,6 +18,25 @@ afterEach(async () => {
 })
 
 describe('openDesktopDatabase', () => {
+    it('upgrades old attachment drafts without losing their identity or saved content', async () => {
+        const old = createClient({ url: `file:${join(root, 'app.db')}` })
+        await old.executeMultiple(`CREATE TABLE desktop_composer_drafts (
+            agent_id TEXT NOT NULL, tab_uid TEXT NOT NULL, revision INTEGER NOT NULL,
+            text TEXT NOT NULL, attachment_path TEXT, updated_at TEXT NOT NULL,
+            PRIMARY KEY (agent_id, tab_uid));
+            INSERT INTO desktop_composer_drafts VALUES ('owner', 'tab', 7, 'Keep this draft', 'notes/one.md', 'before');`)
+        old.close()
+        const db = await openDesktopDatabase(root)
+        expect((await db.execute('SELECT * FROM desktop_composer_drafts')).rows).toEqual([
+            { agent_id: 'owner', tab_uid: 'tab', revision: 7, text: 'Keep this draft', attachment_path: 'notes/one.md', attachment_paths: null, updated_at: 'before' },
+        ])
+        await db.execute({ sql: 'UPDATE desktop_composer_drafts SET attachment_paths = ?', args: [JSON.stringify(['notes/one.md', 'notes/two.txt'])] })
+        await closeDesktopDatabase(root)
+        const reopened = await openDesktopDatabase(root)
+        expect((await reopened.execute('SELECT revision, text, attachment_paths FROM desktop_composer_drafts')).rows).toEqual([
+            { revision: 7, text: 'Keep this draft', attachment_paths: JSON.stringify(['notes/one.md', 'notes/two.txt']) },
+        ])
+    })
     it('migrates existing coworker rows to enabled without replacing their identity', async () => {
         const old = createClient({ url: `file:${join(root, 'app.db')}` })
         await old.executeMultiple(`CREATE TABLE desktop_agents (

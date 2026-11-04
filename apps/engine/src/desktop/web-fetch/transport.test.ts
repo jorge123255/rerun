@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({ request: vi.fn(), lookup: vi.fn() }))
 vi.mock('node:http', () => ({ request: mocks.request }))
 vi.mock('node:https', () => ({ request: mocks.request }))
 vi.mock('node:dns/promises', () => ({ lookup: mocks.lookup }))
-import { abortable, MAX_BYTES, readPublicPage } from './transport'
+import { abortable, MAX_BYTES, readPublicPage } from './transport.js'
 function reply(status: number, headers: Record<string, string>, chunks: Buffer[] = []) {
     mocks.request.mockImplementationOnce((options, callback) => {
         const req = new EventEmitter() as EventEmitter & { end: () => void }

@@ -66,6 +66,7 @@ export function desktopToolPresentation(name: string, rawInput: unknown, rawOutp
     if (tool === 'fs_search' && typeof input.pattern === 'string') preview = text([input.path, input.pattern].filter(Boolean).join(' · '))
     if (tool === 'memory_write') preview = text(input.content)
     if (tool === 'memory_delete') preview = text(input.id)
+    if (tool === 'web_fetch') preview = text(input.url)
     const result: DesktopToolPresentation = preview ? { input: { preview } } : {}
     if (tool === 'functions.exec') {
         const code = text(typeof rawInput === 'string' ? rawInput : input.code)

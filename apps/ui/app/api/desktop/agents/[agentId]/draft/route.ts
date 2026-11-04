@@ -1,6 +1,6 @@
 import { desktopComposerDraftClearSchema, desktopComposerDraftScopeSchema, desktopComposerDraftWriteSchema } from '@/lib/desktop/composer-draft'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
-import { clearDesktopComposerDraft, DesktopDraftConflict, readDesktopComposerDraft, writeDesktopComposerDraft } from '@/lib/desktop/server/composer-draft'
+import { clearDesktopComposerDraft, DesktopDraftConflict, DraftAttachmentRejected, readDesktopComposerDraft, writeDesktopComposerDraft } from '@/lib/desktop/server/composer-draft'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
 
@@ -22,6 +22,7 @@ export async function PUT(request: Request, { params }: Params) {
         if (!parsed.success) throw new DesktopHttpError(400, 'Choose a valid draft and its saved version.')
         try { return Response.json(await writeDesktopComposerDraft(runtime, (await params).agentId, parsed.data), { headers }) }
         catch (error) {
+            if (error instanceof DraftAttachmentRejected) return Response.json({ error: error.message, code: error.code }, { status: error.status, headers })
             if (error instanceof DesktopDraftConflict) return Response.json({ error: error.message, draft: error.draft }, { status: 409, headers })
             throw error
         }

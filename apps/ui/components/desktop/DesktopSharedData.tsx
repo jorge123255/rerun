@@ -33,11 +33,11 @@ function SharedDataPanel() {
     </>
 }
 
-export function DesktopSharedData({ dialogControl }: { dialogControl?: DesktopDialogControl }) {
+export function DesktopSharedData({ dialogControl, hideTrigger = false, onCloseAutoFocus }: { dialogControl?: DesktopDialogControl; hideTrigger?: boolean; onCloseAutoFocus?: (event: Event) => void }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
-        <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Shared database</Button></DialogTrigger>
-        {open && <DialogContent className="flex h-[80dvh] flex-col sm:max-w-5xl">
+        {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Shared database</Button></DialogTrigger>}
+        {open && <DialogContent onCloseAutoFocus={onCloseAutoFocus} className="flex h-[80dvh] flex-col sm:max-w-5xl">
             <DialogHeader>
                 <DialogTitle>Shared database</DialogTitle>
                 <DialogDescription>The workspace database. Coworkers with shared database permission read and write these tables. Browse, filter, edit a row, or save a view.</DialogDescription>

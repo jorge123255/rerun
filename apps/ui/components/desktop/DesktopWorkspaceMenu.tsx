@@ -1,14 +1,14 @@
 'use client'
 
 import { WorkspacePill } from '@rerun/ui/chrome'
-import { Keyboard, LayoutGrid, Search, Settings } from 'lucide-react'
+import { Database, Keyboard, LayoutGrid, Search, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
 import { useRef } from 'react'
 import { desktopWorkspaceIconSelectionUrl } from '@/lib/desktop/icon-catalog'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts, onSharedData }: {
     workspaceName: string
     iconCatalogId?: string | null
     iconUploadId?: string | null
@@ -23,6 +23,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     onWorkspaceSettings?: () => void
     onControlCenter?: () => void
     onShortcuts?: () => void
+    onSharedData?: () => void
 }) {
     const openingControlCenter = useRef(false)
     return <nav aria-label="Workspace" className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -36,6 +37,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
             }}>
                 <DropdownMenuLabel>{profileName} · Rerun Local</DropdownMenuLabel>
                 <DropdownMenuItem onSelect={onBoard}><LayoutGrid /> Team board</DropdownMenuItem>
+                {onSharedData && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onSharedData() }}><Database /> Shared database</DropdownMenuItem>}
                 {onControlCenter && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> Control center</DropdownMenuItem>}
                 <DropdownMenuItem onSelect={onSettings}><Settings /> Settings</DropdownMenuItem>
                 {onWorkspaceSettings && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onWorkspaceSettings() }}><Settings /> Workspace settings</DropdownMenuItem>}

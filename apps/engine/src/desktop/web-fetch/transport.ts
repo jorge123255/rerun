@@ -3,9 +3,9 @@ import { request as httpsRequest } from 'node:https'
 import type { IncomingMessage } from 'node:http'
 import { isIP } from 'node:net'
 import { checkServerIdentity, type PeerCertificate } from 'node:tls'
-import { readTextBody } from './body'
-import { publicDestination, publicUrl } from './public-url'
-export { MAX_BYTES } from './body'
+import { readTextBody } from './body.js'
+import { publicDestination, publicUrl } from './public-url.js'
+export { MAX_BYTES } from './body.js'
 
 export const MAX_REDIRECTS = 3
 export const DEADLINE_MS = 30_000

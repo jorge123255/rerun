@@ -5,7 +5,7 @@ import { flushTabWrites, pendingTabWrite } from './tab-writes'
 import { desktopComposerDraftSchema as savedSchema, type DesktopComposerDraft as Saved } from './composer-draft'
 
 export type ComposerValue = DesktopAttachmentFields & { text: string }
-export type DraftState = ComposerValue & { loaded: boolean; saving: boolean; version: number; error?: string; conflict: boolean }
+export type DraftState = ComposerValue & { loaded: boolean; saving: boolean; version: number; error?: string; conflict: boolean; attachmentRejected?: boolean }
 type Attempt = { tabUid: string; baseRevision: number; requestId: string; text: string } & DesktopAttachmentFields
 type Record = {
     agentId: string; uid: string; state: DraftState; saved: Saved; dirty: boolean; forgotten: boolean;
@@ -64,10 +64,17 @@ async function drain(r: Record) {
         const version = r.state.version
         const attempt = r.attempt ?? { tabUid: r.uid, baseRevision: r.saved.revision, requestId: crypto.randomUUID(), text: r.state.text, ...desktopAttachmentFieldsOf(pathsOf(r.state)) }
         r.attempt = attempt
-        publish(r, { saving: true, error: undefined })
+        publish(r, { saving: true, error: undefined, attachmentRejected: false })
         const response = await fetch(url(r), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(attempt) })
         const body = await response.json()
         if (r.forgotten) return
+        if (!response.ok && body.code === 'draft_attachment_rejected') {
+            // This typed refusal is issued before acceptance. Other HTTP errors (including
+            // a lost/invalid response) must retain the immutable attempt for exact replay.
+            r.attempt = undefined
+            publish(r, { saving: false, attachmentRejected: true, error: body.error || 'Remove or replace the unavailable attachment, then try again.' })
+            return
+        }
         if (response.status === 409) {
             r.saved = savedSchema.parse(body.draft)
             r.attempt = undefined
@@ -106,7 +113,9 @@ export function updateDesktopDraft(r: Record, value: ComposerValue) {
     if (r.forgotten || same(r.state, value)) return
     r.dirty = true
     const fields = desktopAttachmentFieldsOf(pathsOf(value))
-    publish(r, { text: value.text, ...fields, attachmentPath: fields.attachmentPath, attachmentPaths: fields.attachmentPaths, version: r.state.version + 1, saving: true })
+    const correctedAttachments = r.state.attachmentRejected && JSON.stringify(pathsOf(r.state)) !== JSON.stringify(pathsOf(value))
+    publish(r, { text: value.text, ...fields, attachmentPath: fields.attachmentPath, attachmentPaths: fields.attachmentPaths, version: r.state.version + 1, saving: true,
+        ...(correctedAttachments && { error: undefined, attachmentRejected: false }) })
     if (!r.state.error) void saveDesktopDraft(r)
 }
 
@@ -120,7 +129,7 @@ export async function reloadDesktopDraft(r: Record) {
     await r.work
     r.attempt = undefined
     r.dirty = false
-    publish(r, { loaded: false, error: undefined, conflict: false })
+    publish(r, { loaded: false, error: undefined, conflict: false, attachmentRejected: false })
     await saveDesktopDraft(r)
 }
 
@@ -133,7 +142,7 @@ export async function keepDesktopDraft(r: Record) {
     // Refresh the comparison revision before an explicit choice to replace the saved version.
     r.attempt = undefined
     r.dirty = true
-    publish(r, { loaded: false, error: undefined, conflict: false })
+    publish(r, { loaded: false, error: undefined, conflict: false, attachmentRejected: false })
     await saveDesktopDraft(r)
 }
 

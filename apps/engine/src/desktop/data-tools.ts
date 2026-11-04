@@ -3,10 +3,11 @@ import { z } from 'zod'
 import { withAgentLock } from '../agents/lock.js'
 import { readAgentConfig } from '../agents/loader.js'
 import { AGENT_HIDDEN_TABLES, getAgentDb } from '../db/agentDb.js'
-import { getSharedDb, recordTableOwnership, SHARED_HIDDEN_TABLES } from '../db/sharedDb.js'
+import { getSharedDb, SHARED_HIDDEN_TABLES } from '../db/sharedDb.js'
 import { beginDesktopAgentWork } from './agent-lifecycle.js'
 import type { RunContext } from '../runtime/context.js'
-import { desktopExecute, desktopQuery, desktopSchema } from './data-store.js'
+import { agentDataDbPath, dataDir, sharedDbPath } from '../config/paths.js'
+import { DesktopDataCommitUnknownError, executeDesktopData, type DataQueryResult, type DataWriteResult } from './data-executor.js'
 
 export const DESKTOP_DATA_GRANTS = ['db', 'sharedDb'] as const
 export type DesktopDataGrant = typeof DESKTOP_DATA_GRANTS[number]
@@ -27,7 +28,12 @@ async function guarded(ctx: RunContext, grant: DesktopDataGrant, label: string, 
             try { await requireGrant(ctx, grant); return await action() }
             finally { release() }
         })
-    } catch (error) { return `${label} failed: ${error instanceof Error ? error.message : 'The database request failed.'}` }
+    } catch (error) {
+        // The provider must receive a tool error, not a successful string which merely says
+        // "failed". Preserve uncertainty after commit permission even if Stop caused the loss.
+        if (!(error instanceof DesktopDataCommitUnknownError)) ctx.abortSignal?.throwIfAborted()
+        throw new Error(`${label} failed: ${error instanceof Error ? error.message : 'The database request failed.'}`)
+    }
 }
 const params = z.array(z.union([z.string().max(50_000), z.number().finite(), z.boolean(), z.null()])).max(500).default([])
 const sql = z.string().min(1).max(20_000)
@@ -41,12 +47,14 @@ function toolsFor(ctx: RunContext, grant: DesktopDataGrant): ToolSet {
     const database = shared ? 'the workspace shared database' : 'your own private SQLite database'
     const hidden = shared ? SHARED_HIDDEN_TABLES : AGENT_HIDDEN_TABLES
     const client = () => shared ? getSharedDb() : getAgentDb(ctx.agent.id)
+    const file = () => shared ? sharedDbPath() : agentDataDbPath(ctx.agent.id)
     return {
         [`${prefix}_query`]: tool({
             description: `Run one read-only SELECT (or WITH … SELECT) against ${database}. Use ? placeholders and params. Returns at most 200 rows; extra rows are explicitly marked. Internal tables, file functions, extensions and PRAGMA are unavailable.`,
             inputSchema: queryInput,
             execute: input => guarded(ctx, grant, 'Query', async () => {
-                const result = await desktopQuery(await client(), input.sql, input.params, input.limit, hidden)
+                await client()
+                const result = await executeDesktopData(dataDir(), file(), { kind: 'query', ...input, hidden }, { signal: ctx.abortSignal }) as DataQueryResult
                 await requireGrant(ctx, grant)
                 let rows = result.rows
                 let encoded = JSON.stringify(rows)
@@ -59,10 +67,11 @@ function toolsFor(ctx: RunContext, grant: DesktopDataGrant): ToolSet {
             description: `Change ${database} with explicit CREATE/ALTER/DROP TABLE or INSERT/UPDATE/DELETE statements. Use ? placeholders. A statements list commits atomically or rolls back in full. No views, triggers, virtual tables, filesystem operations, extensions, transaction commands or RETURNING. ${shared ? 'Creator metadata is advisory; the shared grant permits changes regardless of which coworker created a table.' : ''}`,
             inputSchema: writeInput,
             execute: input => guarded(ctx, grant, 'Execution', async () => {
-                const db = await client()
+                await client()
                 const statements = input.statements ?? [{ sql: input.sql!, params: input.params }]
-                const result = await desktopExecute(db, statements, hidden, () => requireGrant(ctx, grant))
-                if (shared) await recordTableOwnership(db, statements.map(item => item.sql), ctx.agent.config.name)
+                const result = await executeDesktopData(dataDir(), file(), {
+                    kind: 'execute', statements, hidden, ...(shared ? { creator: ctx.agent.config.name } : {}),
+                }, { signal: ctx.abortSignal, beforeCommit: () => requireGrant(ctx, grant) }) as DataWriteResult
                 return `OK, ${result.statements} statement(s), ${result.rowsAffected} row(s) affected${result.lastInsertRowid !== null ? `, lastInsertRowid=${result.lastInsertRowid}` : ''}`
             }),
         }),
@@ -70,7 +79,8 @@ function toolsFor(ctx: RunContext, grant: DesktopDataGrant): ToolSet {
             description: `Inspect tables, columns and types in ${database}. Table creator metadata is advisory, never permission.`,
             inputSchema: z.object({}).strict(),
             execute: () => guarded(ctx, grant, 'Schema read', async () => {
-                const schema = await desktopSchema(await client(), hidden)
+                await client()
+                const schema = await executeDesktopData(dataDir(), file(), { kind: 'schema', hidden }, { signal: ctx.abortSignal }) as string
                 await requireGrant(ctx, grant)
                 return schema.length > 8_000 ? schema.slice(0, 8_000) + '\n[Schema truncated]' : schema || `No tables yet. Create one with ${prefix}_execute (CREATE TABLE IF NOT EXISTS ...).`
             }),

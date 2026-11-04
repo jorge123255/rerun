@@ -27,6 +27,8 @@ export type DataSource = {
     dropTable: (table: string) => Promise<{ success: boolean; error?: string }>
     purgeTable: (table: string) => Promise<{ success: boolean; error?: string; deleted?: number }>
     exportUrl: (table: string, params: DataExportParams) => string
+    /** Local shells can save an authenticated response without opening another window. */
+    exportFile?: (table: string, params: DataExportParams, signal: AbortSignal) => Promise<void>
     listViews: (table: string) => Promise<Result<{ views: TableView[] }>>
     saveView: (table: string, input: TableViewInput, id?: string) => Promise<Result<{ view: TableView }>>
     deleteView: (table: string, id: string) => Promise<Result>

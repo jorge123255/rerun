@@ -69,16 +69,16 @@ it('keeps the upstream write path closed: query-only reads, no ATTACH, PRAGMA, V
     grant({ db: true, sharedDb: true })
     const tools = both()
 
-    expect(await run(tools, 'db_query', { sql: 'DELETE FROM notes' })).toMatch(/^Query failed: Only a SELECT/)
-    expect(await run(tools, 'db_query', { sql: "SELECT readfile('/etc/passwd') AS v" })).toBe('Query failed: File access is not allowed in SQL.')
-    expect(await run(tools, 'db_query', { sql: 'SELECT name FROM sqlite_master' })).toMatch(/^Query failed: Internal tables are not available here/)
-    expect(await run(tools, 'db_query', { sql: 'SELECT * FROM _rerun_views' })).toMatch(/^Query failed: Internal tables are not available here/)
-    expect(await run(tools, 'shared_db_query', { sql: 'SELECT * FROM "_rerun_shared_tables"' })).toMatch(/^Query failed: Internal tables are not available here/)
+    await expect(run(tools, 'db_query', { sql: 'DELETE FROM notes' })).rejects.toThrow(/^Query failed: Only a SELECT/)
+    await expect(run(tools, 'db_query', { sql: "SELECT readfile('/etc/passwd') AS v" })).rejects.toThrow('Query failed: File access is not allowed in SQL.')
+    await expect(run(tools, 'db_query', { sql: 'SELECT name FROM sqlite_master' })).rejects.toThrow(/^Query failed: Internal tables are not available here/)
+    await expect(run(tools, 'db_query', { sql: 'SELECT * FROM _rerun_views' })).rejects.toThrow(/^Query failed: Internal tables are not available here/)
+    await expect(run(tools, 'shared_db_query', { sql: 'SELECT * FROM "_rerun_shared_tables"' })).rejects.toThrow(/^Query failed: Internal tables are not available here/)
 
-    expect(await run(tools, 'db_execute', { sql: "ATTACH DATABASE '/tmp/other.db' AS other" })).toMatch(/^Execution failed:/)
-    expect(await run(tools, 'db_execute', { sql: 'PRAGMA writable_schema = 1' })).toBe('Execution failed: PRAGMA is not available here.')
-    expect(await run(tools, 'db_execute', { sql: 'VACUUM' })).toBe('Execution failed: VACUUM is not available here.')
-    expect(await run(tools, 'shared_db_execute', { sql: "SELECT writefile('/tmp/pwned', 'x')" })).toMatch(/^Execution failed:/)
+    await expect(run(tools, 'db_execute', { sql: "ATTACH DATABASE '/tmp/other.db' AS other" })).rejects.toThrow(/^Execution failed:/)
+    await expect(run(tools, 'db_execute', { sql: 'PRAGMA writable_schema = 1' })).rejects.toThrow('Execution failed: PRAGMA is not available here.')
+    await expect(run(tools, 'db_execute', { sql: 'VACUUM' })).rejects.toThrow('Execution failed: VACUUM is not available here.')
+    await expect(run(tools, 'shared_db_execute', { sql: "SELECT writefile('/tmp/pwned', 'x')" })).rejects.toThrow(/^Execution failed:/)
 
     // A string literal that merely says the words is not a statement.
     expect(await run(tools, 'db_query', { sql: "SELECT 'attach or pragma' AS s" })).toBe('1 row(s)\n[{"s":"attach or pragma"}]')
@@ -90,8 +90,8 @@ it('refuses a statement when the grant was turned off after the tools were prepa
     expect(Object.keys(tools)).toContain('db_query')
 
     grant({ db: false })
-    expect(await run(tools, 'db_query', { sql: 'SELECT 1 AS one' })).toBe('Query failed: This database is turned off for this coworker.')
-    expect(await run(tools, 'db_execute', { sql: 'CREATE TABLE later (x TEXT)' })).toBe('Execution failed: This database is turned off for this coworker.')
+    await expect(run(tools, 'db_query', { sql: 'SELECT 1 AS one' })).rejects.toThrow('Query failed: This database is turned off for this coworker.')
+    await expect(run(tools, 'db_execute', { sql: 'CREATE TABLE later (x TEXT)' })).rejects.toThrow('Execution failed: This database is turned off for this coworker.')
 })
 
 it('runs a batch as one transaction and rolls every statement back on a failure', async () => {
@@ -104,10 +104,10 @@ it('runs a batch as one transaction and rolls every statement back on a failure'
         { sql: 'INSERT INTO batch (n) VALUES (?)', params: [2] },
     ] })).toBe('OK, 2 statement(s), 2 row(s) affected')
 
-    expect(await run(tools, 'db_execute', { statements: [
+    await expect(run(tools, 'db_execute', { statements: [
         { sql: 'INSERT INTO batch (n) VALUES (?)', params: [3] },
         { sql: 'INSERT INTO batch (n) VALUES (NULL)' },
-    ] })).toMatch(/^Execution failed: .*NOT NULL/)
+    ] })).rejects.toThrow(/^Execution failed: .*NOT NULL/)
 
     expect(await run(tools, 'db_query', { sql: 'SELECT count(*) AS c FROM batch' })).toBe('1 row(s)\n[{"c":2}]')
 })
@@ -128,9 +128,9 @@ it('bounds how many rows a read can return', async () => {
 it('rejects hidden names in SQLite single-quote identifier syntax and rejects schema programs', async () => {
     grant({ db: true })
     const tools = desktopDbTools(ctx())
-    expect(await run(tools, 'db_query', { sql: "SELECT * FROM '_rerun_views'" })).toMatch(/^Query failed: Internal/)
-    expect(await run(tools, 'db_execute', { sql: 'CREATE VIEW exposed AS SELECT 1' })).toMatch(/^Execution failed:/)
-    expect(await run(tools, 'db_execute', { sql: 'CREATE TRIGGER bad AFTER INSERT ON notes BEGIN SELECT 1; END' })).toMatch(/^Execution failed:/)
+    await expect(run(tools, 'db_query', { sql: "SELECT * FROM '_rerun_views'" })).rejects.toThrow(/^Query failed: Internal/)
+    await expect(run(tools, 'db_execute', { sql: 'CREATE VIEW exposed AS SELECT 1' })).rejects.toThrow(/^Execution failed:/)
+    await expect(run(tools, 'db_execute', { sql: 'CREATE TRIGGER bad AFTER INSERT ON notes BEGIN SELECT 1; END' })).rejects.toThrow(/^Execution failed:/)
 })
 
 it('rejects ambiguous write inputs before execution', () => {
@@ -139,6 +139,15 @@ it('rejects ambiguous write inputs before execution', () => {
     expect(() => tool.inputSchema.parse({ sql: 'DELETE FROM notes', statements: [{ sql: 'DELETE FROM notes' }] })).toThrow()
     expect(() => tool.inputSchema.parse({ statements: [] })).toThrow()
     expect(() => tool.inputSchema.parse({ sql: 'x'.repeat(20_001) })).toThrow()
+})
+
+it('propagates Stop as cancellation instead of a successful failure string', async () => {
+    grant({ db: true })
+    const aborted = ctx()
+    const controller = new AbortController()
+    controller.abort()
+    aborted.abortSignal = controller.signal
+    await expect(run(desktopDbTools(aborted), 'db_query', { sql: 'SELECT 1' })).rejects.toMatchObject({ name: 'AbortError' })
 })
 
 it('does not enforce shared table creator metadata as ownership', async () => {

@@ -11,6 +11,7 @@ import { chatRoutes } from './routes/chat.js'
 import { sessionRoutes } from './routes/sessions.js'
 import { memoryRoutes } from './routes/memories.js'
 import { createDataRouter } from './routes/data.js'
+import { createDesktopDataRouter } from '../desktop/data-router.js'
 import { createSkillFilesRouter, skillRoutes } from './routes/skills.js'
 import { skillProposalRoutes } from './routes/skill-proposals.js'
 import { scheduleRoutes } from './routes/schedules.js'
@@ -66,7 +67,11 @@ export function createServer(): Hono {
     api.route('/agents/:id/memories', memoryRoutes)
     api.route(
         '/agents/:id/data',
-        createDataRouter(c => {
+        desktopApp() ? createDesktopDataRouter(c => {
+            const id = c.req.param('id')!
+            if (!agentExists(id)) throw notFound('agent')
+            return getAgentDb(id)
+        }) : createDataRouter(c => {
             const id = c.req.param('id')!
             if (!agentExists(id)) throw notFound('agent')
             return getAgentDb(id)
@@ -90,7 +95,7 @@ export function createServer(): Hono {
         })
     )
     api.route('/shared/files', createFilesRouter(() => sharedDir()))
-    api.route('/shared/data', createDataRouter(() => getSharedDb(), SHARED_HIDDEN_TABLES))
+    api.route('/shared/data', desktopApp() ? createDesktopDataRouter(() => getSharedDb()) : createDataRouter(() => getSharedDb(), SHARED_HIDDEN_TABLES))
     api.route('/brain', brainRoutes)
     api.route('/desktop', desktopRoutes)
     api.route('/agents/:id/desktop', agentDesktopRoutes)

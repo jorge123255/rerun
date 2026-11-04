@@ -3,6 +3,23 @@ import { assertDesktopProvider, desktopRouteAllowed } from './policy.js'
 
 afterEach(() => vi.unstubAllEnvs())
 
+test('desktop database browser routes allow exact operations in each scope and never raw SQL', () => {
+    const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+    for (const prefix of ['/agents/a/data', '/shared/data']) {
+        const routes: [string, string[]][] = [
+            ['/tables', ['GET']], ['/tables/notes', ['DELETE']], ['/tables/notes/rows', ['GET', 'DELETE']],
+            ['/tables/notes/rows/1', ['PATCH']], ['/tables/notes/views', ['GET', 'POST']],
+            ['/tables/notes/views/view-id', ['PUT', 'DELETE']], ['/tables/notes/groups', ['GET']],
+            ['/tables/notes/export', ['GET']], ['/tables/notes/purge', ['POST']],
+        ]
+        for (const [route, allowed] of routes) for (const method of methods)
+            expect(desktopRouteAllowed(method, prefix + route), `${method} ${prefix + route}`).toBe(allowed.includes(method))
+        for (const path of ['/query', '/execute', '/tables/notes/more', '/tables/notes/rows/1/more'])
+            for (const method of methods) expect(desktopRouteAllowed(method, prefix + path)).toBe(false)
+    }
+    for (const method of methods) expect(desktopRouteAllowed(method, '/agents/foreman/data/tables')).toBe(false)
+})
+
 test('desktop runtime rejects CLI and cloud-fallback models, even when the agent selects them', () => {
     vi.stubEnv('RERUN_DESKTOP_APP', '1')
     for (const provider of ['claude', 'codex', 'rerun']) expect(() => assertDesktopProvider(provider)).toThrow('unavailable')

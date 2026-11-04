@@ -268,6 +268,8 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
     if (agent.config.kind === 'foreman') return await buildForemanPrompt(agent, provider, order)
     const cfg = agent.config.tools
     const desktop = desktopApp()
+    const dbOn = desktop ? hasDesktopToolGrant(agent.config, 'db') : cfg.db
+    const sharedDbOn = desktop ? hasDesktopToolGrant(agent.config, 'sharedDb') : cfg.sharedDb
     // The hosted cards switch defaults on. On the Mac only the explicit file-card grant may
     // advertise a card tool, and table cards stay unavailable.
     const showCards = desktop ? hasDesktopToolGrant(agent.config, 'cardFile') : cfg.cards
@@ -276,8 +278,8 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         cfg.schedule ? buildScheduleIndex(agent.id).catch(() => '') : Promise.resolve(''),
         cfg.trigger ? buildTriggerIndex(agent.id).catch(() => '') : Promise.resolve(''),
         cfg.memory && !desktop ? buildMemoryIndex(agent.id).catch(() => '') : Promise.resolve(''),
-        cfg.db ? readAgentDbSchema(agent.id).catch(() => '') : Promise.resolve(''),
-        cfg.sharedDb ? readSharedDbSchema(SHARED_SCHEMA_BUDGET).catch(() => '') : Promise.resolve(''),
+        dbOn && !desktop ? readAgentDbSchema(agent.id).catch(() => '') : Promise.resolve(''),
+        sharedDbOn && !desktop ? readSharedDbSchema(SHARED_SCHEMA_BUDGET).catch(() => '') : Promise.resolve(''),
         buildMcpIndex(agent).catch(() => ''),
         cfg.brain ? buildBrainSection().catch(() => '') : Promise.resolve(''),
     ])
@@ -320,8 +322,12 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
     if (triggerIndex) volatile.push(section('webhook_triggers', triggerIndex))
     if (brain) volatile.push(section('company_brain', brain))
     if (memoryIndex) volatile.push(section('memory_index', memoryIndex))
-    if (cfg.db) volatile.push(section('database', `${databaseNote(cfg.sharedDb)}${dbSchema ? `\n\n${dbSchema}` : ''}`))
-    if (cfg.sharedDb) volatile.push(section('shared_database', `${SHARED_DATABASE_NOTE}${sharedDbSchema ? `\n\n${sharedDbSchema}` : ''}`))
+    if (dbOn) volatile.push(section('database', desktop
+        ? 'Use db_schema to inspect your private records, db_query for read-only queries and db_execute for table or row changes. Shared records use the separate shared_db tools and permission. File SQL, extensions, views and triggers are unavailable.'
+        : `${databaseNote(sharedDbOn)}${dbSchema ? `\n\n${dbSchema}` : ''}`))
+    if (sharedDbOn) volatile.push(section('shared_database', desktop
+        ? 'Use shared_db_schema to inspect workspace records, shared_db_query for read-only queries and shared_db_execute for changes. Every permitted coworker uses this same database. Table creator metadata is advisory, not an ownership rule. Private records use separate db tools. File SQL, extensions, views and triggers are unavailable.'
+        : `${SHARED_DATABASE_NOTE}${sharedDbSchema ? `\n\n${sharedDbSchema}` : ''}`))
     if (mcpIndex) volatile.push(section('connected_services', mcpIndex))
     volatile.push(section('current_time', currentTimeNote()))
 

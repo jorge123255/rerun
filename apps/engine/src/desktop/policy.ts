@@ -17,6 +17,16 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (path === '/desktop/codex-login') return (method === 'GET' || method === 'POST') && desktopCodexAvailable()
     if (/^\/agents\/(?:import|foreman|default)(?:\/|$)/.test(path)) return false
     const id = '[A-Za-z0-9_-]+'
+    const data = `/(?:agents/${id}/data|shared/data)/tables`
+    const item = '[^/]+'
+    if (new RegExp(`^${data}$`).test(path)) return method === 'GET'
+    if (new RegExp(`^${data}/${item}$`).test(path)) return method === 'DELETE'
+    if (new RegExp(`^${data}/${item}/rows$`).test(path)) return method === 'GET' || method === 'DELETE'
+    if (new RegExp(`^${data}/${item}/rows/${item}$`).test(path)) return method === 'PATCH'
+    if (new RegExp(`^${data}/${item}/views$`).test(path)) return method === 'GET' || method === 'POST'
+    if (new RegExp(`^${data}/${item}/views/${item}$`).test(path)) return method === 'PUT' || method === 'DELETE'
+    if (new RegExp(`^${data}/${item}/(?:groups|export)$`).test(path)) return method === 'GET'
+    if (new RegExp(`^${data}/${item}/purge$`).test(path)) return method === 'POST'
     if (method === 'GET') return new RegExp(`^/(?:health|agents|connections|agents/${id}(?:/memories|/sessions(?:/${id}(?:/messages)?)?|/runs(?:/completions|/${id}/(?:stream|steps|tools))?|/stats)?)$`).test(path)
     if (method === 'POST') return new RegExp(`^/(?:agents|connections|agents/${id}/(?:duplicate|chat|memories(?:/recall)?)|agents/${id}/runs/${id}/cancel)$`).test(path)
     if (method === 'DELETE') return new RegExp(`^/agents/${id}(?:/memories(?:/(?!recall$)${id})?)?$`).test(path)

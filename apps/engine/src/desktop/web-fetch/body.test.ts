@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http'
 import { Readable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
-import { MAX_BYTES, readTextBody } from './body'
+import { MAX_BYTES, readTextBody } from './body.js'
 function response(chunks: Buffer[], headers: Record<string, string> = { 'content-type': 'text/plain' }): IncomingMessage {
     const stream = Object.assign(Readable.from(chunks), { headers })
     stream.on('error', () => {})

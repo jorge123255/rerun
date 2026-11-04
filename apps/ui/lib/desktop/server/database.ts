@@ -192,6 +192,9 @@ async function initialize(dataRoot: string): Promise<Client> {
     const agentColumns = await client.execute('PRAGMA table_info(desktop_agents)')
     if (!agentColumns.rows.some(row => row.name === 'enabled'))
         await client.execute('ALTER TABLE desktop_agents ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))')
+    const draftColumns = await client.execute('PRAGMA table_info(desktop_composer_drafts)')
+    if (!draftColumns.rows.some(row => row.name === 'attachment_paths'))
+        await client.execute('ALTER TABLE desktop_composer_drafts ADD COLUMN attachment_paths TEXT')
     const now = new Date().toISOString()
     await client.batch([
         { sql: 'INSERT OR IGNORE INTO desktop_profile (id, display_name, created_at, updated_at) VALUES (1, ?, ?, ?)', args: ['Local User', now, now] },

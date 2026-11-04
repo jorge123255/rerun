@@ -1,6 +1,7 @@
 import type { Client, Transaction } from '@libsql/client'
 import { assertReadOnlySql, formatSchema, listTables, serializeRow, withBusyRetry, type SqlParam } from '../db/sqlStore.js'
 import { assertExplicitWrite, assertNoHiddenTables, assertNoPragma, assertSafeFunctions, singleStatement, sqlTokens } from './sql-guard.js'
+import { recordTableOwnership } from '../db/sharedDb.js'
 
 // Existing schema programs must not turn a permitted table operation into hidden-table access
 // or file access. Desktop tools create ordinary tables only; pre-existing programmable schemas
@@ -37,7 +38,7 @@ export async function desktopQuery(client: Client, sql: string, params: SqlParam
     } finally { try { await tx.rollback() } finally { tx.close() } }
 }
 
-export async function desktopExecute(client: Client, statements: { sql: string; params: SqlParam[] }[], hidden: string[], beforeCommit: () => Promise<void>) {
+export async function desktopExecute(client: Client, statements: { sql: string; params: SqlParam[] }[], hidden: string[], beforeCommit: () => Promise<void>, creator?: string) {
     if (!statements.length || statements.length > 100) throw new Error('Provide 1–100 statements.')
     const checked = statements.map(item => {
         const sql = singleStatement(item.sql)
@@ -56,6 +57,9 @@ export async function desktopExecute(client: Client, statements: { sql: string; 
                 rowsAffected += result.rowsAffected
                 lastInsertRowid = result.lastInsertRowid?.toString() ?? null
             }
+            // Advisory shared metadata is in the same isolated transaction. Never perform its
+            // SQL back on the engine's event loop after a commit acknowledgement.
+            if (creator !== undefined) await recordTableOwnership(tx as unknown as Client, checked.map(item => item.sql), creator)
             await beforeCommit()
             await tx.commit()
             return { statements: checked.length, rowsAffected, lastInsertRowid: checked.length === 1 ? lastInsertRowid : null }

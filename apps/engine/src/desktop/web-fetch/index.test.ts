@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-vi.mock('server-only', () => ({}))
-vi.mock('./transport', async importOriginal => ({ ...await importOriginal<typeof import('./transport')>(), readPublicPage: vi.fn() }))
-import { executeWebFetch } from './index'
-import { DEADLINE_MS, PageReadError, readPublicPage } from './transport'
+vi.mock('./transport.js', async importOriginal => ({ ...await importOriginal<typeof import('./transport.js')>(), readPublicPage: vi.fn() }))
+import { executeWebFetch } from './index.js'
+import { DEADLINE_MS, PageReadError, readPublicPage } from './transport.js'
 const read = vi.mocked(readPublicPage)
 const context = () => ({ coworkerId: 'coworker-h', signal: new AbortController().signal, assertPermission: vi.fn(async () => {}) })
 beforeEach(() => vi.resetAllMocks())
@@ -49,6 +48,14 @@ describe('web_fetch result boundary (offline)', () => {
         await vi.advanceTimersByTimeAsync(DEADLINE_MS)
         expect((await pending).text).toContain('timed out after 30 s')
         expect(read).not.toHaveBeenCalled()
+    })
+
+    it('keeps the observed HTTP status when bounded HTML inspection refuses the page', async () => {
+        read.mockResolvedValue({ url: 'https://example.com/large', status: 200, contentType: 'text/html', xRobotsTag: null, bytes: 80_000, body: '<b>'.repeat(25_000) })
+        const result = await executeWebFetch({ url: 'https://example.com/large' }, context())
+        expect(result).toMatchObject({ failed: true, status: 200, finalUrl: 'https://example.com/large' })
+        expect(result.text).toContain('too many elements')
+        expect(result.text).not.toContain('Page facts')
     })
 
 })

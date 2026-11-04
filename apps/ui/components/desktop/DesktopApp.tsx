@@ -13,6 +13,7 @@ import { SidePanel } from '@/components/layout/SidePanel'
 import { SIDE_PANEL_GAP, loadSidePanelWidth } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
+import { DesktopSharedData } from './DesktopSharedData'
 import { DesktopBoard } from './DesktopBoard'
 import { useDesktopBoardState } from './useDesktopBoardState'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
@@ -60,6 +61,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [boardInteraction, setBoardInteraction] = useState(false)
     const [controlCenterOpen, setControlCenterOpen] = useState(false)
     const [shortcutsOpen, setShortcutsOpen] = useState(false)
+    const [sharedDataOpen, setSharedDataOpen] = useState(false)
     const [placingCopy, setPlacingCopy] = useState(false)
     const [quitting, setQuitting] = useState(false)
     useEffect(() => {
@@ -71,6 +73,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             setQuitting(true)
             setControlCenterOpen(false)
             setShortcutsOpen(false)
+            setSharedDataOpen(false)
             // Freeze chat admissions synchronously, then let best-effort navigation history
             // settle alongside the existing durable draft handshake.
             const [ready] = await Promise.all([flushDesktopDrafts(), flushDesktopRecentCoworkers()])
@@ -119,11 +122,11 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [settings, setSettings] = useState(false)
     useEffect(() => {
         const openSettings = (event: KeyboardEvent) => {
-            if (event.metaKey && event.key === ',' && !shortcutsOpen && !workspaceSettings && !boardInteraction && !boardState.saving && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
+            if (event.metaKey && event.key === ',' && !shortcutsOpen && !sharedDataOpen && !workspaceSettings && !boardInteraction && !boardState.saving && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
         }
         window.addEventListener('keydown', openSettings)
         return () => window.removeEventListener('keydown', openSettings)
-    }, [workspaceSettings, shortcutsOpen, boardInteraction, boardState.saving])
+    }, [workspaceSettings, shortcutsOpen, sharedDataOpen, boardInteraction, boardState.saving])
     const [agents, setAgents] = useState(initialData.agents)
     const boardActivity = useBoardActivity(agents.map(agent => agent.id))
     // Responses already in flight cannot reintroduce a coworker after its confirmed deletion.
@@ -159,7 +162,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const controlCenterDisabled = settings || workspaceSettings || shortcutsOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardInteraction || boardState.saving
+    const controlCenterDisabled = settings || workspaceSettings || shortcutsOpen || sharedDataOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardInteraction || boardState.saving
 
     useEffect(() => {
         if (panelOpen && !settings && !requestedPanel) panelContent.current?.focus({ preventScroll: true })
@@ -353,6 +356,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings}
         onWorkspaceSettings={() => { if (!isDesktopQuitting()) setWorkspaceSettings(true) }}
         onShortcuts={openShortcuts}
+        onSharedData={() => { if (!controlCenterDisabled && !isDesktopQuitting()) setSharedDataOpen(true) }}
         onControlCenter={() => {
             if (controlCenterDisabled) return
             boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')?.focus({ preventScroll: true })
@@ -367,9 +371,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
-                    boardDisabled={settings || workspaceSettings || shortcutsOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
+                    boardDisabled={settings || workspaceSettings || shortcutsOpen || sharedDataOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
                     onBoardInteractionChange={setBoardInteraction}
-                    visibleSessionId={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
+                    visibleSessionId={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !sharedDataOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
                     onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
@@ -382,7 +386,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !boardInteraction}
+                            <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !sharedDataOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
@@ -421,6 +425,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             </Dialog>
             <DesktopWorkspaceSettings open={workspaceSettings} onOpenChange={setWorkspaceSettings} workspaceName={workspaceName}
                 onSaved={saved => { setWorkspaceName(saved.name); setSavedIcon({ iconCatalogId: saved.iconCatalogId ?? null, iconUploadId: saved.iconUploadId ?? null }) }} />
+            <DesktopSharedData hideTrigger dialogControl={{ open: sharedDataOpen, onOpenChange: setSharedDataOpen }} onCloseAutoFocus={event => {
+                const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
+                if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
+            }} />
             <DesktopShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} onCloseAutoFocus={event => {
                 const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }

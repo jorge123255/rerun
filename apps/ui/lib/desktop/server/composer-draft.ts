@@ -19,6 +19,11 @@ export class DesktopDraftConflict extends DesktopHttpError {
     constructor(readonly draft: DesktopComposerDraft, message = 'This draft changed in another panel. Review the saved draft before replacing it.') { super(409, message) }
 }
 
+/** Emitted only before a draft write or receipt has been accepted. */
+export class DraftAttachmentRejected extends DesktopHttpError {
+    readonly code = 'draft_attachment_rejected'
+}
+
 // Additive upgrade for installs created before ordered attachment sets. The central schema
 // migration carries the same statement; this keeps an un-migrated development database usable.
 const attachmentColumn = new WeakMap<Client, Promise<void>>()
@@ -82,7 +87,7 @@ export function readDesktopComposerDraft(db: Client, agentId: string, tabUid: st
     })
 }
 
-async function mutate(runtime: DesktopRuntime, agentId: string, input: Input, action: 'save' | 'clear', attachmentValidated = false): Promise<{ draft: DesktopComposerDraft; cleared?: boolean } | { validateAttachments: true }> {
+async function mutate(runtime: DesktopRuntime, agentId: string, input: Input, action: 'save' | 'clear', attachmentValidated: boolean | DraftAttachmentRejected = false): Promise<{ draft: DesktopComposerDraft; cleared?: boolean } | { validateAttachments: true }> {
     return withRosterWrite(async () => {
         const db = await openDesktopDatabase(runtime.dataRoot)
         await ensureAttachmentColumn(db)
@@ -102,6 +107,9 @@ async function mutate(runtime: DesktopRuntime, agentId: string, input: Input, ac
                 return { draft: current, ...(action === 'clear' && { cleared: Number(previous.cleared) === 1 && Number(previous.result_revision) === current.revision }) }
             }
             if (action === 'save' && 'baseRevision' in input && input.baseRevision !== current.revision) throw new DesktopDraftConflict(current)
+            // File validation runs outside the roster lock. An identical concurrent attempt
+            // may have committed since it began; reconcile that receipt before refusing it.
+            if (attachmentValidated instanceof DraftAttachmentRejected) throw attachmentValidated
             if (action === 'save' && JSON.stringify(inputPaths) !== JSON.stringify(currentPaths) && !attachmentValidated) return { validateAttachments: true }
             const matches = action === 'clear' && 'revision' in input && input.revision === current.revision && input.text === current.text
                 && JSON.stringify(inputPaths) === JSON.stringify(currentPaths)
@@ -139,8 +147,19 @@ export async function writeDesktopComposerDraft(runtime: DesktopRuntime, agentId
     // transaction, then repeat request identity and CAS checks before committing the set.
     const paths = desktopAttachmentPathsOf(input)
     let total = 0
-    for (const path of paths) total += (await readCoworkerFile(runtime, agentId, path, 'attach')).size
-    if (total > DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 128 KiB or smaller in total.')
+    try {
+        for (const path of paths) total += (await readCoworkerFile(runtime, agentId, path, 'attach')).size
+        if (total > DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 128 KiB or smaller in total.')
+    } catch (error) {
+        // A known file refusal is safe to correct. Unexpected I/O/server failures remain
+        // uncertain to the client and must keep the original request identity for retry.
+        if (error instanceof DesktopHttpError && [400, 403, 404, 409, 413, 415].includes(error.status)) {
+            const reconciled = await mutate(runtime, agentId, input, 'save', new DraftAttachmentRejected(error.status, error.message))
+            if ('validateAttachments' in reconciled) throw new Error('Could not reconcile the draft refusal.')
+            return reconciled
+        }
+        throw error
+    }
     const result = await mutate(runtime, agentId, input, 'save', true)
     if ('validateAttachments' in result) throw new DesktopHttpError(500, 'Could not save this draft.')
     return result

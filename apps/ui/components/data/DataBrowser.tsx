@@ -63,6 +63,8 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
     const [purgeDialogOpen, setPurgeDialogOpen] = useState(false)
     const [busy, setBusy] = useState(false)
     const [actionError, setActionError] = useState<string | null>(null)
+    const exportRequest = useRef<AbortController | null>(null)
+    useEffect(() => () => { exportRequest.current?.abort(); exportRequest.current = null }, [source, selected])
     const [views, setViews] = useState<TableView[]>([])
     const [viewsError, setViewsError] = useState<string | null>(null)
     // Null until the views of the selected table are in: the rows wait for them, since the view
@@ -324,19 +326,26 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
     }, [source, selected])
 
     const exportTable = useCallback(
-        (format: 'csv' | 'json') => {
+        async (format: 'csv' | 'json') => {
             if (!selected) return
             const sort = sorting[0]
-            window.open(
-                source.exportUrl(selected, {
+            const params = {
                     format,
                     sort: sort?.id,
                     dir: sort ? (sort.desc ? 'desc' : 'asc') : undefined,
                     q: query || undefined,
                     where: activeView?.where,
-                }),
-                '_blank',
-            )
+                } as const
+            if (!source.exportFile) { window.open(source.exportUrl(selected, params), '_blank'); return }
+            exportRequest.current?.abort()
+            const controller = new AbortController()
+            exportRequest.current = controller
+            setActionError(null)
+            try { await source.exportFile(selected, params, controller.signal) }
+            catch (error) {
+                if (exportRequest.current === controller && !controller.signal.aborted)
+                    setActionError(error instanceof Error ? error.message : 'Could not export this table.')
+            } finally { if (exportRequest.current === controller) exportRequest.current = null }
         },
         [source, selected, sorting, query, activeView?.where],
     )
