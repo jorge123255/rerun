@@ -4,7 +4,7 @@ import { buildSkillIndex } from '../skills/index.js'
 import { buildScheduleIndex } from '../schedules/index.js'
 import { buildTriggerIndex } from '../triggers/index.js'
 import { recallDesktopMemory } from '../desktop/memory-store.js'
-import { desktopToolInstruction } from '../desktop/tool-grants.js'
+import { desktopToolInstruction, hasDesktopToolGrant } from '../desktop/tool-grants.js'
 import { desktopApp } from '../desktop/policy.js'
 import { buildMemoryIndex } from '../memory/index.js'
 import { readAgentDbSchema } from '../db/agentDb.js'
@@ -40,6 +40,9 @@ const serviceCatalogNote = (computer: boolean, takeover: boolean, paidData: bool
 
 const cardsNote = (sharedDb: boolean, schema: boolean) =>
     `You can put a card in the conversation, which the user sees inline instead of a wall of text. Tables are shown through saved views. When you create a table the user will browse, save a view of it right away with table_view_save${sharedDb ? " (scope 'agent' for your private database, 'shared' for the one this workspace shares)" : ''}: the user finds it as a tab when they open the table. Pick its layout by what the rows are: 'table' to compare values, 'list' for people, companies or messages read by a name, 'gallery' only when an image column is filled (products, listings, recipes), 'board' for rows moving through statuses (a pipeline, tasks). Name the columns that play each role in fields, give numbers, dates and statuses a format so they read well, and choose which rows come first with sort and where rather than leaving them in insertion order. card_table then shows the first rows of one of those views by its name, with a button that opens the table on that tab. It only shows saved views: to show a selection (the top leads, the deals still open), save a view for it, which the user keeps as a tab too.${schema ? ' The database schemas further down list the views each table already has.' : ''} card_file shows one or several files as tiles they can click to open, from your workspace or, with scope 'shared', from the shared space. Send a card right after you filled a table or produced files the user should look at, instead of describing the result or pasting rows into your answer. Neither card tool reads anything back to you: they only display. Keep using db_query and fs_read when you need the content yourself.`
+
+const desktopCardsNote =
+    'Show the user files they should open with card_file: existing .txt or .md files from this coworker’s workspace, passed as visible relative paths, up to 12 files and 32 KiB each. Send the card in the turn where you produced or updated the files, before asking the user to review or choose. A card only displays the files; it does not read them back. A file that was moved, deleted or is too large cannot be shown. Table cards are unavailable on this Mac.'
 
 const databaseNote = (sharedDb: boolean) =>
     `${sharedDb ? 'You have a private SQL database that no other coworker can read.' : 'You have one private SQL database, and only one.'} It is the default home for any data you produce, collect, or persist: records, lists, structured or tabular results, extracted facts, intermediate outputs, anything you might later query, filter, count, or update. Reach for the database first (db_query to read, db_execute to write) instead of writing data into files. Do not dump results into a JSON, CSV, Markdown, or text file in your workspace when that data belongs in a table, because anything left in a file is invisible to your db_ tools and hard for the user to query. Files are only for genuine deliverables the user opens (a document, report, PDF, chart, exported dataset, page, or code) and for throwaway scratch a script needs on disk. When a script (Python, Node, shell) stores or reads structured data, it MUST open ${sharedDb ? 'a Rerun database through its environment variable, RERUN_AGENT_DB for this private one and RERUN_SHARED_DB for the shared one' : 'this same database through the RERUN_AGENT_DB environment variable'}, which holds its absolute path (e.g. sqlite3.connect(os.environ["RERUN_AGENT_DB"]) in Python). Never create a .db file of your own anywhere. When you are unsure whether something belongs in the database or in a file, ask the user before choosing.`
@@ -264,11 +267,15 @@ async function buildForemanPrompt(agent: LoadedAgent, provider: Provider, order:
 export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger = { source: 'chat' }, provider: Provider = agent.resolved.provider, order: TurnOrder = turnOrder(provider, agent.resolved.model)): Promise<SystemPrompt> {
     if (agent.config.kind === 'foreman') return await buildForemanPrompt(agent, provider, order)
     const cfg = agent.config.tools
+    const desktop = desktopApp()
+    // The hosted cards switch defaults on. On the Mac only the explicit file-card grant may
+    // advertise a card tool, and table cards stay unavailable.
+    const showCards = desktop ? hasDesktopToolGrant(agent.config, 'cardFile') : cfg.cards
     const [skillIndex, scheduleIndex, triggerIndex, memoryIndex, dbSchema, sharedDbSchema, mcpIndex, brain] = await Promise.all([
         cfg.skills ? buildSkillIndex(agent.id).catch(() => '') : Promise.resolve(''),
         cfg.schedule ? buildScheduleIndex(agent.id).catch(() => '') : Promise.resolve(''),
         cfg.trigger ? buildTriggerIndex(agent.id).catch(() => '') : Promise.resolve(''),
-        cfg.memory && !desktopApp() ? buildMemoryIndex(agent.id).catch(() => '') : Promise.resolve(''),
+        cfg.memory && !desktop ? buildMemoryIndex(agent.id).catch(() => '') : Promise.resolve(''),
         cfg.db ? readAgentDbSchema(agent.id).catch(() => '') : Promise.resolve(''),
         cfg.sharedDb ? readSharedDbSchema(SHARED_SCHEMA_BUDGET).catch(() => '') : Promise.resolve(''),
         buildMcpIndex(agent).catch(() => ''),
@@ -285,7 +292,7 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
     const stable = [
         section('identity', agent.soul.trim() || defaultSoul(agent.config)),
         section('vocabulary', VOCABULARY_NOTE),
-        section('environment', desktopApp() ? desktopToolInstruction(agent.config) : environmentNote(agent.id, cfg.sharedDb)),
+        section('environment', desktop ? desktopToolInstruction(agent.config) : environmentNote(agent.id, cfg.sharedDb)),
         CLI_PROVIDERS.has(provider) ? section('bridged_tools', cliBridgeNote(provider, cfg.web)) : '',
         section('operating_notes', operatingNotes(cfg.skills && agent.config.selfImprovement.enabled)),
         hasPendingSetup(agent) ? section('setup', setupNote(cfg.paidData)) : '',
@@ -293,8 +300,8 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         cfg.paidData ? section('paid_data', paidDataNote(trigger.source === 'chat' && conversational)) : '',
         computer ? section('computer', computerNote(takeover, provider === 'codex', cfg.paidData, cfg.hub)) : '',
         section('reporting_failures', FAILURE_NOTE),
-        conversational ? section('what_the_user_sees', `${WHAT_THE_USER_SEES_NOTE} ${showBeforeAskingNote(cfg.cards)}`) : '',
-        cfg.cards ? section('chat_cards', cardsNote(cfg.sharedDb, cfg.db || cfg.sharedDb)) : '',
+        conversational ? section('what_the_user_sees', `${WHAT_THE_USER_SEES_NOTE} ${showBeforeAskingNote(showCards)}`) : '',
+        showCards ? section('chat_cards', desktop ? desktopCardsNote : cardsNote(cfg.sharedDb, cfg.db || cfg.sharedDb)) : '',
         asks ? section('asking_the_user', askingNote(cfg)) : '',
         offersQuickReplies(agent.config) ? section('quick_replies', QUICK_REPLIES_NOTE) : '',
         conversational ? turnOrderSection(order, turnClosers(agent, takeover)) : '',

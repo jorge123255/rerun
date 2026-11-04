@@ -7,6 +7,7 @@ import { parseScheduledRun } from '@/lib/schedules/scheduled-run'
 import { encodePeaks } from '@/lib/voice/peaks'
 import { parseVoiceMessage } from '@/lib/voice/marker'
 import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
+import { desktopFileCardOf } from '@/lib/desktop/file-card'
 import { hitlKindOf } from '@/lib/chat-hitl'
 import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPath, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
@@ -159,12 +160,21 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
         ...message,
         parts: message.parts.map(part => {
             if (!('toolName' in part)) return part
-            if (stripBridgePrefix(part.toolName) === QUICK_REPLIES_TOOL) return {
+            const toolName = stripBridgePrefix(part.toolName)
+            if (toolName === QUICK_REPLIES_TOOL) return {
                 type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
                 state: part.state, input: desktopQuickReplyInputOf(part) ?? {},
             }
+            // A saved file card is itself the public result: keep only its validated path metadata so
+            // the tile survives reopening the chat. A malformed card falls through to the normal step.
+            if (toolName === 'card_file' && part.state === 'output-available') {
+                const card = desktopFileCardOf(part.output)
+                if (card) return {
+                    type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                    state: 'output-available' as const, input: {}, output: JSON.stringify(card),
+                }
+            }
             const view = desktopToolPresentation(part.toolName, part.input, part.output)
-            const toolName = stripBridgePrefix(part.toolName)
             const formInput = toolName === 'ask_user' ? desktopQuestionInput(part.input)
                 : toolName === 'request_approval' ? desktopApprovalInput(part.input) : null
             return {

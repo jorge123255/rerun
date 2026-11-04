@@ -15,13 +15,15 @@ type AttachmentTileProps = {
     /** Where the bytes come from when they are not a Box's: the foreman's bucket, the design lab. */
     rawUrlFor?: RawUrlFor
     onOpen: () => void
+    /** A text result card has no raw URL, but its tile still opens the original preview dialog. */
+    openable?: boolean
     /** A lone image keeps its own proportions instead of being cropped into the square grid. */
     standalone?: boolean
     className?: string
 }
 
 /** One file rendered as a clickable square: its own thumbnail for an image, its first frame for a video, a typed glyph otherwise. */
-export function AttachmentTile({ agentId, path, label, rawUrlFor, onOpen, standalone = false, className }: AttachmentTileProps) {
+export function AttachmentTile({ agentId, path, label, rawUrlFor, onOpen, openable = false, standalone = false, className }: AttachmentTileProps) {
     const name = label ?? path.split('/').pop() ?? path
     const rawUrl = rawUrlResolver(agentId, rawUrlFor)
     const isImage = rawUrl !== null && filePreviewKind(name) === 'image'
@@ -30,7 +32,7 @@ export function AttachmentTile({ agentId, path, label, rawUrlFor, onOpen, standa
     const fitsContent = standalone && isImage
 
     return (
-        <button type="button" onClick={onOpen} disabled={!rawUrl} title={name} aria-label={`Open ${name}`} className={cn(frame, !fitsContent && 'size-28', className)}>
+        <button type="button" onClick={onOpen} disabled={!rawUrl && !openable} title={name} aria-label={`Open ${name}`} className={cn(frame, !fitsContent && 'size-28', className)}>
             {isImage ? (
                 // eslint-disable-next-line @next/next/no-img-element -- arbitrary proxied file bytes, no fixed dimensions or configured loader
                 <img

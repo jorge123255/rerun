@@ -12,11 +12,11 @@ class WorkspaceReadError extends Error {}
 
 const unavailable = 'That file is unavailable in this coworker’s workspace.'
 
-function validPath(path: string) {
-    return path && path.length <= 4096 && !/[\\\p{Cc}]/u.test(path) && path.split('/').every(part => part && !part.startsWith('.'))
+export function validPath(path: string): boolean {
+    return !!path && path.length <= 4096 && !/[\\\p{Cc}]/u.test(path) && path.split('/').every(part => part && !part.startsWith('.'))
 }
 
-async function workspacePath(id: string, path: string) {
+export async function workspacePath(id: string, path: string) {
     const root = await realpath(dataDir())
     return join(root, relative(dataDir(), workspaceDir(id)), path)
 }

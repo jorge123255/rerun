@@ -335,3 +335,24 @@ it('keeps only validated suggested reply labels in saved desktop history', () =>
     const [invalid] = publicDesktopHistory([{ id: 'engine-invalid', role: 'assistant', parts: [{ ...part, input: { replies: ['x'.repeat(41)] } }] }])
     expect(invalid.parts[0]).toMatchObject({ input: {} })
 })
+
+it('keeps only a validated recorded file card across a reopened chat', () => {
+    const card = { kind: 'file', files: [{ path: 'reports/summary.md', name: 'summary.md', size: 7, scope: 'agent' }] }
+    const part = { type: 'tool-card_file' as const, toolName: 'mcp__rerun__card_file', toolCallId: 'card-1', state: 'output-available' as const,
+        input: { files: [{ path: 'reports/summary.md' }], privateValue: 'hidden' }, output: { type: 'text', value: JSON.stringify(card) } }
+    const [result] = publicDesktopHistory([{ id: 'engine-card', role: 'assistant', parts: [part] }])
+    expect(result.parts[0]).toEqual({
+        type: 'tool-card_file', toolName: 'mcp__rerun__card_file', toolCallId: 'card-1', desktopPreview: true,
+        state: 'output-available', input: {}, output: JSON.stringify(card),
+    })
+    expect(JSON.stringify(result)).not.toContain('privateValue')
+})
+
+it('keeps the recorded card result as the fallback when its stored body is malformed', () => {
+    const output = JSON.stringify({ kind: 'file', files: [{ path: '../escape.md', name: 'escape.md', size: 7, scope: 'agent' }] })
+    const part = { type: 'tool-card_file' as const, toolName: 'card_file', toolCallId: 'card-2', state: 'output-available' as const,
+        input: { files: [{ path: '../escape.md' }] }, output: { type: 'text', value: output } }
+    const [result] = publicDesktopHistory([{ id: 'engine-card-bad', role: 'assistant', parts: [part] }])
+    expect(result.parts[0]).toMatchObject({ type: 'tool-card_file', desktopPreview: true, state: 'output-available' })
+    expect(JSON.stringify(result)).toContain('../escape.md')
+})

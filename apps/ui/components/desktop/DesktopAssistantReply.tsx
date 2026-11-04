@@ -12,12 +12,14 @@ import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
 import { CompactionStep } from '@/components/chat/CompactionBlock'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
 import { DesktopToolStep } from './DesktopToolStep'
+import { DesktopFileCard } from './DesktopFileCard'
 import { DesktopQuickReplies } from './DesktopQuickReplies'
 import type { DesktopQuickReplySend } from '@/lib/desktop/quick-replies'
 import { Button } from '@/components/ui/button'
 import { CheckIcon, CopyIcon, RefreshCcwIcon, ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { desktopCompactionSteps } from '@/lib/desktop/compaction'
+import { desktopFileCardOf } from '@/lib/desktop/file-card'
 import { useCopy } from '@/lib/use-copy'
 import { splitIntoBubbles } from '@/lib/chat/message-bubbles'
 import { cn } from '@/lib/utils'
@@ -112,7 +114,7 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies }: {
+export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId }: {
     message: UIMessage
     streaming: boolean
     onRegenerate?: (id: string) => void
@@ -120,6 +122,8 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
     onRate?: (rating: MessageFeedbackRating) => void
     pendingRequestToolCallId?: string
     quickReplies?: { show: boolean; disabled: boolean; pending: boolean; onSend: DesktopQuickReplySend }
+    /** The trusted local coworker id that owns this conversation; needed to open a result card. */
+    agentId?: string
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const compactions = desktopCompactionSteps(message.parts, streaming)
@@ -136,7 +140,15 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
                 paragraph = ''
             }
         } else if (isToolUIPart(part)) {
-            if (part.toolCallId === pendingRequestToolCallId || stripBridgePrefix(getToolName(part)) === QUICK_REPLIES_TOOL) continue
+            const toolName = stripBridgePrefix(getToolName(part))
+            if (part.toolCallId === pendingRequestToolCallId || toolName === QUICK_REPLIES_TOOL) continue
+            if (toolName === 'card_file' && part.state === 'output-available') {
+                const card = desktopFileCardOf(part.output)
+                if (card) {
+                    blocks.push(<DesktopFileCard key={part.toolCallId} agentId={agentId} card={card} />)
+                    continue
+                }
+            }
             blocks.push(<DesktopToolStep key={part.toolCallId} part={part} restored={message.id.startsWith('engine-')} />)
         } else if (part.type === 'data-compaction') {
             const step = compactions.get(index)

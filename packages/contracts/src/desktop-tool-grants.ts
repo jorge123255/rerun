@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval'] as const
+export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -35,6 +35,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('memoryDelete', 'Delete memories', 'Remove a specific note from this coworker’s Memories using its last known text.', 'memory_delete'),
     supported('askUser', 'Ask the user', 'Ask questions in chat and continue after you answer.', 'ask_user'),
     supported('requestApproval', 'Request approval', 'Ask you to approve or decline proposed actions in chat.', 'request_approval'),
+    supported('cardFile', 'Show result files', 'Show this coworker’s existing text or Markdown files as preview tiles in chat.', 'card_file'),
     pending('filesystem', 'Edit workspace files', 'Create and change workspace documents.', 'Requires conflict-safe writes in the workspace editor.', 'fs_write', 'fs_edit'),
     pending('shared', 'Shared files', 'Work on files visible to multiple coworkers.', 'Requires a shared workspace and its access controls.', 'shared_read', 'shared_write'),
     pending('shell', 'Run commands', 'Run Rerun shell commands in a workspace.', 'Requires a confined engine command runner.', 'shell_exec'),
@@ -53,7 +54,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     pending('notify', 'Send notifications', 'Deliver a coworker notification.', 'Requires a Mac notification destination and user permission.'),
     pending('hub', 'Service catalog', 'Discover and configure Rerun services.', 'Requires an authenticated Rerun hub.'),
     pending('paidData', 'Paid data', 'Search external datasets.', 'Requires a configured provider and billing controls.'),
-    pending('cards', 'Result cards', 'Show files and structured results in chat.', 'Requires safe file or table previews in the chat panel.'),
+    pending('cards', 'Table cards', 'Show saved table views in chat.', 'Requires saved table views in the desktop app.', 'card_table'),
     pending('suggestService', 'Suggest services', 'Suggest a connection for the user to configure.', 'Requires the service connection flow.'),
     pending('requestSecret', 'Request a secret', 'Request a credential through a secure field.', 'Requires a secure entry and credential storage flow.'),
     pending('self', 'Self-improvement', 'Update instructions or install tools.', 'Requires a review flow and isolated installation.'),

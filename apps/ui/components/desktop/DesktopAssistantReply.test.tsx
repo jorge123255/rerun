@@ -26,8 +26,8 @@ const markdown = [
     '', '```text', '<render literally>', '```', '', 'See [reference](https://example.org/reference).',
 ].join('\n')
 
-async function render(parts: UIMessage['parts'], streaming = false) {
-    await act(async () => root.render(<DesktopAssistantReply message={{ id: 'test-reply', role: 'assistant', parts }} streaming={streaming} />))
+async function render(parts: UIMessage['parts'], streaming = false, agentId?: string) {
+    await act(async () => root.render(<DesktopAssistantReply message={{ id: 'test-reply', role: 'assistant', parts }} streaming={streaming} agentId={agentId} />))
 }
 
 function mockClipboard() {
@@ -333,4 +333,38 @@ test('expands actual native steps with the same plain-text input and output acro
         expect(container.textContent).not.toMatch(/engine-only|private\/profile/)
         expect(container.querySelector('b')).toBeNull()
     }
+})
+
+test('draws a recorded card_file result as file tiles instead of a generic tool step', async () => {
+    const output = JSON.stringify({ kind: 'file', files: [{ path: 'reports/summary.md', name: 'summary.md', size: 7, scope: 'agent' }] })
+    await render([{ type: 'dynamic-tool', toolName: 'mcp__rerun__card_file', toolCallId: 'card-1', state: 'output-available',
+        input: { files: [{ path: 'reports/summary.md' }] }, output }], false, 'agent-1')
+    const tile = container.querySelector<HTMLButtonElement>('button[aria-label="Open summary.md"]')
+    expect(tile).not.toBeNull()
+    expect(tile?.disabled).toBe(false)
+    expect(container.querySelector('[data-file-card]')).not.toBeNull()
+    expect(container.textContent).toContain('summary.md')
+    expect(container.textContent).not.toContain('reports/summary.md')
+    expect(container.textContent).not.toContain('Show a file')
+})
+
+test('shows the recorded file tiles but keeps them inert without a trusted coworker id', async () => {
+    const output = JSON.stringify({ kind: 'file', files: [{ path: 'reports/summary.md', name: 'summary.md', size: 7, scope: 'agent' }] })
+    await render([{ type: 'dynamic-tool', toolName: 'card_file', toolCallId: 'card-2', state: 'output-available',
+        input: { files: [{ path: 'reports/summary.md' }] }, output }])
+    const tile = container.querySelector<HTMLButtonElement>('button[aria-label="Open summary.md"]')
+    expect(tile).not.toBeNull()
+    expect(tile?.disabled).toBe(true)
+    expect(container.querySelector('[data-file-card]')).not.toBeNull()
+})
+
+test('keeps an honest tool-result step for a malformed recorded file card', async () => {
+    const output = JSON.stringify({ kind: 'file', files: [{ path: '../../escape.md', name: 'escape.md', size: 7, scope: 'agent' }] })
+    await render([{ type: 'dynamic-tool', toolName: 'card_file', toolCallId: 'card-3', state: 'output-available',
+        input: { files: [{ path: '../../escape.md' }] }, output }], false, 'agent-1')
+    expect(container.querySelector('[data-file-card]')).toBeNull()
+    const row = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Show a file'))!
+    expect(row).not.toBeUndefined()
+    await act(async () => row.click())
+    expect(container.textContent).toContain('../../escape.md')
 })
