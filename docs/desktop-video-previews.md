@@ -69,7 +69,7 @@ Outcomes:
 - missing file: 404 `“name” was not found.`
 - not an MP4 name: 415 `Only MP4 files can be previewed.`
 - wrong container: 415 `This file is not a supported video file.`
-- QuickTime-only, 3GPP, or audio-only MP4: 415 `This video format can’t be previewed.`
+- no accepted MP4 brand, or no scanned video handler: 415 `This video format can’t be previewed.`
 - damaged structure: 415 `This video is damaged and can’t be previewed.`
 - over 16 MB: 413 `Video files can be up to 16 MB.`
 - symlink: 400 `Choose a video file, not a symlink.`
@@ -82,8 +82,8 @@ A direct navigation to the route still gets `video/mp4`, `nosniff`, and a sandbo
 
 ## Limits
 
-- Accepted `ftyp` brands are `isom`, `iso2`, `iso4`, `iso5`, `iso6`, `iso8`, `iso9`, `mp41`, `mp42`, `avc1`, `hvc1`, `hev1`, `dash`, `MSNV`, and `M4V `. One of those must be the major brand or a compatible brand. `qt  ` alone, `3gp*`, and `M4A ` are refused.
-- The file must parse as boxes through the end, with one top-level `moov`, one top-level `mdat` of at least one byte, and a version-0 `hdlr` whose type is `vide`. At most 4096 boxes and a depth of 16. Sample tables and sample bytes are not decoded.
+- Accepted `ftyp` brands are `isom`, `iso2`, `iso4`, `iso5`, `iso6`, `iso8`, `iso9`, `mp41`, `mp42`, `avc1`, `hvc1`, `hev1`, `dash`, `MSNV`, and `M4V `. At least one must appear as a major or compatible brand. `qt  `, `3gp*`, and `M4A ` do not satisfy that requirement by themselves; they do not cause rejection if an accepted brand is also present.
+- The file must parse as boxes through the end, with at least one top-level `moov`, at least one top-level `mdat`, and a version-0 `hdlr` whose type is `vide` within a scanned `moov`. Every encountered `mdat` must contain at least one byte. The parser does not require unique `ftyp`, `moov` or `mdat` boxes or validate a complete track/sample-table hierarchy. It bounds traversal to 4096 boxes and a depth of 16. Sample payloads are not decoded.
 - A file can pass those checks and still fail in the browser. That shows `This video can’t be played.`
 - WebM, MOV, M4V, PDF, recording, conversion, video import, and model video input are out of this slice.
 - There is no public link or external-player launch.

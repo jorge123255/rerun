@@ -14,6 +14,7 @@ import { SIDE_PANEL_GAP } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
 import { DesktopBoard } from './DesktopBoard'
+import { useBoardActivity } from './useBoardActivity'
 import { DesktopControlCenter } from './DesktopControlCenter'
 import { DesktopShortcutsDialog } from './DesktopShortcutsDialog'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
@@ -116,6 +117,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         return () => window.removeEventListener('keydown', openSettings)
     }, [workspaceSettings, shortcutsOpen])
     const [agents, setAgents] = useState(initialData.agents)
+    const boardActivity = useBoardActivity(agents.map(agent => agent.id))
     // Responses already in flight cannot reintroduce a coworker after its confirmed deletion.
     const deletedAgents = useRef(new Set<string>())
     const [creating, setCreating] = useState(false)
@@ -340,7 +342,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         <main className="relative flex h-dvh w-full flex-col overflow-clip bg-frame text-foreground md:p-2">
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
-                <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
+                <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
                     visibleSessionId={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !creating && !controlCenterOpen && !busy && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
                     onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
@@ -397,7 +399,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }
             }} />
-            <DesktopControlCenter coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null} initialRecent={initialData.recentCoworkers}
+            <DesktopControlCenter activity={boardActivity} onRefreshActivity={boardActivity.refresh} coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null} initialRecent={initialData.recentCoworkers}
                 open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
                 onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) selectCoworker(id) }}
                 onOpenChat={chat => { if (currentAgents.current.some(agent => agent.id === chat.agentId)) selectCoworker(chat.agentId, null, chat) }}

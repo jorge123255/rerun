@@ -27,7 +27,7 @@ function agentWithVerbosity(verbosity: string, selfImprovementEnabled: boolean) 
     return { ...agent, config: agentConfigSchema.parse({ name: 'Prompt test', provider: 'rerun', verbosity, selfImprovement: { enabled: selfImprovementEnabled }, tools: { memory: false, db: false, schedule: false } }) }
 }
 
-describe('desktop image card instructions', () => {
+describe('desktop media card instructions', () => {
     afterEach(() => vi.unstubAllEnvs())
 
     it('advertises static albums and mixed files only with the coworker grant, retaining persistent-file limits', async () => {
@@ -36,9 +36,17 @@ describe('desktop image card instructions', () => {
         const prompt = await buildSystemPrompt(enabled, { source: 'chat' })
         const cards = prompt.slice(prompt.indexOf('<chat_cards>'), prompt.indexOf('</chat_cards>'))
         expect(cards).toContain('static PNG, JPEG, WebP or single-frame GIF')
+        expect(cards).toContain('WAV or MP3 audio')
         expect(cards).toContain('one album')
-        expect(cards).toContain('mixed document/image cards')
-        expect(cards).toContain('8 MiB per image and 24 MiB')
+        expect(cards).toContain('mixed document/image/audio cards')
+        expect(cards).toContain('up to 12 files')
+        expect(cards).toContain('32 KiB per document')
+        expect(cards).toContain('8 MiB per image')
+        expect(cards).toContain('16 MiB per audio file')
+        expect(cards).toContain('24 MiB of images per card')
+        expect(cards).toContain('persistent Files workspace')
+        expect(cards).toContain('Audio is fetched only when the file is opened and plays only after the user presses play')
+        expect(cards).toContain('Animated images, SVG, PDF, video, other audio formats and shared files are unavailable')
         expect(cards).toContain('cannot save, import or publish')
         expect(cards).toContain('Table cards are unavailable')
         expect(cards).not.toContain('only for existing .txt or .md')

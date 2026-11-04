@@ -1,8 +1,10 @@
-# Desktop audio result cards
+# Desktop audio result cards (source handoff)
 
-The installed opt-in `card_file` tool now also shows existing WAV and MP3 files from the same
+This source extends the opt-in `card_file` tool to show existing WAV and MP3 files from the same
 coworker's persistent Files workspace. Audio keeps the original square waveform tile and opens in
-the paged result-card lightbox with standard controls.
+the paged result-card lightbox with standard controls. Installation, tests and native acceptance,
+including playback after restart, remain with the integration owner; this handoff does not claim
+those results.
 
 ## Original design reused
 
@@ -34,9 +36,9 @@ the card lightbox. That avoids a duplicate Files header above the player.
   malformed identity, absolute/hidden/traversal paths and mismatched names are rejected. Old text
   cards still parse.
 - **Audio tile:** `DesktopFileCard` keeps the original non-image `AttachmentTile` path: the tile is
-  a square waveform glyph with the file name. It performs no audio request. Audio works in static
-  image albums, text cards and mixed cards without disturbing order or the existing single-image and
-  multi-image album layouts.
+  a square waveform glyph with the file name. It performs no audio request. A card containing audio
+  uses the original square-tile row, including when mixed with text or images, and preserves file
+  order. Image-only cards retain their existing single-image or multi-image album layout.
 - **Lightbox:** `DesktopFileLightbox` fetches the selected audio only when the lightbox is open,
   through the authenticated audio route, with the trusted conversation owner and the card's inode
   identity. It creates one object URL for the `<audio controls>` element. It never autoplays and
@@ -90,8 +92,8 @@ the card lightbox. That avoids a duplicate Files header above the player.
   change.
 - No root-owned `DesktopApp`, `DesktopBoard`, `DesktopConversation`, Files panel, workspace icon or
   audio-reader edit is required. Root keeps the conversation/draft/queue/bootstrap wiring.
-- The installed `/api/desktop/agents/:agentId/files/audio` route is reused unchanged even though its
-  comment says chat cards do not use it yet. Root may update that comment in a later edit.
+- The installed `/api/desktop/agents/:agentId/files/audio` route is reused without a behavior change;
+  its integration comment now identifies both Files previews and chat-card previews as consumers.
 - Proposed verification: a real Codex `card_file` reply with one WAV or MP3, then a mixed
   text/image/audio card; assert the tile is a waveform glyph, no audio request happens before the
   tile opens, the lightbox has one title bar and standard controls, playback starts only on user

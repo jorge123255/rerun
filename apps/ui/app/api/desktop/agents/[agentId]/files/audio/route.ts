@@ -5,9 +5,8 @@ export const dynamic = 'force-dynamic'
 type Context = { params: Promise<{ agentId: string }> }
 
 /** Bytes of one existing WAV or MP3 in this coworker's workspace.
- * The whole file is returned. There is no byte range: the Files preview keeps a blob URL
- * so a JSON error can be shown before playback, and seeking stays inside that blob.
- * Chat file cards do not use this route. */
+ * The whole file is returned. There is no byte range: Files and chat-card previews keep a blob URL
+ * so a JSON error can be shown before playback, and seeking stays inside that blob. */
 export function GET(request: Request, { params }: Context) {
     return desktopRoute(request, async runtime => {
         const { agentId } = await params

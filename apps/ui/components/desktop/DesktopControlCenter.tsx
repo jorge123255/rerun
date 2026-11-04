@@ -8,6 +8,7 @@ import { CirclePlusIcon, FocusCenterIcon, KeyboardIcon, LayoutGridIcon, LockKeyh
 import { parseQuery, searchItems } from '@/lib/control-center/search'
 import { buildDesktopControlCommands, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
+import { latestBoardAttention, type BoardActivitySnapshot } from '@/lib/desktop/board-activity'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { useDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
@@ -43,6 +44,8 @@ export type DesktopControlCenterProps = {
     onOpenChange?: (open: boolean) => void
     disabled?: boolean
     initialRecent?: DesktopRecentCoworkers
+    activity?: BoardActivitySnapshot
+    onRefreshActivity?: () => Promise<BoardActivitySnapshot | null>
     coworkers: DesktopAgentView[]
     // The coworker whose chat is open on the board, or null while the board shows.
     selectedCoworkerId: string | null
@@ -61,7 +64,7 @@ export type DesktopControlCenterProps = {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -105,9 +108,11 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
     const showCoworkerChats = open && !!pageCoworker && query.trim() === ''
     const chats = useDesktopControlCenterChats(pageCoworker?.id ?? null, showCoworkerChats, selectionScope)
     const [chatNotice, setChatNotice] = useState<{ scope: string; text: string } | null>(null)
+    const [attentionNotice, setAttentionNotice] = useState<{ scope: string; text: string } | null>(null)
+    const selectingAttention = useRef<{ scope: string } | null>(null)
     const selectingChat = useRef<{ scope: string } | null>(null)
-    const latest = useRef({ open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
-    latest.current = { open, disabled, selectionScope, coworkers, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
+    const latest = useRef({ open, disabled, selectionScope, coworkers, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
+    latest.current = { open, disabled, selectionScope, coworkers, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
     const available = () => latest.current.open && !latest.current.disabled && !isDesktopQuitting() && latest.current.selectionScope === selectionScope
 
     const close = () => {
@@ -129,12 +134,21 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
         setQuery('')
     }
 
+    const coworkerBadge = (coworker: DesktopAgentView): ControlRow['badge'] => {
+        if (coworker.enabled === false) return { label: 'Off', tone: 'neutral' }
+        switch (activity?.statuses[coworker.id]) {
+            case 'waiting_human': return { label: 'Needs you', tone: 'orange' }
+            case 'working': return { label: 'Working', tone: 'cyan' }
+            case 'unreachable': return { label: 'Activity unavailable', tone: 'neutral' }
+        }
+    }
+
     const coworkerRow = (coworker: DesktopAgentView, section: string): ControlRow => ({
         id: `${section}-coworker-${coworker.id}`,
         label: coworker.name,
         detail: coworker.description || undefined,
         leading: { kind: 'agent', agentId: coworker.id },
-        badge: coworker.enabled === false ? { label: 'Off', tone: 'neutral' } : undefined,
+        badge: coworkerBadge(coworker),
         onSelect: () => {
             if (!available() || !latest.current.coworkers.some(current => current.id === coworker.id)) return
             const action = latest.current.onOpenCoworker
@@ -144,6 +158,41 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
         },
         onDrill: drill({ kind: 'coworker', coworkerId: coworker.id }),
     })
+
+    const attentionRow = (coworker: DesktopAgentView): ControlRow => {
+        const target = latestBoardAttention(activity!.attention, coworker.id)!
+        const stillPending = (snapshot: BoardActivitySnapshot | undefined) => {
+            const owner = latest.current.coworkers.find(current => current.id === coworker.id)
+            if (!owner || owner.enabled === false || snapshot?.statuses[coworker.id] !== 'waiting_human') return false
+            const current = latestBoardAttention(snapshot.attention, coworker.id)
+            return current?.id === target.id && current.kind === target.kind && current.sessionId === target.sessionId && current.agentEnabled !== false
+        }
+        return { ...coworkerRow(coworker, 'needs-you'), onSelect: () => {
+            if (!available() || selectingAttention.current?.scope === selectionScope || !stillPending(latest.current.activity)) return
+            const attempt = { scope: selectionScope }
+            selectingAttention.current = attempt
+            setAttentionNotice(null)
+            void (async () => {
+                try {
+                    const current = latest.current
+                    const fresh = current.onRefreshActivity ? await current.onRefreshActivity() : current.activity
+                    if (!available() || selectingAttention.current !== attempt) return
+                    if (!fresh || !stillPending(fresh) || !stillPending(latest.current.activity)) {
+                        setAttentionNotice({ scope: selectionScope, text: fresh ? 'This request changed. Choose from the refreshed list.' : 'Could not check this request. Try again.' })
+                        return
+                    }
+                    const owner = latest.current.coworkers.find(current => current.id === coworker.id)!
+                    const confirmed = latestBoardAttention(fresh.attention, owner.id)!
+                    close()
+                    latest.current.onOpenConversation({ id: confirmed.sessionId, agentId: owner.id, agentName: owner.name, title: confirmed.title })
+                } catch {
+                    if (available()) setAttentionNotice({ scope: selectionScope, text: 'Could not check this request. Try again.' })
+                } finally {
+                    if (selectingAttention.current === attempt) selectingAttention.current = null
+                }
+            })()
+        } }
+    }
 
     const conversationSection = (section: string, heading: string, coworkerId: string | null): ControlSection[] => {
         if (search.failed) {
@@ -287,14 +336,30 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
         if (scope === 'agents') return [{ id: 'coworkers', heading: 'Coworkers', rows: searchItems(searchableCoworkers, text).map(entry => coworkerRow(entry.coworker, 'coworkers')) }]
 
         if (!text) {
-            const recentIds = new Set(recent)
-            const recentCoworkers = recent.map(id => coworkers.find(coworker => coworker.id === id)).filter((coworker): coworker is DesktopAgentView => !!coworker)
-            const others = coworkers.filter(coworker => !recentIds.has(coworker.id)).slice(0, COWORKER_RESULTS)
+            const waiting = coworkers.filter(coworker => {
+                if (coworker.enabled === false || activity?.statuses[coworker.id] !== 'waiting_human') return false
+                const target = latestBoardAttention(activity.attention, coworker.id)
+                return !!target && target.agentEnabled !== false
+            })
+            const waitingIds = new Set(waiting.map(coworker => coworker.id))
+            const recentCoworkers = recent.map(id => coworkers.find(coworker => coworker.id === id)).filter((coworker): coworker is DesktopAgentView => !!coworker && !waitingIds.has(coworker.id))
+            const others = coworkers.filter(coworker => !waitingIds.has(coworker.id)).slice(0, COWORKER_RESULTS)
+            const unchecked = activity && coworkers.some(coworker => coworker.enabled !== false && (!activity.statuses[coworker.id] || activity.statuses[coworker.id] === 'unknown'))
+            const unavailable = activity && coworkers.some(coworker => coworker.enabled !== false && activity.statuses[coworker.id] === 'unreachable')
+                || unchecked && !!activity?.attention.checkedAt
+            const attentionRows = waiting.map(attentionRow)
+            if (unavailable) attentionRows.push({
+                id: 'needs-you-retry', label: 'Could not check all coworkers', detail: onRefreshActivity ? 'Try again' : undefined,
+                leading: { kind: 'icon', icon: RefreshCwIcon }, onSelect: () => {
+                    if (available()) { setAttentionNotice(null); void latest.current.onRefreshActivity?.().catch(() => {}) }
+                },
+            })
             const retryRows: ControlRow[] = recentState.error ? [{
                 id: 'recent-retry', label: recentState.error, detail: 'Try again', leading: { kind: 'icon', icon: RefreshCwIcon },
                 onSelect: () => { if (available()) recentState.retry() },
             }] : []
             return [
+                { id: 'needs-you', heading: 'Needs you', rows: attentionRows, loading: !!unchecked && !activity?.attention.checkedAt },
                 recentCoworkers.length > 0 ? { id: 'recent', heading: 'Recent', rows: [...recentCoworkers.map(coworker => coworkerRow(coworker, 'recent')), ...retryRows] } : { id: 'coworkers', heading: 'Coworkers', rows: others.map(coworker => coworkerRow(coworker, 'coworkers')) },
                 ...(!recentCoworkers.length && retryRows.length ? [{ id: 'recent-save', heading: 'Recent', rows: retryRows }] : []),
                 ...commandSections,
@@ -321,7 +386,7 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
             anchorToOrb={false}
             description="Jump to a coworker, model settings or a saved conversation."
             closeHint="to close"
-            resultsHint={showCoworkerChats
+            resultsHint={attentionNotice?.scope === selectionScope ? attentionNotice.text : showCoworkerChats
                 ? chatNotice?.scope === selectionScope ? chatNotice.text : chats.loading && chats.data ? 'Refreshing chats…' : chats.data?.hasMore ? 'Showing 8 recent conversations. Type to search older chats.' : undefined
                 : search.hasMore ? 'Showing the first 50 matches. Refine your search for more.' : undefined}
             onCloseAutoFocus={event => {

@@ -5,7 +5,7 @@ import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_
 import { Plus } from 'lucide-react'
 import type { DesktopAgentView } from './DesktopApp'
 import { useBoardActivity } from './useBoardActivity'
-import { latestBoardAttention, type BoardActivityStatus } from '@/lib/desktop/board-activity'
+import { latestBoardAttention, type BoardActivityStatus, type BoardActivitySnapshot } from '@/lib/desktop/board-activity'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { DesktopBoardMenu } from './DesktopBoardMenu'
 import { DesktopFindChat } from './DesktopFindChat'
@@ -25,7 +25,8 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange }: {
+export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange }: {
+    activitySnapshot?: BoardActivitySnapshot
     agents: DesktopAgentView[]
     workspaceName: string
     workspaceMenu?: ReactNode
@@ -43,7 +44,8 @@ export function DesktopBoard({ agents, workspaceName, workspaceMenu, selectedAge
     onOpenConversation?: (hit: DesktopConversationHit) => void
     onPlacementChange?: (placing: boolean) => void
 }) {
-    const { statuses: activity, attention } = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]))
+    const localActivity = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]), !activitySnapshot)
+    const { statuses: activity, attention } = activitySnapshot ?? localActivity
     const openState = useRef({ agents, activity, attention, onOpen, onOpenConversation })
     openState.current = { agents, activity, attention, onOpen, onOpenConversation }
     const attentionCounts = useMemo(() => {
