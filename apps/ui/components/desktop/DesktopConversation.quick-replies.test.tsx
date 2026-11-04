@@ -88,7 +88,7 @@ beforeEach(() => {
                 const body = JSON.parse(String(init.body)), key = body.scope.sessionId ?? body.scope.tabUid, current = queues.get(key)
                 if (body.action === 'enqueue') queues.set(key, body.item)
                 else if (current?.id === body.id && body.action === 'remove') queues.delete(key)
-                else if (current?.id === body.id) queues.set(key, { ...current, state: body.action === 'attempt' ? 'sending' : 'review' })
+                else if (current && current.id === body.id) queues.set(key, { ...current, state: body.action === 'attempt' ? 'sending' : 'review' })
                 return Response.json({ queued: queues.get(key) ?? null })
             }
             return readQueue(url.searchParams.get('sessionId') ?? url.searchParams.get('tabUid')!)
