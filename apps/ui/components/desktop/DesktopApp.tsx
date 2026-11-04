@@ -11,6 +11,7 @@ import { ArrowLeft, X } from 'lucide-react'
 import { SidePanel } from '@/components/layout/SidePanel'
 import { SIDE_PANEL_GAP } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
+import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
 import { DesktopBoard } from './DesktopBoard'
 import { DesktopControlCenter } from './DesktopControlCenter'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
@@ -34,6 +35,7 @@ export type DesktopBootstrap = ConnectionsList & {
     theme: ThemePreference
     profile: { id: number; displayName: string }
     workspace: { id: number; name: string }
+    iconCatalogId?: string | null
     agents: DesktopAgentView[]
     recentCoworkers?: DesktopRecentCoworkers
 }
@@ -93,14 +95,16 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setProviders(snapshot)
     }, [])
     const [workspaceName, setWorkspaceName] = useState(initialData.workspace.name)
+    const [iconCatalogId, setIconCatalogId] = useState(initialData.iconCatalogId ?? null)
+    const [workspaceSettings, setWorkspaceSettings] = useState(false)
     const [settings, setSettings] = useState(false)
     useEffect(() => {
         const openSettings = (event: KeyboardEvent) => {
-            if (event.metaKey && event.key === ',') { event.preventDefault(); setSettings(true) }
+            if (event.metaKey && event.key === ',' && !workspaceSettings && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
         }
         window.addEventListener('keydown', openSettings)
         return () => window.removeEventListener('keydown', openSettings)
-    }, [])
+    }, [workspaceSettings])
     const [agents, setAgents] = useState(initialData.agents)
     // Responses already in flight cannot reintroduce a coworker after its confirmed deletion.
     const deletedAgents = useRef(new Set<string>())
@@ -129,7 +133,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const controlCenterDisabled = settings || creating || !!busy || placingCopy || quitting
+    const controlCenterDisabled = settings || workspaceSettings || creating || !!busy || placingCopy || quitting
 
     useEffect(() => {
         if (panelOpen && !settings) panelContent.current?.focus({ preventScroll: true })
@@ -273,9 +277,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
     const openSettings = () => setSettings(true)
     const modelLabel = defaultProvider ? providers.default?.model : undefined
-    const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} profileName={initialData.profile.displayName}
+    const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} iconCatalogId={iconCatalogId} profileName={initialData.profile.displayName}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
         modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings}
+        onWorkspaceSettings={() => { if (!isDesktopQuitting()) setWorkspaceSettings(true) }}
         onControlCenter={() => {
             if (controlCenterDisabled) return
             boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')?.focus({ preventScroll: true })
@@ -287,7 +292,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu}
-                    visibleSessionId={panelOpen && !settings && !creating && !controlCenterOpen && !busy && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
+                    visibleSessionId={panelOpen && !settings && !workspaceSettings && !creating && !controlCenterOpen && !busy && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
                     onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={() => showBoard(true)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
@@ -300,7 +305,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings}
+                            <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !settings && !workspaceSettings}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
                         </section>
@@ -336,6 +341,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     </form>
                 </DialogContent>}
             </Dialog>
+            <DesktopWorkspaceSettings open={workspaceSettings} onOpenChange={setWorkspaceSettings} workspaceName={workspaceName}
+                onSaved={saved => { setWorkspaceName(saved.name); if (saved.iconCatalogId !== undefined) setIconCatalogId(saved.iconCatalogId) }} />
             <DesktopControlCenter coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null} initialRecent={initialData.recentCoworkers}
                 open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
                 onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) selectCoworker(id) }}

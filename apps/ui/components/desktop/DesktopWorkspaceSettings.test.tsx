@@ -1,214 +1,218 @@
 // @vitest-environment happy-dom
-// Authored for the workspace-icons lane; the integration owner runs all validation.
+// Source-only regressions; the integration owner runs validation.
 import { act, useState } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
-import { DESKTOP_WORKSPACE_ICONS, type DesktopWorkspaceIcon } from '@/lib/desktop/icon-catalog'
-import { DesktopWorkspaceSettings, type DesktopWorkspaceIconSaved } from './DesktopWorkspaceSettings'
+import { DESKTOP_WORKSPACE_ICONS } from '@/lib/desktop/icon-catalog'
+import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
+import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-type Call = { url: string; method: string; body?: unknown }
-type Fixture = { catalogId: string | null; failLoad?: boolean; failPatch?: boolean; failPut?: boolean }
-
-const dialog = () => document.querySelector('[role="dialog"]')
+const roots: Root[] = []
+const settleRequests: (() => void)[] = []
+const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')
 const nameField = () => document.querySelector<HTMLInputElement>('#workspace-settings-name')!
 const choices = () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] [aria-pressed]')]
 const preview = () => document.querySelector<HTMLImageElement>('[role="dialog"] img[alt=""]')!
-const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
-
+const button = (label: string) => [...dialog()!.querySelectorAll<HTMLButtonElement>('button')].find(value => value.textContent?.trim() === label)!
+const click = async (target: HTMLElement) => { await act(async () => { target.click() }) }
 const rename = async (value: string) => act(async () => {
     const input = nameField()
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
     input.dispatchEvent(new Event('input', { bubbles: true }))
 })
-
-function mount() {
-    const container = document.createElement('div')
-    document.body.append(container)
-    return { container, root: createRoot(container) }
+const deferred = () => {
+    let resolve!: (response: Response) => void
+    const promise = new Promise<Response>(done => { resolve = done })
+    settleRequests.push(() => resolve(Response.json({ error: 'Fixture closed' }, { status: 503 })))
+    return { promise, resolve }
 }
 
-function Harness({ onSaved }: { onSaved: (saved: DesktopWorkspaceIconSaved) => void }) {
-    const [open, setOpen] = useState(true)
-    return <DesktopWorkspaceSettings open={open} onOpenChange={setOpen} workspaceName="Disposable" onSaved={onSaved} />
-}
-
-async function render(root: ReturnType<typeof createRoot>, fixture: Fixture, onCall: (call: Call) => void, onSaved: (saved: DesktopWorkspaceIconSaved) => void) {
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
-        const call: Call = { url: String(url), method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : undefined }
-        onCall(call)
-        if (url === '/api/desktop/workspace/icon' && call.method === 'GET') {
-            if (fixture.failLoad) return Response.json({ error: 'unavailable' }, { status: 503 })
-            return Response.json({ catalogId: fixture.catalogId }, { headers: { 'cache-control': 'no-store' } })
-        }
-        if (url === '/api/desktop/workspace/icon' && call.method === 'PUT') {
-            if (fixture.failPut) return Response.json({ error: 'Unknown icon' }, { status: 400 })
-            const body = call.body as { catalogId?: string } | null
-            return Response.json({ catalogId: body?.catalogId ?? null })
-        }
-        if (url === '/api/desktop/settings' && call.method === 'PATCH') {
-            if (fixture.failPatch) return Response.json({ error: 'Check the provider, model, or workspace name and try again.' }, { status: 400 })
-            return Response.json({ connections: [], default: null })
-        }
-        throw new Error(`Unexpected request ${url}`)
-    }))
-    await act(async () => { root.render(<Harness onSaved={onSaved} />) })
-}
-
-const saveButton = async () => {
-    const button = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent?.trim() === 'Save')
-    expect(button, 'Save').toBeTruthy()
-    await act(async () => { button!.click() })
-}
-
-afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals() })
-
-test('the dialog carries the original layout: name beside the preview, ten illustrations and the expand toggle', async () => {
-    const { root } = mount()
-    const calls: Call[] = []
-    await render(root, { catalogId: null }, call => calls.push(call), () => {})
-    await settle()
-    expect(dialog()).not.toBeNull()
-    expect(dialog()!.textContent).toContain('Workspace settings')
-    expect(dialog()!.textContent).toContain('Your workspace name and logo, as your team and your invitations see them.')
-    expect(dialog()!.textContent).toContain('Or pick an illustration')
-    expect(nameField().value).toBe('Disposable')
-    expect(nameField().getAttribute('placeholder')).toBe('e.g. Acme Inc.')
-    expect(choices()).toHaveLength(10)
-    // Without a saved icon the preview stays an empty muted block, with no picked artwork.
-    expect(preview().getAttribute('src')).toBeNull()
-    const expand = [...dialog()!.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.includes('Show all'))
-    expect(expand!.textContent).toBe(`Show all ${DESKTOP_WORKSPACE_ICONS.length}`)
-    await act(async () => { expand!.click() })
-    expect(choices()).toHaveLength(DESKTOP_WORKSPACE_ICONS.length)
-    await act(async () => {
-        const collapse = [...dialog()!.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === 'Show less')!
-        collapse.click()
+function fixture(catalogId: string | null = null) {
+    let saved = { name: 'Disposable', catalogId }
+    let get: (() => Promise<Response> | Response) | undefined
+    let put: ((body: { name: string; catalogId?: string | null }) => Promise<Response> | Response) | undefined
+    const calls: { method: string; body?: { name: string; catalogId?: string | null } }[] = []
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        expect(url).toBe('/api/desktop/workspace/icon')
+        const method = init?.method ?? 'GET'
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined
+        calls.push({ method, body })
+        if (method === 'GET') return get ? get() : Response.json({ catalogId: saved.catalogId })
+        expect(method).toBe('PUT')
+        if (put) return put(body)
+        saved = { name: body.name, catalogId: Object.hasOwn(body, 'catalogId') ? body.catalogId : saved.catalogId }
+        return Response.json(saved)
     })
+    vi.stubGlobal('fetch', fetcher)
+    return { calls, fetcher, setGet: (read: typeof get) => { get = read }, setPut: (write: typeof put) => { put = write }, get saved() { return saved } }
+}
+
+async function mount() {
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container); roots.push(root)
+    const saved = vi.fn()
+    let control!: (open: boolean) => void
+    function Harness() {
+        const [open, setOpen] = useState(true)
+        control = setOpen
+        return <><button aria-label="Workspace menu, Disposable">Workspace</button><DesktopWorkspaceSettings open={open} onOpenChange={setOpen} workspaceName="Disposable" onSaved={saved} /></>
+    }
+    await act(async () => { root.render(<Harness />) })
+    return { saved, setOpen: async (open: boolean) => { await act(async () => { control(open) }) } }
+}
+
+afterEach(async () => {
+    await act(async () => { for (const root of roots.splice(0)) root.unmount(); for (const settle of settleRequests.splice(0)) settle(); cancelDraftShutdown() })
+    document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.restoreAllMocks()
+})
+
+test('keeps the original preview/name layout, ten illustrations and expandable full catalog', async () => {
+    const f = fixture()
+    await mount()
+    expect(dialog()?.textContent).toContain('Workspace settings')
+    expect(dialog()?.textContent).toContain('Or pick an illustration')
+    expect(nameField().value).toBe('Disposable')
+    expect(nameField().maxLength).toBe(60)
     expect(choices()).toHaveLength(10)
-    expect(calls).toEqual([{ url: '/api/desktop/workspace/icon', method: 'GET', body: undefined }])
-})
-
-test('picking an illustration previews it, marks it selected, and Save writes the name and the validated catalog ID', async () => {
-    const { root } = mount()
-    const calls: Call[] = []
-    const saved: DesktopWorkspaceIconSaved[] = []
-    const pick: DesktopWorkspaceIcon = DESKTOP_WORKSPACE_ICONS[7]!
-    await render(root, { catalogId: null }, call => calls.push(call), result => { saved.push(result) })
-    await settle()
-    await act(async () => { choices()[7]!.click() })
-    expect(choices()[7]!.getAttribute('aria-pressed')).toBe('true')
-    expect(preview().getAttribute('src')).toBe(pick.url)
-    await rename(' Renamed workspace ')
-    await saveButton()
-    expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['PATCH /api/desktop/settings', 'PUT /api/desktop/workspace/icon'])
-    expect(calls[0]!.body).toEqual({ action: 'workspace', name: 'Renamed workspace' })
-    expect(calls[1]!.body).toEqual({ catalogId: pick.id })
-    expect(saved).toEqual([{ name: 'Renamed workspace', iconCatalogId: pick.id }])
-    expect(dialog()).toBeNull()
-})
-
-test('Save without a pick keeps the workspace icon untouched, and picking first saves it through the catalog ID', async () => {
-    const { root } = mount()
-    const calls: Call[] = []
-    const saved: DesktopWorkspaceIconSaved[] = []
-    await render(root, { catalogId: 'amber-fluid-blob.webp' }, call => calls.push(call), result => { saved.push(result) })
-    await settle()
-    // The saved illustration renders in the preview and shows as selected in the grid.
-    expect(preview().getAttribute('src')).toBe('/workspace-icons/amber-fluid-blob.webp')
-    const selected = choices().findIndex(button => button.getAttribute('aria-pressed') === 'true')
-    expect(DESKTOP_WORKSPACE_ICONS[selected]!.id).toBe('amber-fluid-blob.webp')
-    await rename('Just renamed')
-    await saveButton()
-    expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['PATCH /api/desktop/settings'])
-    expect(saved).toEqual([{ name: 'Just renamed', iconCatalogId: 'amber-fluid-blob.webp' }])
-    await act(async () => { root.unmount() })
-
-    const second = mount()
-    const secondCalls: Call[] = []
-    const secondSaved: DesktopWorkspaceIconSaved[] = []
-    try {
-        await render(second.root, { catalogId: null }, call => secondCalls.push(call), result => { secondSaved.push(result) })
-        await settle()
-        await act(async () => { choices()[0]!.click() })
-        await saveButton()
-        expect(secondCalls.map(call => `${call.method} ${call.url}`)).toEqual(['PATCH /api/desktop/settings', 'PUT /api/desktop/workspace/icon'])
-        expect(secondSaved).toEqual([{ name: 'Disposable', iconCatalogId: DESKTOP_WORKSPACE_ICONS[0]!.id }])
-    } finally { await act(async () => { second.root.unmount() }) }
-})
-
-test('a rejected catalog ID surfaces the error, keeps the dialog open and reports nothing saved', async () => {
-    const { root } = mount()
-    const calls: Call[] = []
-    const saved: DesktopWorkspaceIconSaved[] = []
-    await render(root, { catalogId: null, failPut: true }, call => calls.push(call), result => { saved.push(result) })
-    await settle()
-    await act(async () => { choices()[3]!.click() })
-    await saveButton()
-    expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['PATCH /api/desktop/settings', 'PUT /api/desktop/workspace/icon'])
-    expect(dialog()!.querySelector('.text-destructive')!.textContent).toContain('Unknown icon')
-    // The name write landed before the icon failed, so the caller still learns the new name.
-    expect(saved).toEqual([{ name: 'Disposable', iconCatalogId: null }])
-    expect(choices()[3]!.getAttribute('aria-pressed')).toBe('true')
-    expect(dialog()).not.toBeNull()
-})
-
-test('a failed name save blocks the icon write and keeps the dialog open with the error', async () => {
-    const { root } = mount()
-    const calls: Call[] = []
-    const saved: DesktopWorkspaceIconSaved[] = []
-    await render(root, { catalogId: null, failPatch: true }, call => calls.push(call), result => { saved.push(result) })
-    await settle()
-    await act(async () => { choices()[0]!.click() })
-    await saveButton()
-    expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['PATCH /api/desktop/settings'])
-    expect(dialog()!.querySelector('.text-destructive')!.textContent).toContain('Check the provider, model, or workspace name and try again.')
-    expect(saved).toEqual([])
-})
-
-test('an unavailable icon read surfaces its own error, and a save without a pick leaves the icon state unknown', async () => {
-    const { root } = mount()
-    const calls: Call[] = []
-    const saved: DesktopWorkspaceIconSaved[] = []
-    await render(root, { catalogId: null, failLoad: true }, call => calls.push(call), result => { saved.push(result) })
-    await settle()
-    expect(dialog()!.textContent).toContain('Could not load the workspace icon. Try again.')
     expect(preview().getAttribute('src')).toBeNull()
-    await saveButton()
-    expect(calls.map(call => `${call.method} ${call.url}`)).toEqual(['PATCH /api/desktop/settings'])
-    expect(saved).toHaveLength(1)
-    expect(saved[0]!.name).toBe('Disposable')
-    expect(saved[0]!.iconCatalogId).toBeUndefined()
-    expect(dialog()).toBeNull()
-    // A picked illustration still saves despite the failed read.
-    await act(async () => { root.unmount() })
-
-    const second = mount()
-    const secondCalls: Call[] = []
-    const secondSaved: DesktopWorkspaceIconSaved[] = []
-    try {
-        await render(second.root, { catalogId: null, failLoad: true }, call => secondCalls.push(call), result => { secondSaved.push(result) })
-        await settle()
-        await act(async () => { choices()[5]!.click() })
-        await saveButton()
-        expect(secondCalls.map(call => `${call.method} ${call.url}`)).toEqual(['PATCH /api/desktop/settings', 'PUT /api/desktop/workspace/icon'])
-        expect(secondSaved).toHaveLength(1)
-        expect(secondSaved[0]!.iconCatalogId).toBe(DESKTOP_WORKSPACE_ICONS[5]!.id)
-    } finally { await act(async () => { second.root.unmount() }) }
+    await click(button(`Show all ${DESKTOP_WORKSPACE_ICONS.length}`))
+    expect(choices()).toHaveLength(50)
+    await click(button('Show less'))
+    expect(choices()).toHaveLength(10)
+    expect(f.calls).toEqual([{ method: 'GET', body: undefined }])
 })
 
-test('Cancel closes without saving a picked illustration', async () => {
-    const { root } = mount()
-    const calls: Call[] = []
-    const saved: DesktopWorkspaceIconSaved[] = []
-    await render(root, { catalogId: null }, call => calls.push(call), result => { saved.push(result) })
-    await settle()
-    await act(async () => { choices()[2]!.click() })
-    expect(choices()[2]!.getAttribute('aria-pressed')).toBe('true')
-    const cancel = [...dialog()!.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === 'Cancel')!
-    await act(async () => { cancel.click() })
+test('one atomic Save persists trimmed name and picked catalog ID, publishes once and closes', async () => {
+    const f = fixture(); const h = await mount()
+    const pick = DESKTOP_WORKSPACE_ICONS[7]
+    await click(choices()[7])
+    expect(preview().getAttribute('src')).toBe(pick.url)
+    expect(choices()[7].getAttribute('aria-pressed')).toBe('true')
+    await rename(' Renamed workspace ')
+    await click(button('Save'))
+    expect(f.calls).toEqual([{ method: 'GET', body: undefined }, { method: 'PUT', body: { name: 'Renamed workspace', catalogId: pick.id } }])
+    expect(h.saved).toHaveBeenCalledTimes(1)
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Renamed workspace', iconCatalogId: pick.id })
     expect(dialog()).toBeNull()
-    expect(calls).toEqual([{ url: '/api/desktop/workspace/icon', method: 'GET', body: undefined }])
-    expect(saved).toEqual([])
+})
+
+test('name-only save omits the icon field and uses the authoritative preserved icon returned by PUT', async () => {
+    const f = fixture(DESKTOP_WORKSPACE_ICONS[5].id); const h = await mount()
+    expect(choices()[5].getAttribute('aria-pressed')).toBe('true')
+    await rename('Just renamed')
+    await click(button('Save'))
+    expect(f.calls[1]).toEqual({ method: 'PUT', body: { name: 'Just renamed' } })
+    expect(h.saved).toHaveBeenCalledTimes(1)
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Just renamed', iconCatalogId: DESKTOP_WORKSPACE_ICONS[5].id })
+    expect(f.saved.name).toBe('Just renamed')
+})
+
+test('a rejected atomic save reports no partial success and retains both edits for retry', async () => {
+    const f = fixture(); f.setPut(() => Response.json({ error: 'Unknown icon' }, { status: 400 }))
+    const h = await mount()
+    await rename('Draft name'); await click(choices()[3]); await click(button('Save'))
+    expect(dialog()?.textContent).toContain('Unknown icon')
+    expect(h.saved).not.toHaveBeenCalled()
+    expect(f.saved).toEqual({ name: 'Disposable', catalogId: null })
+    expect(nameField().value).toBe('Draft name')
+    expect(choices()[3].getAttribute('aria-pressed')).toBe('true')
+    f.setPut(undefined)
+    await click(button('Save'))
+    expect(h.saved).toHaveBeenCalledTimes(1)
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Draft name', iconCatalogId: DESKTOP_WORKSPACE_ICONS[3].id })
+})
+
+test('failed icon read offers Retry and permits name-only save that preserves the persisted icon', async () => {
+    const f = fixture(DESKTOP_WORKSPACE_ICONS[2].id)
+    f.setGet(() => Response.json({ error: 'unavailable' }, { status: 503 }))
+    const h = await mount()
+    expect(dialog()?.textContent).toContain('Could not load the workspace icon.')
+    expect(button('Retry')).toBeTruthy()
+    await rename('Still saved'); await click(button('Save'))
+    expect(f.calls[1]).toEqual({ method: 'PUT', body: { name: 'Still saved' } })
+    expect(h.saved).toHaveBeenCalledTimes(1)
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Still saved', iconCatalogId: DESKTOP_WORKSPACE_ICONS[2].id })
+})
+
+test('Retry and a delayed initial read cannot overwrite a chosen illustration or typed name', async () => {
+    const f = fixture(); const initial = deferred(); f.setGet(() => initial.promise)
+    await mount()
+    await rename('My choice'); await click(choices()[4])
+    await act(async () => { initial.resolve(Response.json({ error: 'offline' }, { status: 503 })) })
+    const retry = deferred(); f.setGet(() => retry.promise)
+    await click(button('Retry'))
+    await click(choices()[6])
+    await act(async () => { retry.resolve(Response.json({ catalogId: DESKTOP_WORKSPACE_ICONS[1].id })) })
+    expect(nameField().value).toBe('My choice')
+    expect(preview().getAttribute('src')).toBe(DESKTOP_WORKSPACE_ICONS[6].url)
+    expect(choices()[6].getAttribute('aria-pressed')).toBe('true')
+    expect(dialog()?.textContent).not.toContain('Could not load the workspace icon.')
+})
+
+test('Save admits once, blocks Cancel/Escape/editing and holds the quit barrier until persistence settles', async () => {
+    const f = fixture(); const pending = deferred(); f.setPut(() => pending.promise)
+    const h = await mount()
+    const form = dialog()!.querySelector('form')!
+    await act(async () => {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(f.calls.filter(call => call.method === 'PUT')).toHaveLength(1)
+    expect(nameField().disabled).toBe(true); expect(button('Cancel').disabled).toBe(true)
+    expect(choices().every(choice => choice.disabled)).toBe(true)
+    await click(button('Cancel'))
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    expect(dialog()).not.toBeNull()
+    let quitSettled = false
+    let quit!: Promise<boolean>
+    await act(async () => { quit = flushDesktopDrafts().then(result => { quitSettled = true; return result }) })
+    expect(quitSettled).toBe(false)
+    await act(async () => { pending.resolve(Response.json({ name: 'Disposable', catalogId: null })); await quit })
+    expect(quitSettled).toBe(true)
+    expect(h.saved).toHaveBeenCalledTimes(1)
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Disposable', iconCatalogId: null })
+    expect(dialog()).toBeNull()
+})
+
+test('late save and GET from a forcibly closed form cannot change or close a reopened draft', async () => {
+    const f = fixture(); const read = deferred(); const save = deferred()
+    f.setGet(() => read.promise); f.setPut(() => save.promise)
+    const h = await mount()
+    await rename('Old name'); await click(button('Save'))
+    await h.setOpen(false)
+    f.setGet(() => Response.json({ catalogId: DESKTOP_WORKSPACE_ICONS[0].id }))
+    await h.setOpen(true)
+    await rename('New draft'); await click(choices()[8])
+    await act(async () => {
+        save.resolve(Response.json({ name: 'Old name', catalogId: null }))
+        read.resolve(Response.json({ catalogId: DESKTOP_WORKSPACE_ICONS[3].id }))
+    })
+    expect(h.saved).not.toHaveBeenCalled()
+    expect(dialog()).not.toBeNull()
+    expect(nameField().value).toBe('New draft')
+    expect(preview().getAttribute('src')).toBe(DESKTOP_WORKSPACE_ICONS[8].url)
+    expect(button('Save').disabled).toBe(false)
+})
+
+test('Cancel performs no write and restores workspace-menu focus', async () => {
+    const f = fixture(); const h = await mount()
+    await click(choices()[2]); await rename('Not saved')
+    await click(button('Cancel'))
+    expect(dialog()).toBeNull(); expect(f.calls).toHaveLength(1); expect(h.saved).not.toHaveBeenCalled()
+    // Radix releases its focus scope on a task after unmount.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+    expect(document.activeElement).toBe(document.querySelector('[aria-label="Workspace menu, Disposable"]'))
+})
+
+test('shutdown blocks a new save even through a retained form submit handler', async () => {
+    const f = fixture(); await mount()
+    const form = dialog()!.querySelector('form')!
+    await act(async () => { await flushDesktopDrafts() })
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
+    expect(f.calls).toHaveLength(1)
+    expect(button('Save').disabled).toBe(true)
+    await act(async () => { cancelDraftShutdown() })
+    expect(button('Save').disabled).toBe(false)
 })

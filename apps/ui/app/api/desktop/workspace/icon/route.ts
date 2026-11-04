@@ -1,8 +1,8 @@
-import { z } from 'zod'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
-import { readDesktopWorkspaceIcon, writeDesktopWorkspaceIcon } from '@/lib/desktop/server/workspace-icon'
+import { desktopWorkspaceIconUpdateSchema, readDesktopWorkspaceIcon, writeDesktopWorkspaceIcon } from '@/lib/desktop/server/workspace-icon'
+import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,14 +14,12 @@ export function GET(request: Request) {
     })
 }
 
-const iconSelection = z.object({ catalogId: z.string().trim().min(1) })
-
 export function PUT(request: Request) {
     return desktopRoute(request, async runtime => {
-        const parsed = iconSelection.safeParse(await request.json().catch(() => null))
-        if (!parsed.success) throw new DesktopHttpError(400, 'Pick one of the built-in illustrations.')
+        const parsed = desktopWorkspaceIconUpdateSchema.safeParse(await request.json().catch(() => null))
+        if (!parsed.success) throw new DesktopHttpError(400, `Enter a workspace name between 1 and ${WORKSPACE_NAME_MAX} characters and choose a built-in illustration.`)
         const db = await openDesktopDatabase(runtime.dataRoot)
-        await writeDesktopWorkspaceIcon(db, parsed.data.catalogId)
-        return Response.json({ catalogId: parsed.data.catalogId })
+        const saved = await writeDesktopWorkspaceIcon(db, parsed.data)
+        return Response.json(saved, { headers: { 'cache-control': 'no-store' } })
     })
 }

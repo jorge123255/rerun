@@ -1,124 +1,87 @@
-# Desktop workspace illustration picker (lane handoff)
+# Desktop workspace illustration picker
 
-Port of the original workspace illustration picker (B5): the built-in illustration slice only.
-Source-only lane — the integration owner runs all validation and Mac testing.
+This ports Rerun's built-in workspace illustration picker and its name/icon save behavior to the
+Mac app. The integration owner runs all checks, packaging and native acceptance; this document
+describes the source contract rather than claiming a release has passed.
 
-Base: `18b7e32fee452237ce1e7d5b79ea7cd5d0b18429`. Branch: `desktop/workspace-icons`.
+## Original design and assets
 
-## What was ported
+Original reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
-- `apps/ui/components/desktop/DesktopWorkspaceSettings.tsx` — the original
-  `WorkspaceSettingsDialog` layout reduced to the built-in picker slice: the same header copy,
-  preview beside the name field, `Or pick an illustration` grid (5/10 columns, ten visible,
-  `Show all 50`/`Show less`), the original selection treatment (ring + check badge,
-  `aria-pressed`), the `e.g. Acme Inc.` name behavior with `WORKSPACE_NAME_MAX`, and the
-  original `Cancel`/`Save` footer with the `Saving` spinner. Save always persists the name and
-  only persists an icon when one was picked, so name edits stay independent of icon selection;
-  Cancel closes without writing anything. Uploads, website-logo links, workspace switching and
-  account/member features are omitted, so no control leads to an unsupported action.
-- `apps/ui/lib/desktop/icon-catalog.ts` — the desktop icon contract: the original catalog's 50
-  entries (verbatim file, description, color and form) with bundled local URLs under
-  `/workspace-icons/`, plus `desktopWorkspaceIconById` and `desktopWorkspaceIconUrl`. The
-  persisted token is the illustration's own file name validated by lookup — never an arbitrary
-  URL or path. The hosted `lib/blobs/catalog.ts` stays untouched and is not imported here.
-- `apps/ui/lib/desktop/server/workspace-icon.ts` — the authenticated store module. It owns the
-  initializer (`CREATE TABLE IF NOT EXISTS desktop_workspace_icon`, keyed by workspace_id with a
-  `catalog_id`, run lazily on the pooled client, retried after a failure) so the central
-  `database.ts`/`store.ts` stay untouched, plus a validated read and write (`Unknown icon` for
-  any ID outside the allowlist).
-- `apps/ui/app/api/desktop/workspace/icon/route.ts` — `GET` returns
-  `{ catalogId: string | null }`; `PUT` accepts `{ catalogId }`, validates it against the
-  catalog and upserts. Both go through the existing `desktopRoute` (session cookie and
-  same-origin), matching the other desktop routes.
-- `apps/ui/public/workspace-icons/` — the 50 original WebP illustrations, downloaded from the
-  project's public `blob-illustrations` bucket and verified against the catalog set;
-  `ATTRIBUTION.md` records the source, date and AGPL-3.0 license. All 50 were available, so no
-  choice was omitted.
-- `apps/ui/components/desktop/DesktopWorkspaceSettings.test.tsx` — authored regression cases
-  (not executed in this lane): original layout and copy, preview/selection/expand behavior,
-  save-without-pick leaving the icon untouched, pick-then-save through the validated catalog ID,
-  rejected-catalog and failed-name errors, the unavailable icon read, and Cancel not mutating
-  the saved icon.
+- `components/dialogs/WorkspaceSettingsDialog.tsx`: header copy, preview beside the name field,
+  “Or pick an illustration” grid, five/ten columns, ten initial choices, Show all 50/Show less,
+  selected ring/check badge, Cancel/Save footer and saving spinner.
+- `lib/blobs/catalog.ts`: the 50 catalog entries and exact filename lookup.
+- `app/api/_actions/workspace.actions.ts`: name validation, catalog validation and preserving the
+  current icon when the save omits an icon selection.
+- `components/layout/WorkspaceSwitcher.tsx`: workspace icon presentation.
+- `lib/naming/workspace-name.ts`: shared `WORKSPACE_NAME_MAX` (60 characters).
 
-Upstream reviewed at `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`:
+`lib/desktop/icon-catalog.ts` retains the original entries, descriptions, colors and forms while
+resolving their URLs to bundled `/workspace-icons/` files. `public/workspace-icons/` contains all
+50 original WebP illustrations. Its `ATTRIBUTION.md` records their public source and license.
+An icon ID is a catalog filename; neither the client nor server converts arbitrary input into a
+URL or filesystem path. Uploads, website-logo fetching, accounts and workspace switching remain
+outside this slice.
 
-- `apps/ui/components/dialogs/WorkspaceSettingsDialog.tsx` (form, grid, naming behavior)
-- `apps/ui/lib/blobs/catalog.ts` (entry data and `getBlobByFile` validation)
-- `apps/ui/app/api/_actions/workspace.actions.ts` (name validation, `iconFile` → validated
-  catalog lookup, `Unknown icon` wording, and that a save without a logo field never replaces
-  the stored icon)
-- `apps/ui/components/layout/WorkspaceSwitcher.tsx` (icon presentation in the switcher and menu)
-- `apps/ui/lib/naming/workspace-name.ts` (`WORKSPACE_NAME_MAX`)
+## Atomic local save
 
-## Integration contract (root-owned wiring)
+`lib/desktop/server/workspace-icon.ts` owns the `desktop_workspace_icon` table, keyed by a foreign
+key to the existing local workspace. Its initializer runs lazily on the pooled client, caches a
+`Promise<void>`, and removes a failed initialization from that cache so a later request can retry.
+No central schema migration is required for this table.
 
-Root owns `DesktopApp`, `DesktopBoard`, `DesktopWorkspaceMenu` and the bootstrap/schema wiring;
-this lane changed none of them. The exact wiring:
+The authenticated `/api/desktop/workspace/icon` route exposes:
 
-1. **Persisted icon for the pill and mounted surfaces.** Extend the desktop bootstrap with the
-   icon so it survives restart, using this lane's store read inside the existing bootstrap
-   query set:
+- `GET` → `{catalogId: string | null}` with `Cache-Control: no-store`.
+- `PUT {name: string, catalogId?: string | null}` → `{name, catalogId}` after the transaction commits.
 
-   ```ts
-   // apps/ui/lib/desktop/server/store.ts (root-owned)
-   import { readDesktopWorkspaceIcon } from './workspace-icon'
-   // alongside the existing parallel reads:
-   const [profile, workspace, agents, appearance, iconCatalogId] = await Promise.all([...,
-       openDesktopDatabase(runtime.dataRoot).then(db => readDesktopWorkspaceIcon(db))])
-   // in the returned bootstrap object:
-   workspace: { id: 1, name: String(workspace.rows[0].name) },
-   iconCatalogId,
-   ```
+The name is trimmed and must contain 1–60 characters. A non-null icon ID must match the exact
+allowlist. Unknown fields or invalid input return 400 using the existing `{error: string}`
+response shape. Validation happens before changing the workspace name or icon.
 
-   `readDesktopWorkspaceIcon` runs the table initializer itself, so no central schema edit is
-   needed and existing databases pick the table up on first use.
+PUT updates the name and optional icon in **one SQLite write transaction**. Omitting `catalogId`
+leaves the current icon row untouched. Explicit `null` removes the selection and restores the
+default illustration; this reset is supported by the API without requiring a reset control in
+the picker. An icon insert, update or reset failure rolls the name back too. There is no preceding
+PATCH to `/api/desktop/settings`, no partial-success callback, and no second save for the icon.
+The response is read from the saved rows and returned only after commit.
 
-2. **Workspace menu pill.** In `DesktopWorkspaceMenu` (root-owned), pass the bundled URL for
-   the persisted catalog ID, keeping the current default as the fallback:
+Reads validate persisted IDs against the catalog. A corrupt or obsolete stored value returns
+`null` rather than an arbitrary URL. Name-only saves preserve the underlying selection, while a
+new valid pick can repair it. A missing workspace returns 404 instead of creating an orphan icon.
+The route uses the standard desktop session-cookie/host checks and same-origin mutation check.
 
-   ```tsx
-   <WorkspacePill name={workspaceName} iconUrl={desktopWorkspaceIconUrl(iconCatalogId) ?? '/pricing/solo.png'}
-       aria-label={`Workspace menu, ${workspaceName}`} ... />
-   ```
+## Mounted UI contract
 
-   `desktopWorkspaceIconUrl` resolves only catalog members, so a stored ID can never produce an
-   arbitrary path. `WorkspacePill`'s `fallbackIconUrl` stays available if the integration wants
-   a second fallback.
+`DesktopWorkspaceSettings` follows the original dialog design. Cancel writes nothing. Save sends
+one atomic PUT and publishes the returned committed name and catalog ID through `onSaved`.
+A failed save leaves the user's draft available to retry and does not report a partial rename.
+A failed icon read is explicit and retryable; name-only save can preserve the persisted icon
+without guessing its value from a failed GET.
 
-3. **Mount the dialog.** Root decides where the entry point lives (the original reached it from
-   the switcher's Settings item). The component is self-contained:
+Root-owned App/bootstrap/menu wiring supplies the persisted icon to mounted workspace surfaces:
 
-   ```tsx
-   <DesktopWorkspaceSettings
-       open={workspaceSettingsOpen}
-       onOpenChange={setWorkspaceSettingsOpen}
-       workspaceName={workspaceName}
-       onSaved={saved => { setWorkspaceName(saved.name); setIconCatalogId(saved.iconCatalogId ?? null) }}
-   />
-   ```
+```tsx
+<WorkspacePill
+    name={workspaceName}
+    iconUrl={desktopWorkspaceIconUrl(iconCatalogId) ?? '/pricing/solo.png'}
+/>
+```
 
-   `onSaved` is the refresh across mounted surfaces: the name state feeds the settings header
-   and the icon state feeds the pill, both of which already render from `DesktopApp` state. It
-   fires after the writes resolve and again reports the name even when only the icon write
-   failed. `iconCatalogId` is `null` when the workspace has no icon and omitted when the dialog
-   could not read the saved icon, so mounted surfaces keep what they already show.
+Bootstrap uses `readDesktopWorkspaceIcon(db)` so the saved selection survives restart. The
+validated catalog URL helper is also the fallback boundary for mounted surfaces. The settings
+entry point uses existing app navigation/dialog/quit guards; opening it does not replace the
+board or discard coworker drafts.
 
-4. **Restart.** The icon persists in the local `app.db` (`desktop_workspace_icon`) and is
-   restored by the bootstrap read above; nothing else is required.
+## Authored coverage
 
-## Remaining limits
+The API regressions cover authenticated reads and same-origin saves, default selection, trimmed
+names, valid-name limits, unknown/path/URL IDs, strict input fields, name-only preservation,
+explicit reset, restart persistence, corrupt stored values, missing workspace and the foreign
+key. SQLite failure triggers exercise rollback for icon insert, update and reset, followed by
+successful retry. A failed lazy initializer is verified to remain retryable.
 
-- Nothing was executed in this lane: tests, type checks, lint and builds belong to the
-  integration owner. The authored cases live in `DesktopWorkspaceSettings.test.tsx`.
-- The slice covers the built-in illustrations only. Arbitrary uploads, website-logo lookup,
-  remote logo links and rehosting are deferred upstream features and have no controls here.
-- The desktop workspace has no seeded icon; until one is picked the pill keeps its current
-  default and the dialog's preview renders the muted empty block, like the original form's
-  empty `icon_url` case.
-- The name write uses the existing `action: 'workspace'` settings change and the icon write
-  uses this lane's route; the two writes are separate requests, so a failed icon write can
-  leave a saved rename behind. That state is reported through `onSaved` and surfaced in the
-  dialog for retry, unlike the original's single all-or-nothing request.
-- The 50 bundled illustrations ship only to the desktop build's public directory (the staged UI
-  copies all of `apps/ui/public`); the web app keeps using its hosted URLs and does not
-  reference this directory.
+Component regressions cover the original layout, selection/expand behavior, one atomic request,
+returned committed state, load/save errors and Cancel. All execution and native verification
+remain root-owned.

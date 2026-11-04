@@ -4,6 +4,7 @@ import { desktopTheme } from '../settings'
 import { DesktopHttpError } from './auth'
 import type { Client, InStatement, Row } from '@libsql/client'
 import { readDesktopRecentCoworkers } from './recent-coworkers'
+import { readDesktopWorkspaceIcon } from './workspace-icon'
 
 export type DesktopAgent = {
     id: string
@@ -59,12 +60,13 @@ export function sessionOf(row: Row): DesktopSession {
 }
 
 export async function readDesktopBootstrap(db: Client) {
-    const [profile, workspace, agents, appearance, recentCoworkers] = await Promise.all([
+    const [profile, workspace, agents, appearance, recentCoworkers, iconCatalogId] = await Promise.all([
         db.execute('SELECT id, display_name FROM desktop_profile WHERE id = 1'),
         db.execute('SELECT id, name FROM desktop_workspace WHERE id = 1'),
         listDesktopAgents(db),
         db.execute('SELECT theme FROM desktop_appearance WHERE workspace_id = 1'),
         readDesktopRecentCoworkers(db),
+        readDesktopWorkspaceIcon(db),
     ])
     return {
         profile: { id: 1, displayName: String(profile.rows[0].display_name) },
@@ -72,6 +74,7 @@ export async function readDesktopBootstrap(db: Client) {
         agents,
         theme: desktopTheme.parse(appearance.rows[0]?.theme ?? 'system'),
         recentCoworkers,
+        iconCatalogId,
     }
 }
 

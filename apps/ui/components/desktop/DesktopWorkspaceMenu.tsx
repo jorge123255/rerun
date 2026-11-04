@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
 import { useRef } from 'react'
+import { desktopWorkspaceIconUrl } from '@/lib/desktop/icon-catalog'
 
-export function DesktopWorkspaceMenu({ workspaceName, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onControlCenter }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter }: {
     workspaceName: string
+    iconCatalogId?: string | null
     profileName: string
     agents: DesktopAgentView[]
     selected: string | null
@@ -17,13 +19,14 @@ export function DesktopWorkspaceMenu({ workspaceName, profileName, agents, selec
     onBoard: () => void
     onCoworker: (id: string) => void
     onSettings: () => void
+    onWorkspaceSettings?: () => void
     onControlCenter?: () => void
 }) {
     const openingControlCenter = useRef(false)
     return <nav aria-label="Workspace" className="flex min-w-0 flex-wrap items-center gap-1.5">
         <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-                <WorkspacePill name={workspaceName} iconUrl="/pricing/solo.png" aria-label={`Workspace menu, ${workspaceName}`} />
+                <WorkspacePill name={workspaceName} iconUrl={desktopWorkspaceIconUrl(iconCatalogId ?? null) ?? '/pricing/solo.png'} aria-label={`Workspace menu, ${workspaceName}`} />
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-64" onCloseAutoFocus={event => {
                 if (openingControlCenter.current) event.preventDefault()
@@ -33,6 +36,7 @@ export function DesktopWorkspaceMenu({ workspaceName, profileName, agents, selec
                 <DropdownMenuItem onSelect={onBoard}><LayoutGrid /> Team board</DropdownMenuItem>
                 {onControlCenter && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> Control center</DropdownMenuItem>}
                 <DropdownMenuItem onSelect={onSettings}><Settings /> Settings</DropdownMenuItem>
+                {onWorkspaceSettings && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onWorkspaceSettings() }}><Settings /> Workspace settings</DropdownMenuItem>}
                 {agents.length > 0 && <><DropdownMenuSeparator /><DropdownMenuLabel>Coworkers</DropdownMenuLabel></>}
                 {agents.map(agent => <DropdownMenuItem key={agent.id} aria-current={selected === agent.id ? 'true' : undefined} onSelect={() => onCoworker(agent.id)}>
                     <span className="truncate">{agent.name}</span>
