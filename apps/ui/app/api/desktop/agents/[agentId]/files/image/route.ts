@@ -4,7 +4,7 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 export const dynamic = 'force-dynamic'
 type Context = { params: Promise<{ agentId: string }> }
 
-/** Bytes of one existing raster in this coworker's workspace. Chat file cards do not use this route. */
+/** Authenticated bytes of one existing raster, used by Files and this coworker's result cards. */
 export function GET(request: Request, { params }: Context) {
     return desktopRoute(request, async runtime => {
         const { agentId } = await params
