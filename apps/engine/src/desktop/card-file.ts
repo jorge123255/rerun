@@ -1,4 +1,4 @@
-import { CARD_MAX_AUDIO_BYTES, CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath, type FileCard, type FileCardEntry } from '@rerun/contracts'
+import { CARD_MAX_AUDIO_BYTES, CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, CARD_MAX_VIDEO_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath, type FileCard, type FileCardEntry } from '@rerun/contracts'
 import { tool, type ToolSet } from 'ai'
 import { basename, isAbsolute, join, relative } from 'node:path'
 import { z } from 'zod'
@@ -17,15 +17,19 @@ const imageTooLarge = 'Result card images can only be up to 8 MB.'
 const imageEmpty = 'That image is empty and can’t be previewed.'
 const audioTooLarge = 'Result card audio files can only be up to 16 MB.'
 const audioEmpty = 'That audio file is empty and can’t be previewed.'
-const imageBudget = 'Those images would exceed the 24 MB result-card preview budget. Show fewer images.'
-const badPath = 'Use a visible .txt, .md, .png, .jpg, .jpeg, .webp, .gif, .wav or .mp3 relative file path inside this coworker’s workspace.'
+const videoTooLarge = 'Result card videos can only be up to 16 MB.'
+const videoEmpty = 'That video is empty and can’t be previewed.'
+const imageBudget = 'Those images and videos would exceed the 24 MB result-card preview budget. Show fewer media files.'
+const badPath = 'Use a visible .txt, .md, .png, .jpg, .jpeg, .webp, .gif, .wav, .mp3 or .mp4 relative file path inside this coworker’s workspace.'
 const shared = 'Shared files are not available in a Mac result card.'
 
 const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
 const CARD_AUDIO = /\.(?:wav|mp3)$/i
+const CARD_VIDEO = /\.mp4$/i
 const isCardImage = (path: string) => CARD_IMAGE.test(path)
 const isCardAudio = (path: string) => CARD_AUDIO.test(path)
-const isCardPath = (path: string) => isDesktopAttachmentPath(path) || isCardImage(path) || isCardAudio(path)
+const isCardVideo = (path: string) => CARD_VIDEO.test(path)
+const isCardPath = (path: string) => isDesktopAttachmentPath(path) || isCardImage(path) || isCardAudio(path) || isCardVideo(path)
 
 function assertScope(scope: 'agent' | 'shared' | undefined) {
     // A card is only a reference to a file this coworker owns. The shared space has no desktop
@@ -63,10 +67,12 @@ async function entryFor(ctx: RunContext, path: string, scope: 'agent' | 'shared'
             if (!info.isFile() || info.nlink !== 1n) throw new CardFileError(unavailable)
             const image = isCardImage(rel)
             const audio = isCardAudio(rel)
+            const video = isCardVideo(rel)
             if (image && info.size === 0n) throw new CardFileError(imageEmpty)
             if (audio && info.size === 0n) throw new CardFileError(audioEmpty)
-            const max = image ? CARD_MAX_IMAGE_BYTES : audio ? CARD_MAX_AUDIO_BYTES : DESKTOP_ATTACHMENT_MAX_BYTES
-            if (info.size > BigInt(max)) throw new CardFileError(image ? imageTooLarge : audio ? audioTooLarge : tooLarge)
+            if (video && info.size === 0n) throw new CardFileError(videoEmpty)
+            const max = image ? CARD_MAX_IMAGE_BYTES : video ? CARD_MAX_VIDEO_BYTES : audio ? CARD_MAX_AUDIO_BYTES : DESKTOP_ATTACHMENT_MAX_BYTES
+            if (info.size > BigInt(max)) throw new CardFileError(image ? imageTooLarge : video ? videoTooLarge : audio ? audioTooLarge : tooLarge)
             // Pin the same inode twice: a path moved into another workspace, or replaced while this
             // card is being made, must not appear as this coworker's file.
             const current = await openWithoutLinks(target)
@@ -76,7 +82,7 @@ async function entryFor(ctx: RunContext, path: string, scope: 'agent' | 'shared'
                     || check.size !== info.size || check.ctimeNs !== info.ctimeNs) throw new CardFileError(unavailable)
             } finally { await current.close() }
             await requireDesktopToolGrant(ctx, 'cardFile')
-            return { path: rel, name: basename(rel), size: Number(info.size), scope: 'agent', ...(image || audio ? { identity: `${info.dev}:${info.ino}` } : {}) }
+            return { path: rel, name: basename(rel), size: Number(info.size), scope: 'agent', ...(image || audio || video ? { identity: `${info.dev}:${info.ino}` } : {}) }
         } finally { await handle.close() }
     } catch (error) {
         ctx.abortSignal?.throwIfAborted()
@@ -91,7 +97,7 @@ export function desktopCardFileTools(ctx: RunContext): ToolSet {
     return {
         card_file: tool({
             description:
-                'Show existing .txt, .md, static .png/.jpg/.jpeg/.webp/.gif, or .wav/.mp3 files already saved in this coworker’s persistent Files workspace as preview tiles in chat. Pass visible paths relative to Files; up to 12 files, 32 KiB per text file, 8 MB per image, 16 MB per audio file, and 24 MB of images per card. Animated GIF/APNG/WebP, SVG, PDF, video, other audio formats and other formats are unavailable. Audio is fetched only when opened and plays only after the user presses play. This does not save, import or publish a file. Native Codex commands and edits use a separate temporary folder whose changes are discarded: never use this tool to deliver those changes, because a matching relative path here would show the persistent original instead. Use it before asking the user to review or choose among existing Files documents, images or audio. Opening a tile reads the current persistent file, not frozen bytes; the image endpoint rechecks the bytes and dimensions when it opens, and the audio endpoint rechecks the bytes when it opens. The tool does not read content back to you. Shared files, folders and links are unavailable.',
+                'Show existing .txt, .md, static .png/.jpg/.jpeg/.webp/.gif, .wav/.mp3, or .mp4 files already saved in this coworker’s persistent Files workspace as preview tiles in chat. Pass visible paths relative to Files; up to 12 files, 32 KiB per text file, 8 MB per image, 16 MB per audio file, 16 MB per video, and 24 MB of images and videos combined per card. Animated GIF/APNG/WebP, SVG, PDF, other audio formats, other video formats and other formats are unavailable. Audio is fetched only when opened and plays only after the user presses play. MP4 previews show the first frame and play only after the user acts; only visible album previews are loaded. This does not save, import or publish a file. Native Codex commands and edits use a separate temporary folder whose changes are discarded: never use this tool to deliver those changes, because a matching relative path here would show the persistent original instead. Use it before asking the user to review or choose among existing Files documents, images, audio or video. Opening a tile reads the current persistent file, not frozen bytes; the media endpoints recheck the bytes, dimensions and identity when they open. The tool does not read content back to you. Shared files, folders and links are unavailable.',
             inputSchema: z.object({
                 files: jsonTolerantArray(
                     z.array(z.object({
@@ -113,8 +119,8 @@ export function desktopCardFileTools(ctx: RunContext): ToolSet {
                 }
                 // A partial card would hide from the model that one of the files was missing.
                 if (failures.length) return `Could not show ${failures.length === 1 ? 'that file' : 'those files'}, nothing was shown:\n${failures.join('\n')}`
-                const imageBytes = shown.reduce((sum, file) => sum + (isCardImage(file.path) ? file.size : 0), 0)
-                if (imageBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return `Could not show those files, nothing was shown:\n${imageBudget}`
+                const mediaBytes = shown.reduce((sum, file) => sum + (isCardImage(file.path) || isCardVideo(file.path) ? file.size : 0), 0)
+                if (mediaBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return `Could not show those files, nothing was shown:\n${imageBudget}`
                 await requireDesktopToolGrant(ctx, 'cardFile')
                 const card: FileCard = { kind: 'file', files: shown }
                 return JSON.stringify(card)

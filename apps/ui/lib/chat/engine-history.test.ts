@@ -378,3 +378,14 @@ it('keeps a validated recorded audio card and its endpoint identity across a reo
         state: 'output-available', input: {}, output: JSON.stringify(card),
     })
 })
+
+it('keeps a validated recorded MP4 card and its endpoint identity across a reopened chat', () => {
+    const card = { kind: 'file', files: [{ path: 'shots/clip.mp4', name: 'clip.mp4', size: 1024, scope: 'agent', identity: '9:2' }] }
+    const part = { type: 'tool-card_file' as const, toolName: 'card_file', toolCallId: 'card-video', state: 'output-available' as const,
+        input: { files: [{ path: 'shots/clip.mp4' }] }, output: JSON.stringify(card) }
+    const [result] = publicDesktopHistory([{ id: 'engine-card-video', role: 'assistant', parts: [part] }])
+    expect(result.parts[0]).toEqual({
+        type: 'tool-card_file', toolName: 'card_file', toolCallId: 'card-video', desktopPreview: true,
+        state: 'output-available', input: {}, output: JSON.stringify(card),
+    })
+})

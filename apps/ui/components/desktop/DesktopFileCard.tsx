@@ -5,46 +5,61 @@ import { MEDIA_CELL_ASPECT } from '@/components/chat/ChatVideoTile'
 import { CARD_MAX_IMAGE_TOTAL_BYTES, type FileCard, type FileCardEntry } from '@rerun/contracts'
 import { cn } from '@/lib/utils'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { DesktopCardVideoFrame, DesktopCardVideoTile } from './DesktopCardVideoTile'
 import { DesktopFileLightbox } from './DesktopFileLightbox'
-import { DesktopCardError, isDesktopCardImage, readDesktopCardImage } from '@/lib/desktop/file-card'
+import { DesktopCardError, isDesktopCardImage, isDesktopCardVideo, readDesktopCardImage, readDesktopCardVideo } from '@/lib/desktop/file-card'
 
-type ImageLoad = { status: 'loading' } | { status: 'ready'; src: string } | { status: 'error'; message: string }
-type ImageState = { key: string; items: ReadonlyMap<number, ImageLoad> }
-type ImageItem = { index: number; file: FileCardEntry }
-type LoadedImageItem = ImageItem & { load: ImageLoad }
+type MediaKind = 'image' | 'video'
+type MediaLoad = { status: 'loading' } | { status: 'ready'; src: string } | { status: 'error'; message: string }
+type MediaState = { key: string; items: ReadonlyMap<number, MediaLoad> }
+type MediaItem = { index: number; file: FileCardEntry; kind: MediaKind }
+type LoadedMediaItem = MediaItem & { load: MediaLoad }
 
-const EMPTY_IMAGES: ReadonlyMap<number, ImageLoad> = new Map()
+const EMPTY_MEDIA: ReadonlyMap<number, MediaLoad> = new Map()
 const MAX_ALBUM_TILES = 4
+const MEDIA_BUDGET_MESSAGE = 'This card’s images and videos exceed the 24 MB preview budget.'
 
-function imageItems(files: readonly FileCardEntry[]): ImageItem[] {
-    return files.flatMap((file, index) => isDesktopCardImage(file.path) ? [{ index, file }] : [])
+function mediaItems(files: readonly FileCardEntry[]): MediaItem[] {
+    return files.flatMap((file, index) => {
+        const kind: MediaKind | null = isDesktopCardImage(file.path) ? 'image' : isDesktopCardVideo(file.path) ? 'video' : null
+        return kind ? [{ index, file, kind }] : []
+    })
 }
 
-function imageMessage(error: unknown): string {
-    return error instanceof DesktopCardError ? error.message : 'This image can’t be displayed.'
+function mediaMessage(error: unknown, kind: MediaKind): string {
+    if (error instanceof DesktopCardError) return error.message
+    return kind === 'video' ? 'This video can’t be played.' : 'This image can’t be displayed.'
 }
 
-function ImagePlaceholder({ shape = 'cell', status, message }: { shape?: 'cell' | 'wide' | 'natural'; status: 'loading' | 'error'; message?: string }) {
+function MediaPlaceholder({ shape = 'cell', kind, status, message }: {
+    shape?: 'cell' | 'wide' | 'natural'
+    kind: MediaKind
+    status: 'loading' | 'error'
+    message?: string
+}) {
     return (
         <span className={cn(
             'grid place-items-center overflow-hidden rounded-2xl bg-muted px-2 text-center text-xs',
             shape === 'natural' ? 'h-60 w-64 max-w-full' : cn('w-full', MEDIA_CELL_ASPECT[shape]),
             status === 'error' ? 'text-destructive' : 'text-muted-foreground',
         )}>
-            {status === 'error' ? message ?? 'This image can’t be displayed' : 'Loading image…'}
+            {status === 'error'
+                ? message ?? (kind === 'video' ? 'This video can’t be played' : 'This image can’t be displayed')
+                : kind === 'video' ? 'Loading video…' : 'Loading image…'}
         </span>
     )
 }
 
 function DesktopMediaTile({ item, shape, onOpen, onError }: {
-    item: LoadedImageItem
+    item: LoadedMediaItem
     shape: 'natural' | 'cell' | 'wide'
     onOpen: () => void
     onError: (index: number, src: string) => void
 }) {
-    const { file, index } = item
+    const { file, index, kind } = item
     const load = item.load
     if (load.status === 'ready') {
+        if (kind === 'video') return <DesktopCardVideoTile src={load.src} name={file.name} shape={shape} onOpen={onOpen} />
         const natural = shape === 'natural'
         return (
             <button
@@ -63,13 +78,13 @@ function DesktopMediaTile({ item, shape, onOpen, onError }: {
     }
     return (
         <button type="button" onClick={onOpen} title={file.name} aria-label={`Open ${file.name}`} className={cn('block text-left', shape === 'natural' ? 'max-w-full' : 'w-full')}>
-            <ImagePlaceholder shape={shape === 'natural' ? 'natural' : shape} status={load.status} message={load.status === 'error' ? load.message : undefined} />
+            <MediaPlaceholder shape={shape === 'natural' ? 'natural' : shape} kind={kind} status={load.status} message={load.status === 'error' ? load.message : undefined} />
         </button>
     )
 }
 
-function DesktopImageTile({ item, disabled, onOpen, onError }: {
-    item: LoadedImageItem
+function DesktopMixedImageTile({ item, disabled, onOpen, onError }: {
+    item: LoadedMediaItem
     disabled: boolean
     onOpen: () => void
     onError: (index: number, src: string) => void
@@ -96,8 +111,35 @@ function DesktopImageTile({ item, disabled, onOpen, onError }: {
     )
 }
 
+function DesktopMixedVideoTile({ item, disabled, onOpen }: {
+    item: LoadedMediaItem
+    disabled: boolean
+    onOpen: () => void
+}) {
+    const { file } = item
+    const load = item.load
+    if (load.status === 'ready') {
+        return <DesktopCardVideoFrame src={load.src} name={file.name} disabled={disabled} onOpen={onOpen} />
+    }
+    const failed = load.status === 'error'
+    return (
+        <button
+            type="button"
+            onClick={onOpen}
+            disabled={disabled}
+            title={failed ? `${file.name} — ${load.message}` : file.name}
+            aria-label={`Open ${file.name}`}
+            className="relative size-28 overflow-hidden rounded-2xl bg-muted p-1.5 text-center transition-opacity disabled:cursor-default enabled:hover:opacity-90"
+        >
+            <span className={cn('grid size-full place-items-center text-[10px] leading-tight', failed ? 'text-destructive' : 'text-muted-foreground')}>
+                {failed ? 'Video unavailable' : 'Loading…'}
+            </span>
+        </button>
+    )
+}
+
 function DesktopMediaAlbum({ items, onOpen, onError }: {
-    items: readonly LoadedImageItem[]
+    items: readonly LoadedMediaItem[]
     onOpen: (index: number) => void
     onError: (index: number, src: string) => void
 }) {
@@ -139,74 +181,77 @@ function DesktopMediaAlbum({ items, onOpen, onError }: {
 }
 
 /**
- * A recorded card_file result on the Mac. Text keeps the original tile and text preview. Images
- * use the original single-image album, multi-image grid and captions; mixed cards keep the original
- * flex row of square tiles. Audio keeps the original square waveform tile and is fetched only when
- * its lightbox opens. Image bytes come only from this conversation's authenticated image route, one
- * released object URL per tile, with replaced, deleted and invalid images shown explicitly.
+ * A recorded card_file result on the Mac. Text keeps the original tile and text preview. Images and
+ * MP4 videos use the original single-item album, two-column album and captions; mixed cards keep the
+ * original flex row of square tiles. Audio keeps the original square waveform tile and is fetched
+ * only when its lightbox opens. Media bytes come only from this conversation's authenticated routes,
+ * one released object URL per tile, with replaced, deleted and invalid files shown explicitly. Only
+ * the visible album previews are fetched; the hidden ones are fetched by the paged lightbox.
  */
 export function DesktopFileCard({ agentId, card }: { agentId?: string; card: FileCard }) {
     const [openIndex, setOpenIndex] = useState<number | null>(null)
     const files = card.files
-    const images = imageItems(files)
-    const allImages = files.length > 0 && images.length === files.length
+    const media = mediaItems(files)
+    const allMedia = files.length > 0 && media.length === files.length
     // The album shows at most four tiles; the hidden ones are fetched by the paged lightbox when
-    // the user reaches them. Mixed cards show every image, so they all get thumbnails.
-    const thumbnails = allImages ? images.slice(0, MAX_ALBUM_TILES) : images
-    const imageKey = `${agentId ?? ''}\u0000${thumbnails.map(({ index, file }) => `${index}:${file.path}:${file.identity ?? ''}`).join('\u0000')}`
-    const imagesRef = useRef(thumbnails)
-    imagesRef.current = thumbnails
-    const [state, setState] = useState<ImageState>({ key: '', items: EMPTY_IMAGES })
+    // the user reaches them. Mixed cards show every image and video, so they all get thumbnails.
+    const thumbnails = allMedia ? media.slice(0, MAX_ALBUM_TILES) : media
+    const mediaKey = `${agentId ?? ''}\u0000${thumbnails.map(({ index, file, kind }) => `${index}:${kind}:${file.path}:${file.identity ?? ''}`).join('\u0000')}`
+    const mediaRef = useRef(thumbnails)
+    mediaRef.current = thumbnails
+    const [state, setState] = useState<MediaState>({ key: '', items: EMPTY_MEDIA })
 
     useEffect(() => {
-        const current = imagesRef.current
+        const current = mediaRef.current
         if (!current.length) {
-            setState({ key: imageKey, items: EMPTY_IMAGES })
+            setState({ key: mediaKey, items: EMPTY_MEDIA })
             return
         }
         const controller = new AbortController()
         let active = true
         const urls = new Map<number, string>()
-        const loadingItems = new Map<number, ImageLoad>()
+        const loadingItems = new Map<number, MediaLoad>()
         for (const { index } of current) loadingItems.set(index, { status: 'loading' })
-        setState({ key: imageKey, items: loadingItems })
+        setState({ key: mediaKey, items: loadingItems })
         if (!agentId) {
-            const unavailableItems = new Map<number, ImageLoad>()
+            const unavailableItems = new Map<number, MediaLoad>()
             for (const { index } of current) unavailableItems.set(index, { status: 'error', message: 'This conversation has no workspace.' })
-            setState({ key: imageKey, items: unavailableItems })
+            setState({ key: mediaKey, items: unavailableItems })
             return () => controller.abort()
         }
         void (async () => {
             let total = 0
             let overBudget = false
-            for (const { index, file } of current) {
+            for (const { index, file, kind } of current) {
                 if (!active) return
                 if (overBudget) {
-                    setState(previous => previous.key === imageKey
-                        ? { key: imageKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: 'This card’s images exceed the 24 MB preview budget.' }) }
+                    setState(previous => previous.key === mediaKey
+                        ? { key: mediaKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: MEDIA_BUDGET_MESSAGE }) }
                         : previous)
                     continue
                 }
                 try {
-                    const { blob } = await readDesktopCardImage(agentId, file.path, file.identity, controller.signal)
+                    const { blob } = kind === 'video'
+                        ? await readDesktopCardVideo(agentId, file.path, file.identity, controller.signal)
+                        : await readDesktopCardImage(agentId, file.path, file.identity, controller.signal)
                     if (!active) return
                     if (total + blob.size > CARD_MAX_IMAGE_TOTAL_BYTES) {
                         overBudget = true
-                        setState(previous => previous.key === imageKey
-                            ? { key: imageKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: 'This card’s images exceed the 24 MB preview budget.' }) }
+                        setState(previous => previous.key === mediaKey
+                            ? { key: mediaKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: MEDIA_BUDGET_MESSAGE }) }
                             : previous)
                         continue
                     }
                     total += blob.size
                     const src = URL.createObjectURL(blob)
                     urls.set(index, src)
-                    setState(previous => previous.key === imageKey
-                        ? { key: imageKey, items: new Map(previous.items).set(index, { status: 'ready' as const, src }) }
+                    setState(previous => previous.key === mediaKey
+                        ? { key: mediaKey, items: new Map(previous.items).set(index, { status: 'ready' as const, src }) }
                         : previous)
                 } catch (error) {
                     if (!active || controller.signal.aborted) return
-                    setState(previous => previous.key === imageKey
-                        ? { key: imageKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: imageMessage(error) }) }
+                    setState(previous => previous.key === mediaKey
+                        ? { key: mediaKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: mediaMessage(error, kind) }) }
                         : previous)
                 }
             }
@@ -217,32 +262,40 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
             for (const url of urls.values()) URL.revokeObjectURL(url)
             urls.clear()
         }
-    }, [agentId, imageKey])
+    }, [agentId, mediaKey])
 
-    const visible = state.key === imageKey ? state.items : EMPTY_IMAGES
-    const loadOf = (index: number): ImageLoad => visible.get(index) ?? { status: 'loading' }
-    const withLoad = (item: ImageItem): LoadedImageItem => ({ ...item, load: loadOf(item.index) })
+    const visible = state.key === mediaKey ? state.items : EMPTY_MEDIA
+    const loadOf = (index: number): MediaLoad => visible.get(index) ?? { status: 'loading' }
+    const withLoad = (item: MediaItem): LoadedMediaItem => ({ ...item, load: loadOf(item.index) })
 
-    const failImage = useCallback((index: number, src: string) => {
+    const failMedia = useCallback((index: number, src: string) => {
         URL.revokeObjectURL(src)
-        setState(previous => previous.key === imageKey
-            ? { key: imageKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: 'This image can’t be displayed.' }) }
+        const item = media.find(candidate => candidate.index === index)
+        setState(previous => previous.key === mediaKey
+            ? { key: mediaKey, items: new Map(previous.items).set(index, { status: 'error' as const, message: item?.kind === 'video' ? 'This video can’t be played.' : 'This image can’t be displayed.' }) }
             : previous)
-    }, [imageKey])
+    }, [media, mediaKey])
 
     const opened = openIndex === null ? null : files[openIndex]
     return <div data-file-card="true" className="min-w-0 w-full">
-        {allImages ? (
-            <DesktopMediaAlbum items={images.map(withLoad)} onOpen={setOpenIndex} onError={failImage} />
+        {allMedia ? (
+            <DesktopMediaAlbum items={media.map(withLoad)} onOpen={setOpenIndex} onError={failMedia} />
         ) : (
             <div className="flex flex-wrap gap-1.5">
                 {files.map((file, index) => isDesktopCardImage(file.path) ? (
-                    <DesktopImageTile
+                    <DesktopMixedImageTile
                         key={`${index}:${file.path}`}
-                        item={withLoad({ index, file })}
+                        item={withLoad({ index, file, kind: 'image' })}
                         disabled={!agentId}
                         onOpen={() => setOpenIndex(index)}
-                        onError={failImage}
+                        onError={failMedia}
+                    />
+                ) : isDesktopCardVideo(file.path) ? (
+                    <DesktopMixedVideoTile
+                        key={`${index}:${file.path}`}
+                        item={withLoad({ index, file, kind: 'video' })}
+                        disabled={!agentId}
+                        onOpen={() => setOpenIndex(index)}
                     />
                 ) : (
                     <AttachmentTile

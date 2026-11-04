@@ -1,5 +1,5 @@
 import {
-    CARD_MAX_AUDIO_BYTES, CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES,
+    CARD_MAX_AUDIO_BYTES, CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, CARD_MAX_VIDEO_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES,
     fileCardSchema, isDesktopAttachmentPath, type FileCard, type FileCardEntry,
 } from '@rerun/contracts'
 
@@ -12,12 +12,15 @@ const visiblePath = (path: string) => path.length <= 4096 && !/[\\\p{Cc}]/u.test
 const textPath = (path: string) => isDesktopAttachmentPath(path) && !path.includes('\\') && !hiddenSegment(path)
 const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
 const CARD_AUDIO = /\.(?:wav|mp3)$/i
+const CARD_VIDEO = /\.mp4$/i
 const imagePath = (path: string) => visiblePath(path) && CARD_IMAGE.test(path)
 const audioPath = (path: string) => visiblePath(path) && CARD_AUDIO.test(path)
+const videoPath = (path: string) => visiblePath(path) && CARD_VIDEO.test(path)
 const validName = (name: string) => name.length > 0 && name.length <= 255 && !/[\\/\p{Cc}]/u.test(name)
 const CARD_IDENTITY = /^\d{1,24}:\d{1,24}$/
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const AUDIO_TYPES = new Set(['audio/wav', 'audio/mpeg'])
+const VIDEO_TYPES = new Set(['video/mp4'])
 
 /** A card's file is an image (not a document) when its path names a supported static raster. */
 export function isDesktopCardImage(path: string): boolean {
@@ -27,6 +30,11 @@ export function isDesktopCardImage(path: string): boolean {
 /** A card's file is audio when its path names a supported WAV or MP3. */
 export function isDesktopCardAudio(path: string): boolean {
     return audioPath(path)
+}
+
+/** A card's file is video when its path names a supported MP4. */
+export function isDesktopCardVideo(path: string): boolean {
+    return videoPath(path)
 }
 
 function candidate(value: unknown, depth = 0): unknown {
@@ -47,10 +55,10 @@ function candidate(value: unknown, depth = 0): unknown {
  * Validate one recorded card_file result for the Mac conversation. It accepts the live tool output
  * (a JSON string), a stored text/json wrapper, a parsed card, and the legacy single-file card. Every
  * file must still look like a visible reference of this coworker: a .txt/.md document, a static
- * PNG/JPEG/WebP/GIF image, or a WAV/MP3 audio file. Images carry the endpoint's inode identity and
- * its 8 MiB / 24 MiB card bounds; audio carries the audio endpoint's identity and 16 MiB bound;
- * text keeps its 32 KiB bound. Anything else returns undefined so the reply can fall back to the
- * real tool result instead of drawing a fabricated, replaced or partial card.
+ * PNG/JPEG/WebP/GIF image, a WAV/MP3 audio file, or an MP4 video. Images and videos share the
+ * endpoint identity and the 24 MiB combined preview budget; images stay 8 MiB, video 16 MiB, audio
+ * 16 MiB; text keeps its 32 KiB bound. Anything else returns undefined so the reply can fall back to
+ * the real tool result instead of drawing a fabricated, replaced or partial card.
  */
 export function desktopFileCardOf(value: unknown): FileCard | undefined {
     const parsed = fileCardSchema.safeParse(candidate(value))
@@ -58,7 +66,7 @@ export function desktopFileCardOf(value: unknown): FileCard | undefined {
     const { files } = parsed.data
     if (files.length < 1 || files.length > CARD_MAX_FILES) return undefined
     const normalized: FileCardEntry[] = []
-    let imageBytes = 0
+    let mediaBytes = 0
     for (const file of files) {
         if (file.scope !== 'agent') return undefined
         if (!validName(file.name) || file.name !== file.path.split('/').at(-1)) return undefined
@@ -66,8 +74,14 @@ export function desktopFileCardOf(value: unknown): FileCard | undefined {
         if (imagePath(file.path)) {
             if (file.size === 0 || file.size > CARD_MAX_IMAGE_BYTES) return undefined
             if (!file.identity || !CARD_IDENTITY.test(file.identity)) return undefined
-            imageBytes += file.size
-            if (imageBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return undefined
+            mediaBytes += file.size
+            if (mediaBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return undefined
+            normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
+        } else if (videoPath(file.path)) {
+            if (file.size === 0 || file.size > CARD_MAX_VIDEO_BYTES) return undefined
+            if (!file.identity || !CARD_IDENTITY.test(file.identity)) return undefined
+            mediaBytes += file.size
+            if (mediaBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return undefined
             normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
         } else if (audioPath(file.path)) {
             if (file.size === 0 || file.size > CARD_MAX_AUDIO_BYTES) return undefined
@@ -127,6 +141,24 @@ export async function readDesktopCardAudio(agentId: string, path: string, identi
     const contentType = (response.headers.get('content-type') ?? blob.type).split(';')[0]!.trim().toLowerCase()
     if (!AUDIO_TYPES.has(contentType) || blob.size < 1 || blob.size > CARD_MAX_AUDIO_BYTES) {
         throw new DesktopCardError('This audio file can’t be played.')
+    }
+    return { blob, contentType }
+}
+
+/** Read a card's current video through the authenticated desktop Files video route. */
+export async function readDesktopCardVideo(agentId: string, path: string, identity: string | undefined, signal?: AbortSignal): Promise<{ blob: Blob; contentType: string }> {
+    if (!videoPath(path)) throw new DesktopCardError('This file is not a supported video.')
+    if (!identity || !CARD_IDENTITY.test(identity)) throw new DesktopCardError('Send this video to preview again.')
+    const query = new URLSearchParams({ path, identity })
+    const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/files/video?${query.toString()}`, { cache: 'no-store', ...(signal && { signal }) })
+    if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        throw new DesktopCardError(typeof body?.error === 'string' ? body.error : 'This video is no longer available.')
+    }
+    const blob = await response.blob()
+    const contentType = (response.headers.get('content-type') ?? blob.type).split(';')[0]!.trim().toLowerCase()
+    if (!VIDEO_TYPES.has(contentType) || blob.size < 1 || blob.size > CARD_MAX_VIDEO_BYTES) {
+        throw new DesktopCardError('This video can’t be played.')
     }
     return { blob, contentType }
 }
