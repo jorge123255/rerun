@@ -3,7 +3,7 @@ import {createCipheriv,createDecipheriv,createHmac,randomBytes} from 'node:crypt
 import type {Client,Row} from '@libsql/client'
 import type {DesktopServiceHealth} from '@rerun/contracts'
 import type {ServicePlan} from './compiler'
-export type OwnedSkill={slug:string;directoryIdentity:string;manifestVersion:string}
+export type OwnedSkill={slug:string;directoryIdentity:string;manifestVersion:string;contentHash:string}
 export type ServiceInstall={owner:string;engineId:string;key:string;id:string;revision:string;state:'preparing'|'ready'|'error'|'disconnected'|'removing';plan:ServicePlan;skills:OwnedSkill[];toolNames:string[];health:DesktopServiceHealth;healthLaunch:string|null;installedAt:string;configured:boolean}
 export function serviceStore(db:Client,keyReader:()=>Buffer){
  const aad=(owner:string,id:string)=>Buffer.from(JSON.stringify(['desktop-service-bearer-v1',owner,id]))

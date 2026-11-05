@@ -1,7 +1,7 @@
 import {expect,it,vi} from 'vitest'
 vi.mock('server-only',()=>({}))
 import {serviceManifestSchema} from '@/lib/services/manifest'
-import {compileLocalService} from './compiler'
+import {compileLocalService,localMethodAvailability} from './compiler'
 const microsoft=serviceManifestSchema.parse({slug:'microsoft',name:'Microsoft Learn',category:'dev',mcpServers:[{name:'microsoft-learn',transport:'http',url:'https://learn.microsoft.com/api/mcp'}]})
 it('supports the real legacy Microsoft Learn anonymous shape without inventing a method',()=>{
  expect(microsoft.authMethods[0].kind).toBe('key')
@@ -20,4 +20,17 @@ it('keeps a single Bearer fixture out of the compiled plan',()=>{
  const manifest=serviceManifestSchema.parse({...microsoft,authMethods:[{id:'token',kind:'key',inputs:[{key:'TOKEN',label:'Token',type:'password',secret:true,required:true}],mcpServers:[{name:'fixture',transport:'http',url:'https://example.com/mcp',headers:{Authorization:'Bearer ${input.TOKEN}'}}]}]})
  const result=compileLocalService(manifest,'token',{TOKEN:'fixture-not-a-real-key'}, {id:'token',supported:true})
  expect(result.bearer).toBe('fixture-not-a-real-key');expect(JSON.stringify(result.plan)).not.toContain('fixture-not-a-real-key')
+})
+it('keeps validated static usage skills bundled with an anonymous HTTPS service',()=>{
+ const skill={name:'microsoft-usage',description:'Search Microsoft Learn',body:'# Usage\n\nSearch before answering.'}
+ const manifest=serviceManifestSchema.parse({...microsoft,skills:[skill]})
+ const result=compileLocalService(manifest,'default',{}, {id:'default',supported:true})
+ expect(result.plan.skills).toEqual([skill])
+ expect(localMethodAvailability(manifest,'default',{id:'default',supported:true})).toEqual({id:'default',supported:true})
+})
+it.each(['name','description','body'])('rejects credential templates in skill %s',field=>{
+ const skill={name:'usage',description:'Usage',body:'Static instructions',[field]:'${input.TOKEN}'}
+ const manifest=serviceManifestSchema.parse({...microsoft,skills:[skill]})
+ expect(()=>compileLocalService(manifest,'default',{}, {id:'default',supported:true})).toThrow('skill template')
+ expect(localMethodAvailability(manifest,'default',{id:'default',supported:true}).supported).toBe(false)
 })

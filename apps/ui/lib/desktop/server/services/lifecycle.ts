@@ -8,14 +8,17 @@ import type {DesktopRuntime} from '../runtime'
 import type {ServiceStore,ServiceInstall} from './store'
 import {compileLocalService} from './compiler'
 import {createServiceSkill,removeServiceSkill,verifyServiceSkill} from './skill-resources'
+import {syncDesktopServiceRegistry,desktopServiceRegistryName} from './service-registry'
 import {getDesktopServiceManifest,getDesktopServiceMethodAvailability} from './catalog/index'
 export type ServiceRun={engineAgentId:string;sessionId:string;runId:string}
 export type ServiceAuthority=(owner:string,action:'manage'|'use',run:ServiceRun|undefined,signal:AbortSignal)=>Promise<{engineAgentId:string;runtime:DesktopRuntime;skillsRoot:string;enabled:boolean;granted:boolean;check?:()=>void}>
 export type ServiceToolNames=(owner:string,installationId:string,names:string[],signal:AbortSignal)=>Promise<void>
-export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthority,assertToolNames:ServiceToolNames,network:typeof fetch=fetch){
+export type ServiceRegistryWriter=(skillsRoot:string,records:ServiceInstall[],signal:AbortSignal)=>Promise<void>
+export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthority,assertToolNames:ServiceToolNames,network:typeof fetch=fetch,writeRegistry:ServiceRegistryWriter=syncDesktopServiceRegistry){
  const lifecycle=remoteMcpLifecycle(),shutdown=new AbortController()
  const active=new Map<string,Promise<unknown>>()
- const idName=(record:ServiceInstall)=>`svc-${record.id.replaceAll('-','')}`
+ const idName=(record:ServiceInstall)=>desktopServiceRegistryName(record.id)
+ const syncRegistry=async(skillsRoot:string,owner:string,signal:AbortSignal)=>writeRegistry(skillsRoot,await abortable(store.list(owner),signal),signal)
  async function current(owner:string,action:'manage'|'use',run:ServiceRun|undefined,signal:AbortSignal){signal.throwIfAborted();shutdown.signal.throwIfAborted();const value=await abortable(authorize(owner,action,run,signal),signal);signal.throwIfAborted();shutdown.signal.throwIfAborted();if(action==='use'&&(!value.enabled||!value.granted))throw new Error('Service permission is off');return value}
  async function liveRecord(owner:string,key:string,revision:string,signal:AbortSignal){const record=await abortable(store.read(owner,key),signal);signal.throwIfAborted();if(!record || record.revision!==revision || record.state!=='ready')throw new Error('Service connection changed');return record}
  function transport(record:ServiceInstall,run:ServiceRun|undefined,signal:AbortSignal){
@@ -33,6 +36,7 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
  }
  async function discover(record:ServiceInstall,run:ServiceRun|undefined,signal:AbortSignal){
   const initial=await current(record.owner,'use',run,signal);if(initial.engineAgentId!==record.engineId)throw new Error('Service owner changed');for(const skill of record.skills)await verifyServiceSkill(initial.skillsRoot,skill)
+  await syncRegistry(initial.skillsRoot,record.owner,signal)
   const runtime=transport(record,run,signal),result=await runtime.probe(record.owner,idName(record),record.revision,signal)
   await current(record.owner,'use',run,signal);await liveRecord(record.owner,record.key,record.revision,signal)
   if(!result.tools)throw new Error('Connection discovery failed')
@@ -69,21 +73,25 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
     const existing=await store.read(owner,compiled.plan.key)
     if(existing&&existing.engineId!==authority.engineAgentId)throw new Error('Service installation belongs to a previous engine identity')
     if(existing?.state==='ready')throw new Error('Existing service must be disconnected before configuring again')
-    if(existing && (existing.skills.length>0 && existing.state==='error' || JSON.stringify(existing.plan)!==JSON.stringify(compiled.plan)))throw new Error('Remove the previous installation before changing its method or owned skill plan')
+    if(existing && JSON.stringify(existing.plan)!==JSON.stringify(compiled.plan))throw new Error('Remove the previous installation before changing its method or owned skill plan')
     const record:ServiceInstall={owner,engineId:authority.engineAgentId,key:compiled.plan.key,id:existing?.id??randomUUID(),revision:randomUUID(),state:'preparing',plan:compiled.plan,skills:existing?.skills??[],toolNames:[],health:{state:'unchecked'},healthLaunch:null,installedAt:existing?.installedAt??new Date().toISOString(),configured:!!compiled.bearer}
     await lifecycle.mutate(owner,idName(record),async()=>{
      const guard=async()=>{const now=await current(owner,'manage',undefined,signal);if(now.runtime.launchNonce!==authority.runtime.launchNonce||now.skillsRoot!==authority.skillsRoot)throw new Error('Service owner changed')}
      await guard()
      if(existing)await store.update(record,existing.revision,compiled.bearer);else {if((await store.list(owner)).length>=64)throw new Error('Too many service installs');await store.create(record,compiled.bearer)}
      try{
+      await syncRegistry(authority.skillsRoot,owner,signal)
       for(const resource of record.skills)await verifyServiceSkill(authority.skillsRoot,resource)
-      for(let index=record.skills.length;index<record.plan.skills.length;index++){const resource=await createServiceSkill(authority.skillsRoot,record.id,index,record.plan.skills[index],guard);record.skills.push(resource);await store.update(record,record.revision)}
-      await guard();record.state='ready';await store.update(record,record.revision)
+      for(let index=record.skills.length;index<record.plan.skills.length;index++){
+       const resource=await createServiceSkill(authority.skillsRoot,record.id,index,record.plan.skills[index],guard)
+       record.skills.push(resource);await store.update(record,record.revision);await syncRegistry(authority.skillsRoot,owner,signal)
+      }
+      await guard();record.state='ready';await store.update(record,record.revision);await syncRegistry(authority.skillsRoot,owner,signal)
      }catch{
       record.state='error';record.health={state:'error',message:'Partial install. Review owned resources before retrying.'}
       const remaining=[]
       for(const skill of record.skills){try{await removeServiceSkill(authority.skillsRoot,skill,guard)}catch{remaining.push(skill)}}
-      record.skills=remaining;await store.update(record,record.revision,'');throw new Error('Service installation incomplete')
+      record.skills=remaining;await store.update(record,record.revision,'');await syncRegistry(authority.skillsRoot,owner,signal);throw new Error('Service installation incomplete')
      }
     })
     result=await probe(owner,record.key,record.revision,signal)
@@ -93,10 +101,10 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
     else await lifecycle.mutate(owner,idName(record),async()=>{
      const now=await current(owner,'manage',undefined,signal);if(now.runtime.launchNonce!==authority.runtime.launchNonce||now.skillsRoot!==authority.skillsRoot)throw new Error('Service owner changed')
      const expected=record.revision;record.revision=randomUUID();record.state=input.action==='remove'?'removing':'disconnected';record.health={state:'disconnected'};record.healthLaunch=null;record.configured=false;record.toolNames=[]
-     await store.update(record,expected,'')
+     await store.update(record,expected,'');await syncRegistry(authority.skillsRoot,owner,signal)
      if(input.action==='remove'){
       for(const skill of record.skills)await removeServiceSkill(authority.skillsRoot,skill,async()=>{const now=await current(owner,'manage',undefined,signal);if(now.runtime.launchNonce!==authority.runtime.launchNonce||now.skillsRoot!==authority.skillsRoot)throw new Error('Service owner changed')})
-      await store.remove(record);result={key:record.key,revision:record.revision,status:'removed',installed:false,health:{state:'disconnected'}}
+      await store.remove(record);await syncRegistry(authority.skillsRoot,owner,signal);result={key:record.key,revision:record.revision,status:'removed',installed:false,health:{state:'disconnected'}}
      }else result=await view(record,signal)
     })
    }
@@ -107,8 +115,20 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
   const work=Promise.resolve().then(run);active.set(requestKey,work);void work.finally(()=>{if(active.get(requestKey)===work)active.delete(requestKey)}).catch(()=>{})
   return abortable(work,signal)
  }
- return {mutate,view,probe,discover,transport,current,liveRecord,idName,lifecycle,
-  async reconcile(owner:string,signal:AbortSignal){await current(owner,'manage',undefined,signal);for(const record of await store.list(owner)){await lifecycle.mutate(owner,idName(record),async()=>{const revision=record.revision;record.health={state:'unchecked'};record.healthLaunch=null;record.toolNames=[];if(record.engineId!==(await current(owner,'manage',undefined,signal)).engineAgentId||record.state==='preparing'||record.state==='removing'){record.state='error';record.revision=randomUUID();await store.update(record,revision,'')}else await store.update(record,revision)})}},
+ async function reconcile(owner:string,signal:AbortSignal){
+  const authority=await current(owner,'manage',undefined,signal)
+  for(const record of await store.list(owner)){await lifecycle.mutate(owner,idName(record),async()=>{
+   const revision=record.revision;record.health={state:'unchecked'};record.healthLaunch=null;record.toolNames=[]
+   if(record.engineId!==(await current(owner,'manage',undefined,signal)).engineAgentId||record.state==='preparing'||record.state==='removing'){record.state='error';record.revision=randomUUID();await store.update(record,revision,'')}else await store.update(record,revision)
+   await syncRegistry(authority.skillsRoot,owner,signal)
+  })}
+  await current(owner,'manage',undefined,signal);await syncRegistry(authority.skillsRoot,owner,signal)
+ }
+ return {mutate,view,probe,discover,transport,current,liveRecord,idName,lifecycle,reconcile,
+  async reconcileOwners(signal:AbortSignal){
+   const rows=await abortable(store.db.execute({sql:'SELECT id FROM desktop_agents',args:[]}),signal)
+   for(const row of rows.rows)await reconcile(String(row.id),signal)
+  },
   async ownedSkills(owner:string,signal:AbortSignal){await current(owner,'manage',undefined,signal);return (await store.list(owner)).flatMap(record=>record.skills.map(skill=>({key:record.key,installationId:record.id,state:record.state,...skill})))},
   transitionOwner:<T>(owner:string,write:()=>Promise<T>)=>lifecycle.transitionOwner(owner,write),
   shutdown(){shutdown.abort();lifecycle.shutdown()},
