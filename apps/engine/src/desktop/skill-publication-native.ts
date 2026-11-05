@@ -1,7 +1,7 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
 import { isAbsolute } from 'node:path'
-import { SkillBoundaryError } from './skill-publication-error.js'
+import { SkillBoundaryError } from './skill-publication-error.ts'
 
 type Identity = { dev: bigint; ino: bigint }
 const exec = promisify(execFile)

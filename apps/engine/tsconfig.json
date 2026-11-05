@@ -4,6 +4,7 @@
     "module": "NodeNext",
     "strict": true,
     "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
     "skipLibCheck": true,
     "types": [
       "node"
