@@ -22,7 +22,8 @@ const textFile = (name = 'notes.md'): FileCardEntry => ({ path: name, name, size
 const cardOf = (files: FileCardEntry[]): FileCard => ({ kind: 'file', files })
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')
 const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-const imageResponse = (size = 4) => new Response(new Uint8Array(size), { headers: { 'content-type': 'image/png' } })
+const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='), char => char.charCodeAt(0))
+const imageResponse = (size?: number) => new Response(size ? new Uint8Array(size) : png, { headers: { 'content-type': 'image/png' } })
 
 function mount() {
     const root = createRoot(document.body.appendChild(document.createElement('div')))
@@ -202,21 +203,20 @@ test('lightbox paging and owner changes abort old reads and never display their 
     expect(requests[2].signal.aborted).toBe(true)
 })
 
-test('thumbnail allocation uses current bytes rather than the smaller sizes recorded in a card', async () => {
+test('mixed cards inspect only four previews and refuse corrupt returned bytes', async () => {
     const urls = objectUrls()
     const requests = imageReads(() => imageResponse(CARD_MAX_IMAGE_BYTES))
     const root = mount()
-    // A mixed card shows every image. Stop as soon as actual bytes fill the budget,
-    // without fetching a fourth thumbnail that cannot fit.
+    // The fifth mixed image stays lazy, and malformed bytes never become object URLs.
     await act(async () => root.render(<DesktopFileCard agentId="budget-owner" card={cardOf([
         textFile(), ...Array.from({ length: 5 }, (_, i) => image(i + 1)),
     ])} />))
     await flush()
-    expect(requests.map(request => request.path)).toEqual(['shots/1.png', 'shots/2.png', 'shots/3.png'])
-    expect(urls.create).toHaveBeenCalledTimes(3)
-    expect(document.querySelectorAll('[data-file-card] img')).toHaveLength(3)
-    expect([...document.querySelectorAll('button')].filter(node => node.textContent?.trim() === 'Image unavailable')).toHaveLength(2)
-    expect(document.querySelector('button[aria-label="Open 4.png"]')?.getAttribute('title')).toContain('24 MB')
+    expect(requests.map(request => request.path)).toEqual(['shots/1.png', 'shots/2.png', 'shots/3.png', 'shots/4.png'])
+    expect(urls.create).toHaveBeenCalledTimes(0)
+    expect(document.querySelectorAll('[data-file-card] img')).toHaveLength(0)
+    expect([...document.querySelectorAll('button')].filter(node => node.textContent?.trim() === 'Image unavailable')).toHaveLength(4)
+    expect(document.querySelector('button[aria-label="Open 5.png"]')?.getAttribute('title')).toContain('Open to preview')
     await unmount(root)
     expect(new Set(urls.revoke.mock.calls.map(([url]) => url))).toEqual(new Set(urls.create.mock.results.map(result => result.value)))
 })

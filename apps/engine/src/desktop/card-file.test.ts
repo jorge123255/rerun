@@ -151,7 +151,7 @@ it('refuses shared, foreign, hidden, linked, directory, unsupported and oversize
         ['folder.wav', 'agent', /folder, not a file/],
         ['folder.mp4', 'agent', /folder, not a file/],
         ['folder.pdf', 'agent', /folder, not a file/],
-        ['reports/image.svg', 'agent', /relative .* path/],
+        ['reports/image.tiff', 'agent', /relative .* path/],
         ['shots/clip.avi', 'agent', /relative .* path/],
         ['voice/tone.aac', 'agent', /relative .* path/],
         ['big.md', 'agent', /32 KiB/],
@@ -382,4 +382,11 @@ it.each(['webm', 'mov', 'm4v'])('admits %s video with identity while enforcing t
     await writeFile(join(workspaceDir(alpha), path), Buffer.alloc(1024, 7))
     await grant(alpha, false)
     await expect(show(tool, path)).rejects.toThrow()
+})
+
+ it.each(['svg', 'avif', 'ico', 'bmp', 'gif', 'webp'])('admits confined own-file %s metadata without decoding in the engine', async ext => {
+    await grant(alpha, true)
+    await writeFile(join(workspaceDir(alpha), 'shots', `extra.${ext}`), Buffer.from('source fixture'))
+    const result = JSON.parse(await show(await toolFor(alpha), `shots/extra.${ext}`))
+    expect(result.files[0]).toMatchObject({ path: `shots/extra.${ext}`, scope: 'agent', identity: expect.stringMatching(/^\d+:\d+$/) })
 })

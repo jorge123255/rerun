@@ -1,3 +1,4 @@
+import { inspectCardImageResponse } from './image-card-response'
 import {
     CARD_MAX_AUDIO_BYTES, CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, CARD_MAX_VIDEO_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES,
     fileCardSchema, isDesktopAttachmentPath, type FileCard, type FileCardEntry,
@@ -10,7 +11,7 @@ const hiddenSegment = (path: string) => path.split('/').some(segment => segment.
 const visiblePath = (path: string) => path.length <= 4096 && !/[\\\p{Cc}]/u.test(path)
     && path.split('/').every(segment => segment !== '' && segment !== '.' && segment !== '..' && !segment.startsWith('.'))
 const textPath = (path: string) => isDesktopAttachmentPath(path) && !path.includes('\\') && !hiddenSegment(path)
-const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
+const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp|svg|avif|ico|bmp)$/i
 const CARD_AUDIO = /\.(?:wav|mp3|m4a|ogg|flac)$/i
 const CARD_VIDEO = /\.(?:mp4|webm|mov|m4v)$/i
 const CARD_PDF = /\.pdf$/i
@@ -22,11 +23,10 @@ const videoPath = (path: string) => visiblePath(path) && CARD_VIDEO.test(path)
 const pdfPath = (path: string) => visiblePath(path) && CARD_PDF.test(path)
 const validName = (name: string) => name.length > 0 && name.length <= 255 && !/[\\/\p{Cc}]/u.test(name)
 const CARD_IDENTITY = /^\d{1,24}:\d{1,24}$/
-const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const AUDIO_TYPES = new Set(['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/flac'])
 const VIDEO_TYPES = new Set(['video/mp4', 'video/webm', 'video/quicktime'])
 
-/** A card's file is an image (not a document) when its path names a supported static raster. */
+/** A card's file is an image (not a document) when its path names a supported bounded image. */
 export function isDesktopCardImage(path: string): boolean {
     return imagePath(path)
 }
@@ -63,8 +63,8 @@ function candidate(value: unknown, depth = 0): unknown {
 /**
  * Validate one recorded card_file result for the Mac conversation. It accepts the live tool output
  * (a JSON string), a stored text/json wrapper, a parsed card, and the legacy single-file card. Every
- * file must still look like a visible reference of this coworker: a .txt/.md document, a PDF, a static
- * PNG/JPEG/WebP/GIF image, a WAV/MP3/M4A/Ogg/FLAC audio file, or an MP4/WebM/MOV/M4V video. Images and videos share the
+ * file must still look like a visible reference of this coworker: a .txt/.md document, a PDF, a bounded
+ * PNG/JPEG/WebP/GIF/SVG/AVIF/ICO/BMP image, a WAV/MP3/M4A/Ogg/FLAC audio file, or an MP4/WebM/MOV/M4V video. Images and videos share the
  * endpoint identity and the 24 MiB combined preview budget; images stay 8 MiB, video 16 MiB, audio
  * 16 MiB, and each PDF 16 MiB. PDFs carry the same identity and do not join that budget. Text keeps
  * its 32 KiB bound. Anything else returns undefined so the reply can fall back to the real tool
@@ -131,21 +131,16 @@ export async function readDesktopCardFile(agentId: string, path: string, signal?
 }
 
 /** Read a card's current image through the authenticated desktop Files image route. */
-export async function readDesktopCardImage(agentId: string, path: string, identity: string | undefined, signal?: AbortSignal): Promise<{ blob: Blob; contentType: string }> {
+export async function readDesktopCardImage(agentId: string, path: string, identity: string | undefined, signal?: AbortSignal): Promise<import('./image-card-response').CardImageDisplay> {
     if (!imagePath(path)) throw new DesktopCardError('This file is not a supported image.')
     if (!identity || !CARD_IDENTITY.test(identity)) throw new DesktopCardError('Send this image to preview again.')
-    const query = new URLSearchParams({ path, identity })
-    const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/files/image?${query.toString()}`, { cache: 'no-store', ...(signal && { signal }) })
-    if (!response.ok) {
-        const body = await response.json().catch(() => ({}))
-        throw new DesktopCardError(typeof body?.error === 'string' ? body.error : 'This image is no longer available.')
-    }
-    const blob = await response.blob()
-    const contentType = (response.headers.get('content-type') ?? blob.type).split(';')[0]!.trim()
-    if (!IMAGE_TYPES.has(contentType) || blob.size < 1 || blob.size > CARD_MAX_IMAGE_BYTES) {
-        throw new DesktopCardError('This image can’t be displayed.')
-    }
-    return { blob, contentType }
+    const query = new URLSearchParams({ path, identity, animation: '1' })
+    const deadline = AbortSignal.timeout(5_000)
+    const boundedSignal = signal ? AbortSignal.any([signal, deadline]) : deadline
+    const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/files/image?${query}`, { cache: 'no-store', signal: boundedSignal })
+    if (!response.ok) throw new DesktopCardError('This image is no longer available.')
+    try { return await inspectCardImageResponse(response, path, boundedSignal) }
+    catch { signal?.throwIfAborted(); throw new DesktopCardError('This image can’t be displayed.') }
 }
 
 

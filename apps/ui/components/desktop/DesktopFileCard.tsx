@@ -3,6 +3,7 @@
 import { AttachmentTile } from '@/components/chat/AttachmentTile'
 import { MEDIA_CELL_ASPECT } from '@/components/chat/ChatVideoTile'
 import { CARD_MAX_IMAGE_TOTAL_BYTES, type FileCard, type FileCardEntry } from '@rerun/contracts'
+import { CardDisplayBudget } from '@/lib/desktop/image-card-response'
 import { cn } from '@/lib/utils'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { DesktopCardVideoFrame, DesktopCardVideoTile } from './DesktopCardVideoTile'
@@ -105,7 +106,7 @@ function DesktopMixedImageTile({ item, disabled, onOpen, onError }: {
     return (
         <button type="button" onClick={onOpen} disabled={disabled} title={load.status === 'error' && load.message ? `${file.name} — ${load.message}` : file.name} aria-label={`Open ${file.name}`} className={cn(frame, 'grid place-items-center p-1.5 text-center')}>
             <span className={load.status === 'error' ? 'text-[10px] leading-tight text-destructive' : 'text-[10px] leading-tight text-muted-foreground'}>
-                {load.status === 'error' ? 'Image unavailable' : 'Loading…'}
+                {load.status === 'error' ? load.message === 'Open to preview.' ? 'Open to preview' : 'Image unavailable' : 'Loading…'}
             </span>
         </button>
     )
@@ -133,7 +134,7 @@ function DesktopMixedVideoTile({ item, disabled, onOpen, onError }: {
             className="relative size-28 overflow-hidden rounded-2xl bg-muted p-1.5 text-center transition-opacity disabled:cursor-default enabled:hover:opacity-90"
         >
             <span className={cn('grid size-full place-items-center text-[10px] leading-tight', failed ? 'text-destructive' : 'text-muted-foreground')}>
-                {failed ? 'Video unavailable' : 'Loading…'}
+                {failed ? load.message === 'Open to preview.' ? 'Open to preview' : 'Video unavailable' : 'Loading…'}
             </span>
         </button>
     )
@@ -190,14 +191,17 @@ function DesktopMediaAlbum({ items, onOpen, onError }: {
  * one released object URL per tile, with replaced, deleted and invalid files shown explicitly. Only
  * the visible album previews are fetched; the hidden ones are fetched by the paged lightbox.
  */
-export function DesktopFileCard({ agentId, card }: { agentId?: string; card: FileCard }) {
+export function DesktopFileCard(props: { agentId?: string; card: FileCard }) {
+    return <DesktopOwnedFileCard key={JSON.stringify([props.agentId, props.card])} {...props} />
+}
+
+function DesktopOwnedFileCard({ agentId, card }: { agentId?: string; card: FileCard }) {
     const [openIndex, setOpenIndex] = useState<number | null>(null)
     const files = card.files
     const media = mediaItems(files)
     const allMedia = files.length > 0 && media.length === files.length
-    // The album shows at most four tiles; the hidden ones are fetched by the paged lightbox when
-    // the user reaches them. Mixed cards show every image and video, so they all get thumbnails.
-    const thumbnails = allMedia ? media.slice(0, MAX_ALBUM_TILES) : media
+    // At most four previews are live. The lightbox replaces thumbnails while open.
+    const thumbnails = openIndex === null ? media.slice(0, MAX_ALBUM_TILES) : []
     const mediaKey = `${agentId ?? ''}\u0000${thumbnails.map(({ index, file, kind }) => `${index}:${kind}:${file.path}:${file.identity ?? ''}`).join('\u0000')}`
     const mediaRef = useRef(thumbnails)
     const ownedUrls = useRef(new Map<number, string>())
@@ -224,6 +228,7 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
             return () => controller.abort()
         }
         void (async () => {
+            const budget = new CardDisplayBudget()
             let total = 0
             let overBudget = false
             for (const { index, file, kind } of current) {
@@ -235,10 +240,12 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
                     continue
                 }
                 try {
-                    const { blob } = kind === 'video'
+                    const display = kind === 'video'
                         ? await readDesktopCardVideo(agentId, file.path, file.identity, controller.signal)
                         : await readDesktopCardImage(agentId, file.path, file.identity, controller.signal)
+                    const { blob } = display
                     if (!active) return
+                    budget.add(blob.size, 'frames' in display ? display.frames : 0, 'pixels' in display ? display.pixels : 0)
                     if (total + blob.size > CARD_MAX_IMAGE_TOTAL_BYTES) {
                         overBudget = true
                         setState(previous => previous.key === mediaKey
@@ -269,7 +276,7 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
     }, [agentId, mediaKey])
 
     const visible = state.key === mediaKey ? state.items : EMPTY_MEDIA
-    const loadOf = (index: number): MediaLoad => visible.get(index) ?? { status: 'loading' }
+    const loadOf = (index: number): MediaLoad => visible.get(index) ?? { status: 'error', message: 'Open to preview.' }
     const withLoad = (item: MediaItem): LoadedMediaItem => ({ ...item, load: loadOf(item.index) })
 
     const failMedia = useCallback((index: number, src: string) => {
@@ -323,6 +330,7 @@ export function DesktopFileCard({ agentId, card }: { agentId?: string; card: Fil
         )}
         {opened && openIndex !== null && agentId && (
             <DesktopFileLightbox
+                key={`${agentId}:${openIndex}:${JSON.stringify(files)}`}
                 agentId={agentId}
                 files={files}
                 index={openIndex}

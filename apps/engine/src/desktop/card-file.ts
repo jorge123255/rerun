@@ -22,13 +22,13 @@ const videoEmpty = 'That video is empty and can’t be previewed.'
 const pdfTooLarge = 'Result card PDFs can only be up to 16 MB.'
 const pdfEmpty = 'That PDF is empty and can’t be previewed.'
 const imageBudget = 'Those images and videos would exceed the 24 MB result-card preview budget. Show fewer media files.'
-const badPath = 'Use a visible .txt, .md, .pdf, .png, .jpg, .jpeg, .webp, .gif, .wav, .mp3, .m4a, .ogg, .flac, .mp4, .webm, .mov or .m4v relative file path inside this coworker’s workspace.'
+const badPath = 'Use a visible .txt, .md, .pdf, .png, .jpg, .jpeg, .webp, .gif, .svg, .avif, .ico, .bmp, .wav, .mp3, .m4a, .ogg, .flac, .mp4, .webm, .mov or .m4v relative file path inside this coworker’s workspace.'
 const shared = 'Shared files are not available in a Mac result card.'
 
 /** Matches DESKTOP_PDF_MAX_BYTES. The shared card contract is unchanged, so the cap stays local. */
 export const DESKTOP_CARD_PDF_MAX_BYTES = 16 * 1024 * 1024
 
-const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
+const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp|svg|avif|ico|bmp)$/i
 const CARD_AUDIO = /\.(?:wav|mp3|m4a|ogg|flac)$/i
 const CARD_VIDEO = /\.(?:mp4|webm|mov|m4v)$/i
 const CARD_PDF = /\.pdf$/i
@@ -106,7 +106,7 @@ export function desktopCardFileTools(ctx: RunContext): ToolSet {
     return {
         card_file: tool({
             description:
-                'Show existing .txt, .md, .pdf, static .png/.jpg/.jpeg/.webp/.gif, .wav/.mp3/.m4a/.ogg/.flac, or .mp4/.webm/.mov/.m4v files already saved in this coworker’s persistent Files workspace as preview tiles in chat. Pass visible paths relative to Files; up to 12 files, 32 KiB per text file, 16 MB per PDF, 8 MB per image, 16 MB per audio file, 16 MB per video, and 24 MB of images and videos combined per card. PDFs are document tiles, not image or video album entries. Animated GIF/APNG/WebP, SVG, other audio formats, other video formats and other formats are unavailable. Audio is fetched only when opened and plays only after the user presses play. A PDF page is fetched only when that PDF is opened. Video previews show the first frame and play only after the user acts; only visible album previews are loaded. This does not save, import, publish or search a file, and it does not read PDF content back to you. Native Codex commands and edits use a separate temporary folder: pending changes must go through the native file review before they become persistent Files. Never use this tool to deliver unaccepted changes, because a matching relative path here would show the persistent original instead. Use it before asking the user to review or choose among existing Files documents, PDFs, images, audio or video. Opening a tile reads the current persistent file, not frozen bytes; the media and PDF page endpoints recheck the bytes and identity when they open. The tool does not read content back to you. Shared files, folders and links are unavailable.',
+                'Show existing .txt, .md, .pdf, .png/.jpg/.jpeg/.webp/.gif/.svg/.avif/.ico/.bmp, .wav/.mp3/.m4a/.ogg/.flac, or .mp4/.webm/.mov/.m4v files already saved in this coworker’s persistent Files workspace as preview tiles in chat. Pass visible paths relative to Files; up to 12 files, 32 KiB per text file, 16 MB per PDF, 8 MB per image, 16 MB per audio file, 16 MB per video, and 24 MB of images and videos combined per card. PDFs are document tiles, not image or video album entries. GIF/WebP animations use the bounded Files preview; SVG is limited to the accepted static subset rendered as PNG, and AVIF/ICO/BMP are converted to PNG. APNG and unsupported or unsafe content are refused. Audio is fetched only when opened and plays only after the user presses play. A PDF page is fetched only when that PDF is opened. Video previews show the first frame and play only after the user acts; only visible album previews are loaded. This does not save, import, publish or search a file, and it does not read PDF content back to you. Native Codex commands and edits use a separate temporary folder: pending changes must go through the native file review before they become persistent Files. Never use this tool to deliver unaccepted changes, because a matching relative path here would show the persistent original instead. Use it before asking the user to review or choose among existing Files documents, PDFs, images, audio or video. Opening a tile reads the current persistent file, not frozen bytes; the media and PDF page endpoints recheck the bytes and identity when they open. The tool does not read content back to you. Shared files, folders and links are unavailable.',
             inputSchema: z.object({
                 files: jsonTolerantArray(
                     z.array(z.object({

@@ -68,8 +68,8 @@ test.each([
     ['a hidden audio segment', card([audio({ path: '.secret/tone.wav', name: 'tone.wav' })])],
     ['a hidden video segment', card([video({ path: '.secret/clip.mp4', name: 'clip.mp4' })])],
     ['a backslash', card([file({ path: 'reports\\summary.md' })])],
-    ['an unsupported document', card([file({ path: 'reports/image.svg', name: 'image.svg' })])],
-    ['an unsupported image', card([image({ path: 'shots/photo.avif', name: 'photo.avif' })])],
+    ['an unsupported document', card([file({ path: 'reports/image.tiff', name: 'image.tiff' })])],
+    ['an unsupported image', card([image({ path: 'shots/photo.heic', name: 'photo.heic' })])],
     ['an unsupported video', card([video({ path: 'shots/clip.avi', name: 'clip.avi' })])],
     ['a shared pdf', card([pdf({ scope: 'shared' })])],
     ['an absolute pdf path', card([pdf({ path: '/tmp/codex-edit/deck.pdf', name: 'deck.pdf' })])],
@@ -150,18 +150,18 @@ test('reads a card file through the authenticated desktop files route', async ()
 })
 
 test('reads an image with its identity through the authenticated desktop image route', async () => {
-    const fetch = vi.fn(async () => new Response(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }), { headers: { 'content-type': 'image/png' } }))
+    const fetch = vi.fn(async () => new Response(new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')], { type: 'image/png' }), { headers: { 'content-type': 'image/png' } }))
     vi.stubGlobal('fetch', fetch)
     const result = await readDesktopCardImage('agent-1', 'shots/photo.png', '12:34')
     expect(result.contentType).toBe('image/png')
-    expect([...new Uint8Array(await result.blob.arrayBuffer())]).toEqual([1, 2, 3])
-    expect(fetch).toHaveBeenCalledWith('/api/desktop/agents/agent-1/files/image?path=shots%2Fphoto.png&identity=12%3A34', { cache: 'no-store' })
+    expect(result).toMatchObject({ frames: 1, pixels: 1 })
+    expect(fetch).toHaveBeenCalledWith('/api/desktop/agents/agent-1/files/image?path=shots%2Fphoto.png&identity=12%3A34&animation=1', { cache: 'no-store', signal: expect.any(AbortSignal) })
 })
 
 test('reports a deleted, replaced or invalid image instead of returning stale bytes', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: '“photo.png” was renamed or replaced. It was left unchanged.' }, { status: 409 })))
     await expect(readDesktopCardImage('agent-1', 'shots/photo.png', '12:34')).rejects.toThrow(DesktopCardError)
-    await expect(readDesktopCardImage('agent-1', 'shots/photo.png', '12:34')).rejects.toThrow('renamed or replaced')
+    await expect(readDesktopCardImage('agent-1', 'shots/photo.png', '12:34')).rejects.toThrow('no longer available')
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ content: { hidden: 'not text' } })))
     await expect(readDesktopCardFile('agent-1', 'reports/summary.md')).rejects.toThrow('no longer available')
     vi.stubGlobal('fetch', vi.fn(async () => new Response('not an image', { headers: { 'content-type': 'text/plain' } })))
@@ -183,7 +183,7 @@ test('reads a card audio file with its identity through the authenticated deskto
 test('reports missing, replaced or invalid audio without returning stale bytes', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: '“tone.wav” was renamed or replaced. It was left unchanged.' }, { status: 409 })))
     await expect(readDesktopCardAudio('agent-1', 'voice/tone.wav', '12:34')).rejects.toThrow(DesktopCardError)
-    await expect(readDesktopCardAudio('agent-1', 'voice/tone.wav', '12:34')).rejects.toThrow('renamed or replaced')
+    await expect(readDesktopCardAudio('agent-1', 'voice/tone.wav', '12:34')).rejects.toThrow('no longer available')
     vi.stubGlobal('fetch', vi.fn(async () => new Response('not audio', { headers: { 'content-type': 'text/plain' } })))
     await expect(readDesktopCardAudio('agent-1', 'voice/tone.wav', '12:34')).rejects.toThrow('can’t be played')
     await expect(readDesktopCardAudio('agent-1', 'voice/tone.wav', undefined)).rejects.toThrow('Send this audio')
@@ -202,7 +202,7 @@ test('reads a card video with its identity through the authenticated desktop vid
 test('reports missing, replaced or invalid video without returning stale bytes', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: '“clip.mp4” was renamed or replaced. It was left unchanged.' }, { status: 409 })))
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', '12:35')).rejects.toThrow(DesktopCardError)
-    await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', '12:35')).rejects.toThrow('renamed or replaced')
+    await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', '12:35')).rejects.toThrow('no longer available')
     vi.stubGlobal('fetch', vi.fn(async () => new Response('not a video', { headers: { 'content-type': 'text/plain' } })))
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', '12:35')).rejects.toThrow('can’t be played')
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', undefined)).rejects.toThrow('Send this video')
@@ -215,7 +215,7 @@ test.each([['m4a', 'audio/mp4'], ['ogg', 'audio/ogg'], ['flac', 'audio/flac']])(
     expect(desktopFileCardOf(card([entry]))?.files).toEqual([entry])
     expect(desktopFileCardOf(card([audio({ ...entry, identity: undefined })]))).toBeUndefined()
     expect(desktopFileCardOf(card([audio({ ...entry, size: CARD_MAX_AUDIO_BYTES + 1 })]))).toBeUndefined()
-    const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': contentType } }))
+    const fetch = vi.fn(async () => new Response(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'), { headers: { 'content-type': contentType } }))
     vi.stubGlobal('fetch', fetch)
     const result = await readDesktopCardAudio('owner a', String(entry.path), '12:34')
     expect(result.contentType).toBe(contentType)
@@ -230,7 +230,7 @@ test.each([['webm', 'video/webm'], ['mov', 'video/quicktime'], ['m4v', 'video/mp
     expect(desktopFileCardOf(card([entry]))?.files).toEqual([entry])
     expect(desktopFileCardOf(card([video({ ...entry, identity: undefined })]))).toBeUndefined()
     expect(desktopFileCardOf(card([video({ ...entry, size: CARD_MAX_VIDEO_BYTES + 1 })]))).toBeUndefined()
-    const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': contentType } }))
+    const fetch = vi.fn(async () => new Response(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'), { headers: { 'content-type': contentType } }))
     vi.stubGlobal('fetch', fetch)
     expect((await readDesktopCardVideo('owner a', String(entry.path), '12:35')).contentType).toBe(contentType)
     expect(fetch).toHaveBeenCalledWith(`/api/desktop/agents/owner%20a/files/video?path=clips%2Fclip.${ext}&identity=12%3A35`, { cache: 'no-store' })

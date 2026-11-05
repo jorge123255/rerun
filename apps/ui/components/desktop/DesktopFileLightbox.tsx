@@ -48,7 +48,19 @@ function stopAudio(node: HTMLAudioElement | null) {
  * video start only from the player controls and are stopped and released when the page, owner or
  * dialog changes, or when the component unmounts. PDF requests and blobs follow the same cleanup.
  */
-export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onClose }: {
+type DesktopFileLightboxProps = {
+    agentId: string
+    files: readonly FileCardEntry[]
+    index: number
+    onIndexChange: (index: number) => void
+    onClose: () => void
+}
+
+export function DesktopFileLightbox(props: DesktopFileLightboxProps) {
+    return <DesktopOwnedFileLightbox key={JSON.stringify([props.agentId, props.files, props.index])} {...props} />
+}
+
+function DesktopOwnedFileLightbox({ agentId, files, index, onIndexChange, onClose }: {
     agentId: string
     files: readonly FileCardEntry[]
     index: number
@@ -141,12 +153,14 @@ export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onCl
     }, [agentId, audio, file.identity, file.path, image, key, kind, pdf, video])
 
     function failImage(src: string) {
+        if (objectUrl.current !== src) return
         URL.revokeObjectURL(src)
         objectUrl.current = null
         setPreview({ key, status: 'error', message: 'This image can’t be displayed.' })
     }
 
     function failAudio(src: string) {
+        if (objectUrl.current !== src) return
         if (audioFailed.current) return
         audioFailed.current = true
         stopAudio(audioRef.current)
@@ -156,6 +170,7 @@ export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onCl
     }
 
     function failVideo(src: string) {
+        if (objectUrl.current !== src) return
         if (videoFailed.current) return
         videoFailed.current = true
         stopDesktopCardVideo(videoRef.current)
