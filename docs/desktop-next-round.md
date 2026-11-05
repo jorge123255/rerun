@@ -1,4 +1,31 @@
-# Round 30 assignments — templates, setup, app requests and images
+# Round 31 assignments — coworker collaboration, app skills and browser exports
+
+Prepared base: `136f318e931a4433ea6d178f3f9e961e1a2d8a86`. The eight isolated lane worktrees were prepared at that base; subsequent agent edits are preserved. The [shared interface agreement](desktop-round31-interfaces.md) keeps implementation ownership separate. Original Rerun pin: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+
+**Assignment standard:** all A–H prompts now use substantial, complete numbered feature lists like the additional trigger agent, with original-code references, clear ownership and root-only execution checks. [Required format](desktop-agent-assignment-standard.md). Expanding a prompt does not reset or redispatch an active lane.
+
+[Copy the eight prompts](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Rerun round 31 agent prompts.md>).
+
+| Agent | Next task | Worktree suffix |
+| --- | --- | --- |
+| A | E10 — Persistent coworker calls | `round31-coworker-calls` |
+| B | C8 — Original coworker-call progress and target chat | `round31-coworker-call-ui` |
+| C | C4 — Original @coworker composer mentions | `round31-coworker-mentions` |
+| D | E10 — Isolated delegated workers | `round31-delegation` |
+| E | C8 — Original sub-run tree and exact Stop | `round31-delegation-ui` |
+| F | E4 — App usage skill bundles and ownership | `round31-service-skills` |
+| G | E3 — Browser links, page export and screenshots | `round31-browser-exports` |
+| H | E3 — Passive live browser preview during ordinary work | `round31-browser-live-preview` |
+
+The larger agent owns the complete local E9 webhook/trigger source slice, including original Triggers UI, run/payload cards and a Control Center adapter, in `round31-triggers-full` at `aa35cc841b9d5c20246b4a095c910775af572d52`. [Full task list](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Big agent round 31 webhook triggers prompt.md>). Public hosting remains an explicit unresolved choice; the agent must not expose a listener or run deliveries. This scope does not overlap A–H.
+
+Root owns shared wiring, every repair and all tests, builds, installation, live Codex and native/restart checks. Agents author source only, preserve original design, and return clean commits without pushing. Coworker calls must respect unfinished target setup; app-owned skills must retain trustworthy ownership in capture and editing. Those shared enforcement points remain root-owned.
+
+Root completed original Control Center → Open → Install and round30 integration/repairs. [Native and full-restart acceptance](desktop-round30-templates-setup-acceptance.md) closes B4, reducing 23 open groups to 22. Assigned round31 source is not an accepted product feature. See the [parity checklist](desktop-parity-checklist.md) for accepted scope and remaining capability groups.
+
+---
+
+# Historical round 30 assignments — templates, setup, app requests and images
 
 Eight fresh worktrees are prepared under `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/`. Their exact shared base and copyable prompts are recorded in the round 30 assignment index. Every worktree includes [the shared interface agreement](desktop-round30-interfaces.md). Original Rerun pin: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 

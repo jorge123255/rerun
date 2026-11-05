@@ -1,9 +1,14 @@
 # Round 31 — coworker calls, delegation, app skills and browser parity
 
 Original source pin: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
-The assignment base contains the accepted browser integration. Round 30 templates,
-setup, suggested apps and image formats are under root review in parallel; their
-source handoffs are not accepted yet. Do not modify or depend on their worktrees.
+The assignment base contains the accepted browser integration. Root has since
+accepted the delivered round30 template/setup/app-request/image slices in aa35cc8.
+Read the coding checkout for integration references; do not modify or depend on
+external lane worktrees. Preserve the original assignment base and ownership.
+
+All future prompts use the full numbered feature-list standard recorded in
+`desktop-agent-assignment-standard.md`. Source ownership and root-only execution
+checks below remain unchanged.
 
 Root owns integration, every repair, all execution checks, dependencies, builds,
 signing, the installed app, providers, Docker, credentials and native/restart QA.
