@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { DESKTOP_IMAGE_MAX_BYTES } from '@/lib/desktop/server/image-bytes'
+import { DESKTOP_PREVIEW_MAX_FRAMES } from '@/lib/desktop/server/animated-image'
+import { bindCoworkerPreviewImageFolder } from '@/lib/desktop/server/preview-image'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent } from '@/lib/desktop/server/store'
 import { GET as read } from '../read/route'
@@ -67,6 +69,7 @@ const token = 'e'.repeat(48)
 let root: string
 let alice: string
 let bob: string
+let restorePreview = () => {}
 const workspace = (id: string) => join(root, 'workspaces', '1', 'engine', 'agents', id, 'workspace')
 
 function request(id: string, suffix: string, cookie = token) {
@@ -74,9 +77,10 @@ function request(id: string, suffix: string, cookie = token) {
         headers: { host: '127.0.0.1:3194', origin, cookie: `rerun-desktop-session=${cookie}` },
     })
 }
-const image = (path: string, identity?: string, id = alice) => {
+const image = (path: string, identity?: string, id = alice, animation = false) => {
     const query = new URLSearchParams({ path })
     if (identity !== undefined) query.set('identity', identity)
+    if (animation) query.set('animation', '1')
     return GET(request(id, `?${query}`), { params: Promise.resolve({ agentId: id }) })
 }
 const listing = (path = 'docs', id = alice) => list(new Request(`${origin}/api/desktop/agents/${id}/files?path=${encodeURIComponent(path)}`, {
@@ -103,9 +107,14 @@ beforeEach(async () => {
     await writeFile(join(workspace('engine-alice'), 'docs', 'draw.svg'), svg)
     await writeFile(join(workspace('engine-alice'), 'docs', 'fake.png'), svg)
     await writeFile(join(workspace('engine-bob'), 'docs', 'shot.png'), gif)
+    restorePreview = bindCoworkerPreviewImageFolder({
+        recoverInterruptedEdits: async () => {},
+        claimed: () => false,
+    })
 })
 
 afterEach(async () => {
+    restorePreview()
     await closeDesktopDatabase(root)
     process.env = { ...env }
     await rm(root, { recursive: true, force: true })
@@ -293,4 +302,98 @@ test('WebP animation flags and animation chunks, including an empty ANMF, are ne
         expect(response.status, name).toBe(415)
         expect((await response.json()).error).toContain('Animated')
     }
+})
+
+function anmf(imageChunk: Buffer, width: number, height: number) {
+    const header = Buffer.alloc(16)
+    header.writeUIntLE(width - 1, 6, 3)
+    header.writeUIntLE(height - 1, 9, 3)
+    header.writeUIntLE(100, 12, 3)
+    return webpChunk('ANMF', Buffer.concat([header, imageChunk]))
+}
+
+test('Files animation preview keeps the original GIF and WebP bytes, including every frame', async () => {
+    const descriptor = gif.indexOf(0x2c)
+    const animatedGif = Buffer.concat([gif.subarray(0, gif.length - 1), gif.subarray(descriptor)])
+    const frame = vp8Frame(1, 1)
+    const animatedWebp = webpFile(vp8x(1, 1, 0x02), webpChunk('ANIM', Buffer.alloc(6)), anmf(frame, 1, 1), anmf(frame, 1, 1))
+    await writeFile(join(workspace('engine-alice'), 'docs', 'loop.gif'), animatedGif)
+    await writeFile(join(workspace('engine-alice'), 'docs', 'loop.webp'), animatedWebp)
+
+    const gifResponse = await image('docs/loop.gif', undefined, alice, true)
+    expect(gifResponse.status).toBe(200)
+    expect(gifResponse.headers.get('content-type')).toBe('image/gif')
+    const gifBytes = Buffer.from(await gifResponse.arrayBuffer())
+    expect(gifBytes).toEqual(animatedGif)
+    expect(gifBytes.filter(byte => byte === 0x2c)).toHaveLength(2)
+
+    const webpResponse = await image('docs/loop.webp', undefined, alice, true)
+    expect(webpResponse.status).toBe(200)
+    expect(webpResponse.headers.get('content-type')).toBe('image/webp')
+    const webpBytes = Buffer.from(await webpResponse.arrayBuffer())
+    expect(webpBytes).toEqual(animatedWebp)
+    expect(webpBytes.toString('latin1').split('ANMF')).toHaveLength(3)
+
+    for (const [path, type, bytes] of [
+        ['docs/shot.png', 'image/png', png],
+        ['docs/shot.jpg', 'image/jpeg', jpeg],
+        ['docs/shot.gif', 'image/gif', gif],
+        ['docs/shot.webp', 'image/webp', webp],
+    ] as const) {
+        const still = await image(path, undefined, alice, true)
+        expect(still.status, path).toBe(200)
+        expect(still.headers.get('content-type'), path).toBe(type)
+        expect(Buffer.from(await still.arrayBuffer())).toEqual(bytes)
+    }
+
+    const hidden = await image('docs/loop.gif')
+    expect(hidden.status).toBe(415)
+    expect((await hidden.json()).error).toContain('Animated')
+    expect((await image('docs/loop.gif', undefined, alice, true)).status).toBe(200)
+})
+
+test('an animated preview still refuses symlinks, hard links, the wrong file, and a flattened animation container', async () => {
+    await symlink(join(workspace('engine-alice'), 'docs', 'shot.gif'), join(workspace('engine-alice'), 'docs', 'alias.gif'))
+    const linkResponse = await image('docs/alias.gif', undefined, alice, true)
+    expect(linkResponse.status).toBe(400)
+    expect(await linkResponse.text()).not.toContain('GIF89a')
+
+    const extra = join(workspace('engine-alice'), 'docs', 'extra.gif')
+    await link(join(workspace('engine-alice'), 'docs', 'shot.gif'), extra)
+    expect((await image('docs/shot.gif', undefined, alice, true)).status).toBe(400)
+    await unlink(extra)
+
+    const listed = ((await (await listing()).json()) as { entries: { name: string; identity: string }[] }).entries
+    const identity = listed.find(entry => entry.name === 'shot.png')?.identity
+    const target = join(workspace('engine-alice'), 'docs', 'shot.png')
+    await rename(target, `${target}.hold`)
+    await writeFile(target, gif)
+    const replaced = await image('docs/shot.png', identity, alice, true)
+    expect(replaced.status).toBe(409)
+    expect(await replaced.text()).not.toContain('GIF89a')
+    await rename(`${target}.hold`, target)
+
+    const flagged = webpFile(vp8x(1, 1, 0x02), webp.subarray(12))
+    await writeFile(join(workspace('engine-alice'), 'docs', 'flagged.webp'), flagged)
+    const refused = await image('docs/flagged.webp', undefined, alice, true)
+    expect(refused.status).toBe(415)
+    expect(refused.headers.get('content-type')).toContain('application/json')
+    expect(await refused.text()).not.toContain('RIFF')
+
+    const apng = Buffer.concat([png.subarray(0, 33), pngChunk('acTL', Buffer.alloc(8)), png.subarray(33)])
+    await writeFile(join(workspace('engine-alice'), 'docs', 'motion.png'), apng)
+    expect((await (await image('docs/motion.png', undefined, alice, true)).json()).error).toBe('Animated PNG can’t be previewed.')
+
+    const descriptor = gif.indexOf(0x2c)
+    const one = gif.subarray(descriptor, gif.length - 1)
+    const tooMany = Buffer.concat([gif.subarray(0, descriptor), ...Array.from({ length: DESKTOP_PREVIEW_MAX_FRAMES + 1 }, () => one), Buffer.from([0x3b])])
+    await writeFile(join(workspace('engine-alice'), 'docs', 'many.gif'), tooMany)
+    const many = await image('docs/many.gif', undefined, alice, true)
+    expect(many.status).toBe(413)
+    expect((await many.json()).error).toBe('This animation has too many frames to preview.')
+    expect(Number(many.headers.get('content-length'))).toBeLessThan(200)
+
+    expect((await image('docs/../../engine-bob/workspace/docs/shot.png', undefined, alice, true)).status).toBe(400)
+    expect((await GET(request(alice, '?path=docs/shot.png&animation=1&animation=1'), { params: Promise.resolve({ agentId: alice }) })).status).toBe(400)
+    expect((await GET(request(alice, '?path=docs/shot.png&animation=0'), { params: Promise.resolve({ agentId: alice }) })).status).toBe(400)
 })

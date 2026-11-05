@@ -29,7 +29,10 @@ export type DesktopFileImagePreviewProps = {
 
 type View = { loading: true } | { error: string } | { src: string }
 
-/** FileDetail header and FilePreview image frame, filled from the authenticated desktop route. */
+/** FileDetail header and FilePreview image frame, filled from the authenticated desktop route.
+ * The original preview is `<img src={rawUrl}>`. This Mac route has no hosted file URL, so the
+ * same bytes are shown from a blob. GIF and animated WebP stay in that `<img>` and are not
+ * drawn to a canvas or played as audio or video. */
 export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef }: DesktopFileImagePreviewProps) {
     const [view, setView] = useState<View>({ loading: true })
     const requestKey = `${path}\0${identity ?? ''}\0${srcUrl}`
@@ -50,7 +53,7 @@ export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, 
         setView({ loading: true })
         void (async () => {
             try {
-                const response = await fetch(srcUrl, { cache: 'no-store', signal: controller.signal })
+                const response = await fetch(previewUrl(srcUrl), { cache: 'no-store', signal: controller.signal })
                 const type = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? ''
                 if (!response.ok || !RASTER_TYPES.has(type)) {
                     const body = await response.json().catch(() => null) as { error?: unknown } | null
@@ -92,6 +95,12 @@ export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, 
                 : <ImagePreviewSkeleton />}
         </div>
     </div>
+}
+
+function previewUrl(srcUrl: string): string {
+    const url = new URL(srcUrl, 'http://127.0.0.1')
+    url.searchParams.set('animation', '1')
+    return `${url.pathname}${url.search}`
 }
 
 function isDesktopImageRoute(srcUrl: string, path: string, identity?: string): boolean {
