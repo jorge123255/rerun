@@ -1,38 +1,70 @@
-# Round 31 C — coworker mention handoff
+# Round 31 C — complete coworker mention handoff
 
-Source handoff only. Root owns integration, all checks and product acceptance.
+Source implementation and regression sources only. This continues commit `dad86d6876f560bdf19f836938b5cff41d9a9b4a`; it does not replace that work. Root owns central integration, every execution check and product acceptance.
 
-## Original references
+## Original source mapping
 
 Read at `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`:
 
-- `apps/ui/components/chat/MentionAutocomplete.tsx`: shared `@`/`/` detection, preferred ordering, labels, Box hint, keyboard selection, menu scrolling and token text.
-- `apps/ui/components/chat/AgentChat.tsx`: composer/question-form textarea synchronization and mention-token rendering.
-- `apps/ui/components/foreman/ForemanComposerSlot.tsx`: composer synchronization and menu anchoring.
-- `apps/ui/components/foreman/ForemanChatLayer.tsx`: history mention tokens.
+- `apps/ui/components/chat/MentionAutocomplete.tsx`: `@`/`/` trigger regex, query matching, preferred-same-Box then name ordering, `Coworkers`/`Skills` headings, buddy/handle/Box hint placement, handle-or-name insertion, ArrowUp/Down wrap, Enter/Tab selection, Escape, pointer pick and menu-local scrolling.
+- `apps/ui/components/chat/ChatComposer.tsx`: injected textarea handlers, mention-first key handling before Send, caret/focus synchronization and mention tokens. The desktop wrapper keeps its existing IME guard and only submits Enter when the mention handler did not consume it.
+- `apps/ui/lib/chat/composer-links.ts`: standalone mention boundaries, longest-first tokenization and saved-message presentation. Selected desktop metadata accepts only the same standalone boundaries, so email/embedded text cannot become a coworker token.
+- `apps/engine/src/tools/builtin/call-agent.ts`: exact-ID then unique-case-insensitive-name resolution, duplicate-name refusal and separately authorized `call_agent`. Plain typed names remain plain text for that runtime path; mention selection never dispatches or grants it.
 
-The desktop adapter preserves the original absolute, bottom-anchored menu, `max-h-56` scrolling list, truncation, preferred-then-name ordering, ArrowUp/ArrowDown/Enter/Tab/Escape behavior and direct textarea synchronization. It also retains the existing `useDesktopSkillSuggestions` shelf read and the desktop IME guard.
+The desktop menu preserves the original absolute bottom anchor, `max-h-56` behavior at normal heights, local `scrollTop`, truncation, headings and ordering. Its responsive cap is `min(14rem,50dvh)` for short viewports. No original shared component was edited.
 
-## Required contract and server authority
+## Canonical contract and roster authority
 
-`DesktopCoworkerCallTarget` is imported directly from `packages/contracts/src/desktop-coworker-calls.ts`. That paired A file is absent at the assignment base; root must integrate A and its central export policy without creating a second target definition.
+`DesktopCoworkerCallTarget` is imported directly from `packages/contracts/src/desktop-coworker-calls.ts`; no second target response type or permission model exists. That A file is still absent and is a required integration dependency.
 
-`apps/ui/app/api/desktop/coworkers/[agentId]/mentions/route.ts` deliberately depends on this missing root-owned export:
+The route uses root-injected authority with this exact required signature:
 
 ```ts
 import { desktopCoworkerMentionTargets } from '@/lib/desktop/server/engine'
 
-const targets = await desktopCoworkerMentionTargets(runtime, ownerAgentId)
+const targets = await desktopCoworkerMentionTargets(runtime, ownerAgentId, { signal })
 ```
 
-Root must implement that function using current local roster and A's current call-grant authority. It must validate the owner, exclude the owner itself and deleted targets, and return exact public `{agentId,name,handle,boxName,enabled,callable}` rows. It must not expose engine IDs. `callable` must reflect current enabled state and the actual per-coworker call grant/allowed target IDs; selecting a mention never changes either value. `createDesktopCoworkerMentionsApi` explicitly projects these six fields even if an authority row carries extra private fields.
+Root must implement that central export using the authenticated caller’s current local identity and current roster/grant authority. It must validate the caller, reject stale local/engine mappings, exclude the caller itself and deleted targets, and return canonical local `{agentId,name,handle,boxName,enabled,callable}` rows. `callable` must reflect current enabled state plus the actual default-off call grant and allowed target IDs. It must never expose engine IDs, private context, credentials, memories, files or chats. Lookup cannot enable a coworker, create a session, start a run or change a grant.
 
-## Composer wiring
+`createDesktopCoworkerMentionsApi` projects only those six fields even if an injected row has extras. It rejects duplicate local IDs and malformed/oversized rows rather than guessing or silently truncating. Duplicate names and duplicate handles remain valid because selection binds an immutable local ID. Limits are explicit: 100 targets, 256 UTF-16 code units per public text field, 10-second default authority deadline. Cancellation returns 408, deadline 504, invalid roster 502 and unavailable authority 503. Empty returns `{targets:[]}` with 200.
 
-Replace the existing `DesktopSkillMentions` wrapper with `DesktopCoworkerMentions`; its API extends `DesktopSkillMentionsApi`, so the existing composer render function remains compatible. Root supplies controlled text and mention records plus the current conversation Box name:
+## Exported owned API
+
+From `@/components/desktop/mentions`:
+
+- `DesktopCoworkerMentions`, `DesktopCoworkerMentionsApi`
+- `DesktopMentionMenu`, `DesktopMentionItem`
+- `useDesktopMentionAutocomplete`
+- `useDesktopCoworkerMentionTargets`, `listDesktopCoworkerMentionTargets`, `revalidateDesktopCoworkerMentionsAtSend`
+- All pure model helpers from `coworker-mention-model.ts`
+
+From `@/lib/desktop/coworker-mentions` (client-compatible re-export): the pure model helpers plus the lookup hook/client functions above.
+
+From `@/lib/desktop/server/coworker-mentions`:
+
+- `createDesktopCoworkerMentionsApi`
+- `validateDesktopCoworkerMentionsAtSend`
+- `DesktopCoworkerMentionRosterAuthority`
+- `DESKTOP_COWORKER_MENTION_TARGET_LIMIT`, `DESKTOP_COWORKER_MENTION_TEXT_LIMIT`, `DESKTOP_COWORKER_MENTION_LOOKUP_TIMEOUT_MS`
+
+Pure model surface:
+
+- `insertDesktopCoworkerMention`, `deleteDesktopCoworkerMention`, `replaceDesktopCoworkerMention`, `reconcileDesktopCoworkerMentions`
+- `desktopCoworkerMentionFields`, `desktopCoworkerMentionsFromMetadata`
+- `revalidateDesktopCoworkerMentions`
+- `desktopCoworkerMentionMetadataFields`, `restoreDesktopCoworkerMentionMetadata`
+- `desktopCoworkerMentionHistoryTokens`, `desktopCoworkerMentionsForRegeneration`
+- `DesktopCoworkerMention`, `DesktopResolvedCoworkerMention`, `DesktopCoworkerMentionRevalidation`, `DesktopCoworkerMentionIdentity`, `DesktopCoworkerMentionMetadata`, `DesktopCoworkerMentionRestore`, `DESKTOP_COWORKER_MENTION_METADATA_VERSION`
+
+The pure model has no client directive, allowing the server validator to reuse the exact range and target logic without duplicating it.
+
+## Composer integration and event order
+
+Replace `DesktopSkillMentions` with `DesktopCoworkerMentions`, keeping controlled per-tab text/mention state and the existing attachment/composer structure:
 
 ```tsx
-import { DesktopCoworkerMentions, type DesktopCoworkerMentionsApi } from '@/components/desktop/mentions'
+import { DesktopCoworkerMentions } from '@/components/desktop/mentions'
 import type { DesktopCoworkerMention } from '@/lib/desktop/coworker-mentions'
 
 const [coworkerMentions, setCoworkerMentions] = useState<DesktopCoworkerMention[]>([])
@@ -44,16 +76,23 @@ const [coworkerMentions, setCoworkerMentions] = useState<DesktopCoworkerMention[
     mentions={coworkerMentions}
     onTextChange={setInput}
     onMentionsChange={setCoworkerMentions}
+    enabled={composerEnabled}
+    refreshKey={composerRefreshKey}
 >
-    {api => <ExistingDesktopComposer mentionApi={api} />}
+    {api => <>
+        <Textarea ref={api.inputRef} {...api.textareaProps} />
+        {api.menu}
+    </>}
 </DesktopCoworkerMentions>
 ```
 
-`api.targets`, `targetStatus`, `targetError` and `retryTargets` expose roster availability. The existing `status`, `skills`, `error` and `retry` fields remain the skill-shelf values. `api.tokens` includes current roster/skill tokens and valid persisted tokens, including an old token after a rename.
+`api.textareaProps` includes the original handlers and ARIA listbox/active-option attributes. Event order is IME guard → mention navigation/selection → only if not prevented, ordinary Enter submit. When no menu consumes Enter, Shift+Enter retains ordinary newline behavior and unrelated shortcuts remain untouched. Pointer `mousedown` prevents focus loss, then restores caret/focus. The menu scrolls itself, never the board/chat.
 
-## Durable drafts, queue and regeneration
+`api.targets`, `targetStatus`, `targetError` and `retryTargets` expose `idle/loading/ready/empty/error/unavailable`. Existing `status`, `skills`, `error` and `retry` remain the /skill shelf fields. Disabled or uncallable targets are not presented as new selections. Old valid selected tokens remain renderable after a rename.
 
-A selected record is exactly:
+## Immutable metadata and editing
+
+A selected record remains:
 
 ```ts
 type DesktopCoworkerMention = {
@@ -64,36 +103,99 @@ type DesktopCoworkerMention = {
 }
 ```
 
-Offsets are UTF-16 textarea offsets. The token excludes the trailing insertion space. Root should add an optional `coworkerMentions` array to its existing draft, queued-message and source-message metadata schemas. Do not replace the central schemas with this document's structural type.
+Offsets are UTF-16 textarea offsets; `token` excludes the trailing insertion space. Explicit insertion requires an enabled/callable target and a standalone trigger. Editing shifts unaffected ranges and drops an edited token’s record. Dropped records are plain text and are never re-resolved by display name. Deletion removes the exact selected token and shifts other records.
 
-Use the owned helpers rather than re-serializing by name:
+`desktopCoworkerMentionFields` supplies the simple history-compatible `coworkerMentions` array. `desktopCoworkerMentionHistoryTokens` supplies safe `ComposerMention[]` for root’s saved-message renderer without changing old text after a rename.
+
+## Versioned draft, queue and acknowledgement binding
+
+`desktopCoworkerMentionMetadataFields(identity,text,mentions)` returns one optional `coworkerMentionMetadata` envelope with version 1, exact agent/session/tab/request identity, exact body text and immutable records. `restoreDesktopCoworkerMentionMetadata` refuses wrong versions, owners, sessions, tabs, request IDs, bodies and ranges. No origin-only persistence is created.
+
+Use identities as follows:
 
 ```ts
-import {
-    desktopCoworkerMentionFields,
-    desktopCoworkerMentionsFromMetadata,
-} from '@/lib/desktop/coworker-mentions'
+const draftFields = desktopCoworkerMentionMetadataFields(
+    { agentId, sessionId, tabUid, requestId: null }, text, mentions,
+)
 
-const fields = desktopCoworkerMentionFields(text, coworkerMentions)
-const restored = desktopCoworkerMentionsFromMetadata(savedText, savedMetadata)
+const queueFields = desktopCoworkerMentionMetadataFields(
+    { agentId, sessionId: queueScope.sessionId ?? null, tabUid: queueScope.tabUid ?? null, requestId: queued.id },
+    queued.text, mentions,
+)
+
+const acknowledgedFields = desktopCoworkerMentionMetadataFields(
+    { agentId, sessionId: admittedSessionId, tabUid, requestId: admittedRunOrRequestId },
+    admittedText, mentions,
+)
 ```
 
-- Draft: include `fields` in the existing draft write attempt and revision comparison. Restore with `desktopCoworkerMentionsFromMetadata(draft.text, draft)` and preserve the records through the existing draft flush/quit handshake.
-- Queue: include the same fields when enqueueing, persist them unchanged, and restore them for every flush/send-now path. Clear text and mention records together only after admission.
-- Regeneration: read the exact source message's metadata and carry the records into the alternate request. Do not infer targets from the current display names or current roster tokens.
-- Editing: `reconcileDesktopCoworkerMentions` shifts unaffected ranges and drops an edited token's record. Dropped records are plain text; they are not silently resolved to a target.
-- History rendering: merge `api.tokens` as before. The records, not `ComposerMention`, retain immutable target identity.
+Required root schema/store additions, all optional for backward compatibility:
 
-## Required send admission
+- `apps/ui/lib/desktop/composer-draft.ts`: `coworkerMentionMetadata` and legacy `coworkerMentions`; include metadata in write fingerprint/CAS and clear it with text only after admission.
+- `apps/ui/lib/desktop/queued-message.ts`: the same fields on the queued item; preserve them through waiting/sending/review, restart and retry.
+- Server draft/queue stores and chat request/history metadata schemas: additive migration/parse support; do not rewrite existing attachments or unrelated drafts.
 
-Root must call `api.revalidateSend()` before an initial send, every queued delivery and every regeneration. This performs a fresh GET for the current owner and resolves only the stored IDs. A rename retains the old visible token but resolves the same ID; duplicate names cannot redirect it. Missing/deleted, disabled or uncallable targets and stale ranges return `{ok:false}` and must block admission while preserving the draft and queue item. A typed plain name has no record and remains plain text for deterministic tool-side disambiguation.
+Draft restore uses `requestId:null`. Queue restore uses the existing item ID. Acknowledged send reconciliation uses the exact admitted request/run ID. Failed/cancelled sends keep text and metadata. Old metadata cannot bind another owner, tab, request or edited body.
 
-On `{ok:true}`, root may attach the returned exact target IDs to its trusted message metadata. Root/A must still reauthorize the actual `call_agent` invocation and allowed targets at execution. The mention adapter itself never dispatches work, creates a session, changes grants or copies target context.
+## Required server send admission and regeneration
 
-## Unsupported and unverified cases
+Client `api.revalidateSend()` is a fresh-read UX adapter, not sufficient authority. Root must call the server helper before initial admission, every queue flush/send-now and every regeneration:
 
-- No persistent-call execution, target-chat navigation, delegation, tool registration or grant mutation is implemented in this lane.
-- Old visible tokens are not rewritten after a rename, and name-only persisted text is not upgraded into a selected mention.
-- A failed roster read does not substitute a cached roster for send admission.
-- The paired A contract and root roster export remain integration dependencies, so this source is not independently buildable at the assignment base.
-- Regression sources were authored but not executed. No tests, typecheck, lint, builds, servers, live APIs, Mac UI, restart QA, packaging, Docker or Keychain operations were run.
+```ts
+const restored = restoreDesktopCoworkerMentionMetadata(identity, text, metadata)
+if (!restored.ok) throw new DesktopHttpError(409, restored.error)
+
+const checked = await validateDesktopCoworkerMentionsAtSend(rosterAuthority, {
+    agentId, text, mentions: restored.mentions, signal,
+})
+if (!checked.ok) throw new DesktopHttpError(409, checked.error)
+```
+
+For legacy `coworkerMentions` history, root may parse the simple records but must still perform the same fresh server ID/range check. Missing/deleted, disabled, uncallable, duplicate-ID and stale-range cases refuse. Rename keeps the original visible token and exact ID. Duplicate names/handles never redirect. Plain names have no record and stay plain text. The helper performs only a fresh roster read; it does not dispatch, grant tools or bypass A’s admission.
+
+For regeneration:
+
+```ts
+const mentions = desktopCoworkerMentionsForRegeneration(sourceText, regeneratedText, sourceMetadata)
+// Create a new current request identity and run validateDesktopCoworkerMentionsAtSend again.
+```
+
+Damaged source ranges throw rather than silently dropping a selected coworker. Unchanged regeneration preserves ID/display token; edited regeneration reconciles ranges first. Never reuse the old acknowledged request identity as the new regeneration request.
+
+## Implemented / dependent / unsupported matrix
+
+| Area | Implemented in lane | Root dependency | Unsupported here |
+| --- | --- | --- | --- |
+| Original @ and / discovery | Trigger/matching/order/headings/icons/hints/insertion | Mount beside existing composer | File mentions |
+| Keyboard/pointer/focus/IME | Wrap, Enter/Tab, Escape, hover/pick, caret/focus, ARIA, local scroll | Preserve root event ordering | Runtime accessibility acceptance |
+| Trusted roster | Bounded safe GET, cancellation, deadlines, empty/error states | Current caller/roster/grant authority export | Engine IDs/private context |
+| Immutable tokens | ID/token/range, insert/delete/shift/invalidate | Controlled per-tab state | Name-based silent re-resolution |
+| Send safety | Client fresh check and required server validator | Call server validator in every admission path | Dispatch/grant/tool authority |
+| Drafts/queues/acks | Versioned owner/body/request envelope and reconciliation | Additive central schemas/migrations/stores | New persistence silo |
+| History/regeneration | Safe old-token rendering and strict source carry-forward | Renderer and alternate-request wiring | Retroactive rename or old-request reuse |
+| Verification | Focused regression sources authored | Run/repair all checks and Mac/restart QA | Tests/builds/live acceptance by lane |
+
+## Regression sources authored, all unrun
+
+- `coworker-mention-model.test.ts`: @ boundaries, duplicate identities/names, insertion/deletion/range edits, rename/delete/disable/revoke, plain text, versioned draft/queue/ack ownership and body binding, history/regeneration.
+- `server-coworker-mentions.test.ts`: safe projection, valid empty, duplicate IDs/names, response bounds, cancellation/deadline, fresh server send validation and refusal without dispatch.
+- `coworker-mentions-client.test.tsx`: stale owner/generation rejection, loading/empty/error/unavailable/retry and fresh read-only send lookup.
+- `DesktopCoworkerMentions.test.tsx`: preferred ordering, Box hints, /skill coexistence, immutable selection without Send, email/plain text, Arrow wrap/ARIA, pointer focus/caret and IME/Escape.
+
+No tests, typecheck, lint, builds, installs, servers, live APIs, Mac UI, restart QA, packaging, Docker or Keychain operations were run. Installed Next.js documentation under `node_modules/next/dist/docs` is absent in this checkout; no installation was attempted.
+
+## Changed files in this continuation
+
+- `apps/ui/components/desktop/mentions/coworker-mention-model.ts` — new pure token/metadata model.
+- `apps/ui/components/desktop/mentions/coworker-mention-model.test.ts` — new regression source.
+- `apps/ui/components/desktop/mentions/server-coworker-mentions.test.ts` — new regression source.
+- `apps/ui/components/desktop/mentions/coworker-mentions-client.test.tsx` — new regression source.
+- `apps/ui/components/desktop/mentions/DesktopCoworkerMentions.tsx` — preserve ARIA props through the composed API.
+- `apps/ui/components/desktop/mentions/DesktopMentionMenu.tsx` — option identity and short-height behavior.
+- `apps/ui/components/desktop/mentions/useDesktopMentionAutocomplete.ts` — IME, ARIA and highlight lifecycle.
+- `apps/ui/components/desktop/mentions/DesktopCoworkerMentions.test.tsx` — expanded interaction regression source.
+- `apps/ui/components/desktop/mentions/index.ts` — complete owned exports.
+- `apps/ui/lib/desktop/coworker-mentions.ts` — pure-model re-export and generation-safe client lifecycle.
+- `apps/ui/lib/desktop/server/coworker-mentions.ts` — bounded authority, cancellation and server send validator.
+- `apps/ui/app/api/desktop/coworkers/[agentId]/mentions/route.ts` — signal-forwarding authority call.
+- `docs/desktop-round31-c-handoff.md` — this handoff.

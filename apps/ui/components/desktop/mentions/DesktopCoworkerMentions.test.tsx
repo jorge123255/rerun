@@ -82,3 +82,51 @@ it('inserts a /skill as text without creating a coworker target record', async (
     expect(onMentionsChange).toHaveBeenLastCalledWith([])
     expect(onSubmit).not.toHaveBeenCalled()
 })
+
+it('does not turn email or embedded text into coworker suggestions', async () => {
+    await mount()
+    await type('mail@researcher')
+    expect(document.querySelector('[role="listbox"]')).toBeNull()
+    await type('prefix@researcher')
+    expect(document.querySelector('[role="listbox"]')).toBeNull()
+})
+
+it('wraps keyboard highlight and exposes the active option without submitting', async () => {
+    const { onTextChange, onSubmit } = await mount()
+    await type('@re')
+    const textarea = document.querySelector('textarea')!
+    expect(textarea.getAttribute('aria-expanded')).toBe('true')
+    await key('ArrowUp')
+    const options = [...document.querySelectorAll('[role="option"]')]
+    expect(options[1]?.getAttribute('aria-selected')).toBe('true')
+    expect(textarea.getAttribute('aria-activedescendant')).toBe(options[1]?.id)
+    await key('Enter')
+    expect(onTextChange).toHaveBeenLastCalledWith('@assistant ')
+    expect(onSubmit).not.toHaveBeenCalled()
+})
+
+it('supports pointer hover/pick while retaining textarea focus and caret placement', async () => {
+    const { onTextChange, onSubmit } = await mount()
+    await type('@re')
+    const options = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+    await act(async () => options[1].dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })))
+    await act(async () => options[1].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })))
+    const textarea = document.querySelector('textarea')!
+    expect(onTextChange).toHaveBeenLastCalledWith('@assistant ')
+    expect(textarea.selectionStart).toBe(11)
+    expect(document.activeElement).toBe(textarea)
+    expect(onSubmit).not.toHaveBeenCalled()
+})
+
+it('leaves IME composition and Escape follow-up editing untouched', async () => {
+    const { onTextChange, onSubmit } = await mount()
+    await type('@re')
+    const textarea = document.querySelector('textarea')!
+    await act(async () => textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true })))
+    expect(onTextChange).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+    await key('Escape')
+    expect(document.querySelector('[role="listbox"]')).toBeNull()
+    await key('Enter')
+    expect(onTextChange).toHaveBeenCalledTimes(1)
+})

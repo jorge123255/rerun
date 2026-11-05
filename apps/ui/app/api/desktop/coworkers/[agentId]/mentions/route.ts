@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request, { params }: { params: Promise<{ agentId: string }> }) {
     return desktopRoute(request, async runtime => {
         const api = createDesktopCoworkerMentionsApi({
-            listTargets: ownerAgentId => desktopCoworkerMentionTargets(runtime, ownerAgentId),
+            listTargets: (ownerAgentId, { signal }) => desktopCoworkerMentionTargets(runtime, ownerAgentId, { signal }),
         })
         return api(request, (await params).agentId)
     })

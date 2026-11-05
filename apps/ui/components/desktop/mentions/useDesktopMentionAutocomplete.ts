@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type SyntheticEvent } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type SyntheticEvent } from 'react'
 import { mentionTokensOf, type MentionSkill } from '@/components/chat/MentionAutocomplete'
 import type { ComposerMention } from '@/lib/chat/composer-links'
 import {
@@ -24,6 +24,7 @@ export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxNam
     onMentionsChange: (mentions: DesktopCoworkerMention[]) => void
 }) {
     const inputRef = useRef<HTMLTextAreaElement>(null)
+    const menuId = useId()
     const [mention, setMention] = useState<MentionState | null>(null)
     const [highlight, setHighlight] = useState(0)
 
@@ -60,6 +61,10 @@ export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxNam
     }, [agents, skills, mentions])
 
     const open = mention !== null && items.length > 0
+    useEffect(() => {
+        setHighlight(current => Math.min(current, Math.max(0, items.length - 1)))
+    }, [items.length])
+
     const detect = useCallback((element: HTMLTextAreaElement) => {
         const caret = element.selectionStart ?? 0
         const before = element.value.slice(0, caret)
@@ -101,7 +106,7 @@ export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxNam
 
     const onSelect = useCallback((event: SyntheticEvent<HTMLTextAreaElement>) => detect(event.currentTarget), [detect])
     const onKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
-        if (!open) return
+        if (event.nativeEvent.isComposing || !open) return
         if (event.key === 'ArrowDown') {
             event.preventDefault()
             setHighlight(current => (current + 1) % items.length)
@@ -110,7 +115,8 @@ export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxNam
             setHighlight(current => (current - 1 + items.length) % items.length)
         } else if (event.key === 'Enter' || event.key === 'Tab') {
             event.preventDefault()
-            pick(items[highlight])
+            const selected = items[highlight]
+            if (selected) pick(selected)
         } else if (event.key === 'Escape') {
             event.preventDefault()
             setMention(null)
@@ -119,8 +125,15 @@ export function useDesktopMentionAutocomplete({ targets, skills, preferredBoxNam
 
     return {
         inputRef,
-        menu: open ? <DesktopMentionMenu trigger={mention.trigger} items={items} highlight={highlight} onHover={setHighlight} onPick={pick} /> : null,
+        menu: open ? <DesktopMentionMenu id={menuId} trigger={mention.trigger} items={items} highlight={highlight} onHover={setHighlight} onPick={pick} /> : null,
         tokens,
-        textareaProps: { onChange, onSelect, onKeyDown },
+        textareaProps: {
+            onChange, onSelect, onKeyDown,
+            'aria-autocomplete': 'list',
+            'aria-haspopup': 'listbox',
+            'aria-expanded': open,
+            'aria-controls': open ? menuId : undefined,
+            'aria-activedescendant': open ? `${menuId}-${highlight}` : undefined,
+        },
     }
 }

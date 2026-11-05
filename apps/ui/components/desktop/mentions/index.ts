@@ -1,2 +1,5 @@
 export { DesktopCoworkerMentions, type DesktopCoworkerMentionsApi } from './DesktopCoworkerMentions'
+export { DesktopMentionMenu, type DesktopMentionItem } from './DesktopMentionMenu'
 export { useDesktopMentionAutocomplete } from './useDesktopMentionAutocomplete'
+export { listDesktopCoworkerMentionTargets, revalidateDesktopCoworkerMentionsAtSend, useDesktopCoworkerMentionTargets, type DesktopCoworkerMentionTargetStatus } from '@/lib/desktop/coworker-mentions'
+export * from './coworker-mention-model'

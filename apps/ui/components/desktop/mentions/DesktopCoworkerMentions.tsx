@@ -65,8 +65,7 @@ export function DesktopCoworkerMentions({ agentId, preferredBoxName, text, menti
         menu: mention.menu,
         tokens: mention.tokens,
         textareaProps: {
-            onChange: mention.textareaProps.onChange,
-            onSelect: mention.textareaProps.onSelect,
+            ...mention.textareaProps,
             onKeyDown: handleKeyDown,
         },
         ...suggestions,

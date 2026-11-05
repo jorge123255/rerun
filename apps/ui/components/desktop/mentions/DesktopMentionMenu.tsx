@@ -16,7 +16,8 @@ export type DesktopMentionItem = {
     preferred: boolean
 } | ({ kind: 'skill' } & MentionSkill)
 
-export function DesktopMentionMenu({ trigger, items, highlight, onHover, onPick }: {
+export function DesktopMentionMenu({ id, trigger, items, highlight, onHover, onPick }: {
+    id: string
     trigger: '@' | '/'
     items: DesktopMentionItem[]
     highlight: number
@@ -34,9 +35,10 @@ export function DesktopMentionMenu({ trigger, items, highlight, onHover, onPick 
 
     return <div className="absolute bottom-full left-0 right-0 z-50 mb-1 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md">
         <p className="px-3 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{trigger === '@' ? 'Coworkers' : 'Skills'}</p>
-        <ul ref={listRef} role="listbox" className="relative max-h-56 space-y-0.5 overflow-y-auto p-1">
+        <ul id={id} ref={listRef} role="listbox" className="relative max-h-[min(14rem,50dvh)] space-y-0.5 overflow-y-auto p-1">
             {items.map((item, index) => <li key={item.kind === 'agent' ? item.id : item.slug}>
                 <button
+                    id={`${id}-${index}`}
                     type="button"
                     role="option"
                     aria-selected={index === highlight}
