@@ -1,6 +1,6 @@
 # Next Rerun Mac agent assignments
 
-Updated November 4, 2026. New A/B/G/H worktrees are prepared at `bb45f3a99e2ae2fe2de8e944a9eb4ab329ef0055`, including root's source implementation of Control Center Logs. Installed acceptance remains `c41e83743cb969fc9814a2c64850d04cd762777f` until the new native checks finish. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+Updated November 4, 2026. New A/B/G/H worktrees are prepared at `bb45f3a99e2ae2fe2de8e944a9eb4ab329ef0055`, including root's source implementation of Control Center Logs. Installed and accepted source is now `86c35a307831da45c5f844bd81995181755f6bfe`; root's Logs slice passed Mac and restart acceptance. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
 Previous A/B/G/H/root deliveries remain accepted. This round adds four new lane slices and root's Logs navigation; C/D/E/F continue unfinished work. No unfinished lane is reset or counted as accepted. The catalog remains **28 unfinished capability groups**; these smaller deliveries complete parts of C3/C8/B5 rather than pretending entire groups are closed.
 
@@ -14,13 +14,15 @@ Previous A/B/G/H/root deliveries remain accepted. This round adds four new lane 
 | F | E5 — MCP list/admission corrections | `coworker-mcp` / `desktop/coworker-mcp` | Finish corrections on 0df850c; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent F next prompt.md>) |
 | G | C8 — Private/shared table result cards | `chat-table-cards` / `desktop/chat-table-cards` | New clean worktree; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent G next prompt.md>) |
 | H | B5 — Website/direct-image workspace logos | `workspace-website-logo` / `desktop/workspace-website-logo` | New clean worktree; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent H next prompt.md>) |
-| Root | B5 — Original Control Center coworker Open → Logs | Coding checkout `rerun-desktop`, `desktop/m1` | Source checks passed; native/restart acceptance pending |
+| Root | B5 — Original Control Center coworker Open → Logs | Coding checkout `rerun-desktop`, `desktop/m1` | Installed and accepted in 86c35a3; see desktop-control-center-logs-acceptance.md |
 
 Root alone runs all checks, builds, installation, live model requests and native Mac/restart acceptance. Agent prompts forbid running these checks or controlling the app. Root owns central integration files. B owns the composer area only; its base already includes root's Logs navigation, avoiding that overlap. A and G provide independent card components/adapters; root integrates shared history/render/grant wiring. H supplies isolated link-preview modules and an exact workspace-form integration fragment.
 
 A/B/G/H old completed worktrees are preserved. C keeps its existing dirty notification work. D advanced during preparation to clean `2dde64793cf909781e73e9afe6719c3cf4535295`; root's source review confirmed several fixes but found remaining destructive truncation, confinement/publication, tool-adapter, ownership, editor and proposal problems, all listed in the updated prompt. E/F keep their reviewed correction tasks. F's untracked alternate tool adapter remains excluded.
 
 See each prompt for exact original sources, ownership, limits, authored-regression scope and handoff requirements. New tasks are not accepted until root has reviewed the returned commits and completed applicable checks and Mac QA.
+
+Root's new Logs delivery passed **4,039 UI tests**, UI typecheck, packaging and live Mac checks. Codex returned **42** before restart and **43** afterward; run details, owner isolation, selected tab and two drafts survived. Recovery-backed fixture cleanup and the final restart preserved all original **23 chats / 88 messages**. [Acceptance](desktop-control-center-logs-acceptance.md).
 
 ---
 

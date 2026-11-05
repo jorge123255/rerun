@@ -1,14 +1,14 @@
 # Rerun Mac delivery checklist
 
-Updated November 4, 2026. Installed source: `c41e83743cb969fc9814a2c64850d04cd762777f`.
+Updated November 4, 2026. Installed source: `86c35a307831da45c5f844bd81995181755f6bfe`.
 
 The parity catalog has **28 unfinished capability groups**, down from 29 because **D7 private/shared data tables is complete**. Individual delivery tasks can complete part of a broader group; partial scope remains listed rather than being removed to reduce the count.
 
-## Active assignments — source work and root acceptance
+## Active assignments — root Logs accepted; eight lanes continue
 
-A: PDF chat cards; B: composer text uploads; C: finish notifications; D: confined Skills/tool corrections; E: schedule retry correction; F: MCP corrections; G: table chat cards; H: website logos. Root takes original Control Center **Open → Logs** and all integration/testing. Four new clean lane worktrees are prepared at `bb45f3a`; existing C/D/E/F worktrees are preserved. Previous accepted deliveries remain accepted. The new work is not yet accepted and does not reduce the 28 unfinished capability groups. See [current prompts](desktop-next-round.md).
+A: PDF chat cards; B: composer text uploads; C: finish notifications; D: confined Skills/tool corrections; E: schedule retry correction; F: MCP corrections; G: table chat cards; H: website logos. Root takes original Control Center **Open → Logs** and all integration/testing. Four new clean lane worktrees are prepared at `bb45f3a`; existing C/D/E/F worktrees are preserved. Previous accepted deliveries remain accepted. Root's Logs slice is accepted; the eight lane assignments remain pending and the catalog retains 28 unfinished capability groups. See [current prompts](desktop-next-round.md).
 
-Root's Logs source now passes **4,039 UI tests, 39 existing skips**, plus UI typecheck; native/restart acceptance is pending. Engine/contracts trees are unchanged from the previously validated release.
+Root's Logs slice passed **4,039 UI tests, 39 existing skips**, UI typecheck, packaging and native/restart acceptance. Real Codex replies returned **42** before restart and **43** afterward. Owner isolation, saved run details, selected tab and two drafts were verified. Final recovery-backed cleanup/restart preserved the original **23 chats / 88 messages**. Engine/contracts trees remain unchanged. [Acceptance](desktop-control-center-logs-acceptance.md).
 
 ## Previous delivery — 5 of 9 tasks accepted; four continue
 
