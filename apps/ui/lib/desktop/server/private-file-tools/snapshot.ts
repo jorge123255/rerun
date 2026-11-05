@@ -34,16 +34,16 @@ async function openCanonical(path: string): Promise<FileHandle> {
 /** No model operation heals journals. Human Files owns that recovery and its visible conflicts. */
 export async function privateFileLocation(root: string, path: string): Promise<PrivateFileLocation> {
     privateTextPath(path)
-    const target = join(root, path)
+    const target = join(/* turbopackIgnore: true */ root, path)
     const directories: Directory[] = []
     let current = root
     for (const part of ['', ...path.split('/').slice(0, -1)]) {
-        if (part) current = join(current, part)
+        if (part) current = join(/* turbopackIgnore: true */ current, part)
         const info = await lstat(current, { bigint: true })
         // These are user workspace paths, never assets to trace into the standalone app.
         if (!info.isDirectory() || info.uid !== uid() || await realpath(/* turbopackIgnore: true */ current) !== current) throw refused()
         directories.push({path: current, dev: info.dev, ino: info.ino, uid: info.uid})
-        const names = await readdir(current)
+        const names = await readdir(/* turbopackIgnore: true */ current)
         if (names.length > 10_000 || names.some(name => /^\.rerun-(publish|rename|delete)-/.test(name))) {
             throw new Error('This folder needs recovery. Open Files before using private file tools.')
         }
@@ -97,9 +97,9 @@ export async function assertPrivateSnapshot(snapshot: PrivateFileSnapshot): Prom
 /** Retain displaced inodes; an external writer may acquire one after any lsof check. */
 export async function assertPrivateBackupBudget(location: PrivateFileLocation): Promise<void> {
     let count = 0, bytes = BigInt(0)
-    for (const name of await readdir(dirname(location.target))) {
+    for (const name of await readdir(/* turbopackIgnore: true */ dirname(/* turbopackIgnore: true */ location.target))) {
         if (!name.startsWith('.rerun-backup-')) continue
-        const stat = await lstat(join(dirname(location.target), name), {bigint: true})
+        const stat = await lstat(join(/* turbopackIgnore: true */ dirname(location.target), name), {bigint: true})
         if (++count >= 999 || !stat.isFile() || stat.uid !== uid() || (bytes += stat.size) > BigInt(50 * 1024 * 1024 - 2 * PRIVATE_TEXT_BYTES)) {
             throw new Error('Private file recovery storage is full. Review hidden backup files in Files before editing again.')
         }

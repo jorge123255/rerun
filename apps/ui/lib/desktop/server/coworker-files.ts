@@ -572,8 +572,8 @@ const IMPORTABLE = /\.(txt|md)$/i
 async function assertPrivateToolLocation(workspace:string,path:string,mustExist:boolean) {
     const located=await containedPath(workspace,path)
     if(!located.root || path.split('/').some(part=>!part || part.startsWith('.')))throw new DesktopHttpError(400,'Choose an existing visible private Files location.')
-    const expected=join(located.root,path)
-    const parent=await realpath(/* turbopackIgnore: true */ dirname(expected)).catch(()=>null)
+    const expected=join(/* turbopackIgnore: true */ located.root,path)
+    const parent=await realpath(/* turbopackIgnore: true */ dirname(/* turbopackIgnore: true */ expected)).catch(()=>null)
     if(parent!==dirname(expected) || located.target && located.target!==expected || mustExist && !located.target)throw new DesktopHttpError(400,'Private file tools cannot follow symlinks or create folders.')
 }
 
@@ -584,7 +584,7 @@ export async function readPrivateCoworkerFile(runtime: DesktopRuntime, agentId: 
     return withCoworkerFiles(runtime, agentId, async () => {
         await beforeRead()
         const workspace = await coworkerWorkspace(runtime, agentId)
-        return withSaveLock(join(workspace, path), async () => {
+        return withSaveLock(join(/* turbopackIgnore: true */ workspace, path), async () => {
             await beforeRead()
             const location = await privateFileLocation(workspace, path)
             const snapshot = await readPrivateSnapshot(location)
@@ -618,7 +618,7 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
         resolved = await containedPath(workspace, folder)
     }
     const { target, rel } = resolved
-    if(publication && target!==join(resolved.root ?? '',folder))throw new DesktopHttpError(400,'Private file tools cannot follow symlinks.')
+    if(publication && target!==join(/* turbopackIgnore: true */ resolved.root ?? '',folder))throw new DesktopHttpError(400,'Private file tools cannot follow symlinks.')
     if (!target) throw new DesktopHttpError(404, 'Folder not found')
     const path = rel ? `${rel}/${name}` : name
     const privateLocation = publication ? await privateFileLocation(workspace, path) : null
