@@ -14,7 +14,6 @@ import {
     createTrigger,
     deleteTrigger,
     getTrigger,
-    listRuns,
     listTriggers,
     rotateTriggerToken,
     updateTrigger,
@@ -69,42 +68,30 @@ async function readTriggerBody(request: Request): Promise<unknown> {
     }
 }
 
-type RevisionBag = {
+/** REQUIRED durable revision/mutation/event authority. Never optional; never in-memory. */
+export type DesktopTriggerDurableStore = {
     getRevision(engineAgentId: string, slug: string): Promise<string>
     bumpRevision(engineAgentId: string, slug: string): Promise<string>
     findMutation(engineAgentId: string, requestId: string): Promise<{ kind: string; resultJson: string } | null>
     rememberMutation(input: { engineAgentId: string; requestId: string; kind: string; slug: string; resultJson: string }): Promise<void>
-    listEvents?(engineAgentId: string, slug?: string): Promise<unknown[]>
+    listEvents(engineAgentId: string, slug?: string): Promise<unknown[]>
 }
 
-const fallbackRevisions = new Map<string, string>()
-function memoryRevisions(): RevisionBag {
-    return {
-        async getRevision(engineAgentId, slug) {
-            const key = `${engineAgentId}:${slug}`
-            if (!fallbackRevisions.has(key)) fallbackRevisions.set(key, `r1:${crypto.randomUUID().slice(0, 8)}`)
-            return fallbackRevisions.get(key)!
-        },
-        async bumpRevision(engineAgentId, slug) {
-            const key = `${engineAgentId}:${slug}`
-            const prev = fallbackRevisions.get(key)
-            const match = prev?.match(/^r(\d+)/)
-            const n = match ? Number(match[1]) + 1 : 1
-            const next = `r${n}:${crypto.randomUUID().slice(0, 8)}`
-            fallbackRevisions.set(key, next)
-            return next
-        },
-        async findMutation() { return null },
-        async rememberMutation() {},
+function assertDurable(durable: DesktopTriggerDurableStore | null | undefined): DesktopTriggerDurableStore {
+    if (!durable || typeof durable.getRevision !== 'function' || typeof durable.bumpRevision !== 'function'
+        || typeof durable.findMutation !== 'function' || typeof durable.rememberMutation !== 'function'
+        || typeof durable.listEvents !== 'function') {
+        throw new DesktopHttpError(503, 'Trigger durable store is not configured. Root must inject bindDesktopTriggers persistence before management admits work.')
     }
+    return durable
 }
 
 /**
- * Authenticated management API. Root should inject the engine-side revision/idempotency bag.
- * When omitted, a process-local fallback is used only so the route can be mounted; production
- * must pass the durable store from bindDesktopTriggers.
+ * Authenticated management API. `durable` is REQUIRED — process-local revision maps are forbidden.
+ * Root wires the engine-side store from bindDesktopTriggers (or an equivalent durable adapter).
  */
-export function desktopTriggersApi(db: Client, authorize: TriggerAccess, revisions: RevisionBag = memoryRevisions()) {
+export function desktopTriggersApi(db: Client, authorize: TriggerAccess, durable: DesktopTriggerDurableStore) {
+    const revisions = assertDurable(durable)
     return async (request: Request, agentId: string): Promise<Response> => {
         try {
             const runtime = await authenticateDesktopRequest(request)
@@ -121,26 +108,8 @@ export function desktopTriggersApi(db: Client, authorize: TriggerAccess, revisio
             if (request.method === 'GET' && action === 'history') {
                 await recoverDesktopTriggerChats(db, engine, agentId, { signal: request.signal, engineAgentId: owner.engineAgentId }).catch(() => [])
                 const slug = url.searchParams.get('slug') ?? undefined
-                if (revisions.listEvents) {
-                    return Response.json(await revisions.listEvents(owner.engineAgentId, slug), { headers: { 'Cache-Control': 'no-store' } })
-                }
-                const runs = await listRuns(engine, owner.engineAgentId, { limit: 100 })
-                const items = runs
-                    .filter(run => run.triggerSource === 'trigger' && (!slug || run.triggerSlug === slug))
-                    .map(run => ({
-                        eventId: run.id,
-                        slug: run.triggerSlug ?? '',
-                        triggerName: run.triggerSlug ?? 'trigger',
-                        status: run.status === 'running' ? 'running' : run.status === 'cancelled' ? 'cancelled' : run.status === 'error' ? 'error' : 'finished',
-                        receivedAt: run.startedAt,
-                        finishedAt: run.finishedAt ?? null,
-                        localSessionId: null,
-                        runId: run.id,
-                        error: null,
-                        capturedPayload: true,
-                        liveOnly: false,
-                    }))
-                return Response.json(items, { headers: { 'Cache-Control': 'no-store' } })
+                // Durable event ledger only — never invent captured payloads from a bare run list.
+                return Response.json(await revisions.listEvents(owner.engineAgentId, slug), { headers: { 'Cache-Control': 'no-store' } })
             }
 
             if (request.method === 'GET') {

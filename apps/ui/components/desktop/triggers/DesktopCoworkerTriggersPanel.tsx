@@ -5,6 +5,12 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import { DesktopCoworkerTriggers } from './DesktopCoworkerTriggers'
+import {
+    unavailableTriggerRunModelCatalog,
+    desktopTriggerPromptLock,
+    type DesktopTriggerRunModelCatalog,
+    type DesktopTriggerTemplateLockState,
+} from '@/lib/desktop/triggers'
 
 /** B5 wrapper matching DesktopCoworkerRoutines — root mounts beside Routines / Control Center Open → Triggers. */
 export function DesktopCoworkerTriggersPanel({
@@ -12,11 +18,15 @@ export function DesktopCoworkerTriggersPanel({
     dialogControl,
     onOpenChat,
     ingressAvailable = false,
+    modelCatalog = unavailableTriggerRunModelCatalog(),
+    templateLock = desktopTriggerPromptLock(false),
 }: {
     agent: { id: string; name: string }
     dialogControl?: DesktopDialogControl
     onOpenChat: (id: string, title?: string) => void
     ingressAvailable?: boolean
+    modelCatalog?: DesktopTriggerRunModelCatalog
+    templateLock?: DesktopTriggerTemplateLockState
 }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const scope = `${agent.id}:${open}`
@@ -45,6 +55,8 @@ export function DesktopCoworkerTriggersPanel({
                         key={agent.id}
                         agentId={agent.id}
                         ingressAvailable={ingressAvailable}
+                        modelCatalog={modelCatalog}
+                        templateLock={templateLock}
                         onOpenSession={chat => {
                             if (cycle.current !== captured || !open || !chat.sessionId) return
                             cycle.current = { scope: '' }

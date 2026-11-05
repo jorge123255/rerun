@@ -17,3 +17,25 @@ export {
     type DesktopTriggersPanelCommand,
     type OpenDesktopTriggersPanel,
 } from './panel-adapter'
+
+export {
+    latestTriggerOutcomes,
+    triggerOutcomeKey,
+    type DesktopTriggerOutcome,
+    type DesktopTriggerOutcomeStatus,
+} from './outcomes'
+export {
+    encodeTriggerRunModelPick,
+    decodeTriggerRunModelPick,
+    providerForTriggerPick,
+    unavailableTriggerRunModelCatalog,
+    DESKTOP_TRIGGER_AGENT_DEFAULT,
+    type DesktopTriggerRunModelPick,
+    type DesktopTriggerModelGroup,
+    type DesktopTriggerModelOption,
+    type DesktopTriggerRunModelCatalog,
+} from './run-model'
+export {
+    desktopTriggerPromptLock,
+    type DesktopTriggerTemplateLockState,
+} from './template-lock'

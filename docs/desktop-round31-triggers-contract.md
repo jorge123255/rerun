@@ -6,6 +6,17 @@ Branch: `desktop/round31-triggers-full`.
 
 This document is the single protocol for local webhook triggers. Root owns mounts, grants, packaging and every execution check. This lane supplies owned source only.
 
+
+## Correction — durable management (post-20e56ce)
+
+Process-local revision/mutation maps are **forbidden**. Management API requires a root-injected `DesktopTriggerDurableStore` via `configureDesktopTriggersManagement({ durable })`. Missing durable → 503 fail closed. History is durable `listEvents` only (no invented captured payloads from a bare run list).
+
+Typed editor adapters replace free-text model override:
+- `DesktopTriggerRunModelField` + injected `DesktopTriggerRunModelCatalog` (honest unavailable until root wires local catalog)
+- `DesktopTriggerTemplateLock` + injected lock state (no hosted billing store import)
+- `DesktopTaskNotifyField` (existing desktop notify prefs) with `source="trigger"`
+- `DesktopTaskOutcomeFooter` + `latestTriggerOutcomes` from durable history (Done/Failed/Needs input/Running; Open chat only with adopted localSessionId)
+
 ## Identities
 
 | Public (renderer / history) | Trusted (server / engine) |

@@ -7,7 +7,7 @@ import type { DesktopRuntime } from '../runtime'
 import { engineOf } from '../settings'
 import { withRosterWrite } from '../roster-writes'
 import { getAgent } from '@/lib/engine/client'
-import { desktopTriggersApi } from './api'
+import { desktopTriggersApi, type DesktopTriggerDurableStore } from './api'
 import { adoptDesktopTriggerEvent } from './adoption'
 
 const identity = z.string().min(1).max(200)
@@ -20,13 +20,23 @@ const bridgeSchema = z.discriminatedUnion('event', [
 
 const closedKey = Symbol.for('rerun.desktop.trigger.closed.v1')
 const revokedKey = Symbol.for('rerun.desktop.trigger.revoked.v1')
+const configKey = Symbol.for('rerun.desktop.trigger.management.v1')
 const globalState = globalThis as typeof globalThis & {
     [closedKey]?: Set<string>
     [revokedKey]?: Set<string>
+    [configKey]?: DesktopTriggerManagementConfig | null
 }
 const closed = globalState[closedKey] ??= new Set<string>()
 const revoked = globalState[revokedKey] ??= new Set<string>()
 const keyOf = (runtime: DesktopRuntime) => `${runtime.dataRoot}\0${runtime.launchNonce}`
+
+export type AuthorizeDesktopTrigger = (runtime: DesktopRuntime, db: Client, engineAgentId: string, signal?: AbortSignal) => Promise<void>
+
+export type DesktopTriggerManagementConfig = {
+    /** REQUIRED durable revision/mutation/event store from bindDesktopTriggers (or equivalent). */
+    durable: DesktopTriggerDurableStore
+    authorize?: AuthorizeDesktopTrigger
+}
 
 function assertActive(runtime: DesktopRuntime, signal?: AbortSignal) {
     signal?.throwIfAborted()
@@ -48,10 +58,19 @@ async function localOwner(db: Client, engineAgentId: string) {
 }
 
 /**
- * REQUIRED root-owned authorize. Checks current local identity, enabled state, and the trigger
- * capability root promotes from the pending catalog entry. Do not replace with a no-op.
+ * Root MUST call this once with the durable engine store before management admits work.
+ * Omitting durable (or passing a memory stub) is a configuration error — requests fail closed.
  */
-export type AuthorizeDesktopTrigger = (runtime: DesktopRuntime, db: Client, engineAgentId: string, signal?: AbortSignal) => Promise<void>
+export function configureDesktopTriggersManagement(config: DesktopTriggerManagementConfig | null): void {
+    if (config && (!config.durable || typeof config.durable.listEvents !== 'function')) {
+        throw new Error('configureDesktopTriggersManagement requires a durable store with listEvents/getRevision/bumpRevision/findMutation/rememberMutation')
+    }
+    globalState[configKey] = config
+}
+
+export function getDesktopTriggersManagementConfig(): DesktopTriggerManagementConfig | null {
+    return globalState[configKey] ?? null
+}
 
 export async function authorizeDesktopTriggersBasic(runtime: DesktopRuntime, db: Client, engineAgentId: string, signal?: AbortSignal): Promise<void> {
     assertActive(runtime, signal)
@@ -60,9 +79,7 @@ export async function authorizeDesktopTriggersBasic(runtime: DesktopRuntime, db:
     const current = await getAgent(engineOf(runtime), engineAgentId)
     assertActive(runtime, signal)
     if (current.id !== engineAgentId || !current.config.enabled) throw new DesktopHttpError(409, 'Coworker identity or enabled state changed')
-    // Grant promotion is root-owned. Until `trigger` is a supported desktopRerunGrantId, root must
-    // inject a tighter authorize that checks its chosen capability bit. This basic helper only
-    // proves identity/enabled/deletion — it deliberately does NOT invent an allow-all grant.
+    // Does NOT invent an allow-all grant. Root should replace with grant-aware authorize.
     await withRosterWrite(async () => {
         assertActive(runtime, signal)
         if (await localOwner(db, engineAgentId) !== owner) throw new DesktopHttpError(409, 'Coworker identity changed')
@@ -86,23 +103,24 @@ export async function handleDesktopTriggerBridge(runtime: DesktopRuntime, body: 
         revoked.add(event.agentId)
         return Response.json({ ok: true, persisted: true }, { headers: { 'Cache-Control': 'no-store' } })
     }
-    await authorizeDesktopTriggersBasic(runtime, db, event.agentId, signal)
+    const authorize = getDesktopTriggersManagementConfig()?.authorize ?? authorizeDesktopTriggersBasic
+    await authorize(runtime, db, event.agentId, signal)
     if (event.event === 'desktop.trigger.adopt') {
         const adopted = await adoptDesktopTriggerEvent(db, engineOf(runtime), event)
         if (!adopted) throw new DesktopHttpError(409, 'Trigger conversation could not be saved')
-        await authorizeDesktopTriggersBasic(runtime, db, event.agentId, signal)
+        await authorize(runtime, db, event.agentId, signal)
     }
     assertActive(runtime, signal)
     return Response.json({ ok: true, persisted: true }, { headers: { 'Cache-Control': 'no-store' } })
 }
 
-export async function desktopTriggerRequest(
-    runtime: DesktopRuntime,
-    request: Request,
-    agentId: string,
-    authorize: AuthorizeDesktopTrigger = authorizeDesktopTriggersBasic,
-) {
+export async function desktopTriggerRequest(runtime: DesktopRuntime, request: Request, agentId: string) {
     assertActive(runtime, request.signal)
+    const config = getDesktopTriggersManagementConfig()
+    if (!config?.durable) {
+        throw new DesktopHttpError(503, 'Trigger durable store is not configured. Root must call configureDesktopTriggersManagement before admitting management.')
+    }
     const db = await openDesktopDatabase(runtime.dataRoot)
-    return desktopTriggersApi(db, id => authorize(runtime, db, id, request.signal))(request, agentId)
+    const authorize = config.authorize ?? authorizeDesktopTriggersBasic
+    return desktopTriggersApi(db, id => authorize(runtime, db, id, request.signal), config.durable)(request, agentId)
 }

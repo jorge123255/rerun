@@ -9,7 +9,19 @@ import { PanelSteps } from '@/components/ui/panel-steps'
 import { SkeletonPanelRows } from '@/components/ui/skeleton'
 import { Badge } from '@rerun/ui/primitives'
 import { PauseIcon, PlusIcon, WebhookIcon, ArrowLeftIcon, Loader2Icon } from '@/lib/icons'
-import { listDesktopTriggers, listDesktopTriggerHistory, TriggerRequestError } from '@/lib/desktop/triggers'
+import { DesktopTaskOutcomeFooter } from '@/components/desktop/triggers/DesktopTaskOutcomeFooter'
+import {
+    listDesktopTriggers,
+    listDesktopTriggerHistory,
+    latestTriggerOutcomes,
+    triggerOutcomeKey,
+    TriggerRequestError,
+    unavailableTriggerRunModelCatalog,
+    desktopTriggerPromptLock,
+    type DesktopTriggerOutcome,
+    type DesktopTriggerRunModelCatalog,
+    type DesktopTriggerTemplateLockState,
+} from '@/lib/desktop/triggers'
 import type { DesktopTrigger, DesktopTriggerHistoryItem } from '@rerun/contracts'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RunStatusBadge } from '@rerun/ui/monitoring'
@@ -27,16 +39,42 @@ export function DesktopCoworkerTriggers({
     agentId,
     onOpenSession,
     ingressAvailable = false,
+    modelCatalog = unavailableTriggerRunModelCatalog(),
+    templateLock = desktopTriggerPromptLock(false),
 }: {
     agentId: string
     onOpenSession: (chat: ChatOpen) => void
     ingressAvailable?: boolean
+    modelCatalog?: DesktopTriggerRunModelCatalog
+    templateLock?: DesktopTriggerTemplateLockState
 }) {
-    return <Triggers key={agentId} agentId={agentId} onOpenSession={onOpenSession} ingressAvailable={ingressAvailable} />
+    return (
+        <Triggers
+            key={agentId}
+            agentId={agentId}
+            onOpenSession={onOpenSession}
+            ingressAvailable={ingressAvailable}
+            modelCatalog={modelCatalog}
+            templateLock={templateLock}
+        />
+    )
 }
 
-function Triggers({ agentId, onOpenSession, ingressAvailable }: { agentId: string; onOpenSession: (chat: ChatOpen) => void; ingressAvailable: boolean }) {
+function Triggers({
+    agentId,
+    onOpenSession,
+    ingressAvailable,
+    modelCatalog,
+    templateLock,
+}: {
+    agentId: string
+    onOpenSession: (chat: ChatOpen) => void
+    ingressAvailable: boolean
+    modelCatalog: DesktopTriggerRunModelCatalog
+    templateLock: DesktopTriggerTemplateLockState
+}) {
     const [triggers, setTriggers] = useState<DesktopTrigger[] | null>(null)
+    const [outcomes, setOutcomes] = useState<Record<string, DesktopTriggerOutcome>>({})
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
     const [view, setView] = useState<View>({ mode: 'list' })
@@ -54,6 +92,7 @@ function Triggers({ agentId, onOpenSession, ingressAvailable }: { agentId: strin
             agentEpoch.current = agentId
             setView({ mode: 'list' })
             setTriggers(null)
+            setOutcomes({})
             setError('')
         }
     }, [agentId])
@@ -63,8 +102,17 @@ function Triggers({ agentId, onOpenSession, ingressAvailable }: { agentId: strin
         setLoading(true)
         try {
             const next = await listDesktopTriggers(agentId)
+            let nextOutcomes: Record<string, DesktopTriggerOutcome> = {}
+            try {
+                const history = await listDesktopTriggerHistory(agentId)
+                nextOutcomes = latestTriggerOutcomes(history)
+            } catch {
+                // Outcomes stay empty rather than inventing Done/Failed from incomplete data.
+                nextOutcomes = {}
+            }
             if (alive.current && own === listEpoch.current && agentEpoch.current === agentId) {
                 setTriggers(next)
+                setOutcomes(nextOutcomes)
                 setError('')
             }
         } catch (err) {
@@ -87,6 +135,8 @@ function Triggers({ agentId, onOpenSession, ingressAvailable }: { agentId: strin
                 <DesktopTriggerEditor
                     agentId={agentId}
                     ingressAvailable={ingressAvailable}
+                    modelCatalog={modelCatalog}
+                    templateLock={templateLock}
                     onDone={() => { setView({ mode: 'list' }); void load() }}
                     onBack={() => setView({ mode: 'list' })}
                 />
@@ -101,6 +151,8 @@ function Triggers({ agentId, onOpenSession, ingressAvailable }: { agentId: strin
                     agentId={agentId}
                     slug={view.slug}
                     ingressAvailable={ingressAvailable}
+                    modelCatalog={modelCatalog}
+                    templateLock={templateLock}
                     onDone={() => { setView({ mode: 'list' }); void load() }}
                     onBack={() => setView({ mode: 'list' })}
                     onShowHistory={() => setView({ mode: 'runs', slug: view.slug })}
@@ -152,7 +204,13 @@ function Triggers({ agentId, onOpenSession, ingressAvailable }: { agentId: strin
                                     onClick={() => setView({ mode: 'edit', slug: t.slug })}
                                     title={t.name}
                                     description={triggerSummary(t)}
-                                    footer={<span>{t.lastFiredAt ? `last call ${new Date(t.lastFiredAt).toLocaleString()}` : 'Never called'}</span>}
+                                    footer={
+                                        <DesktopTaskOutcomeFooter
+                                            outcome={outcomes[triggerOutcomeKey(t.slug)]}
+                                            lastStartedAt={t.lastFiredAt}
+                                            onOpenChat={(sessionId, runId) => onOpenSession({ sessionId, title: t.name, runId })}
+                                        />
+                                    }
                                     meta={!t.enabled ? (
                                         <Badge size="xs" tone="neutral" glow={false} leading={<PauseIcon className="size-3" />}>paused</Badge>
                                     ) : undefined}

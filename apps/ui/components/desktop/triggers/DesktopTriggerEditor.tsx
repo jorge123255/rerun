@@ -1,6 +1,9 @@
 'use client'
 
 import { DesktopTriggerUrlField } from '@/components/desktop/triggers/DesktopTriggerUrlField'
+import { DesktopTriggerRunModelField } from '@/components/desktop/triggers/DesktopTriggerRunModelField'
+import { DesktopTriggerTemplateLock } from '@/components/desktop/triggers/DesktopTriggerTemplateLock'
+import { DesktopTaskNotifyField } from '@/components/desktop/DesktopTaskNotifyField'
 import { PanelDeleteButton, PanelEditorBody, PanelEditorFooter, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -17,6 +20,12 @@ import {
     rotateDesktopTrigger,
     updateDesktopTrigger,
     TriggerRequestError,
+    providerForTriggerPick,
+    unavailableTriggerRunModelCatalog,
+    desktopTriggerPromptLock,
+    type DesktopTriggerRunModelCatalog,
+    type DesktopTriggerRunModelPick,
+    type DesktopTriggerTemplateLockState,
 } from '@/lib/desktop/triggers'
 import type { DesktopTrigger, DesktopTriggerMethod } from '@rerun/contracts'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -31,9 +40,22 @@ type Props = {
     onBack: () => void
     onShowHistory?: () => void
     ingressAvailable?: boolean
+    /** Injected local model catalog. Defaults to honest unavailable (follow coworker). */
+    modelCatalog?: DesktopTriggerRunModelCatalog
+    /** Injected template lock state. Defaults to unlocked. */
+    templateLock?: DesktopTriggerTemplateLockState
 }
 
-export function DesktopTriggerEditor({ agentId, slug, onDone, onBack, onShowHistory, ingressAvailable = false }: Props) {
+export function DesktopTriggerEditor({
+    agentId,
+    slug,
+    onDone,
+    onBack,
+    onShowHistory,
+    ingressAvailable = false,
+    modelCatalog = unavailableTriggerRunModelCatalog(),
+    templateLock = desktopTriggerPromptLock(false),
+}: Props) {
     const isEdit = !!slug
     const [loading, setLoading] = useState(isEdit)
     const [trigger, setTrigger] = useState<DesktopTrigger | null>(null)
@@ -42,13 +64,14 @@ export function DesktopTriggerEditor({ agentId, slug, onDone, onBack, onShowHist
     const [methods, setMethods] = useState<DesktopTriggerMethod[]>(DEFAULT_METHODS)
     const [enabled, setEnabled] = useState(true)
     const [body, setBody] = useState('')
-    const [model, setModel] = useState<string | null>(null)
+    const [pick, setPick] = useState<DesktopTriggerRunModelPick>({ connectionId: null, model: null })
     const [saving, setSaving] = useState(false)
     const [deleting, setDeleting] = useState(false)
     const [rotating, setRotating] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [dirty, setDirty] = useState(false)
     const loadGen = useRef(0)
+    const agentGen = useRef(agentId)
     const alive = useRef(true)
 
     useEffect(() => {
@@ -57,28 +80,46 @@ export function DesktopTriggerEditor({ agentId, slug, onDone, onBack, onShowHist
     }, [])
 
     useEffect(() => {
+        if (agentGen.current === agentId) return
+        agentGen.current = agentId
+        // Stale cross-coworker guard: drop drafts/loads from a previous owner.
+        loadGen.current++
+        setTrigger(null)
+        setName('')
+        setDescription('')
+        setMethods(DEFAULT_METHODS)
+        setEnabled(true)
+        setBody('')
+        setPick({ connectionId: null, model: null })
+        setDirty(false)
+        setError(null)
+        setLoading(Boolean(slug))
+    }, [agentId, slug])
+
+    useEffect(() => {
         if (!slug) return
         const gen = ++loadGen.current
+        const owner = agentId
         setLoading(true)
         setError(null)
         getDesktopTrigger(agentId, slug)
             .then(t => {
-                if (!alive.current || gen !== loadGen.current) return
+                if (!alive.current || gen !== loadGen.current || agentGen.current !== owner) return
                 setTrigger(t)
                 setName(t.name)
                 setDescription(t.description ?? '')
                 setMethods(t.methods.length ? t.methods : DEFAULT_METHODS)
                 setEnabled(t.enabled ?? true)
-                setModel(t.model)
+                setPick({ connectionId: t.connectionId ?? null, model: t.model })
                 setBody(t.body ?? '')
                 setDirty(false)
             })
             .catch(err => {
-                if (!alive.current || gen !== loadGen.current) return
+                if (!alive.current || gen !== loadGen.current || agentGen.current !== owner) return
                 setError(err instanceof TriggerRequestError ? err.message : 'Could not load trigger')
             })
             .finally(() => {
-                if (alive.current && gen === loadGen.current) setLoading(false)
+                if (alive.current && gen === loadGen.current && agentGen.current === owner) setLoading(false)
             })
     }, [agentId, slug])
 
@@ -98,20 +139,26 @@ export function DesktopTriggerEditor({ agentId, slug, onDone, onBack, onShowHist
     const handleSave = useCallback(async () => {
         setSaving(true)
         setError(null)
+        const provider = providerForTriggerPick(pick, modelCatalog.availableGroups)
         try {
             if (isEdit) {
                 if (!trigger) throw new Error('Trigger not loaded')
-                await updateDesktopTrigger(agentId, slug!, {
+                const next = await updateDesktopTrigger(agentId, slug!, {
                     requestId: crypto.randomUUID(),
                     expectedRevision: trigger.revision,
                     description,
                     body,
                     methods,
                     enabled,
-                    connectionId: null,
-                    provider: null,
-                    model,
+                    connectionId: pick.connectionId,
+                    provider: provider as never,
+                    model: pick.model,
                 })
+                if (alive.current) {
+                    setTrigger(next)
+                    setDirty(false)
+                    onDone()
+                }
             } else {
                 await createDesktopTrigger(agentId, {
                     requestId: crypto.randomUUID(),
@@ -119,21 +166,22 @@ export function DesktopTriggerEditor({ agentId, slug, onDone, onBack, onShowHist
                     description,
                     body,
                     methods,
-                    connectionId: null,
-                    provider: null,
-                    model,
+                    connectionId: pick.connectionId,
+                    provider: provider as never,
+                    model: pick.model,
                 })
-            }
-            if (alive.current) {
-                setDirty(false)
-                onDone()
+                if (alive.current) {
+                    setDirty(false)
+                    onDone()
+                }
             }
         } catch (err) {
+            // Preserve drafts on failure (original behaviour).
             if (alive.current) setError(err instanceof Error ? err.message : 'Failed to save')
         } finally {
             if (alive.current) setSaving(false)
         }
-    }, [agentId, slug, isEdit, trigger, name, description, methods, enabled, model, body, onDone])
+    }, [agentId, slug, isEdit, trigger, name, description, methods, enabled, pick, body, onDone, modelCatalog.availableGroups])
 
     const handleRotate = useCallback(async () => {
         if (!slug || !trigger) return
@@ -172,6 +220,7 @@ export function DesktopTriggerEditor({ agentId, slug, onDone, onBack, onShowHist
     }
 
     const canSave = name.trim() && body.trim() && methods.length > 0
+    const promptLocked = templateLock.locked && isEdit
 
     return (
         <PanelEditorShell>
@@ -226,16 +275,13 @@ export function DesktopTriggerEditor({ agentId, slug, onDone, onBack, onShowHist
                     </div>
                 </Field>
 
-                <Field label="Model override" helperText="Leave empty to follow this coworker's configured local model. Hosted connection pickers are unavailable.">
-                    <Input
-                        hideRequired
-                        value={model ?? ''}
-                        onChange={e => { setDirty(true); setModel(e.target.value.trim() ? e.target.value : null) }}
-                        disabled={saving}
-                        placeholder="Follow coworker model"
-                        className="h-8 text-sm"
-                    />
-                </Field>
+                <DesktopTriggerRunModelField
+                    id="trigger-model"
+                    value={pick}
+                    onChange={next => { setDirty(true); setPick(next) }}
+                    catalog={modelCatalog}
+                    disabled={saving}
+                />
 
                 {isEdit && (
                     <Field orientation="row" label="Enabled">
@@ -243,16 +289,20 @@ export function DesktopTriggerEditor({ agentId, slug, onDone, onBack, onShowHist
                     </Field>
                 )}
 
-                <MarkdownTextarea
-                    label="Trigger prompt"
-                    dialogTitle="Edit the trigger prompt"
-                    helperText="What the coworker runs when the URL is called (a fresh session each time). The caller payload is attached below it."
-                    value={body}
-                    onChange={value => { setDirty(true); setBody(value) }}
-                    disabled={saving}
-                    className="text-xs min-h-32 font-mono"
-                    placeholder="A commit just landed. Review the diff in the payload and post a summary to Slack."
-                />
+                {slug && <DesktopTaskNotifyField agentId={agentId} source="trigger" slug={slug} disabled={saving} />}
+
+                <DesktopTriggerTemplateLock state={{ ...templateLock, locked: promptLocked }}>
+                    <MarkdownTextarea
+                        label="Trigger prompt"
+                        dialogTitle="Edit the trigger prompt"
+                        helperText="What the coworker runs when the URL is called (a fresh session each time). The caller payload is attached below it."
+                        value={body}
+                        onChange={value => { setDirty(true); setBody(value) }}
+                        disabled={saving || promptLocked}
+                        className="text-xs min-h-32 font-mono"
+                        placeholder="A commit just landed. Review the diff in the payload and post a summary to Slack."
+                    />
+                </DesktopTriggerTemplateLock>
             </PanelEditorBody>
             <PanelEditorFooter>
                 {isEdit && (
@@ -265,7 +315,7 @@ export function DesktopTriggerEditor({ agentId, slug, onDone, onBack, onShowHist
                     />
                 )}
                 <Button size="sm" variant="outline" disabled={saving || deleting} onClick={handleBack}>Cancel</Button>
-                <Button size="sm" className="flex-1" loading={saving} onClick={handleSave} disabled={!canSave || deleting}>
+                <Button size="sm" className="flex-1" loading={saving} onClick={handleSave} disabled={!canSave || deleting || promptLocked}>
                     {isEdit ? 'Save changes' : 'Create trigger'}
                 </Button>
             </PanelEditorFooter>

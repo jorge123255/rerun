@@ -1,6 +1,48 @@
 # Desktop Round 31 — Triggers source handoff (E9 + B5 + C8)
 
 ## Status
+## Correction commit (owned gaps after 20e56ce)
+
+Preserves `20e56ce1733add522851a3c58363e3010ec8d207`. Fixes owned gaps only; root integration still required.
+
+### Gaps fixed
+1. **Removed process-local revision fallback** from UI management API. `desktopTriggersApi(db, authorize, durable)` requires durable; `configureDesktopTriggersManagement` must supply it or requests 503. History uses durable `listEvents` only.
+2. **TaskNotify / template lock / model inheritance** via typed local adapters (`DesktopTaskNotifyField`, `DesktopTriggerTemplateLock`, `DesktopTriggerRunModelField` + `DesktopTriggerRunModelCatalog`). No free-text model string; catalog unavailable is honest; template unlock is injected (no billing store bypass).
+3. **Faithful `DesktopTaskOutcomeFooter`** + `latestTriggerOutcomes` from durable history — Done/Failed/Needs input/Running; Open chat only when `localSessionId` was adopted; never invents results.
+4. **Editor/panel hardening:** Cancel/discard confirm, rotate ConfirmDialog, delete PanelDeleteButton, draft preserve on failure, stale cross-coworker load/draft reset, list strips tokens, Copy is the only clipboard write of the URL secret.
+
+### Additional originals read for this correction
+- `apps/ui/components/agent/TaskNotifyField.tsx`
+- `apps/ui/components/agent/TemplateContentLock.tsx`
+- `apps/ui/hooks/useTemplateContentLock.ts`
+- `apps/ui/components/agent/RunModelField.tsx`
+- `apps/ui/components/agent/TaskOutcomeFooter.tsx`
+- `apps/ui/lib/schedules/outcomes.ts`
+- Existing desktop `DesktopTaskNotifyField.tsx` (reused, not rewritten)
+
+### Root wiring addition (durable management)
+```ts
+import { configureDesktopTriggersManagement } from '@/lib/desktop/server/triggers'
+import { asDesktopTriggerDurableManagement } from '…/engine/desktop/triggers' // via root bridge
+
+configureDesktopTriggersManagement({
+  durable: asDesktopTriggerDurableManagement(triggers.store), // or cross-process equivalent
+  authorize: rootAuthorizeWithTriggerGrant, // grant-aware; do not leave basic-only in production
+})
+```
+
+Panel:
+```tsx
+<DesktopCoworkerTriggersPanel
+  agent={coworker}
+  onOpenChat={openLocalChat}
+  modelCatalog={rootLocalTriggerModelCatalog} // or omit → unavailable/follow-coworker
+  templateLock={desktopTriggerPromptLock(rootTemplateLocked, rootUnlock)}
+  ingressAvailable={false}
+/>
+```
+
+
 
 Source implementation + authored regression sources only.  
 **No tests, typecheck, lint, builds, installs, app servers, packaging, Mac UI, provider/API calls, webhook deliveries, Docker, Keychain or network setup were executed by this lane.**  
@@ -153,8 +195,8 @@ Coverage intent: lifecycle/conflicts, lost ACK, rotate/revoke, passive visits, p
 - Grant catalog still pending until root promotes `trigger`
 - DesktopConversation / Control Center / coworker-panel lists not edited
 - Model tools not registered in central tool registry
-- Process-local revision fallback in UI API is only a mount-safety default; production must pass engine durable store
-- TaskNotifyField / template content lock / hosted RunModelField not ported (desktop uses coworker local model override string)
+- Durable store must be configured by root (`configureDesktopTriggersManagement`) or management 503s — intentional
+- Model catalog / template unlock / trigger grant promotion remain root-injected dependencies
 - No packaged Mac app verification by this lane
 
 ## Commit

@@ -20,3 +20,4 @@ export type {
     DesktopTriggerStartResult,
     DesktopTriggerHumanRoute,
 } from './types.js'
+export { asDesktopTriggerDurableManagement, type DesktopTriggerDurableManagement } from './durable-adapter.js'
