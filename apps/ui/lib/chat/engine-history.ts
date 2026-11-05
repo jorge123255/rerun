@@ -9,6 +9,7 @@ import { parseVoiceMessage } from '@/lib/voice/marker'
 import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
 import { desktopTableCardOf } from '@/lib/desktop/table-card'
 import { desktopFileCardOf } from '@/lib/desktop/file-card'
+import { desktopSkillProposalIdOf } from '@/lib/desktop/skill-proposal-source'
 import { hitlKindOf } from '@/lib/chat-hitl'
 import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, desktopAttachmentFieldsOf, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPaths, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
@@ -165,6 +166,14 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
             if (toolName === QUICK_REPLIES_TOOL) return {
                 type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
                 state: part.state, input: desktopQuickReplyInputOf(part) ?? {},
+            }
+            if (toolName === 'skill_propose') {
+                const proposalId = part.state === 'output-available' ? desktopSkillProposalIdOf(part.output) : null
+                return {
+                    type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                    state: part.state, input: {},
+                    ...(proposalId && { output: JSON.stringify({ status: 'shown', proposalId }) }),
+                }
             }
             // A saved file card is itself the public result: keep only its validated path metadata so
             // the tile survives reopening the chat. A malformed card falls through to the normal step.
