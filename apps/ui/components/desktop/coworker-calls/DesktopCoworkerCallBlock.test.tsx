@@ -6,12 +6,13 @@ import { createDesktopCoworkerCallsClient, type DesktopCoworkerCallSnapshot } fr
 import { DesktopCoworkerCallBlock } from './DesktopCoworkerCallBlock'
 
 vi.mock('@/hooks/useToolDisplay', () => ({ useToolDisplay: () => (toolName: string) => ({ label: toolName, iconProps: { icon: () => null } }) }))
+vi.mock('@/components/chat/ElapsedTime', () => ({ ElapsedTime: () => <span>Live elapsed</span> }))
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
 const snapshot = (status: DesktopCoworkerCallSnapshot['status'] = 'running'): DesktopCoworkerCallSnapshot => ({
-    callId: 'call-1', revision: 'revision-1', parentAgentId: 'parent-agent', parentSessionId: 'parent-chat', parentRunId: 'parent-run', toolCallId: 'tool-call-1',
+    callId: '00000000-0000-4000-8000-000000000001', revision: '1', parentAgentId: 'parent-agent', parentSessionId: 'parent-chat', parentRunId: 'parent-run', toolCallId: 'tool-call-1',
     targetAgentId: 'target-agent', targetSessionId: 'target-chat', targetName: 'Ada', wait: true, status,
     createdAt: '2026-11-05T10:00:00.000Z', updatedAt: '2026-11-05T10:01:00.000Z',
     progress: { steps: 2, toolCalls: 1, failures: 0, preview: status === 'error' ? 'Provider failed.' : 'Finished the research.', calls: [{ tool: 'web_fetch', status: 'completed' }] },
@@ -77,7 +78,7 @@ test('keeps completed, error, cancelled and interrupted outcomes truthful after 
 
 test('a failed Stop stays retryable and a confirmed Stop returns the exact revised snapshot', async () => {
     const call = snapshot()
-    const stopped = { ...call, revision: 'revision-2', status: 'cancelled' as const }
+    const stopped = { ...call, revision: '2', status: 'cancelled' as const }
     const fetcher = vi.fn()
         .mockResolvedValueOnce(Response.json({ error: 'Stop was not acknowledged.' }, { status: 503 }))
         .mockResolvedValueOnce(Response.json({ call: stopped }))
@@ -91,6 +92,43 @@ test('a failed Stop stays retryable and a confirmed Stop returns the exact revis
         await click(button('Stop this task')!)
         expect(onChange).toHaveBeenCalledExactlyOnceWith(stopped)
         expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual(JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body)))
+    })
+    client.dispose()
+})
+
+test('disables target navigation until the server adopts a chat', async () => {
+    const call = { ...snapshot(), targetSessionId: null }
+    const client = createDesktopCoworkerCallsClient(call.parentAgentId, call.parentSessionId)
+    await withBlock(<DesktopCoworkerCallBlock client={client} call={call} onOpenTarget={async () => {}} />, async () => {
+        expect(document.body.textContent).toContain('Target chat is being prepared…')
+        expect(button('Open chat')!.disabled).toBe(true)
+    })
+    client.dispose()
+})
+
+test('applies the authoritative snapshot when Stop races completion', async () => {
+    const call = snapshot()
+    const completed = { ...call, revision: '2', status: 'completed' as const }
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'This coworker call changed. Refresh it and try Stop again.', call: completed }, { status: 409 })))
+    const onChange = vi.fn()
+    const client = createDesktopCoworkerCallsClient(call.parentAgentId, call.parentSessionId)
+    await withBlock(<DesktopCoworkerCallBlock client={client} call={call} onChange={onChange} />, async () => {
+        await click(button('Stop this task')!)
+        expect(onChange).toHaveBeenCalledExactlyOnceWith(completed)
+        expect(document.body.textContent).toContain('This coworker call changed. Refresh it and try Stop again.')
+        expect(button('Stop this task')!.disabled).toBe(false)
+    })
+    client.dispose()
+})
+
+test('shows elapsed only for the current live run, not restored history', async () => {
+    const call = snapshot()
+    const client = createDesktopCoworkerCallsClient(call.parentAgentId, call.parentSessionId)
+    await withBlock(<DesktopCoworkerCallBlock client={client} call={call} live={false} />, async () => {
+        expect(document.body.textContent).not.toContain('Live elapsed')
+    })
+    await withBlock(<DesktopCoworkerCallBlock client={client} call={call} live />, async () => {
+        expect(document.body.textContent).toContain('Live elapsed')
     })
     client.dispose()
 })

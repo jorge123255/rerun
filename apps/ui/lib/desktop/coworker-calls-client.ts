@@ -1,10 +1,56 @@
 'use client'
 
-import type { DesktopCoworkerCallSnapshot } from '../../../../packages/contracts/src/desktop-coworker-calls'
+import {
+    desktopCoworkerCallListSchema,
+    desktopCoworkerCallStopResultSchema,
+    type DesktopCoworkerCallSnapshot,
+} from '../../../../packages/contracts/src/desktop-coworker-calls'
 
 export type { DesktopCoworkerCallSnapshot } from '../../../../packages/contracts/src/desktop-coworker-calls'
 
 export type DesktopCoworkerCallOpenTarget = { agentId: string; sessionId: string }
+
+const MAX_RESPONSE_BYTES = 1_000_000
+const REQUEST_TIMEOUT_MS = 10_000
+
+export class DesktopCoworkerCallStopError extends Error {
+    constructor(message: string, readonly call?: DesktopCoworkerCallSnapshot) {
+        super(message)
+        this.name = 'DesktopCoworkerCallStopError'
+    }
+}
+
+async function readBody(response: Response, signal: AbortSignal): Promise<unknown> {
+    if (!response.body) return null
+    const reader = response.body.getReader()
+    const chunks: Uint8Array[] = []
+    let size = 0
+    try {
+        while (true) {
+            signal.throwIfAborted()
+            const item = await reader.read()
+            if (item.done) break
+            size += item.value.byteLength
+            if (size > MAX_RESPONSE_BYTES) throw new Error('Coworker call response is too large.')
+            chunks.push(item.value)
+        }
+    } finally { await reader.cancel().catch(() => undefined) }
+    try {
+        const bytes = new Uint8Array(size)
+        let offset = 0
+        for (const chunk of chunks) {
+            bytes.set(chunk, offset)
+            offset += chunk.byteLength
+        }
+        return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+    } catch {
+        throw new Error('Coworker call response was malformed.')
+    }
+}
+
+function errorMessage(body: unknown, fallback: string): string {
+    return body && typeof body === 'object' && 'error' in body && typeof body.error === 'string' ? body.error : fallback
+}
 
 export function createDesktopCoworkerCallsClient(parentAgentId: string, parentSessionId: string) {
     const url = `/api/desktop/sessions/${encodeURIComponent(parentSessionId)}/coworker-calls`
@@ -17,49 +63,56 @@ export function createDesktopCoworkerCallsClient(parentAgentId: string, parentSe
         owned(current) && owned(expected) && current.callId === expected.callId && current.parentRunId === expected.parentRunId
         && current.toolCallId === expected.toolCallId && current.targetAgentId === expected.targetAgentId
 
-    async function request<T>(method: 'GET' | 'POST', input?: unknown, signal?: AbortSignal): Promise<T> {
+    async function request(method: 'GET' | 'POST', input?: unknown, signal?: AbortSignal): Promise<{ ok: boolean; body: unknown }> {
         if (closed) throw new Error('Coworker call owner changed')
         const controller = new AbortController()
         controllers.add(controller)
         try {
-            const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
+            const requestSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS), ...(signal ? [signal] : [])])
             const response = await fetch(url, {
                 method, cache: 'no-store', signal: requestSignal,
                 headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
                 body: method === 'POST' ? JSON.stringify(input) : undefined,
             })
-            const body = await response.json().catch(() => null) as (T & { error?: unknown }) | null
+            const body = await readBody(response, requestSignal)
             requestSignal.throwIfAborted()
             if (closed) throw new Error('Coworker call owner changed')
-            if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : method === 'GET' ? 'Could not load coworker calls.' : 'Could not stop the coworker call.')
-            if (body === null) throw new Error('Coworker call acknowledgement unavailable.')
-            return body
+            return { ok: response.ok, body }
+        } catch (cause) {
+            if (closed) throw new Error('Coworker call owner changed')
+            throw cause
         } finally {
             controllers.delete(controller)
         }
     }
 
     async function list(signal?: AbortSignal): Promise<DesktopCoworkerCallSnapshot[]> {
-        const body = await request<{ calls: DesktopCoworkerCallSnapshot[] }>('GET', undefined, signal)
-        if (!Array.isArray(body.calls)) throw new Error('Could not load coworker calls.')
-        return body.calls.filter(owned)
+        const { ok, body } = await request('GET', undefined, signal)
+        if (!ok) throw new Error(errorMessage(body, 'Could not load coworker calls.'))
+        const parsed = desktopCoworkerCallListSchema.safeParse(body)
+        if (!parsed.success) throw new Error('Coworker call response was malformed.')
+        if (parsed.data.calls.some(call => !owned(call))) throw new Error('Coworker call response belonged to another chat.')
+        return parsed.data.calls
     }
 
     return {
         list,
 
         async stop(call: DesktopCoworkerCallSnapshot, signal?: AbortSignal): Promise<DesktopCoworkerCallSnapshot> {
-            if (!owned(call)) throw new Error('This coworker call belongs to another chat.')
+            if (!owned(call)) throw new DesktopCoworkerCallStopError('This coworker call belongs to another chat.')
             const previous = stopRequests.get(call.callId)
             const ticket = previous?.expectedRevision === call.revision
                 ? previous
                 : { expectedRevision: call.revision, requestId: crypto.randomUUID() }
             stopRequests.set(call.callId, ticket)
-            const body = await request<{ call: DesktopCoworkerCallSnapshot }>('POST', {
+            const { ok, body } = await request('POST', {
                 operation: 'stop', requestId: ticket.requestId, callId: call.callId, expectedRevision: call.revision,
             }, signal)
-            if (!body.call || !sameIdentity(body.call, call)) throw new Error('Stop acknowledgement belonged to another coworker call.')
-            return body.call
+            const parsed = desktopCoworkerCallStopResultSchema.safeParse(body)
+            if (parsed.success && !sameIdentity(parsed.data.call, call)) throw new DesktopCoworkerCallStopError('Stop acknowledgement belonged to another coworker call.')
+            if (!ok) throw new DesktopCoworkerCallStopError(errorMessage(body, 'Could not stop the coworker call.'), parsed.success ? parsed.data.call : undefined)
+            if (!parsed.success) throw new DesktopCoworkerCallStopError('Stop acknowledgement was malformed.')
+            return parsed.data.call
         },
 
         async openTarget(call: DesktopCoworkerCallSnapshot, onOpenTarget: (target: DesktopCoworkerCallOpenTarget) => Promise<void>, signal?: AbortSignal): Promise<void> {

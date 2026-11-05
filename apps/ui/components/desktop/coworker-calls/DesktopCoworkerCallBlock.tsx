@@ -1,15 +1,16 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { SubRunBlock } from '@/components/chat/SubRunBlock'
 import { Button } from '@/components/ui/button'
-import type { DesktopCoworkerCallOpenTarget, DesktopCoworkerCallSnapshot, DesktopCoworkerCallsClient } from '@/lib/desktop/coworker-calls-client'
+import { DesktopCoworkerCallStopError, type DesktopCoworkerCallOpenTarget, type DesktopCoworkerCallSnapshot, type DesktopCoworkerCallsClient } from '@/lib/desktop/coworker-calls-client'
 import { desktopCoworkerCallProgress, desktopCoworkerCallState, isDesktopCoworkerCallLive } from './coworker-call-progress'
+import { DesktopCoworkerSubRunBlock } from './DesktopCoworkerSubRunBlock'
 
-export function DesktopCoworkerCallBlock({ client, call, active = true, onOpenTarget, onChange }: {
+export function DesktopCoworkerCallBlock({ client, call, active = true, live = false, onOpenTarget, onChange }: {
     client: DesktopCoworkerCallsClient
     call: DesktopCoworkerCallSnapshot
     active?: boolean
+    live?: boolean
     onOpenTarget?: (target: DesktopCoworkerCallOpenTarget) => Promise<void>
     onChange?: (call: DesktopCoworkerCallSnapshot) => void
 }) {
@@ -32,6 +33,12 @@ export function DesktopCoworkerCallBlock({ client, call, active = true, onOpenTa
         setOpenError(null)
         setStopError(null)
     }, [client, call.callId, call.parentRunId, call.toolCallId])
+    useEffect(() => {
+        if (active) return
+        request.current?.abort()
+        request.current = null
+        setAction(null)
+    }, [active])
 
     const stop = async (taskId: string) => {
         if (!active || !onChange || request.current) return
@@ -45,6 +52,7 @@ export function DesktopCoworkerCallBlock({ client, call, active = true, onOpenTa
             if (mounted.current && !controller.signal.aborted) onChange(stopped)
         } catch (cause) {
             if (mounted.current && !controller.signal.aborted) {
+                if (cause instanceof DesktopCoworkerCallStopError && cause.call) onChange(cause.call)
                 setStopError(cause instanceof Error ? cause.message : 'Could not stop the coworker call.')
                 setStopReset(value => value + 1)
             }
@@ -55,7 +63,7 @@ export function DesktopCoworkerCallBlock({ client, call, active = true, onOpenTa
     }
 
     const open = async () => {
-        if (!active || !onOpenTarget || request.current) return
+        if (!active || !onOpenTarget || !call.targetSessionId || request.current) return
         const controller = new AbortController()
         request.current = controller
         setAction('open')
@@ -71,16 +79,18 @@ export function DesktopCoworkerCallBlock({ client, call, active = true, onOpenTa
     }
 
     return <div className="flex min-w-0 w-full flex-col items-start gap-1">
-        <SubRunBlock
+        <DesktopCoworkerSubRunBlock
             key={`${call.callId}:${stopReset}`}
             toolName="call_agent"
             state={desktopCoworkerCallState(call)}
             progress={progress}
             dense={!isDesktopCoworkerCallLive(call)}
+            liveElapsed={live}
             onStopTask={active && onChange ? taskId => { void stop(taskId) } : undefined}
         />
         {call.status === 'waiting-human' && <p role="status" className="break-words text-xs text-muted-foreground">Waiting for you in {call.targetName}’s chat.</p>}
-        {onOpenTarget && <Button type="button" variant="secondary" size="sm" disabled={!active || action !== null} onClick={() => { void open() }}>
+        {!call.targetSessionId && <p role="status" className="break-words text-xs text-muted-foreground">Target chat is being prepared…</p>}
+        {onOpenTarget && <Button type="button" variant="secondary" size="sm" disabled={!active || !call.targetSessionId || action !== null} onClick={() => { void open() }}>
             {action === 'open' ? 'Opening chat…' : 'Open chat'}
         </Button>}
         {(openError || stopError) && <p role="alert" className="break-words text-xs text-destructive">{openError || stopError}</p>}

@@ -1,9 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useVisibleInterval } from '@/hooks/useVisibleInterval'
 import { createDesktopCoworkerCallsClient, type DesktopCoworkerCallSnapshot } from '@/lib/desktop/coworker-calls-client'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { needsDesktopCoworkerCallUpdates } from './coworker-call-progress'
 
 export const DESKTOP_COWORKER_CALLS_POLL_MS = 3000
 
@@ -14,7 +14,7 @@ type ReadState = {
     error: string | null
 }
 
-export function useDesktopCoworkerCalls(agentId: string, sessionId: string, active = true) {
+export function useDesktopCoworkerCalls(agentId: string, sessionId: string, active = true, observing = false) {
     const scope = JSON.stringify([agentId, sessionId])
     const lifecycle = JSON.stringify([active, scope])
     const identity = useRef({ lifecycle, generation: 0 })
@@ -26,7 +26,9 @@ export function useDesktopCoworkerCalls(agentId: string, sessionId: string, acti
     const mounted = useRef(true)
     const current = useCallback(() => mounted.current && identity.current.generation === generation, [generation])
 
-    const read = useCallback(async () => {
+    const updatesNeeded = observing || state.status === 'loading' || (state.scope === scope && state.status === 'ready' && state.calls.some(needsDesktopCoworkerCallUpdates))
+    const read = useCallback(async (force = false) => {
+        if (!force && !updatesNeeded) return
         if (!active || !current() || isDesktopQuitting() || inFlight.current || document.visibilityState === 'hidden') return
         const controller = new AbortController()
         inFlight.current = controller
@@ -44,7 +46,7 @@ export function useDesktopCoworkerCalls(agentId: string, sessionId: string, acti
         } finally {
             if (inFlight.current === controller) inFlight.current = null
         }
-    }, [active, client, current, scope])
+    }, [active, client, current, scope, updatesNeeded])
 
     useEffect(() => {
         mounted.current = true
@@ -57,10 +59,33 @@ export function useDesktopCoworkerCalls(agentId: string, sessionId: string, acti
         setState(previous => previous.scope === scope ? previous : { scope, status: 'loading', calls: [], error: null })
         return () => { inFlight.current?.abort(); inFlight.current = null }
     }, [generation, scope])
-    useVisibleInterval(read, DESKTOP_COWORKER_CALLS_POLL_MS)
+    useEffect(() => {
+        if (!active || !updatesNeeded) return
+        let interval: ReturnType<typeof setInterval> | undefined
+        const start = () => {
+            void read()
+            interval = setInterval(() => void read(), DESKTOP_COWORKER_CALLS_POLL_MS)
+        }
+        const stop = () => {
+            clearInterval(interval)
+            interval = undefined
+            inFlight.current?.abort()
+            inFlight.current = null
+        }
+        const onVisibility = () => {
+            if (document.visibilityState === 'hidden') stop()
+            else if (!interval) start()
+        }
+        if (document.visibilityState !== 'hidden') start()
+        document.addEventListener('visibilitychange', onVisibility)
+        return () => {
+            stop()
+            document.removeEventListener('visibilitychange', onVisibility)
+        }
+    }, [active, read, updatesNeeded])
 
     const retry = useCallback(() => {
-        if (active && current() && !isDesktopQuitting()) void read()
+        if (active && current() && !isDesktopQuitting()) void read(true)
     }, [active, current, read])
     const replace = useCallback((call: DesktopCoworkerCallSnapshot) => {
         if (!current() || call.parentAgentId !== agentId || call.parentSessionId !== sessionId) return

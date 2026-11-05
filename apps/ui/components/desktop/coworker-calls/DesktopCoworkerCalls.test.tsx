@@ -19,14 +19,15 @@ afterEach(async () => {
     vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers()
 })
 
-const snapshot = (name = 'Ada', parentAgentId = 'parent-a', parentSessionId = 'chat-a'): DesktopCoworkerCallSnapshot => ({
-    callId: `call-${name}`, revision: 'revision-1', parentAgentId, parentSessionId, parentRunId: 'run', toolCallId: 'tool-call', targetAgentId: `target-${name}`,
+const snapshot = (name = 'Ada', parentAgentId = 'parent-a', parentSessionId = 'chat-a', patch: Partial<DesktopCoworkerCallSnapshot> = {}): DesktopCoworkerCallSnapshot => ({
+    callId: name === 'Ada' ? '00000000-0000-4000-8000-000000000001' : '00000000-0000-4000-8000-000000000002',
+    revision: '1', parentAgentId, parentSessionId, parentRunId: 'run', toolCallId: 'tool-call', targetAgentId: `target-${name}`,
     targetSessionId: `chat-${name}`, targetName: name, wait: true, status: 'running', createdAt: '2026-11-05T10:00:00.000Z', updatedAt: '2026-11-05T10:01:00.000Z',
-    progress: { steps: 1, toolCalls: 0, failures: 0, preview: '', calls: [] },
+    progress: { steps: 1, toolCalls: 0, failures: 0, preview: '', calls: [] }, ...patch,
 })
 
-test('polls only while active and stops permanently on unmount', async () => {
-    const fetcher = vi.fn(async () => Response.json({ calls: [snapshot()] }))
+test('polls only while active and stops permanently on unmount without issuing a mutation', async () => {
+    const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ calls: [snapshot()] }))
     vi.stubGlobal('fetch', fetcher)
     const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
     await act(async () => root.render(<DesktopCoworkerCalls agentId="parent-a" sessionId="chat-a" active={false} />))
@@ -39,6 +40,31 @@ test('polls only while active and stops permanently on unmount', async () => {
     await act(async () => root.unmount()); roots.pop()
     await act(async () => { await vi.advanceTimersByTimeAsync(9000) })
     expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher.mock.calls.every(call => call[1]?.method === 'GET')).toBe(true)
+})
+
+test('separates initial loading from a valid empty result and stops polling empty', async () => {
+    let resolve!: (response: Response) => void
+    const fetcher = vi.fn(() => new Promise<Response>(done => { resolve = done }))
+    vi.stubGlobal('fetch', fetcher)
+    const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
+    await act(async () => root.render(<DesktopCoworkerCalls agentId="parent-a" sessionId="chat-a" />))
+    expect(document.body.textContent).toContain('Loading coworker calls…')
+    await act(async () => { resolve(Response.json({ calls: [] })) })
+    expect(document.body.textContent).not.toContain('Loading coworker calls…')
+    expect(document.body.textContent).not.toContain('Calling Ada')
+    await act(async () => { await vi.advanceTimersByTimeAsync(9000) })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+})
+
+test('does not poll a settled historical call or manufacture a live timer', async () => {
+    const fetcher = vi.fn(async () => Response.json({ calls: [snapshot('Ada', 'parent-a', 'chat-a', { status: 'completed' })] }))
+    vi.stubGlobal('fetch', fetcher)
+    const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
+    await act(async () => root.render(<DesktopCoworkerCalls agentId="parent-a" sessionId="chat-a" />))
+    expect(document.body.textContent).toContain('Ada answered')
+    await act(async () => { await vi.advanceTimersByTimeAsync(9000) })
+    expect(fetcher).toHaveBeenCalledTimes(1)
 })
 
 test('an owner change clears the old calls and a late response cannot restore them', async () => {

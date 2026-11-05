@@ -21,6 +21,13 @@ const taskError = (call: DesktopCoworkerCallSnapshot): string | undefined => {
 }
 
 export const isDesktopCoworkerCallLive = (call: DesktopCoworkerCallSnapshot) => call.status === 'queued' || call.status === 'running' || call.status === 'waiting-human'
+export const needsDesktopCoworkerCallUpdates = (call: DesktopCoworkerCallSnapshot) => isDesktopCoworkerCallLive(call) || call.status === 'dispatched'
+
+export type DesktopCoworkerCallToolSource = { agentId: string; sessionId: string; runId: string; toolCallId: string }
+
+export function desktopCoworkerCallForTool(calls: readonly DesktopCoworkerCallSnapshot[], source: DesktopCoworkerCallToolSource): DesktopCoworkerCallSnapshot | null {
+    return calls.find(call => call.parentAgentId === source.agentId && call.parentSessionId === source.sessionId && call.parentRunId === source.runId && call.toolCallId === source.toolCallId) ?? null
+}
 
 export const desktopCoworkerCallState = (call: DesktopCoworkerCallSnapshot): ToolState =>
     isDesktopCoworkerCallLive(call) ? 'input-available' : call.status === 'error' || call.status === 'cancelled' || call.status === 'interrupted' ? 'output-error' : 'output-available'
