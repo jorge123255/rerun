@@ -72,6 +72,15 @@ Never copy private memories/files/chats, secret strings or browser profiles into
 the caller. The target uses its own existing model and grants. Prevent loops and
 bounded-depth fanout. Limits must be named and explicit, not silently truncated.
 
+Target admission must also honor the current desktop setup gate. Expose a required
+root-injected authority callback and invoke it before child session/run effects
+and again before execution. A target with pending setup cannot receive an ordinary
+call until the existing setup flow records completion or an explicit user Skip.
+Never start, skip or complete setup on the caller's behalf, or reuse the target's
+claimed setup session to bypass admission. Root wires the existing shared setup/chat gate;
+A supplies the typed dependency and refusal/revalidation regression sources without
+editing setup, central admission, or shared routes.
+
 GET `/api/desktop/sessions/[sessionId]/coworker-calls` returns `{calls: Snapshot[]}`.
 POST accepts only `{operation:'stop', requestId, callId, expectedRevision}` and
 returns `{call: Snapshot}`. It stops only the named child owned by that parent;
@@ -140,6 +149,18 @@ skills appear read-only to the coworker and local editor, and are excluded from
 ordinary template capture/export. Disconnect must not secretly revoke a provider
 credential. Do not widen service or skill grants. Reuse the existing lifecycle,
 not a parallel connector system. Root handles registry exposure and central UI.
+
+Supply a trusted ownership projection from the canonical SQLite service records,
+bound to the current local/engine owner, installation ID, skill slug and recorded
+resource identity/hash. Template capture currently reads the upstream
+`workspace/.rerun/services.json` footprint; that file alone is not authoritative
+for desktop service installs. Provide typed projection/verification helpers in F's
+owned paths so root can bridge service-owned skills into template capture/export
+exclusions and the existing editor/model write protections. Do not trust a model-
+writable footprint or renderer-supplied ownership, expose credentials, or treat
+unknown/stale ownership as permission to capture or modify a protected skill.
+Root owns the shared template/editor/tool gates and route wiring; F documents the
+required integrations and authors boundary regressions without editing those paths.
 
 ## G: original browser page options
 
