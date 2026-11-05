@@ -2,41 +2,13 @@
 
 import { useEffect, useRef } from 'react'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
-import { desktopNotificationsBridge, type DesktopNotificationTarget, type DesktopNotificationDeliveryResult } from '@/lib/desktop/notification-bridge'
-import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_ADMIT_URL, DESKTOP_NOTIFICATION_DELIVERY_URL, DESKTOP_NOTIFICATION_TERMIALS_URL, desktopNotificationAdmissionsSchema, desktopNotificationEventsSchema, desktopTerminalBindingSchema } from '@/lib/desktop/notifications'
-import { DESKTOP_COMPLETIONS_URL, desktopCompletionsSchema } from '@/lib/desktop/completed-actions'
-import { DESKTOP_ATTENTION_URL, desktopAttentionSchema } from '@/lib/desktop/attention'
+import { desktopNotificationsBridge, type DesktopNotificationDeliveryResult } from '@/lib/desktop/notification-bridge'
+import { resolveDesktopNotificationClick } from '@/lib/desktop/notification-click'
+import { showDesktopNotificationToast } from '@/lib/desktop/notification-toast'
+import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_ADMIT_URL, DESKTOP_NOTIFICATION_DELIVERY_URL, desktopNotificationAdmissionsSchema, desktopNotificationEventsSchema } from '@/lib/desktop/notifications'
 
 export const DESKTOP_NOTIFICATION_POLL_MS = 3000
 type DeliveryArgs = { onOpenConversation?: (target: { agentId: string; sessionId: string }) => void; visibleSessionId?: string | null }
-
-async function routeClick(target: DesktopNotificationTarget, signal: AbortSignal): Promise<{ agentId: string; sessionId: string } | null> {
-    if (!target || !target.agentId || !target.sessionId) return null
-    const options = { cache: 'no-store' as const, signal }
-    if (target.kind === 'done') {
-        if (!target.groupId) return null
-        const response = await fetch(DESKTOP_COMPLETIONS_URL, options)
-        if (!response.ok) return null
-        const body = desktopCompletionsSchema.parse(await response.json())
-        const group = body.items.find(item => item.id === target.groupId && item.agentId === target.agentId)
-        // A newer folded completion must not redirect an old click to another chat.
-        return group?.sessionIds.includes(target.sessionId) ? { agentId: target.agentId, sessionId: target.sessionId } : null
-    }
-    if (target.kind === 'error') {
-        if (!target.terminalId) return null
-        const response = await fetch(`${DESKTOP_NOTIFICATION_TERMIALS_URL}/${encodeURIComponent(target.terminalId)}`, options)
-        if (!response.ok) return null
-        const binding = desktopTerminalBindingSchema.parse(await response.json())
-        return binding.agentId === target.agentId && binding.sessionId === target.sessionId ? binding : null
-    }
-    if ((target.kind !== 'question' && target.kind !== 'approval') || !target.requestId) return null
-    const response = await fetch(DESKTOP_ATTENTION_URL, options)
-    if (!response.ok) return null
-    const body = desktopAttentionSchema.parse(await response.json())
-    const item = body.items.find(candidate => candidate.id === target.requestId && candidate.kind === target.kind
-        && candidate.agentId === target.agentId && candidate.sessionId === target.sessionId)
-    return item ? { agentId: item.agentId, sessionId: item.sessionId } : null
-}
 
 async function playSound(signal: AbortSignal): Promise<boolean> {
     let audio: HTMLAudioElement | undefined
@@ -60,8 +32,9 @@ async function boundedDelivery(work: Promise<DesktopNotificationDeliveryResult>)
     finally { clearTimeout(timer) }
 }
 
-/** Durable admission precedes native display; ambiguous IPC/crash outcomes stay
- * consumed instead of replaying an alert the OS may already have shown. */
+/** Durable admission precedes every surface; the in-app toast, the native alert and the
+ * sound share the one attempt, so polling, reconnecting and restarting never replay. An
+ * interrupted or ambiguous attempt stays consumed instead of risking a duplicate banner. */
 export function useDesktopNotificationDelivery({ onOpenConversation, visibleSessionId }: DeliveryArgs = {}): void {
     const navigation = useRef(onOpenConversation); navigation.current = onOpenConversation
     const visible = useRef(visibleSessionId); visible.current = visibleSessionId
@@ -79,7 +52,7 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                 if (signal.aborted || isDesktopQuitting()) return
                 const bridge = desktopNotificationsBridge()
                 const keys = body.events.filter(event => !(document.visibilityState === 'visible' && event.sessionId === visible.current)
-                    && ((body.channels.toast && bridge.available) || (body.channels.sound && event.kind !== 'done'))).slice(0, 50).map(event => event.key)
+                    && (body.channels.toast || (body.channels.sound && event.kind !== 'done'))).slice(0, 50).map(event => event.key)
                 if (!keys.length) return
                 const admission = await fetch(DESKTOP_NOTIFICATION_ADMIT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keys }), cache: 'no-store', signal })
                 if (!admission.ok) return
@@ -87,11 +60,14 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                 for (const event of admitted.events) {
                     let status: DesktopNotificationDeliveryResult['status'] = 'unavailable'
                     if (!signal.aborted && !isDesktopQuitting()) {
-                        if (admitted.channels.toast && bridge.available) {
-                            // The original sound asset below is the sole sound, avoiding a double ring.
-                            status = (await boundedDelivery(bridge.notify({ key: event.key, kind: event.kind, agentId: event.agentId, sessionId: event.sessionId,
+                        if (admitted.channels.toast) {
+                            // The in-app card needs no bridge; the native alert is silent because
+                            // the original sound asset below is the sole sound, avoiding a double ring.
+                            showDesktopNotificationToast(event, binding => navigation.current?.(binding))
+                            status = 'shown'
+                            if (bridge.available) await boundedDelivery(bridge.notify({ key: event.key, kind: event.kind, agentId: event.agentId, sessionId: event.sessionId,
                                 groupId: event.groupId ?? null, terminalId: event.terminalId ?? null, requestId: event.requestId ?? null,
-                                title: event.title, subtitle: event.subtitle, silent: true, body: event.body ?? undefined }))).status
+                                title: event.title, subtitle: event.subtitle, silent: true, body: event.body ?? undefined }))
                         }
                         if (admitted.channels.sound && event.kind !== 'done' && await playSound(signal)) status = 'shown'
                     }
@@ -115,7 +91,7 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
             click?.abort()
             click = new AbortController()
             const signal = AbortSignal.any([click.signal, AbortSignal.timeout(5000)])
-            void routeClick(target, signal).then(binding => {
+            void resolveDesktopNotificationClick(target, signal).then(binding => {
                 if (active && !signal.aborted && !isDesktopQuitting() && binding) navigation.current?.(binding)
             }).catch(() => {})
         })

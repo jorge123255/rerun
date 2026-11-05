@@ -18,6 +18,7 @@ export const desktopNotificationPrefsPatchSchema = notificationPrefsPatchSchema
 export const desktopNotificationEventSchema = z.object({
     key: z.string().min(1),
     kind: z.enum(['done', 'error', 'question', 'approval']),
+    source: z.enum(['chat', 'schedule', 'trigger']),
     agentId: z.string().min(1),
     agentName: z.string(),
     sessionId: z.string().min(1),
@@ -49,4 +50,5 @@ export const desktopNotificationAdmissionsSchema = z.object({
 // What a terminal click revalidates to: the current local owner and conversation of the recorded
 // run, resolved live so a deleted coworker or rebound session lands nowhere.
 export const desktopTerminalBindingSchema = z.object({ agentId: z.string().min(1), sessionId: z.string().min(1) })
+export type DesktopNotificationAdmission = z.infer<typeof desktopNotificationAdmissionsSchema>['events'][number]
 export type DesktopTerminalBinding = z.infer<typeof desktopTerminalBindingSchema>

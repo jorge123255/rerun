@@ -106,6 +106,7 @@ async function mergeAndWritePrefs(db: Client, patch: NotificationPrefsPatch): Pr
 export type DesktopNotificationEvent = {
     key: string
     kind: 'done' | 'error' | 'question' | 'approval'
+    source: 'chat' | 'schedule' | 'trigger'
     agentId: string
     agentName: string
     sessionId: string
@@ -255,7 +256,7 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
             if (!wantedByPrefs(prefs, { kind: 'done', agentId: item.agentId, source: item.source, slug: item.slug })) continue
             const sourceName = item.source !== 'chat' && item.slug ? item.slug : null
             scored.push({ at, event: {
-                key, kind: 'done', agentId: item.agentId, agentName: item.agentName, sessionId: item.sessionId,
+                key, kind: 'done', source: item.source, agentId: item.agentId, agentName: item.agentName, sessionId: item.sessionId,
                 title: item.agentName, subtitle: sourceName ? `${sourceName} · Done` : 'Done',
                 // A finished schedule only says "completed", which the subtitle already does.
                 body: item.source === 'chat' ? item.message : null, silent: true, groupId: item.id,
@@ -267,7 +268,7 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
             if (seen.has(key) || !Number.isFinite(at) || at < enabledAtMs) continue
             if (!wantedByPrefs(prefs, { kind: item.kind, agentId: item.agentId, source: 'chat', slug: null })) continue
             scored.push({ at, event: {
-                key, kind: item.kind, agentId: item.agentId, agentName: item.agentName, sessionId: item.sessionId,
+                key, kind: item.kind, source: 'chat', agentId: item.agentId, agentName: item.agentName, sessionId: item.sessionId,
                 title: item.agentName, subtitle: item.kind === 'question' ? 'Question' : 'Needs approval',
                 body: item.summary || null, silent: false, requestId: item.id,
             } })
@@ -288,10 +289,11 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
             if (seen.has(key) || !Number.isFinite(at) || at < enabledAtMs) continue
             const agentId = String(row.agent_id)
             const slug = row.slug == null ? null : String(row.slug)
+            const source = String(row.source) as WantedEvent['source']
             const terminalKind = 'error' as const
-            if (!wantedByPrefs(prefs, { kind: terminalKind, agentId, source: String(row.source) as WantedEvent['source'], slug })) continue
+            if (!wantedByPrefs(prefs, { kind: terminalKind, agentId, source, slug })) continue
             scored.push({ at, event: {
-                key, kind: terminalKind, agentId, agentName: String(row.agent_name), sessionId: String(row.session_id),
+                key, kind: terminalKind, source, agentId, agentName: String(row.agent_name), sessionId: String(row.session_id),
                 title: String(row.agent_name), subtitle: slug ? `${slug} · Failed` : 'Failed',
                 body: row.message ? String(row.message).slice(0, 180) : null, silent: false, terminalId: String(row.id),
             } })

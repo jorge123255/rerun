@@ -19,7 +19,7 @@ let listener: ((target: DesktopNotificationTarget) => void) | undefined
 let channels = { toast: true, sound: false }, receiptFails = false
 let attention: unknown[] = [], groups: unknown[] = [], terminal: unknown = null
 let attentionRead: (() => Promise<Response>) | undefined
-const event = (key = 'pending:request-a', sessionId = 'chat-a'): DesktopNotificationEvent => ({ key, kind: 'question', agentId: 'agent-a', agentName: 'Ada', sessionId, title: 'Ada', subtitle: 'Question', body: 'Choose a color', silent: false, requestId: key.slice(8) })
+const event = (key = 'pending:request-a', sessionId = 'chat-a'): DesktopNotificationEvent => ({ key, kind: 'question', source: 'chat', agentId: 'agent-a', agentName: 'Ada', sessionId, title: 'Ada', subtitle: 'Question', body: 'Choose a color', silent: false, requestId: key.slice(8) })
 
 beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
@@ -76,23 +76,24 @@ test('durable admission precedes native delivery and a lost receipt does not rep
     expect(notify).toHaveBeenCalledTimes(1)
     expect(attempts.size).toBe(1)
 })
-test('missing bridge and disabled channels never consume events without delivery', async () => {
+test('a missing bridge still delivers the in-app toast while disabled channels never consume events', async () => {
     events.push(event()); (window as unknown as { desktopApp?: unknown }).desktopApp = undefined
-    await mount(); expect(attempts.size).toBe(0); expect(delivered.size).toBe(0)
-    channels = { toast: false, sound: false }; await tick()
-    expect(receipts).toEqual([]); expect(audioPlay).not.toHaveBeenCalled()
+    await mount(); expect(notify).not.toHaveBeenCalled(); expect(delivered.has(events[0]!.key)).toBe(true)
+    events.push(event('pending:request-b', 'chat-b')); channels = { toast: false, sound: false }; await tick()
+    expect(receipts).toHaveLength(1); expect(receipts[0]!.status).toBe('shown'); expect(delivered.size).toBe(1)
 })
-test('definite unavailable delivery releases its exact admission and a later successful retry settles', async () => {
-    events.push(event()); notify.mockResolvedValueOnce({ status: 'unavailable' })
-    await mount(); expect(attempts.size).toBe(0); expect(delivered.size).toBe(0)
-    await tick(); expect(notify).toHaveBeenCalledTimes(2); expect(delivered.has(events[0]!.key)).toBe(true)
+test('a failed sound releases its exact admission and a later successful retry settles', async () => {
+    channels = { toast: false, sound: true }; events.push(event())
+    audioPlay.mockRejectedValueOnce(new Error('audio blocked'))
+    await mount(); expect(notify).not.toHaveBeenCalled(); expect(attempts.size).toBe(0); expect(delivered.size).toBe(0)
+    await tick(); expect(audioPlay).toHaveBeenCalledTimes(2); expect(delivered.has(events[0]!.key)).toBe(true)
     expect(receipts.map(row => row.status)).toEqual(['unavailable', 'shown'])
 })
-test('ambiguous bridge outcomes stay admitted without pretending they were shown', async () => {
+test('an ambiguous native outcome cannot unsend the in-app toast or replay it', async () => {
     events.push(event()); notify.mockRejectedValueOnce(new Error('IPC disconnected'))
     await mount(); await tick()
-    expect(notify).toHaveBeenCalledTimes(1); expect(delivered.size).toBe(0); expect(attempts.size).toBe(1)
-    expect(receipts[0]!.status).toBe('unknown')
+    expect(notify).toHaveBeenCalledTimes(1); expect(delivered.has(events[0]!.key)).toBe(true)
+    expect(receipts.map(row => row.status)).toEqual(['shown'])
 })
 test('the original sound is a real acknowledged channel and never rings for Done', async () => {
     channels = { toast: false, sound: true }; events.push(event())
