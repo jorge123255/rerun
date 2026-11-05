@@ -115,7 +115,7 @@ describe('bounded logo fetch with mocked sockets, no network', () => {
         expect(lastResponse?.destroyed).toBe(true)
     })
 
-    it.each([
+    it.each<Record<string, string>>([
         { 'content-type': 'image/svg+xml' },
         { 'content-type': 'image/gif' },
         { 'content-type': 'image/x-icon' },
