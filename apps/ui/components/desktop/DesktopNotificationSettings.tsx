@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CoworkerRules } from '@/components/notifications/settings/CoworkerRules'
+import { CoworkerRules, type CoworkerPickerProps } from '@/components/notifications/settings/CoworkerRules'
 import { ScopeRadioList } from '@/components/notifications/settings/ScopeRadioList'
 import { SETTINGS_CARD, SettingsSection, SwitchRow } from '@/components/notifications/settings/SettingsSection'
 import { Button } from '@/components/ui/button'

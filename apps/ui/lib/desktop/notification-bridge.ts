@@ -6,14 +6,16 @@
 
 export type DesktopNotificationCopy = { title: string; subtitle?: string; body?: string; silent?: boolean }
 
-// The identity a click must revalidate before navigating: the finished-run group for `done`, the
-// exact pending request hash for a question or approval.
+// The identity a click must revalidate before navigating: the finished-run group for a completion,
+// the recorded terminal for a stopped or failed run, the exact pending request hash for a
+// question or approval.
 export type DesktopNotificationTarget = {
     key: string
-    kind: 'done' | 'question' | 'approval'
+    kind: 'done' | 'error' | 'question' | 'approval'
     agentId: string
     sessionId: string | null
     groupId?: string | null
+    terminalId?: string | null
     requestId?: string | null
 }
 
@@ -22,7 +24,13 @@ type DesktopNotificationsBridge = {
     onNotificationClick?: (handler: (target: DesktopNotificationTarget) => void) => () => void
 }
 
-export function desktopNotificationsBridge(): DesktopNotificationsBridge & { available: boolean } {
+export type DesktopNotificationsHandle = {
+    available: boolean
+    notify: (notification: DesktopNotificationCopy & DesktopNotificationTarget) => void
+    onClick: (handler: (target: DesktopNotificationTarget) => void) => () => void
+}
+
+export function desktopNotificationsBridge(): DesktopNotificationsHandle {
     if (typeof window === 'undefined') return { available: false, notify: () => {}, onClick: () => () => {} }
     const bridge = (window as Window & { desktopApp?: { notifications?: DesktopNotificationsBridge } }).desktopApp?.notifications
     return {

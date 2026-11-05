@@ -10,6 +10,8 @@ import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET as readPrefs, PUT as writePrefs } from './route'
 import { GET as readEvents } from './events/route'
 import { POST as acknowledge } from './seen/route'
+import { GET as terminalBinding } from './terminals/[id]/route'
+import { handleDesktopEngineCallback } from '@/lib/desktop/server/engine-callback'
 
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime
@@ -36,6 +38,14 @@ const eventsGet = () => new Request(`${runtime.app.origin}/api/desktop/notificat
 const seenPost = (keys: string[]) => new Request(`${runtime.app.origin}/api/desktop/notifications/seen`, {
     method: 'POST', headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin,
         cookie: `rerun-desktop-session=${runtime.app.sessionToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ keys }),
+})
+const terminalGet = (id: string) => new Request(`${runtime.app.origin}/api/desktop/notifications/terminals/${encodeURIComponent(id)}`, { headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin, cookie: `rerun-desktop-session=${runtime.app.sessionToken}`, 'sec-fetch-site': 'same-origin' } })
+const enginePost = (payload: unknown) => handleDesktopEngineCallback(new Request(`${runtime.app.origin}/api/webhooks/engine`, {
+    method: 'POST', headers: { host: new URL(runtime.app.origin).host, authorization: `Bearer ${runtime.engine.apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify(payload),
+}))
+const terminalPayload = (over: Record<string, unknown>) => ({
+    event: 'agent.message.completed', kind: 'done', agentId: alice.engineAgentId, sessionId: aliceChat.engineSessionId,
+    runId: crypto.randomUUID(), message: 'Message completed', metadata: { status: 'done', source: 'chat' }, timestamp: raised(30_000), ...over,
 })
 
 beforeEach(async () => {
@@ -131,6 +141,71 @@ test('done events follow the chat/schedule decision: started runs under mine, ot
     const scheduled = after.events.filter(event => event.kind === 'done')
     expect(scheduled.map(event => event.agentId)).toEqual([bob.id])
     expect(scheduled[0]!.subtitle).toBe('morning-digest · Done')
+})
+
+test('cancelled and error terminals announce as silent Done events and revalidate their binding', async () => {
+    const failed = terminalPayload({ kind: 'error', runId: 'run-failed', message: 'Message failed: provider timeout', metadata: { status: 'error', source: 'chat' } })
+    const stopped = terminalPayload({ kind: 'done', runId: 'run-stopped', message: 'Message stopped', metadata: { status: 'cancelled', source: 'chat' } })
+    const finished = terminalPayload({ kind: 'done', runId: 'run-done', metadata: { status: 'done', source: 'chat' } })
+    expect((await enginePost(finished)).status).toBe(202)
+    expect(await (await enginePost(finished)).json()).toMatchObject({ persisted: false })
+    expect(await (await enginePost(failed)).json()).toMatchObject({ persisted: true })
+    expect(await (await enginePost(stopped)).json()).toMatchObject({ persisted: true })
+
+    const body = await (await readEvents(eventsGet())).json() as { events: { key: string; kind: string; agentId: string; sessionId: string; subtitle: string; body: string | null; silent: boolean; terminalId?: string; groupId?: string }[] }
+    const terminals = body.events.filter(event => event.terminalId)
+    // The successful `done` terminal stays on the completions store: only the two kept rows announce.
+    expect(terminals.map(event => event.terminalId).sort()).toEqual(['run-failed', 'run-stopped'])
+    const failedEvent = terminals.find(event => event.terminalId === 'run-failed')!
+    // A failed run keeps the original urgent 'error' kind: it still announces under « needed ».
+    expect(failedEvent).toMatchObject({ kind: 'error', agentId: alice.id, sessionId: aliceChat.id, subtitle: 'Done', body: 'Message failed: provider timeout', silent: false })
+    expect(terminals.find(event => event.terminalId === 'run-stopped')).toMatchObject({ kind: 'done', subtitle: 'Done', silent: true })
+    expect(failedEvent.key).toBe('terminal:run-failed')
+    expect(failedEvent.groupId).toBeUndefined()
+
+    const binding = await terminalBinding(terminalGet('run-failed'), { params: Promise.resolve({ id: 'run-failed' }) })
+    expect(binding.status).toBe(200)
+    expect(await binding.json()).toEqual({ agentId: alice.id, sessionId: aliceChat.id })
+    expect((await terminalBinding(terminalGet('run-unknown'), { params: Promise.resolve({ id: 'run-unknown' }) })).status).toBe(404)
+
+    // Acknowledged terminal keys never replay, exactly like completion and request keys.
+    await acknowledge(seenPost(terminals.map(event => event.key)))
+    await closeDesktopDatabase(root)
+    expect((await (await readEvents(eventsGet())).json()).events).toEqual([])
+})
+
+test('a scheduled terminal gives the local owner the original follow, which then admits its done runs', async () => {
+    // Bob's first scheduled terminal on an unruled coworker writes follow: true, like the hosted
+    // owner-follow; his successful done stays on the completions store and announces under « mine ».
+    completions.push({ owner: bob.engineAgentId, rows: [{ id: 'run-bob-done', runId: 'run-bob-done', agentId: bob.engineAgentId, sessionId: bobChat.engineSessionId, source: 'schedule', slug: 'morning-digest', completedAt: raised(80_000), text: null, provider: 'codex', model: 'fixture', costMicros: null, stepCount: 1 }] })
+    const scheduled = { event: 'agent.schedule.completed', kind: 'error', agentId: bob.engineAgentId, sessionId: bobChat.engineSessionId,
+        runId: 'run-bob-failed', message: 'Schedule "morning-digest" failed: timeout', metadata: { status: 'error', source: 'schedule', scheduleSlug: 'morning-digest' }, timestamp: raised(70_000) }
+    expect(await (await enginePost(scheduled)).json()).toMatchObject({ persisted: true })
+
+    const prefs = await (await readPrefs(prefsGet())).json() as { coworkers: Record<string, { mode: string; follow?: boolean }> }
+    expect(prefs.coworkers[bob.id]).toEqual({ mode: 'default', follow: true })
+
+    const body = await (await readEvents(eventsGet())).json() as { events: { kind: string; agentId: string; subtitle: string; terminalId?: string; groupId?: string }[] }
+    const bobs = body.events.filter(event => event.agentId === bob.id && (event.kind === 'done' || event.kind === 'error'))
+    // The failed terminal and the followed task's completion both announce, each with its own
+    // revalidation identity: the recorded terminal and the finished-run group.
+    expect(bobs).toHaveLength(2)
+    expect(bobs.every(event => event.subtitle === 'morning-digest · Done')).toBe(true)
+    expect(bobs.filter(event => event.terminalId === 'run-bob-failed')).toHaveLength(1)
+    expect(bobs.filter(event => event.groupId)).toHaveLength(1)
+})
+
+test('scope « needed » keeps finished and stopped runs quiet while failures and questions still announce', async () => {
+    await enginePost(terminalPayload({ kind: 'error', runId: 'run-needed', message: 'Message failed: boom', metadata: { status: 'error', source: 'chat' } }))
+    await enginePost(terminalPayload({ kind: 'done', runId: 'run-stopped-needed', message: 'Message stopped', metadata: { status: 'cancelled', source: 'chat' } }))
+    completions.push({ owner: alice.engineAgentId, rows: [{ id: 'run-alice', runId: 'run-alice', agentId: alice.engineAgentId, sessionId: aliceChat.engineSessionId, source: 'chat', slug: null, completedAt: raised(90_000), text: 'done', provider: 'codex', model: 'fixture', costMicros: null, stepCount: 1 }] })
+    await writePrefs(prefsRequest({ scope: 'needed' }))
+    const body = await (await readEvents(eventsGet())).json() as { events: { kind: string; subtitle: string; terminalId?: string }[] }
+    // The original 'error' kind is urgent: a broken run still reaches under « needed », a stopped
+    // or finished one does not.
+    expect(body.events.filter(event => event.kind === 'done')).toEqual([])
+    expect(body.events.filter(event => event.kind === 'error').map(event => event.terminalId)).toEqual(['run-needed'])
+    expect(body.events.some(event => event.kind === 'question' && event.subtitle === 'Question')).toBe(true)
 })
 
 test('scope « nothing » and the install cutoff never announce, and nothing replayed after restart', async () => {

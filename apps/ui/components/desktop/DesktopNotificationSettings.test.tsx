@@ -91,7 +91,7 @@ test('adding a coworker rule picks from the local roster and resets through its 
         const reset = [...document.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === 'Reset researcher')!
         reset.click()
     })
-    expect(puts.at(-1)).toEqual({ coworkers: { researcher: { mode: 'default', follow: false } } })
+    expect(puts.at(-1)).toEqual({ coworkers: { researcher: { mode: 'default' } } })
 })
 
 test('a failed save surfaces the error and keeps the drafted values', async () => {

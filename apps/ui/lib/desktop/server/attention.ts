@@ -79,7 +79,7 @@ async function collect(runtime: DesktopRuntime): Promise<DesktopAttention> {
             const original = tasks.find(task => task.session.id === item.sessionId)
             if (!current || current.agentId !== agent.id || current.engineSessionId !== original?.session.engineSessionId) continue
             await assertCoworkerNotDeleting(db, agent.id)
-                ownedItems.push({ ...item, agentName: agent.name, agentEnabled: agent.enabled, title: current.title, updatedAt: current.updatedAt,
+            ownedItems.push({ ...item, agentName: agent.name, agentEnabled: agent.enabled, title: current.title, updatedAt: current.updatedAt,
                 // A request without its own timestamp ages by the chat that raised it.
                 requestedAt: item.requestedAt ?? current.updatedAt })
         } catch { unavailable.add(agent.id) }

@@ -1,11 +1,12 @@
 'use client'
 
-import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { useDesktopNotificationDelivery } from './useDesktopNotificationDelivery'
+
+export type DesktopNotificationOpenTarget = { agentId: string; sessionId: string; title: string }
 
 export type DesktopNotificationDeliveryProps = {
     /** Navigation only: opens the exact coworker/session a click revalidated, never answering. */
-    onOpenConversation?: (hit: Pick<DesktopConversationHit, 'agentId' | 'sessionId' | 'title'>) => void
+    onOpenConversation?: (target: DesktopNotificationOpenTarget) => void
     /** The conversation currently on screen (root-supplied), so its own events stay in-app. */
     visibleSessionId?: string | null
 }

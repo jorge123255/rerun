@@ -1,13 +1,14 @@
 import 'server-only'
 import { engineCreatedEventSchema, notificationPayloadSchema } from '@/lib/engine/types'
 import { authenticateDesktopEngineRequest, DesktopHttpError } from './auth'
+import { recordDesktopRunTerminal } from './notifications'
 
 const SUPPORTED_CREATED_EVENTS = new Set(['box.connection.connected'])
-const SUPPORTED_NOTIFICATION_EVENTS = new Set(['agent.message.completed'])
+const SUPPORTED_NOTIFICATION_EVENTS = new Set(['agent.message.completed', 'agent.schedule.completed', 'agent.trigger.completed'])
 
 export async function handleDesktopEngineCallback(request: Request): Promise<Response> {
     try {
-        await authenticateDesktopEngineRequest(request)
+        const runtime = await authenticateDesktopEngineRequest(request)
         const body = await request.json().catch(() => undefined)
         if (body === undefined) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
 
@@ -19,8 +20,11 @@ export async function handleDesktopEngineCallback(request: Request): Promise<Res
 
         const notification = notificationPayloadSchema.safeParse(body)
         if (!notification.success) return Response.json({ error: 'Invalid payload' }, { status: 400 })
-        if (SUPPORTED_NOTIFICATION_EVENTS.has(notification.data.event)) return Response.json({ ok: true, persisted: false }, { status: 202 })
-        return Response.json({ ok: true, ignored: 'unsupported_m1_event', persisted: false }, { status: 202 })
+        if (!SUPPORTED_NOTIFICATION_EVENTS.has(notification.data.event)) return Response.json({ ok: true, ignored: 'unsupported_m1_event', persisted: false }, { status: 202 })
+        // Only cancelled/error terminals persist here; a genuine `done` stays on the completion
+        // store the finished-run cards already read, so nothing announces twice.
+        const persisted = await recordDesktopRunTerminal(runtime, notification.data)
+        return Response.json({ ok: true, persisted }, { status: 202 })
     } catch (error) {
         if (error instanceof DesktopHttpError) return Response.json({ error: error.message }, { status: error.status })
         return Response.json({ error: 'Desktop callback failed' }, { status: 500 })

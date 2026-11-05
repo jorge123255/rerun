@@ -1,10 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { playNotificationSoundOnce } from '@/lib/notifications/browser'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { desktopNotificationsBridge, type DesktopNotificationTarget } from '@/lib/desktop/notification-bridge'
-import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_SEEN_URL, desktopNotificationEventsSchema } from '@/lib/desktop/notifications'
+import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_SEEN_URL, DESKTOP_NOTIFICATION_TERMIALS_URL, desktopNotificationEventsSchema, desktopTerminalBindingSchema } from '@/lib/desktop/notifications'
 import { DESKTOP_COMPLETIONS_URL, desktopCompletionsSchema } from '@/lib/desktop/completed-actions'
 import { DESKTOP_ATTENTION_URL, desktopAttentionSchema } from '@/lib/desktop/attention'
 
@@ -19,15 +19,22 @@ type DeliveryArgs = {
 }
 
 const routeClick = async (target: DesktopNotificationTarget, navigate?: (target: { agentId: string; sessionId: string }) => void): Promise<void> => {
-    if (target.kind === 'done') {
-        if (!target.groupId) return
-        const response = await fetch(DESKTOP_COMPLETIONS_URL, { cache: 'no-store' })
+    if (target.kind === 'done' || target.kind === 'error') {
+        if (target.groupId) {
+            const response = await fetch(DESKTOP_COMPLETIONS_URL, { cache: 'no-store' })
+            if (!response.ok) return
+            const body = desktopCompletionsSchema.parse(await response.json())
+            // The group may have advanced since the announcement: navigate to its newest conversation.
+            const group = body.items.find(item => item.id === target.groupId && item.agentId === target.agentId)
+            if (!group) return
+            navigate?.({ agentId: group.agentId, sessionId: group.sessionId })
+            return
+        }
+        if (!target.terminalId) return
+        const response = await fetch(`${DESKTOP_NOTIFICATION_TERMIALS_URL}/${encodeURIComponent(target.terminalId)}`, { cache: 'no-store' })
         if (!response.ok) return
-        const body = desktopCompletionsSchema.parse(await response.json())
-        // The group may have advanced since the announcement: navigate to its newest conversation.
-        const group = body.items.find(item => item.id === target.groupId && item.agentId === target.agentId)
-        if (!group) return
-        navigate?.({ agentId: group.agentId, sessionId: group.sessionId })
+        const binding = desktopTerminalBindingSchema.parse(await response.json())
+        navigate?.(binding)
         return
     }
     if (!target.requestId) return
@@ -73,7 +80,7 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                     if (event.sessionId === visible.current) continue
                     if (body.channels.toast) bridge.notify({
                         key: event.key, kind: event.kind, agentId: event.agentId, sessionId: event.sessionId,
-                        groupId: event.groupId ?? null, requestId: event.requestId ?? null,
+                        groupId: event.groupId ?? null, terminalId: event.terminalId ?? null, requestId: event.requestId ?? null,
                         title: event.title, subtitle: event.subtitle, body: event.body ?? undefined, silent: event.silent,
                     })
                     if (body.channels.sound && event.kind !== 'done') playNotificationSoundOnce(event.key)
@@ -97,7 +104,7 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
 
     useEffect(() => {
         const { onClick } = desktopNotificationsBridge()
-        const stop = onClick(target => { void routeNotificationClick(target, target => navigation.current?.(target)) })
+        const stop = onClick(target => { void routeClick(target, target => navigation.current?.(target)) })
         return stop
     }, [])
 }

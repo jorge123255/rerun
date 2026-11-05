@@ -7,6 +7,7 @@ import { z } from 'zod'
 export const DESKTOP_NOTIFICATION_PREFS_URL = '/api/desktop/notifications'
 export const DESKTOP_NOTIFICATION_EVENTS_URL = '/api/desktop/notifications/events'
 export const DESKTOP_NOTIFICATION_SEEN_URL = '/api/desktop/notifications/seen'
+export const DESKTOP_NOTIFICATION_TERMIALS_URL = '/api/desktop/notifications/terminals'
 
 // The original patch shape the settings surface sends; the stored value merges it exactly like
 // the hosted write did.
@@ -14,7 +15,7 @@ export const desktopNotificationPrefsPatchSchema = notificationPrefsPatchSchema
 
 export const desktopNotificationEventSchema = z.object({
     key: z.string().min(1),
-    kind: z.enum(['done', 'question', 'approval']),
+    kind: z.enum(['done', 'error', 'question', 'approval']),
     agentId: z.string().min(1),
     agentName: z.string(),
     sessionId: z.string().min(1),
@@ -22,9 +23,10 @@ export const desktopNotificationEventSchema = z.object({
     subtitle: z.string(),
     body: z.string().nullable(),
     silent: z.boolean(),
-    // The revalidation identity: the finished-run group for `done`, the exact pending request
-    // hash for a question or approval.
+    // The revalidation identity: the finished-run group for a completion, the recorded terminal
+    // for a stopped or failed run, the exact pending request hash for a question or approval.
     groupId: z.string().optional(),
+    terminalId: z.string().optional(),
     requestId: z.string().optional(),
 })
 export type DesktopNotificationEvent = z.infer<typeof desktopNotificationEventSchema>
@@ -37,3 +39,8 @@ export const desktopNotificationEventsSchema = z.object({
     checkedAt: z.string(),
 })
 export type DesktopNotificationEvents = z.infer<typeof desktopNotificationEventsSchema>
+
+// What a terminal click revalidates to: the current local owner and conversation of the recorded
+// run, resolved live so a deleted coworker or rebound session lands nowhere.
+export const desktopTerminalBindingSchema = z.object({ agentId: z.string().min(1), sessionId: z.string().min(1) })
+export type DesktopTerminalBinding = z.infer<typeof desktopTerminalBindingSchema>

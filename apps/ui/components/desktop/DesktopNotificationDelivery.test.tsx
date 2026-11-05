@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { DESKTOP_ATTENTION_URL, desktopAttentionSchema } from '@/lib/desktop/attention'
 import { DESKTOP_COMPLETIONS_URL, desktopCompletionsSchema } from '@/lib/desktop/completed-actions'
-import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_SEEN_URL } from '@/lib/desktop/notifications'
+import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_SEEN_URL, DESKTOP_NOTIFICATION_TERMIALS_URL } from '@/lib/desktop/notifications'
 import { playNotificationSoundOnce } from '@/lib/notifications/browser'
 import { DesktopNotificationDelivery } from './DesktopNotificationDelivery'
 
@@ -16,11 +16,12 @@ vi.mock('@/lib/notifications/browser', () => ({ playNotificationSoundOnce, playN
 
 const roots: Root[] = []
 const seenKeys: string[][] = []
-const notifications: { key: string; kind: string; title: string; subtitle?: string; body?: string; silent?: boolean; agentId: string; sessionId: string | null; groupId?: string | null; requestId?: string | null }[] = []
-let clickHandler: ((target: { key: string; kind: 'done' | 'question' | 'approval'; agentId: string; sessionId: string | null; groupId?: string | null; requestId?: string | null }) => void) | undefined
+const notifications: { key: string; kind: string; title: string; subtitle?: string; body?: string; silent?: boolean; agentId: string; sessionId: string | null; groupId?: string | null; terminalId?: string | null; requestId?: string | null }[] = []
+let clickHandler: ((target: { key: string; kind: 'done' | 'error' | 'question' | 'approval'; agentId: string; sessionId: string | null; groupId?: string | null; terminalId?: string | null; requestId?: string | null }) => void) | undefined
 const queuedEvents: { events: unknown; channels?: { toast: boolean; sound: boolean } }[] = []
 const attentionItems: { id: string; kind: 'question' | 'approval'; agentId: string; agentName: string; agentEnabled: boolean; sessionId: string; title: string; summary: string; requestedAt?: string; updatedAt: string }[] = []
 const completionGroups: { id: string; agentId: string; agentName: string; agentEnabled: boolean; sessionId: string; sessionIds: string[]; title: string; message: string | null; source: 'chat'; slug: null; count: number; completedAt: string; completionIds: string[] }[] = []
+const terminalBindings = new Map<string, { agentId: string; sessionId: string }>()
 const navigations: { agentId: string; sessionId: string; title: string }[] = []
 let setVisibleExternally: (value: string | null) => void = () => {}
 
@@ -51,6 +52,10 @@ beforeEach(() => {
         }
         if (path === DESKTOP_ATTENTION_URL) return Response.json({ items: attentionItems, unavailableAgentIds: [], checkedAt: '' })
         if (path === DESKTOP_COMPLETIONS_URL) return Response.json({ items: completionGroups, unavailableAgentIds: [], enabledAt: '', nextCursor: null, checkedAt: '' })
+        if (path.startsWith(`${DESKTOP_NOTIFICATION_TERMIALS_URL}/`)) {
+            const binding = terminalBindings.get(decodeURIComponent(path.slice(DESKTOP_NOTIFICATION_TERMIALS_URL.length + 1)))
+            return binding ? Response.json(binding) : Response.json({ error: 'gone' }, { status: 404 })
+        }
         return Response.json({ error: 'Unexpected request' }, { status: 404 })
     }))
 })
@@ -61,14 +66,14 @@ afterEach(async () => {
     ;(window as unknown as { desktopApp?: unknown }).desktopApp = undefined
     vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers()
     notifications.length = 0; seenKeys.length = 0; queuedEvents.length = 0
-    attentionItems.length = 0; completionGroups.length = 0; navigations.length = 0
+    attentionItems.length = 0; completionGroups.length = 0; navigations.length = 0; terminalBindings.clear()
     clickHandler = undefined
 })
 
 function installBridge() {
     ;(window as unknown as { desktopApp?: unknown }).desktopApp = {
         notifications: {
-            notify: (payload: { key: string; kind: string; title: string; subtitle?: string; body?: string; silent?: boolean; agentId: string; sessionId: string | null; groupId?: string | null; requestId?: string | null }) => notifications.push(payload),
+            notify: (payload: { key: string; kind: string; title: string; subtitle?: string; body?: string; silent?: boolean; agentId: string; sessionId: string | null; groupId?: string | null; terminalId?: string | null; requestId?: string | null }) => notifications.push(payload),
             onNotificationClick: handler => { clickHandler = handler; return () => { if (clickHandler === handler) clickHandler = undefined } },
         },
     }
@@ -154,6 +159,18 @@ test('a click revalidates the exact pending request against the live projection 
     // The request was answered while the notification sat: a stale click lands nowhere.
     attentionItems.length = 0
     await act(async () => { clickHandler!({ key: 'pending:gone', kind: 'question', agentId: 'ada', sessionId: 's1', requestId: 'gone' }) })
+    expect(navigations).toHaveLength(1)
+})
+
+test('a stopped-run click revalidates the recorded terminal binding before navigating', async () => {
+    installBridge()
+    terminalBindings.set('run-9', { agentId: 'ada', sessionId: 's7' })
+    await render()
+    await act(async () => { clickHandler!({ key: 'terminal:run-9', kind: 'done', agentId: 'ada', sessionId: 's7', terminalId: 'run-9' }) })
+    expect(navigations).toEqual([{ agentId: 'ada', sessionId: 's7', title: '' }])
+    // The coworker was deleted while the notification sat: the binding is gone and nothing opens.
+    terminalBindings.clear()
+    await act(async () => { clickHandler!({ key: 'terminal:run-9', kind: 'done', agentId: 'ada', sessionId: 's7', terminalId: 'run-9' }) })
     expect(navigations).toHaveLength(1)
 })
 

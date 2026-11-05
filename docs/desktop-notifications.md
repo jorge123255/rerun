@@ -59,25 +59,42 @@ semantics are untouched: the fix only replaces the timestamp source.
 ## Events, delivery and clicks
 
 - `apps/ui/lib/desktop/server/notifications.ts` — `readDesktopNotificationEvents` composes the
-  completions and attention projections with the stored prefs: scope « nothing » announces
-  nothing, a muted coworker never announces, « everything » announces every coworker, and the
-  remaining scopes follow the original rules (`taskNotifies` for scheduled runs, runs the user
-  started under « mine », questions/approvals always reaching the local user). The install
-  cutoff and the seen ledger subtract whatever already announced.
+  completions, attention and recorded-terminal projections with the stored prefs, newest first:
+  scope « nothing » announces nothing, a muted coworker never announces, « everything » announces
+  every coworker, « needed » keeps finished and stopped runs quiet (a followed task included)
+  while a run that broke keeps the original urgent `error` kind and still reaches, and the
+  remaining scopes follow the original rules (`taskNotifies` for scheduled runs, the coworker's
+  `follow` or « everything » for slugless unattended runs, runs the user started under « mine »,
+  questions/approvals always reaching the local user). The install cutoff and the seen ledger
+  subtract whatever already announced.
+- `apps/ui/lib/desktop/server/engine-callback.ts` + `recordDesktopRunTerminal` — the engine's
+  terminal webhook now persists cancelled/error run terminals into
+  `desktop_notification_terminals` (engine identities kept, re-mapped onto local ids at read,
+  like the completions projection). A genuine `done` terminal is never recorded here: it stays on
+  the completion store the finished-run cards read, so nothing announces twice. Every
+  schedule/trigger terminal also runs the single-member edition of the hosted owner-follow: the
+  first automated run on a coworker nobody has ruled on writes `follow: true` through the same
+  prefs merge, so « My runs and what I follow » admits its scheduled runs like the original.
+- `apps/ui/app/api/desktop/notifications/terminals/[id]/route.ts` — `GET` the live local
+  owner/session binding of a recorded terminal; the click revalidation for stopped/failed runs.
 - `apps/ui/app/api/desktop/notifications/events/route.ts` — `GET` the events (newest first) with
   the channel flags; `apps/ui/app/api/desktop/notifications/seen/route.ts` — `POST` the
-  acknowledged keys, recorded only after the delivery announced them.
+  acknowledged keys, recorded only after the delivery announced them;
+  `apps/ui/app/api/desktop/notifications/terminals/[id]/route.ts` — `GET` a terminal's live
+  owner/session binding for click revalidation.
 - `apps/ui/lib/desktop/notification-bridge.ts` — the narrow bridge wrapper: it reads
   `window.desktopApp.notifications` (`notify` + `onNotificationClick`) and never touches the
-  blanket renderer-permission policy.
+  blanket renderer-permission policy. The target carries `groupId` (completion), `terminalId`
+  (stopped/failed run) or `requestId` (pending question/approval) as its revalidation identity.
 - `apps/ui/components/desktop/useDesktopNotificationDelivery.ts` /
   `DesktopNotificationDelivery.tsx` — the delivery controller (renders nothing): it polls the
   events every three seconds visible or not, announces `toast` events through the bridge and
   plays the original sound only for what needs the user, acknowledges after announcing, skips
   the visible conversation's own events until it can announce them, and routes clicks through a
-  live revalidation: a done click re-reads the completions and opens the group's newest
-  conversation; a question/approval click re-reads the attention projection and opens the
-  still-pending request. Nothing is ever answered, marked read or navigated blind.
+  live revalidation: a done-group click re-reads the completions and opens the group's newest
+  conversation, a stopped/failed-run click re-reads the terminal binding, and a
+  question/approval click re-reads the attention projection and opens the still-pending request.
+  Nothing is ever answered, marked read or navigated blind.
 - `apps/ui/components/desktop/DesktopNotificationDelivery.test.tsx`,
   `apps/ui/components/desktop/DesktopNotificationSettings.test.tsx` and
   `apps/ui/app/api/desktop/notifications/route.test.ts` — authored regressions (not executed in
@@ -110,7 +127,8 @@ Upstream reviewed at `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`:
            if (!payload || typeof payload.key !== 'string' || typeof payload.title !== 'string') return
            ipcRenderer.send('desktop:notify', {
                key: payload.key, kind: payload.kind, agentId: payload.agentId,
-               sessionId: payload.sessionId ?? null, groupId: payload.groupId ?? null, requestId: payload.requestId ?? null,
+               sessionId: payload.sessionId ?? null, groupId: payload.groupId ?? null,
+               terminalId: payload.terminalId ?? null, requestId: payload.requestId ?? null,
                title: payload.title, subtitle: payload.subtitle ?? undefined, body: payload.body ?? undefined, silent: payload.silent === true,
            })
        },
@@ -136,7 +154,8 @@ Upstream reviewed at `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`:
            for (const window of BrowserWindow.getAllWindows()) {
                window.webContents.send('desktop:notification-click', {
                    key: payload.key, kind: payload.kind, agentId: payload.agentId,
-                   sessionId: payload.sessionId ?? null, groupId: payload.groupId ?? null, requestId: payload.requestId ?? null,
+                   sessionId: payload.sessionId ?? null, groupId: payload.groupId ?? null,
+                   terminalId: payload.terminalId ?? null, requestId: payload.requestId ?? null,
                })
            }
        })
@@ -176,11 +195,15 @@ Upstream reviewed at `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`:
   are omitted, and the stored prefs keep the contracts' shape with `email` unused.
 - The in-app toast above the inbox is not ported this round: a `toast` preference announces
   through the OS surface, which is the only local surface wired so far. The « Sound » row keeps
-  its original copy; error runs are outside this slice's events, so the sound only covers
-  questions and approvals.
+  its original copy; stopped/failed runs announce with the « Done » copy like finished runs — a
+  failure keeps the urgent `error` kind, so the sound covers questions, approvals and broken
+  runs, exactly the original urgent set minus `connector`.
 - A scheduled task's « Notify me » switch is not ported: scheduled runs follow the stored
   `tasks` ledger through the original `taskNotifies` rules, but no surface edits a task's own
-  switch yet.
+  switch yet. The hosted owner-follow is ported inside `recordDesktopRunTerminal`, so the first
+  schedule/trigger terminal on an unruled coworker writes `follow: true`; `agent.notification`
+  events (questions/approvals) do not run it, matching nothing on the desktop since those always
+  reach the local user anyway.
 - The coworker bell is not ported to the desktop tiles; per-coworker rules are managed from
   Settings' `Per coworker` section only.
 - A delivery whose native bridge is missing degrades to the sound only; the event is still
