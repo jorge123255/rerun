@@ -39,7 +39,7 @@ test('numbered migrations preserve existing roster and add independently cascadi
     await db.execute({sql:'INSERT INTO desktop_mcp_stdio(owner,name,executable,args,revision) VALUES(?,?,?,?,?)',args:['owner','local','/usr/bin/true','[]',randomUUID()]})
     await closeDesktopDatabase(root)
     const reopened = await openDesktopDatabase(root)
-    expect((await reopened.execute('SELECT * FROM desktop_schema_migrations')).rows).toHaveLength(4)
+    expect((await reopened.execute('SELECT id FROM desktop_schema_migrations WHERE version BETWEEN 2 AND 5 ORDER BY version')).rows.map(row => row.id)).toEqual(['native-file-review','local-mcp-programs','brain-editor-drafts','local-app-connections'])
     expect((await reopened.execute('SELECT * FROM desktop_mcp_stdio')).rows).toHaveLength(1)
     expect((await reopened.execute('SELECT * FROM desktop_sessions')).rows).toHaveLength(2)
     expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])

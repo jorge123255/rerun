@@ -29,7 +29,7 @@ export function compileLocalService(raw:ServiceManifest,methodId:string,values:R
  const skills=manifest.skills.map(skill=>({name:skill.name.normalize('NFC').trim(),description:skill.description.normalize('NFC').trim(),body:skill.body.normalize('NFC').trim()}))
  const slugs=skills.map(skill=>skill.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''))
  if(slugs.some(slug=>!slug||slug.length>64)||new Set(slugs).size!==slugs.length||skills.some(skill=>/[\p{Cc}]/u.test(skill.name)||skill.body.includes('\0')||skill.description.includes('\0'))||Buffer.byteLength(JSON.stringify(skills))>262144)throw new Error('Unsupported service skill template')
- if(bearer&&[bearer,Buffer.from(bearer).toString('base64'),encodeURIComponent(bearer)].some(secret=>JSON.stringify(skills).includes(secret)))throw new Error('Unsupported service skill template')
+ if(bearer&&[bearer,Buffer.from(bearer).toString('base64'),encodeURIComponent(bearer)].some(secret=>skills.some(skill=>[skill.name,skill.description,skill.body].some(value=>value.includes(secret)))))throw new Error('Unsupported service skill template')
  return {plan:{slug:manifest.slug,key,name:manifest.name,category:manifest.category,icon:manifest.icon??null,methodId,serverName:serverName(server.name),url,secretInput,skills},bearer}
 }
 export function localMethodAvailability(manifest:ServiceManifest,methodId:string,availability:DesktopServiceMethodAvailability):DesktopServiceMethodAvailability{

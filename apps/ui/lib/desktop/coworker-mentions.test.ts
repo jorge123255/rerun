@@ -27,7 +27,7 @@ describe('immutable mention ranges', () => {
     it('shifts later ranges after an earlier edit and drops a mention whose token was edited', () => {
         const later = { targetId: 'peer-2', token: '@writer', start: 21, end: 28 }
         expect(reconcileDesktopCoworkerMentions('@researcher and then @writer', 'Say @researcher and then @writer', [mention, later])).toEqual([
-            mention,
+            { ...mention, start: 4, end: 15 },
             { ...later, start: 25, end: 32 },
         ])
         expect(reconcileDesktopCoworkerMentions('@researcher', '@research', [mention])).toEqual([])

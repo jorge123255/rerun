@@ -26,6 +26,7 @@ import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { withRosterWrite } from './roster-writes'
 import { findDesktopAgent } from './store'
+import { bindDesktopServiceSkillOwners } from './service-skills/authority'
 
 // Folder and bundled-file mutations share `skill-publication.ts` with the desktop skill tools.
 // The roster lock only orders this process. It is not what keeps the engine, or any other
@@ -48,6 +49,7 @@ async function guard<T>(action: () => Promise<T>): Promise<T> {
 }
 
 export async function assertCoworkerSkillIdentity(runtime: DesktopRuntime, agentId: string, expectedEngineId?: string) {
+    bindDesktopServiceSkillOwners(runtime)
     const db = await openDesktopDatabase(runtime.dataRoot)
     const coworker = await findDesktopAgent(db, agentId)
     if (!coworker) throw new DesktopHttpError(404, 'Coworker not found')
@@ -57,8 +59,8 @@ export async function assertCoworkerSkillIdentity(runtime: DesktopRuntime, agent
     return coworker
 }
 
-// Read connector ownership from this exact coworker's confined workspace. The generic engine
-// file reader follows links and therefore cannot authorize local skill publication.
+// Desktop ownership comes from the canonical local service records. Workspace registry files
+// remain informational and cannot authorize edits, removal, or export of an app skill.
 export async function readSkillOwnersRegistry(runtime: DesktopRuntime, agentId: string, expectedEngineId?: string): Promise<ServiceRegistry> {
     try {
         const coworker = await assertCoworkerSkillIdentity(runtime, agentId, expectedEngineId)

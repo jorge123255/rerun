@@ -843,6 +843,31 @@ describe('desktop Regenerate reply', () => {
         } finally { vi.unstubAllEnvs() }
     })
 
+    it('regeneration receipt probes never start work and recover only the exact accepted source', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const { listSessions } = await import('../../db/repos/sessions.js')
+            const { body, first } = await history()
+            const before = await listSessions(id)
+            const missing = await chat(id, { ...body, replayOnly: true, connectionId: 'unavailable-connection' })
+            expect(missing.status).toBe(404)
+            expect(await missing.json()).toEqual({ code: 'regeneration_not_found' })
+            expect(await listSessions(id)).toEqual(before)
+            expect(state.calls).toHaveLength(0)
+            const accepted = await chat(id, body)
+            await accepted.text()
+            expect(state.calls).toHaveLength(1)
+            const replay = await chat(id, { ...body, replayOnly: true, connectionId: 'unavailable-connection' })
+            expect([200, 204]).toContain(replay.status)
+            expect(replay.headers.get('x-session-id')).toBe(accepted.headers.get('x-session-id'))
+            expect(replay.headers.get('x-run-id')).toBe(accepted.headers.get('x-run-id'))
+            await replay.text()
+            expect(state.calls).toHaveLength(1)
+            expect((await chat(id, { ...body, replayOnly: true, regenerateMessageId: first.id })).status).toBe(409)
+            expect(state.calls).toHaveLength(1)
+        } finally { vi.unstubAllEnvs() }
+    })
+
     it('rejects unowned, non-assistant, forged, and busy targets before creating any session', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         try {

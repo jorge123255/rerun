@@ -38,12 +38,14 @@ function triggerSummary(t: DesktopTrigger): string {
 export function DesktopCoworkerTriggers({
     agentId,
     onOpenSession,
+    onEditStateChange,
     ingressAvailable = false,
     modelCatalog = unavailableTriggerRunModelCatalog(),
     templateLock = desktopTriggerPromptLock(false),
 }: {
     agentId: string
     onOpenSession: (chat: ChatOpen) => void
+    onEditStateChange?: (state: { dirty: boolean; busy: boolean }) => void
     ingressAvailable?: boolean
     modelCatalog?: DesktopTriggerRunModelCatalog
     templateLock?: DesktopTriggerTemplateLockState
@@ -53,6 +55,7 @@ export function DesktopCoworkerTriggers({
             key={agentId}
             agentId={agentId}
             onOpenSession={onOpenSession}
+            onEditStateChange={onEditStateChange}
             ingressAvailable={ingressAvailable}
             modelCatalog={modelCatalog}
             templateLock={templateLock}
@@ -63,12 +66,14 @@ export function DesktopCoworkerTriggers({
 function Triggers({
     agentId,
     onOpenSession,
+    onEditStateChange,
     ingressAvailable,
     modelCatalog,
     templateLock,
 }: {
     agentId: string
     onOpenSession: (chat: ChatOpen) => void
+    onEditStateChange?: (state: { dirty: boolean; busy: boolean }) => void
     ingressAvailable: boolean
     modelCatalog: DesktopTriggerRunModelCatalog
     templateLock: DesktopTriggerTemplateLockState
@@ -133,6 +138,7 @@ function Triggers({
         return (
             <PanelSteps stepKey={stepKey} depth={stepDepth}>
                 <DesktopTriggerEditor
+                    onEditStateChange={onEditStateChange}
                     agentId={agentId}
                     ingressAvailable={ingressAvailable}
                     modelCatalog={modelCatalog}
@@ -148,6 +154,7 @@ function Triggers({
         return (
             <PanelSteps stepKey={stepKey} depth={stepDepth}>
                 <DesktopTriggerEditor
+                    onEditStateChange={onEditStateChange}
                     agentId={agentId}
                     slug={view.slug}
                     ingressAvailable={ingressAvailable}
@@ -191,7 +198,7 @@ function Triggers({
                     <EmptyState
                         icon={WebhookIcon}
                         title="No triggers yet"
-                        description="A trigger gives your coworker a public URL. Whenever another service calls it, the coworker runs with the payload it received."
+                        description="A trigger gives your coworker a local webhook URL. When a program on this Mac calls it, the coworker runs with the payload it received."
                         action={newButton}
                     />
                 ) : null}
@@ -220,7 +227,7 @@ function Triggers({
                     </PanelScroller>
                 ) : null}
                 <p className="p-3 text-xs text-muted-foreground">
-                    External delivery still requires a hosting decision. Copying or previewing a URL never starts a run. Disabled or deleted triggers keep their history.
+                    Webhook URLs work only on this Mac. Copying or previewing a URL never starts a run. Disabled or deleted triggers keep their history.
                 </p>
                 <Button size="sm" variant="ghost" disabled={loading} onClick={() => void load()}>Refresh</Button>
             </div>
@@ -246,6 +253,7 @@ function TriggerRuns({
     const [opening, setOpening] = useState<string | null>(null)
     const [error, setError] = useState('')
     const alive = useRef(true)
+    const generation = useRef(0)
 
     useEffect(() => {
         alive.current = true
@@ -253,18 +261,19 @@ function TriggerRuns({
     }, [])
 
     const load = useCallback(async () => {
+        const own = ++generation.current
         setLoading(true)
         try {
             const next = await listDesktopTriggerHistory(agentId, slug)
-            if (alive.current) { setItems(next); setError('') }
+            if (alive.current && own === generation.current) { setItems(next); setError('') }
         } catch (err) {
-            if (alive.current) setError(err instanceof TriggerRequestError ? err.message : 'Could not load history')
+            if (alive.current && own === generation.current) setError(err instanceof TriggerRequestError ? err.message : 'Could not load history')
         } finally {
-            if (alive.current) setLoading(false)
+            if (alive.current && own === generation.current) setLoading(false)
         }
     }, [agentId, slug])
 
-    useEffect(() => { void load() }, [load])
+    useEffect(() => { void load(); return () => { generation.current++ } }, [load])
 
     return (
         <div className="flex h-full min-h-0 flex-col">
@@ -293,7 +302,7 @@ function TriggerRuns({
                                 }}
                                 title={new Date(item.receivedAt).toLocaleString()}
                                 description={[item.capturedPayload ? 'captured payload' : 'live-only', item.error].filter(Boolean).join(' · ')}
-                                meta={opening === item.eventId ? <Loader2Icon className="size-3.5 animate-spin text-muted-foreground" /> : <RunStatusBadge status={item.status === 'finished' ? 'completed' : item.status === 'needs-input' ? 'running' : item.status === 'refused' || item.status === 'uncertain' ? 'error' : item.status} />}
+                                meta={opening === item.eventId ? <Loader2Icon className="size-3.5 animate-spin text-muted-foreground" /> : <RunStatusBadge status={item.status === 'finished' ? 'done' : item.status === 'needs-input' || item.status === 'accepted' ? 'running' : item.status === 'refused' || item.status === 'uncertain' ? 'error' : item.status} />}
                             />
                         ))}
                     </PanelList>

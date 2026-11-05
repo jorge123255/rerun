@@ -26,7 +26,7 @@ export async function recoverDesktopTriggerOwner(input: {
             continue
         }
         const run = await authority.readRun(engineAgentId, event.runId)
-        if (!run || run.agentId !== engineAgentId || run.triggerSource !== 'trigger' || run.triggerSlug !== event.slug) {
+        if (!run || run.agentId !== engineAgentId || run.triggerSource !== 'trigger' || run.triggerSlug !== event.slug || run.sessionId !== event.engineSessionId) {
             await store.updateEvent(engineAgentId, event.eventId, { status: 'uncertain', error: 'Run ownership could not be confirmed after restart' })
             uncertain++
             continue

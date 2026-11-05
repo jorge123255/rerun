@@ -34,7 +34,7 @@ export function DesktopTriggerTemplateLock({
                         {state.unlockLabel ?? 'Unlock'}
                     </Button>
                 ) : (
-                    <p className="text-xs text-muted-foreground">Unlock is unavailable in this desktop build until root wires plan status.</p>
+                    <p className="text-xs text-muted-foreground">These template instructions are read-only.</p>
                 )}
             </div>
         </div>

@@ -90,8 +90,8 @@ test('a browser cannot supply the internal creation exception through the public
         headers: {host: '127.0.0.1:3001', origin: runtime.app.origin, cookie: 'rerun-desktop-session=fixture-session', 'content-type': 'application/json'},
         body: JSON.stringify({agentId, text, tabUid: requestId, internalCreationRequestId: requestId}),
     }))
-    expect(response.status).toBe(409)
-    expect(await response.json()).toEqual({error: desktopCreationPendingMessage})
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({error: 'Choose a saved reply to regenerate, write a message or attach a file.'})
     expect(mocks.chat).not.toHaveBeenCalled()
 })
 

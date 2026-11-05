@@ -1,3 +1,4 @@
+import { checkedDesktopCoworkerMentions, type DesktopCoworkerMention } from '@rerun/contracts'
 import 'server-only'
 import type { Client, Row } from '@libsql/client'
 import { desktopAttachmentPathsSchema, desktopAttachmentItemsSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, type DesktopAttachmentSelection } from '@rerun/contracts'
@@ -90,17 +91,18 @@ export function writeDesktopTabs(db: Client, agentId: string, input: DesktopTabW
                 if (count > 10) throw new DesktopHttpError(409, 'Check unresolved imports before combining these conversation tabs.')
                 finalCounts.set(to, count)
             }
-            const storedDrafts = await transaction.execute({ sql: 'SELECT tab_uid, revision, text, attachment_path, attachment_paths, attachment_items FROM desktop_composer_drafts WHERE agent_id = ?', args: [agentId] })
+            const storedDrafts = await transaction.execute({ sql: 'SELECT tab_uid, revision, text, attachment_path, attachment_paths, attachment_items, coworker_mentions FROM desktop_composer_drafts WHERE agent_id = ?', args: [agentId] })
             const drafts = new Map(storedDrafts.rows.map(draft => [String(draft.tab_uid), draft]))
+            const mentionsOf = (row: Row | undefined) => row ? checkedDesktopCoworkerMentions(String(row.text), row.coworker_mentions ? JSON.parse(String(row.coworker_mentions)) : []) : []
             const transfers = new Map<string, Row>()
             const clear = new Set<string>()
-            const writeDraft = async (uid: string, prior: Row | undefined, text: string, attachments: readonly DesktopAttachmentSelection[]) => {
+            const writeDraft = async (uid: string, prior: Row | undefined, text: string, attachments: readonly DesktopAttachmentSelection[], mentions: DesktopCoworkerMention[] = []) => {
                 const version = Number(prior?.revision ?? 0)
                 if (version >= Number.MAX_SAFE_INTEGER - 1) throw new DesktopHttpError(409, 'This draft version cannot be moved. Open a new conversation tab.')
                 const fields = desktopAttachmentFieldsOf(attachments)
-                await transaction.execute({ sql: `INSERT INTO desktop_composer_drafts (agent_id,tab_uid,revision,text,attachment_path,attachment_paths,attachment_items,updated_at) VALUES (?,?,?,?,?,?,?,?)
-                    ON CONFLICT(agent_id,tab_uid) DO UPDATE SET revision=excluded.revision,text=excluded.text,attachment_path=excluded.attachment_path,attachment_paths=excluded.attachment_paths,attachment_items=excluded.attachment_items,updated_at=excluded.updated_at`,
-                    args: [agentId, uid, version + 1, text, typeof attachments[0] === 'string' ? attachments[0] : null, fields.attachmentPaths ? JSON.stringify(fields.attachmentPaths) : null, fields.attachmentItems ? JSON.stringify(fields.attachmentItems) : null, new Date().toISOString()] })
+                await transaction.execute({ sql: `INSERT INTO desktop_composer_drafts (agent_id,tab_uid,revision,text,attachment_path,attachment_paths,attachment_items,coworker_mentions,updated_at) VALUES (?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(agent_id,tab_uid) DO UPDATE SET revision=excluded.revision,text=excluded.text,attachment_path=excluded.attachment_path,attachment_paths=excluded.attachment_paths,attachment_items=excluded.attachment_items,coworker_mentions=excluded.coworker_mentions,updated_at=excluded.updated_at`,
+                    args: [agentId, uid, version + 1, text, typeof attachments[0] === 'string' ? attachments[0] : null, fields.attachmentPaths ? JSON.stringify(fields.attachmentPaths) : null, fields.attachmentItems ? JSON.stringify(fields.attachmentItems) : null, mentions.length ? JSON.stringify(mentions) : null, new Date().toISOString()] })
             }
             for (const before of previous) {
                 const after = input.tabs.find(tab => tab.uid === before.uid)
@@ -110,7 +112,7 @@ export function writeDesktopTabs(db: Client, agentId: string, input: DesktopTabW
                 if (destination && source && (source.text !== '' || draftAttachmentPaths(source).length > 0)) {
                     const existing = drafts.get(destination.uid)
                     if (existing && (existing.text !== '' || draftAttachmentPaths(existing).length > 0) &&
-                        (existing.text !== source.text || JSON.stringify(draftAttachmentPaths(existing)) !== JSON.stringify(draftAttachmentPaths(source)))) throw new DesktopHttpError(409, 'Both conversation tabs have drafts. Reload the tabs before moving them.')
+                        (existing.text !== source.text || JSON.stringify(draftAttachmentPaths(existing)) !== JSON.stringify(draftAttachmentPaths(source)) || JSON.stringify(mentionsOf(existing)) !== JSON.stringify(mentionsOf(source)))) throw new DesktopHttpError(409, 'Both conversation tabs have drafts. Reload the tabs before moving them.')
                     transfers.set(destination.uid, source)
                 }
                 // A regenerated reply keeps the live UID. Its old draft belongs to the original
@@ -118,7 +120,7 @@ export function writeDesktopTabs(db: Client, agentId: string, input: DesktopTabW
                 if (after) clear.add(before.uid)
             }
             for (const uid of clear) if (!transfers.has(uid)) await writeDraft(uid, drafts.get(uid), '', [])
-            for (const [uid, source] of transfers) await writeDraft(uid, drafts.get(uid), String(source.text), draftAttachmentPaths(source))
+            for (const [uid, source] of transfers) await writeDraft(uid, drafts.get(uid), String(source.text), draftAttachmentPaths(source), mentionsOf(source))
             for (const { id, from, to } of uploadMoves) {
                 if (to === from) continue
                 if (to === null) {

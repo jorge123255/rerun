@@ -28,6 +28,7 @@ export type DesktopTriggerModelOverride = {
 export type DesktopTriggerStartResult = {
     runId: string
     sessionId: string
+    settled?: Promise<{ kind: 'done' | 'error' | 'cancelled'; error?: string; pendingToolCallId?: string }>
 }
 
 export type DesktopTriggerHumanRoute =
@@ -56,6 +57,9 @@ export type DesktopTriggerAuthority = {
         message: string
         model: DesktopTriggerModelOverride
         eventId: string
+        assertActive: () => Promise<void>
+        onSessionCreated: (sessionId: string) => Promise<void>
+        onRunCreated: (runId: string, sessionId: string) => Promise<void>
     }): Promise<DesktopTriggerStartResult>
     cancelExactRun(engineAgentId: string, runId: string): Promise<void>
     readRun(engineAgentId: string, runId: string): Promise<{ id: string; sessionId: string; status: string; agentId: string; triggerSource: string | null; triggerSlug: string | null } | null>
@@ -87,9 +91,17 @@ export type DesktopTriggerAuthority = {
     rotateTriggerToken(engineAgentId: string, slug: string, nextToken: string): Promise<DesktopTriggerRecord>
     deleteTrigger(engineAgentId: string, slug: string): Promise<void>
     markFired(engineAgentId: string, slug: string, firedAt: string): Promise<void>
+    /** Exact definition CAS; statistics are preserved independently. */
+    replaceTrigger?(engineAgentId: string, slug: string, expected: DesktopTriggerRecord | null, next: DesktopTriggerRecord | null): Promise<DesktopTriggerRecord | null>
 }
 
-export type DesktopTriggerMutationKind = 'create' | 'update' | 'rotate' | 'delete' | 'enable' | 'disable'
+export type DesktopTriggerMutationIntent = {
+    requestId: string; fingerprint: string; kind: DesktopTriggerMutationKind; slug: string
+    before: DesktopTriggerRecord | null; after: DesktopTriggerRecord | null
+    revision: string; resultJson: string | null
+}
+
+export type DesktopTriggerMutationKind = 'create' | 'update' | 'rotate' | 'delete' | 'enable' | 'disable' | 'stop'
 
 export type DesktopTriggerStore = {
     initialize(engineAgentId: string): Promise<void>
@@ -113,6 +125,10 @@ export type DesktopTriggerStore = {
     revokeOwner(engineAgentId: string): Promise<void>
     isRevoked(engineAgentId: string): Promise<boolean>
     recoverUncertain(engineAgentId: string): Promise<void>
+    findIntent(engineAgentId: string, requestId: string): Promise<DesktopTriggerMutationIntent | null>
+    findPendingIntent(engineAgentId: string, slug: string): Promise<DesktopTriggerMutationIntent | null>
+    reserveIntent(engineAgentId: string, intent: DesktopTriggerMutationIntent): Promise<void>
+    completeIntent(engineAgentId: string, requestId: string, resultJson: string): Promise<void>
 }
 
 export type { DesktopTriggerCreate, DesktopTriggerUpdate, DesktopTriggerFireInput, DesktopTriggerStop, DesktopTriggerDeliveryReceipt }

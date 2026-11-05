@@ -15,16 +15,17 @@ import {getDesktopServiceManifest,getDesktopServiceMethodAvailability} from './c
 export type ServiceRun={engineAgentId:string;sessionId:string;runId:string}
 export type ServiceAuthority=(owner:string,action:'manage'|'use',run:ServiceRun|undefined,signal:AbortSignal)=>Promise<{engineAgentId:string;runtime:DesktopRuntime;skillsRoot:string;enabled:boolean;granted:boolean;check?:()=>void}>
 export type ServiceToolNames=(owner:string,installationId:string,names:string[],signal:AbortSignal)=>Promise<void>
+export type ServiceRestartAuthority=(owner:string,signal:AbortSignal)=>Promise<{engineId:string;skillsRoot:string}>
 export type ServiceRegistryWriter=(skillsRoot:string,records:ServiceInstall[],signal:AbortSignal)=>Promise<void>
-export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthority,assertToolNames:ServiceToolNames,network:typeof fetch=fetch,writeRegistry:ServiceRegistryWriter=syncDesktopServiceRegistry){
+export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthority,assertToolNames:ServiceToolNames,network:typeof fetch=fetch,writeRegistry:ServiceRegistryWriter=syncDesktopServiceRegistry,restartAuthority?:ServiceRestartAuthority){
  const lifecycle=remoteMcpLifecycle(),shutdown=new AbortController()
  const skillJournal=serviceSkillJournal(store.db)
- const skillAuthority=connectorSkillAuthority(store,skillJournal,async owner=>{const authority=await current(owner,'manage',undefined,shutdown.signal);return {engineId:authority.engineAgentId,skillsRoot:authority.skillsRoot}})
+ const skillAuthority=connectorSkillAuthority(store,skillJournal,async (owner,signal=shutdown.signal)=>{const authority=await current(owner,'manage',undefined,signal);return {engineId:authority.engineAgentId,skillsRoot:authority.skillsRoot}})
  const active=new Map<string,Promise<unknown>>()
  const idName=(record:ServiceInstall)=>desktopServiceRegistryName(record.id)
  const syncRegistry=async(skillsRoot:string,owner:string,signal:AbortSignal)=>writeRegistry(skillsRoot,await abortable(store.list(owner),signal),signal)
- async function current(owner:string,action:'manage'|'use',run:ServiceRun|undefined,signal:AbortSignal){signal.throwIfAborted();shutdown.signal.throwIfAborted();const value=await abortable(authorize(owner,action,run,signal),signal);signal.throwIfAborted();shutdown.signal.throwIfAborted();if(action==='use'&&(!value.enabled||!value.granted))throw new Error('Service permission is off');return value}
- async function liveRecord(owner:string,key:string,revision:string,signal:AbortSignal){const record=await abortable(store.read(owner,key),signal);signal.throwIfAborted();if(!record || record.revision!==revision || record.state!=='ready')throw new Error('Service connection changed');await skillAuthority.assertReady(owner,record.id);return record}
+ async function current(owner:string,action:'manage'|'use',run:ServiceRun|undefined,signal:AbortSignal){signal.throwIfAborted();shutdown.signal.throwIfAborted();const value=await abortable(authorize(owner,action,run,signal),signal);signal.throwIfAborted();shutdown.signal.throwIfAborted();value.check?.();if(action==='use'&&(!value.enabled||!value.granted))throw new Error('Service permission is off');return value}
+ async function liveRecord(owner:string,key:string,revision:string,signal:AbortSignal){const record=await abortable(store.read(owner,key),signal);signal.throwIfAborted();if(!record || record.revision!==revision || record.state!=='ready')throw new Error('Service connection changed');await skillAuthority.assertReady(owner,record.id,signal);return record}
  function transport(record:ServiceInstall,run:ServiceRun|undefined,signal:AbortSignal){
   const reader:RemoteMcpStore={lifecycle,
    list:async()=>[],read:async(owner,name)=>{if(owner!==record.owner||name!==idName(record))throw new Error('Service owner mismatch');const now=await liveRecord(owner,record.key,record.revision,signal);return {name,url:now.plan.url,revision:now.revision,bearer:await abortable(store.credential(owner,now.id),signal)}},
@@ -34,13 +35,13 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
  }
  async function view(record:ServiceInstall,signal:AbortSignal){
   const authority=await current(record.owner,'manage',undefined,signal)
-  let skillsHealthy=false;try{await skillAuthority.assertReady(record.owner,record.id);skillsHealthy=true}catch{}
+  let skillsHealthy=false;try{await skillAuthority.assertReady(record.owner,record.id,signal);skillsHealthy=true}catch{}
   const healthy=skillsHealthy&&authority.engineAgentId===record.engineId&&record.state==='ready'&&authority.enabled&&authority.granted&&record.health.state==='healthy'&&record.healthLaunch===authority.runtime.launchNonce&&Date.now()>=Date.parse(record.health.checkedAt??'')&&Date.now()-Date.parse(record.health.checkedAt??'')<60_000
   const health:DesktopServiceHealth=healthy?record.health:record.state==='disconnected'?{state:'disconnected',message:'Local credentials removed. This does not revoke the remote API key.'}:!authority.enabled||!authority.granted?{state:'unchecked',message:'Enable Apps in this coworker’s Tools to check the connection.'}:record.health.state==='error'?record.health:{state:'unchecked',message:'Connection health is not established for the current permissions and app launch.'}
   return {key:record.key,slug:record.plan.slug,name:record.plan.name,category:record.plan.category,icon:record.plan.icon,revision:record.revision,health,installed:healthy,status:healthy?'active' as const:record.state==='error'?'error' as const:'needs_config' as const,authMethodId:record.plan.methodId,installedAt:record.installedAt,toolNames:healthy?record.toolNames:[],configured:record.plan.secretInput?{[record.plan.secretInput]:record.configured}:{}}
  }
  async function discover(record:ServiceInstall,run:ServiceRun|undefined,signal:AbortSignal){
-  await skillAuthority.assertReady(record.owner,record.id)
+  await skillAuthority.assertReady(record.owner,record.id,signal)
   const initial=await current(record.owner,'use',run,signal);if(initial.engineAgentId!==record.engineId)throw new Error('Service owner changed');for(const skill of record.skills)await verifyServiceSkill(initial.skillsRoot,skill)
   await syncRegistry(initial.skillsRoot,record.owner,signal)
   const runtime=transport(record,run,signal),result=await runtime.probe(record.owner,idName(record),record.revision,signal)
@@ -112,7 +113,7 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
        if(!reservation.resource)throw new Error('Unacknowledged staging resource; preserved for explicit recovery')
        const refs=(await store.list(owner)).filter(other=>other.id!==record.id).flatMap(other=>other.skills)
        if(refs.some(skill=>skill.slug===reservation.resource!.slug||skill.directoryIdentity===reservation.resource!.directoryIdentity))throw new Error('Skill still referenced by another installation')
-       const resource=await resolveServiceSkillRemoval(authority.skillsRoot,reservation)
+       const resource=await resolveServiceSkillRemoval(authority.skillsRoot,reservation,guard)
        await removeServiceSkill(authority.skillsRoot,resource,guard)
        await skillJournal.update(reservation,'removed',reservation.resource)
       }
@@ -129,19 +130,36 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
   return abortable(work,signal)
  }
  async function reconcile(owner:string,signal:AbortSignal){
-  const authority=await current(owner,'manage',undefined,signal)
+  const scope=async()=>{
+   signal.throwIfAborted();shutdown.signal.throwIfAborted()
+   if(restartAuthority)return abortable(restartAuthority(owner,signal),signal)
+   const value=await current(owner,'manage',undefined,signal);return {engineId:value.engineAgentId,skillsRoot:value.skillsRoot}
+  }
+  const authority=await scope(),offlineSkills=connectorSkillAuthority(store,skillJournal,scope)
   for(const record of await store.list(owner)){await lifecycle.mutate(owner,idName(record),async()=>{
-   let skillsValid=true;try{await skillAuthority.assertReady(owner,record.id)}catch{skillsValid=false}
+   let skillsValid=true;try{await offlineSkills.assertReady(owner,record.id,signal)}catch{skillsValid=false}
    const revision=record.revision;record.health={state:'unchecked'};record.healthLaunch=null;record.toolNames=[]
-   if(record.engineId!==(await current(owner,'manage',undefined,signal)).engineAgentId||!skillsValid||record.state==='preparing'||record.state==='removing'){record.state='error';record.revision=randomUUID();await store.update(record,revision,'')}else await store.update(record,revision)
-   await syncRegistry(authority.skillsRoot,owner,signal)
+   const now=await scope()
+   if(now.engineId!==authority.engineId||now.skillsRoot!==authority.skillsRoot)throw new Error('Service owner changed')
+   if(record.engineId!==now.engineId||!skillsValid||record.state==='preparing'||record.state==='removing'){record.state='error';record.revision=randomUUID();await store.update(record,revision,'')}else await store.update(record,revision)
   })}
-  await current(owner,'manage',undefined,signal);await syncRegistry(authority.skillsRoot,owner,signal)
+  await scope();await syncRegistry(authority.skillsRoot,owner,signal)
  }
  return {skillAuthority,skillJournal,mutate,view,probe,discover,transport,current,liveRecord,idName,lifecycle,reconcile,
   async reconcileOwners(signal:AbortSignal){
-   const rows=await abortable(store.db.execute({sql:'SELECT id FROM desktop_agents',args:[]}),signal)
-   for(const row of rows.rows)await reconcile(String(row.id),signal)
+   // Clear usable health before any owner inspection; restart never probes a provider.
+   await abortable(store.db.execute(`UPDATE desktop_service_installs SET health='{"state":"unchecked"}',health_launch=NULL,tool_names='[]'`),signal)
+   const rows=await abortable(store.db.execute({sql:'SELECT DISTINCT owner FROM desktop_service_installs LIMIT 4097',args:[]}),signal)
+   if(rows.rows.length>4096)throw new Error('Service owner limit exceeded')
+   for(const row of rows.rows){
+    signal.throwIfAborted();shutdown.signal.throwIfAborted()
+    const owner=String(row.owner),stop=AbortSignal.any([signal,shutdown.signal,AbortSignal.timeout(5_000)])
+    try{await reconcile(owner,stop)}catch{
+     signal.throwIfAborted();shutdown.signal.throwIfAborted()
+     // A missing/deleting owner or broken projection cannot hold unrelated MCP startup hostage.
+     await abortable(store.db.execute({sql:`UPDATE desktop_service_installs SET state='error',bearer=NULL,revision=?,health='{"state":"error","message":"App resources need review before reconnecting."}',health_launch=NULL,tool_names='[]' WHERE owner=?`,args:[randomUUID(),owner]}),signal)
+    }
+   }
   },
   async ownedSkills(owner:string,signal:AbortSignal){await current(owner,'manage',undefined,signal);return (await store.list(owner)).flatMap(record=>record.skills.map(skill=>({key:record.key,installationId:record.id,state:record.state,...skill})))},
   transitionOwner:<T>(owner:string,write:()=>Promise<T>)=>lifecycle.transitionOwner(owner,write),

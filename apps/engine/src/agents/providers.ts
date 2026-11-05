@@ -1,3 +1,4 @@
+import { desktopDelegationCodexCwd } from '../desktop/delegation/child-scope.js'
 import { createProviderRegistry, wrapLanguageModel, type LanguageModel, type ToolSet } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAI } from '@ai-sdk/openai'
@@ -322,7 +323,10 @@ function connectionEnv(agent: LoadedAgent): Record<string, string> {
 // run — there is no token setting to pass. `env` is merged over process.env by the provider. The
 // home is the connection's, so agents sharing a subscription share one auth.json.
 function codexShared(agent: LoadedAgent): CodexExecSettings & CodexAppServerSettings {
-    if (desktopApp()) return desktopCodexRuntime()
+    if (desktopApp()) {
+        const cwd = desktopDelegationCodexCwd(agent)
+        return { ...desktopCodexRuntime(), ...(cwd ? { cwd } : {}) }
+    }
     const { RERUN_CODEX_PATH } = env()
     const { cwd, env: agentEnv } = agentProcessEnv(agent)
     return {

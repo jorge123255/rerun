@@ -2,6 +2,7 @@ import 'server-only'
 import { z } from 'zod'
 import { desktopRerunToolCatalog, desktopCodexToolCatalog } from '@rerun/contracts'
 import { serviceStore } from './services/store'
+import { bindDesktopServiceSkillOwners, desktopServiceSkillRestartScope } from './service-skills/authority'
 import { localServiceLifecycle, type ServiceAuthority } from './services/lifecycle'
 import { serviceApi } from './services/api'
 import { serviceEngineBridge } from './services/bridge'
@@ -49,6 +50,7 @@ const masterKey = () => {
 
 async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     masterKey()
+    bindDesktopServiceSkillOwners(runtime)
     const db = await openDesktopDatabase(runtime.dataRoot)
     await initializeDesktopMcp(db)
     entry.shutdown.signal.throwIfAborted()
@@ -169,16 +171,13 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         const prefixes = [...remoteRows.map(row => row.name), ...localRows.map(row => row.name), ...serviceRows.filter(row => row.id !== installationId && row.state !== 'disconnected').map(row => row.plan.serverName)]
         if (new Set(names).size !== names.length || names.some(name => !/^[\w.-]{1,128}$/.test(name) || reserved.has(name) || prefixes.some(prefix => name.startsWith(`${prefix}_`)))) throw new Error('Service tool conflicts with another tool')
         signal.throwIfAborted()
-    })
+    }, fetch, undefined, (owner, signal) => desktopServiceSkillRestartScope(runtime, owner, signal))
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
     })
-    // Restart never replays a remote call or makes unrelated connections depend on
-    // an online engine. Fresh use repeats the full owner/grant checks above.
-    await db.execute(`UPDATE desktop_service_installs SET health='{"state":"unchecked"}',health_launch=NULL,tool_names='[]'`)
-    await db.execute(`UPDATE desktop_service_installs SET state='error',bearer=NULL,health='{"state":"error","message":"Interrupted setup. Remove this installation before trying again."}'
-        WHERE state IN ('preparing','removing') OR engine_id != (SELECT engine_agent_id FROM desktop_agents WHERE id=owner)`)
+    // Offline reconciliation verifies canonical owned skills without replaying remote work.
+    await services.reconcileOwners(entry.shutdown.signal)
     entry.shutdown.signal.throwIfAborted()
     const writeback = nativeWritebackService(db, async (identity, action, signal) => {
         const stop = AbortSignal.any([signal, entry.shutdown.signal])

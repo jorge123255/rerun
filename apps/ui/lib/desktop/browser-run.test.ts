@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
-import { createBrowserRunObserver, isAcceptableSocketUrl, parseTrustedCurrentRun, projectBrowserRunScreen, projectSavedRun, sanitizeSite, type BrowserRunScreenState, type CurrentRunCheckResult } from './browser-run'
+import { createBrowserRunObserver, isAcceptableSocketUrl, parseTrustedCurrentRun, projectBrowserRunScreen, projectSavedRun, sanitizeSite, type BrowserRunScreenState, type CurrentRunCheckResult, type CurrentRunCheck, type PassiveViewerTransport } from './browser-run'
 
 const run = { agentId: 'ada', sessionId: 's1', runId: 'r1' }
 const trusted = { ...run, liveScreen: { kind: 'browser' as const, site: 'example.com' } }
@@ -14,7 +14,7 @@ function deferred<T>() {
     return { promise, resolve, reject }
 }
 
-function observe(check = vi.fn(async () => running), requestWatchTicket = vi.fn(async () => ticket())) {
+function observe(check = vi.fn<CurrentRunCheck>(async () => running), requestWatchTicket = vi.fn<PassiveViewerTransport['requestWatchTicket']>(async () => ticket())) {
     const states: BrowserRunScreenState[] = []
     const observer = createBrowserRunObserver({ run, check, transport: { requestWatchTicket }, onState: s => states.push(s) })
     return { observer, states, check, requestWatchTicket }

@@ -1,4 +1,6 @@
 import { join } from 'node:path'
+import { withSkillReadLease } from '../skill-publication.js'
+import { assertUserSkillOperation } from '../service-skills/authority.js'
 import { z } from 'zod'
 import {
     DESKTOP_TEMPLATE_LIMITS,
@@ -203,6 +205,10 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             if (!stored.success || stored.data.planRevision !== input.planRevision || stored.data.revision !== input.revision) {
                 throw new TemplateRequestError(409, 'Capture plan is no longer current')
             }
+            const locked = [...new Map(stored.data.bindings.map(binding => [binding.engineAgentId, binding])).values()].sort((a, b) => a.engineAgentId.localeCompare(b.engineAgentId))
+            const underLocks = <T>(index: number, work: () => Promise<T>): Promise<T> => index === locked.length ? work()
+                : withSkillReadLease(join(roots.agentsRoot, locked[index]!.engineAgentId, 'skills'), () => underLocks(index + 1, work))
+            return underLocks(0, async () => {
             const selections = z.array(desktopTemplateSelectionSchema).parse(input.selections)
             const expected = stored.data.coworkers.map(coworker => coworker.agentId)
             const selectedIds = selections.map(selection => selection.agentId)
@@ -228,6 +234,11 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             if (prior.success && (prior.data.templateId !== input.templateId || prior.data.planRevision !== input.planRevision)) {
                 throw new TemplateRequestError(409, 'This capture request already belongs to another plan')
             }
+            const assertSelectedSkills = async () => {
+                for (const binding of stored.data.bindings) for (const slug of byId.get(binding.agentId)!.skills)
+                    await assertUserSkillOperation(join(roots.agentsRoot, binding.engineAgentId, 'workspace'), slug)
+            }
+            await assertSelectedSkills()
             const capturedAt = prior.success ? prior.data.capturedAt : new Date().toISOString()
             if (!prior.success) {
                 await writeOwnJson(home, `capture-${input.requestId}.json`, {
@@ -254,15 +265,18 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
                 for (const coworker of chosen) {
                     for (const file of coworker.bytes) await writeOwnJsonBytes(directory, `${coworker.agentKey}/${file.path}`, file.bytes)
                 }
+                await assertSelectedSkills()
                 await writeOwnJson(directory, 'manifest.json', manifest)
             }
             const confirmed = await readManifest(roots.dataRoot, input.templateId, manifest.revision)
             if (canonicalJson(confirmed) !== canonicalJson(manifest)) throw new TemplateRequestError(409, 'Stored template bytes do not match this capture')
+            await assertSelectedSkills()
             await replaceOwnJson(templateHome(roots.dataRoot, input.templateId), 'current.json', { revision: manifest.revision })
             await replaceOwnJson(home, `capture-${input.requestId}.json`, {
                 version: 1, fingerprint, requestId: input.requestId, templateId: input.templateId, planRevision: input.planRevision, capturedAt, revision: manifest.revision,
             })
             return { templateId: input.templateId, revision: manifest.revision }
+            })
         },
 
         async list(): Promise<DesktopTemplateList> {

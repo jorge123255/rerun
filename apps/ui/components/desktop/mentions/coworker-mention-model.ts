@@ -3,12 +3,8 @@ import type { DesktopCoworkerCallTarget } from '../../../../../packages/contract
 
 export const DESKTOP_COWORKER_MENTION_METADATA_VERSION = 1
 
-export type DesktopCoworkerMention = {
-    targetId: string
-    token: string
-    start: number
-    end: number
-}
+import type { DesktopCoworkerMention } from '@rerun/contracts'
+export type { DesktopCoworkerMention } from '@rerun/contracts'
 
 export type DesktopResolvedCoworkerMention = DesktopCoworkerMention & {
     target: DesktopCoworkerCallTarget
@@ -81,7 +77,7 @@ export function reconcileDesktopCoworkerMentions(previousText: string, nextText:
         if (mention.end <= prefix) next.push(mention)
         else if (mention.start >= oldEditEnd) next.push({ ...mention, start: mention.start + delta, end: mention.end + delta })
     }
-    return next
+    return next.flatMap(mention => readMentions(nextText, [mention]))
 }
 
 export function insertDesktopCoworkerMention(text: string, mentions: DesktopCoworkerMention[], selection: {
@@ -94,8 +90,10 @@ export function insertDesktopCoworkerMention(text: string, mentions: DesktopCowo
     if (selection.start > 0 && !/\s/.test(text[selection.start - 1])) throw new Error('A coworker mention must start after whitespace.')
     const token = `@${selection.target.handle || selection.target.name}`
     if (/[\r\n]/.test(token)) throw new Error('A coworker mention must stay on one line.')
-    const nextText = `${text.slice(0, selection.start)}${token} ${text.slice(selection.end)}`
-    const nextMentions = reconcileDesktopCoworkerMentions(text, nextText, mentions)
+    const end = text[selection.end] === ' ' ? selection.end + 1 : selection.end
+    const nextText = `${text.slice(0, selection.start)}${token} ${text.slice(end)}`
+    const delta = nextText.length - text.length
+    const nextMentions = readMentions(text, mentions).flatMap(mention => mention.end <= selection.start ? [mention] : mention.start >= end ? [{ ...mention, start: mention.start + delta, end: mention.end + delta }] : [])
     nextMentions.push({ targetId: selection.target.agentId, token, start: selection.start, end: selection.start + token.length })
     nextMentions.sort((a, b) => a.start - b.start || a.end - b.end)
     return { text: nextText, mentions: nextMentions }
@@ -107,7 +105,8 @@ export function deleteDesktopCoworkerMention(text: string, mentions: DesktopCowo
     if (!found) return { text, mentions: current }
     const end = text[found.end] === ' ' ? found.end + 1 : found.end
     const nextText = `${text.slice(0, found.start)}${text.slice(end)}`
-    return { text: nextText, mentions: reconcileDesktopCoworkerMentions(text, nextText, current) }
+    const delta = nextText.length - text.length
+    return { text: nextText, mentions: current.flatMap(mention => mention.end <= found.start ? [mention] : mention.start >= end ? [{ ...mention, start: mention.start + delta, end: mention.end + delta }] : []) }
 }
 
 export function replaceDesktopCoworkerMention(text: string, mentions: DesktopCoworkerMention[], selected: DesktopCoworkerMention, target: DesktopCoworkerCallTarget): { text: string; mentions: DesktopCoworkerMention[] } {

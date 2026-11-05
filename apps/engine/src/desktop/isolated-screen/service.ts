@@ -237,6 +237,23 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         return { available: true, prerequisite: 'ready', state: runState(container.state, Boolean(live?.lease || live?.takingOver)) }
     }
 
+    async function running(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen> {
+        signal = AbortSignal.any([signal, closing.signal])
+        throwIfAborted(signal)
+        assertOwner(owner)
+        // Inspection must not queue behind navigate's action lock: its export callback
+        // revalidates this exact generation while that action is still in progress.
+        const live = lives.get(owner.engineAgentId)
+        if (!live || live.stopping || live.launchNonce !== owner.launchNonce) throw new IsolatedScreenRefusal(STALE, 'stale')
+        const target = { ...owner, sessionGeneration: live.generation }
+        const container = await docker.inspectContainer(containerName(owner.engineAgentId), signal)
+        if (container.status !== 'found' || container.state !== 'running' || !sameOwnerContainer(container.labels, owner)
+            || container.labels[LABEL_NONCE] !== owner.launchNonce || container.labels[LABEL_GENERATION] !== live.generation) throw new IsolatedScreenRefusal(STALE, 'stale')
+        current(target)
+        throwIfAborted(signal)
+        return { target, width: live.screen.viewWidth, height: live.screen.viewHeight }
+    }
+
     async function ensure(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen> {
         signal = AbortSignal.any([signal, closing.signal])
         throwIfAborted(signal)
@@ -545,5 +562,5 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         return result
     }
 
-    return { status, ensure, navigate, act, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }
+    return { status, ensure, running, navigate, act, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }
 }

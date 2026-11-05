@@ -11,13 +11,16 @@ export const ISOLATED_VIEWER_TICKET_TTL_MS = 60_000
 const id = z.string().min(1).max(200)
 const ownerSchema = z.strictObject({ engineAgentId: id, launchNonce: id })
 const targetSchema = ownerSchema.extend({ sessionGeneration: id })
+const runSchema = z.strictObject({ sessionId: id, runId: id })
+type ScreenRun = z.infer<typeof runSchema>
 const modeSchema = z.enum(['watch', 'drive'])
 export type IsolatedScreenOwner = z.infer<typeof ownerSchema>
 export type IsolatedScreenMode = z.infer<typeof modeSchema>
 export type IsolatedScreenTarget = z.infer<typeof targetSchema>
 export type IsolatedScreenStatus = {
     state: 'available' | 'unavailable' | 'starting' | 'taken-over' | 'disconnected'
-    reason?: string; driving: boolean; width?: number; height?: number
+    currentRun?: (ScreenRun & { kind: 'browser' | 'computer'; site: string | null }) | null
+    reason?: string; driving: boolean; running?: boolean; sessionGeneration?: string; width?: number; height?: number
 }
 // A supplies a *server-enforced* read-only VNC endpoint for watch. WebSocket frames are not
 // RFB message boundaries; filtering their first byte cannot enforce read-only access.
@@ -25,6 +28,7 @@ export type IsolatedScreenEndpoint = Duplex
 export interface IsolatedScreenService {
     status(owner: IsolatedScreenOwner, signal: AbortSignal): Promise<IsolatedScreenStatus>
     ensure(owner: IsolatedScreenOwner, signal: AbortSignal): Promise<{ target: IsolatedScreenTarget; width: number; height: number }>
+    running?(owner: IsolatedScreenOwner, signal: AbortSignal): Promise<{ target: IsolatedScreenTarget; width: number; height: number }>
     navigate(target: IsolatedScreenTarget, input: { url: string }, signal: AbortSignal): Promise<unknown>
     startTakeover(target: IsolatedScreenTarget, signal: AbortSignal): Promise<string>
     finishTakeover(target: IsolatedScreenTarget, lease: string, signal: AbortSignal): Promise<{ url: string | null; expired?: boolean }>
@@ -34,10 +38,11 @@ export interface IsolatedScreenService {
 export type IsolatedViewerAuthority = {
     launchNonce: string
     uiOrigin: string
+    currentRun?: (owner: IsolatedScreenOwner) => ScreenRun | null
     /** Required: reread current exact coworker, enabled/deleting state and browser/computer grants. */
     authorize: (owner: IsolatedScreenOwner, mode: IsolatedScreenMode, signal: AbortSignal) => Promise<void>
 }
-type Ticket = { owner: IsolatedScreenOwner; target: IsolatedScreenTarget; mode: IsolatedScreenMode; lease?: string; expiresAt: number }
+type Ticket = { owner: IsolatedScreenOwner; target: IsolatedScreenTarget; mode: IsolatedScreenMode; lease?: string; run?: ScreenRun; expiresAt: number }
 const keyOf = (owner: IsolatedScreenOwner) => JSON.stringify([owner.engineAgentId, owner.launchNonce])
 const sameTarget = (a: IsolatedScreenTarget, b: IsolatedScreenTarget) => keyOf(a) === keyOf(b) && a.sessionGeneration === b.sessionGeneration
 
@@ -51,7 +56,7 @@ export function createIsolatedViewerTickets() {
             sweep(now)
             if (entries.size >= 256) throw new Error('Too many screen requests')
             const ticket = randomBytes(24).toString('base64url'), expiresAt = now + ISOLATED_VIEWER_TICKET_TTL_MS
-            entries.set(ticket, { owner, target, mode, ...(input.lease && { lease: input.lease }), expiresAt })
+            entries.set(ticket, { owner, target, mode, ...(input.lease && { lease: input.lease }), ...(input.run && { run: runSchema.parse(input.run) }), expiresAt })
             return { ticket, expiresAt }
         },
         redeem(token: string, now = Date.now()): Ticket | null {
@@ -66,7 +71,8 @@ export function createIsolatedViewerTickets() {
 }
 
 const launch = z.strictObject({ launchNonce: id })
-const viewInput = launch.extend({ mode: modeSchema, lease: z.string().min(1).max(500).optional() })
+const viewInput = launch.extend({ mode: modeSchema, lease: z.string().min(1).max(500).optional(), requireRunning: z.boolean().optional(), run: runSchema.optional() })
+    .refine(input => (!input.requireRunning || input.mode === 'watch') && (!input.run || (input.requireRunning && input.mode === 'watch')), 'Passive tickets must be watch-only')
 const takeoverInput = launch.extend({ url: z.string().url().refine(url => /^https?:\/\//i.test(url)).optional(), lease: z.string().min(1).max(500).optional() })
 const finishInput = launch.extend({ lease: z.string().min(1).max(500) })
 
@@ -97,6 +103,11 @@ export function createIsolatedViewer(service: IsolatedScreenService, authority: 
         signal.throwIfAborted()
         if (closed) throw new Error('Screen stopped')
     }
+    function assertRun(value: IsolatedScreenOwner, run?: ScreenRun) {
+        if (!run) return
+        const current = authority.currentRun?.(value)
+        if (!current || current.sessionId !== run.sessionId || current.runId !== run.runId) throw new Error('This run no longer owns the screen')
+    }
     async function operation<T>(value: IsolatedScreenOwner, mode: IsolatedScreenMode, signal: AbortSignal, work: (signal: AbortSignal) => Promise<T>) {
         if (pending.size >= 64) throw new Error('Too many screen requests')
         const controller = new AbortController(), epoch = epochs.get(keyOf(value)) ?? 0
@@ -110,8 +121,9 @@ export function createIsolatedViewer(service: IsolatedScreenService, authority: 
             return result
         } finally { pending.delete(controller) }
     }
-    async function ensure(value: IsolatedScreenOwner, signal: AbortSignal) {
-        const result = await service.ensure(value, signal)
+    async function ensure(value: IsolatedScreenOwner, signal: AbortSignal, requireRunning = false) {
+        if (requireRunning && !service.running) throw new Error('Passive screen viewing is unavailable')
+        const result = await (requireRunning ? service.running!(value, signal) : service.ensure(value, signal))
         signal.throwIfAborted()
         const target = targetSchema.parse(result.target)
         if (keyOf(target) !== keyOf(value)) throw new Error('Screen owner mismatch')
@@ -165,12 +177,15 @@ export function createIsolatedViewer(service: IsolatedScreenService, authority: 
     routes.post('/view', async c => {
         const input = viewInput.parse(await c.req.json().catch(() => null)), value = owner(c.req.param('id')!, input.launchNonce)
         const result = await operation(value, input.mode, c.req.raw.signal, async signal => {
-            const ensured = await ensure(value, signal)
+            assertRun(value, input.run)
+            const ensured = await ensure(value, signal, input.requireRunning)
+            assertRun(value, input.run)
             const held = leases.get(keyOf(value))
             if (input.mode === 'drive' && (!held || held.lease !== input.lease || !sameTarget(held.target, ensured.target))) throw new Error('Take control first')
             return ensured
         })
-        const issued = tickets.issue({ owner: value, target: result.target, mode: input.mode, lease: input.lease })
+        assertRun(value, input.run)
+        const issued = tickets.issue({ owner: value, target: result.target, mode: input.mode, lease: input.lease, run: input.run })
         return c.json({ ...issued, expiresAt: new Date(issued.expiresAt).toISOString(), width: result.width, height: result.height })
     })
     routes.post('/takeover', async c => {
@@ -251,6 +266,7 @@ export function createIsolatedViewer(service: IsolatedScreenService, authority: 
         sockets.set(shutdown, ticket.owner)
         const valid = async () => {
             await authorize(ticket.owner, ticket.mode, abort.signal)
+            assertRun(ticket.owner, ticket.run)
             if (ticket.mode === 'drive') {
                 const held = leases.get(keyOf(ticket.owner))
                 if (!held || held.lease !== ticket.lease || !sameTarget(held.target, ticket.target)) throw new Error('Control expired')
@@ -273,6 +289,7 @@ export function createIsolatedViewer(service: IsolatedScreenService, authority: 
                 vnc = stream
                 vnc.once('close', shutdown); vnc.once('error', shutdown)
                 vnc.on('data', chunk => {
+                    try { assertRun(ticket.owner, ticket.run) } catch { return shutdown() }
                     if (ws.readyState !== ws.OPEN || ws.bufferedAmount > 2 * 1024 * 1024) return shutdown()
                     ws.send(chunk)
                 })

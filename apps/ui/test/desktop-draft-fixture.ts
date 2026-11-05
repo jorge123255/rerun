@@ -1,5 +1,5 @@
 import { afterEach } from 'vitest'
-import { desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf as desktopAttachmentPathsOf, type DesktopAttachmentFields } from '@rerun/contracts'
+import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, type DesktopCoworkerMentionFields, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf as desktopAttachmentPathsOf, type DesktopAttachmentFields } from '@rerun/contracts'
 import { cancelDraftShutdown, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
 import type { DesktopComposerDraft } from '@/lib/desktop/composer-draft'
 
@@ -19,9 +19,9 @@ export function createDesktopDraftFixture() {
     const uploads = new Map<string, { agent: string; tabUid: string; id: string; name: string; size: number }>()
     const key = (agent: string, uid: string) => JSON.stringify([agent, uid])
     const read = (agent: string, uid: string): DesktopComposerDraft => saved.get(key(agent, uid)) ?? { revision: 0, text: '' }
-    const write = (agent: string, uid: string, value: { text: string } & DesktopAttachmentFields) => {
+    const write = (agent: string, uid: string, value: { text: string } & DesktopAttachmentFields & DesktopCoworkerMentionFields) => {
         const fields = desktopAttachmentFieldsOf(desktopAttachmentPathsOf(value))
-        const next = { revision: read(agent, uid).revision + 1, text: value.text, ...fields }
+        const next = { revision: read(agent, uid).revision + 1, text: value.text, ...fields, ...desktopCoworkerMentionFieldsOf(checkedDesktopCoworkerMentions(value.text, value.coworkerMentions)) }
         saved.set(key(agent, uid), next)
         return next
     }
@@ -61,7 +61,7 @@ export function createDesktopDraftFixture() {
                     if (!before.id || before.id === after.id) continue
                     const original = next.find(tab => tab.uid !== before.uid && tab.id === before.id)
                     const source = read(agent, before.uid)
-                    if (original) write(agent, original.uid, { text: source.text, ...desktopAttachmentFieldsOf(desktopAttachmentPathsOf(source)) })
+                    if (original) write(agent, original.uid, { text: source.text, ...desktopAttachmentFieldsOf(desktopAttachmentPathsOf(source)), ...desktopCoworkerMentionFieldsOf(source.coworkerMentions) })
                     write(agent, before.uid, { text: '' })
                 }
                 layouts.set(agent, next)
@@ -69,20 +69,22 @@ export function createDesktopDraftFixture() {
                 return
             }
             if (method === 'GET') return Response.json({ draft: read(agent, url.searchParams.get('tabUid')!) })
-            const body = JSON.parse(String(init?.body)) as { tabUid: string; requestId: string; baseRevision?: number; revision?: number; text: string; attachmentPath?: string; attachmentPaths?: string[] }
+            const body = JSON.parse(String(init?.body)) as { tabUid: string; requestId: string; baseRevision?: number; revision?: number; text: string } & DesktopAttachmentFields & DesktopCoworkerMentionFields
+            try { checkedDesktopCoworkerMentions(body.text, body.coworkerMentions) } catch { return Response.json({ error: 'Coworker mention ranges changed.' }, { status: 400 }) }
             const current = read(agent, body.tabUid)
             const fingerprint = JSON.stringify([agent, method, body])
             const receipt = receipts.get(body.requestId)
             if (receipt) return receipt === fingerprint ? Response.json({ draft: current }) : Response.json({ error: 'Changed draft request', draft: current }, { status: 409 })
             if (method === 'PUT') {
                 if (body.baseRevision !== current.revision) return Response.json({ error: 'Changed draft', draft: current }, { status: 409 })
-                const draft = write(agent, body.tabUid, { text: body.text, ...desktopAttachmentFieldsOf(desktopAttachmentPathsOf(body)) })
+                const draft = write(agent, body.tabUid, { text: body.text, ...desktopAttachmentFieldsOf(desktopAttachmentPathsOf(body)), ...desktopCoworkerMentionFieldsOf(body.coworkerMentions) })
                 receipts.set(body.requestId, fingerprint)
                 return Response.json({ draft })
             }
             if (method === 'DELETE') {
                 const cleared = body.revision === current.revision && body.text === current.text
                     && JSON.stringify(desktopAttachmentPathsOf(body)) === JSON.stringify(desktopAttachmentPathsOf(current))
+                    && JSON.stringify(body.coworkerMentions ?? []) === JSON.stringify(current.coworkerMentions ?? [])
                 const draft = cleared ? write(agent, body.tabUid, { text: '' }) : current
                 receipts.set(body.requestId, fingerprint)
                 return Response.json({ draft, cleared })

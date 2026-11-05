@@ -145,7 +145,7 @@ export function createScreenExportPublisher(deps: ScreenExportDependencies): Scr
         }
         const replay = async (receipt: ScreenExportReceipt): Promise<ScreenSavedExports> => {
             if (receipt.digest !== digest) throw new Error('Browser export tool identity was reused.')
-            if (receipt.state === 'settled' && receipt.result?.status === 'saved') return validateScreenExportResult(receipt.result, files)
+            if (!deps.reconcile && receipt.state === 'settled' && receipt.result?.status === 'saved') return validateScreenExportResult(receipt.result, files)
             if (!deps.reconcile) return receipt.result ? validateScreenExportResult(receipt.result, files) : uncertain()
             await guard()
             const result = validateScreenExportResult(await deps.reconcile({ key, digest, files }, authority, guard, signal), files)

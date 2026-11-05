@@ -22,7 +22,8 @@ describe('stopDesktopTriggerRun', () => {
             localSessionId: 'other-sess', engineSessionId: 'eng-sess-2', runId: 'run-2', revision: 'r1', error: null,
             payloadBytes: 0, truncated: false, capturedPayload: true, payloadPreview: '',
         })
-        const cancelExactRun = vi.fn(async () => {})
+        let cancelled = false
+        const cancelExactRun = vi.fn(async () => { cancelled = true })
         const authority = {
             assertActive: () => {},
             resolveOwnerByEngineId: async () => ({ localAgentId: 'local-1', engineAgentId: 'eng-1', enabled: true, deleting: false }),
@@ -32,7 +33,7 @@ describe('stopDesktopTriggerRun', () => {
             startTriggerRun: async () => ({ runId: 'x', sessionId: 'y' }),
             cancelExactRun,
             readRun: async (_a: string, runId: string) => ({
-                id: runId, sessionId: runId === 'run-1' ? 'eng-sess' : 'eng-sess-2', status: 'running', agentId: 'eng-1', triggerSource: 'trigger', triggerSlug: 'hook',
+                id: runId, sessionId: runId === 'run-1' ? 'eng-sess' : 'eng-sess-2', status: cancelled && runId === 'run-1' ? 'cancelled' : 'running', agentId: 'eng-1', triggerSource: 'trigger', triggerSlug: 'hook',
             }),
             readSession: async () => null,
             adoptTriggerSession: async () => ({ agentId: 'local-1', engineAgentId: 'eng-1', sessionId: 'local-sess', engineSessionId: 'eng-sess', tabUid: 'trigger:local-sess', title: 'Hook', runId: 'run-1' }),
@@ -46,17 +47,20 @@ describe('stopDesktopTriggerRun', () => {
             markFired: async () => {},
         } satisfies DesktopTriggerAuthority
 
+        const requestId = randomUUID()
         const result = await stopDesktopTriggerRun({
             authority,
             store,
             engineAgentId: 'eng-1',
             localAgentId: 'local-1',
-            body: { requestId: randomUUID(), localSessionId: 'local-sess', runId: 'run-1', expectedEventId: 'e1' },
+            body: { requestId, localSessionId: 'local-sess', runId: 'run-1', expectedEventId: 'e1' },
         })
         expect(result.canceled).toBe(true)
         expect(cancelExactRun).toHaveBeenCalledTimes(1)
         expect(cancelExactRun).toHaveBeenCalledWith('eng-1', 'run-1')
         expect((await store.getEvent('eng-1', 'e2'))?.status).toBe('running')
         expect((await store.getEvent('eng-1', 'e1'))?.status).toBe('cancelled')
+        await expect(stopDesktopTriggerRun({ authority, store, engineAgentId: 'eng-1', localAgentId: 'local-1', body: { requestId, localSessionId: 'other-sess', runId: 'run-2', expectedEventId: 'e2' } })).rejects.toMatchObject({ status: 409 })
+        expect(cancelExactRun).toHaveBeenCalledTimes(1)
     })
 })

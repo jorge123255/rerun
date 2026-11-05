@@ -82,12 +82,16 @@ export type DesktopTriggerDeliveryStatus = z.infer<typeof desktopTriggerDelivery
 export const desktopTriggerDeliveryReceiptSchema = z.object({
     eventId: z.string().min(1).max(80),
     attemptFingerprint: z.string().min(1).max(200).nullable(),
+    requestFingerprint: z.string().max(128).optional(),
     localAgentId: z.string().min(1).max(200),
     engineAgentId: z.string().min(1).max(200),
     slug: z.string().regex(DESKTOP_TRIGGER_SLUG_RE),
     triggerName: z.string(),
     method: desktopTriggerMethodSchema,
     receivedAt: z.string(),
+    finishedAt: z.string().nullable().optional(),
+    pendingToolCallId: z.string().nullable().optional(),
+    stopRequestId: z.string().nullable().optional(),
     status: desktopTriggerDeliveryStatusSchema,
     localSessionId: z.string().nullable(),
     engineSessionId: z.string().nullable(),
@@ -101,11 +105,11 @@ export const desktopTriggerDeliveryReceiptSchema = z.object({
 export type DesktopTriggerDeliveryReceipt = z.infer<typeof desktopTriggerDeliveryReceiptSchema>
 
 export const desktopTriggerFireInputSchema = z.object({
-    token: z.string().min(1),
+    token: z.string().min(1).max(200),
     method: desktopTriggerMethodSchema,
-    query: z.string().default(''),
-    contentType: z.string().default(''),
-    body: z.string().default(''),
+    query: z.string().max(8192).default(''),
+    contentType: z.string().max(256).default(''),
+    body: z.string().max(1048576).default(''),
     bodyBytes: z.number().int().nonnegative().default(0),
     /** Explicit same-attempt retry identity. Never inferred from matching bodies. */
     attemptFingerprint: z.string().min(1).max(200).optional(),

@@ -74,7 +74,7 @@ export function createDesktopTriggerIngressHandler(deps: {
         if (outcome.status === 503) return Response.json({ error: outcome.error }, { status: 503 })
         if (outcome.status !== 202) return Response.json({ error: 'Not found' }, { status: 404 })
         return Response.json(
-            { runId: outcome.runId, sessionId: outcome.sessionId, trigger: slug, eventId: outcome.eventId, replay: outcome.replay },
+            { trigger: slug, eventId: outcome.eventId, replay: outcome.replay },
             { status: 202 },
         )
     }

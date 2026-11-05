@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterAll, beforeAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,6 +6,11 @@ import { randomUUID } from 'node:crypto'
 import type { DesktopRuntime } from './runtime'
 import { closeDesktopDatabase, openDesktopDatabase } from './database'
 import { getDesktopRemoteMcpService, withDesktopMcpOwnerTransition, shutdownDesktopRemoteMcp } from './mcp-binding'
+
+import { prepareSkillHelperFixture } from '../../../../engine/src/desktop/skill-publication.test-support'
+let helper: Awaited<ReturnType<typeof prepareSkillHelperFixture>>
+beforeAll(async () => { helper = await prepareSkillHelperFixture() }, 30_000)
+afterAll(async () => { await helper.close() })
 
 const context = vi.hoisted(() => ({ runtime: undefined as unknown, spawn: vi.fn() }))
 let providerCalls: string[]
@@ -20,6 +25,7 @@ beforeEach(async () => {
     runtime = { protocolVersion:1,launchNonce:randomUUID(),buildId:'fixture',workspaceId:1,dataRoot:root,app:{origin:'http://127.0.0.1:4000',sessionToken:'a'.repeat(64)},engine:{origin:'http://127.0.0.1:4001',apiKey:'b'.repeat(64)} } as DesktopRuntime
     context.runtime = runtime; context.spawn.mockReset()
     vi.stubEnv('RERUN_DESKTOP_SECRET_KEY', 'c'.repeat(64))
+    vi.stubEnv('RERUN_DESKTOP_RENAME_HELPER', helper.path)
     grants = {}; enabled = true; runStatus = 'running'; providerCalls = []
     await mkdir(join(root,'workspaces','1','engine','agents',identity.engineAgentId,'workspace'), {recursive:true})
     const db = await openDesktopDatabase(root)
@@ -53,7 +59,8 @@ test('real bundled catalog installs only explicitly supported methods, uses the 
  const catalog=await (await service.servicesApi(request('?view=catalog&limit=100'),'owner')).json()
  expect(catalog.total).toBe(209); expect(catalog.services).toHaveLength(100)
  const install={action:'install',requestId:randomUUID(),slug:'microsoft',authMethodId:'default',values:{}}
- const saved=await (await service.servicesApi(request('',install),'owner')).json()
+ const installedResponse=await service.servicesApi(request('',install),'owner'); const saved=await installedResponse.json()
+ expect(installedResponse.status, JSON.stringify(saved)).toBe(200)
  expect(saved.installed).toBe(false); expect(grants.services).toBeUndefined(); expect(providerCalls).toHaveLength(0)
  expect(saved.health.state).toBe('unchecked'); expect(saved.health.message).toContain('Enable Apps')
  grants.services=true

@@ -19,6 +19,9 @@ import { readDesktopQuestion } from '../questions'
 import { readDesktopApproval } from '../approvals'
 import { readDesktopTakeover } from '../takeover'
 import { readPendingDesktopServiceToolCallView } from '../service-requests/view'
+import { getSession } from '@/lib/engine/client'
+import { engineOf } from '../settings'
+import { withRosterWrite } from '../roster-writes'
 import { authorizeDesktopCoworkerCall } from './authority'
 import {
     adoptDesktopCoworkerCallEpoch,
@@ -82,6 +85,30 @@ function snapshot(row: CoworkerCallRecord) {
     })
 }
 
+async function recoverCalledChat(runtime: DesktopRuntime, row: CoworkerCallRecord): Promise<CoworkerCallRecord> {
+    if (row.phase !== 'terminal' || row.targetSessionId || !row.engineTargetSessionId) return row
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    try {
+        const session = await getSession(engineOf(runtime), row.engineTargetAgentId, row.engineTargetSessionId, { signal: AbortSignal.timeout(5000) })
+        if (!session || session.id !== row.engineTargetSessionId || session.agentId !== row.engineTargetAgentId || session.source !== 'agent' || session.originAgentId !== row.engineParentAgentId || session.originSessionId !== row.engineParentSessionId) return row
+        return await withRosterWrite(async () => {
+            const current = await getDesktopCoworkerCall(db, row.callId)
+            const owner = await findDesktopAgent(db, row.targetAgentId)
+            if (!current || current.phase !== 'terminal' || current.targetSessionId || current.engineTargetSessionId !== session.id || current.engineTargetAgentId !== row.engineTargetAgentId || owner?.engineAgentId !== row.engineTargetAgentId) return current ?? row
+            await assertCoworkerNotDeleting(db, owner.id)
+            const chat = await createDesktopSession(db, { agentId: owner.id, engineSessionId: session.id, title: session.title })
+            // Retired epochs cannot update execution state. Recover only this verified local link.
+            await db.execute({
+                sql: `UPDATE desktop_coworker_calls SET target_session_id=?, revision=revision+1, updated_at=?
+                    WHERE call_id=? AND revision=? AND phase='terminal' AND target_session_id IS NULL
+                        AND target_agent_id=? AND engine_target_agent_id=? AND engine_target_session_id=?`,
+                args: [chat.id, new Date().toISOString(), current.callId, current.revision, owner.id, session.agentId, session.id],
+            })
+            return await getDesktopCoworkerCall(db, current.callId) ?? current
+        })
+    } catch { return row } // A failed read never creates or replays an engine run.
+}
+
 async function currentSnapshot(runtime: DesktopRuntime, row: CoworkerCallRecord) {
     const result = snapshot(row)
     if (row.status !== 'waiting-human' || row.phase !== 'terminal' || !row.pendingToolCallId || !row.targetSessionId) return result
@@ -105,7 +132,7 @@ export async function readDesktopCoworkerCalls(runtime: DesktopRuntime, sessionI
     const session = await findDesktopSession(db, sessionId)
     if (!session || session.agentId == null) throw new DesktopHttpError(404, 'Conversation not found.')
     const calls = []
-    for (const row of await listDesktopCoworkerCallRows(db, session.id)) calls.push(await currentSnapshot(runtime, row))
+    for (const row of await listDesktopCoworkerCallRows(db, session.id)) calls.push(await currentSnapshot(runtime, await recoverCalledChat(runtime, row)))
     return desktopCoworkerCallListSchema.parse({ calls })
 }
 
@@ -253,9 +280,23 @@ export async function handleDesktopCoworkerCallBridge(runtime: DesktopRuntime, b
                 return Response.json({ ok: true, result: { publicAgentId: target.id, engineAgentId: target.engineAgentId, connectionId: selected.connectionId, model: selected.model } })
             }
             case 'adopt-session': {
-                const input = payload as { publicAgentId?: string; engineSessionId?: string; title?: string }
-                if (!input.publicAgentId || !input.engineSessionId || !input.title) throw new DesktopHttpError(400, 'Coworker call chat is invalid.')
-                const saved = await createDesktopSession(db, { agentId: input.publicAgentId, engineSessionId: input.engineSessionId, title: input.title })
+                const input = z.strictObject({ publicAgentId: serverId, engineSessionId: serverId, title: z.string().min(1).max(200) }).parse(payload)
+                const rows = await db.execute({ sql: 'SELECT call_id FROM desktop_coworker_calls WHERE target_agent_id=? AND engine_target_session_id=? AND launch_epoch=?', args: [input.publicAgentId, input.engineSessionId, message.epoch!] })
+                if (rows.rows.length !== 1) throw new DesktopHttpError(409, 'The coworker call does not own this chat.')
+                const row = await getDesktopCoworkerCall(db, String(rows.rows[0].call_id))
+                if (!row) throw new DesktopHttpError(409, 'The coworker call no longer exists.')
+                const actual = await getSession(engineOf(runtime), row.engineTargetAgentId, input.engineSessionId, { signal: AbortSignal.timeout(5_000) })
+                if (!actual || actual.id !== input.engineSessionId || actual.agentId !== row.engineTargetAgentId || actual.source !== 'agent' || actual.originAgentId !== row.engineParentAgentId || actual.originSessionId !== row.engineParentSessionId) throw new DesktopHttpError(409, 'The coworker call does not own this chat.')
+                const saved = await withRosterWrite(async () => {
+                    const currentEpoch = (await db.execute('SELECT epoch FROM desktop_coworker_call_epoch WHERE id=1')).rows[0]
+                    if (currentEpoch?.epoch !== message.epoch) throw new DesktopHttpError(409, 'The coworker call runtime has changed.')
+                    const current = await getDesktopCoworkerCall(db, row.callId)
+                    if (!current || current.launchEpoch !== message.epoch || current.targetAgentId !== input.publicAgentId || current.engineTargetAgentId !== actual.agentId || current.engineTargetSessionId !== actual.id || current.engineParentAgentId !== actual.originAgentId || current.engineParentSessionId !== actual.originSessionId) throw new DesktopHttpError(409, 'The coworker call does not own this chat.')
+                    await assertCoworkerNotDeleting(db, input.publicAgentId)
+                    const owner = await findDesktopAgent(db, input.publicAgentId)
+                    if (owner?.engineAgentId !== row.engineTargetAgentId) throw new DesktopHttpError(409, 'Coworker identity changed.')
+                    return createDesktopSession(db, { agentId: owner.id, engineSessionId: actual.id, title: actual.title })
+                })
                 return Response.json({ ok: true, result: { publicSessionId: saved.id } })
             }
             case 'get-by-source':

@@ -32,7 +32,7 @@ function fixture() {
         async read(id) { return clone(records.get(id) ?? null) },
         async list(sessionId) { return clone([...records.values()].filter(r => !sessionId || r.snapshot.parentSessionId === sessionId)) },
     }
-    const receiptStore: ReceiptStore = { async read(id) { return receipts.get(id) ?? null }, async put(id, r) { receipts.set(id, r) } }
+    const receiptStore: ReceiptStore = { async reserve(id, receipt) { const prior = receipts.get(id); if (prior && prior.digest !== receipt.digest) throw new Error('conflict'); if (!prior) receipts.set(id, structuredClone(receipt)); return prior ?? receipt }, async read(id) { return receipts.get(id) ?? null }, async put(id, r) { receipts.set(id, r) } }
     let launches = 0, drains = 0, cleaned = 0
     const host: DelegationHost = {
         async current() { return { connectionId: 'connection', model: 'same-model', tools: ['fs_read'] } }, isolatedTool: t => t === 'fs_read',

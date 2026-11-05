@@ -276,7 +276,7 @@ export function DesktopDelegationMount({
                     output={output}
                     errorText={errorText}
                     dense={dense}
-                    showLiveClock={view === 'live'}
+                    showLiveClock={view === 'live' && isLive(snapshot)}
                     onStopTask={taskId => stopTask(snapshot, taskId)}
                 />
             )) : fallback}

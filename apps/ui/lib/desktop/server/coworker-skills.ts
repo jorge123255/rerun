@@ -45,6 +45,7 @@ export { skillSlugOf }
 // unreadable registry refuses instead of looking empty — a user must never edit a connector's skill
 // because the registry was temporarily unreadable.
 async function skillOwnerError(runtime: DesktopRuntime, agentId: string, engineAgentId: string, slug: string): Promise<string | null> {
+    if (slug.startsWith('svc-')) return connectorSkillReadOnlyError(slug, 'App')
     const owner = connectorSkillOwners(await readSkillOwnersRegistry(runtime, agentId, engineAgentId)).get(slug)
     return owner ? connectorSkillReadOnlyError(slug, owner) : null
 }

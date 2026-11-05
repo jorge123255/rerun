@@ -3,7 +3,8 @@ import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { prepareSkillHelperFixture } from './skill-publication.test-support.js'
-import { deleteConfinedFile, listPublishedSkills, parseSkillDraft, publishNewSkill, readConfinedFile, readPublishedSkill, replaceSkillManifest, setSkillPublishHooksForTests, writeConfinedFile } from './skill-publication.js'
+import { bindDesktopSkillOwnerReader } from './service-skills/authority.js'
+import { archiveSkillFolder, deleteSkillFolder, deleteConfinedFile, listPublishedSkills, parseSkillDraft, publishNewSkill, readConfinedFile, readPublishedSkill, replaceSkillManifest, setSkillPublishHooksForTests, writeConfinedFile } from './skill-publication.js'
 
 const previousHelper = process.env.RERUN_DESKTOP_RENAME_HELPER
 let fixture: Awaited<ReturnType<typeof prepareSkillHelperFixture>>
@@ -93,4 +94,40 @@ test('listing returns summaries, preserves original multiline YAML semantics and
         await writeFile(join(folder, 'SKILL.md'), `---\nname: Large\ndescription: Bounded\n---\n${'x'.repeat(2 * 1024 * 1024)}`)
     }
     await expect(listPublishedSkills(skills)).rejects.toThrow('index is too large')
+})
+
+
+test('desktop canonical ownership blocks all mutation and export paths after workspace footprints are removed', async () => {
+    await writeConfinedFile(join(skills, 'notes'), 'reference.md', 'Retain this reference')
+    const previous = process.env.RERUN_DESKTOP_APP
+    process.env.RERUN_DESKTOP_APP = '1'
+    bindDesktopSkillOwnerReader(async () => new Map([['notes', 'Calendar']]))
+    try {
+        const original = await readFile(join(skills, 'notes', 'SKILL.md'), 'utf8')
+        await expect(replaceSkillManifest(skills, 'notes', { body: 'Changed' })).rejects.toThrow('managed by its app')
+        await expect(writeConfinedFile(join(skills, 'notes'), 'reference.md', 'Changed')).rejects.toThrow('managed by its app')
+        await expect(deleteConfinedFile(join(skills, 'notes'), 'reference.md')).rejects.toThrow('managed by its app')
+        await expect(deleteSkillFolder(skills, 'notes')).rejects.toThrow('managed by its app')
+        await expect(archiveSkillFolder(skills, 'notes')).rejects.toThrow('managed by its app')
+        await expect(publishNewSkill(skills, 'svc-unknown', { name: 'Unknown', description: '', body: 'Unsafe' })).rejects.toThrow('managed by its app')
+        expect(await readFile(join(skills, 'notes', 'SKILL.md'), 'utf8')).toBe(original)
+        expect(await readFile(join(skills, 'notes', 'reference.md'), 'utf8')).toBe('Retain this reference')
+    } finally {
+        if (previous === undefined) delete process.env.RERUN_DESKTOP_APP; else process.env.RERUN_DESKTOP_APP = previous
+        bindDesktopSkillOwnerReader(async () => { throw new Error('No active fixture authority') })
+    }
+})
+
+test('desktop publication repeats canonical authority under the kernel lease before its rename', async () => {
+    const previous = process.env.RERUN_DESKTOP_APP
+    process.env.RERUN_DESKTOP_APP = '1'
+    let reads = 0
+    bindDesktopSkillOwnerReader(async () => ++reads >= 3 ? new Map([['late-owner', 'Calendar']]) : new Map())
+    try {
+        await expect(publishNewSkill(skills, 'late-owner', { name: 'Late owner', description: '', body: 'Never published' })).rejects.toThrow('managed by its app')
+        expect((await readdir(skills)).includes('late-owner')).toBe(false)
+    } finally {
+        if (previous === undefined) delete process.env.RERUN_DESKTOP_APP; else process.env.RERUN_DESKTOP_APP = previous
+        bindDesktopSkillOwnerReader(async () => { throw new Error('No active fixture authority') })
+    }
 })

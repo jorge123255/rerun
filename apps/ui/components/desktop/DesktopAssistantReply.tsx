@@ -30,6 +30,9 @@ import { cn } from '@/lib/utils'
 import { DesktopBrainProposalBlock } from './brain/proposals/DesktopBrainProposalBlock'
 import { DesktopSkillProposalBlock } from './skills/DesktopSkillProposalBlock'
 import type { EngineSkillProposal } from '@/lib/engine/types'
+import { DesktopCoworkerCalls } from './coworker-calls/DesktopCoworkerCalls'
+import { DesktopDelegationMount } from './delegation/DesktopDelegationMount'
+import type { DesktopCoworkerCallOpenTarget } from '@/lib/desktop/coworker-calls-client'
 
 const desktopComponents: Components = {
     a: ({ href, children }) => {
@@ -121,7 +124,7 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent, skillProposals }: {
+export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent, skillProposals, childRuns }: {
     message: UIMessage
     streaming: boolean
     onRegenerate?: (id: string) => void
@@ -132,6 +135,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
     /** The trusted local coworker id that owns this conversation; needed to open a result card. */
     agentId?: string
     agent?: DesktopAgentView
+    childRuns?: { sessionId: string; active: boolean; onOpenTarget?: (target: DesktopCoworkerCallOpenTarget) => Promise<void> }
     skillProposals?: { rows: ReadonlyMap<string, EngineSkillProposal>; pinnedIds: ReadonlySet<string>; pendingId: string | null; onDecide?: (id: string, decision: 'accept' | 'dismiss') => void; onOpenSkill?: (slug: string) => void }
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
@@ -151,6 +155,13 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
         } else if (isToolUIPart(part)) {
             const toolName = stripBridgePrefix(getToolName(part))
             if (part.toolCallId === pendingRequestToolCallId || toolName === QUICK_REPLIES_TOOL) continue
+            if (childRuns && agentId && (toolName === 'call_agent' || toolName === 'delegate_tasks')) {
+                const fallback = <DesktopToolStep part={part} restored={message.id.startsWith('engine-')} />
+                blocks.push(toolName === 'call_agent'
+                    ? <DesktopCoworkerCalls key={part.toolCallId} agentId={agentId} sessionId={childRuns.sessionId} toolCallId={part.toolCallId} active={childRuns.active} currentRunActive={streaming} fallback={fallback} onOpenTarget={childRuns.onOpenTarget} />
+                    : <DesktopDelegationMount key={part.toolCallId} agentId={agentId} sessionId={childRuns.sessionId} toolCallId={part.toolCallId} view={childRuns.active ? 'live' : 'history'} followLive={streaming} fallback={fallback} />)
+                continue
+            }
             if(toolName==='install_complete' && part.state==='output-available') {
                 let output:unknown=part.output
                 if(typeof output==='string'){try{output=JSON.parse(output)}catch{}}

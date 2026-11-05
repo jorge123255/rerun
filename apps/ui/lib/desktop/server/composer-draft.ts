@@ -1,3 +1,4 @@
+import { desktopCoworkerMentionFieldsOf } from '@rerun/contracts'
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentFingerprintOf, desktopAttachmentSelectionsOf, desktopAttachmentPathsSchema, desktopAttachmentItemsSchema, type DesktopAttachmentSelection, type DesktopAttachmentFields } from '@rerun/contracts'
@@ -35,6 +36,8 @@ function ensureAttachmentColumn(db: Client): Promise<void> {
         const columns = await db.execute('PRAGMA table_info(desktop_composer_drafts)')
         if (!columns.rows.some(row => String(row.name) === 'attachment_paths'))
             await db.execute('ALTER TABLE desktop_composer_drafts ADD COLUMN attachment_paths TEXT')
+        if (!columns.rows.some(row => String(row.name) === 'coworker_mentions'))
+            await db.execute('ALTER TABLE desktop_composer_drafts ADD COLUMN coworker_mentions TEXT')
         if (!columns.rows.some(row => String(row.name) === 'attachment_items'))
             await db.execute('ALTER TABLE desktop_composer_drafts ADD COLUMN attachment_items TEXT')
     })().catch(error => { attachmentColumn.delete(db); throw error })
@@ -74,17 +77,17 @@ function attachmentPathsOfRow(row?: Row): DesktopAttachmentSelection[] {
 function draftOf(row?: Row): DesktopComposerDraft {
     if (!row) return empty()
     return desktopComposerDraftSchema.parse({ revision: Number(row.revision), text: String(row.text),
-        ...desktopAttachmentFieldsOf(attachmentPathsOfRow(row)), updatedAt: String(row.updated_at) })
+        ...desktopAttachmentFieldsOf(attachmentPathsOfRow(row)), ...(row.coworker_mentions != null ? {coworkerMentions: JSON.parse(String(row.coworker_mentions))} : {}), updatedAt: String(row.updated_at) })
 }
 
 async function draftAt(db: Query, agentId: string, tabUid: string) {
-    const found = await db.execute({ sql: 'SELECT revision, text, attachment_path, attachment_paths, attachment_items, updated_at FROM desktop_composer_drafts WHERE agent_id = ? AND tab_uid = ?', args: [agentId, tabUid] })
+    const found = await db.execute({ sql: 'SELECT revision, text, attachment_path, attachment_paths, attachment_items, coworker_mentions, updated_at FROM desktop_composer_drafts WHERE agent_id = ? AND tab_uid = ?', args: [agentId, tabUid] })
     return draftOf(found.rows[0])
 }
 
 function fingerprint(agentId: string, input: Input, action: 'save' | 'clear') {
     return createHash('sha256').update(JSON.stringify([action, agentId, input.tabUid, 'baseRevision' in input ? input.baseRevision : input.revision,
-        input.text, desktopAttachmentFingerprintOf(desktopAttachmentSelectionsOf(input))])).digest('hex')
+        input.text, desktopAttachmentFingerprintOf(desktopAttachmentSelectionsOf(input)), ...(input.coworkerMentions?.length ? [input.coworkerMentions] : [])])).digest('hex')
 }
 
 export function readDesktopComposerDraft(db: Client, agentId: string, tabUid: string) {
@@ -120,22 +123,23 @@ async function mutate(runtime: DesktopRuntime, agentId: string, input: Input, ac
             if (attachmentValidated instanceof DraftAttachmentRejected) throw attachmentValidated
             if (action === 'save' && JSON.stringify(inputPaths) !== JSON.stringify(currentPaths) && !attachmentValidated) return { validateAttachments: true }
             const matches = action === 'clear' && 'revision' in input && input.revision === current.revision && input.text === current.text
-                && JSON.stringify(inputPaths) === JSON.stringify(currentPaths)
+                && JSON.stringify(inputPaths) === JSON.stringify(currentPaths) && JSON.stringify(input.coworkerMentions ?? []) === JSON.stringify(current.coworkerMentions ?? [])
             const changed = action === 'save' || matches
             if (changed && current.revision >= Number.MAX_SAFE_INTEGER - 1) throw new DesktopDraftConflict(current, 'This draft version cannot be updated. Open a new conversation tab.')
             const next: DesktopComposerDraft = changed
                 ? { revision: current.revision + 1, text: action === 'save' ? input.text : '',
-                    ...(action === 'save' && desktopAttachmentFieldsOf(inputPaths)), updatedAt: new Date().toISOString() }
+                    ...(action === 'save' && { ...desktopAttachmentFieldsOf(inputPaths), ...desktopCoworkerMentionFieldsOf(input.coworkerMentions) }), updatedAt: new Date().toISOString() }
                 : current
             // Empty rows are revision tombstones. Clear never resets a version to zero, so an
             // older delayed save cannot restore text after a message has been accepted.
             const nextPaths = desktopAttachmentSelectionsOf(next as DesktopAttachmentFields)
-            await transaction.execute({ sql: `INSERT INTO desktop_composer_drafts (agent_id,tab_uid,revision,text,attachment_path,attachment_paths,attachment_items,updated_at) VALUES (?,?,?,?,?,?,?,?)
-                ON CONFLICT(agent_id,tab_uid) DO UPDATE SET revision=excluded.revision, text=excluded.text, attachment_path=excluded.attachment_path, attachment_paths=excluded.attachment_paths, attachment_items=excluded.attachment_items, updated_at=excluded.updated_at`,
+            await transaction.execute({ sql: `INSERT INTO desktop_composer_drafts (agent_id,tab_uid,revision,text,attachment_path,attachment_paths,attachment_items,coworker_mentions,updated_at) VALUES (?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(agent_id,tab_uid) DO UPDATE SET revision=excluded.revision, text=excluded.text, attachment_path=excluded.attachment_path, attachment_paths=excluded.attachment_paths, attachment_items=excluded.attachment_items, coworker_mentions=excluded.coworker_mentions, updated_at=excluded.updated_at`,
                 args: [agentId, input.tabUid, next.revision, next.text,
                     typeof nextPaths[0] === 'string' ? nextPaths[0] : null,
                     !next.attachmentItems && nextPaths.length > 1 ? JSON.stringify(nextPaths) : null,
                     next.attachmentItems ? JSON.stringify(next.attachmentItems) : null,
+                    next.coworkerMentions?.length ? JSON.stringify(next.coworkerMentions) : null,
                     next.updatedAt ?? new Date().toISOString()] })
             await transaction.execute({ sql: 'INSERT INTO desktop_composer_draft_writes (request_id,agent_id,tab_uid,fingerprint,result_revision,cleared) VALUES (?,?,?,?,?,?)',
                 args: [input.requestId, agentId, input.tabUid, hash, next.revision, matches ? 1 : 0] })

@@ -26,10 +26,11 @@ afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); Reflect.deletePrope
 
 test('separately imported route modules receive the exact same process-wide authority', async () => {
     const first = await getDesktopRemoteMcpService(runtime)
+    const opensAfterInitialization = mocks.open.mock.calls.length
     vi.resetModules()
     const independentlyBundled = await import('./mcp-binding')
     expect(await independentlyBundled.getDesktopRemoteMcpService(runtime)).toBe(first)
-    expect(mocks.open).toHaveBeenCalledTimes(1)
+    expect(mocks.open).toHaveBeenCalledTimes(opensAfterInitialization)
     expect(mocks.createStore).toHaveBeenCalledTimes(1)
 })
 

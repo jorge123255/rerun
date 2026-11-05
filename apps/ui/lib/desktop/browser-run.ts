@@ -129,7 +129,7 @@ export type BrowserRunObserverDeps = {
     check: CurrentRunCheck
     transport: PassiveViewerTransport
     onState: (state: BrowserRunScreenState) => void
-    limits?: Partial<typeof BROWSER_RUN_LIMITS>
+    limits?: Partial<Record<keyof typeof BROWSER_RUN_LIMITS, number>>
     now?: () => number
 }
 
@@ -231,6 +231,6 @@ export type BrowserRunObserver = ReturnType<typeof createBrowserRunObserver>
  * (watch tickets that refuse a stopped guest) is in place; until then root must keep the guard that
  * its CurrentRunCheck reports 'running' only for an already-running guest.
  */
-export function createScreenClientPassiveTransport(requestDesktopScreenTicket: (agentId: string, mode: 'watch', signal?: AbortSignal) => Promise<PassiveViewerTicket>): PassiveViewerTransport {
-    return { requestWatchTicket: (run, signal) => requestDesktopScreenTicket(run.agentId, 'watch', signal) }
+export function createScreenClientPassiveTransport(requestDesktopScreenTicket: (agentId: string, mode: 'watch', signal?: AbortSignal, lease?: string, requireRunning?: boolean) => Promise<PassiveViewerTicket>): PassiveViewerTransport {
+    return { requestWatchTicket: (run, signal) => requestDesktopScreenTicket(run.agentId, 'watch', signal, undefined, true) }
 }

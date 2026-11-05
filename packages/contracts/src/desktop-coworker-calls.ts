@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { contextTextPart, isContextPart, visibleText } from './chat-context.js'
 
 // Original sub-run-watch.ts keeps this many recent tool rows and this much preview.
 // The windows are explicit. A message, context, or finished answer over its max is refused whole.
@@ -32,6 +33,54 @@ export const desktopCoworkerCallTargetSchema = z.strictObject({
     callable: z.boolean(),
 })
 export type DesktopCoworkerCallTarget = z.infer<typeof desktopCoworkerCallTargetSchema>
+
+export const desktopCoworkerMentionSchema = z.strictObject({
+    targetId: publicId,
+    token: z.string().min(2).max(201).startsWith('@').refine(value => !/[\p{Cc}]/u.test(value), 'Mention tokens stay on one line.'),
+    start: z.number().int().min(0).max(20_000),
+    end: z.number().int().min(1).max(20_000),
+})
+export const desktopCoworkerMentionsSchema = z.array(desktopCoworkerMentionSchema).max(100)
+export type DesktopCoworkerMention = z.infer<typeof desktopCoworkerMentionSchema>
+export type DesktopCoworkerMentionFields = { coworkerMentions?: DesktopCoworkerMention[] }
+export const desktopCoworkerMentionFieldsOf = (mentions: readonly DesktopCoworkerMention[] | undefined): DesktopCoworkerMentionFields =>
+    mentions?.length ? { coworkerMentions: [...mentions] } : {}
+
+/** A selected token binds an exact ID/range; visible names never resolve an identity. */
+export function checkedDesktopCoworkerMentions(text: string, value: unknown): DesktopCoworkerMention[] {
+    const mentions = desktopCoworkerMentionsSchema.parse(value ?? []).map(item => ({ ...item }))
+    let end = 0
+    for (const item of mentions) {
+        if (item.start < end || item.end <= item.start || item.end > text.length || text.slice(item.start, item.end) !== item.token
+            || (item.start > 0 && !/\s/.test(text[item.start - 1]!))
+            || (item.end < text.length && !/[\s.,;:!?)\]}'"]/.test(text[item.end]!))) throw new Error('A saved coworker mention no longer matches its text.')
+        end = item.end
+    }
+    return mentions
+}
+export function validDesktopCoworkerMentionFields(input: { text: string; coworkerMentions?: DesktopCoworkerMention[] }): boolean {
+    try { checkedDesktopCoworkerMentions(input.text, input.coworkerMentions); return true } catch { return false }
+}
+export function trimDesktopCoworkerMentions(text: string, value: readonly DesktopCoworkerMention[] | undefined) {
+    const mentions = checkedDesktopCoworkerMentions(text, value)
+    const start = text.length - text.trimStart().length, trimmed = text.trim()
+    return { text: trimmed, ...desktopCoworkerMentionFieldsOf(checkedDesktopCoworkerMentions(trimmed, mentions.map(item => ({ ...item, start: item.start - start, end: item.end - start })))) }
+}
+export function desktopCoworkerMentionContextParts(text: string, value: readonly DesktopCoworkerMention[] | undefined) {
+    const mentions = checkedDesktopCoworkerMentions(text, value)
+    if (!mentions.length) return []
+    const part = contextTextPart(`Selected coworker mentions (exact local identities chosen by the user):\n${JSON.stringify(mentions.map(({ token, targetId }) => ({ token, targetId })))}\nUse these IDs when referring to the selected coworkers. A mention does not grant permission or request an automatic coworker call.`)
+    return [{ ...part, providerOptions: { rerun: { ...part.providerOptions.rerun, desktopCoworkerMentions: mentions } } }]
+}
+export function desktopStoredCoworkerMentions(content: unknown, strict = false): DesktopCoworkerMention[] {
+    if (!Array.isArray(content)) return []
+    const marked = content.filter(part => isContextPart(part) && part?.providerOptions?.rerun && Object.hasOwn(part.providerOptions.rerun, 'desktopCoworkerMentions'))
+    if (!marked.length) return []
+    try {
+        if (marked.length !== 1) throw new Error('Duplicate saved coworker mention records.')
+        return checkedDesktopCoworkerMentions(visibleText(content, ''), marked[0].providerOptions.rerun.desktopCoworkerMentions)
+    } catch (error) { if (strict) throw error; return [] }
+}
 
 export const desktopCoworkerCallProgressSchema = z.strictObject({
     steps: z.number().int().nonnegative(),
@@ -75,6 +124,7 @@ export type DesktopCoworkerCallStop = z.infer<typeof desktopCoworkerCallStopSche
 
 export const desktopCoworkerCallStopResultSchema = z.strictObject({
     call: desktopCoworkerCallSnapshotSchema,
+    error: z.string().max(1000).optional(),
 })
 export type DesktopCoworkerCallStopResult = z.infer<typeof desktopCoworkerCallStopResultSchema>
 

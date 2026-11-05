@@ -11,7 +11,7 @@ it('returns only explicit safe target fields from the injected current roster au
 
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ targets: [target] })
-    expect(listTargets).toHaveBeenCalledWith('owner-1')
+    expect(listTargets).toHaveBeenCalledWith('owner-1', { signal: expect.any(AbortSignal) })
 })
 
 it('reports roster failure without substituting a stale browser roster', async () => {

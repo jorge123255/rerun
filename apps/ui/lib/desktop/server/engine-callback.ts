@@ -6,6 +6,8 @@ import { handleDesktopScheduleBridge } from './schedules-binding'
 import { adoptDesktopScheduleEvent } from './schedules/adoption'
 import { openDesktopDatabase } from './database'
 import { engineOf } from './settings'
+import { handleDesktopCoworkerCallBridge } from './coworker-calls/http'
+import { readDesktopJson } from './request-json'
 
 const SUPPORTED_CREATED_EVENTS = new Set(['box.connection.connected'])
 const SUPPORTED_NOTIFICATION_EVENTS = new Set(['agent.message.completed', 'agent.schedule.completed', 'agent.trigger.completed'])
@@ -13,8 +15,10 @@ const SUPPORTED_NOTIFICATION_EVENTS = new Set(['agent.message.completed', 'agent
 export async function handleDesktopEngineCallback(request: Request): Promise<Response> {
     try {
         const runtime = await authenticateDesktopEngineRequest(request)
-        const body = await request.json().catch(() => undefined)
+        const body = await readDesktopJson(request, 512_000)
         if (body === undefined) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
+        const callResponse = await handleDesktopCoworkerCallBridge(runtime, body)
+        if (callResponse) return callResponse
         const scheduleResponse = await handleDesktopScheduleBridge(runtime, body, request.signal)
         if (scheduleResponse) return scheduleResponse
 

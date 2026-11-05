@@ -1,4 +1,5 @@
 import 'server-only'
+import { abortable } from './mcp/remote'
 
 import type { DesktopCoworkerCallTarget } from '../../../../../packages/contracts/src/desktop-coworker-calls.ts'
 import { revalidateDesktopCoworkerMentions, type DesktopCoworkerMention, type DesktopCoworkerMentionRevalidation } from '@/components/desktop/mentions/coworker-mention-model'
@@ -19,7 +20,7 @@ const boundedText = (value: unknown, nullable: boolean): value is string | null 
 async function currentTargets(authority: DesktopCoworkerMentionRosterAuthority, ownerAgentId: string, signal: AbortSignal): Promise<DesktopCoworkerCallTarget[]> {
     if (!boundedText(ownerAgentId, false)) throw new DesktopCoworkerMentionRosterError('Invalid coworker owner.')
     signal.throwIfAborted()
-    const rows = await authority.listTargets(ownerAgentId, { signal })
+    const rows = await abortable(authority.listTargets(ownerAgentId, { signal }), signal)
     signal.throwIfAborted()
     if (!Array.isArray(rows)) throw new DesktopCoworkerMentionRosterError('Coworker roster is malformed.')
     if (rows.length > DESKTOP_COWORKER_MENTION_TARGET_LIMIT) throw new DesktopCoworkerMentionRosterError('Coworker suggestion roster exceeded its safe limit.')
@@ -61,12 +62,12 @@ export function createDesktopCoworkerMentionsApi(authority: DesktopCoworkerMenti
 export async function validateDesktopCoworkerMentionsAtSend(authority: DesktopCoworkerMentionRosterAuthority, input: {
     agentId: string
     text: string
-    mentions: DesktopCoworkerMention[]
+    mentions: readonly DesktopCoworkerMention[]
     signal?: AbortSignal
 }): Promise<DesktopCoworkerMentionRevalidation> {
     const deadline = AbortSignal.timeout(DESKTOP_COWORKER_MENTION_LOOKUP_TIMEOUT_MS)
     const signal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline
     const targets = await currentTargets(authority, input.agentId, signal)
     signal.throwIfAborted()
-    return revalidateDesktopCoworkerMentions(input.text, input.mentions, targets)
+    return revalidateDesktopCoworkerMentions(input.text, [...input.mentions], targets)
 }

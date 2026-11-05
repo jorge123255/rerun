@@ -87,3 +87,17 @@ test('an image-only queued message remains valid after a cold reopen; empty or m
     expect(desktopQueuedMessageSchema.safeParse({ ...queued, attachmentItems: [] }).success).toBe(false)
     expect(desktopQueuedMessageSchema.safeParse({ ...queued, attachmentItems: [{ type: 'image', image: { ...image, sha256: 'invalid' } }] }).success).toBe(false)
 })
+
+
+test('keeps selected coworker IDs in a reviewed queue after reopening its database',async()=>{
+    const {db,agent,a,b}=await setup()
+    const mentions=[{targetId:'local-peer',token:'@ada',start:0,end:4}]
+    const selected={...item('@ada review'),coworkerMentions:mentions}
+    await writeDesktopQueue(db,agent.id,{action:'enqueue',scope:{sessionId:a.id},expectedId:null,item:selected})
+    await closeDesktopDatabase(root)
+    const reopened=await openDesktopDatabase(root)
+    expect((await readDesktopQueue(reopened,agent.id,{sessionId:a.id})).queued).toMatchObject({id:selected.id,text:selected.text,coworkerMentions:mentions})
+    expect((await readDesktopQueue(reopened,agent.id,{sessionId:b.id})).queued).toBeNull()
+    await writeDesktopQueue(reopened,agent.id,{action:'review',scope:{sessionId:a.id},id:selected.id})
+    expect((await readDesktopQueue(reopened,agent.id,{sessionId:a.id})).queued).toMatchObject({state:'review',coworkerMentions:mentions})
+})

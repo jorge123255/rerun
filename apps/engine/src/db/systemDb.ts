@@ -1,3 +1,4 @@
+import { desktopTriggerStateSchema } from '../desktop/triggers/state.js'
 import { mkdirSync, existsSync } from 'node:fs'
 import { createClient, type Client } from '@libsql/client'
 import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql'
@@ -244,6 +245,14 @@ export const SYSTEM_DB_MIGRATIONS: SqliteMigration[] = [
         version: 7,
         id: 'desktop-first-turn-input',
         up: client => client.execute('CREATE TABLE IF NOT EXISTS desktop_first_turns (run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, message_id TEXT NOT NULL UNIQUE)').then(() => undefined),
+    },
+    {
+        version: 8,
+        id: 'desktop-trigger-intents-and-deliveries',
+        up: async client => {
+            await client.executeMultiple(desktopTriggerStateSchema)
+            await ensureColumns(client, 'desktop_trigger_events', ['request_fingerprint TEXT', 'pending_tool_call_id TEXT', 'stop_request_id TEXT'])
+        },
     },
 ]
 

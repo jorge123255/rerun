@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ setup: vi.fn(), model: vi.fn(), question: vi.fn(), approval: vi.fn(), takeover: vi.fn(), service: vi.fn() }))
+const mocks = vi.hoisted(() => ({ setup: vi.fn(), model: vi.fn(), question: vi.fn(), approval: vi.fn(), takeover: vi.fn(), service: vi.fn(), getSession: vi.fn() }))
+vi.mock('@/lib/engine/client', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/engine/client')>(), getSession: mocks.getSession }))
 vi.mock('../setup/service', () => ({ assertDesktopSetupChatAllowed: mocks.setup }))
 vi.mock('../chat-model', () => ({ resolveDesktopChatModel: mocks.model }))
 vi.mock('../questions', () => ({ readDesktopQuestion: mocks.question }))
@@ -16,7 +17,7 @@ import { closeDesktopDatabase, openDesktopDatabase } from '../database'
 import type { DesktopRuntime } from '../runtime'
 import { createDesktopAgent, createDesktopSession, listDesktopSessions } from '../store'
 import { replaceDesktopCoworkerCallAllows } from './authority'
-import { adoptDesktopCoworkerCallEpoch, getDesktopCoworkerCall, initializeDesktopCoworkerCalls, insertDesktopCoworkerCall, type CoworkerCallRecord } from './db'
+import { adoptDesktopCoworkerCallEpoch, getDesktopCoworkerCall, initializeDesktopCoworkerCalls, insertDesktopCoworkerCall, patchDesktopCoworkerCall, type CoworkerCallRecord } from './db'
 import { handleDesktopCoworkerCallBridge, readDesktopCoworkerCalls, stopDesktopCoworkerCall } from './http'
 import type { DesktopQuestionView } from '../../questions'
 import type { DesktopApprovalView } from '../../approvals'
@@ -92,6 +93,7 @@ beforeEach(async () => {
     mocks.approval.mockResolvedValue({ approval: null })
     mocks.takeover.mockResolvedValue({ takeover: null })
     mocks.service.mockResolvedValue(null)
+    mocks.getSession.mockResolvedValue(null)
 })
 
 afterEach(async () => {
@@ -359,4 +361,123 @@ test.each(['waiting', 'answered'] as const)('Stop on a terminal human request th
     await expectUnchangedCall(row)
     expect((await db.execute('SELECT request_id FROM desktop_coworker_call_stop_intents')).rows).toEqual([{ request_id: input.requestId }])
     expect((await db.execute('SELECT request_id FROM desktop_coworker_call_stops')).rows).toEqual([{ request_id: input.requestId }])
+})
+
+async function unlinkedCall(overrides: Partial<CoworkerCallRecord> = {}, keepLocalChat = false) {
+    const saved = await waitingCall({ targetSessionId: null, status: 'error', pendingToolCallId: null, ...overrides })
+    if (!keepLocalChat) await db.execute({ sql: 'DELETE FROM desktop_sessions WHERE id=?', args: [saved.target.id] })
+    return saved
+}
+
+function actualCalledChat() {
+    return {
+        id: 'engine-child-session', agentId: bob.engineAgentId, title: 'Actual called chat', source: 'agent',
+        originAgentId: caller.engineAgentId, originSessionId: caller.engineSessionId,
+    }
+}
+
+test('reopens a retired call and durably links its exact existing engine chat without launching work', async () => {
+    const { row } = await unlinkedCall({ status: 'running', phase: 'launched' })
+    await closeDesktopDatabase(root)
+    db = await openDesktopDatabase(root)
+    runtime = { ...runtime, launchNonce: 'restarted-launch' }
+    await adoptDesktopCoworkerCallEpoch(db, 'restarted-epoch', NOW, runtime.launchNonce)
+    mocks.getSession.mockResolvedValue(actualCalledChat())
+
+    const seen = (await readDesktopCoworkerCalls(runtime, parentSession.id)).calls[0]
+    const chats = await listDesktopSessions(db, bob.id)
+    expect(chats).toHaveLength(1)
+    expect(chats[0]).toMatchObject({ engineSessionId: row.engineTargetSessionId, title: 'Actual called chat' })
+    expect(seen).toMatchObject({ status: 'interrupted', targetSessionId: chats[0].id, revision: String(row.revision + 2) })
+    expect(await getDesktopCoworkerCall(db, row.callId)).toMatchObject({
+        launchEpoch: EPOCH, status: 'interrupted', phase: 'terminal', engineChildRunId: row.engineChildRunId,
+        targetSessionId: chats[0].id, progress: row.progress, resultText: row.resultText,
+    })
+    await closeDesktopDatabase(root)
+    db = await openDesktopDatabase(root)
+    expect((await readDesktopCoworkerCalls(runtime, parentSession.id)).calls[0]).toEqual(seen)
+    expect(await listDesktopSessions(db, bob.id)).toHaveLength(1)
+    expect(mocks.getSession).toHaveBeenCalledExactlyOnceWith(expect.any(Object), bob.engineAgentId, row.engineTargetSessionId, { signal: expect.any(AbortSignal) })
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(mocks.setup).not.toHaveBeenCalled()
+    expect(mocks.model).not.toHaveBeenCalled()
+})
+
+test('a lost local-link acknowledgement reuses the existing chat and writes the link once', async () => {
+    const { row, target } = await unlinkedCall({}, true)
+    mocks.getSession.mockResolvedValue(actualCalledChat())
+    const seen = await readDesktopCoworkerCalls(runtime, parentSession.id)
+    expect(seen.calls[0]).toMatchObject({ targetSessionId: target.id, revision: String(row.revision + 1) })
+    expect(await readDesktopCoworkerCalls(runtime, parentSession.id)).toEqual(seen)
+    expect(await listDesktopSessions(db, bob.id)).toHaveLength(1)
+    expect(mocks.getSession).toHaveBeenCalledTimes(1)
+})
+
+test.each(['missing', 'session', 'agent', 'source', 'origin agent', 'origin session'] as const)('does not recover a called chat with mismatched %s', async mismatch => {
+    const { row } = await unlinkedCall()
+    const actual = actualCalledChat()
+    if (mismatch === 'session') actual.id = 'unrelated-chat'
+    if (mismatch === 'agent') actual.agentId = caller.engineAgentId
+    if (mismatch === 'source') actual.source = 'ui'
+    if (mismatch === 'origin agent') actual.originAgentId = 'other-caller'
+    if (mismatch === 'origin session') actual.originSessionId = 'other-parent-chat'
+    mocks.getSession.mockResolvedValue(mismatch === 'missing' ? null : actual)
+    expect((await readDesktopCoworkerCalls(runtime, parentSession.id)).calls[0]).toMatchObject({ targetSessionId: null, revision: String(row.revision) })
+    expect(await listDesktopSessions(db, bob.id)).toEqual([])
+    await expectUnchangedCall(row)
+})
+
+test('an unavailable or malformed engine chat read leaves recovery retryable', async () => {
+    const { row } = await unlinkedCall()
+    mocks.getSession.mockRejectedValue(new Error('Engine response unavailable or invalid'))
+    expect((await readDesktopCoworkerCalls(runtime, parentSession.id)).calls[0]).toMatchObject({ targetSessionId: null, revision: String(row.revision) })
+    expect(await listDesktopSessions(db, bob.id)).toEqual([])
+    await expectUnchangedCall(row)
+    mocks.getSession.mockResolvedValue(actualCalledChat())
+    expect((await readDesktopCoworkerCalls(runtime, parentSession.id)).calls[0].targetSessionId).not.toBeNull()
+})
+
+test.each(['remapped owner', 'deleting owner', 'changed call session'] as const)('rechecks %s after the asynchronous engine read', async changed => {
+    const { row } = await unlinkedCall()
+    mocks.getSession.mockImplementation(async () => {
+        if (changed === 'remapped owner') await db.execute({ sql: 'UPDATE desktop_agents SET engine_agent_id=? WHERE id=?', args: ['replacement-engine', bob.id] })
+        if (changed === 'deleting owner') await db.execute({ sql: 'INSERT INTO desktop_deletions(agent_id,engine_agent_id,name) VALUES(?,?,?)', args: [bob.id, bob.engineAgentId, bob.name] })
+        if (changed === 'changed call session') await patchDesktopCoworkerCall(db, row.callId, { revision: row.revision }, { engineTargetSessionId: 'replacement-chat' }, NOW)
+        return actualCalledChat()
+    })
+    expect((await readDesktopCoworkerCalls(runtime, parentSession.id)).calls[0].targetSessionId).toBeNull()
+    expect(await listDesktopSessions(db, bob.id)).toEqual([])
+    expect(fetcher).not.toHaveBeenCalled()
+})
+
+test('a live call remains owned by engine adoption, and Stop does not mutate its revision through a read', async () => {
+    const { row } = await unlinkedCall({ status: 'dispatched', phase: 'launched' })
+    mocks.getSession.mockResolvedValue(actualCalledChat())
+    expect((await readDesktopCoworkerCalls(runtime, parentSession.id)).calls[0]).toMatchObject({ targetSessionId: null, revision: String(row.revision) })
+    fetcher.mockImplementation(async (input, init) => {
+        expect(new URL(String(input)).pathname).toBe(`/agents/${bob.engineAgentId}/runs/${row.engineChildRunId}/cancel`)
+        expect(init?.method).toBe('POST')
+        return Response.json({ cancelled: true })
+    })
+    const response = await stopDesktopCoworkerCall(runtime, parentSession.id, {
+        operation: 'stop', requestId: crypto.randomUUID(), callId: row.callId, expectedRevision: String(row.revision),
+    }, fetcher)
+    expect(response.status).toBe(200)
+    expect((await response.json()).call.status).toBe('cancelled')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(mocks.getSession).not.toHaveBeenCalled()
+    expect(await listDesktopSessions(db, bob.id)).toEqual([])
+})
+
+test.each(['epoch', 'call session'] as const)('adopt-session refuses a changed %s after fetching the actual engine session', async changed => {
+    const { row } = await unlinkedCall({ status: 'queued', phase: 'session-open', engineChildRunId: null })
+    mocks.getSession.mockImplementation(async () => {
+        if (changed === 'epoch') await adoptDesktopCoworkerCallEpoch(db, 'replacement-epoch', NOW, 'replacement-launch')
+        else await patchDesktopCoworkerCall(db, row.callId, { revision: row.revision }, { engineTargetSessionId: 'replacement-chat' }, NOW)
+        return actualCalledChat()
+    })
+    const response = await bridge(envelope('adopt-session', { publicAgentId: bob.id, engineSessionId: row.engineTargetSessionId, title: 'Untrusted title' }))
+    expect(response.status).toBe(409)
+    expect(await listDesktopSessions(db, bob.id)).toEqual([])
+    expect(fetcher).not.toHaveBeenCalled()
 })

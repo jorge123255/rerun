@@ -17,7 +17,7 @@ export function buildDesktopControlCoworkerTabs({ panels, setup, actions }: {
 }): DesktopControlCoworkerTab[] {
     return AGENT_TABS.filter((tab): tab is DesktopControlCoworkerTab => tab.id === 'setup'
         ? setup
-        : panels && isDesktopCoworkerPanel(tab.id) && (tab.id !== 'actions' || actions))
+        : panels && isDesktopCoworkerPanel(tab.id) && (tab.id !== 'actions' || actions)).map(tab => tab.id === 'triggers' ? { ...tab, description: 'URLs that start a run when called on this Mac' } : tab)
 }
 
 export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'shared_files', 'company_brain', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'notifications', 'shortcuts'] as const

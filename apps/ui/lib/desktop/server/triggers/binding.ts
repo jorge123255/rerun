@@ -1,126 +1,74 @@
 import 'server-only'
 import { z } from 'zod'
+import { desktopRerunGrantsOf } from '@rerun/contracts'
 import type { Client } from '@libsql/client'
 import { DesktopHttpError } from '../auth'
 import { openDesktopDatabase } from '../database'
 import type { DesktopRuntime } from '../runtime'
 import { engineOf } from '../settings'
-import { withRosterWrite } from '../roster-writes'
 import { getAgent } from '@/lib/engine/client'
+import { findDesktopAgent } from '../store'
+import { assertDesktopSetupChatAllowed } from '../setup/service'
+import { resolveDesktopChatModel } from '../chat-model'
 import { desktopTriggersApi, type DesktopTriggerDurableStore } from './api'
-import { adoptDesktopTriggerEvent } from './adoption'
-
-const identity = z.string().min(1).max(200)
-const bridgeSchema = z.discriminatedUnion('event', [
-    z.object({ event: z.literal('desktop.trigger.authorize'), agentId: identity }).strict(),
-    z.object({ event: z.literal('desktop.trigger.adopt'), agentId: identity, sessionId: identity, runId: identity.nullable(), title: z.string().max(160) }).strict(),
-    z.object({ event: z.literal('desktop.trigger.shutdown') }).strict(),
-    z.object({ event: z.literal('desktop.trigger.revoke'), agentId: identity }).strict(),
-])
-
-const closedKey = Symbol.for('rerun.desktop.trigger.closed.v1')
-const revokedKey = Symbol.for('rerun.desktop.trigger.revoked.v1')
-const configKey = Symbol.for('rerun.desktop.trigger.management.v1')
-const globalState = globalThis as typeof globalThis & {
-    [closedKey]?: Set<string>
-    [revokedKey]?: Set<string>
-    [configKey]?: DesktopTriggerManagementConfig | null
-}
-const closed = globalState[closedKey] ??= new Set<string>()
-const revoked = globalState[revokedKey] ??= new Set<string>()
-const keyOf = (runtime: DesktopRuntime) => `${runtime.dataRoot}\0${runtime.launchNonce}`
+import { adoptDesktopTriggerSession } from './adoption'
 
 export type AuthorizeDesktopTrigger = (runtime: DesktopRuntime, db: Client, engineAgentId: string, signal?: AbortSignal) => Promise<void>
-
-export type DesktopTriggerManagementConfig = {
-    /** REQUIRED durable revision/mutation/event store from bindDesktopTriggers (or equivalent). */
-    durable: DesktopTriggerDurableStore
-    authorize?: AuthorizeDesktopTrigger
-}
-
-function assertActive(runtime: DesktopRuntime, signal?: AbortSignal) {
+export type DesktopTriggerManagementConfig = { durable: DesktopTriggerDurableStore; authorize?: AuthorizeDesktopTrigger }
+/** Kept for old source callers; production routes now use one engine lifecycle over the authenticated bridge. */
+export function configureDesktopTriggersManagement(config: DesktopTriggerManagementConfig | null): void { if (config) throw new Error('Trigger management now requires the authenticated engine lifecycle route') }
+export function getDesktopTriggersManagementConfig(): DesktopTriggerManagementConfig | null { return null }
+async function owner(runtime: DesktopRuntime, db: Client, id: string, signal?: AbortSignal) {
     signal?.throwIfAborted()
-    if (closed.has(keyOf(runtime))) throw new DesktopHttpError(503, 'Triggers are stopping. Reopen Rerun to continue.')
+    const result = await db.execute({ sql: 'SELECT a.id,a.enabled,d.agent_id AS deleting FROM desktop_agents a LEFT JOIN desktop_deletions d ON d.agent_id=a.id WHERE a.workspace_id=1 AND a.engine_agent_id=?', args: [id] })
+    if (result.rows.length !== 1 || result.rows[0].deleting != null) throw new DesktopHttpError(404, 'Coworker not found')
+    const row = result.rows[0], detail = await getAgent(engineOf(runtime), id)
+    if (detail.id !== id) throw new DesktopHttpError(409, 'Coworker identity changed')
+    const current = await findDesktopAgent(db, String(row.id))
+    if (!current || current.engineAgentId !== id) throw new DesktopHttpError(409, 'Coworker identity changed')
+    const deleting = (await db.execute({ sql: 'SELECT 1 FROM desktop_deletions WHERE agent_id=?', args: [current.id] })).rows.length > 0
+    signal?.throwIfAborted()
+    if (deleting) throw new DesktopHttpError(409, 'Coworker is being deleted')
+    return { agent: current, detail, identity: { localAgentId: current.id, engineAgentId: id, enabled: current.enabled && detail.config.enabled, deleting: false } }
 }
-
-async function localOwner(db: Client, engineAgentId: string) {
-    const result = await db.execute({
-        sql: `SELECT a.id,a.enabled,d.agent_id AS deleting FROM desktop_agents a
-        LEFT JOIN desktop_deletions d ON d.agent_id=a.id WHERE a.workspace_id=1 AND a.engine_agent_id=?`,
-        args: [engineAgentId],
-    })
-    const owner = result.rows[0]
-    if (result.rows.length !== 1 || !owner) throw new DesktopHttpError(404, 'Coworker not found')
-    if (owner.deleting !== null && owner.deleting !== undefined) throw new DesktopHttpError(409, 'This coworker is being deleted')
-    if (Number(owner.enabled) !== 1) throw new DesktopHttpError(403, 'Enable this coworker to use triggers')
-    if (revoked.has(engineAgentId)) throw new DesktopHttpError(404, 'Coworker triggers revoked')
-    return String(owner.id)
+export async function authorizeDesktopTriggersBasic(runtime: DesktopRuntime, db: Client, id: string, signal?: AbortSignal) { await owner(runtime, db, id, signal) }
+export async function authorizeDesktopTriggers(runtime: DesktopRuntime, db: Client, id: string, signal?: AbortSignal) {
+    const result = await owner(runtime, db, id, signal)
+    if (!result.identity.enabled || !(desktopRerunGrantsOf(result.detail.config.tools) as Record<string, boolean>).trigger) throw new DesktopHttpError(403, 'Enable Triggers in this coworker’s Capabilities')
+    return result
 }
-
-/**
- * Root MUST call this once with the durable engine store before management admits work.
- * Omitting durable (or passing a memory stub) is a configuration error — requests fail closed.
- */
-export function configureDesktopTriggersManagement(config: DesktopTriggerManagementConfig | null): void {
-    if (config && (!config.durable || typeof config.durable.listEvents !== 'function')) {
-        throw new Error('configureDesktopTriggersManagement requires a durable store with listEvents/getRevision/bumpRevision/findMutation/rememberMutation')
-    }
-    globalState[configKey] = config
-}
-
-export function getDesktopTriggersManagementConfig(): DesktopTriggerManagementConfig | null {
-    return globalState[configKey] ?? null
-}
-
-export async function authorizeDesktopTriggersBasic(runtime: DesktopRuntime, db: Client, engineAgentId: string, signal?: AbortSignal): Promise<void> {
-    assertActive(runtime, signal)
-    const owner = await withRosterWrite(() => localOwner(db, engineAgentId))
-    assertActive(runtime, signal)
-    const current = await getAgent(engineOf(runtime), engineAgentId)
-    assertActive(runtime, signal)
-    if (current.id !== engineAgentId || !current.config.enabled) throw new DesktopHttpError(409, 'Coworker identity or enabled state changed')
-    // Does NOT invent an allow-all grant. Root should replace with grant-aware authorize.
-    await withRosterWrite(async () => {
-        assertActive(runtime, signal)
-        if (await localOwner(db, engineAgentId) !== owner) throw new DesktopHttpError(409, 'Coworker identity changed')
-        assertActive(runtime, signal)
-    })
-}
-
-/** Caller MUST authenticate the engine callback before dispatching. */
+const identity = z.string().min(1).max(200)
+const envelope = z.strictObject({ event: z.literal('desktop.trigger'), launchNonce: identity, op: z.enum(['owner', 'authorize', 'setup', 'model', 'adopt']), payload: z.unknown() })
+const ownerInput = z.strictObject({ engineAgentId: identity })
 export async function handleDesktopTriggerBridge(runtime: DesktopRuntime, body: unknown, signal?: AbortSignal): Promise<Response | null> {
-    if (!body || typeof body !== 'object' || !('event' in body) || typeof body.event !== 'string' || !body.event.startsWith('desktop.trigger.')) return null
-    const parsed = bridgeSchema.safeParse(body)
-    if (!parsed.success) throw new DesktopHttpError(400, 'Invalid trigger callback')
-    const event = parsed.data
-    if (event.event === 'desktop.trigger.shutdown') {
-        closed.add(keyOf(runtime))
-        return Response.json({ ok: true, persisted: true }, { headers: { 'Cache-Control': 'no-store' } })
-    }
-    assertActive(runtime, signal)
+    if (!body || typeof body !== 'object' || !('event' in body) || body.event !== 'desktop.trigger') return null
+    const event = envelope.parse(body)
+    if (event.launchNonce !== runtime.launchNonce) throw new DesktopHttpError(409, 'Trigger launch changed')
     const db = await openDesktopDatabase(runtime.dataRoot)
-    if (event.event === 'desktop.trigger.revoke') {
-        revoked.add(event.agentId)
-        return Response.json({ ok: true, persisted: true }, { headers: { 'Cache-Control': 'no-store' } })
+    let result: unknown
+    if (event.op === 'adopt') {
+        const input = z.strictObject({ localAgentId: identity, engineAgentId: identity, engineSessionId: identity, runId: identity.nullable(), title: z.string().max(160) }).parse(event.payload)
+        const current = await owner(runtime, db, input.engineAgentId, signal)
+        if (current.agent.id !== input.localAgentId) throw new DesktopHttpError(409, 'Coworker identity changed')
+        result = await adoptDesktopTriggerSession(db, engineOf(runtime), { agentId: input.localAgentId, engineAgentId: input.engineAgentId, engineSessionId: input.engineSessionId, runId: input.runId }, { signal })
+    } else if (event.op === 'model') {
+        const input = z.strictObject({ engineAgentId: identity, override: z.strictObject({ connectionId: z.string().nullable(), provider: z.string().nullable(), model: z.string().nullable() }) }).parse(event.payload)
+        const current = await authorizeDesktopTriggers(runtime, db, input.engineAgentId, signal)
+        await assertDesktopSetupChatAllowed(runtime, current.agent.id)
+        if ((input.override.connectionId === null) !== (input.override.model === null) || (input.override.provider !== null && input.override.connectionId === null)) throw new DesktopHttpError(409, 'Choose a currently connected trigger model')
+        const selected = await resolveDesktopChatModel(runtime, current.agent, null, input.override.connectionId && input.override.model ? { connectionId: input.override.connectionId, model: input.override.model } : undefined)
+        await authorizeDesktopTriggers(runtime, db, input.engineAgentId, signal)
+        await assertDesktopSetupChatAllowed(runtime, current.agent.id)
+        result = { connectionId: selected.connectionId, model: selected.model }
+    } else {
+        const input = ownerInput.parse(event.payload)
+        const current = event.op === 'owner' ? await owner(runtime, db, input.engineAgentId, signal) : await authorizeDesktopTriggers(runtime, db, input.engineAgentId, signal)
+        if (event.op === 'setup') await assertDesktopSetupChatAllowed(runtime, current.agent.id)
+        result = current.identity
     }
-    const authorize = getDesktopTriggersManagementConfig()?.authorize ?? authorizeDesktopTriggersBasic
-    await authorize(runtime, db, event.agentId, signal)
-    if (event.event === 'desktop.trigger.adopt') {
-        const adopted = await adoptDesktopTriggerEvent(db, engineOf(runtime), event)
-        if (!adopted) throw new DesktopHttpError(409, 'Trigger conversation could not be saved')
-        await authorize(runtime, db, event.agentId, signal)
-    }
-    assertActive(runtime, signal)
-    return Response.json({ ok: true, persisted: true }, { headers: { 'Cache-Control': 'no-store' } })
+    return Response.json({ ok: true, result }, { headers: { 'Cache-Control': 'no-store' } })
 }
-
 export async function desktopTriggerRequest(runtime: DesktopRuntime, request: Request, agentId: string) {
-    assertActive(runtime, request.signal)
-    const config = getDesktopTriggersManagementConfig()
-    if (!config?.durable) {
-        throw new DesktopHttpError(503, 'Trigger durable store is not configured. Root must call configureDesktopTriggersManagement before admitting management.')
-    }
     const db = await openDesktopDatabase(runtime.dataRoot)
-    const authorize = config.authorize ?? authorizeDesktopTriggersBasic
-    return desktopTriggersApi(db, id => authorize(runtime, db, id, request.signal), config.durable)(request, agentId)
+    return desktopTriggersApi(db, id => authorizeDesktopTriggersBasic(runtime, db, id, request.signal))(request, agentId)
 }

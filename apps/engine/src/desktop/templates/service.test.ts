@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, afterEach, expect, test } from 'vitest'
 import { DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING } from '@rerun/contracts'
+import { bindDesktopSkillOwnerReader } from '../service-skills/authority.js'
 import { prepareSkillHelperFixture } from '../skill-publication.test-support.js'
 import { desktopTemplateRouteAllowed } from './allow.js'
 import { installManifest, sealManifest } from './install.js'
@@ -246,4 +247,21 @@ test('a linked destination ancestor cannot create directories outside the owned 
     const {writeExclusiveFile}=await import('./files.js')
     await expect(writeExclusiveFile(folder,'redirect/new-folder/note.txt',Buffer.from('private'))).rejects.toThrow()
     expect(await readdir(outside)).toEqual([])
+})
+
+
+test('desktop template plans exclude canonical app skills when the workspace registry is absent', async () => {
+    const { folder, engine, engineAgentId } = await scaffold()
+    await rm(join(folder, 'workspace/.rerun/services.json'))
+    const previous = process.env.RERUN_DESKTOP_APP
+    process.env.RERUN_DESKTOP_APP = '1'
+    bindDesktopSkillOwnerReader(async () => new Map([['Owned', 'Calendar']]))
+    try {
+        const { plan } = await draftAndPlan(engine, engineAgentId)
+        expect(JSON.stringify(plan)).not.toContain(secrets.connector)
+        expect(plan.coworkers[0]?.exclusions).toContainEqual({ path: 'skills/Owned', reason: 'connector-skill' })
+    } finally {
+        if (previous === undefined) delete process.env.RERUN_DESKTOP_APP; else process.env.RERUN_DESKTOP_APP = previous
+        bindDesktopSkillOwnerReader(async () => { throw new Error('No active fixture authority') })
+    }
 })

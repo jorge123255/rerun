@@ -16,13 +16,13 @@ export const DELEGATION_LIMITS = {
 
 const prohibited = /^(?:delegate_tasks|call_agent|ask_user|request_approval|request_secret|suggest_service|install_complete|setup_|routine_|trigger_|schedule_|install_|publish_|hub_|notify_|shell_|native_|computer_|browser_|mcp_|service_|takeover_)/i
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-const sourceKey = (source: Source) => JSON.stringify(source)
+const sourceKey = (source: Source) => JSON.stringify([source.parentAgentId, source.parentSessionId, source.parentRunId, source.toolCallId])
 
 export function subset(parent: Authority, host: Pick<DelegationHost, 'isolatedTool'>): string[] {
     return [...new Set(parent.tools)].filter(name => !prohibited.test(name) && host.isolatedTool(name))
 }
 
-function bounded<T>(work: Promise<T>, signal: AbortSignal, timeoutMs = DELEGATION_LIMITS.hostMs): Promise<T> {
+function bounded<T>(work: Promise<T>, signal: AbortSignal, timeoutMs: number = DELEGATION_LIMITS.hostMs): Promise<T> {
     return new Promise<T>((resolve, reject) => {
         const timer = setTimeout(() => finish(new Error('Host operation timed out')), timeoutMs)
         timer.unref?.()
@@ -282,25 +282,32 @@ export function createDelegationRuntime(store: DelegationStore, host: Delegation
     }
 
     async function stop(source: Pick<Source, 'parentAgentId' | 'parentSessionId'>, request: DesktopDelegationStop) {
-        const digest = hash([source, request])
+        const owner = { parentAgentId: source.parentAgentId, parentSessionId: source.parentSessionId }
+        const digest = hash([owner, request.requestId, request.delegationId, request.taskId, request.expectedRevision])
         const pending = pendingStops.get(request.requestId)
         if (pending) {
             if (pending.digest !== digest) throw new Error('Stop identity conflict')
             return pending.promise
         }
         const promise = (async () => {
-            const prior = await receipts.read(request.requestId)
-            if (prior) {
-                if (prior.digest !== digest) throw new Error('Stop identity conflict')
-                return prior.delegation
-            }
             const record = await store.read(request.delegationId)
             if (!record || record.snapshot.parentAgentId !== source.parentAgentId || record.snapshot.parentSessionId !== source.parentSessionId) throw new Error('Delegation owner mismatch')
+            const prior = await receipts.read(request.requestId)
+            if (prior && prior.digest !== digest) throw new Error('Stop identity conflict')
             const index = record.snapshot.tasks.findIndex(task => task.taskId === request.taskId)
-            if (index < 0 || record.snapshot.revision !== request.expectedRevision) throw new Error('Delegation revision conflict')
+            if (index < 0) throw new Error('Delegation task unavailable')
+            if (prior?.delegation) return prior.delegation
+            const intent = prior ?? await locked(async () => {
+                const current = await store.read(request.delegationId)
+                if (!current || current.snapshot.revision !== request.expectedRevision) throw new Error('Delegation revision conflict')
+                return receipts.reserve(request.requestId, { digest, source: owner, request })
+            })
+            if (intent.digest !== digest) throw new Error('Stop identity conflict')
+            // A reserved intent remains valid after a lost acknowledgement, progress update,
+            // or restart. Its immutable task identity can never redirect to a sibling run.
             await mutate(request.delegationId, current => {
-                if (current.snapshot.revision !== request.expectedRevision) throw new Error('Delegation revision conflict')
                 const task = current.snapshot.tasks[index]!
+                if (task.taskId !== request.taskId) throw new Error('Delegation task changed')
                 if (task.status === 'queued' || task.status === 'running') settle(current, index, 'stopped', 'stopped by the user')
             })
             const active = live.get(request.taskId)
@@ -311,7 +318,7 @@ export function createDelegationRuntime(store: DelegationStore, host: Delegation
             await clean(request.delegationId, index)
             const delegation = (await store.read(request.delegationId))!.snapshot
             if (delegation.tasks[index]!.cleanup !== 'complete') throw new Error('Owned cleanup is not confirmed; retry Stop')
-            await receipts.put(request.requestId, { digest, delegation })
+            await receipts.put(request.requestId, { digest, source: owner, request, delegation })
             return delegation
         })()
         pendingStops.set(request.requestId, { digest, promise })

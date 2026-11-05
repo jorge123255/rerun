@@ -6,6 +6,7 @@ import { gzipSync } from 'node:zlib'
 import { parseFrontmatter } from '../skills/frontmatter.ts'
 import { acquireSkillLease, renameSkillEntry } from './skill-publication-native.ts'
 import { SkillBoundaryError } from './skill-publication-error.ts'
+import { assertUserSkillOperation, desktopSkillAuthorityRequired, trustedSkillOwners } from './service-skills/authority.ts'
 export { SkillBoundaryError } from './skill-publication-error.ts'
 import { connectorSkillReadOnlyError, MAX_SKILL_FILE_BYTES, MAX_SKILL_FOLDER_BYTES, MAX_SKILL_REFERENCE_FILES, TEXT_FILE_PAGE_CHARS } from '@rerun/contracts'
 
@@ -56,7 +57,34 @@ const identityKey = (info: Identity) => `${info.dev}:${info.ino}`
 type Version = Identity & { size: bigint; mtimeNs: bigint; ctimeNs: bigint; uid: bigint; nlink: bigint }
 const versionKey = (info: Version) => `${identityKey(info)}:${info.size}:${info.mtimeNs}:${info.ctimeNs}:${info.uid}:${info.nlink}`
 const sameVersion = (a: Version, b: Version) => versionKey(a) === versionKey(b)
-type PublishOptions = { beforeCommit?: () => Promise<void>; signal?: AbortSignal }
+export type StagedSkillPublication = { name: string; directoryIdentity: string; manifestVersion: string; contentHash: string }
+type PublishOptions = { beforeCommit?: () => Promise<void>; signal?: AbortSignal; servicePublication?: true; beforePublish?: (stage: StagedSkillPublication) => Promise<void> }
+function protectedOptions(skillsRoot: string, slug: string, options: PublishOptions): PublishOptions {
+    return { ...options, beforeCommit: async () => {
+        await options.beforeCommit?.()
+        if (!options.servicePublication) await assertUserSkillOperation(join(dirname(skillsRoot), 'workspace'), slug, options.signal)
+    } }
+}
+/** Holds the same cross-process lease as skill writers while templates snapshot and seal bytes. */
+export async function withSkillReadLease<T>(skillsRoot: string, action: () => Promise<T>): Promise<T> {
+    const root = await openDirectory(skillsRoot).catch(error => { if (missing(error) || error instanceof SkillBoundaryError && error.status === 404) return null; throw error })
+    if (!root) return action()
+    try {
+        const lease = await acquireSkillLease(root.path, root.identity)
+        try { lease.assertCurrent(); await assertSame(root); const result = await action(); lease.assertCurrent(); await assertSame(root); return result }
+        finally { await lease.release() }
+    } finally { await root.handle.close() }
+}
+/** Service footprints use the same pinned publication boundary in workspace/.rerun. */
+export async function prepareServiceRegistryRoot(workspace: string, signal?: AbortSignal): Promise<string> {
+    if (basename(workspace) !== 'workspace') throw outside()
+    return withPublication(workspace, { signal }, async (root, check) => {
+        await check()
+        const child = await ensureChildDirectory(root, root.pinned, root.path, '.rerun')
+        try { await check(); await assertSame(child); return child.path }
+        finally { await child.handle.close() }
+    })
+}
 const MAX_TREE_DEPTH = 32
 
 async function withPublication<T>(skillsRoot: string, options: PublishOptions, action: (root: PinnedDir, check: () => Promise<void>) => Promise<T>): Promise<T> {
@@ -416,7 +444,7 @@ function parseJournal(value: unknown): PublicationJournal {
     const entry = (name: unknown) => typeof name === 'string' && name.length <= 255 && !!name && name !== '.' && name !== '..' && !/[\/\\\0]/.test(name)
     const record = (file: unknown) => !!file && typeof file === 'object' && /^\d+:\d+$/.test(String((file as JournalFile).identity)) && /^[a-f0-9]{64}$/.test(String((file as JournalFile).hash))
     if (!row || row.version !== 1 || !/^\d+:\d+$/.test(row.parentIdentity ?? '') || typeof row.parent !== 'string' || relativeParts(row.parent).join('/') !== row.parent ||
-        !SKILL_SLUG.test(row.parent.split('/')[0] ?? '') || row.parent.split('/').some(reserved) || row.parent.split('/').length > MAX_TREE_DEPTH ||
+        !(SKILL_SLUG.test(row.parent.split('/')[0] ?? '') || row.parent === '.rerun') || row.parent.split('/').some(reserved) || row.parent.split('/').length > MAX_TREE_DEPTH ||
         !entry(row.final) || reserved(row.final!) || !entry(row.backup) || !row.backup!.startsWith(BACKUP_PREFIX) ||
         !entry(row.temp) || !row.temp!.startsWith(TEMP_PREFIX) || !record(row.before) || !record(row.after)) {
         throw new SkillBoundaryError(409, 'A previous Skills change needs recovery. Its files were left unchanged.')
@@ -425,6 +453,7 @@ function parseJournal(value: unknown): PublicationJournal {
 }
 
 async function recoverJournal(root: PinnedDir, name: string, record: PublicationJournal, check: () => Promise<void>, journalIdentity: Identity): Promise<void> {
+    if (record.parent === '.rerun' && basename(root.path) !== 'workspace') throw outside()
     const recoveryCheck = async () => {
         await check()
         const slug = record.parent.split('/')[0]!
@@ -540,7 +569,7 @@ export async function writeConfinedFile(root: string, path: string, content: str
     const name = parts.at(-1)
     if (!name || reserved(name) || parts.length > MAX_TREE_DEPTH) throw new SkillBoundaryError(400, 'Send a file path to save.')
     if (parts.length === 1 && name.toUpperCase() === MANIFEST.toUpperCase()) throw new SkillBoundaryError(400, 'Send a file path other than SKILL.md.')
-    await withPublication(dirname(root), options, async (skills, check) => {
+    await withPublication(dirname(root), protectedOptions(dirname(root), basename(root), options), async (skills, check) => {
         const rootDir = await openDirectory(root)
         const opened: PinnedDir[] = [rootDir]
         try {
@@ -560,7 +589,7 @@ export async function deleteConfinedFile(root: string, path: string, options: Pu
     const name = parts.at(-1)
     if (!name || reserved(name) || parts.length > MAX_TREE_DEPTH) throw new SkillBoundaryError(400, 'Send a file path to delete.')
     if (parts.length === 1 && name.toUpperCase() === MANIFEST.toUpperCase()) throw new SkillBoundaryError(400, 'Send a file path other than SKILL.md.')
-    await withPublication(dirname(root), options, async (_skills, check) => {
+    await withPublication(dirname(root), protectedOptions(dirname(root), basename(root), options), async (_skills, check) => {
         const parentPath = join(root, ...parts.slice(0, -1))
         let parent: PinnedDir
         try { parent = await openDirectory(parentPath) } catch (error) { if (error instanceof SkillBoundaryError && error.status === 404) return; throw error }
@@ -804,6 +833,7 @@ export async function listPublishedSkills(skillsRoot: string, options: PublishOp
 // Missing registry means no connector owns a skill. A symlink or a document that is not
 // `{ services: { ... } }` refuses, so a broken registry cannot look like an empty one.
 export async function ownersInWorkspace(workspaceRoot: string): Promise<Map<string, string>> {
+    if (desktopSkillAuthorityRequired()) return trustedSkillOwners(workspaceRoot)
     const root = await openDirectory(workspaceRoot).catch(error => {
         if (error instanceof SkillBoundaryError) throw unreadableOwners()
         throw error
@@ -874,7 +904,7 @@ export async function readSkillImportSource(workspaceRoot: string, sourcePath: s
 export async function publishNewSkill(skillsRoot: string, slug: string, draft: { name: string; description: string; body: string; files?: SkillFilePayload[] }, options: PublishOptions = {}): Promise<PublishedSkill> {
     assertSlug(slug)
     if ((draft.files?.length ?? 0) > MAX_SKILL_REFERENCE_FILES) throw new SkillBoundaryError(400, `Too many reference files (max ${MAX_SKILL_REFERENCE_FILES})`)
-    return withPublication(skillsRoot, options, async (root, check) => {
+    return withPublication(skillsRoot, protectedOptions(skillsRoot, slug, options), async (root, check) => {
         if (await statAt(join(root.pinned, slug))) throw new SkillBoundaryError(409, 'A skill with that name already exists.')
         const stageName = `${STAGE_PREFIX}${randomBytes(12).toString('hex')}`
         await mkdir(join(root.pinned, stageName), { mode: 0o755 })
@@ -887,8 +917,20 @@ export async function publishNewSkill(skillsRoot: string, slug: string, draft: {
             await stage.handle.sync()
             await check()
             await assertSame(stage)
+            if (options.beforePublish) {
+                const manifest = await readSnapshot(stage, MANIFEST)
+                if (!manifest) throw outside()
+                // From this point an unknown callback acknowledgement may be durable. Preserve
+                // the exact staging inode so the service journal can reconcile either name.
+                attempted = true
+                await options.beforePublish({ name: stageName, directoryIdentity: identityKey(stage.identity),
+                    manifestVersion: `${manifest.info.dev}:${manifest.info.ino}:${manifest.info.size}:${manifest.info.mtimeNs}:${manifest.info.ctimeNs}`,
+                    contentHash: hashBytes(manifest.bytes) })
+                await check(); await assertSame(stage)
+            }
             attempted = true
             await renameSkillEntry(root.path, root.identity, stageName, stage.identity, slug)
+            await root.handle.sync()
             const result = await readPublishedSkillUnlocked(skillsRoot, slug)
             if (!result) throw new SkillBoundaryError(409, 'Could not confirm the new skill. Reopen Skills before trying again.')
             return { ...result, files }
@@ -925,7 +967,7 @@ async function removeEntry(parentPinned: string, name: string, uid: bigint): Pro
 
 export async function replaceSkillManifest(skillsRoot: string, slug: string, patch: { description?: string; body?: string; baseIdentity?: string }, options: PublishOptions = {}): Promise<PublishedSkill> {
     assertSlug(slug)
-    return withPublication(skillsRoot, options, async (root, check) => {
+    return withPublication(skillsRoot, protectedOptions(skillsRoot, slug, options), async (root, check) => {
         const skill = await openDirectory(join(skillsRoot, slug))
         try {
             const before = await readSnapshot(skill, MANIFEST)
@@ -948,7 +990,7 @@ export async function replaceSkillManifest(skillsRoot: string, slug: string, pat
 
 export async function deleteSkillFolder(skillsRoot: string, slug: string, options: PublishOptions = {}): Promise<void> {
     assertSlug(slug)
-    await withPublication(skillsRoot, options, async (root, check) => {
+    await withPublication(skillsRoot, protectedOptions(skillsRoot, slug, options), async (root, check) => {
         const info = await statAt(join(root.pinned, slug))
         if (!info) throw new SkillBoundaryError(404, 'Skill not found.')
         if (info.isSymbolicLink() || !info.isDirectory() || info.uid !== root.uid) throw outside()
@@ -956,6 +998,7 @@ export async function deleteSkillFolder(skillsRoot: string, slug: string, option
         const source = await openDirectory(join(root.path, slug))
         try { await listRealFiles(source, '') } finally { await source.handle.close() }
         const deleted = `.rerun-skill-deleted-${randomBytes(12).toString('hex')}`
+        await check()
         await renameSkillEntry(root.path, root.identity, slug, info, deleted)
         await removeOwnedDirectory(root.pinned, deleted, info, root.uid)
     })
@@ -1015,12 +1058,13 @@ async function packDirectory(dir: PinnedDir, archiveName: string, out: Buffer[],
 
 export async function archiveSkillFolder(skillsRoot: string, slug: string): Promise<Buffer> {
     assertSlug(slug)
-    return withPublication(skillsRoot, {}, async () => {
+    return withPublication(skillsRoot, protectedOptions(skillsRoot, slug, {}), async (_root, check) => {
         const skill = await openDirectory(join(skillsRoot, slug))
         try {
             const chunks: Buffer[] = []
             await packDirectory(skill, slug, chunks)
             chunks.push(Buffer.alloc(1024, 0))
+            await check()
             return gzipSync(Buffer.concat(chunks))
         } finally { await skill.handle.close() }
     })

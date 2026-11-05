@@ -1,3 +1,5 @@
+import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, desktopStoredCoworkerMentions, visibleText, type DesktopCoworkerMention } from '@rerun/contracts'
+import { validateDesktopCoworkerMentionsAtSend } from './coworker-mentions'
 import { assertDesktopSetupChatAllowed } from './setup/service'
 import type { DesktopTakeoverGuard } from '@rerun/contracts'
 import 'server-only'
@@ -23,6 +25,11 @@ import type { DesktopRuntime } from './runtime'
 import { createDesktopAgentWithinRosterWrite, createDesktopSession, findDesktopAgent, findDesktopSession, regenerationRequestId } from './store'
 import { withRosterWrite } from './roster-writes'
 import { planDesktopAgentPlacement } from './spaces'
+import { desktopCoworkerCallTargets } from './coworker-calls/targets'
+
+export async function desktopCoworkerMentionTargets(runtime: DesktopRuntime, agentId: string, options: { signal?: AbortSignal } = {}) {
+    return (await desktopCoworkerCallTargets(runtime, agentId, undefined, options.signal)).targets
+}
 
 // Compatibility endpoint for the original OpenAI setup form.
 export async function connectDesktopOpenAI(runtime: DesktopRuntime, apiKey: string) {
@@ -93,7 +100,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard }
+    | { sessionId?: string; text: string; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -110,7 +117,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     await assertCoworkerNotDeleting(db, input.agentId)
     const kickoff = await assertDesktopCreationSettled(db, input.agentId, internalCreationRequestId)
     if (kickoff && ('regenerateMessageId' in input || input.sessionId || input.tabUid !== kickoff.requestId || input.text !== kickoff.text ||
-        input.requestId || input.reconcileOnly || input.modelChoice || input.question || input.approval || input.takeover || desktopAttachmentSelectionsOf(input).length)) {
+        input.coworkerMentions?.length || input.requestId || input.reconcileOnly || input.modelChoice || input.question || input.approval || input.takeover || desktopAttachmentSelectionsOf(input).length)) {
         throw new DesktopHttpError(409, desktopCreationPendingMessage)
     }
     const agent = await findDesktopAgent(db, input.agentId)
@@ -120,6 +127,8 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
     await assertDesktopSetupChatAllowed(runtime, input.agentId, input.sessionId)
     const regenerate = 'regenerateMessageId' in input
+    const mentions = regenerate ? [] : checkedDesktopCoworkerMentions(input.text, input.coworkerMentions)
+    const mentionFields = desktopCoworkerMentionFieldsOf(mentions)
     const attachmentPaths = regenerate ? [] : desktopAttachmentSelectionsOf(input)
     const attachmentFields = desktopAttachmentFieldsOf(attachmentPaths)
     const uid = !regenerate && !existing ? input.tabUid : undefined
@@ -131,15 +140,37 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         } }) }
     }
     const queued = !regenerate && input.requestId ? { runId: input.requestId, ...attachmentFields, ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }), ...(input.takeover && { takeover: input.takeover }) } : undefined
+    const requestId = regenerate ? await regenerationRequestId(db, input.sessionId, input.regenerateMessageId, input.requestId) : undefined
     let replay: Response | undefined
+    if (regenerate) {
+        const probe = await chat(engineOf(runtime), agent.engineAgentId, {
+            sessionId: existing!.engineSessionId, regenerateMessageId: input.regenerateMessageId.slice('engine-'.length),
+            requestId: requestId!, replayOnly: true, source: 'dashboard',
+        })
+        if (!(probe.status === 404 && (await probe.clone().json().catch(() => ({}))).code === 'regeneration_not_found')) replay = probe
+    }
     if (queued && existing && !regenerate) {
         const probe = await chat(engineOf(runtime), agent.engineAgentId, {
-            sessionId: existing.engineSessionId, message: input.text,
+            sessionId: existing.engineSessionId, message: input.text, ...mentionFields,
             desktopQueuedTurn: { ...queued, replayOnly: true }, source: 'dashboard',
         })
         if (probe.status === 404 && (await probe.clone().json().catch(() => ({}))).code === 'queued_turn_not_found') {
             if (input.reconcileOnly) throw new DesktopHttpError(404, 'This queued message has not been sent. Review it before sending.')
         } else replay = probe
+    }
+    let selected = mentions, sourceText = !regenerate ? input.text : ''
+    if (!replay) {
+        if (regenerate) {
+            const rows = await getSessionMessages(engineOf(runtime), agent.engineAgentId, existing!.engineSessionId, { requireSuccess: true })
+            const replyIndex = rows.findIndex(row => row.id === input.regenerateMessageId.slice('engine-'.length) && row.role === 'assistant')
+            if (replyIndex < 0) throw new DesktopHttpError(404, 'Saved reply not found.')
+            const source = rows.slice(0, replyIndex).reverse().find(row => row.role === 'user')
+            if (!source) throw new DesktopHttpError(409, 'The original user message is unavailable.')
+            let content: unknown
+            try { content = JSON.parse(source.contentJson); selected = desktopStoredCoworkerMentions(content, true) }
+            catch { throw new DesktopHttpError(409, 'The saved coworker mentions are damaged. Open the original message before trying again.') }
+            sourceText = visibleText(content, '')
+        }
     }
     // Existing chats resolve their own saved model. Only a first send carries an unsaved choice.
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
@@ -159,7 +190,10 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const attachmentBody = images.length ? { desktopAttachments: resolved }
         : files.length === 1 ? { workspaceAttachment: { path: files[0]!.path, content: files[0]!.content } }
         : files.length > 1 ? { workspaceAttachments: files.map(file => ({ path: file.path, content: file.content })) } : {}
-    const requestId = regenerate ? await regenerationRequestId(db, input.sessionId, input.regenerateMessageId, input.requestId) : undefined
+    if (!replay && selected.length) {
+        const result = await validateDesktopCoworkerMentionsAtSend({ listTargets: (owner, options) => desktopCoworkerMentionTargets(runtime, owner, options) }, { agentId: agent.id, text: sourceText, mentions: selected })
+        if (!result.ok) throw new DesktopHttpError(409, result.error)
+    }
     const start = !regenerate && uid ? previousStart ?? await reserveTabStart(db, agent, uid, input, runtime.launchNonce) : null
     const engineResponse = replay ?? await (queued ? startQueuedChat : chat)(engineOf(runtime), agent.engineAgentId, {
         ...(regenerate ? {
@@ -167,7 +201,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             regenerateMessageId: input.regenerateMessageId.slice('engine-'.length),
             requestId: requestId!,
         } : {
-            sessionId: existing?.engineSessionId, message: input.text,
+            sessionId: existing?.engineSessionId, message: input.text, ...mentionFields,
             ...(start && { desktopFirstTurn: { sessionId: String(start.engine_session_id), runId: String(start.run_id) } }),
             ...(queued && { desktopQueuedTurn: queued }),
             ...attachmentBody,

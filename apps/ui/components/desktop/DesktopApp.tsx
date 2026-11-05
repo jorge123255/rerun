@@ -385,6 +385,13 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setRequestedPanel({ agentId, panel, nonce: ++panelRequestNonce.current })
     }
 
+    async function openCoworkerChat(target: { agentId: string; sessionId: string }) {
+        if (creationAdmission.current.blocked || isDesktopQuitting() || !currentAgents.current.some(agent => agent.id === target.agentId)) throw new Error('This coworker is no longer available.')
+        const body = await json<{ sessions: DesktopSessionView[] }>(await fetch(`/api/desktop/agents/${encodeURIComponent(target.agentId)}/sessions`, { cache: 'no-store', signal: AbortSignal.timeout(10_000) }))
+        if (!body.sessions.some(session => session.id === target.sessionId) || isDesktopQuitting() || !currentAgents.current.some(agent => agent.id === target.agentId)) throw new Error('This coworker chat is no longer available.')
+        selectCoworker(target.agentId, target.sessionId)
+    }
+
     function openSavedConversation(hit: DesktopConversationHit) {
         if (currentAgents.current.some(agent => agent.id === hit.agentId)) selectCoworker(hit.agentId, hit.id)
     }
@@ -440,7 +447,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
+                            <CoworkerChat onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={selectedAgent} requested={requestedSession} selected={panelOpen && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />
@@ -538,7 +545,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     )
 }
 
-function CoworkerChat({ agent, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, onOpenModelSettings, onClosePanel, onVisibleSession }: {
+function CoworkerChat({ agent, requested, requestedPanel, onPanelRequestHandled, selected, modelLabel, onOpenModelSettings, onOpenCoworkerChat, onClosePanel, onVisibleSession }: {
     agent: DesktopAgentView
     requested: DesktopChatRequest | null
     requestedPanel: DesktopCoworkerPanelRequest | null
@@ -547,6 +554,7 @@ function CoworkerChat({ agent, requested, requestedPanel, onPanelRequestHandled,
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
     modelLabel?: string
     onOpenModelSettings: () => void
+    onOpenCoworkerChat: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
 }) {
     const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
@@ -587,7 +595,7 @@ function CoworkerChat({ agent, requested, requestedPanel, onPanelRequestHandled,
             <Button type="button" size="sm" variant="outline" onClick={reload}>Retry conversations</Button>
         </div>}
         {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
-        {missing || !bootstrap || !sessions ? dismiss : <DesktopChatTabs
+        {missing || !bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
             agent={agent} selected={selected} requested={requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
             refreshSessions={readSessions} reload={reload} modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}

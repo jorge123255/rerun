@@ -7,7 +7,7 @@ process.env.RERUN_API_KEY = ''
 
 const { describe, expect, it } = await import('vitest')
 const { createClient } = await import('@libsql/client')
-const { closeSystemDb, getSystemDb, systemDbExists } = await import('./systemDb.js')
+const { closeSystemDb, getSystemDb, systemDbExists, SYSTEM_DB_MIGRATIONS, migrateSystemDb } = await import('./systemDb.js')
 const { agentDataDir, systemDbPath } = await import('../config/paths.js')
 
 async function columnsOf(agentId: string, table: string): Promise<string[]> {
@@ -108,5 +108,28 @@ describe('systemDbExists', () => {
         expect(systemDbExists('fresh')).toBe(false)
         await getSystemDb('fresh')
         expect(systemDbExists('fresh')).toBe(true)
+    })
+})
+
+
+describe('desktop trigger migration from version 7', () => {
+    it('adds durable trigger records without changing chat or first-turn receipts, and reopens idempotently', async () => {
+        const id = 'trigger-upgrade'
+        mkdirSync(agentDataDir(id), { recursive: true })
+        const db = createClient({ url: `file:${systemDbPath(id)}` })
+        try {
+            for (const step of SYSTEM_DB_MIGRATIONS.filter(step => step.version <= 7)) await step.up(db)
+            await db.execute('PRAGMA user_version = 7')
+            await db.execute("INSERT INTO sessions(id,agent_id,title,created_at,updated_at) VALUES('keep','trigger-upgrade','Saved chat','now','now')")
+            await db.execute("INSERT INTO desktop_first_turns VALUES('run','keep','fingerprint','message')")
+            await migrateSystemDb(db, systemDbPath(id))
+            await db.execute("INSERT INTO desktop_trigger_intents VALUES('request','digest','hook','{}',NULL)")
+            await migrateSystemDb(db, systemDbPath(id))
+            expect((await db.execute('PRAGMA user_version')).rows[0]?.user_version).toBe(8)
+            expect((await db.execute("SELECT title FROM sessions WHERE id='keep'")).rows[0]?.title).toBe('Saved chat')
+            expect((await db.execute('SELECT fingerprint FROM desktop_first_turns')).rows[0]?.fingerprint).toBe('fingerprint')
+            expect((await db.execute('SELECT fingerprint FROM desktop_trigger_intents')).rows[0]?.fingerprint).toBe('digest')
+            expect((await db.execute('PRAGMA table_info(desktop_trigger_events)')).rows.map(row => row.name)).toEqual(expect.arrayContaining(['request_fingerprint', 'pending_tool_call_id', 'stop_request_id']))
+        } finally { db.close() }
     })
 })

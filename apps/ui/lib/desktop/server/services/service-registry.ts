@@ -2,7 +2,7 @@ import 'server-only'
 
 import {join} from 'node:path'
 import type {RegistryEntry} from '@/lib/services/registry'
-import {ownersOfRegistryJson,readConfinedFile,writeConfinedFile} from '../../../../../engine/src/desktop/skill-publication'
+import {ownersOfRegistryJson,prepareServiceRegistryRoot,readConfinedFile,writeConfinedFile} from '../../../../../engine/src/desktop/skill-publication'
 import type {ServiceInstall} from './store'
 
 type DesktopRegistryEntry=RegistryEntry&{desktopInstallationId?:string}
@@ -15,6 +15,7 @@ export function desktopServiceRegistryName(installationId:string):string{
 export function desktopServiceRegistryProjection(current:DesktopServiceRegistry|null,records:ServiceInstall[]):DesktopServiceRegistry{
  const services=Object.fromEntries(Object.entries(current?.services??{}).filter(([,entry])=>typeof entry.desktopInstallationId!=='string'))
  for(const record of records){
+  if(Object.hasOwn(services,record.key))throw new Error('Another service owns this registry entry; preserved')
   services[record.key]={
    status:record.state==='ready'?'active':'needs_config',config:{},authMethodId:record.plan.methodId,
    mcpServers:[desktopServiceRegistryName(record.id)],envKeys:[],skills:record.skills.map(skill=>skill.slug),
@@ -36,6 +37,7 @@ export async function syncDesktopServiceRegistry(skillsRoot:string,records:Servi
   for(const entry of Object.values(current.services))if('desktopInstallationId' in entry&&typeof entry.desktopInstallationId!=='string')throw new Error('Service ownership registry is invalid')
  }
  const projected=desktopServiceRegistryProjection(current,records)
+ await prepareServiceRegistryRoot(join(skillsRoot,'..','workspace'),signal)
  await writeConfinedFile(root,'services.json',`${JSON.stringify(projected,null,2)}\n`,{
   signal,createOnly:!existing,baseIdentity:existing?.identity,completeRead:!!existing,
  })

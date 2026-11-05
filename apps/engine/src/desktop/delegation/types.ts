@@ -39,8 +39,10 @@ export interface DelegationHost {
     cleanup(resource: Resource, outputs: readonly OwnedOutput[], signal: AbortSignal): Promise<void>
     publicText(source: Source, text: string): string
 }
-export type StopReceipt = { digest: string; delegation: DesktopDelegationSnapshot }
+export type StopReceipt = { digest: string; source: Pick<Source, 'parentAgentId' | 'parentSessionId'>; request: DesktopDelegationStop; delegation?: DesktopDelegationSnapshot }
 export interface ReceiptStore {
     read(requestId: string): Promise<StopReceipt | null>
+    /** Reserve the exact owner/task/revision before cancellation or cleanup. */
+    reserve(requestId: string, receipt: StopReceipt): Promise<StopReceipt>
     put(requestId: string, receipt: StopReceipt): Promise<void>
 }

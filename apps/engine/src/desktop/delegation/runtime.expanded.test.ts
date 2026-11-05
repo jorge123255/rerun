@@ -41,7 +41,7 @@ function memoryStore() {
 
 function receipts() {
     const rows = new Map<string, StopReceipt>()
-    const store: ReceiptStore = { async read(id) { return rows.get(id) ?? null }, async put(id, receipt) { rows.set(id, structuredClone(receipt)) } }
+    const store: ReceiptStore = { async reserve(id, receipt) { const prior = rows.get(id); if (prior && prior.digest !== receipt.digest) throw new Error('conflict'); if (!prior) rows.set(id, structuredClone(receipt)); return prior ?? receipt }, async read(id) { return rows.get(id) ?? null }, async put(id, receipt) { rows.set(id, structuredClone(receipt)) } }
     return store
 }
 
@@ -123,7 +123,7 @@ describe('bounded scheduling and durable progress', () => {
     it('reconciles a concurrent duplicate invocation and rejects a changed body without another launch', async () => {
         const { store } = memoryStore()
         const wait = deferred<string>()
-        const { host, calls } = hostWith({ async create() { return { settled: Promise.resolve(), async stop() {}, async run() { return wait.promise } } } })
+        const { host, calls } = hostWith({ async create() { calls.launches++; return { settled: Promise.resolve(), async stop() {}, async run() { return wait.promise } } } })
         const runtime = await ready(store, host)
         const input = { tasks: [{ task: 'only' }] }
         const first = runtime.execute(source, input, new AbortController().signal)
@@ -139,17 +139,18 @@ describe('bounded scheduling and durable progress', () => {
     it('refuses revoked admission before a reservation and fails a changed execution model honestly', async () => {
         const revoked = memoryStore()
         const { host: denied } = hostWith({ async current() { throw new Error('delegation grant revoked') } })
-        const deniedRuntime = createDelegationRuntime(denied.store, denied, receipts())
+        const deniedRuntime = createDelegationRuntime(revoked.store, denied, receipts())
         await deniedRuntime.reconcile()
         await expect(deniedRuntime.execute(source, { tasks: [{ task: 'no' }] }, new AbortController().signal)).rejects.toThrow('delegation grant revoked')
-        expect(await denied.store.list()).toEqual([])
+        expect(await revoked.store.list()).toEqual([])
 
         const { store } = memoryStore()
         let reads = 0
         const { host } = hostWith({ async current() { reads++; return reads === 1 ? authority : { ...authority, connectionId: 'changed' } } })
         const runtime = await ready(store, host)
         const snapshot = await runtime.execute(source, { tasks: [{ task: 'no fallback' }] }, new AbortController().signal)
-        expect(snapshot.tasks[0]).toMatchObject({ status: 'error', result: undefined })
+        expect(snapshot.tasks[0]?.status).toBe('error')
+        expect(snapshot.tasks[0]?.result).toBeUndefined()
     })
 
     it('fails provider startup without a fabricated answer and cleans only admitted resources', async () => {
@@ -164,28 +165,30 @@ describe('bounded scheduling and durable progress', () => {
 })
 
 describe('exact cancellation and partial outcomes', () => {
-    it('stops a queued sibling without cancelling the active task or allowing its late result to overwrite Stop', async () => {
+    it('stops a queued fifth sibling without cancelling four active tasks, then stops only the selected active task', async () => {
         const { store } = memoryStore()
-        const wait = deferred<string>()
+        const waits = new Map<string, ReturnType<typeof deferred<string>>>()
         const { host } = hostWith({ async create(_, input) {
-            return { settled: Promise.resolve(), async stop() { wait.reject(new Error('stopped')) }, async run(progress) {
+            const wait = deferred<string>(); waits.set(input.task, wait)
+            return { settled: Promise.resolve(), async stop() { wait.resolve('late result') }, async run(progress) {
                 await progress({ type: 'text', text: 'partial active work' })
                 return wait.promise
             } }
         } })
-        const receiptStore = receipts()
-        const runtime = await ready(store, host, receiptStore)
-        const executing = runtime.execute(source, { tasks: [{ task: 'active' }, { task: 'queued' }] }, new AbortController().signal)
-        await tick(); await tick()
-        const [current] = await runtime.list('session')
-        const queued = current!.tasks[1]!
+        const runtime = await ready(store, host)
+        const executing = runtime.execute(source, { tasks: ['active','two','three','four','queued'].map(task => ({task})) }, new AbortController().signal)
+        await until(() => waits.size === 4); await tick()
+        const [current] = await runtime.list('session'), queued = current!.tasks[4]!
+        expect(queued.status).toBe('queued')
         const stopped = await runtime.stop(source, { operation: 'stop-task', requestId: crypto.randomUUID(), delegationId: current!.delegationId, taskId: queued.taskId, expectedRevision: current!.revision })
-        expect(stopped.tasks[1]).toMatchObject({ status: 'stopped', cleanup: 'complete' })
-        expect(stopped.tasks[0].status).toBe('running')
+        expect(stopped.tasks[4]).toMatchObject({ status: 'stopped', cleanup: 'complete' })
+        expect(stopped.tasks.slice(0,4).every(task => task.status === 'running')).toBe(true)
         await runtime.stop(source, { operation: 'stop-task', requestId: crypto.randomUUID(), delegationId: current!.delegationId, taskId: current!.tasks[0]!.taskId, expectedRevision: stopped.revision })
+        for (const name of ['two','three','four']) waits.get(name)!.resolve(name)
         const snapshot = await executing
         expect(snapshot.tasks[0]).toMatchObject({ status: 'stopped', result: 'partial active work', partial: true })
-        expect(snapshot.tasks[1].status).toBe('stopped')
+        expect(snapshot.tasks.map(task => task.status)).toEqual(['stopped','done','done','done','stopped'])
+        expect(waits.has('queued')).toBe(false)
     })
 
     it('parent cancellation stops active and queued work and preserves bounded partial output', async () => {
@@ -198,14 +201,14 @@ describe('exact cancellation and partial outcomes', () => {
             } }
         } })
         const runtime = await ready(store, host)
-        const executing = runtime.execute(source, { tasks: [{ task: 'active' }, { task: 'never admitted' }] }, parent.signal)
+        const executing = runtime.execute(source, { tasks: ['active','two','three','four','never admitted'].map(task => ({task})) }, parent.signal)
         await tick(); await tick()
         parent.abort()
         const snapshot = await executing
-        expect(snapshot.tasks.map(task => task.status)).toEqual(['stopped', 'stopped'])
+        expect(snapshot.tasks.map(task => task.status)).toEqual(['stopped', 'stopped', 'stopped', 'stopped', 'stopped'])
         expect(snapshot.tasks[0]).toMatchObject({ result: 'kept partial answer', partial: true })
         expect(orderedDelegationResult(snapshot)).toContain('Partial output:\nkept partial answer')
-        expect(snapshot.tasks[1].startedAt).toBeUndefined()
+        expect(snapshot.tasks[4].startedAt).toBeUndefined()
     })
 
     it('rejects a wrong parent, task or revision without touching another lifecycle', async () => {
@@ -225,7 +228,7 @@ describe('restart, shutdown and resource replacement', () => {
         const { store } = memoryStore()
         await store.reserve({ version: 1, digest: 'old', resources: [{ token: 'owned', identity: 'inode' }], outputs: [null], snapshot: { ...source, delegationId: crypto.randomUUID(), revision: crypto.randomUUID(), tasks: [{ taskId: crypto.randomUUID(), title: 'unfinished', status: 'running', steps: 1, toolCalls: 0, failures: 0, calls: [], preview: 'partial', cleanup: 'pending' }] } })
         const resource = { token: 'owned', identity: 'inode' }
-        const { host, calls } = hostWith({ async recover() { return resource }, async admitOutputs() { return [{ identity: 'published', hash: 'sha256' }] } })
+        const { host, calls } = hostWith({ async recover() { return resource }, async admitOutputs() { calls.publications++; return [{ identity: 'published', hash: 'sha256' }] } })
         const runtime = createDelegationRuntime(store, host, receipts())
         await runtime.reconcile()
         const [snapshot] = await runtime.list('session')

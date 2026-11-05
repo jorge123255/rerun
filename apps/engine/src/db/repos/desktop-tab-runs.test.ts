@@ -3,7 +3,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
-import { contextTextPart } from '@rerun/contracts'
+import { contextTextPart, desktopStoredCoworkerMentions } from '@rerun/contracts'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(join(tmpdir(), 'rerun-first-turn-'))
 process.env.RERUN_HUB_BASE_URL = ''
@@ -103,4 +103,32 @@ test('a matching legacy single-run user row can be replayed without appending or
     expect(await startDesktopTabRun(id, input)).toBeNull()
     expect((await listMessages(id, input.sessionId)).map(row => row.id)).toEqual([saved!.id])
     await expect(startDesktopTabRun(id, { ...input, message: 'Changed legacy input' })).rejects.toMatchObject({ status: 409 })
+})
+
+
+test('selected coworker IDs survive restart and a same-text different-ID replay cannot change them', async () => {
+    const mentions=[{targetId:'local-peer-one',token:'@ada',start:0,end:4}]
+    const input={...turn(),message:'@ada review this',coworkerMentions:mentions}
+    const saved=await startDesktopTabRun(id,input)
+    closeSystemDb(id)
+    expect(await getDesktopTabRun(id,input)).toBe(true)
+    expect(desktopStoredCoworkerMentions(JSON.parse(saved!.contentJson),true)).toEqual(mentions)
+    await expect(getDesktopTabRun(id,{...input,coworkerMentions:[{...mentions[0],targetId:'local-peer-two'}]})).rejects.toMatchObject({status:409})
+    await expect(getDesktopTabRun(id,{...input,coworkerMentions:[]})).rejects.toMatchObject({status:409})
+    const {client}=await getSystemDb(id)
+    await client.execute({sql:'DELETE FROM desktop_first_turns WHERE run_id=?',args:[input.runId]})
+    await expect(getDesktopTabRun(id,{...input,coworkerMentions:[]})).rejects.toMatchObject({status:409})
+    expect(await getDesktopTabRun(id,input)).toBe(true)
+})
+
+test('queued receipt and saved prompt bind the same selected IDs after a closed database',async()=>{
+    const {createSession}=await import('./sessions.js')
+    const {reserveDesktopQueuedTurn,getDesktopQueuedTurn}=await import('./desktop-queued-turns.js')
+    const session=await createSession(id)
+    const input={runId:crypto.randomUUID(),sessionId:session.id,message:'@ada review this',coworkerMentions:[{targetId:'local-peer-one',token:'@ada',start:0,end:4}]}
+    const saved=await reserveDesktopQueuedTurn(id,input)
+    closeSystemDb(id)
+    expect(await getDesktopQueuedTurn(id,input)).toBe(true)
+    expect(desktopStoredCoworkerMentions(JSON.parse(saved.contentJson),true)).toEqual(input.coworkerMentions)
+    await expect(getDesktopQueuedTurn(id,{...input,coworkerMentions:[{...input.coworkerMentions[0],targetId:'local-peer-two'}]})).rejects.toMatchObject({status:409})
 })

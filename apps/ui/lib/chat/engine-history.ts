@@ -1,3 +1,4 @@
+import { desktopStoredCoworkerMentions, desktopCoworkerMentionFieldsOf, type DesktopCoworkerMentionFields } from '@rerun/contracts'
 import { desktopQuickReplyInputOf } from '@/lib/desktop/quick-replies'
 import type { EngineMessage } from '@/lib/engine/types'
 import { desktopSummaryMetadata, isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
@@ -25,7 +26,7 @@ type ToolInvocationPart = {
     output?: unknown
 }
 type UIMessagePart = { type: 'file'; url: string; mediaType: string; filename: string } | TextPart | ToolInvocationPart | DesktopSourcePart | { type: 'step-start' } | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
-export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: DesktopAttachmentFields & { authorId?: string; createdAt?: string } }
+export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: DesktopAttachmentFields & DesktopCoworkerMentionFields & { authorId?: string; createdAt?: string } }
 
 function safeParse(json: string | null | undefined): unknown {
     if (!json) return null
@@ -91,7 +92,7 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
                 if (!image.success || part.mediaType !== image.data.mediaType || part.data.length > 4 * Math.ceil(image.data.byteLength / 3) || !/^[A-Za-z0-9+/]+={0,2}$/.test(part.data)) continue
                 images.push({ type: 'file', url: `data:${image.data.mediaType};base64,${part.data}`, mediaType: image.data.mediaType, filename: image.data.name })
             }
-            result.push({ id: `engine-${m.id}`, role: 'user', parts: [{ type: 'text', text: extractText(content) }, ...images], metadata: { createdAt: m.createdAt, ...(m.authorId && { authorId: m.authorId }), ...attachment } })
+            result.push({ id: `engine-${m.id}`, role: 'user', parts: [{ type: 'text', text: extractText(content) }, ...images], metadata: { createdAt: m.createdAt, ...(m.authorId && { authorId: m.authorId }), ...attachment, ...desktopCoworkerMentionFieldsOf(desktopStoredCoworkerMentions(content)) } })
             continue
         }
 

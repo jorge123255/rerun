@@ -43,7 +43,7 @@ async function bounded(response: Response, signal: AbortSignal): Promise<unknown
     return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-export async function replaceDesktopCoworkerCallAllows(db: Client, callerAgentId: string, targetAgentIds: readonly string[]): Promise<void> {
+export async function replaceDesktopCoworkerCallAllows(db: Client, callerAgentId: string, targetAgentIds: readonly string[], expected?: readonly string[]): Promise<void> {
     await initializeDesktopCoworkerCalls(db)
     const unique = [...new Set(targetAgentIds)]
     if (unique.length !== targetAgentIds.length) throw new DesktopHttpError(400, 'Each allowed coworker can be listed once.')
@@ -52,6 +52,10 @@ export async function replaceDesktopCoworkerCallAllows(db: Client, callerAgentId
     try {
         const caller = await tx.execute({ sql: 'SELECT id FROM desktop_agents WHERE id = ? AND workspace_id = 1', args: [callerAgentId] })
         if (!caller.rows.length) throw new DesktopHttpError(404, 'Coworker not found.')
+        const saved = (await tx.execute({ sql: 'SELECT target_agent_id FROM desktop_coworker_call_allows WHERE caller_agent_id=? ORDER BY target_agent_id', args: [callerAgentId] })).rows.map(row => String(row.target_agent_id))
+        const same = (ids: readonly string[]) => JSON.stringify([...ids].sort()) === JSON.stringify(saved)
+        if (same(unique)) { await tx.commit(); return }
+        if (expected && !same(expected)) throw new DesktopHttpError(409, 'Allowed coworkers changed. Reopen Tools before trying again.')
         for (const id of unique) {
             const found = await tx.execute({ sql: 'SELECT id FROM desktop_agents WHERE id = ? AND workspace_id = 1', args: [id] })
             if (!found.rows.length) throw new DesktopHttpError(400, 'An allowed coworker was not found.')

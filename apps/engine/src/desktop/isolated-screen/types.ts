@@ -111,6 +111,7 @@ export type ScreenReconcile = {
 export type IsolatedScreenService = {
     status(owner: ScreenOwner, signal: AbortSignal): Promise<ScreenStatus>
     ensure(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen>
+    running(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen>
     navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal, exports?: ScreenNavigationExport): Promise<ScreenPage>
     act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal): Promise<ScreenShot>
     startTakeover(target: ScreenTarget, signal: AbortSignal): Promise<ScreenLease>

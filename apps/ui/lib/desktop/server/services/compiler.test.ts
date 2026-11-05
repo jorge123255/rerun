@@ -45,3 +45,10 @@ it('rejects literal credential and derived placeholder material in bundled outpu
  const manifest=serviceManifestSchema.parse({...microsoft,skills:[{name:'usage',description:'Static',body:'${basic:input.USER:input.TOKEN}'}]})
  expect(()=>compileLocalService(manifest,'default',{}, {id:'default',supported:true})).toThrow('skill template')
 })
+
+
+it('rejects literal credentials even when JSON serialization would escape them',()=>{
+ const token='fixture"quoted-key'
+ const manifest=serviceManifestSchema.parse({...microsoft,skills:[{name:'usage',description:'Static',body:`Never publish ${token}`}],authMethods:[{id:'token',kind:'key',inputs:[{key:'TOKEN',label:'Token',type:'password',secret:true,required:true}],mcpServers:[{name:'fixture',transport:'http',url:'https://example.com/mcp',headers:{Authorization:'Bearer ${input.TOKEN}'}}]}]})
+ expect(()=>compileLocalService(manifest,'token',{TOKEN:token},{id:'token',supported:true})).toThrow('skill template')
+})

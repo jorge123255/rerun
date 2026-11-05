@@ -29,6 +29,7 @@ export function DesktopCoworkerTriggersPanel({
     templateLock?: DesktopTriggerTemplateLockState
 }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
+    const editing = useRef({ dirty: false, busy: false })
     const scope = `${agent.id}:${open}`
     const latest = useRef({ scope, setOpen, onOpenChat })
     const cycle = useRef({ scope })
@@ -41,19 +42,20 @@ export function DesktopCoworkerTriggersPanel({
     }, [captured])
 
     return (
-        <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
+        <Dialog open={open} onOpenChange={next => { if (!next && (editing.current.busy || (editing.current.dirty && !window.confirm('Discard unsaved trigger changes?')))) return; setOpen(next) }} asSheet={false}>
             <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Triggers</Button></DialogTrigger>
             {open && (
                 <DialogContent className="flex h-[80dvh] max-h-[700px] w-full flex-col sm:max-w-3xl">
                     <DialogHeader>
                         <DialogTitle>Triggers</DialogTitle>
                         <DialogDescription>
-                            {agent.name}&apos;s webhook URLs. External delivery still needs a hosting decision; copying or previewing a URL never starts a run.
+                            {agent.name}&apos;s webhook URLs. These URLs work only on this Mac. Copying or previewing a URL never starts a run.
                         </DialogDescription>
                     </DialogHeader>
                     <DesktopCoworkerTriggers
                         key={agent.id}
                         agentId={agent.id}
+                        onEditStateChange={state => { editing.current = state }}
                         ingressAvailable={ingressAvailable}
                         modelCatalog={modelCatalog}
                         templateLock={templateLock}

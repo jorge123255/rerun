@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
     DESKTOP_COWORKER_CALL_INTERRUPTED_REASON,
     DESKTOP_COWORKER_CALL_MAX_FANOUT,
@@ -501,4 +501,23 @@ describe('desktop coworker call launch and recovery boundaries', () => {
         await expect(store.insertReserved({ ...existing, requestFingerprint: desktopCoworkerCallFingerprint(call({ context: 'different context' })) })).rejects.toThrow('request changed')
         expect(store.rows()).toEqual([existing])
     })
+})
+
+
+it.each(['error', 'cancelled'] as const)('retains bounded partial text for a dispatched child ending %s without re-running it', async kind => {
+    const child = harness({ startChildRun: async input => {
+        await input.onRunCreated('engine-child-run')
+        return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run',
+            settled: Promise.resolve(kind === 'error' ? { kind, error: 'Provider stopped' } : { kind }),
+            result: { fullStream: streamOf([{ type: 'text-delta', text: 'Useful partial answer token: supersecretvalue' }]) } } }
+    } })
+    const input = call({ wait: false })
+    expect((await child.runtime.execute(input)).text).toContain('Message dispatched')
+    await vi.waitFor(() => expect(child.store.rows()[0]?.phase).toBe('terminal'))
+    const saved = child.store.rows()[0]!
+    expect(saved.status).toBe(kind)
+    expect(saved.resultText).toContain('Useful partial answer')
+    expect(saved.resultText).not.toContain('supersecretvalue')
+    expect((await child.runtime.execute(input)).text).toBe(saved.resultText)
+    expect(child.sessions).toHaveLength(1)
 })

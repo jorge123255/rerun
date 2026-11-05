@@ -28,7 +28,7 @@ describe('openDesktopDatabase', () => {
         old.close()
         const db = await openDesktopDatabase(root)
         expect((await db.execute('SELECT * FROM desktop_composer_drafts')).rows).toEqual([
-            { agent_id: 'owner', tab_uid: 'tab', revision: 7, text: 'Keep this draft', attachment_path: 'notes/one.md', attachment_paths: null, attachment_items: null, updated_at: 'before' },
+            { agent_id: 'owner', tab_uid: 'tab', revision: 7, text: 'Keep this draft', attachment_path: 'notes/one.md', attachment_paths: null, attachment_items: null, coworker_mentions: null, updated_at: 'before' },
         ])
         await db.execute({ sql: 'UPDATE desktop_composer_drafts SET attachment_paths = ?', args: [JSON.stringify(['notes/one.md', 'notes/two.txt'])] })
         await closeDesktopDatabase(root)

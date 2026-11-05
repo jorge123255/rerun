@@ -25,8 +25,8 @@ export function useDesktopComposerDraft(agentId: string, tabUid: string | undefi
         if (!record || !state.loaded) { restored.current = null; return }
         if (restored.current === record) return
         restored.current = record
-        restoreRef.current({ text: state.text, ...desktopAttachmentFieldsOf(desktopAttachmentPathsOf(state as DesktopAttachmentFields)) })
-    }, [record, state.loaded, state.text, state.attachmentPath, state.attachmentPaths, state.attachmentItems])
+        restoreRef.current({ text: state.text, coworkerMentions: state.coworkerMentions, ...desktopAttachmentFieldsOf(desktopAttachmentPathsOf(state as DesktopAttachmentFields)) })
+    }, [record, state.loaded, state.text, state.attachmentPath, state.attachmentPaths, state.attachmentItems, state.coworkerMentions])
     const update = useCallback((draft: ComposerValue) => { if (record) updateDesktopDraft(record, draft) }, [record])
     const clear = useCallback((version: number) => !record || clearDesktopDraft(record, version), [record])
     const flush = useCallback(async () => {

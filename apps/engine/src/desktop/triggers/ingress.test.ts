@@ -24,13 +24,17 @@ function record(partial: Partial<DesktopTriggerRecord> = {}): DesktopTriggerReco
         model: null,
         body: 'Handle the event.',
         createdAt: new Date().toISOString(),
-        revision: 'r1',
         ...partial,
     }
 }
 
 function authority(trigger: DesktopTriggerRecord, opts: { setup?: boolean; grant?: boolean; deleting?: boolean; enabled?: boolean } = {}): DesktopTriggerAuthority {
-    const start = vi.fn(async () => ({ runId: 'run-1', sessionId: 'sess-1' }))
+    let nextRun = 0
+    const start = vi.fn(async (input: Parameters<DesktopTriggerAuthority['startTriggerRun']>[0]) => {
+        const suffix = ++nextRun, sessionId = `sess-${suffix}`, runId = `run-${suffix}`
+        await input.onSessionCreated(sessionId); await input.onRunCreated(runId, sessionId); await input.assertActive()
+        return { runId, sessionId, settled: Promise.resolve({ kind: 'done' as const }) }
+    })
     return {
         assertActive: () => {},
         resolveOwnerByEngineId: async () => ({ localAgentId: 'local-1', engineAgentId: 'eng-1', enabled: opts.enabled !== false, deleting: opts.deleting === true }),
@@ -41,7 +45,7 @@ function authority(trigger: DesktopTriggerRecord, opts: { setup?: boolean; grant
         cancelExactRun: async () => {},
         readRun: async () => null,
         readSession: async () => null,
-        adoptTriggerSession: async () => ({ agentId: 'local-1', engineAgentId: 'eng-1', sessionId: 'local-sess', engineSessionId: 'sess-1', tabUid: 'trigger:local-sess', title: 'Hook', runId: 'run-1' }),
+        adoptTriggerSession: async input => ({ agentId: input.localAgentId, engineAgentId: input.engineAgentId, sessionId: `local-${input.engineSessionId}`, engineSessionId: input.engineSessionId, tabUid: `trigger:local-${input.engineSessionId}`, title: 'Hook', runId: input.runId }),
         routeHuman: async () => {},
         ingressOrigin: () => ({ enabled: false, origin: null, bindHost: '127.0.0.1', bindPort: null, hostingDecision: 'unresolved' }),
         listTriggers: async () => [trigger],
@@ -95,10 +99,10 @@ describe('desktop trigger ingress', () => {
         await store.initialize('eng-1')
         const auth = authority(record())
         const ingress = createDesktopTriggerIngressHandler({ authority: auth, store })
-        const mk = (attempt?: string) => ingress.handle(new Request('http://127.0.0.1/t', {
+        const mk = (attempt?: string, body = '{"a":1}') => ingress.handle(new Request('http://127.0.0.1/t', {
             method: 'POST',
             headers: { 'content-type': 'application/json', ...(attempt ? { 'x-desktop-trigger-attempt': attempt } : {}) },
-            body: '{"a":1}',
+            body,
         }), { engineAgentId: 'eng-1', slug: 'hook', token: 'secret-token-value-0001' })
         const a = await mk()
         const b = await mk()
@@ -115,6 +119,8 @@ describe('desktop trigger ingress', () => {
         const dj = await d.json() as { eventId: string; replay: boolean }
         expect(cj.eventId).toEqual(dj.eventId)
         expect(dj.replay).toBe(true)
+        expect((auth as any).start).toHaveBeenCalledTimes(3)
+        expect((await mk('same-attempt', '{"a":2}')).status).toBe(409)
         expect((auth as any).start).toHaveBeenCalledTimes(3)
     })
 

@@ -342,6 +342,7 @@ test('coworker drill lists only the supported original Open tabs before its save
         ['tab-memories', 'Knowledge', 'What this coworker remembers'],
         ['tab-files', 'Files', "This coworker's files"],
         ['tab-scheduled', 'Routines', 'Recurring and scheduled tasks'],
+        ['tab-triggers', 'Triggers', 'URLs that start a run when called on this Mac'],
         ['tab-tools', 'Capabilities', 'Tools this coworker can use'],
         ['tab-monitoring', 'Monitoring', 'Usage, cost and activity for this coworker'],
         ['tab-logs', 'Logs', 'Activity and run logs'],
@@ -349,7 +350,7 @@ test('coworker drill lists only the supported original Open tabs before its save
     ])
     expect(sections[0]!.rows.every(row => row.leading.kind === 'icon')).toBe(true)
     expect(sections.slice(1).map(section => section.heading)).toEqual(['Open chats', 'Recent conversations'])
-    for (const absent of ['Triggers', 'To handle', 'Install']) {
+    for (const absent of ['To handle', 'Install']) {
         expect(sections[0]!.rows.some(row => row.label === absent)).toBe(false)
     }
     await clickRow('Knowledge')

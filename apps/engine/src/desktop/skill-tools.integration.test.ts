@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { RunContext } from '../runtime/context.js'
 import { prepareSkillHelperFixture } from './skill-publication.test-support.js'
+import { bindDesktopSkillOwnerReader } from './service-skills/authority.js'
 import { acquireSkillLease } from './skill-publication-native.js'
 import { publishNewSkill, setSkillPublishHooksForTests } from './skill-publication.js'
 
@@ -23,7 +24,7 @@ const id = 'skills-qa'
 const config = () => agentConfigSchema.parse({ name: 'Skills QA', tools: { desktopToolGrants: { skills: true } } })
 const context = (value = config(), signal?: AbortSignal) => ({ agent: { id, config: value }, sessionId: 'fixture-session', abortSignal: signal } as RunContext)
 const options = { toolCallId: 'fixture-call', messages: [] }
-beforeAll(async () => { fixture = await prepareSkillHelperFixture(); process.env.RERUN_DESKTOP_RENAME_HELPER = fixture.path }, 30_000)
+beforeAll(async () => { bindDesktopSkillOwnerReader(async () => new Map()); fixture = await prepareSkillHelperFixture(); process.env.RERUN_DESKTOP_RENAME_HELPER = fixture.path }, 30_000)
 beforeEach(async () => {
     await mkdir(workspaceDir(id), { recursive: true })
     await writeAgentConfig(id, config())

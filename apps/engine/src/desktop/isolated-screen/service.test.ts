@@ -168,7 +168,7 @@ class FakeDocker implements DockerClient {
         }
         if (body.op === 'navigate') {
             const url = String(body.url)
-            return encodeOk({ status: 200, finalUrl: url, text: 'Hello', html: '<p>secret</p>', links: [{ href: 'https://example.com/a', text: 'A' }] })
+            return encodeOk({ pageOptionsVersion: 1, status: 200, finalUrl: url, text: 'Hello', html: '<p>secret</p>', truncated: false, links: body.links ? [{ href: 'https://example.com/a', text: 'A' }] : [], linksTruncated: false, htmlBytes: 0, screenshotBytes: 0, screenshotWidth: 0, screenshotHeight: 0, exportErrors: [] })
         }
         if (body.op === 'location') {
             if (this.locationFails) return encodeFailure('no tab', false)
@@ -225,6 +225,17 @@ async function boot(box = harness()) {
     const screen = await box.service.ensure(owner, signal)
     return { ...box, signal, screen, target: screen.target }
 }
+
+it('running inspection refuses absent/stopped guests without creating or restarting them', async () => {
+    const box = harness(), signal = new AbortController().signal
+    await expect(box.service.running(owner, signal)).rejects.toThrow()
+    expect(box.docker.containers.size).toBe(0)
+    const screen = await box.service.ensure(owner, signal)
+    expect((await box.service.running(owner, signal)).target).toEqual(screen.target)
+    box.docker.containers.get(containerName(owner.engineAgentId))!.state = 'exited'
+    await expect(box.service.running(owner, signal)).rejects.toThrow()
+    expect(box.docker.containers.get(containerName(owner.engineAgentId))!.state).toBe('exited')
+})
 
 describe('isolated screen prerequisites', () => {
     it('reports a missing image without starting a container', async () => {
@@ -428,8 +439,8 @@ describe('isolated screen lifecycle', () => {
 describe('isolated screen actions', () => {
     it('navigates over http and drops page html', async () => {
         const box = await boot()
-        const page = await box.service.navigate(box.target, { url: 'https://example.com/hello' }, box.signal)
-        expect(page).toEqual({ status: 200, finalUrl: 'https://example.com/hello', text: 'Hello', truncated: false, links: [{ href: 'https://example.com/a', text: 'A' }], wall: null })
+        const page = await box.service.navigate(box.target, { url: 'https://example.com/hello', links: true }, box.signal)
+        expect(page).toEqual({ status: 200, finalUrl: 'https://example.com/hello', text: 'Hello', truncated: false, links: [{ href: 'https://example.com/a', text: 'A' }], wall: null, outcome: 'ok', linksTruncated: false })
         expect(page).not.toHaveProperty('html')
         const before = box.docker.execs.length
         for (const url of ['file:///etc/passwd', 'javascript:alert(1)', 'data:text/html,hi', 'about:blank', 'chrome://settings', 'https://user:pass@example.com/', 'http://.evil', 'http://a..b']) {

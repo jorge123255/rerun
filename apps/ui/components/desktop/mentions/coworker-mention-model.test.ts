@@ -68,7 +68,7 @@ describe('send revalidation', () => {
     })
 
     test('a stale range or overlapping records refuse admission', () => {
-        expect(revalidateDesktopCoworkerMentions('@ada changed', [selected], [target()])).toMatchObject({ ok: false, code: 'range' })
+        expect(revalidateDesktopCoworkerMentions('@adaX changed', [selected], [target()])).toMatchObject({ ok: false, code: 'range' })
         expect(revalidateDesktopCoworkerMentions('@ada', [selected, { ...selected, targetId: 'peer-2' }], [target(), target({ agentId: 'peer-2' })])).toMatchObject({ ok: false, code: 'range' })
     })
 

@@ -58,7 +58,7 @@ test('server send validation performs a fresh read-only ID check and never dispa
 })
 
 test.each([
-    ['edited range', '@ada edited', [{ targetId: 'peer-1', token: '@ada', start: 0, end: 4 }], 'range'],
+    ['edited range', '@adaX edited', [{ targetId: 'peer-1', token: '@ada', start: 0, end: 4 }], 'range'],
     ['deleted target', '@ada review', [{ targetId: 'missing', token: '@ada', start: 0, end: 4 }], 'target'],
     ['disabled target', '@ada review', [{ targetId: 'disabled', token: '@ada', start: 0, end: 4 }], 'target'],
 ] as const)('server send refuses a %s without granting or calling', async (_reason, text, mentions, code) => {

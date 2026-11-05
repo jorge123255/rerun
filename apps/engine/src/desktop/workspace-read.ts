@@ -1,3 +1,4 @@
+import { readDesktopBrowserExportCache } from './isolated-screen/export-client.js'
 import { DESKTOP_ATTACHMENT_MAX_BYTES, type DesktopRerunGrantId } from '@rerun/contracts'
 import { tool, type ToolSet } from 'ai'
 import { mkdir, opendir, realpath, writeFile } from 'node:fs/promises'
@@ -175,7 +176,14 @@ export function desktopWorkspaceReadTools(ctx: RunContext): ToolSet {
     if (hasDesktopToolGrant(ctx.agent.config, 'workspaceRead')) result.fs_read = tool({
         description: 'Read a UTF-8 file from this coworker’s workspace. Use a visible relative path. Files can be up to 32 KiB.',
         inputSchema: z.object({ path: z.string().describe('Path relative to the root') }),
-        execute: ({ path }) => readWorkspaceText(ctx, path, 'workspaceRead'),
+        execute: async ({ path }) => {
+            if (!path.startsWith('.rerun/pages/')) return readWorkspaceText(ctx, path, 'workspaceRead')
+            await requireDesktopToolGrant(ctx, 'workspaceRead')
+            if (!ctx.runId || !ctx.abortSignal) throw new WorkspaceReadError(unavailable)
+            const saved = await readDesktopBrowserExportCache({ engineAgentId: ctx.agent.id, sessionId: ctx.sessionId, runId: ctx.runId }, path, ctx.abortSignal)
+            await requireDesktopToolGrant(ctx, 'workspaceRead')
+            return saved.content
+        },
     })
     if (hasDesktopToolGrant(ctx.agent.config, 'workspaceList')) result.fs_list = tool({
         description: 'List visible entries in a coworker workspace directory. Directories end in a slash.',

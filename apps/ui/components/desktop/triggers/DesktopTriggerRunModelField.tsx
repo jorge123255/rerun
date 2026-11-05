@@ -32,10 +32,10 @@ export function DesktopTriggerRunModelField({ id, value, onChange, catalog, help
         return (
             <Field
                 label="Model"
-                helperText={catalog.unavailableReason ?? 'Local model catalog is unavailable for Triggers. This trigger follows the coworker model until root wires the catalog.'}
+                helperText={catalog.unavailableReason ?? 'The model list is currently unavailable. The saved model selection is preserved.'}
             >
                 <p className="flex min-h-8 items-center rounded-md border border-dashed border-input px-3 text-xs text-muted-foreground">
-                    Follow coworker model (catalog unavailable)
+                    {value.model ? `${value.model} (model list unavailable)` : 'Follow coworker model'}
                 </p>
             </Field>
         )
@@ -52,7 +52,7 @@ export function DesktopTriggerRunModelField({ id, value, onChange, catalog, help
         <Field
             label="Model"
             htmlFor={id}
-            helperText={helperText ?? 'The model this trigger runs under when it fires. Requires the provider to be available on this Mac. Null inherits the coworker model.'}
+            helperText={helperText ?? 'The model this trigger runs under when it fires. Requires the provider to be available on this Mac. Choose Coworker default to follow its model.'}
         >
             <Select
                 value={encodeTriggerRunModelPick(value)}

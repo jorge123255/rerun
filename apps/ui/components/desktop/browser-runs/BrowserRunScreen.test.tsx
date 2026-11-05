@@ -112,7 +112,7 @@ test('a run change remounts a fresh observer; Stop (trusted null) releases only 
 
 test('a late ticket after unmount is dropped', async () => {
     let resolve!: (t: { socketUrl: string; expiresAt: string }) => void
-    await render({ transport: { requestWatchTicket: vi.fn(() => new Promise(r => { resolve = r })) } })
+    await render({ transport: { requestWatchTicket: vi.fn(() => new Promise<{ socketUrl: string; expiresAt: string }>(r => { resolve = r })) } })
     await act(async () => root!.unmount()); root = undefined
     resolve({ socketUrl: 'ws://127.0.0.1/late', expiresAt: new Date(Date.now() + 60_000).toISOString() })
     await act(async () => { await new Promise(r => setTimeout(r, 0)) })

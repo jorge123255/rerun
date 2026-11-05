@@ -9,6 +9,7 @@ import { PanelGrid, PanelScroller, PanelSection } from '@/components/ui/panel-li
 import { PANEL_CARD } from '@/components/ui/panel-row'
 import { Switch } from '@/components/ui/switch'
 import type { CoworkerTools, CoworkerToolPatch, CoworkerToolRow, DesktopToolGroup } from '@/lib/desktop/coworker-tools'
+import { DesktopCoworkerCallTargets } from './coworker-calls/DesktopCoworkerCallTargets'
 import { getToolMeta } from '@/lib/tool-meta'
 import { ChevronDownIcon, FolderIcon, PencilIcon, TerminalIcon, GlobeIcon, WandSparklesIcon, WrenchIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -26,7 +27,7 @@ async function requestTools(url: string, init: RequestInit): Promise<CoworkerToo
 
 const nativeIcons = { workspaceRead: FolderIcon, workspaceWrite: PencilIcon, shell: TerminalIcon, webSearch: GlobeIcon, codeMode: TerminalIcon }
 
-function CapabilityCard({ group, row, saving, toggle }: { group: DesktopToolGroup; row: CoworkerToolRow; saving: boolean; toggle: (patch: CoworkerToolPatch) => void }) {
+function CapabilityCard({ agentId, group, row, saving, toggle }: { agentId: string; group: DesktopToolGroup; row: CoworkerToolRow; saving: boolean; toggle: (patch: CoworkerToolPatch) => void }) {
     const id = useId()
     const icon = group === 'codex' ? nativeIcons[row.id as keyof typeof nativeIcons] ?? WrenchIcon : row.tools[0] ? getToolMeta(row.tools[0]).icon : WrenchIcon
     return <div className={cn('flex flex-col gap-2 p-3', PANEL_CARD)}>
@@ -42,6 +43,7 @@ function CapabilityCard({ group, row, saving, toggle }: { group: DesktopToolGrou
                 {row.unavailableReason && <p className="mt-1">{row.unavailableReason}</p>}
             </div>
         </div>
+        {group === 'rerun' && row.id === 'callAgent' && row.enabled && <DesktopCoworkerCallTargets key={agentId} agentId={agentId} />}
     </div>
 }
 
@@ -75,8 +77,8 @@ function SelfImprovementCard({ row, nested, saving, toggle }: {
     </div>
 }
 
-function ToolSections({ tools, unavailable = false, saving, toggle }: {
-    tools: CoworkerTools; unavailable?: boolean; saving: boolean; toggle: (patch: CoworkerToolPatch) => void
+function ToolSections({ agentId, tools, unavailable = false, saving, toggle }: {
+    agentId: string; tools: CoworkerTools; unavailable?: boolean; saving: boolean; toggle: (patch: CoworkerToolPatch) => void
 }) {
     return (['rerun', 'codex'] as const).map(group => {
         // A previously granted tool whose prerequisite changed stays visible so it can be revoked.
@@ -88,8 +90,8 @@ function ToolSections({ tools, unavailable = false, saving, toggle }: {
         return <PanelSection key={group} label={group === 'rerun' ? 'Rerun tools' : 'Native Codex tools'}>
             {group === 'codex' && !unavailable && <p className="text-xs text-muted-foreground">These permissions apply when this coworker uses ChatGPT (Codex).</p>}
             <PanelGrid className="grid-cols-1 sm:grid-cols-2">
-                {grid.map(row => <CapabilityCard key={row.id} group={group} row={row} saving={saving} toggle={toggle} />)}
-                {group === 'rerun' && !selfRow && selfNested.map(row => <CapabilityCard key={row.id} group={group} row={row} saving={saving} toggle={toggle} />)}
+                {grid.map(row => <CapabilityCard key={row.id} agentId={agentId} group={group} row={row} saving={saving} toggle={toggle} />)}
+                {group === 'rerun' && !selfRow && selfNested.map(row => <CapabilityCard key={row.id} agentId={agentId} group={group} row={row} saving={saving} toggle={toggle} />)}
             </PanelGrid>
             {group === 'rerun' && selfRow && <div className="mt-3">
                 <SelfImprovementCard row={selfRow} nested={selfNested} saving={saving} toggle={toggle} />
@@ -130,7 +132,7 @@ function ToolsPanel({ agent, saving, setSaving }: { agent: DesktopAgentView; sav
     const unavailableCount = tools ? [...tools.rerun, ...tools.codex].filter(row => !row.available && !row.enabled).length : 0
     return <PanelScroller className="space-y-4 px-1">
         {tools ? <>
-            <ToolSections tools={tools} saving={saving} toggle={toggle} />
+            <ToolSections agentId={agent.id} tools={tools} saving={saving} toggle={toggle} />
             {unavailableCount > 0 && <Collapsible>
                 <CollapsibleTrigger asChild>
                     <Button type="button" variant="ghost" className="group w-full justify-between">
@@ -139,7 +141,7 @@ function ToolsPanel({ agent, saving, setSaving }: { agent: DesktopAgentView; sav
                     </Button>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-2 space-y-4">
-                    <ToolSections tools={tools} unavailable saving={saving} toggle={toggle} />
+                    <ToolSections agentId={agent.id} tools={tools} unavailable saving={saving} toggle={toggle} />
                 </CollapsibleContent>
             </Collapsible>}
         </> : !error && <p role="status" className="text-sm text-muted-foreground">Loading tools…</p>}

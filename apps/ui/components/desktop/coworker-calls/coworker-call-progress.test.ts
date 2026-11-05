@@ -6,7 +6,7 @@ const call = (status: DesktopCoworkerCallSnapshot['status']): DesktopCoworkerCal
     callId: '00000000-0000-4000-8000-000000000001', revision: '1', parentAgentId: 'parent-agent', parentSessionId: 'parent-chat', parentRunId: 'parent-run', toolCallId: 'tool-call-1',
     targetAgentId: 'target-agent', targetSessionId: 'target-chat', targetName: 'Ada', wait: true, status,
     createdAt: '2026-11-05T10:00:00.000Z', updatedAt: '2026-11-05T10:05:00.000Z',
-    progress: { steps: 4, toolCalls: 3, failures: 1, preview: 'Found the answer. More detail follows.', calls: [{ tool: 'web_fetch', status: 'completed' }, { tool: 'shell_exec', status: 'failed' }] },
+    progress: { steps: 4, toolCalls: 3, failures: 1, preview: 'Found the answer. More detail follows.', calls: [{ tool: 'web_fetch', status: 'completed' }, { tool: 'shell_exec', status: 'error' }] },
 })
 
 test.each([
@@ -29,7 +29,7 @@ test('preserves progress without inventing durations or live timestamps after a 
     const task = desktopCoworkerCallProgress(call('running')).tasks[0]
     expect(task.calls).toEqual([
         { tool: 'web_fetch', summary: 'completed' },
-        { tool: 'shell_exec', summary: 'failed', failed: true },
+        { tool: 'shell_exec', summary: 'error', failed: true },
     ])
     expect(task.startedAt).toBeUndefined()
     expect(task.finishedAt).toBeUndefined()

@@ -4,6 +4,7 @@ export type DesktopScreenStatusView = {
     state: DesktopScreenState
     reason?: string
     driving: boolean
+    running?: boolean
     width?: number
     height?: number
 }
@@ -26,8 +27,8 @@ export function fetchDesktopScreenStatus(agentId: string, signal?: AbortSignal):
     return call(agentId, { method: 'GET', signal, cache: 'no-store' })
 }
 
-export function requestDesktopScreenTicket(agentId: string, mode: 'watch' | 'drive', signal?: AbortSignal, lease?: string): Promise<DesktopScreenTicketView> {
-    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'view', mode, ...(lease && { lease }) }), signal })
+export function requestDesktopScreenTicket(agentId: string, mode: 'watch' | 'drive', signal?: AbortSignal, lease?: string, requireRunning = false): Promise<DesktopScreenTicketView> {
+    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'view', mode, ...(lease && { lease }), ...(requireRunning && { requireRunning: true }) }), signal })
 }
 
 export function startDesktopScreenTakeover(agentId: string, url?: string, signal?: AbortSignal): Promise<{ lease: string }> {

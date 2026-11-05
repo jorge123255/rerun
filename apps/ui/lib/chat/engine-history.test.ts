@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { workspaceAttachmentPart } from '@rerun/contracts'
+import { workspaceAttachmentPart, desktopCoworkerMentionContextParts } from '@rerun/contracts'
 import { buildAttachmentsRef } from '@/lib/chat/attachments-marker'
 import { buildInstallMessage } from '@/lib/chat/install-marker'
 import { MAX_TOOL_OUTPUT_CHARS, type HistoryMessage, publicDesktopHistory, toApiMessages, transformEngineMessages } from '@/lib/chat/engine-history'
@@ -408,4 +408,13 @@ it('hydrates durable desktop image parts without reopening mutable workspace pat
     expect(message.metadata?.attachmentItems).toEqual([{ type: 'text', path: 'before.md' }, { type: 'image', image }, { type: 'text', path: 'after.txt' }])
     expect(message.parts).toEqual([{ type: 'text', text: 'Read these' }, { type: 'file', url: 'data:image/png;base64,AQID', mediaType: 'image/png', filename: 'reference.png' }])
     expect(JSON.stringify(message)).not.toContain('Private reference text')
+})
+
+
+it('desktop history preserves immutable coworker mention metadata without showing hidden routing context',()=>{
+    const text='@ada review',mentions=[{targetId:'local-peer-one',token:'@ada',start:0,end:4}]
+    const [row]=publicDesktopHistory(transformEngineMessages([{id:'mention-user',sessionId:'chat',role:'user',contentJson:JSON.stringify([{type:'text',text},...desktopCoworkerMentionContextParts(text,mentions)]),toolCallsJson:null,createdAt:'2026-01-01T00:00:00.000Z'}],{desktopSummaries:true}))
+    expect(row.parts).toEqual([{type:'text',text}])
+    expect(row.metadata?.coworkerMentions).toEqual(mentions)
+    expect(JSON.stringify(row.parts)).not.toContain('Selected coworker mentions')
 })

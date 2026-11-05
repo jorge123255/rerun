@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react'
 
 /** Original TriggerUrlField — origin after mount; Copy is the only clipboard write of the secret URL. */
 function useTriggerUrl(agentId: string, slug: string, token: string, originOverride: string | null): string {
-    const path = `/api/t/${agentId}/${slug}/${token}`
+    const path = `/api/desktop/trigger-ingress/${encodeURIComponent(agentId)}/${encodeURIComponent(slug)}/${encodeURIComponent(token)}`
     const [origin, setOrigin] = useState(originOverride ?? '')
     useEffect(() => {
         if (originOverride) {
@@ -61,14 +61,14 @@ export function DesktopTriggerUrlField({ agentId, slug, token, rotating, onRotat
 
     if (!ingressAvailable) {
         return (
-            <Field label="Webhook URL" helperText="External delivery still needs a hosting decision. Loopback-only defaults stay disabled until root mounts ingress.">
-                <p className="flex min-h-8 items-center rounded-md border border-dashed border-input px-3 py-1.5 text-xs text-muted-foreground">Webhook URL unavailable — hosting decision unresolved.</p>
+            <Field label="Webhook URL" helperText="Local webhook delivery is not available.">
+                <p className="flex min-h-8 items-center rounded-md border border-dashed border-input px-3 py-1.5 text-xs text-muted-foreground">Local webhook URL unavailable.</p>
             </Field>
         )
     }
 
     return (
-        <Field label="Webhook URL" helperText="Anyone holding this URL can start a run. Treat it as a secret. Copying it, previewing it in a chat or opening it in a browser starts nothing.">
+        <Field label="Webhook URL" helperText="This URL works only on this Mac. A local program holding it can start a run. Treat it as a secret. Copying it or opening it in a browser starts nothing.">
             <div className="flex flex-wrap items-center gap-1.5">
                 <code className="flex h-8 min-w-0 flex-1 items-center truncate rounded-md border border-input bg-muted/40 px-3 font-mono text-xs">{url}</code>
                 <Button size="icon-sm" variant="outline" aria-label="Copy the webhook URL" onClick={copy}>

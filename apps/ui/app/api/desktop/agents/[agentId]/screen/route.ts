@@ -6,7 +6,7 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 const takeoverUrl = z.string().url().refine(url => /^https?:\/\//i.test(url), 'Only a web page can be opened')
 
 const postInput = z.discriminatedUnion('action', [
-    z.strictObject({ action: z.literal('view'), mode: z.enum(['watch', 'drive']), lease: z.string().min(1).max(500).optional() }),
+    z.strictObject({ action: z.literal('view'), mode: z.enum(['watch', 'drive']), lease: z.string().min(1).max(500).optional(), requireRunning: z.boolean().optional() }),
     z.strictObject({ action: z.literal('takeover'), url: takeoverUrl.optional() }),
     z.strictObject({ action: z.literal('takeover-finish'), lease: z.string().min(1).max(500) }),
     z.strictObject({ action: z.literal('stop') }),
@@ -29,7 +29,7 @@ export function POST(request: Request, { params }: Context) {
         const input = parsed.data
         switch (input.action) {
             case 'view': {
-                const { socketUrl, ticket } = await desktopScreenTicket(runtime, agentId, input.mode, request.signal, input.lease)
+                const { socketUrl, ticket } = await desktopScreenTicket(runtime, agentId, input.mode, request.signal, input.lease, input.requireRunning)
                 return Response.json({ socketUrl, expiresAt: ticket.expiresAt, width: ticket.width, height: ticket.height }, { headers: { 'cache-control': 'no-store' } })
             }
             case 'takeover': {

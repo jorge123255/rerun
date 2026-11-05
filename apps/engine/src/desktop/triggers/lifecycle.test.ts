@@ -31,7 +31,6 @@ describe('desktop trigger lifecycle idempotency', () => {
                 model: null,
                 body: input.body,
                 createdAt: new Date().toISOString(),
-                revision: 'r1',
             }
             return existing
         })
@@ -60,6 +59,13 @@ describe('desktop trigger lifecycle idempotency', () => {
             rotateTriggerToken: rotates,
             deleteTrigger: deletes,
             markFired: async () => {},
+            replaceTrigger: async (_id, _slug, _before, next) => {
+                if (!next) { await deletes(); return null }
+                if (existing && existing.token !== next.token) await rotates(_id, _slug, next.token)
+                else await writes(next)
+                existing = next
+                return existing
+            },
         }
         const life = createDesktopTriggerLifecycle(authority, store)
         const requestId = randomUUID()
@@ -67,8 +73,16 @@ describe('desktop trigger lifecycle idempotency', () => {
         const createdAgain = await life.create('eng-1', { requestId, name: 'Hook', description: '', body: 'Do it', methods: ['POST'], provider: null, model: null })
         expect(created.revision).toEqual(createdAgain.revision)
         expect(writes).toHaveBeenCalledTimes(1)
+        await expect(life.create('eng-1', { requestId, name: 'Hook', description: '', body: 'Changed body', methods: ['POST'], provider: null, model: null })).rejects.toMatchObject({ status: 409 })
+
+        const stopped = vi.fn(async () => { throw new Error('Run stopped') })
+        await expect(life.update('eng-1', 'hook', { requestId: randomUUID(), expectedRevision: created.revision, body: 'Do not write this' }, stopped)).rejects.toThrow('Run stopped')
+        expect(existing!.body).toBe('Do it')
+        expect(writes).toHaveBeenCalledTimes(1)
 
         const rotateId = randomUUID()
+        vi.spyOn(store, 'completeIntent').mockRejectedValueOnce(new Error('Lost acknowledgement'))
+        await expect(life.rotate('eng-1', 'hook', { requestId: rotateId, expectedRevision: created.revision })).rejects.toThrow('Lost acknowledgement')
         const rotated = await life.rotate('eng-1', 'hook', { requestId: rotateId, expectedRevision: created.revision })
         const rotatedAgain = await life.rotate('eng-1', 'hook', { requestId: rotateId, expectedRevision: created.revision })
         expect(rotated.token).toEqual(rotatedAgain.token)

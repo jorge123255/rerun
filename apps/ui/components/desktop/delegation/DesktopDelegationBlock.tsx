@@ -2,8 +2,8 @@
 
 import { ElapsedTime } from '@/components/chat/ElapsedTime'
 import { StepRow } from '@/components/chat/StepRow'
-import { ToolOutput, ToolSection } from '@/components/chat/ToolCallBlock'
-import { useToolDisplay } from '@/hooks/useToolDisplay'
+import { ToolOutput, ToolSection } from '@/components/chat/ToolStepRow'
+import { desktopSubRunToolDisplay } from '@/lib/desktop/sub-run-display'
 import { isSubRunLive, subRunHeadline } from '@/lib/chat/sub-run-progress'
 import { ToolCallRow, type ToolCallStatus } from '@rerun/ui/chat'
 import { useEffect, useRef, useState } from 'react'
@@ -24,8 +24,8 @@ export type DesktopDelegationBlockProps = {
     showLiveClock?: boolean
 }
 
-export function DesktopDelegationBlock({ snapshot, agentId, output, errorText, onStopTask, dense = false, showLiveClock = true }: DesktopDelegationBlockProps) {
-    const toolDisplay = useToolDisplay(agentId)
+export function DesktopDelegationBlock({ snapshot, output, errorText, onStopTask, dense = false, showLiveClock = true }: DesktopDelegationBlockProps) {
+    const toolDisplay = desktopSubRunToolDisplay
     const { iconProps } = toolDisplay(DELEGATE_TOOL)
     const tasks = snapshot.tasks.map(delegationTaskToSubRun)
     const live = tasks.some(isSubRunLive)

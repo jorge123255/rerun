@@ -26,6 +26,7 @@ type Props = {
     onVisibleSession?: (agentId: string, sessionId: string | null) => void
     refreshSessions: () => Promise<void>
     reload: () => void
+    onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel: () => void
     onOpenModelSettings: () => void
     modelLabel?: string
@@ -42,7 +43,7 @@ function initialTabs(layout: DesktopTabLayout | null, sessions: DesktopSessionVi
     return id && session?.id === id ? openSessionTab(initial, id, session.title) : initial
 }
 
-export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, reload, onClosePanel, modelLabel, onOpenModelSettings }: Props) {
+export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, reload, onOpenCoworkerChat, onClosePanel, modelLabel, onOpenModelSettings }: Props) {
     const [layout, setLayout] = useState(() => initialTabs(initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() =>
         requested && 'tabUid' in requested && !initialLayout?.tabs.some(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null)
@@ -276,6 +277,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
                         if (id && !sessions.some(session => session.id === id)) void refreshSessions().catch(() => setNotice('Chat opened. Could not refresh the chat list. Reopen the coworker to retry.'))
                     }}
                     onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
+                    onOpenCoworkerChat={onOpenCoworkerChat}
                     modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
                     renderHistory={(_busy, control) => <DesktopChatHistory control={control} agentId={agent.id} count={sessions.length} selectedId={tab.id} busy={false} onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}
                     renderRunHistory={control => <DesktopRunHistory agent={agent} dialogControl={control} />} />

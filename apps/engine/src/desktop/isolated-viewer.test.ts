@@ -5,6 +5,7 @@ import { Hono } from 'hono'
 import { WebSocket } from 'ws'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createIsolatedViewer, createIsolatedViewerTickets, ISOLATED_VIEWER_TICKET_TTL_MS, ISOLATED_VIEWER_WS_PATH, type IsolatedScreenService } from './isolated-viewer.js'
+const run = { sessionId: 'session-1', runId: 'run-1' }
 const owner = { engineAgentId: 'agent-1', launchNonce: 'nonce-1' }, target = { ...owner, sessionGeneration: 'gen-1' }
 const cleanups: (() => Promise<unknown>)[] = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -12,11 +13,12 @@ function setup() {
     const service = {
         status: vi.fn(async () => ({ state: 'available' as const, driving: false })),
         ensure: vi.fn(async () => ({ target, width: 1200, height: 800 })),
+        running: vi.fn(async () => ({ target, width: 1200, height: 800 })),
         navigate: vi.fn(async () => undefined), startTakeover: vi.fn(async () => 'lease-1'),
         finishTakeover: vi.fn(async () => ({ url: 'https://example.com' })), stop: vi.fn(async () => {}),
         withViewer: vi.fn<IsolatedScreenService['withViewer']>(async () => {}),
     }
-    const authority = { launchNonce: 'nonce-1', uiOrigin: 'http://127.0.0.1:12345', authorize: vi.fn(async () => {}) }
+    const authority = { launchNonce: 'nonce-1', uiOrigin: 'http://127.0.0.1:12345', currentRun: vi.fn<() => typeof run | null>(() => run), authorize: vi.fn(async () => {}) }
     const controller = createIsolatedViewer(service, authority)
     cleanups.push(() => controller.close())
     const app = new Hono().route('/agents/:id/screen', controller.routes)
@@ -46,6 +48,17 @@ it('requires current authority before starting a screen and rejects old launches
     expect((await f.post('view', { mode: 'watch' })).status).toBe(409)
     expect(f.service.ensure).not.toHaveBeenCalled()
     expect((await f.post('view', { mode: 'watch', launchNonce: 'old' })).status).toBe(409)
+})
+it('passive tickets inspect only an existing generation and cannot restart a stopped guest', async () => {
+    const f = setup()
+    expect((await f.post('view', { mode: 'watch', requireRunning: true })).status).toBe(200)
+    expect(f.service.running).toHaveBeenCalledTimes(1)
+    expect(f.service.ensure).not.toHaveBeenCalled()
+    f.service.running.mockRejectedValue(new Error('stopped'))
+    expect((await f.post('view', { mode: 'watch', requireRunning: true })).status).toBe(409)
+    expect(f.service.ensure).not.toHaveBeenCalled()
+    expect((await f.post('view', { mode: 'drive', requireRunning: true })).status).toBe(400)
+    expect(f.service.startTakeover).not.toHaveBeenCalled()
 })
 it('rejects malformed view modes and drive without its exact current lease', async () => {
     const f = setup()
@@ -189,4 +202,60 @@ it('serializes buffered WebSocket messages across asynchronous authority checks'
     resolve()
     await vi.waitFor(() => expect(Buffer.concat(chunks).toString()).toBe('AB'))
     const closed = once(ws, 'close'); ws.close(); await closed
+})
+
+
+describe('run-bound passive viewer', () => {
+    it('requires the exact current session and run before inspecting an existing guest', async () => {
+        const f = setup()
+        for (const input of [
+            { mode: 'watch', run },
+            { mode: 'drive', requireRunning: true, run },
+        ]) expect((await f.post('view', input)).status).toBe(400)
+        for (const current of [null, { ...run, sessionId: 'sibling' }, { ...run, runId: 'next' }]) {
+            f.authority.currentRun.mockReturnValue(current)
+            expect((await f.post('view', { mode: 'watch', requireRunning: true, run })).status).toBe(409)
+        }
+        expect(f.service.running).not.toHaveBeenCalled()
+        expect(f.service.ensure).not.toHaveBeenCalled()
+    })
+
+    it('rejects a run replaced during the final asynchronous authorization check', async () => {
+        const f = setup()
+        f.authority.authorize.mockImplementationOnce(async () => {}).mockImplementationOnce(async () => {
+            f.authority.currentRun.mockReturnValue({ ...run, runId: 'next' })
+        })
+        const response = await f.post('view', { mode: 'watch', requireRunning: true, run })
+        expect(response.status).toBe(409)
+        expect(await response.json()).not.toHaveProperty('ticket')
+        expect(f.service.running).toHaveBeenCalledTimes(1)
+        expect(f.service.ensure).not.toHaveBeenCalled()
+    })
+
+    it('cannot redeem a previously issued ticket into a later run of the same coworker', async () => {
+        const f = setup(), n = await network(f, true)
+        const body = await (await f.post('view', { mode: 'watch', requireRunning: true, run })).json()
+        f.authority.currentRun.mockReturnValue({ ...run, runId: 'next' })
+        const ws = new WebSocket(`${n.url}?ticket=${body.ticket}`, { origin: f.authority.uiOrigin })
+        ws.on('error', () => {})
+        await once(ws, 'close')
+        expect(f.service.withViewer).not.toHaveBeenCalled()
+        expect(f.service.ensure).not.toHaveBeenCalled()
+    })
+
+    it('closes a stale observer before forwarding a frame from a replacement run', async () => {
+        const f = setup(), n = await network(f, true)
+        const body = await (await f.post('view', { mode: 'watch', requireRunning: true, run })).json()
+        const ws = new WebSocket(`${n.url}?ticket=${body.ticket}`, { origin: f.authority.uiOrigin })
+        await once(ws, 'message')
+        const frames: string[] = []
+        ws.on('message', data => frames.push(data.toString()))
+        const closed = once(ws, 'close')
+        f.authority.currentRun.mockReturnValue({ ...run, runId: 'next' })
+        for (const socket of n.sockets) socket.write('replacement frame')
+        await closed
+        expect(frames).toEqual([])
+        await vi.waitFor(() => expect(n.sockets.size).toBe(0))
+        expect(f.service.stop).not.toHaveBeenCalled()
+    })
 })

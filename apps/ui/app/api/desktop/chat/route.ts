@@ -1,3 +1,4 @@
+import { desktopCoworkerMentionsSchema, validDesktopCoworkerMentionFields } from '@rerun/contracts'
 import { desktopModelPickSchema } from '@/lib/desktop/chat-model'
 import { desktopChatHasContent } from '@/lib/desktop/chat-content'
 import { desktopAttachmentItemsSchema, hasOneDesktopAttachmentField, desktopAttachmentPathsSchema } from '@rerun/contracts'
@@ -9,7 +10,8 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 const sendInput = z.object({
     agentId: z.string().min(1),
     sessionId: z.string().min(1).optional(),
-    text: z.string().trim().max(20_000),
+    text: z.string().max(20_000),
+    coworkerMentions: desktopCoworkerMentionsSchema.optional(),
     attachmentPath: z.string().min(1).max(4096).optional(),
     attachmentPaths: desktopAttachmentPathsSchema.optional(),
     attachmentItems: desktopAttachmentItemsSchema.optional(),
@@ -18,7 +20,7 @@ const sendInput = z.object({
     reconcileOnly: z.boolean().optional(),
     modelChoice: desktopModelPickSchema.optional(),
     tabUid: z.string().min(1).max(128).optional(),
-}).refine(hasOneDesktopAttachmentField, 'Use one attachment field.')
+}).strict().refine(validDesktopCoworkerMentionFields, 'Coworker mention ranges changed.').refine(hasOneDesktopAttachmentField, 'Use one attachment field.')
     .refine(desktopChatHasContent, 'Write a message or attach a file.')
     .refine(input => (!input.tabUid || !input.sessionId) && (!input.requestId || !!input.sessionId) && (!input.reconcileOnly || !!input.requestId))
 const regenerateInput = z.object({

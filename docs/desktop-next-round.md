@@ -1,4 +1,26 @@
-# Round 31 assignments — coworker collaboration, app skills and browser exports
+# Round 32 assignments — complete A–I feature packages
+
+Prepared base: `ab0de35eb45fbcf0b801943fd8ad7c3c861b9210`. Original Rerun source/design: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. The larger agent is Agent I. Each new worktree is separate from the preserved round31 author worktrees.
+
+[Copy the nine full task lists](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Rerun round 32 agent prompts.md>). All lists follow the [assignment standard](desktop-agent-assignment-standard.md): original-code mapping, complete lifecycle, exact scope, clean local handoff; root executes all tests and Mac/restart checks and fixes integration issues directly.
+
+| Agent | Complete package | Worktree suffix |
+| --- | --- | --- |
+| A | D4 semantic memory recall with keyword fallback | `round32-semantic-memory` |
+| B | C4 voice recording, review, transcription and playback | `round32-voice-composer` |
+| C | C6 private secret requests in chat | `round32-secret-requests` |
+| D | E2 original web search | `round32-web-search` |
+| E | E3 isolated terminal and file manager launchers | `round32-computer-launchers` |
+| F | E4 app headers and multiple accounts | `round32-service-accounts` |
+| G | E5 legacy SSE MCP connections | `round32-mcp-sse` |
+| H | E7 reviewable coworker MCP registration | `round32-self-mcp` |
+| I | W3 portable local templates and asset import/export | `round32-portable-templates` |
+
+Root is completing round31 A–I review, repairs, shared wiring, source checks and native/full-restart acceptance, plus original Control Center Triggers navigation. No round32 item is accepted merely by dispatch or author completion. The checklist count changes only after acceptance; the last accepted baseline has 22 unfinished capability groups.
+
+---
+
+# Historical round 31 assignments — coworker collaboration, app skills and browser exports
 
 Prepared base: `136f318e931a4433ea6d178f3f9e961e1a2d8a86`. The eight isolated lane worktrees were prepared at that base; subsequent agent edits are preserved. The [shared interface agreement](desktop-round31-interfaces.md) keeps implementation ownership separate. Original Rerun pin: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 

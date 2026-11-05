@@ -1,6 +1,6 @@
 # Standard for Rerun agent assignments
 
-The user requested on November 5, 2026 that the complete task-list format used for the additional webhook/trigger agent become the standard for **all A–H assignments**.
+The user requested on November 5, 2026 that the complete task-list format used for the additional webhook/trigger agent become the standard for **all A–H assignments**. The additional full-list agent is now **I**, and follows the same standard.
 
 Each agent receives a substantial coherent feature package from the parity checklist, with the complete owned lifecycle and useful regression source. Choose the task count by the work required, normally around eight to ten concrete steps; do not split a feature into artificial one-function assignments or add unrelated work to fill a quota.
 

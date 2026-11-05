@@ -1,3 +1,6 @@
+import { readDesktopDelegation } from '../desktop/delegation/binding.js'
+import { desktopDelegationChildTools } from '../desktop/delegation/child-scope.js'
+import { readDesktopTriggerRuntime } from '../desktop/triggers/runtime.js'
 import type { ToolSet } from 'ai'
 import { filesystemTools } from './builtin/filesystem.js'
 import { sharedTools } from './builtin/shared.js'
@@ -49,13 +52,23 @@ import { desktopStdioTools } from '../desktop/mcp-stdio/client.js'
 import { desktopServiceTools } from '../desktop/service-tools.js'
 import { desktopSuggestServiceTools } from '../desktop/service-requests/suggest-service.js'
 import { desktopSetupRunAllowed, desktopSetupTools } from '../desktop/setup/service.js'
+import { desktopBrowserExportPublisher } from '../desktop/isolated-screen/export-client.js'
 import { isolatedScreenTools } from '../desktop/isolated-screen/tools.js'
 import { desktopBrainTools } from '../desktop/brain-tools.js'
+import { readDesktopCoworkerCallRuntime } from '../desktop/coworker-calls/bind.js'
+import { desktopCallAgentTools } from '../desktop/coworker-calls/tool.js'
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
     if (desktopApp()) {
-        const screen = isolatedScreenTools(ctx)
+        const child = await desktopDelegationChildTools(ctx)
+        if (child) return child
+        const screen = isolatedScreenTools(ctx, { publishExports: desktopBrowserExportPublisher })
         const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopSuggestServiceTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx) }
+        Object.assign(tools, readDesktopDelegation()?.tools(ctx) ?? {})
+        const triggers = readDesktopTriggerRuntime()
+        if (triggers && hasDesktopToolGrant(ctx.agent.config, 'trigger') && !ctx.agent.config.ephemeral) Object.assign(tools, triggers.toolFactory(ctx.agent.id, ctx))
+        const calls = readDesktopCoworkerCallRuntime()
+        if (calls && hasDesktopToolGrant(ctx.agent.config, 'callAgent') && !ctx.agent.config.ephemeral) Object.assign(tools, desktopCallAgentTools(ctx, calls))
         if (ctx.agent.config.setup?.required && ctx.agent.install && desktopSetupRunAllowed(ctx.agent, ctx.sessionId)) Object.assign(tools, desktopSetupTools(ctx))
         const remote = await desktopMcpTools(ctx)
         if (Object.keys(remote.tools).some(name => Object.hasOwn(tools, name))) {
@@ -71,8 +84,8 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
             const existing = { ...merged, ...local?.tools }
             if (hasDesktopToolGrant(ctx.agent.config, 'services')) services = await desktopServiceTools(ctx)
             if (Object.keys(services?.tools ?? {}).some(name => Object.hasOwn(existing, name))) throw new Error('An app tool conflicts with another tool.')
-            return { tools: { ...existing, ...services?.tools }, close: async () => { try { await services?.close() } finally { try { await local?.close() } finally { await remote.close(); screen.release() } } } }
-        } catch (error) { try { await services?.close() } finally { try { await local?.close() } finally { await remote.close(); screen.release() } }; throw error }
+            return { tools: { ...existing, ...services?.tools }, close: async () => { try { await services?.close() } finally { try { await local?.close() } finally { try { await remote.close() } finally { screen.release() } } } } }
+        } catch (error) { try { await services?.close() } finally { try { await local?.close() } finally { try { await remote.close() } finally { screen.release() } } }; throw error }
     }
     const cfg = ctx.agent.config.tools
     const tools: ToolSet = {}

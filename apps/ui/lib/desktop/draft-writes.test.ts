@@ -17,7 +17,7 @@ function deferred<T>() {
 function commit(key: string, body: DesktopComposerDraftWrite) {
     const previous = saved.get(key) ?? empty()
     if (body.baseRevision !== previous.revision) return Response.json({ draft: previous }, { status: 409 })
-    const draft = { revision: previous.revision + 1, text: body.text, ...(body.attachmentPath && { attachmentPath: body.attachmentPath }), ...(body.attachmentPaths && { attachmentPaths: [...body.attachmentPaths] }) }
+    const draft = { revision: previous.revision + 1, text: body.text, ...(body.coworkerMentions?.length && {coworkerMentions:body.coworkerMentions}), ...(body.attachmentPath && { attachmentPath: body.attachmentPath }), ...(body.attachmentPaths && { attachmentPaths: [...body.attachmentPaths] }) }
     saved.set(key, draft)
     return Response.json({ draft })
 }
@@ -276,4 +276,23 @@ test('a save failure refuses quit and remains frozen until Stay, then explicit r
     await drafts.saveDesktopDraft(record)
     expect(await drafts.flushDesktopDrafts()).toBe(true)
     expect(saved.get(keyOf('alice', 'one'))?.text).toBe('Keep this')
+})
+
+
+test('selected coworker IDs persist with the exact draft body and another tab cannot inherit them',async()=>{
+    const record=drafts.desktopDraftRecord('alice','mentions-one')
+    await drafts.saveDesktopDraft(record)
+    const mentions=[{targetId:'peer-one',token:'@ada',start:0,end:4}]
+    drafts.updateDesktopDraft(record,{text:'@ada review',coworkerMentions:mentions})
+    await drafts.saveDesktopDraft(record)
+    drafts.forgetDesktopDraft('alice','mentions-one')
+    const restored=drafts.desktopDraftRecord('alice','mentions-one')
+    await drafts.saveDesktopDraft(restored)
+    expect(restored.state).toMatchObject({text:'@ada review',coworkerMentions:mentions})
+    const sibling=drafts.desktopDraftRecord('alice','mentions-two')
+    await drafts.saveDesktopDraft(sibling)
+    expect(sibling.state.coworkerMentions??[]).toEqual([])
+    drafts.updateDesktopDraft(restored,{text:'@edited review'})
+    await drafts.saveDesktopDraft(restored)
+    expect(restored.state.coworkerMentions).toEqual([])
 })

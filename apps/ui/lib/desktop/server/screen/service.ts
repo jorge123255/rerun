@@ -15,6 +15,9 @@ const screenStatusSchema = z.object({
     state: z.enum(['available', 'unavailable', 'starting', 'taken-over', 'disconnected']),
     reason: z.string().optional(),
     driving: z.boolean().default(false),
+    running: z.boolean().default(false),
+    currentRun: z.object({ sessionId: z.string(), runId: z.string(), kind: z.enum(['browser', 'computer']), site: z.string().nullable() }).nullable().optional(),
+    sessionGeneration: z.string().optional(),
     width: z.number().optional(),
     height: z.number().optional(),
 })
@@ -62,18 +65,19 @@ export async function desktopScreenStatus(runtime: DesktopRuntime, agentId: stri
         return await request(conn, `${screenBase(agent)}/status?launchNonce=${encodeURIComponent(runtime.launchNonce)}`, { method: 'GET', signal }, d => screenStatusSchema.parse(d))
     } catch (err) {
         if (err instanceof Error && 'status' in err && (err as { status: number }).status === 404) {
-            return { state: 'unavailable', driving: false, reason: 'The isolated browser runtime is not installed yet.' }
+            return { state: 'unavailable', driving: false, running: false, reason: 'The isolated browser runtime is not installed yet.' }
         }
         throw err
     }
 }
 
-export async function desktopScreenTicket(runtime: DesktopRuntime, agentId: string, mode: 'watch' | 'drive', signal: AbortSignal, lease?: string): Promise<{ socketUrl: string; ticket: DesktopScreenTicket }> {
+export async function desktopScreenTicket(runtime: DesktopRuntime, agentId: string, mode: 'watch' | 'drive', signal: AbortSignal, lease?: string, requireRunning = false, run?: { sessionId: string; runId: string }): Promise<{ socketUrl: string; ticket: DesktopScreenTicket }> {
+    if (requireRunning && mode !== 'watch') throw new DesktopHttpError(400, 'Passive viewing cannot take control')
     const agent = await screenAgent(runtime, agentId)
     const conn = engineOf(runtime)
     const ticket = await request(conn, `${screenBase(agent)}/view`, {
         method: 'POST',
-        body: JSON.stringify({ mode, launchNonce: runtime.launchNonce, ...(lease && { lease }) }),
+        body: JSON.stringify({ mode, launchNonce: runtime.launchNonce, ...(lease && { lease }), ...(requireRunning && { requireRunning: true }), ...(run && { run }) }),
         signal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]),
     }, d => viewTicketSchema.parse(d))
     return { socketUrl: viewerSocketUrl(runtime, ticket.ticket), ticket }

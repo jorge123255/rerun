@@ -22,6 +22,8 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (desktopBrainPagesRouteAllowed(method, path)) return true
     if (/^\/desktop\/brain\/proposals(?:\/count)?$/.test(path)) return method === 'GET'
     if (/^\/desktop\/brain\/proposals\/[A-Za-z0-9_-]+\/(?:accept|dismiss)$/.test(path)) return method === 'POST'
+    if (path === '/desktop/delegation/stop') return method === 'POST'
+    if (path === '/desktop/triggers/manage') return method === 'POST'
     if (path === '/desktop/agents/create') return method === 'POST'
     if (path === '/desktop/new-agent/read') return method === 'POST'
     if (path === '/desktop/codex-login') return (method === 'GET' || method === 'POST') && desktopCodexAvailable()

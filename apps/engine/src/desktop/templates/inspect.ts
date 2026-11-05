@@ -11,6 +11,7 @@ import {
     type DesktopTemplateExclusionReason,
 } from '@rerun/contracts'
 import { TemplateRequestError } from './errors.js'
+import { desktopSkillAuthorityRequired, trustedSkillOwners } from '../service-skills/authority.js'
 import { readConfined, walkConfined } from './files.js'
 import { canonicalJson, sha256 } from './hash.js'
 
@@ -225,7 +226,8 @@ export async function inspectCoworker(agentsRoot: string, localAgentId: string, 
     const bySlug = new Map<string, WalkEntryLike[]>()
     for (const entry of skillWalk.entries) {
         const slug = entry.path.split('/')[1]
-        if (!slug) continue
+        // The native read lease creates this inert lock; its presence cannot alter a capture plan.
+        if (!slug || slug === '.rerun-skill-lock') continue
         const list = bySlug.get(slug) ?? []
         list.push(entry)
         bySlug.set(slug, list)
@@ -235,7 +237,7 @@ export async function inspectCoworker(agentsRoot: string, localAgentId: string, 
             exclusions.push({ path: `skills/${slug}`, reason: 'unsupported' })
             continue
         }
-        if (owners?.has(slug)) {
+        if (slug.startsWith('svc-') || owners?.has(slug)) {
             exclusions.push({ path: `skills/${slug}`, reason: 'connector-skill' })
             continue
         }
@@ -283,6 +285,7 @@ export async function inspectCoworker(agentsRoot: string, localAgentId: string, 
 type WalkEntryLike = { path: string; kind: 'file' | 'link' | 'other' }
 
 async function connectorOwners(folder: string, exclusions: DesktopTemplateExclusion[]): Promise<Set<string> | null> {
+    if (desktopSkillAuthorityRequired()) return new Set((await trustedSkillOwners(resolve(folder, 'workspace'))).keys())
     const path = 'workspace/.rerun/services.json'
     const kind = await existsKind(resolve(folder, path))
     if (kind === 'absent') return new Set()

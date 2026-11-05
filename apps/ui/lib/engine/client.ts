@@ -1,3 +1,4 @@
+import type { DesktopCoworkerMention } from '@rerun/contracts'
 import type { DesktopTakeoverGuard } from '@rerun/contracts'
 import { z } from 'zod'
 import {
@@ -469,8 +470,8 @@ export async function getSessionMessages(conn: EngineConnection, agentId: string
 // Returns the raw fetch Response so the caller can read the `x-session-id`
 // header and pipe the SSE body straight through to the browser.
 type ChatParams = { connectionId?: string; model?: string; source?: SessionSource; author?: MessageAuthor } & (
-    | { sessionId?: string; message: string; foreman?: ForemanBrief; install?: boolean; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; workspaceAttachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; desktopFirstTurn?: { sessionId: string; runId: string }; desktopQueuedTurn?: { runId: string; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; replayOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard } }
-    | { sessionId: string; regenerateMessageId: string; requestId: string }
+    | { sessionId?: string; message: string; coworkerMentions?: DesktopCoworkerMention[]; foreman?: ForemanBrief; install?: boolean; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; workspaceAttachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; desktopFirstTurn?: { sessionId: string; runId: string }; desktopQueuedTurn?: { runId: string; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; replayOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard } }
+    | { sessionId: string; regenerateMessageId: string; requestId: string; replayOnly?: boolean }
 )
 
 export async function chat(conn: EngineConnection, agentId: string, params: ChatParams): Promise<Response> {

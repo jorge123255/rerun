@@ -3,13 +3,13 @@
 import { ElapsedTime } from '@/components/chat/ElapsedTime'
 import { StepRow } from '@/components/chat/StepRow'
 import { SubRunTree } from '@/components/chat/SubRunTree'
-import { ToolOutput, ToolSection, toolStatusOf, type ToolState } from '@/components/chat/ToolCallBlock'
-import { useToolDisplay } from '@/hooks/useToolDisplay'
+import { ToolOutput, ToolSection, toolStatusOf, type ToolState } from '@/components/chat/ToolStepRow'
+import { desktopSubRunToolDisplay } from '@/lib/desktop/sub-run-display'
 import { isSubRunLive, subRunHeadline, type SubRunProgress } from '@/lib/chat/sub-run-progress'
 import { ToolCallRow, type ToolCallStatus } from '@rerun/ui/chat'
 import { useEffect, useRef, useState } from 'react'
 
-export function DesktopCoworkerSubRunBlock({ toolName, agentId, state, output, errorText, progress, onStopTask, dense = false, liveElapsed = false }: {
+export function DesktopCoworkerSubRunBlock({ toolName, state, output, errorText, progress, onStopTask, dense = false, liveElapsed = false }: {
     toolName: string
     agentId?: string
     state: ToolState
@@ -20,7 +20,7 @@ export function DesktopCoworkerSubRunBlock({ toolName, agentId, state, output, e
     dense?: boolean
     liveElapsed?: boolean
 }) {
-    const toolDisplay = useToolDisplay(agentId)
+    const toolDisplay = desktopSubRunToolDisplay
     const { iconProps } = toolDisplay(toolName)
     const live = toolStatusOf(state) === 'running' && progress.tasks.some(isSubRunLive)
     const { label, summary } = subRunHeadline(progress, live, toolName)

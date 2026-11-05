@@ -51,6 +51,6 @@ export function providerForTriggerPick(
     return groups.find(g => g.connectionId === pick.connectionId)?.provider ?? null
 }
 
-export function unavailableTriggerRunModelCatalog(reason = 'Local model catalog is not wired for Triggers yet.'): DesktopTriggerRunModelCatalog {
+export function unavailableTriggerRunModelCatalog(reason = 'The model list is currently unavailable.'): DesktopTriggerRunModelCatalog {
     return { availableGroups: [], agentModelLabel: null, available: false, unavailableReason: reason }
 }

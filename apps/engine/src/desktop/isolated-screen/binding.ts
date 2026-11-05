@@ -1,3 +1,4 @@
+import { currentScreenRun } from './run-owner.js'
 import type { AgentConfig } from '@rerun/contracts'
 import { readAgentConfig } from '../../agents/loader.js'
 import { desktopDeletionActive } from '../agent-lifecycle.js'
@@ -39,7 +40,9 @@ export function bindIsolatedScreen(runtime: { launchNonce: string; app: { origin
         ...screen,
         async status(owner, signal) {
             const status = await screen.status(owner, signal)
+            const active = status.state === 'running' || status.state === 'human' ? await screen.running(owner, signal).catch(() => null) : null
             return { state: !status.available ? 'unavailable' : status.state === 'human' ? 'taken-over' : status.state === 'starting' ? 'starting' : 'available', driving: status.state === 'human',
+                running: !!active, currentRun: active ? currentScreenRun(owner.engineAgentId) : null, ...(active && { sessionGeneration: active.target.sessionGeneration, width: active.width, height: active.height }),
                 ...(!status.available && { reason: status.prerequisite === 'docker-missing' ? 'Install and open Docker Desktop to use this coworker’s isolated browser.' : status.prerequisite === 'daemon-unreachable' ? 'Open Docker Desktop to use this coworker’s isolated browser.' : status.prerequisite === 'image-missing' ? 'The isolated browser image has not been installed.' : 'The isolated browser is not available on this machine.' }) }
         },
         ensure: (owner, signal) => ensureIsolatedScreen(owner.engineAgentId, signal),
@@ -48,7 +51,7 @@ export function bindIsolatedScreen(runtime: { launchNonce: string; app: { origin
             try { return await screen.finishTakeover(target, { token }, signal) }
             catch (error) { if (error instanceof IsolatedScreenRefusal && error.kind === 'stale') return { url: null, expired: true }; throw error }
         },
-    }, { launchNonce, uiOrigin: runtime.app.origin, authorize: (owner, _mode, signal) => requireScreenGrant(owner.engineAgentId, signal) })
+    }, { launchNonce, uiOrigin: runtime.app.origin, currentRun: owner => currentScreenRun(owner.engineAgentId), authorize: (owner, _mode, signal) => requireScreenGrant(owner.engineAgentId, signal) })
     return viewer
 }
 export async function ensureIsolatedScreen(engineAgentId: string, signal: AbortSignal) {

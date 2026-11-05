@@ -8,6 +8,7 @@ import { createDesktopTriggerToolFactory } from './tools.js'
 import { stopDesktopTriggerRun } from './stop.js'
 import type { DesktopTriggerAuthority, DesktopTriggerStore } from './types.js'
 import { randomUUID } from 'node:crypto'
+import { desktopTriggerDefinitionRevision } from './lifecycle.js'
 
 export { desktopTriggerStateSchema }
 
@@ -54,6 +55,7 @@ export function bindDesktopTriggers(input: {
             await input.authority.assertSetupClear(engineAgentId)
         },
         newRequestId: () => randomUUID(),
+        priorRevision: async (id, requestId) => { const intent = await store.findIntent(id, requestId); return intent?.before ? desktopTriggerDefinitionRevision(intent.before) : null },
     })
 
     return {

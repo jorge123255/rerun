@@ -39,6 +39,7 @@ type Props = {
     onDone: () => void
     onBack: () => void
     onShowHistory?: () => void
+    onEditStateChange?: (state: { dirty: boolean; busy: boolean }) => void
     ingressAvailable?: boolean
     /** Injected local model catalog. Defaults to honest unavailable (follow coworker). */
     modelCatalog?: DesktopTriggerRunModelCatalog
@@ -52,6 +53,7 @@ export function DesktopTriggerEditor({
     onDone,
     onBack,
     onShowHistory,
+    onEditStateChange,
     ingressAvailable = false,
     modelCatalog = unavailableTriggerRunModelCatalog(),
     templateLock = desktopTriggerPromptLock(false),
@@ -70,6 +72,8 @@ export function DesktopTriggerEditor({
     const [rotating, setRotating] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [dirty, setDirty] = useState(false)
+    useEffect(() => { onEditStateChange?.({ dirty, busy: saving || deleting || rotating }) }, [dirty, saving, deleting, rotating, onEditStateChange])
+    useEffect(() => () => onEditStateChange?.({ dirty: false, busy: false }), [onEditStateChange])
     const loadGen = useRef(0)
     const agentGen = useRef(agentId)
     const alive = useRef(true)
@@ -132,11 +136,13 @@ export function DesktopTriggerEditor({
     }, [])
 
     const handleBack = useCallback(() => {
+        if (saving || deleting || rotating) return
         if (dirty && !window.confirm('Discard unsaved trigger changes?')) return
         onBack()
-    }, [dirty, onBack])
+    }, [dirty, onBack, saving, deleting, rotating])
 
     const handleSave = useCallback(async () => {
+        if (saving || deleting || rotating) return
         setSaving(true)
         setError(null)
         const provider = providerForTriggerPick(pick, modelCatalog.availableGroups)
@@ -162,6 +168,7 @@ export function DesktopTriggerEditor({
             } else {
                 await createDesktopTrigger(agentId, {
                     requestId: crypto.randomUUID(),
+                    enabled,
                     name,
                     description,
                     body,
@@ -181,10 +188,10 @@ export function DesktopTriggerEditor({
         } finally {
             if (alive.current) setSaving(false)
         }
-    }, [agentId, slug, isEdit, trigger, name, description, methods, enabled, pick, body, onDone, modelCatalog.availableGroups])
+    }, [agentId, slug, isEdit, trigger, name, description, methods, enabled, pick, body, onDone, modelCatalog.availableGroups, saving, deleting, rotating])
 
     const handleRotate = useCallback(async () => {
-        if (!slug || !trigger) return
+        if (!slug || !trigger || saving || deleting || rotating) return
         setRotating(true)
         setError(null)
         try {
@@ -195,10 +202,10 @@ export function DesktopTriggerEditor({
         } finally {
             if (alive.current) setRotating(false)
         }
-    }, [agentId, slug, trigger])
+    }, [agentId, slug, trigger, saving, deleting, rotating])
 
     const handleDelete = useCallback(async () => {
-        if (!slug || !trigger) return
+        if (!slug || !trigger || saving || deleting || rotating) return
         setDeleting(true)
         setError(null)
         try {
@@ -209,7 +216,7 @@ export function DesktopTriggerEditor({
         } finally {
             if (alive.current) setDeleting(false)
         }
-    }, [agentId, slug, trigger, onDone])
+    }, [agentId, slug, trigger, onDone, saving, deleting, rotating])
 
     if (loading) {
         return (
@@ -224,9 +231,9 @@ export function DesktopTriggerEditor({
 
     return (
         <PanelEditorShell>
-            <PanelEditorHeader title={isEdit ? 'Edit trigger' : 'New trigger'} onBack={saving || deleting ? undefined : handleBack}>
+            <PanelEditorHeader title={isEdit ? 'Edit trigger' : 'New trigger'} onBack={saving || deleting || rotating ? undefined : handleBack}>
                 {isEdit && onShowHistory && (
-                    <Button size="sm" variant="ghost" onClick={onShowHistory} disabled={saving || deleting}>
+                    <Button size="sm" variant="ghost" onClick={onShowHistory} disabled={saving || deleting || rotating}>
                         <HistoryIcon className="size-3.5 mr-1" /> History
                     </Button>
                 )}
@@ -239,7 +246,7 @@ export function DesktopTriggerEditor({
                     hideRequired
                     value={name}
                     onChange={e => { setDirty(true); setName(e.target.value) }}
-                    disabled={isEdit || saving}
+                    disabled={isEdit || saving || deleting || rotating}
                     placeholder="GitHub push"
                     className="h-8 text-sm"
                 />
@@ -248,7 +255,7 @@ export function DesktopTriggerEditor({
                     hideRequired
                     value={description}
                     onChange={e => { setDirty(true); setDescription(e.target.value) }}
-                    disabled={saving}
+                    disabled={saving || deleting || rotating}
                     placeholder="Fires when a commit lands on main"
                     className="h-8 text-sm"
                 />
@@ -268,7 +275,7 @@ export function DesktopTriggerEditor({
                     <div className="flex flex-wrap gap-3">
                         {ALL_METHODS.map(method => (
                             <label key={method} className="flex items-center gap-1.5 text-xs cursor-pointer">
-                                <Checkbox size="sm" checked={methods.includes(method)} disabled={saving} onCheckedChange={checked => toggleMethod(method, checked === true)} />
+                                <Checkbox size="sm" checked={methods.includes(method)} disabled={saving || deleting || rotating} onCheckedChange={checked => toggleMethod(method, checked === true)} />
                                 {method}
                             </label>
                         ))}
@@ -280,16 +287,16 @@ export function DesktopTriggerEditor({
                     value={pick}
                     onChange={next => { setDirty(true); setPick(next) }}
                     catalog={modelCatalog}
-                    disabled={saving}
+                    disabled={saving || deleting || rotating}
                 />
 
                 {isEdit && (
                     <Field orientation="row" label="Enabled">
-                        <Switch checked={enabled} disabled={saving} onCheckedChange={value => { setDirty(true); setEnabled(value) }} />
+                        <Switch checked={enabled} disabled={saving || deleting || rotating} onCheckedChange={value => { setDirty(true); setEnabled(value) }} />
                     </Field>
                 )}
 
-                {slug && <DesktopTaskNotifyField agentId={agentId} source="trigger" slug={slug} disabled={saving} />}
+                {slug && <DesktopTaskNotifyField agentId={agentId} source="trigger" slug={slug} disabled={saving || deleting || rotating} />}
 
                 <DesktopTriggerTemplateLock state={{ ...templateLock, locked: promptLocked }}>
                     <MarkdownTextarea
@@ -298,7 +305,7 @@ export function DesktopTriggerEditor({
                         helperText="What the coworker runs when the URL is called (a fresh session each time). The caller payload is attached below it."
                         value={body}
                         onChange={value => { setDirty(true); setBody(value) }}
-                        disabled={saving || promptLocked}
+                        disabled={saving || deleting || rotating || promptLocked}
                         className="text-xs min-h-32 font-mono"
                         placeholder="A commit just landed. Review the diff in the payload and post a summary to Slack."
                     />
@@ -314,8 +321,8 @@ export function DesktopTriggerEditor({
                         confirmDescription="Its webhook URL stops responding right away. Anything still calling it starts failing. Historical runs are kept."
                     />
                 )}
-                <Button size="sm" variant="outline" disabled={saving || deleting} onClick={handleBack}>Cancel</Button>
-                <Button size="sm" className="flex-1" loading={saving} onClick={handleSave} disabled={!canSave || deleting || promptLocked}>
+                <Button size="sm" variant="outline" disabled={saving || deleting || rotating} onClick={handleBack}>Cancel</Button>
+                <Button size="sm" className="flex-1" loading={saving} onClick={handleSave} disabled={!canSave || saving || deleting || rotating || promptLocked}>
                     {isEdit ? 'Save changes' : 'Create trigger'}
                 </Button>
             </PanelEditorFooter>

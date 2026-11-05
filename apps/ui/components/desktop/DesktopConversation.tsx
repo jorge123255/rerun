@@ -11,6 +11,8 @@ import { USER_BUBBLE_INK, USER_BUBBLE_SHAPE } from '@/components/chat/bubble-sty
 import { ArrowUpIcon, ChevronDownIcon, PlusIcon, SquareIcon, UploadIcon, UserRoundIcon, XIcon } from '@/lib/icons'
 import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
 import { useDesktopReplyFeedback } from '@/lib/desktop/reply-feedback'
+import { DesktopBrowserRun } from './browser-runs/DesktopBrowserRun'
+import { DesktopSelectedMentionText } from './mentions/DesktopSelectedMentionText'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -29,9 +31,14 @@ import { DesktopSetupGate, DesktopSetupSkippedBanner } from './setup/DesktopSetu
 import { DesktopCoworkerSetup } from './DesktopCoworkerSetup'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { DesktopCoworkerData } from './DesktopCoworkerData'
+import { DesktopBoundTriggersPanel } from './triggers/DesktopBoundTriggersPanel'
+import { DesktopWebhookRunBlock } from './triggers/DesktopWebhookRunBlock'
+import { parseTriggerPayload } from '@rerun/contracts'
 import { DesktopCoworkerRoutines } from './DesktopCoworkerRoutines'
 import { DesktopCoworkerSkills } from './DesktopCoworkerSkills'
-import { DesktopSkillMentions } from './DesktopSkillMentions'
+import { DesktopCoworkerMentions } from './mentions/DesktopCoworkerMentions'
+import { reconcileDesktopCoworkerMentions } from '@/lib/desktop/coworker-mentions'
+import { desktopCoworkerMentionFieldsOf, trimDesktopCoworkerMentions, type DesktopCoworkerMention, type DesktopCoworkerMentionFields } from '@rerun/contracts'
 import { DesktopCoworkerNotificationControl } from './DesktopCoworkerNotificationBell'
 import { DesktopSkillProposalDock } from './skills/DesktopSkillProposalDock'
 import { useCoworkerSkillProposals } from '@/lib/desktop/use-coworker-skill-proposals'
@@ -122,7 +129,7 @@ async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMes
 const stopUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/stop`
 const RUN_POLL_MS = 3000
 
-export type ComposerDraft = { text: string; attachment?: string; attachments?: DesktopAttachmentSelection[] }
+export type ComposerDraft = DesktopCoworkerMentionFields & { text: string; attachment?: string; attachments?: DesktopAttachmentSelection[] }
 export type TabActivity = { busy: boolean; dirty: boolean; readableSessionId?: string | null }
 
 const draftPaths = (draft: ComposerDraft | undefined) => draft ? (draft.attachments?.length ? draft.attachments : draft.attachment ? [draft.attachment] : []) : []
@@ -140,7 +147,7 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onClosePanel, modelLabel, onOpenModelSettings }: {
+export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, onOpenModelSettings }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
@@ -157,6 +164,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     onChatSession: (id: string, sourceDraft?: ComposerDraft) => void | boolean | Promise<boolean>
     renderHistory?: (busy: boolean, control: { needsRequest: number | null; active: boolean; onOpenChange: (open: boolean) => void }) => ReactNode
     renderRunHistory?: (control: DesktopDialogControl) => ReactNode
+    onOpenCoworkerChat?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onClosePanel?: () => void
     modelLabel?: string
     onOpenModelSettings?: () => void
@@ -219,7 +227,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const [attachments, setAttachments] = useState<ReadonlyMap<string, readonly DesktopAttachmentSelection[]>>(() => new Map(initialPaths.length ? [[draftKey, initialPaths]] : []))
     // Ordinary navigation carries the current composer. An alternate and its original keep independent drafts.
     const inputKey = inputs.has(draftKey) ? draftKey : ''
-    const composer = useRef<ComposerDraft>({ text: initialDraft?.text ?? '', attachments: initialPaths })
+    const composer = useRef<ComposerDraft>({ text: initialDraft?.text ?? '', attachments: initialPaths, coworkerMentions: initialDraft?.coworkerMentions })
+    const [mentionValues, setMentionValues] = useState<ReadonlyMap<string, DesktopCoworkerMention[]>>(() => new Map(initialDraft?.coworkerMentions ? [[draftKey, initialDraft.coworkerMentions]] : []))
+    const pickedMentions = useRef<DesktopCoworkerMention[] | null>(null)
     const draft = useDesktopComposerDraft(agent.id, tabUid, value => {
         const paths = desktopAttachmentPathsOf(value)
         setInputs(current => new Map(current).set(draftKey, value.text))
@@ -229,23 +239,29 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             else next.delete(draftKey)
             return next
         })
-        composer.current = { text: value.text, attachments: paths }
+        composer.current = { text: value.text, attachments: paths, coworkerMentions: value.coworkerMentions }
+        setMentionValues(current => new Map(current).set(draftKey, value.coworkerMentions ?? []))
     })
     // The tab UID remains stable when the first accepted message receives its session ID.
     // Production reads the durable record directly, so newer typing cannot fall off that bind.
     const input = tabUid ? draft.text : inputs.get(inputKey) ?? ''
+    const coworkerMentions = tabUid ? draft.coworkerMentions ?? [] : reconcileDesktopCoworkerMentions(input, input, mentionValues.get(inputKey) ?? [])
+    const mentionSignature = JSON.stringify(coworkerMentions)
     const attachmentPaths = tabUid ? desktopAttachmentPathsOf(draft) : attachments.get(draftKey) ?? []
     const attachmentSignature = JSON.stringify(attachmentPaths)
     const textAttachments = attachmentPaths.filter((item): item is string => typeof item === 'string')
     const imageAttachments = attachmentPaths.filter((item): item is DesktopImageSnapshot => typeof item !== 'string')
     const setInput = (value: string) => {
+        const picked = pickedMentions.current; pickedMentions.current = null
         if (!draft.loaded || draft.error || regenerating.current || isDesktopQuitting()) return
+        const nextMentions = picked ?? reconcileDesktopCoworkerMentions(input, value, coworkerMentions)
+        setMentionValues(current => new Map(current).set(inputKey, nextMentions))
         setInputs(current => new Map(current).set(inputKey, value))
-        composer.current = { text: value, attachments: [...attachmentPaths] }
-        draft.update({ text: value, ...desktopAttachmentFieldsOf(attachmentPaths) })
+        composer.current = { text: value, attachments: [...attachmentPaths], coworkerMentions: nextMentions }
+        draft.update({ text: value, coworkerMentions: nextMentions, ...desktopAttachmentFieldsOf(attachmentPaths) })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the path signature covers inline arrays
-    useEffect(() => { composer.current = { text: input, attachments: [...attachmentPaths] } }, [input, attachmentSignature])
+    useEffect(() => { composer.current = { text: input, attachments: [...attachmentPaths], coworkerMentions } }, [input, attachmentSignature, mentionSignature])
     const pendingAttachment = useRef<{ key: string; inputKey: string; input: string; attachments: readonly DesktopAttachmentSelection[]; version: number; release: () => void } | null>(null)
     const preparingSubmit = useRef(false)
     const [preparingSend, setPreparingSend] = useState(false)
@@ -262,7 +278,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         })
         if (key === draftKey) {
             composer.current = { ...composer.current, attachments: [...paths] }
-            draft.update({ text: composer.current.text, ...desktopAttachmentFieldsOf(paths) })
+            draft.update({ text: composer.current.text, coworkerMentions: composer.current.coworkerMentions, ...desktopAttachmentFieldsOf(paths) })
         }
         return true
     }, [draft.loaded, draft.error, draft.attachmentRejected, draft.update, draftKey])
@@ -652,14 +668,15 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             if (!snapshot.loaded || snapshot.error || !await current.draft.flush() || !currentIntent() || uploadsBusy() || uploadsHaveBlocked()) return
             if ((tabUid ? desktopDraftRecord(agent.id, tabUid).state.version !== version : submissionCurrent.current.input !== input)) return
             const paths = [...(composer.current.attachments ?? [])]
+            const mentionFields = trimDesktopCoworkerMentions(input, composer.current.coworkerMentions)
             if (!text && !paths.length) return
             const live = submissionCurrent.current
             if (live.inactive || live.stopping || !live.ready || live.pendingRequest || (live.requestBlocked && !live.generating)
                 || !live.queue.loaded || live.queue.pending || live.queue.error || regenerating.current || pendingAttachment.current) return
             if (live.generating || (live.queue.queued && draftQueues.current.has(live.queue.queued.id))) {
                 const queuedPaths = live.queue.queued ? desktopQueuedAttachmentPaths(live.queue.queued) : []
-                const sameDraft = !live.generating && live.queue.queued && live.queue.queued.text === text && samePaths(queuedPaths, paths)
-                const item = sameDraft ? live.queue.queued : await live.queue.enqueue(text, paths, live.busy ? live.liveRunId : live.engineRunning.runId ?? null)
+                const sameDraft = !live.generating && live.queue.queued && live.queue.queued.text === text && samePaths(queuedPaths, paths) && JSON.stringify(live.queue.queued.coworkerMentions ?? []) === JSON.stringify(mentionFields.coworkerMentions ?? [])
+                const item = sameDraft ? live.queue.queued : await live.queue.enqueue(text, paths, live.busy ? live.liveRunId : live.engineRunning.runId ?? null, mentionFields.coworkerMentions)
                 if (!item) return
                 if (current.draft.clear(version)) {
                     setInputs(current => current.get(inputKey) === input ? new Map(current).set(inputKey, '') : current)
@@ -676,9 +693,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             pendingAttachment.current = pending
             const pick = !sessionId && conversationChoice.current?.session === null ? conversationChoice.current.pick : undefined
             const attachmentFields = desktopAttachmentFieldsOf(paths)
-            const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(!sessionId && tabUid && { tabUid }), ...(pick && { modelChoice: pick }), ...attachmentFields }
+            const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(!sessionId && tabUid && { tabUid }), ...(pick && { modelChoice: pick }), ...attachmentFields, ...desktopCoworkerMentionFieldsOf(mentionFields.coworkerMentions) }
             handedOff = true
-            void sendMessage({ text, ...(paths.length && { metadata: attachmentFields }) }, { body }).finally(() => {
+            void sendMessage({ text, ...((paths.length || mentionFields.coworkerMentions?.length) && { metadata: { ...attachmentFields, ...desktopCoworkerMentionFieldsOf(mentionFields.coworkerMentions) } }) }, { body }).finally(() => {
                 if (pendingAttachment.current === pending) pendingAttachment.current = null
                 hold()
             })
@@ -700,8 +717,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             clearError?.()
             const paths = desktopQueuedAttachmentPaths(item)
             const attachmentFields = desktopAttachmentFieldsOf(paths)
-            await sendMessage({ text: item.text, ...(paths.length && { metadata: attachmentFields }) }, {
-                body: { agentId: agent.id, sessionId, text: item.text, requestId: item.id, ...attachmentFields },
+            await sendMessage({ text: item.text, ...((paths.length || item.coworkerMentions?.length) && { metadata: { ...attachmentFields, ...desktopCoworkerMentionFieldsOf(item.coworkerMentions) } }) }, {
+                body: { agentId: agent.id, sessionId, text: item.text, requestId: item.id, ...attachmentFields, ...desktopCoworkerMentionFieldsOf(item.coworkerMentions) },
             })
         } catch (cause) {
             setQueueNotice(cause instanceof Error ? cause.message : 'Could not send the queued message. It is still saved.')
@@ -740,14 +757,15 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             const paths = desktopQueuedAttachmentPaths(item)
             await queue.action('review', item.id)
             if (!isCurrent()) return
-            if (composer.current.text.trim() === item.text && samePaths(draftPaths(composer.current), paths)) draftQueues.current.add(item.id)
+            if (composer.current.text.trim() === item.text && samePaths(draftPaths(composer.current), paths) && JSON.stringify(trimDesktopCoworkerMentions(composer.current.text, composer.current.coworkerMentions).coworkerMentions ?? []) === JSON.stringify(item.coworkerMentions ?? [])) draftQueues.current.add(item.id)
             // An older waiting message must not replace a newer draft already in the composer.
             if (!composer.current.text && draftPaths(composer.current).length === 0) {
                 draftQueues.current.add(item.id)
                 setInputs(current => new Map(current).set(draftKey, item.text))
                 setAttachments(current => { const next = new Map(current); if (paths.length) next.set(draftKey, paths); else next.delete(draftKey); return next })
-                composer.current = { text: item.text, attachments: paths }
-                draft.update({ text: item.text, ...desktopAttachmentFieldsOf(paths) })
+                composer.current = { text: item.text, attachments: paths, coworkerMentions: item.coworkerMentions }
+                setMentionValues(current => new Map(current).set(draftKey, item.coworkerMentions ?? []))
+                draft.update({ text: item.text, coworkerMentions: item.coworkerMentions ?? [], ...desktopAttachmentFieldsOf(paths) })
             }
             setQueueNotice('Your saved queued message is ready to review before sending.')
         }
@@ -756,7 +774,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 // A restart may have lost only the HTTP acknowledgement. Reconcile the exact
                 // request before offering its draft again; this probe can never create a run.
                 const response = await fetch('/api/desktop/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-                    agentId: agent.id, sessionId, text: item.text, requestId: item.id, reconcileOnly: true,
+                    agentId: agent.id, sessionId, text: item.text, requestId: item.id, reconcileOnly: true, ...desktopCoworkerMentionFieldsOf(item.coworkerMentions),
                     ...desktopAttachmentFieldsOf(desktopQueuedAttachmentPaths(item)),
                 }) })
                 if (response.ok && response.headers.get('x-session-id') === sessionId && response.headers.get('x-run-id') === item.id) {
@@ -1007,6 +1025,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     <DesktopCoworkerFiles agent={agent} dialogControl={dialogControl('files')} />
                     <DesktopCoworkerData agent={agent} dialogControl={dialogControl('data')} />
                     <DesktopCoworkerRoutines agent={agent} dialogControl={dialogControl('scheduled')} onOpenChat={onSelectSession} />
+                    <DesktopBoundTriggersPanel agent={agent} dialogControl={dialogControl('triggers')} onOpenChat={onSelectSession} />
                     <DesktopCoworkerSkills agent={agent} dialogControl={dialogControl('skills')} focusSlug={focusedSkill} />
                     <DesktopCoworkerTools agent={agent} dialogControl={dialogControl('tools')} />
                     <DesktopCoworkerMcpDialog agent={agent} dialogControl={dialogControl('mcp')} />
@@ -1041,12 +1060,14 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     {sessionId && active && <DesktopNativeWritebackReview agentId={agent.id} sessionId={sessionId} refreshKey={`${status}/${transcript.length}`}/>}
                     {transcript.map((message, messageIndex) => {
                         const scheduledRun = scheduledRunOf(message)
+                        const triggerPayload = message.role === 'user' ? parseTriggerPayload(message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n')) : null
                         // Reuse Rerun's routine divider and prompt dialog. No hosted file-link
                         // navigation: the desktop Files panel owns this coworker's documents.
                         const install = message.role==='user' ? parseInstallMessage(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         if(install)return <AgentInstallBlock key={message.id} agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />
                         const hitl = message.role === 'user' ? parseHitlReply(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         if(hitl?.kind==='service')return <DesktopServiceRequestReceipt key={message.id} entries={hitl.entries} />
+                        if (triggerPayload) return <DesktopWebhookRunBlock key={message.id} agentId={agent.id} payload={triggerPayload} />
                         if (scheduledRun) return <DesktopScheduledRunBlock key={message.id} run={scheduledRun} />
                         return (
                         <div key={message.id} className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
@@ -1063,6 +1084,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                     })()}
                                     {message.role === 'assistant'
                                         ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} streaming={(status === 'streaming' || serviceStreaming) && messageIndex === transcript.length - 1}
+                                            childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}
                                             skillProposals={{ rows: skillProposals.proposals, pinnedIds: skillProposals.pinnedIds, pendingId: skillProposals.pendingId,
                                                 onDecide: proposalsActive ? skillProposals.decide : undefined, onOpenSkill: proposalsActive ? openProposalSkill : undefined }}
                                             pendingRequestToolCallId={pendingRequest?.toolCallId}
@@ -1071,7 +1093,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                             feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
                                             onRate={message.id.startsWith('engine-') ? rating => feedback.rate(message.id, rating) : undefined}
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
-                                        : message.parts.map((part, index) => part.type === 'text' ? <span key={index}>{part.text}</span> : null)}
+                                        : message.parts.map((part, index) => part.type === 'text' ? <DesktopSelectedMentionText key={index} text={part.text} metadata={message.metadata} /> : null)}
                                 </MessageContent>
                             </Message>
                             {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
@@ -1081,7 +1103,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         if (payload.action === 'open') { setScreenOpen('request'); return }
                         if (payload.action === 'done' || payload.action === 'skip') await decideTakeover(payload)
                     }} />}
-                    {generating && <div className="text-sm text-muted-foreground">{agent.name} is working…</div>}
+                    {generating && (sessionId ? <DesktopBrowserRun key={sessionId} agentId={agent.id} sessionId={sessionId} active={active} takeoverPending={!!takeover} fullViewerOpen={screenOpen !== null} onOpen={() => setScreenOpen('manual')} fallback={<div className="text-sm text-muted-foreground">{agent.name} is working…</div>} /> : <div className="text-sm text-muted-foreground">{agent.name} is working…</div>)}
                     {stopError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopError}</div>}
                     {(error || historyError) && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
                         {historyError || error?.message}
@@ -1154,7 +1176,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             beginUpload(files)
                         }} />
                     <label htmlFor={composerId} className="sr-only">Message {agent.name}</label>
-                    <DesktopSkillMentions agentId={agent.id} onTextChange={setInput}
+                    <DesktopCoworkerMentions agentId={agent.id} text={input} mentions={coworkerMentions} onTextChange={setInput}
+                        onMentionsChange={value => { pickedMentions.current = value }}
                         enabled={active && !inactive && draft.loaded && !draft.error && !draft.quitting && !regenerationSource && !detailPanel}
                         refreshKey={`${status}:${lastMessage?.id ?? ''}`}>
                     {mention => <>
@@ -1177,11 +1200,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         }}
                     />
                     {mention.menu}
+                    {mention.targetError && /(?:^|\s)@\S*$/.test(input) && <div role="status" className="flex items-center gap-2 px-2.5 pb-2 text-xs text-muted-foreground"><span>{mention.targetError}</span><Button type="button" variant="ghost" size="xs" onClick={mention.retryTargets}>Retry coworkers</Button></div>}
                     {mention.error && /(?:^|\s)\/\S*$/.test(input) && <div role="status" className="flex items-center gap-2 px-2.5 pb-2 text-xs text-muted-foreground">
                         <span>{mention.error}</span><Button type="button" variant="ghost" size="xs" onClick={mention.retry}>Retry skills</Button>
                     </div>}
                     </>}
-                    </DesktopSkillMentions>
+                    </DesktopCoworkerMentions>
                     <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
                             workspaceModel={modelLabel} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} onReady={setModelReady} />

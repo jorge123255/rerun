@@ -1,3 +1,6 @@
+import { bindDesktopDelegation, installDesktopDelegation } from '../../desktop/delegation/binding.js'
+import { createDesktopTriggerRuntime, readDesktopTriggerRuntime } from '../../desktop/triggers/runtime.js'
+import { createDesktopTriggerRoutes } from '../../desktop/triggers/router.js'
 import type { Server } from 'node:http'
 import { readFile, realpath } from 'node:fs/promises'
 import { resolve } from 'node:path'
@@ -25,6 +28,7 @@ import { stopDesktopMcp } from '../../desktop/mcp-tools.js'
 import { logger } from '../../lib/logger.js'
 import { bindIsolatedScreen } from '../../desktop/isolated-screen/binding.js'
 import { reconcileIsolatedScreens, shutdownIsolatedScreens } from '../../desktop/isolated-screen/index.js'
+import { bindDesktopCoworkerCalls } from '../../desktop/coworker-calls/bind.js'
 
 const secret = z.string().regex(/^[a-f0-9]{64}$/)
 const origin = z.string().url().refine(value => {
@@ -47,6 +51,7 @@ export async function desktopRunCommand(): Promise<void> {
     await prepareDataDir()
     await initializeDesktopBrainStore()
     const lifetime = new AbortController()
+    let triggers: Awaited<ReturnType<typeof createDesktopTriggerRuntime>> | undefined
     let schedules: Awaited<ReturnType<typeof bindDesktopSchedules>> | undefined
     let stopScheduler: ReturnType<typeof startScheduler> | undefined
     let stopping = false
@@ -74,7 +79,11 @@ export async function desktopRunCommand(): Promise<void> {
     })
     app.get('/health', c => initialized ? c.json(ready) : c.json({ status: 'starting' }, 503))
     const screen = bindIsolatedScreen(runtime)
+    const delegation = bindDesktopDelegation(runtime.launchNonce)
+    installDesktopDelegation(delegation)
     app.route('/agents/:id/screen', screen.routes)
+    app.route('/desktop/delegation', delegation.routes)
+    app.route('/desktop/triggers', createDesktopTriggerRoutes(readDesktopTriggerRuntime, runtime.launchNonce))
     app.route('/', createServer())
     let server: Server
     const shutdown = async () => {
@@ -87,7 +96,7 @@ export async function desktopRunCommand(): Promise<void> {
         stopCodexLogin()
         // Close admissions before waiting for any preparation. Callback delivery is best effort
         // during teardown; failure must never reopen either local service or prevent shutdown.
-        const closing = Promise.allSettled([schedules?.close(), stopDesktopMcp(), stopDesktopSkillProposals(), screen.close().then(() => shutdownIsolatedScreens(AbortSignal.timeout(25_000)))])
+        const closing = Promise.allSettled([schedules?.close(), triggers?.close(), delegation.close(), stopDesktopMcp(), stopDesktopSkillProposals(), screen.close().then(() => shutdownIsolatedScreens(AbortSignal.timeout(25_000)))])
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
         await Promise.allSettled([closing, abortAllRuns(), stopScheduler?.drain()])
@@ -117,6 +126,12 @@ export async function desktopRunCommand(): Promise<void> {
             if (stopping) return
             schedules = await bindDesktopSchedules(runtime)
             if (stopping) { await schedules.close().catch(() => {}); return }
+            await bindDesktopCoworkerCalls(runtime)
+            if (stopping) return
+            triggers = await createDesktopTriggerRuntime(runtime, { loopbackIngress: true })
+            if (stopping) { await triggers.close().catch(() => {}); return }
+            await delegation.initialize()
+            if (stopping) return
             initialized = true
             stopScheduler = startScheduler()
             process.send?.({ type: 'ready', ...ready })

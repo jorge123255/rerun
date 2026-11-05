@@ -367,9 +367,12 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
                     status: cancelled ? 'cancelled' : outcome.stopReason !== undefined || overlong ? 'error' : pendingToolCallId ? 'waiting-human' : 'completed', phase: 'terminal',
                     progress: project(progress, cancelled ? 'cancelled' : undefined), error: outcome.stopReason ?? (overlong ? text : null),
                     pendingToolCallId,
-                    ...(currentRow.wait ? { resultText: text } : {}),
+                    ...(currentRow.wait || outcome.stopReason !== undefined || overlong ? { resultText: text } : {}),
                 }, deps.now())
-                const final = done ?? await currentOwned()
+                let final = done ?? await currentOwned()
+                if (!done && ['cancelled', 'interrupted'].includes(final.status) && final.engineChildRunId === child.engineRunId && outcome.text) {
+                    final = await deps.store.patch(final.callId, { revision: final.revision, statuses: [final.status], engineChildRunId: child.engineRunId }, { resultText: text, progress: project(progress, 'cancelled') }, deps.now()) ?? final
+                }
                 return { text: currentRow.wait ? final.resultText ?? text : text, snapshot: await publish(final, input.onProgress) }
             }
             if (!currentRow.wait) {
