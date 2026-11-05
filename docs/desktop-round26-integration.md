@@ -1,6 +1,6 @@
 # Round 26 integration and root acceptance
 
-Status: source integration and regression review in progress; this file does not claim Mac acceptance yet.
+Status: E private file edits, G description creation and root To handle passed native/full-restart acceptance in 1b94f86. MCP OAuth refusal/retry was observed; a real provider OAuth sign-in remains unverified.
 
 Original design reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
@@ -13,15 +13,16 @@ Original design reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
 ## Root verification record
 
-Only root executes checks, packaging and Mac QA. Internal helpers authored/reviewed source and regression cases without executing them. Initial full UI run: 4,525 passed, 3 integration-fixture failures, 39 skipped; those failures are being corrected. Engine second full run: 3,337 passed, one expected new-migration snapshot mismatch; the v7 snapshot was verified to add only the first-turn receipt table and preserve all v6 table schemas. Final checks supersede these initial runs.
+Only root ran checks, packaging and Mac QA. Initial broad UI run covered 4,558 passing tests, one obsolete creation-focus assertion and 39 skips; the corrected targeted run passed 28 tests. Engine broad run covered 3,337 passing tests and one additive migration expectation; the corrected targeted run passed 114 tests. Both type checks passed. Shell tests passed 20; changed UI lint had no errors and 100 warnings. Final file-instruction/provider checks passed 34 tests in the dependency-equipped build worktree. Production builds, native runtime verification, strict signature verification and installation passed.
 
-Before installation, root fully quit the canonical app and verified a recovery copy of every workspace file at the task scratch directory `work/round26-before-install`. The original two coworkers retain 23 chats and 88 exact messages. No credentials are included in acceptance output.
+The disposable Round26 QA coworker was created through the original description composer and board placement. Its first real Codex reply was READY26; the exact owner, placement, first chat and creation receipt survived restart. A plain fresh-chat request in 1b94f86 invoked Write File, Edit File and Read File, returning FRESH AFTER. An earlier file preview remained ROUND26 AFTER after restart. The app-specific tool instructions now distinguish granted workspace publication from Codex's native temporary filesystem.
+
+Control Center To handle opened Chats -> Needs you. Mark all as read used the original confirmation, changed the count to zero and retained the unanswered approval. Both the zero count and untouched approval survived full restart. MCP authorization showed the permission refusal while disabled and the unsupported-provider/Retry sign-in state for https://example.com/mcp when enabled. No real external account sign-in is claimed.
+
+Root quit the canonical app and verified full recovery snapshots before updates and restart. The original two coworkers retain 23 chats and 88 exact messages. Round26 QA remains for the next acceptance run; it was not deleted. No credentials appear in this report.
 
 ## Remaining acceptance
 
-- Complete final source checks and install one canonical Mac app.
-- Create from the original description dialog, place on the board, observe a real Codex first reply and exact one-coworker/one-first-message persistence after restart.
-- Exercise private write/edit from chat and inspect the saved file after restart; ensure grants and owner isolation remain correct.
-- Exercise To handle, exact navigation, read receipts and unanswered approvals across restart.
-- Verify MCP authorization UI; distinguish unsupported-provider/error/cancel behavior from a real approved OAuth connection.
-- Remove only backed-up temporary QA coworkers, restart and verify original chats and messages are unchanged.
+- Real public-client MCP OAuth sign-in requires a compatible provider and user browser approval.
+- Native queue transition, actual macOS banner/click delivery and broader capability scopes remain separately tracked.
+- Round27 integrates PDF text, image inputs, Shared files, notification surfaces and skill suggestions; its Mac acceptance is separate from the above record.

@@ -2,7 +2,7 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { DesktopSkillMentions, type DesktopSkillMentionsApi } from './DesktopSkillMentions'
 
@@ -16,16 +16,20 @@ const submit = vi.fn()
 const row = (slug: string, name = slug, description = '') => ({ slug, name, description, body: `# ${name}\n\nbody`, files: [] as string[], fromConnector: false })
 const shelf = (skills: ReturnType<typeof row>[]) => Response.json({ skills })
 
+function Capture({ api }: { api: DesktopSkillMentionsApi }) {
+    useEffect(() => { captured = api }, [api])
+    return null
+}
+
 function Harness({ agentId }: { agentId: string | null }) {
     const [text, setText] = useState('')
     const formRef = useRef<HTMLFormElement>(null)
     return (
         <DesktopSkillMentions agentId={agentId} onTextChange={setText}>
             {api => {
-                // eslint-disable-next-line react-hooks/immutability -- expose this render-prop snapshot only to the test harness
-                captured = api
                 return (
                     <form ref={formRef}>
+                        <Capture api={api} />
                         <textarea ref={api.inputRef} value={text} aria-label="message" {...api.textareaProps} />
                         {api.menu}
                     </form>
