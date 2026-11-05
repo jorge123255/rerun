@@ -1,6 +1,6 @@
 # Next Rerun Mac assignments — 26 remaining groups
 
-Prepared from accepted base `b428751d716efdb3c928c124921502d2a5e4e6c1`. Installed/accepted app remains `742d089`; the previous round closed E6 Skills and E8 Routines, reducing 28 to 26 unfinished capability groups. These eight new slices are assigned, not accepted; the count changes only after applicable native/restart acceptance.
+Prepared from accepted base `b428751d716efdb3c928c124921502d2a5e4e6c1`. The base acceptance was `742d089`; root’s Control Center Notifications slice is now installed and accepted in `b30aa78`; the previous round closed E6 Skills and E8 Routines, reducing 28 to 26 unfinished capability groups. These eight new slices are assigned, not accepted; the count changes only after applicable native/restart acceptance.
 
 | Agent | Scope | Worktree under rerun-desktop-worktrees | Copy prompt |
 | --- | --- | --- | --- |
@@ -12,7 +12,7 @@ Prepared from accepted base `b428751d716efdb3c928c124921502d2a5e4e6c1`. Installe
 | F | E5 — MCP OAuth with a Mac callback | `mcp-oauth-loopback` | [Prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent F round 26 prompt.md>) |
 | G | B4 — Create a coworker from a job description | `coworker-description-kickoff` | [Prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent G round 26 prompt.md>) |
 | H | C4 — Original /skill composer suggestions | `skill-mentions` | [Prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent H round 26 prompt.md>) |
-| Root | B5 — original workspace/scoped Control Center Notifications commands | Coding checkout `rerun-desktop`, `desktop/m1` | Owns implementation and all integration/QA |
+| Root | B5 — original workspace/scoped Control Center Notifications commands | Coding checkout `rerun-desktop`, `desktop/m1` | Installed and restart-accepted in `b30aa78`; owns all integration/QA |
 
 All eight clean worktrees were created from the same accepted base. Old worktrees are preserved. Root reserves central integration files so independent lanes do not overwrite each other. H handles actual /skill suggestions; no inactive coworker-delegation option. C follows the original coworker-card bell, not invented board-tile chrome. G follows original description/kickoff behavior, not fabricated SOUL generation. E provides private Rerun fs_write/fs_edit; native temporary Codex edits remain temporary.
 
