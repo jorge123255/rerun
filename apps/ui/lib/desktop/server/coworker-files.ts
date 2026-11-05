@@ -1105,7 +1105,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
     const workspace=await coworkerWorkspace(runtime,agentId)
     if(publication)await assertPrivateToolLocation(workspace,path,true)
     const { root, target, rel } = await containedPath(workspace, path)
-    if(publication && target!==join(root ?? '',path))throw new DesktopHttpError(400,'Private file tools cannot follow symlinks.')
+    if(publication && target!==join(/* turbopackIgnore: true */ root ?? '',path))throw new DesktopHttpError(400,'Private file tools cannot follow symlinks.')
     const name = rel.split('/').pop() ?? ''
     if (!rel || name.startsWith('.') || !EDITABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be edited here.')
     if (!root || !target) throw new DesktopHttpError(404, 'File not found')
@@ -1149,7 +1149,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
             const readCurrent = async (fileName = finalName) => {
                 if (publication) {
                     await assertFolderUnmoved()
-                    const current = await readPrivateTextAt(join(folder, fileName)).catch(error => { if (missing(error)) return null; throw error })
+                    const current = await readPrivateTextAt(join(/* turbopackIgnore: true */ folder, fileName)).catch(error => { if (missing(error)) return null; throw error })
                     await assertFolderUnmoved()
                     return current
                 }
@@ -1179,7 +1179,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
             }
             const assertPrivateDisplaced = async (fileName: string) => {
                 if (!publication?.snapshot) return
-                const current = await readPrivateTextAt(join(folder, fileName))
+                const current = await readPrivateTextAt(join(/* turbopackIgnore: true */ folder, fileName))
                 await assertFolderUnmoved()
                 const expected = publication.snapshot
                 // Rename changes ctime, but it must not change the data, owner, link count,
