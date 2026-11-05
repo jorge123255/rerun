@@ -48,7 +48,7 @@ export function decodeReply(text: string, mime: string, id: number): Record<stri
     if (!reply || reply.error || !reply.result || typeof reply.result !== 'object') throw new Error('MCP protocol request failed')
     return reply.result
 }
-export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, network: typeof fetch = fetch) {
+export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, network: typeof fetch = fetch, oauthCredential?: (agent:string,name:string,revision:string,signal:AbortSignal)=>Promise<string|null>) {
     const lifecycle = store.lifecycle
     const disconnect = lifecycle.disconnect
     async function operate(agent: string, name: string, revision: string, call?: { name:string; arguments:Record<string,unknown> }, stop?: AbortSignal) {
@@ -59,16 +59,17 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
         const timer = setTimeout(() => controller.abort(), call ? 120_000 : 20_000)
         const cancel = () => controller.abort()
         stop?.addEventListener('abort',cancel,{once:true}); if (stop?.aborted) cancel()
-        let bearer = '', session = '', id = 0, configuredUrl = ''
+        let bearer = '', session = '', id = 0, configuredUrl = '', configuredBearer = ''
         const execute = async () => {
         try {
-            const first = await abortable(store.read(agent,name),signal); bearer = first.bearer
+            const first = await abortable(store.read(agent,name),signal); configuredBearer=first.bearer; bearer = oauthCredential ? (await abortable(oauthCredential(agent,name,revision,signal),signal)) ?? first.bearer : first.bearer
             const url = endpoint(first.url); configuredUrl = url
             async function guard() {
                 ticket.assertCurrent()
                 const [permission,current] = await abortable(Promise.all([access(agent),store.read(agent,name)]),signal)
                 ticket.assertCurrent()
-                if (!permission.enabled || !permission.granted || current.revision !== revision || current.url !== url || current.bearer !== bearer) throw new Error('MCP permission or server changed')
+                if (!permission.enabled || !permission.granted || current.revision !== revision || current.url !== url || current.bearer !== configuredBearer) throw new Error('MCP permission or server changed')
+                if(oauthCredential){const token=await abortable(store.readOAuth(agent,name),signal);ticket.assertCurrent();if((token?.accessToken ?? current.bearer)!==bearer || token && (token.resource!==url || token.refreshPending))throw new Error('MCP credential changed')}
             }
             publish = guard
             async function rpc(method: string, params: unknown, notification = false) {
@@ -128,7 +129,10 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
                 try {
                     const [permission,current] = await abortable(Promise.all([access(agent),store.read(agent,name)]),cleanupSignal)
                     ticket.assertCurrent()
-                    if (permission.enabled && permission.granted && current.revision === revision && current.url === configuredUrl && current.bearer === bearer) {
+                    const credential=oauthCredential?await abortable(store.readOAuth(agent,name),cleanupSignal):null
+                    ticket.assertCurrent()
+                    const sameCredential=!oauthCredential || !credential?.refreshPending && (credential?.accessToken ?? current.bearer)===bearer && (!credential || credential.resource===configuredUrl)
+                    if (sameCredential && permission.enabled && permission.granted && current.revision === revision && current.url === configuredUrl && current.bearer === configuredBearer) {
                         const closed = await abortable(network(configuredUrl,{method:'DELETE',redirect:'manual',credentials:'omit',signal:cleanupSignal,headers:{'Mcp-Session-Id':session,'MCP-Protocol-Version':'2025-03-26',...(bearer ? {Authorization:`Bearer ${bearer}`} : {})}}),cleanupSignal)
                         if(closed.body)await abortable(closed.body.cancel(),cleanupSignal)
                     }

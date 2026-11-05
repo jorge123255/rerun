@@ -47,7 +47,15 @@ export function remoteMcpLifecycle() {
             if(closed || owner.pending || server.pending || owner.generation!==a || server.generation!==b) throw new Error('MCP capability invalidated')
         }
     }
-    return {admit,disconnect,mutate,watch,
+    function commitCredentials<T>(agent:string,name:string,signal:AbortSignal,write:(check:()=>void)=>Promise<T>):Promise<T> {
+        const server=state(agent,name),owner=state(agent,''),a=server.generation,b=owner.generation
+        const check=()=>{signal.throwIfAborted();if(closed || owner.pending || a!==server.generation || b!==owner.generation)throw new Error('MCP credential admission invalidated')}
+        check();server.pending++
+        const result=server.tail.catch(()=>{}).then(()=>{check();return write(check)})
+        server.tail=result
+        return result.finally(()=>{server.pending--})
+    }
+    return {admit,disconnect,mutate,watch,commitCredentials,
         transitionOwner:<T>(agent:string,write:()=>Promise<T>)=>mutate(agent,'',write),
         shutdown:()=>{closed=true;for(const value of states.values())invalidate(value)},
     }

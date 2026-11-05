@@ -9,6 +9,10 @@ export const remoteMcpSchema = `CREATE TABLE IF NOT EXISTS desktop_remote_mcp (
  agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
  name TEXT NOT NULL, url TEXT NOT NULL, revision TEXT NOT NULL, bearer TEXT,
  PRIMARY KEY(agent_id,name));`
+export const remoteMcpOAuthSchema = `CREATE TABLE IF NOT EXISTS desktop_remote_mcp_oauth (
+ agent_id TEXT NOT NULL,name TEXT NOT NULL,revision TEXT NOT NULL,bundle TEXT NOT NULL,
+ PRIMARY KEY(agent_id,name), FOREIGN KEY(agent_id,name) REFERENCES desktop_remote_mcp(agent_id,name) ON DELETE CASCADE);`
+export type OAuthTokenBundle={refreshPending?:string;accessToken:string;refreshToken?:string;expiresAt:number;resource:string;issuer:string;tokenEndpoint:string;clientId:string;scope?:string}
 export function remoteMcpStore(db: Client, key: () => Buffer) {
     const lifecycle = remoteMcpLifecycle()
     function seal(agent: string, name: string, value: string) {
@@ -29,6 +33,24 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
     }
     return {
         list, lifecycle,
+        async readOAuth(agent:string,name:string):Promise<OAuthTokenBundle|null> {
+            const row=(await db.execute({sql:'SELECT o.bundle FROM desktop_remote_mcp_oauth o JOIN desktop_remote_mcp s ON s.agent_id=o.agent_id AND s.name=o.name AND s.revision=o.revision WHERE o.agent_id=? AND o.name=?',args:[agent,name]})).rows[0]
+            return row?JSON.parse(open(agent,`oauth:${name}`,String(row.bundle))):null
+        },
+        async writeOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal) {
+            return lifecycle.commitCredentials(agent,name,signal,async check=>{
+                check()
+                const encrypted=seal(agent,`oauth:${name}`,JSON.stringify(bundle))
+                try {
+                    const result=await db.execute({sql:'INSERT INTO desktop_remote_mcp_oauth(agent_id,name,revision,bundle) SELECT agent_id,name,revision,? FROM desktop_remote_mcp WHERE agent_id=? AND name=? AND revision=? ON CONFLICT(agent_id,name) DO UPDATE SET revision=excluded.revision,bundle=excluded.bundle',args:[encrypted,agent,name,revision]})
+                    check()
+                    if(result.rowsAffected!==1)throw new Error('MCP server changed')
+                } catch(error) {
+                    await db.execute({sql:'DELETE FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=? AND bundle=?',args:[agent,name,encrypted]})
+                    throw error
+                }
+            })
+        },
         async read(agent: string, name: string) {
             const row = (await db.execute({ sql:'SELECT * FROM desktop_remote_mcp WHERE agent_id=? AND name=?',args:[agent,name] })).rows[0]
             if (!row) throw new Error('MCP server unavailable')
