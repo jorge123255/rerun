@@ -1,4 +1,4 @@
-import { spawn, execFile } from 'node:child_process'
+import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
 import { isAbsolute } from 'node:path'
 import { SkillBoundaryError } from './skill-publication-error.js'
@@ -30,7 +30,7 @@ export async function renameSkillEntry(directory: string, parent: Identity, sour
 /** The kernel lease spans both processes and survives no process death; its file is never unlinked. */
 export async function acquireSkillLease(directory: string, parent: Identity, signal?: AbortSignal): Promise<{ assertCurrent(): void; release(): Promise<void> }> {
     signal?.throwIfAborted()
-    const child = spawn(helper(), ['--skill-lock', directory, String(parent.dev), String(parent.ino)], { stdio: ['pipe', 'pipe', 'pipe'], env })
+    const child: ChildProcessWithoutNullStreams = spawn(helper(), ['--skill-lock', directory, String(parent.dev), String(parent.ino)], { stdio: ['pipe', 'pipe', 'pipe'], env })
     let alive = true
     let released = false
     const exited = new Promise<void>(resolve => { child.once('close', () => { alive = false; resolve() }); child.once('error', () => { alive = false; resolve() }) })

@@ -85,7 +85,7 @@ function skillsFetcher(options: { skills?: unknown[]; proposals?: Record<string,
 
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = '' })
 
-async function mountPanel(options: { skills?: unknown[]; proposals?: unknown[] } = {}) {
+async function mountPanel(options: Parameters<typeof skillsFetcher>[0] = {}) {
     const { fetcher, created, decided } = skillsFetcher(options)
     vi.stubGlobal('fetch', fetcher)
     const container = document.createElement('div')
