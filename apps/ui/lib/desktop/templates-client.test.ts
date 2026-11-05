@@ -78,3 +78,79 @@ it('opens a captured draft or library row using only its exact template identity
     expect((await client.detail(row)).agents[0].name).toBe('QA coworker')
     expect(calls).toEqual([0, 1].map(() => ({ operation: 'detail', ...template })))
 })
+
+it('reads current installation with GET only and validates the exact template identity', async () => {
+    const fetcher = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ status: 'installed', ...template, requestId, receiptId, coworkers: [] }))
+    vi.stubGlobal('fetch', fetcher)
+    const client = createDesktopTemplatesClient()
+    await expect(client.currentInstall({ ...template })).resolves.toMatchObject({ status: 'installed', requestId, receiptId })
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith(`/api/desktop/templates/intent?templateId=${template.templateId}&revision=${template.revision}`, expect.objectContaining({ method: 'GET', cache: 'no-store' }))
+    expect(fetcher.mock.calls[0][1]).not.toHaveProperty('body')
+    fetcher.mockImplementationOnce(async () => Response.json({ status: 'none', ...template, revision: 'c'.repeat(64) }))
+    await expect(client.currentInstall(template)).rejects.toThrow('unknown')
+})
+
+it('recovers a pending attempt without mutation and refuses a different retry identity before execution', async () => {
+    const calls: { method: string; body?: unknown }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+        const method = String(init.method)
+        calls.push({ method, ...(init.body ? { body: JSON.parse(String(init.body)) } : {}) })
+        return Response.json(method === 'GET' ? { status: 'pending', ...template, requestId } : { operation: 'install', ...template, requestId: '55555555-5555-4555-8555-555555555555', spaceId, positions: [{ col: 0, row: 0 }] })
+    }))
+    const client = createDesktopTemplatesClient()
+    await client.currentInstall(template)
+    expect(client.pendingInstall(template)).toEqual({ ...template, requestId })
+    expect(calls).toEqual([{ method: 'GET' }])
+    await expect(client.install(template, { requestId })).rejects.toThrow('installation changed')
+    expect(calls).toHaveLength(2)
+    expect(calls[1].body).toEqual({ operation: { operation: 'install', ...template } })
+})
+
+it('a read-confirmed lost Use again response clears only the completed rotation before a new explicit copy', async () => {
+    let currentRequest = requestId
+    let loseResponse = true
+    const rotations: string[] = []
+    const posts: string[] = []
+    const identities = new Map<string, string>()
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+        if (init.method === 'GET') return Response.json({ status: 'installed', ...template, requestId: currentRequest, receiptId, coworkers: [] })
+        const body = JSON.parse(String(init.body))
+        if (url.endsWith('/intent')) {
+            rotations.push(body.againRequestId)
+            if (!identities.has(body.againRequestId)) identities.set(body.againRequestId, crypto.randomUUID())
+            currentRequest = identities.get(body.againRequestId)!
+            return Response.json({ ...body.operation, requestId: currentRequest, spaceId, positions: [{ col: 0, row: 0 }] })
+        }
+        posts.push(body.requestId)
+        if (loseResponse) { loseResponse = false; throw new Error('response lost') }
+        return Response.json({ status: 'installed', ...template, requestId: body.requestId, receiptId, coworkers: [] })
+    }))
+    const client = createDesktopTemplatesClient()
+    await client.currentInstall(template)
+    await expect(client.install(template, { again: true })).rejects.toThrow('unknown')
+    expect(client.pendingInstall(template)?.requestId).toBe(currentRequest)
+    await client.currentInstall(template)
+    expect(client.pendingInstall(template)).toBeNull()
+    expect(posts).toHaveLength(1)
+    await client.install(template, { again: true })
+    expect(rotations).toHaveLength(2)
+    expect(rotations[0]).not.toBe(rotations[1])
+    expect(posts[0]).not.toBe(posts[1])
+})
+
+it('a late pre-install status read cannot replace the completed attempt', async () => {
+    let finishRead!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+        if (init.method === 'GET') return new Promise<Response>(resolve => { finishRead = resolve })
+        const body = JSON.parse(String(init.body))
+        if (url.endsWith('/intent')) return Response.json({ ...body.operation, requestId, spaceId, positions: [{ col: 0, row: 0 }] })
+        return Response.json({ status: 'installed', ...template, requestId, receiptId, coworkers: [] })
+    }))
+    const client = createDesktopTemplatesClient()
+    const read = client.currentInstall(template)
+    const rejected = expect(read).rejects.toThrow('unknown')
+    await client.install(template)
+    finishRead(Response.json({ status: 'pending', ...template, requestId }))
+    await rejected
+    expect(client.pendingInstall(template)).toBeNull()
+})

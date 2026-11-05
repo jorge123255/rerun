@@ -52,10 +52,10 @@ export function DesktopTemplateDetailPanel({ client, template, resume = null, on
             </div>
         </ScrollFade>
         <div className="border-t bg-muted/50 px-5 py-4 max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
-            {install.receipt && <p role="status" className="mb-2 text-center text-xs text-muted-foreground">Installation confirmed · {install.receipt.coworkers.length} current coworker{install.receipt.coworkers.length === 1 ? '' : 's'} · Receipt <code>{install.receipt.receiptId}</code></p>}
-            {install.error && <p role="alert" className="mb-2 text-center text-xs text-destructive">{install.error}{install.interrupted ? ' The same request ID is kept for an ambiguous retry.' : ''}</p>}
-            <Button type="button" className="w-full" loading={install.busy} disabled={!canInstall || install.busy} title={!canInstall ? 'Capture at least one coworker before installing.' : undefined} onClick={install.receipt ? install.again : install.run}>
-                {install.receipt ? 'Use again' : install.interrupted ? 'Retry installation' : 'Use template'}
+            {install.receipt && <p role="status" className="mb-2 text-center text-xs text-muted-foreground">Previously used · {install.receipt.coworkers.length} coworker{install.receipt.coworkers.length === 1 ? '' : 's'} still in this workspace</p>}
+            {install.error && <p role="alert" className="mb-2 text-center text-xs text-destructive">{install.error}</p>}
+            <Button type="button" className="w-full" loading={install.busy} disabled={!canInstall || install.busy} title={!canInstall ? 'Capture at least one coworker before installing.' : undefined} onClick={install.readFailed ? install.refresh : install.receipt ? install.again : install.run}>
+                {install.checking ? 'Checking previous use…' : install.readFailed ? 'Try again' : install.receipt ? 'Use again' : install.interrupted ? 'Retry installation' : 'Use template'}
             </Button>
             <p className="mt-2 text-center text-[11px] text-muted-foreground">{canInstall ? 'Creates fresh coworkers with empty histories and tools switched off.' : 'Capture at least one coworker before installing this draft.'}</p>
         </div>

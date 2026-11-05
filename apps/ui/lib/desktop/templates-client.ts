@@ -2,6 +2,7 @@
 
 import { desktopTemplateCaptureResultSchema, desktopTemplateCreateDraftResultSchema, desktopTemplateDetailSchema, desktopTemplateInstallResultSchema, desktopTemplateListSchema, desktopTemplateOperationSchema, desktopTemplatePlanSchema, desktopTemplateReceiptSchema, desktopTemplateSourcesResultSchema, templateAgentSchema, type DesktopTemplatePlan } from '@rerun/contracts'
 import type { DesktopCapturePlanSet, DesktopCaptureSelection, DesktopCaptureWorkspace, DesktopTemplateDetail, DesktopTemplateDraft, DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt, DesktopTemplateSummary } from '@/components/desktop/templates/types'
+import { desktopTemplateInstallStateSchema, type DesktopTemplateInstallState } from './template-install-state'
 
 const UNKNOWN = 'Local template acknowledgement is unknown. Retry the same attempt.'
 export class DesktopTemplateRequestError extends Error {
@@ -14,14 +15,15 @@ export function createDesktopTemplatesClient() {
     const againRequests = new Map<string,string>()
     const plans = new Map<string, DesktopTemplatePlan>()
     const installs = new Map<string, DesktopTemplateInstallIntent>()
+    const installGenerations = new Map<string, number>()
     let closed = false
-    async function request(body: Record<string, unknown>, intent = false): Promise<unknown> {
+    async function fetchResponse(url: string, init: RequestInit): Promise<unknown> {
         if (closed) throw new DesktopTemplateRequestError('Template panel was closed. Reopen it to reconcile the attempt.', false)
         const controller = new AbortController()
         controllers.add(controller)
         try {
             const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(45_000)])
-            const response = await fetch(`${base}${intent ? '/intent' : ''}`, { method: 'POST', cache: 'no-store', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+            const response = await fetch(url, { ...init, cache: 'no-store', signal })
             const data = await response.json()
             signal.throwIfAborted()
             if (closed) throw new Error('Panel closed')
@@ -32,8 +34,12 @@ export function createDesktopTemplatesClient() {
             throw new DesktopTemplateRequestError(UNKNOWN, false)
         } finally { controllers.delete(controller) }
     }
-    async function mutate(body: Record<string, unknown>, againRequestId?: string) {
+    function request(body: Record<string, unknown>, intent = false) {
+        return fetchResponse(`${base}${intent ? '/intent' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    }
+    async function mutate(body: Record<string, unknown>, againRequestId?: string, expectedRequestId?: string) {
         const operation = desktopTemplateOperationSchema.parse(await request({ operation: body, ...(againRequestId ? { againRequestId } : {}) }, true))
+        if (expectedRequestId && (!('requestId' in operation) || operation.requestId !== expectedRequestId)) throw new DesktopTemplateRequestError('This installation changed. Reopen the template to review its current status.', true)
         if (operation.operation === 'install') installs.set(`${operation.templateId}:${operation.revision}`, { templateId: operation.templateId, revision: operation.revision, requestId: operation.requestId })
         return request(operation)
     }
@@ -81,15 +87,26 @@ export function createDesktopTemplatesClient() {
             return Promise.all(result.templates.filter(template => template.status === 'captured' && template.revision).map(template => this.detail({ templateId: template.templateId, revision: template.revision! })))
         },
         async detail(template: DesktopTemplateIdentity): Promise<DesktopTemplateDetail> { return detailOf(await request({ operation: 'detail', templateId: template.templateId, revision: template.revision })) },
+        async currentInstall(template: DesktopTemplateIdentity): Promise<DesktopTemplateInstallState> {
+            const key = `${template.templateId}:${template.revision}`
+            const generation = installGenerations.get(key) ?? 0
+            const query = new URLSearchParams({ templateId: template.templateId, revision: template.revision })
+            const result = desktopTemplateInstallStateSchema.parse(await fetchResponse(`${base}/intent?${query}`, { method: 'GET' }))
+            if (result.templateId !== template.templateId || result.revision !== template.revision || generation !== (installGenerations.get(key) ?? 0)) throw new DesktopTemplateRequestError(UNKNOWN, false)
+            if (result.status === 'pending') installs.set(key, { templateId: result.templateId, revision: result.revision, requestId: result.requestId })
+            else { installs.delete(key); againRequests.delete(key) }
+            return result
+        },
         async install(template: DesktopTemplateIdentity, options: { again?: boolean; requestId?: string } = {}): Promise<DesktopTemplateInstallReceipt> {
             const key = `${template.templateId}:${template.revision}`
+            installGenerations.set(key, (installGenerations.get(key) ?? 0) + 1)
             if(options.again && !againRequests.has(key))againRequests.set(key,crypto.randomUUID())
             let raw:unknown
-            try {raw=await mutate({ operation: 'install', templateId: template.templateId, revision: template.revision }, againRequests.get(key))}
+            try {raw=await mutate({ operation: 'install', templateId: template.templateId, revision: template.revision }, againRequests.get(key), options.requestId)}
             catch(error){if(error instanceof DesktopTemplateRequestError && error.definite){againRequests.delete(key);installs.delete(key)}throw error}
             const result = desktopTemplateInstallResultSchema.parse(raw)
             if (result.status !== 'installed') throw new DesktopTemplateRequestError(result.reason, false)
-            if (result.templateId !== template.templateId || result.revision !== template.revision) throw new DesktopTemplateRequestError(UNKNOWN, false)
+            if (result.templateId !== template.templateId || result.revision !== template.revision || result.requestId !== installs.get(key)?.requestId) throw new DesktopTemplateRequestError(UNKNOWN, false)
             againRequests.delete(key)
             installs.delete(key)
             return { receiptId: result.receiptId, coworkers: result.coworkers }

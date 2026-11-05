@@ -2,17 +2,64 @@ import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import { z } from 'zod'
-import { desktopTemplateDetailSchema, desktopTemplateOperationSchema, type DesktopTemplateOperation } from '@rerun/contracts'
+import { DESKTOP_TEMPLATE_LIMITS, desktopTemplateDetailSchema, desktopTemplateOperationSchema, type DesktopTemplateOperation } from '@rerun/contracts'
 import { agentsOverlap, containerContainsTile, DEFAULT_SPAN } from '@rerun/ui/iso-grid/iso'
 import { DesktopHttpError } from '../auth'
 import { withRosterWrite } from '../roster-writes'
 import type { DesktopTemplateEngineClient } from './server'
+import { desktopTemplateInstallIdentitySchema, desktopTemplateInstallStateSchema, type DesktopTemplateInstallState } from '../../template-install-state'
 
 const bodySchema = z.strictObject({ operation: z.record(z.string(), z.unknown()), againRequestId: z.uuid().optional() })
 function canonical(value: unknown): string {
     if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
     if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
     return JSON.stringify(value)
+}
+
+export async function readTemplateInstallIntent(db: Client, raw: unknown): Promise<DesktopTemplateInstallState> {
+    const parsed = desktopTemplateInstallIdentitySchema.safeParse(raw)
+    if (!parsed.success) throw new DesktopHttpError(400, 'Invalid template selection')
+    const identity = parsed.data
+    const key = createHash('sha256').update(canonical({ operation: 'install', ...identity })).digest('hex')
+    const tx = await db.transaction('read')
+    try {
+        const prior = (await tx.execute({ sql: 'SELECT request_id,operation FROM desktop_template_intents WHERE key=?', args: [key] })).rows[0]
+        if (!prior) return { status: 'none', ...identity }
+        const operation = desktopTemplateOperationSchema.parse(JSON.parse(String(prior.operation)))
+        if (operation.operation !== 'install' || operation.requestId !== prior.request_id || operation.templateId !== identity.templateId || operation.revision !== identity.revision) {
+            throw new DesktopHttpError(409, 'The saved installation could not be confirmed. Reopen the template and try again.')
+        }
+        const pending = { status: 'pending' as const, ...identity, requestId: operation.requestId }
+        const receipt = (await tx.execute({ sql: 'SELECT * FROM desktop_template_requests WHERE request_id=?', args: [operation.requestId] })).rows[0]
+        if (!receipt) return pending
+        const fingerprint = createHash('sha256').update(canonical(operation)).digest('hex')
+        if (receipt.operation !== 'install' || receipt.fingerprint !== fingerprint ||
+            (receipt.template_id !== null && receipt.template_id !== identity.templateId) ||
+            (receipt.revision !== null && receipt.revision !== identity.revision)) {
+            throw new DesktopHttpError(409, 'The saved installation could not be confirmed. Reopen the template and try again.')
+        }
+        if (receipt.status === 'refused') return { ...pending, status: 'refused' }
+        if (receipt.status !== 'installed') return pending
+        if (receipt.template_id !== identity.templateId || receipt.revision !== identity.revision) throw new DesktopHttpError(409, 'The saved installation could not be confirmed.')
+        const payload = z.object({ coworkers: z.array(z.object({ agentId: z.uuid(), engineAgentId: z.string().min(1) })).min(1).max(DESKTOP_TEMPLATE_LIMITS.maxCoworkers) }).parse(JSON.parse(String(receipt.payload)))
+        const coworkers = []
+        for (const coworker of payload.coworkers) {
+            const record = (await tx.execute({
+                sql: `SELECT a.id,a.engine_agent_id,a.name,a.description,a.enabled,a.created_at,a.updated_at,p.col,p.row,p.space_id
+                      FROM desktop_agents a LEFT JOIN desktop_space_placements p ON p.agent_id=a.id WHERE a.id=? AND a.workspace_id=1`,
+                args: [coworker.agentId],
+            })).rows[0]
+            if (!record) continue
+            if (record.engine_agent_id !== coworker.engineAgentId) throw new DesktopHttpError(409, 'An installed coworker has changed identity. Its installation could not be confirmed.')
+            coworkers.push({
+                id: String(record.id), name: String(record.name), description: String(record.description), enabled: Number(record.enabled) !== 0,
+                createdAt: String(record.created_at), updatedAt: String(record.updated_at),
+                ...(record.col === null || record.row === null ? {} : { position: { col: Number(record.col), row: Number(record.row) } }),
+                ...(record.space_id === null ? {} : { spaceId: String(record.space_id) }),
+            })
+        }
+        return desktopTemplateInstallStateSchema.parse({ status: 'installed', ...identity, requestId: operation.requestId, receiptId: String(receipt.receipt_id), coworkers })
+    } finally { tx.close() }
 }
 
 export async function prepareTemplateIntent(db: Client, engine: DesktopTemplateEngineClient, raw: unknown): Promise<DesktopTemplateOperation> {

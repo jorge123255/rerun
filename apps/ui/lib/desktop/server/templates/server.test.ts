@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING, desktopTemplateOperationSchema, desktopTemplateSkillFileSchema } from '@rerun/contracts'
-import { prepareTemplateIntent } from './intents'
+import { prepareTemplateIntent, readTemplateInstallIntent } from './intents'
 import { commitDesktopTemplateInstall } from './commit'
 import { initializeDesktopTemplates } from './schema'
 import { createDesktopTemplateServer, type DesktopTemplateEngineClient } from './server'
@@ -243,4 +243,57 @@ test('a saved install intent and Use again survive lost acknowledgements and a r
         expect(next).not.toEqual(first)
         expect(await prepareTemplateIntent(reopened,engine,body)).toEqual(next)
     } finally {reopened.close()}
+})
+
+test('opening install status never reserves or executes an installation', async () => {
+    const identity = { templateId, revision }
+    expect(await readTemplateInstallIntent(db, identity)).toEqual({ status: 'none', ...identity })
+    expect((await db.execute('SELECT * FROM desktop_template_intents')).rows).toEqual([])
+    expect((await db.execute('SELECT * FROM desktop_template_requests')).rows).toEqual([])
+    const { engine, posts } = engineFor()
+    const operation = await prepareTemplateIntent(db, engine, { operation: { operation: 'install', ...identity } })
+    if (operation.operation !== 'install') throw new Error('Expected install')
+    expect(await readTemplateInstallIntent(db, identity)).toEqual({ status: 'pending', ...identity, requestId: operation.requestId })
+    expect(posts).toEqual([])
+    expect((await db.execute('SELECT * FROM desktop_template_requests')).rows).toEqual([])
+    expect((await db.execute('SELECT * FROM desktop_agents')).rows).toEqual([])
+})
+
+test('read-only install status survives restart, uses renamed coworkers and follows the latest rotation', async () => {
+    const identity = { templateId, revision }
+    const body = { operation: { operation: 'install', ...identity } }
+    const { engine, posts } = engineFor()
+    const operation = await prepareTemplateIntent(db, engine, body)
+    const server = createDesktopTemplateServer({ db, engine, initializeImportedSetup: async () => ({ revision: 'setup' }), commitInstalled: input => commitDesktopTemplateInstall(db, input) })
+    const installed = await server.handle(operation)
+    if (!('status' in installed) || installed.status !== 'installed') throw new Error('Expected installed')
+    await db.execute({ sql: 'UPDATE desktop_agents SET name=? WHERE id=?', args: ['Renamed after import', installed.coworkers[0]!.id] })
+    const snapshot = async () => Promise.all(['desktop_template_intents', 'desktop_template_requests', 'desktop_template_rotations', 'desktop_agents', 'desktop_board_state'].map(async table => (await db.execute(`SELECT * FROM ${table}`)).rows))
+    const before = await snapshot()
+    const reopened = createClient({ url: `file:${join(directory, 'app.db')}` })
+    try {
+        expect(await readTemplateInstallIntent(reopened, identity)).toMatchObject({ status: 'installed', requestId: installed.requestId, receiptId: installed.receiptId, coworkers: [{ id: installed.coworkers[0]!.id, name: 'Renamed after import' }] })
+        expect(await snapshot()).toEqual(before)
+        expect(posts).toHaveLength(1)
+        const again = await prepareTemplateIntent(db, engine, { ...body, againRequestId: crypto.randomUUID() })
+        if (again.operation !== 'install') throw new Error('Expected install')
+        expect(await readTemplateInstallIntent(reopened, identity)).toEqual({ status: 'pending', ...identity, requestId: again.requestId })
+        expect(again.requestId).not.toBe(installed.requestId)
+        expect(posts).toHaveLength(1)
+    } finally { reopened.close() }
+})
+
+test('installed status omits deleted coworkers but refuses a replacement identity or changed receipt', async () => {
+    const identity = { templateId, revision }
+    const { engine } = engineFor()
+    const operation = await prepareTemplateIntent(db, engine, { operation: { operation: 'install', ...identity } })
+    const installed = await createDesktopTemplateServer({ db, engine, initializeImportedSetup: async () => ({ revision: 'setup' }), commitInstalled: input => commitDesktopTemplateInstall(db, input) }).handle(operation)
+    if (!('status' in installed) || installed.status !== 'installed') throw new Error('Expected installed')
+    const id = installed.coworkers[0]!.id
+    await db.execute({ sql: 'UPDATE desktop_agents SET engine_agent_id=? WHERE id=?', args: ['replacement-engine', id] })
+    await expect(readTemplateInstallIntent(db, identity)).rejects.toMatchObject({ status: 409 })
+    await db.execute({ sql: 'DELETE FROM desktop_agents WHERE id=?', args: [id] })
+    expect(await readTemplateInstallIntent(db, identity)).toMatchObject({ status: 'installed', coworkers: [] })
+    await db.execute({ sql: 'UPDATE desktop_template_requests SET fingerprint=? WHERE request_id=?', args: ['changed', installed.requestId] })
+    await expect(readTemplateInstallIntent(db, identity)).rejects.toMatchObject({ status: 409 })
 })

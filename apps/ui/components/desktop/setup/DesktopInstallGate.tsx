@@ -41,7 +41,7 @@ export function DesktopInstallGate({
 }) {
     const [launched, setLaunched] = useState(false)
     const [skipping, setSkipping] = useState(false)
-    const starting = launched || skipping || disabled
+    const starting = (!inProgress && launched) || skipping || disabled
 
     const start = async () => {
         setLaunched(true)

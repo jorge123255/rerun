@@ -61,3 +61,18 @@ it('keeps Skip available until a Start attempt begins and then prevents overlapp
     act(() => skip().click())
     expect(onSkip).toHaveBeenCalledOnce()
 })
+
+it('allows Skip after the successful Start is acknowledged as a claimed setup', async () => {
+    const onStart = vi.fn(async () => true)
+    const onSkip = vi.fn(async () => {})
+    const host = render({ onStart, onSkip })
+    const find = (label: string) => [...host.querySelectorAll('button')].find(button => button.textContent?.includes(label))!
+    await act(async () => find('Install Ada').click())
+    expect(find('Skip for now').disabled).toBe(true)
+    act(() => roots.at(-1)!.root.render(<DesktopInstallGate agentId="agent" agentName="Ada" apps={[]} onStart={onStart} onSkip={onSkip} inProgress />))
+    expect(find('Continue setup').disabled).toBe(false)
+    expect(find('Skip for now').disabled).toBe(false)
+    await act(async () => find('Skip for now').click())
+    expect(onSkip).toHaveBeenCalledOnce()
+    expect(onStart).toHaveBeenCalledOnce()
+})
