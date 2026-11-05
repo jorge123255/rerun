@@ -65,7 +65,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     nested('self', 'verbositySet', 'Change reply length', 'Let this coworker durably change how long its answers are, from minimal to detailed.', 'verbosity_set'),
     supported('mcp', 'Custom MCP servers', 'Use tools from this coworker’s configured HTTPS MCP servers. Configure connections in MCP servers.'),
     supported('localMcpStdio', 'Local MCP programs', 'Run explicitly configured programs as your Mac user. These programs can access your Mac files and network. Saving a connection does not enable this permission.'),
-    supported('nativeWriteback', 'Review temporary file changes', 'Keep proposed text and Markdown changes from native Codex edits for your review. Each file requires Apply before it changes this coworker’s Files.'),
+    supported('nativeWriteback', 'Review temporary file changes', 'Keep proposed text and Markdown changes from native Codex edits for your review. Each file requires approval before it changes this coworker’s Files.'),
     pending('foreman', 'Foreman', 'Build a team and work across coworkers.', 'Requires the board’s Foreman runtime and workspace authorization.'),
 ]
 

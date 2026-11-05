@@ -18,6 +18,6 @@ const server = createServer((request, response) => {
 server.listen(Number(new URL(origin).port), '127.0.0.1', () => {
     if (engine) process.send?.({ type: 'ready', protocolVersion: 1, launchNonce: runtime.launchNonce, buildId: runtime.buildId })
 })
-const stop = () => server.close(() => process.exit(0))
+const stop = () => server.close(() => process.exit(Number(process.env.FIXTURE_STOP_EXIT_CODE ?? 0)))
 process.on('message', message => { if (message?.type === 'stop') stop() })
 process.on('disconnect', stop)

@@ -13,6 +13,25 @@ import { RuntimeSupervisor } from '../src/main/supervisor.mjs'
 const fixture = fileURLToPath(new URL('./service-fixture.mjs', import.meta.url))
 const identity = () => ({ installId: randomUUID(), engineApiKey: randomBytes(32).toString('hex'), encryptionKey: randomBytes(32).toString('hex') })
 
+test('only a requested UI graceful exit accepts 143 after this launch has drained tools', async () => {
+    for (const [role, code, signal, drained, accepted] of [
+        ['ui', 143, null, true, true],
+        ['ui', 143, null, false, false],
+        ['engine', 143, null, true, false],
+        ['ui', 143, 'SIGTERM', true, false],
+        ['ui', 1, null, true, false],
+    ]) {
+        const supervisor = new RuntimeSupervisor({ bundle: {}, root: '', identity: identity() })
+        supervisor.runtime = { launchNonce: randomUUID() }
+        supervisor.toolsDrainedRuntime = drained ? supervisor.runtime : { launchNonce: 'old-launch' }
+        const child = new EventEmitter()
+        Object.assign(child, { desktopRole: role, exitCode: null, signalCode: null, connected: true,
+            send() { this.exitCode = code; this.signalCode = signal; this.emit('exit', code, signal) } })
+        supervisor.children.add(child)
+        assert.equal(await supervisor.stopChildren(false), accepted, `${role}/${code}/${signal}/${drained}`)
+    }
+})
+
 test('a failed local-process drain keeps authority alive and reports an error until retry succeeds', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-drain-'))
     let acknowledged = false
@@ -41,7 +60,8 @@ test('real supervised processes require authenticated nonce readiness and Quit r
         root, identity: workspaceIdentity, bundle: { nodePath: process.execPath, uiRoot: root, engineEntry: 'fixture', buildId: 'example-build' },
         launch: (command, args, options) => {
             assert.equal(options.env.RERUN_DESKTOP_SECRET_KEY, workspaceIdentity.encryptionKey)
-            const child = spawn(command, [fixture], { ...options, env: { ...options.env, FIXTURE_KIND: args.includes('desktop-run') ? 'engine' : 'ui' } })
+            const engine = args.includes('desktop-run')
+            const child = spawn(command, [fixture], { ...options, env: { ...options.env, FIXTURE_KIND: engine ? 'engine' : 'ui', FIXTURE_STOP_EXIT_CODE: engine ? '0' : '143' } })
             children.push(child)
             return child
         }, startupTimeout: 3000, stopTimeout: 1000,
@@ -54,7 +74,7 @@ test('real supervised processes require authenticated nonce readiness and Quit r
         assert.equal((await fetch(`${runtime.engine.origin}/health`)).status, 401)
         assert.equal((await fetch(`${runtime.app.origin}/api/desktop/health`)).status, 401)
         await supervisor.stop()
-        assert(children.every(child => child.exitCode === 0))
+        assert.deepEqual(children.map(child => child.exitCode), [143, 0])
         assert.equal(supervisor.children.size, 0)
         await assert.rejects(access(join(root, 'runtime.json')))
         const restarted = await supervisor.start()

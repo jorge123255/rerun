@@ -31,9 +31,10 @@ export class RuntimeSupervisor extends EventEmitter {
         this.emit('status', this.status)
     }
 
-    spawnOwned(args, env, launchNonce) {
+    spawnOwned(args, env, launchNonce, role = 'engine') {
         const startup = this.startupAbort
         const child = this.launch(this.bundle.nodePath, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], detached: false })
+        child.desktopRole = role
         this.children.add(child)
         child.stdout?.resume()
         child.stderr?.resume()
@@ -80,7 +81,7 @@ export class RuntimeSupervisor extends EventEmitter {
                 const runtimeFile = resolve(this.root, 'runtime.json')
                 await atomicPrivateJSON(runtimeFile, runtime)
                 const shared = { ...childEnvironment(), RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_DATA_DIR: this.root, RERUN_DESKTOP_RUNTIME_FILE: runtimeFile, RERUN_DESKTOP_SECRET_KEY: this.identity.encryptionKey }
-                const ui = this.spawnOwned([this.bundle.uiHost], { ...shared, RERUN_DESKTOP_UI_ROOT: this.bundle.uiRoot, RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath, RERUN_DESKTOP_PDF_HELPER: this.bundle.pdfHelperPath, RERUN_DESKTOP_PDF_TEXT_HELPER: this.bundle.pdfTextHelperPath, PORT: String(uiPort), HOSTNAME: '127.0.0.1' })
+                const ui = this.spawnOwned([this.bundle.uiHost], { ...shared, RERUN_DESKTOP_UI_ROOT: this.bundle.uiRoot, RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath, RERUN_DESKTOP_PDF_HELPER: this.bundle.pdfHelperPath, RERUN_DESKTOP_PDF_TEXT_HELPER: this.bundle.pdfTextHelperPath, PORT: String(uiPort), HOSTNAME: '127.0.0.1' }, undefined, 'ui')
                 await this.waitForHealth(ui, `${runtime.app.origin}/api/desktop/health`, { Cookie: `rerun-desktop-session=${runtime.app.sessionToken}` }, runtime)
                 const engine = this.spawnOwned([this.bundle.engineEntry, 'desktop-run'], {
                     ...shared, RERUN_HOST: '127.0.0.1', RERUN_PORT: String(enginePort), RERUN_API_KEY: this.identity.engineApiKey,
@@ -158,7 +159,13 @@ export class RuntimeSupervisor extends EventEmitter {
                 child.kill('SIGKILL')
                 await exited
             }
-            if (child.shutdownFailed || child.exitCode !== 0 || child.signalCode !== null) confirmed = false
+            // ui-host requests Next's graceful SIGTERM handler. After draining its
+            // HTTP server Next exits with 128 + SIGTERM (143), not zero. Accept
+            // that exit only here, after an explicit stop and authenticated tool
+            // drain for this launch; a raw signal or engine failure still fails.
+            const gracefulUiExit = child.desktopRole === 'ui' && child.exitCode === 143
+                && this.runtime && this.toolsDrainedRuntime === this.runtime
+            if (child.shutdownFailed || (child.exitCode !== 0 && !gracefulUiExit) || child.signalCode !== null) confirmed = false
             this.children.delete(child)
             if (!confirmed && !force) break
         }
@@ -175,6 +182,7 @@ export class RuntimeSupervisor extends EventEmitter {
         })
         const result = response.ok ? await response.json() : null
         if (result?.stopped !== true) throw new Error('Local program cleanup was not confirmed')
+        this.toolsDrainedRuntime = runtime
     }
 
     async stop({ preserveError = false } = {}) {

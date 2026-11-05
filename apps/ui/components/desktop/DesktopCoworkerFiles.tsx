@@ -562,7 +562,7 @@ export function DesktopCoworkerFiles({ agent, dialogControl }: { agent: DesktopA
         }}>
             <DialogHeader>
                 <DialogTitle>Files</DialogTitle>
-                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file. PNG, JPEG, WebP, GIF and PDF files already in the folder can be previewed. WAV, MP3 and MP4 files already in the folder can be played.</DialogDescription>
+                <DialogDescription>{agent.name}’s workspace. Browse, preview, edit, rename, delete, or import a .txt or .md file. Preview supported images and PDFs, or play audio and video already in the folder.</DialogDescription>
             </DialogHeader>
             <FilesPanel key={agent.id} agent={agent} registerCloseGuard={registerCloseGuard} />
             <DialogFooter><DialogClose asChild><Button type="button">Done</Button></DialogClose></DialogFooter>
