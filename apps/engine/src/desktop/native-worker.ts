@@ -10,13 +10,15 @@ import { desktopCodexGrantsOf } from '@rerun/contracts'
 import { dataDir } from '../config/paths.js'
 import { readAgentConfig } from '../agents/loader.js'
 import type { RunContext } from '../runtime/context.js'
+import {captureNativeBaseline,captureNativeChanges,type NativeBaseline,type NativeWritebackBundle} from './native-writeback/capture.js'
 import { snapshotWorkspaceText } from './workspace-read.js'
 
 const MAX_FRAME = 512 * 1024
 const MAX_TRANSFER = 4 * 1024 * 1024
 const MAX_LIFE = 120_000
 
-export type DesktopNativeWorker = { cwd: string; url: string; close: () => Promise<void> }
+export type DesktopNativeWorker = { cwd: string; url: string; close: () => Promise<void>; finish: () => Promise<void> }
+export type NativeWritebackHooks={authorizeCapture:(ctx:RunContext)=>Promise<void>;persist:(bundle:NativeWritebackBundle)=>Promise<void>}
 
 function inside(root: string, path: unknown): boolean {
     if (typeof path !== 'string') return false
@@ -114,7 +116,7 @@ async function withinBudget(root: string) {
     return true
 }
 
-export async function createDesktopNativeWorker(ctx: RunContext): Promise<DesktopNativeWorker> {
+export async function createDesktopNativeWorker(ctx: RunContext, writeback?:NativeWritebackHooks): Promise<DesktopNativeWorker> {
     if (process.platform !== 'darwin' || process.env.RERUN_DESKTOP_APP !== '1') throw new Error('Native commands require the Mac desktop app.')
     const launcher = process.env.RERUN_DESKTOP_CODEX_RUNNER
     if (!launcher || !isAbsolute(launcher)) throw new Error('The packaged native command runner is unavailable.')
@@ -136,6 +138,9 @@ export async function createDesktopNativeWorker(ctx: RunContext): Promise<Deskto
     const server = createServer((_req, res) => res.writeHead(404).end())
     const websocket = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME, perMessageDeflate: false })
     const workers = new Map<WebSocket, ChildProcessWithoutNullStreams>()
+    const children=new Set<ChildProcessWithoutNullStreams>()
+    let baseline:NativeBaseline|undefined
+    let capture=false
     let closed = false, cleanup: Promise<void> | undefined
     let expires: NodeJS.Timeout | undefined, revoke: NodeJS.Timeout | undefined
     let transfer = 0
@@ -149,7 +154,19 @@ export async function createDesktopNativeWorker(ctx: RunContext): Promise<Deskto
         websocket.close()
         server.closeAllConnections()
         server.close()
-        cleanup = rm(dir, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 })
+        cleanup = (async()=>{
+            await Promise.all([...children].map(child=>new Promise<void>((resolve,reject)=>{
+                if(child.exitCode!==null || child.signalCode!==null){resolve();return}
+                const timer=setTimeout(()=>{child.off('exit',done);reject(new Error('Native worker has not stopped; scratch retained'))},3000)
+                const done=()=>{clearTimeout(timer);resolve()};child.once('exit',done)
+            })))
+            if(capture && baseline && writeback){
+                await writeback.authorizeCapture(ctx)
+                const bundle=await captureNativeChanges(ctx,cwd,baseline)
+                if(bundle.files.length)await writeback.persist(bundle)
+            }
+            await rm(dir,{recursive:true,force:true,maxRetries:4,retryDelay:50})
+        })()
         return cleanup
     }
     const abort = () => { void close().catch(() => {}) }
@@ -158,6 +175,7 @@ export async function createDesktopNativeWorker(ctx: RunContext): Promise<Deskto
         await mkdir(state, { mode: 0o700 })
         if (includeFiles) await snapshotWorkspaceText(ctx, cwd, active)
         await active()
+        if(writeback && includeFiles && edit){await writeback.authorizeCapture(ctx);baseline=await captureNativeBaseline(ctx,cwd,active)}
         server.on('upgrade', (req, socket, head) => {
             if (closed || workers.size || req.url !== secret || req.headers.origin) { socket.destroy(); return }
             websocket.handleUpgrade(req, socket, head, ws => websocket.emit('connection', ws))
@@ -167,6 +185,7 @@ export async function createDesktopNativeWorker(ctx: RunContext): Promise<Deskto
                 '-f', policy, binary, 'exec-server', '--listen', 'stdio://'], {
                 cwd, detached: true, env: { HOME: state, CODEX_HOME: state, TMPDIR: state, PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' }, stdio: ['pipe', 'pipe', 'pipe'],
             })
+            children.add(child);child.once('exit',()=>children.delete(child))
             workers.set(ws, child)
             child.stderr.resume()
             child.on('error', abort)
@@ -217,6 +236,6 @@ export async function createDesktopNativeWorker(ctx: RunContext): Promise<Deskto
             checking = true
             void Promise.all([active(), withinBudget(cwd)]).then(([, okay]) => { if (!okay) abort() }).catch(abort).finally(() => { checking = false })
         }, 300).unref()
-        return { cwd, url: `ws://127.0.0.1:${address.port}${secret}`, close }
+        return { cwd, url: `ws://127.0.0.1:${address.port}${secret}`, close, finish:()=>{if(!closed)capture=true;return close()} }
     } catch (error) { await close(); throw error }
 }
