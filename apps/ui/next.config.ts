@@ -10,7 +10,14 @@ const nextConfig: NextConfig = {
   // Desktop packaging builds a self-contained server.js with traced dependencies; web/Docker
   // builds keep `next start` and emit nothing extra.
   ...(process.env.RERUN_DESKTOP_STANDALONE === "1"
-    ? { output: "standalone" as const, outputFileTracingRoot: path.join(__dirname, "../../") }
+    ? {
+        output: "standalone" as const,
+        outputFileTracingRoot: path.join(__dirname, "../../"),
+        // Local tool paths are user data resolved at runtime. Their broad file
+        // trace must not copy compiled React source or QA fixtures into the app.
+        // Keep lib/runtime workers and traced dependencies available unchanged.
+        outputFileTracingExcludes: { "/api/desktop/**/*": ["./components/**/*", "./test/**/*"] },
+      }
     : {}),
   // A phone on the same wifi opens the dev server by its LAN address, which Next refuses to serve
   // scripts to unless it is listed here. A Conductor cloud workspace serves it behind
