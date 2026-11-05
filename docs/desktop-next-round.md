@@ -1,6 +1,6 @@
 # Rerun next assignments — round 28
 
-Base: `15dce4a9dcefeb95b0042d01d8b2afc9bbe5c3f6`. Original Rerun: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. **25 capability groups remain; assignments are not acceptance.** Root implements attachment-only sends and owns integration and every test/build/Mac restart check.
+Base: `15dce4a9dcefeb95b0042d01d8b2afc9bbe5c3f6`. Original Rerun: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. **25 capability groups remain; assignments are not acceptance.** Root’s attachment-only send/queue/regeneration/restart slice is now installed and accepted in `328ed48` (1/9 round 28 tasks). Root owns integration and every test/build/Mac restart check.
 
 | Agent | Assignment | Prompt |
 | --- | --- | --- |

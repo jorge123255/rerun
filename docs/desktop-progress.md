@@ -1,6 +1,10 @@
 # Rerun Mac delivery checklist
 
-## Current acceptance — November 5, 2026
+## Current round 28 — November 5, 2026
+
+Installed product `328ed48`: **1 of 9 new tasks accepted**, root’s attachment-only send/queue/regeneration/restart slice. A–H have separate fresh worktrees and the original-source prompts in `desktop-next-round.md`; they remain unaccepted. **25 capability groups remain.** Original 23 chats/88 messages are unchanged. See `desktop-round28-attachment-only-acceptance.md`. The preceding delivery remains 8/9 accepted, with actual MCP OAuth and macOS banner acceptance still outstanding.
+
+## Previous acceptance — November 5, 2026
 
 Installed product source: `adfb47d`. **8 of 9 current delivery tasks accepted; 25 unfinished capability groups remain, down from 26 after D6 Shared files.** Root verified two coworkers reading the same shared note while retaining distinct private files/chats before and after restart. Image-plus-text input, PDF text/Find, /skill suggestions and original in-app notification/bell/task surfaces also passed. Prior E/G/root deliveries remain accepted. A real MCP OAuth sign-in and actual macOS notification banner/click remain unverified; C7 stays open.
 

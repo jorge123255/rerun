@@ -47,7 +47,7 @@ its existing `codexAppServerProvider`; these attachments do not enable shell or 
 - Image turns require a ChatGPT / Codex provider. Another provider is refused before creating a
   run. This also covers a text follow-up or regeneration whose saved history includes images;
   the history check holds the session claim while deciding admission.
-- A written message is still required. Image-only sends remain a later parity item.
+- Image-only and text-file-only sends are now accepted in `328ed48`, including draft restart, queued delivery, history and regeneration. Truly empty sends remain disabled.
 - Per image: 8 MiB, 8192 pixels per edge, 16,777,216 pixels total. Per selection: four images,
   16 MiB combined, independently of ten text files and 128 KiB of combined text references.
 - PNG/JPEG/WebP only; animated images and GIF are refused. The existing workspace file picker
