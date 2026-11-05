@@ -17,6 +17,13 @@ import { AppLogo } from './marks'
 import { NamePill } from './NamePill'
 import { SchedulePlanner } from './SchedulePlanner'
 
+export type FieldFooterCapabilities = {
+    /** False on a host with no connector install: no picker, no "+ Apps" button. */
+    apps: boolean
+    /** False on a host with no schedule store: no planner, no clock button. */
+    schedule: boolean
+}
+
 export type FieldFooterProps = {
     name: string | null
     nameProps: Omit<ComponentProps<typeof NamePill>, 'name'>
@@ -26,25 +33,29 @@ export type FieldFooterProps = {
     schedule: { read: JobSchedule | null; choice: ScheduleChoice; onChoice: (choice: ScheduleChoice) => void; open: boolean; onOpenChange: (open: boolean) => void }
     canCreate: boolean
     creating: boolean
+    /** Omitted means every hosted entry point, so the web dialog keeps both. */
+    capabilities?: FieldFooterCapabilities
 }
+
+const HOSTED_CAPABILITIES: FieldFooterCapabilities = { apps: true, schedule: true }
 
 // The field's footer: the name, the apps read in the description (or "+ Apps") with their picker,
 // the timing it read (or "Schedule") with its planner, and the create button, which submits the
 // form the field sits in.
-export function FieldFooter({ name, nameProps, catalog, apps, onToggleApp, schedule, canCreate, creating }: FieldFooterProps) {
+export function FieldFooter({ name, nameProps, catalog, apps, onToggleApp, schedule, canCreate, creating, capabilities = HOSTED_CAPABILITIES }: FieldFooterProps) {
     const shown = apps.flatMap(slug => catalog?.get(slug) ?? [])
     const scheduled = scheduleLabel(schedule.choice) ?? schedule.read?.label ?? null
     const [rowRef, portalContainer] = useDialogPortalContainer<HTMLDivElement>()
     return (
         <div ref={rowRef} className="@container relative flex items-center gap-1">
             <NamePill name={name} {...nameProps} />
-            <Popover>
+            {capabilities.apps && <Popover>
                 <PopoverTrigger asChild>{shown.length > 0 ? <PickedApps apps={shown} /> : <AddApps />}</PopoverTrigger>
                 <PopoverContent container={portalContainer} align="start" sideOffset={8} className="w-72 max-w-[calc(100vw-2rem)] gap-0 overflow-hidden p-0">
                     <AppsPicker catalog={catalog} selected={apps} onToggle={onToggleApp} />
                 </PopoverContent>
-            </Popover>
-            <Popover open={schedule.open} onOpenChange={schedule.onOpenChange}>
+            </Popover>}
+            {capabilities.schedule && <Popover open={schedule.open} onOpenChange={schedule.onOpenChange}>
                 <PopoverTrigger asChild>
                     <ScheduleButton label={scheduled} />
                 </PopoverTrigger>
@@ -52,7 +63,7 @@ export function FieldFooter({ name, nameProps, catalog, apps, onToggleApp, sched
                 <PopoverContent container={portalContainer} align="start" sideOffset={8} onOpenAutoFocus={event => event.preventDefault()} className="w-[356px] max-w-[calc(100vw-2rem)] gap-0 rounded-xl p-1.5">
                     <SchedulePlanner read={schedule.read} app={shown[0]} choice={schedule.choice} onChoice={schedule.onChoice} />
                 </PopoverContent>
-            </Popover>
+            </Popover>}
             {/* The only part of the row that gives way: a long name is cut in the button, where the pill
                 and the title already spell it out, rather than pushing the button to a line of its own.
                 Where the row is too narrow for the sentence at all, on a phone, the button is its arrow
