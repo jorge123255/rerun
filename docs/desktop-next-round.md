@@ -1,5 +1,7 @@
 # Round 29 assignments — E3 and E4 priority
 
+Current update: C handoff is reviewed/fixed in `70d7bb2` but waits for A/B before runtime activation. Root’s additional WebM/MOV/M4V chat-card slice is installed and restart-accepted in `9f47325`; see [acceptance](desktop-round29-c-video-acceptance.md). Other lane worktrees are preserved.
+
 Eight new lanes are prepared; root owns audio result cards and every integration/check/Mac restart. **24 groups remain**: assignments are not acceptance. Original Rerun pin: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. Read [the shared interface agreement](desktop-round29-interfaces.md). Exact base and copyable prompts are recorded in the user-facing round 29 assignment index.
 
 | Agent | Scope | Worktree suffix |

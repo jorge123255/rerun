@@ -1,5 +1,11 @@
 # Rerun Mac delivery checklist
 
+## Latest round 29 delivery — C review and root video cards
+
+Installed `9f47325`. Root’s WebM/MOV/M4V result-card slice passed actual Codex, album/player and full-restart acceptance. All three saved clips replayed to 0:02; original 23 chats/88 messages remain unchanged. Root ran 102 distinct UI/reader/route and 34 engine checks, types, lint, build and Mac QA. See `desktop-round29-c-video-acceptance.md`.
+
+C handoff `b5fc632` was integrated and fixed in `70d7bb2`; source checks pass. The viewer remains unmounted until A/B provide the actual runtime, authority/tool bridge and durable takeover. No E3 native/runtime acceptance is claimed. Two root slices (audio, video) are accepted this round; 24 groups remain.
+
 ## Current round 29 — November 5, 2026
 
 Installed product `23af258`: **root C8 audio slice accepted**, with actual Codex M4A/Ogg/FLAC cards, native playback and full-restart persistence. Original 23 chats/88 messages unchanged. Root ran 88 distinct targeted UI/reader checks, 19 engine checks, types, lint, build/package/install and all native checks. See `desktop-round29-audio-acceptance.md`.
