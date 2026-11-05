@@ -105,7 +105,7 @@ function panelDialog(title: string) {
 }
 async function dismissPanel(title: string) {
     const dialog = await until(() => panelDialog(title))
-    if (title === 'Monitoring') await click('Close', dialog)
+    if (title === 'Monitoring' || title === 'Apps') await click('Close', dialog)
     else await click(title === 'Edit coworker' ? 'Cancel' : 'Done', dialog)
     await until(() => !panelDialog(title))
 }
@@ -141,6 +141,15 @@ function fixture(runStatus?: () => Promise<Response>) {
         if (url.pathname === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: date, checkedAt: date, nextCursor: null })
         if (url.pathname === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: date })
         if (url.pathname === '/api/desktop/conversations/search') return Response.json({ hits: [], hasMore: false })
+        const servicesRoute = url.pathname.match(/^\/api\/desktop\/coworkers\/([^/]+)\/services$/)
+        if (servicesRoute) {
+            const agent = coworkers.find(item => item.id === decodeURIComponent(servicesRoute[1]))
+            if (!agent || method !== 'GET') throw new Error('Unexpected Apps owner or mutation')
+            panelReads.push(url.pathname)
+            if (url.searchParams.get('view') === 'installed') return Response.json([])
+            if (url.searchParams.get('view') === 'catalog') return Response.json({ services: [], total: 0 })
+            throw new Error('Unexpected Apps view')
+        }
         const agentRoute = url.pathname.match(/^\/api\/desktop\/agents\/([^/]+)\/(.+)$/)
         if (agentRoute) {
             const agentId = decodeURIComponent(agentRoute[1])
@@ -223,6 +232,7 @@ test('original coworker Open rows use existing dialogs without remounting the cu
     await enter(input, 'Reviewer keeps this draft')
     const readsBefore = [...app.messageReads]
     const targets = [
+        ['Apps', 'Apps', 'Connections for Reviewer'],
         ['Knowledge', 'Memories', 'Reviewer private memory'],
         ['Files', 'Files', 'notes.md'],
         ['Capabilities', 'Tools', 'Reviewer file access'],
@@ -306,6 +316,13 @@ test('only the selected chat opens a coworker dialog and both distinct drafts re
     expect(second.value).toBe('Second chat unsent draft')
     await dismissPanel('Recent runs')
     await openCoworkerPage('Reviewer')
+    await chooseOpenRow('Apps')
+    await until(() => panelDialog('Apps')?.textContent?.includes('Connections for Reviewer'))
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    expect(first.value).toBe('First chat unsent draft')
+    expect(second.value).toBe('Second chat unsent draft')
+    await dismissPanel('Apps')
+    await openCoworkerPage('Reviewer')
     await chooseOpenRow('Chat')
     expect(composer()).toBe(second)
     await act(async () => { expect(await flushDesktopDrafts()).toBe(true) })
@@ -317,6 +334,11 @@ test('only the selected chat opens a coworker dialog and both distinct drafts re
     resetDesktopRecentCoworkers()
     const reopened = await app.mount()
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
+    await openCoworkerPage('Reviewer')
+    await chooseOpenRow('Apps')
+    await until(() => panelDialog('Apps')?.textContent?.includes('Connections for Reviewer'))
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    await dismissPanel('Apps')
     await openCoworkerPage('Reviewer')
     await chooseOpenRow('Logs')
     await until(() => panelDialog('Recent runs')?.textContent?.includes('Reviewer model'))

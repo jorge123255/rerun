@@ -1,5 +1,12 @@
 # Rerun Mac delivery checklist
 
+## Round 30 — root navigation accepted; new lanes prepared
+
+Root completed Control Center coworker Open → Apps acceptance from the board and after full restart in installed product `b0f9899`. The original shared-tab navigation was already wired; root corrected its stale test and verified owner isolation, selected chat, exact drafts and board state. All 41 navigation checks and UI typecheck pass. The original 23 chats/88 messages are unchanged. No product rebuild was necessary. [Acceptance](desktop-round30-control-apps-acceptance.md).
+
+A now has clean source handoff `047fba4`; root retains all A/B/C integration and repairs. New A–H assignments cover private templates, first-install setup, suggested-app requests and richer image cards/inputs. Their source handoffs are not accepted features. 23 groups remain. Root runs all execution checks and Mac/restart acceptance. [Assignments](desktop-next-round.md).
+
+
 ## Current round 29 — Apps and Files accepted
 
 Installed product **b0f9899**, verified November 5, 2026. **23 capability groups remain**, down from 24 after D5 Files previews passed native and full-restart acceptance. D/F and the supported E connection slice are integrated; G/H close the remaining Files format scope. Root fixed the handoffs and ran the relevant source checks, packaging and Mac tests. Apps uses the original catalog and panel, with real Microsoft Learn Codex replies before and after restart; E4 stays partial for the unsupported methods and skill bundles. C is source-integrated but inactive, B requires root reconciliation, and A is still working. See [Apps and Files acceptance](desktop-round29-apps-formats-acceptance.md).
@@ -99,7 +106,7 @@ Evidence: `desktop-pending-inbox-acceptance.md` and `desktop-workspace-logo-acce
 
 | Area | Accepted work | Remaining work |
 | --- | --- | --- |
-| B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local/website logo upload; Skills/Routines/MCP navigation; Box search/member drill, Move to another Box and New Box | Control Center Apps command (the coworker Apps panel is installed), Triggers, Setup and remaining contextual actions. Board Boxes are complete under B2 |
+| B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local/website logo upload; Skills/Routines/MCP navigation; Box search/member drill, Move to another Box and New Box | Triggers, Setup and remaining contextual actions; coworker Open → Apps is accepted. Board Boxes are complete under B2 |
 | C7: Actions and notifications | Pending and Done inbox; exact navigation; persistent individual/bulk read; live closed counts; source-message request age; notification preferences and native shown receipts; original in-app toasts, coworker bell and task Notify me | Actual OS banner/click acceptance |
 | C8: Conversation activity and results | File steps, compaction, text/static-image/PDF/table cards, WAV/MP3/M4A/Ogg/FLAC audio, MP4/WebM/MOV/M4V video, scheduled runs and Skills proposals | Child runs, broader image chat cards and remaining request presentations; new Files formats did not widen card admission |
 
