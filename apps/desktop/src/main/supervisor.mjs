@@ -45,6 +45,10 @@ export class RuntimeSupervisor extends EventEmitter {
         })
         child.on('error', () => { child.launchFailed = true; if (!this.cleaning && !this.stopping) startup?.abort() })
         child.once('exit', () => {
+            // A late failed exit after a Quit timeout must not disappear with
+            // the ChildProcess. UI cleanup cannot attest this engine's writers.
+            if (child.desktopRole === 'engine' && child.stopRequested
+                && (child.shutdownFailed || child.exitCode !== 0 || child.signalCode !== null)) this.unconfirmedEngineExit = true
             this.children.delete(child)
             if (!this.cleaning && !this.stopping && this.status.state === 'starting') startup?.abort()
             if (!this.stopping && this.status.state === 'ready') {
@@ -56,6 +60,7 @@ export class RuntimeSupervisor extends EventEmitter {
     }
 
     start() {
+        if (this.unconfirmedEngineExit) return Promise.reject(new Error('Engine cleanup was not confirmed'))
         if (this.operation) return this.operation
         if (this.status.state === 'ready') return Promise.resolve(this.runtime)
         this.operation = this.startServices().finally(() => { this.operation = null })
@@ -140,12 +145,14 @@ export class RuntimeSupervisor extends EventEmitter {
     }
 
     async stopChildren(force = true) {
+        if (this.unconfirmedEngineExit && !force) return false
         this.cleaning = true
-        let confirmed = true
+        let confirmed = !this.unconfirmedEngineExit
         const owned = [...this.children].reverse()
         for (const child of owned) {
             if (child.exitCode !== null || child.signalCode !== null) continue
             const exited = new Promise(done => child.once('exit', done))
+            child.stopRequested = true
             if (child.connected) child.send({ type: 'stop' }, () => {})
             else child.kill('SIGTERM')
             let timer

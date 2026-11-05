@@ -52,6 +52,73 @@ test('a failed local-process drain keeps authority alive and reports an error un
     } finally { await rm(root, { recursive: true, force: true }) }
 })
 
+for (const { name, code, signal, accepted } of [
+    { name: 'nonzero exit', code: 1, signal: null, accepted: false },
+    { name: 'raw signal', code: null, signal: 'SIGKILL', accepted: false },
+    { name: 'confirmed clean exit', code: 0, signal: null, accepted: true },
+]) {
+    test(`late engine ${name} after a stop timeout retains its verdict across a fresh UI drain ACK`, async () => {
+        const root = await mkdtemp(join(tmpdir(), 'rerun-late-engine-exit-'))
+        const runtime = { launchNonce: randomUUID(), app: { origin: 'http://127.0.0.1:3000' }, engine: { apiKey: 'fixture' } }
+        let drainAcknowledgements = 0, uiStops = 0, engineStops = 0
+        const supervisor = new RuntimeSupervisor({
+            root, identity: identity(), bundle: { nodePath: 'unused-fake-launch' }, stopTimeout: 1,
+            fetcher: async () => { drainAcknowledgements++; return Response.json({ stopped: true }) },
+            launch: (_command, args) => {
+                const child = new EventEmitter()
+                Object.assign(child, { exitCode: null, signalCode: null, connected: true,
+                    send(message, callback) {
+                        assert.equal(message.type, 'stop')
+                        if (args[0] === 'ui') {
+                            uiStops++
+                            this.exitCode = 143
+                            this.emit('exit', 143, null)
+                        } else engineStops++ // Deliberately outlive the first stop timeout.
+                        callback?.()
+                    },
+                    kill() { assert.fail('Ordinary Quit must not force-kill an unconfirmed service') },
+                })
+                return child
+            },
+        })
+        supervisor.runtime = runtime
+        const ui = supervisor.spawnOwned(['ui'], {}, undefined, 'ui')
+        const engine = supervisor.spawnOwned(['engine'], {}, runtime.launchNonce, 'engine')
+        supervisor.publish('ready')
+        try {
+            await assert.rejects(supervisor.stop(), /cleanup was not confirmed/)
+            assert.equal(supervisor.status.state, 'error')
+            assert.equal(drainAcknowledgements, 1)
+            assert.equal(engineStops, 1)
+            assert.equal(uiStops, 0)
+            assert(supervisor.children.has(engine))
+
+            // Exercise spawnOwned's actual exit listener after stop() has already
+            // failed; a second UI acknowledgement proves nothing about this engine.
+            if (accepted) engine.emit('message', { type: 'stopped', launchNonce: runtime.launchNonce })
+            engine.exitCode = code
+            engine.signalCode = signal
+            engine.emit('exit', code, signal)
+
+            if (accepted) {
+                await supervisor.stop()
+                assert.equal(supervisor.status.state, 'stopped')
+                assert.equal(supervisor.children.size, 0)
+                assert.equal(uiStops, 1)
+                assert.equal(ui.exitCode, 143)
+            } else {
+                await assert.rejects(supervisor.stop(), /cleanup was not confirmed/)
+                assert.equal(supervisor.status.state, 'error')
+                assert.equal(supervisor.runtime, runtime)
+                assert.equal(uiStops, 0)
+                assert.equal(ui.exitCode, null)
+                assert(supervisor.children.has(ui))
+            }
+            assert.equal(drainAcknowledgements, 2)
+        } finally { await rm(root, { recursive: true, force: true }) }
+    })
+}
+
 test('real supervised processes require authenticated nonce readiness and Quit removes owned children', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-supervisor-'))
     const children = []
