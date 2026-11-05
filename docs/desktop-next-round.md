@@ -17,7 +17,7 @@ Eight fresh worktrees are prepared under `/Users/gszulc/OpenBot/Shared/rerun-des
 
 A/B share the local template contract; C/D share setup authoring and one durable first-install chat; E/F share exact suggested-app request/progress/receipt identity. G owns result cards, H owns immutable model-input snapshots; shared decoders remain read-only. Root handles all central wiring, every repair and all checks/builds/installations/live Codex/Mac/restart tests. Lanes may author regression sources but execute none, and return clean local commits without push/merge.
 
-Root also retains A's clean round29 isolated-runtime handoff `047fba42f937a96df54103bfd3283998fb7aa0ca`, B's reviewed uncommitted snapshot and C's already-fixed inactive viewer. Their integration, transport/lease reconciliation, screenshot delivery and runtime/native acceptance remain root work. New prompts do not return those defects to the agents, and no E3 acceptance is claimed.
+Root completed integration of A's round29 isolated runtime `047fba42f937a96df54103bfd3283998fb7aa0ca`, B's reviewed snapshot and C's viewer in installed `28d8b31`. Root fixed control/transport, screenshot delivery, durable handoffs, profile shutdown, notification and Actions failures, then passed live Codex and native/full-restart acceptance. [Browser acceptance and remaining E3 scope](desktop-browser-integration-acceptance.md). The new A–H assignments above are separate; no correction prompts need to be sent back.
 
 ---
 
