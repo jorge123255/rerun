@@ -1,0 +1,446 @@
+import { constants } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { link, lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { TEXT_FILE_PAGE_CHARS } from '@rerun/contracts'
+
+// One filesystem boundary for the workspace shared folder. The desktop UI and the
+// desktop shared_read / shared_list tools both call this module. Callers pass the
+// engine data shared directory they already resolved. Tool arguments never choose it.
+// Hosted /shared/files and apps/engine/src/files/store.ts stay on their own path.
+
+const O_NOFOLLOW_ANY = 0x20000000
+const TEXT_NAME = /\.(txt|md)$/i
+const PART = /^[^/\\.\0][^/\\\0]{0,240}$/
+export const SHARED_IMPORT_BYTES = 1024 * 1024
+export const SHARED_LIST_LIMIT = 512
+const LIST_VISIT_LIMIT = 1024
+const MAX_DEPTH = 32
+const MAX_WINDOW_BYTES = 8 * 1024 * 1024
+
+export class SharedWorkspaceFileError extends Error {
+    constructor(readonly status: number, message: string) {
+        super(message)
+        this.name = 'SharedWorkspaceFileError'
+    }
+}
+
+export type SharedDirectoryEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
+export type SharedDirectoryListing = { path: string; entries: SharedDirectoryEntry[]; truncated: boolean }
+export type SharedTextPage = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null }
+export type SharedImportResult = { path: string; name: string }
+export type SharedFileAccess = { signal?: AbortSignal; beforeCommit?: () => Promise<void> | void }
+
+type Pin = { handle: FileHandle; pinned: string; path: string; dev: bigint; ino: bigint; ctimeNs: bigint }
+
+const outside = () => new SharedWorkspaceFileError(400, 'That path is outside the shared folder.')
+const otherUser = () => new SharedWorkspaceFileError(403, 'This shared folder belongs to another user. It was left unopened.')
+const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR'
+const isAbort = (error: unknown) => error instanceof Error && error.name === 'AbortError'
+
+function currentUid(): bigint {
+    if (typeof process.getuid !== 'function') throw new SharedWorkspaceFileError(400, 'Shared files are only available on this Mac.')
+    return BigInt(process.getuid())
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+    signal?.throwIfAborted()
+}
+
+async function commit(access: SharedFileAccess | undefined) {
+    throwIfAborted(access?.signal)
+    await access?.beforeCommit?.()
+    throwIfAborted(access?.signal)
+}
+
+function partsOf(path: string, empty: 'root' | 'reject'): string[] {
+    if (typeof path !== 'string' || path.length > 4096 || /[\0\\]/.test(path) || isAbsolute(path)) throw outside()
+    if (empty === 'root' && (path === '' || path === '.')) return []
+    const parts = path.split('/')
+    if (!parts.length || parts.length > MAX_DEPTH || parts.some(part => !PART.test(part))) throw outside()
+    return parts
+}
+
+function contained(root: string, target: string) {
+    const rel = relative(root, target)
+    if (rel === '' || (!!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) return
+    throw outside()
+}
+
+function mapFs(error: unknown, folder = false): SharedWorkspaceFileError {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') return new SharedWorkspaceFileError(404, folder ? 'Folder not found' : 'File not found')
+    if (code === 'ELOOP') return outside()
+    if (code === 'EACCES' || code === 'EPERM') return otherUser()
+    if (code === 'EEXIST') return new SharedWorkspaceFileError(409, 'This folder already has something with that name. The existing file was kept.')
+    return new SharedWorkspaceFileError(500, 'Shared files could not be opened.')
+}
+
+function stamp(mtimeNs: bigint): string {
+    return new Date(Number(mtimeNs / 1_000_000n)).toISOString()
+}
+
+function validImportName(name: string) {
+    if (!name || name.length > 255 || /[/\\\0]/.test(name) || name.startsWith('.') || !PART.test(name)) {
+        throw new SharedWorkspaceFileError(400, 'That file name can’t be imported.')
+    }
+    if (!TEXT_NAME.test(name)) throw new SharedWorkspaceFileError(415, 'Only .txt and .md files can be imported.')
+}
+
+function rethrow(error: unknown, folder = false): never {
+    if (isAbort(error) || error instanceof SharedWorkspaceFileError) throw error
+    if (!(error as NodeJS.ErrnoException).code) throw error
+    throw mapFs(error, folder)
+}
+
+async function openNoFollow(path: string, directory: boolean): Promise<FileHandle> {
+    const flags = constants.O_RDONLY | constants.O_NONBLOCK | (directory ? constants.O_DIRECTORY : 0)
+    try {
+        if (process.platform === 'darwin') return await open(path, flags | O_NOFOLLOW_ANY)
+        if (process.platform !== 'linux') throw new SharedWorkspaceFileError(400, 'Shared files are only available on this Mac.')
+        let dir = await open('/', constants.O_RDONLY | constants.O_DIRECTORY)
+        try {
+            const parts = path.split('/').filter(Boolean)
+            for (const [index, part] of parts.entries()) {
+                const next = await open(`/proc/self/fd/${dir.fd}/${part}`, constants.O_NOFOLLOW |
+                    (index === parts.length - 1 ? flags : constants.O_RDONLY | constants.O_DIRECTORY))
+                await dir.close()
+                dir = next
+            }
+            return dir
+        } catch (error) {
+            await dir.close()
+            throw error
+        }
+    } catch (error) {
+        if (isAbort(error) || error instanceof SharedWorkspaceFileError) throw error
+        if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw outside()
+        throw error
+    }
+}
+
+async function pinDirectory(path: string, signal?: AbortSignal): Promise<Pin> {
+    throwIfAborted(signal)
+    const handle = await openNoFollow(path, true)
+    try {
+        const info = await handle.stat({ bigint: true })
+        if (!info.isDirectory()) throw outside()
+        if (info.uid !== currentUid()) throw otherUser()
+        const pinned = process.platform === 'darwin' ? `/.vol/${info.dev}/${info.ino}` : `/proc/self/fd/${handle.fd}`
+        return { handle, pinned, path, dev: info.dev, ino: info.ino, ctimeNs: info.ctimeNs }
+    } catch (error) {
+        await handle.close()
+        throw error
+    }
+}
+
+async function assertPin(pin: Pin) {
+    const again = await openNoFollow(pin.path, true)
+    try {
+        const info = await again.stat({ bigint: true })
+        if (info.dev !== pin.dev || info.ino !== pin.ino || info.ctimeNs !== pin.ctimeNs || info.uid !== currentUid()) throw outside()
+    } finally { await again.close() }
+}
+
+function assertTrustedRoot(root: string) {
+    if (!isAbsolute(root) || basename(root) !== 'shared') throw outside()
+}
+
+async function parentOfShared(root: string, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal)
+    assertTrustedRoot(root)
+    const parent = dirname(root)
+    const info = await lstat(parent, { bigint: true }).catch(error => {
+        if (missing(error)) throw new SharedWorkspaceFileError(404, 'The shared folder is not ready.')
+        throw error
+    })
+    if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
+    if (info.uid !== currentUid()) throw otherUser()
+    if (await realpath(parent) !== parent) throw outside()
+}
+
+async function openSharedRoot(root: string, signal?: AbortSignal): Promise<Pin> {
+    await parentOfShared(root, signal)
+    const info = await lstat(root, { bigint: true })
+    if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
+    if (info.uid !== currentUid()) throw otherUser()
+    const pin = await pinDirectory(root, signal)
+    if (pin.dev !== info.dev || pin.ino !== info.ino) {
+        await pin.handle.close()
+        throw outside()
+    }
+    return pin
+}
+
+async function ensureSharedRoot(root: string, signal?: AbortSignal): Promise<Pin> {
+    await parentOfShared(root, signal)
+    const existing = await lstat(root, { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
+    if (!existing) {
+        const parent = await pinDirectory(dirname(root), signal)
+        try {
+            await mkdir(join(parent.pinned, 'shared'), { mode: 0o755 }).catch(error => {
+                if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+            })
+        } finally { await parent.handle.close() }
+    }
+    return openSharedRoot(root, signal)
+}
+
+async function descend(root: string, rootPin: Pin, parts: string[], signal?: AbortSignal): Promise<{ pin: Pin; close: boolean; rel: string }> {
+    let pin = rootPin
+    let close = false
+    let rel = ''
+    for (const part of parts) {
+        throwIfAborted(signal)
+        const listed = await lstat(join(pin.pinned, part), { bigint: true })
+        if (listed.isSymbolicLink()) throw outside()
+        if (!listed.isDirectory()) throw new SharedWorkspaceFileError(400, 'That path is not a folder.')
+        if (listed.uid !== currentUid()) throw otherUser()
+        const nextPath = join(root, rel, part)
+        contained(root, nextPath)
+        const next = await pinDirectory(nextPath, signal)
+        if (next.dev !== listed.dev || next.ino !== listed.ino) {
+            await next.handle.close()
+            throw outside()
+        }
+        if (close) await pin.handle.close()
+        pin = next
+        close = true
+        rel = rel ? `${rel}/${part}` : part
+    }
+    return { pin, close, rel }
+}
+
+async function withRoot<T>(root: string, access: SharedFileAccess | undefined, openRoot: (root: string, signal?: AbortSignal) => Promise<Pin>, action: (rootPin: Pin) => Promise<T>, folder = false): Promise<T> {
+    try {
+        await commit(access)
+        const rootPin = await openRoot(root, access?.signal)
+        try {
+            await commit(access)
+            const result = await action(rootPin)
+            await assertPin(rootPin)
+            await commit(access)
+            return result
+        } finally { await rootPin.handle.close() }
+    } catch (error) { rethrow(error, folder) }
+}
+
+/** App data root to the engine shared directory. Does not create it and does not follow a linked engine or shared folder. */
+export function desktopEngineSharedDirectory(dataRoot: string): string {
+    return join(dataRoot, 'workspaces', '1', 'engine', 'shared')
+}
+
+export async function resolveDesktopSharedDirectory(dataRoot: string, signal?: AbortSignal): Promise<string> {
+    try {
+        throwIfAborted(signal)
+        if (!isAbsolute(dataRoot)) throw outside()
+        const root = await realpath(dataRoot)
+        const engine = join(root, 'workspaces', '1', 'engine')
+        const info = await lstat(engine, { bigint: true }).catch(error => {
+            if (missing(error)) throw new SharedWorkspaceFileError(404, 'The shared folder is not ready.')
+            throw error
+        })
+        if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
+        if (info.uid !== currentUid()) throw otherUser()
+        if (await realpath(engine) !== engine) throw outside()
+        const shared = join(engine, 'shared')
+        if (shared !== desktopEngineSharedDirectory(root)) throw outside()
+        return shared
+    } catch (error) { rethrow(error) }
+}
+
+/** `engineDataDir` is the engine's own data directory (`sharedDir()`'s parent), never a tool argument. */
+export async function resolveEngineSharedDirectory(engineDataDir: string, signal?: AbortSignal): Promise<string> {
+    try {
+        throwIfAborted(signal)
+        if (!isAbsolute(engineDataDir)) throw outside()
+        const engine = await realpath(engineDataDir)
+        const info = await lstat(engine, { bigint: true }).catch(error => {
+            if (missing(error)) throw new SharedWorkspaceFileError(404, 'The shared folder is not ready.')
+            throw error
+        })
+        if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
+        if (info.uid !== currentUid()) throw otherUser()
+        return join(engine, 'shared')
+    } catch (error) { rethrow(error) }
+}
+
+export async function listSharedDirectory(root: string, path: string, access?: SharedFileAccess): Promise<SharedDirectoryListing> {
+    let rel = ''
+    try { rel = partsOf(path, 'root').join('/'); assertTrustedRoot(root) }
+    catch (error) { rethrow(error, true) }
+    const present = await lstat(root, { bigint: true }).catch(error => { if (missing(error)) return null; rethrow(error, true) })
+    if (!present) {
+        if (rel === '') return { path: '', entries: [], truncated: false }
+        throw new SharedWorkspaceFileError(404, 'Folder not found')
+    }
+    try {
+        return await withRoot(root, access, openSharedRoot, async rootPin => {
+            const child = await descend(root, rootPin, rel ? rel.split('/') : [], access?.signal)
+            try {
+                const entries: SharedDirectoryEntry[] = []
+                let visited = 0
+                let truncated = false
+                for (const name of await readdir(child.pin.pinned)) {
+                    throwIfAborted(access?.signal)
+                    if (++visited > LIST_VISIT_LIMIT || entries.length >= SHARED_LIST_LIMIT) { truncated = true; break }
+                    if (!PART.test(name)) continue
+                    const info = await lstat(join(child.pin.pinned, name), { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
+                    if (!info || info.isSymbolicLink() || info.uid !== currentUid()) continue
+                    if (info.isDirectory()) entries.push({ name, type: 'dir', size: 0, modifiedAt: stamp(info.mtimeNs) })
+                    else if (info.isFile() && info.nlink === 1n) entries.push({ name, type: 'file', size: Number(info.size), modifiedAt: stamp(info.mtimeNs) })
+                }
+                entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
+                await assertPin(child.pin)
+                return { path: child.rel, entries, truncated }
+            } finally { if (child.close) await child.pin.handle.close() }
+        }, true)
+    } catch (error) { rethrow(error, true) }
+}
+
+function decodePrefix(bytes: Uint8Array, partial: boolean): string {
+    try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
+    catch {
+        if (!partial || bytes.length < 4) throw new SharedWorkspaceFileError(415, 'This file must contain UTF-8 text.')
+        try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, bytes.length - 3)) }
+        catch { throw new SharedWorkspaceFileError(415, 'This file must contain UTF-8 text.') }
+    }
+}
+
+export async function readSharedText(root: string, path: string, offset = 0, access?: SharedFileAccess): Promise<SharedTextPage> {
+    if (!Number.isInteger(offset) || offset < 0) throw new SharedWorkspaceFileError(400, 'offset must be a non-negative integer.')
+    const byteBudget = (offset + TEXT_FILE_PAGE_CHARS) * 4
+    if (byteBudget > MAX_WINDOW_BYTES) throw new SharedWorkspaceFileError(413, 'This shared file is too large to read from that offset.')
+    const parts = partsOf(path, 'reject')
+    const name = parts[parts.length - 1]!
+    if (!TEXT_NAME.test(name)) throw new SharedWorkspaceFileError(415, 'Only .txt and .md files can be read from the shared folder.')
+    const rel = parts.join('/')
+    return withRoot(root, access, openSharedRoot, async rootPin => {
+        const child = await descend(root, rootPin, parts.slice(0, -1), access?.signal)
+        let handle: FileHandle | null = null
+        try {
+            const listed = await lstat(join(child.pin.pinned, name), { bigint: true })
+            if (listed.isSymbolicLink()) throw new SharedWorkspaceFileError(400, 'Choose a file, not a symlink.')
+            if (!listed.isFile()) throw new SharedWorkspaceFileError(400, 'That path is not a file.')
+            if (listed.nlink !== 1n) throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
+            if (listed.uid !== currentUid()) throw otherUser()
+            const target = join(root, rel)
+            contained(root, target)
+            handle = await openNoFollow(target, false)
+            const opened = await handle.stat({ bigint: true })
+            if (opened.dev !== listed.dev || opened.ino !== listed.ino || opened.nlink !== 1n || opened.uid !== currentUid() || !opened.isFile()) {
+                throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
+            }
+            if (opened.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new SharedWorkspaceFileError(413, 'This shared file is too large to read from that offset.')
+            const size = Number(opened.size)
+            const toRead = Math.min(size, byteBudget)
+            const buffer = Buffer.alloc(toRead)
+            let read = 0
+            while (read < toRead) {
+                throwIfAborted(access?.signal)
+                const chunk = await handle.read(buffer, read, toRead - read, read)
+                if (!chunk.bytesRead) break
+                read += chunk.bytesRead
+            }
+            const after = await handle.stat({ bigint: true })
+            if (after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== 1n || after.size !== opened.size || after.ctimeNs !== opened.ctimeNs) {
+                throw new SharedWorkspaceFileError(409, 'This file changed while it was being read.')
+            }
+            const bytes = buffer.subarray(0, read)
+            if (bytes.includes(0)) throw new SharedWorkspaceFileError(415, 'This file must contain UTF-8 text.')
+            const text = decodePrefix(bytes, size > read)
+            if (offset > text.length && size > read) throw new SharedWorkspaceFileError(413, 'This shared file is too large to read from that offset.')
+            const content = text.slice(offset, offset + TEXT_FILE_PAGE_CHARS)
+            const end = offset + content.length
+            const truncated = end < text.length || size > read
+            return { path: rel, content, size, truncated, offset, nextOffset: truncated ? end : null }
+        } finally {
+            await handle?.close()
+            if (child.close) await child.pin.handle.close()
+        }
+    })
+}
+
+async function mkdirChild(parent: Pin, root: string, rel: string, name: string, signal?: AbortSignal): Promise<Pin> {
+    throwIfAborted(signal)
+    const dest = join(parent.pinned, name)
+    const existing = await lstat(dest, { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
+    if (existing) {
+        if (existing.isSymbolicLink() || !existing.isDirectory()) throw new SharedWorkspaceFileError(400, 'That path is not a folder.')
+        if (existing.uid !== currentUid()) throw otherUser()
+    } else {
+        await mkdir(dest, { mode: 0o755 }).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error })
+    }
+    const nextPath = join(root, rel, name)
+    contained(root, nextPath)
+    const pin = await pinDirectory(nextPath, signal)
+    const listed = await lstat(dest, { bigint: true })
+    if (listed.isSymbolicLink() || !listed.isDirectory() || listed.uid !== currentUid() || pin.dev !== listed.dev || pin.ino !== listed.ino) {
+        await pin.handle.close()
+        throw outside()
+    }
+    return pin
+}
+
+export async function importSharedText(root: string, folder: string, name: string, bytes: Uint8Array, access?: SharedFileAccess): Promise<SharedImportResult> {
+    validImportName(name)
+    if (bytes.byteLength > SHARED_IMPORT_BYTES) throw new SharedWorkspaceFileError(413, 'Files can be up to 1 MB.')
+    if (bytes.includes(0)) throw new SharedWorkspaceFileError(415, 'Only text files can be imported.')
+    try { new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
+    catch { throw new SharedWorkspaceFileError(415, 'Only text files can be imported.') }
+    const folders = partsOf(folder, 'root')
+    const rel = folders.length ? `${folders.join('/')}/${name}` : name
+    const kept = () => new SharedWorkspaceFileError(409, `This folder already has a file named “${name}”. The existing file was kept; rename yours and import it again.`)
+    return withRoot(root, access, ensureSharedRoot, async rootPin => {
+        let parent = rootPin
+        let closeParent = false
+        let parentRel = ''
+        try {
+            for (const part of folders) {
+                const next = await mkdirChild(parent, root, parentRel, part, access?.signal)
+                if (closeParent) await parent.handle.close()
+                parent = next
+                closeParent = true
+                parentRel = parentRel ? `${parentRel}/${part}` : part
+            }
+            await commit(access)
+            const existing = await lstat(join(parent.pinned, name)).catch(error => { if (missing(error)) return null; throw error })
+            if (existing) throw kept()
+            const tempName = `.rerun-shared-import-${randomBytes(12).toString('hex')}`
+            const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (process.platform === 'darwin' ? O_NOFOLLOW_ANY : constants.O_NOFOLLOW)
+            const tempLexical = join(parent.path, tempName)
+            contained(root, tempLexical)
+            const handle = process.platform === 'darwin'
+                ? await open(tempLexical, flags, 0o644)
+                : await open(join(parent.pinned, tempName), flags, 0o644)
+            let published = false
+            try {
+                const opened = await handle.stat({ bigint: true })
+                const listed = await lstat(join(parent.pinned, tempName), { bigint: true })
+                if (opened.dev !== listed.dev || opened.ino !== listed.ino || opened.nlink !== 1n || opened.uid !== currentUid()) throw outside()
+                await handle.writeFile(bytes)
+                await handle.sync()
+                const written = await handle.stat({ bigint: true })
+                if (written.size !== BigInt(bytes.byteLength) || written.nlink !== 1n || written.dev !== opened.dev || written.ino !== opened.ino) throw outside()
+                await commit(access)
+                try { await link(join(parent.pinned, tempName), join(parent.pinned, name)) }
+                catch (error) {
+                    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw kept()
+                    throw error
+                }
+                published = true
+                await unlink(join(parent.pinned, tempName))
+                const final = await lstat(join(parent.pinned, name), { bigint: true })
+                if (final.isSymbolicLink() || !final.isFile() || final.uid !== currentUid() || final.dev !== opened.dev || final.ino !== opened.ino) throw outside()
+                if (final.nlink !== 1n) {
+                    await unlink(join(parent.pinned, name)).catch(() => {})
+                    throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
+                }
+            } finally {
+                await handle.close()
+                if (!published) await unlink(join(parent.pinned, tempName)).catch(() => {})
+            }
+            return { path: rel, name }
+        } finally { if (closeParent) await parent.handle.close() }
+    })
+}
