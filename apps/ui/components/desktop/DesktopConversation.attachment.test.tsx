@@ -43,6 +43,7 @@ test('a scoped picker supports retry, folders, ordered multi-selection, removal,
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
         const nativeReview = desktopNativeReviewRead(input); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
@@ -89,6 +90,7 @@ test('sending a workspace file keeps the draft for retry and renders only its sa
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
@@ -126,6 +128,7 @@ test('stale folder failures do not replace a more recent listing or reopen a dis
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
         const nativeReview = desktopNativeReviewRead(input); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
@@ -158,6 +161,7 @@ test('a follow-up attachment can be removed while streaming without changing the
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) {
@@ -212,6 +216,7 @@ test('three ordered files travel as one immutable set, persist per tab, and rend
             if (init?.method === 'PUT') draftWrites.push(JSON.parse(String(init.body)))
             return fixture
         }
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
@@ -267,6 +272,7 @@ test('the picker stops at ten files and at the shared 128 KiB total', async () =
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
         const nativeReview = desktopNativeReviewRead(input); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
@@ -289,6 +295,7 @@ test('a failing multi-file send keeps every chip and the typed text', async () =
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
         const nativeReview = desktopNativeReviewRead(input); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
@@ -321,6 +328,7 @@ test('a rejected attachment draft keeps its text and permits removing the reject
         }
         const response = fixture.handle(input, init)
         if (response) return response
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })

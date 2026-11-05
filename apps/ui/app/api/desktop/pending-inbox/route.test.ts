@@ -44,7 +44,7 @@ async function read() {
     expect(response.headers.get('cache-control')).toBe('no-store')
     return desktopPendingInboxSchema.parse(await response.json())
 }
-const seen = async () => (await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_pending_inbox_seen')).rows
+const seen = async () => (await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_pending_inbox_seen_v2')).rows
 const questionId = async () => (await questionResolvers.readDesktopQuestion(runtime, question.id)).question!.id
 const approvalId = async () => (await readDesktopApproval(runtime, approval.id)).approval!.id
 

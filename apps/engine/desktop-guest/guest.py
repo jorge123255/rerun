@@ -190,6 +190,22 @@ def spawn(argv):
 
 
 def stop_children():
+    # Closing the browser before X11 lets its profile databases finish writing.
+    browser = children[-1] if children else None
+    if browser is not None and browser.poll() is None and port_ready(CDP_PORT):
+        sock = None
+        try:
+            sock = page_socket()
+            Cdp(sock).call('Browser.close', {}, 3)
+        except Exception:
+            pass
+        finally:
+            if sock is not None:
+                sock.close()
+        try:
+            browser.wait(timeout=6)
+        except subprocess.TimeoutExpired:
+            pass
     for proc in children:
         if proc.poll() is None:
             try:
@@ -396,7 +412,7 @@ def dispatch(request, client):
     if op == 'screenshot':
         return screenshot()
     if op == 'release':
-        run_xdotool(['mouseup', '1', '3'], client)
+        run_xdotool(['mouseup', '1', 'mouseup', '3'], client)
         return {'ok': True}, b''
     if op == 'location':
         return {'ok': True, 'url': current_url()}, b''
@@ -806,6 +822,7 @@ def main():
     if mode == 'rpc':
         try:
             rpc_main()
+            return
         except GuestError as error:
             sys.stdout.buffer.write(encode_frame({'ok': False, 'refusal': error.refusal, 'reason': error.reason}))
             sys.exit(0)

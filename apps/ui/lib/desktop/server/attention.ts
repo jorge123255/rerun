@@ -1,6 +1,7 @@
 import 'server-only'
 import { resolve } from 'node:path'
 import type { DesktopAttention, DesktopAttentionItem } from '../attention'
+import { readDesktopTakeover } from './takeover'
 import { readDesktopApproval } from './approvals'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { openDesktopDatabase } from './database'
@@ -50,6 +51,11 @@ async function collect(runtime: DesktopRuntime): Promise<DesktopAttention> {
                     signal.throwIfAborted()
                     const { approval } = await readDesktopApproval(runtime, session.id, { signal })
                     if (approval) pending = { id: approval.id, kind: 'approval', summary: summary(approval.approvals[0].action), requestedAt: approval.requestedAt ?? undefined }
+                    else {
+                        signal.throwIfAborted()
+                        const { takeover } = await readDesktopTakeover(runtime, session.id, { signal })
+                        if (takeover) pending = { id: takeover.id, kind: 'takeover', summary: summary(takeover.reason), requestedAt: takeover.requestedAt }
+                    }
                 }
             } catch { failed = true }
             try {

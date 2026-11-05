@@ -100,6 +100,7 @@ beforeEach(() => {
         }
         if (url.pathname.endsWith('/messages')) return Response.json({ messages: history.get(sessionId) ?? [] })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/feedback')) return Response.json({ votes: [] })
         if (url.pathname.endsWith('/stop')) return Response.json({ running: false, runId: null, failedRunId: null })

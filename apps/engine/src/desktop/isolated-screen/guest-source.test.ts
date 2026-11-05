@@ -39,6 +39,7 @@ describe('guest image source', () => {
         expect(read('openbox.xml')).not.toContain('keybind')
         const published = `${guest}\n${entry}\n${read('Dockerfile')}`
         expect(published).not.toContain('--network host')
-        expect(published).not.toContain('/Users/')
+        expect(guest).toContain("BANNED_MOUNT = ('docker.sock', '/Users/'")
+        expect(read('Dockerfile')).not.toContain('/Users/')
     })
 })

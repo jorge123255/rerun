@@ -8,6 +8,7 @@ const mock = vi.hoisted(() => ({ agents: vi.fn(), sessions: vi.fn(), session: vi
 vi.mock('./database', () => ({ openDesktopDatabase: async () => ({}) }))
 vi.mock('./store', () => ({ listDesktopAgents: mock.agents, listDesktopSessions: mock.sessions, findDesktopSession: mock.session }))
 vi.mock('./questions', () => ({ readDesktopQuestion: mock.question }))
+vi.mock('./takeover', () => ({ readDesktopTakeover: async () => ({ takeover: null }) }))
 vi.mock('./approvals', () => ({ readDesktopApproval: mock.approval }))
 vi.mock('./coworker-delete', () => ({ assertCoworkerNotDeleting: mock.owner }))
 vi.mock('./settings', () => ({ engineOf: () => ({}) }))

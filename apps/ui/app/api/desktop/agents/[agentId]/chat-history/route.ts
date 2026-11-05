@@ -1,6 +1,7 @@
 import { listSessions } from '@/lib/engine/client'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { readDesktopChatHistory, type DesktopChatHistory } from '@/lib/desktop/server/chat-history'
+import { readDesktopTakeover } from '@/lib/desktop/server/takeover'
 import { readDesktopApproval } from '@/lib/desktop/server/approvals'
 import { readDesktopQuestion } from '@/lib/desktop/server/questions'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
@@ -28,7 +29,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ agen
                     const { question } = await readDesktopQuestion(runtime, id)
                     if (question) return question.questions[0].question.slice(0, 200)
                     const { approval } = await readDesktopApproval(runtime, id)
-                    return approval ? approval.approvals[0].action.slice(0, 200) : null
+                    if (approval) return approval.approvals[0].action.slice(0, 200)
+                    return (await readDesktopTakeover(runtime, id)).takeover?.reason.slice(0, 200) ?? null
                 },
             }, agent)
         } catch {

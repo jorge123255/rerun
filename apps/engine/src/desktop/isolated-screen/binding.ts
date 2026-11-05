@@ -3,7 +3,7 @@ import { readAgentConfig } from '../../agents/loader.js'
 import { desktopDeletionActive } from '../agent-lifecycle.js'
 import { hasDesktopToolGrant } from '../tool-grants.js'
 import { createIsolatedViewer } from '../isolated-viewer.js'
-import { service } from './index.js'
+import { IsolatedScreenRefusal, service } from './index.js'
 import type { ScreenOwner, ScreenTarget } from './types.js'
 
 let viewer: ReturnType<typeof createIsolatedViewer> | undefined
@@ -44,7 +44,10 @@ export function bindIsolatedScreen(runtime: { launchNonce: string; app: { origin
         },
         ensure: (owner, signal) => ensureIsolatedScreen(owner.engineAgentId, signal),
         async startTakeover(target, signal) { return (await screen.startTakeover(target, signal)).token },
-        finishTakeover: (target, token, signal) => screen.finishTakeover(target, { token }, signal),
+        async finishTakeover(target, token, signal) {
+            try { return await screen.finishTakeover(target, { token }, signal) }
+            catch (error) { if (error instanceof IsolatedScreenRefusal && error.kind === 'stale') return { url: null, expired: true }; throw error }
+        },
     }, { launchNonce, uiOrigin: runtime.app.origin, authorize: (owner, _mode, signal) => requireScreenGrant(owner.engineAgentId, signal) })
     return viewer
 }

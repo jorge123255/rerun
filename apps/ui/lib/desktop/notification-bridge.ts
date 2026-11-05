@@ -12,7 +12,7 @@ export type DesktopNotificationDeliveryResult = { status: 'shown' | 'unavailable
 // question or approval.
 export type DesktopNotificationTarget = {
     key: string
-    kind: 'done' | 'error' | 'question' | 'approval'
+    kind: 'done' | 'error' | 'question' | 'approval' | 'takeover'
     agentId: string
     sessionId: string | null
     groupId?: string | null

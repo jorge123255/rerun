@@ -68,6 +68,7 @@ beforeEach(() => {
     answer = async (sessionId, body) => { questions.set(sessionId, null); return acknowledgement(sessionId, body.requestId, 'x-question-id', body.questionId) }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://local'), sessionId = url.pathname.split('/')[4]
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) {
             if (init?.method === 'POST') {
                 const body = JSON.parse(String(init.body)) as DesktopApprovalAnswer

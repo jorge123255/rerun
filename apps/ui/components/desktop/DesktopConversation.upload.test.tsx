@@ -68,6 +68,7 @@ function stubFetch(overrides: {
         const url = new URL(String(input), 'http://local')
         const draftResponse = fixture?.handle(input, init)
         if (draftResponse) return draftResponse
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })

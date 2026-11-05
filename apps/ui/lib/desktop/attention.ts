@@ -4,7 +4,7 @@ import { z } from 'zod'
 // Opening an item never accepts, dismisses, or executes its request.
 export const desktopAttentionItemSchema = z.object({
     id: z.string().min(1),
-    kind: z.enum(['question', 'approval']),
+    kind: z.enum(['question', 'approval', 'takeover']),
     agentId: z.string().min(1),
     agentName: z.string(),
     agentEnabled: z.boolean(),

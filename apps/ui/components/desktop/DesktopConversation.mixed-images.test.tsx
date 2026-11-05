@@ -82,6 +82,7 @@ beforeEach(() => {
         }
         if (url.pathname.endsWith('/files')) return Response.json({ entries: ['one.txt', 'two.md', 'notes.txt', 'legacy.txt'].map(name => ({ name, type: 'file', size: 4 })) })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
         if (url.pathname.endsWith('/messages')) return Response.json({ messages: [] })

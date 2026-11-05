@@ -128,7 +128,7 @@ it('rejects another website origin without spending the ticket', async () => {
 it('Stop still stops the exact guest when takeover release fails', async () => {
     const f = setup(); await f.post('takeover')
     f.service.finishTakeover.mockRejectedValue(new Error('release failed'))
-    expect((await f.app.request('/agents/agent-1/screen/stop?launchNonce=nonce-1', { method: 'POST' })).status).toBe(409)
+    expect((await f.app.request('/agents/agent-1/screen/stop?launchNonce=nonce-1', { method: 'POST' })).status).toBe(200)
     expect(f.service.stop).toHaveBeenCalledWith(target, expect.any(AbortSignal))
 })
 it('failed cancellation release falls back to stopping the acquired target', async () => {

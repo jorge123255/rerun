@@ -154,7 +154,7 @@ export function createIsolatedViewer(service: IsolatedScreenService, authority: 
         for (const [controller, current] of pending) if (keyOf(current) === key) controller.abort()
         for (const [shutdown, current] of sockets) if (keyOf(current) === key) shutdown()
         const held = leases.get(key)
-        if (held) await release(value, held.lease)
+        if (held) await cleanup(value, held)
     }
     const routes = new Hono()
     routes.onError((error, c) => c.json({ error: error instanceof z.ZodError ? 'Invalid screen request' : 'Isolated screen unavailable' }, error instanceof z.ZodError ? 400 : 409))

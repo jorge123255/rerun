@@ -10,6 +10,14 @@ CREATE TABLE IF NOT EXISTS desktop_pending_inbox_seen (
     kind TEXT NOT NULL CHECK (kind IN ('question', 'approval')),
     seen_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS desktop_pending_inbox_seen_v2 (
+    item_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('question', 'approval', 'takeover')),
+    seen_at TEXT NOT NULL
+);
+INSERT OR IGNORE INTO desktop_pending_inbox_seen_v2 SELECT * FROM desktop_pending_inbox_seen;
 `
 
 export async function initializeDesktopPendingInbox(db: Client): Promise<void> {

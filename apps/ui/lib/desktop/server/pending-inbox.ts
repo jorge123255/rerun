@@ -2,6 +2,7 @@ import 'server-only'
 import { z } from 'zod'
 import type { DesktopPendingInbox, DesktopPendingReadTarget } from '../pending-inbox'
 import { readDesktopAttention } from './attention'
+import { readDesktopTakeover } from './takeover'
 import { readDesktopApproval } from './approvals'
 import { openDesktopDatabase } from './database'
 import { initializeDesktopPendingInbox } from './pending-inbox-db'
@@ -22,7 +23,7 @@ export async function readDesktopPendingInbox(runtime: DesktopRuntime): Promise<
     await initializeDesktopPendingInbox(db)
     const ids = attention.items.map(item => item.id)
     if (!ids.length) return { items: [], unavailableAgentIds: attention.unavailableAgentIds, checkedAt: attention.checkedAt }
-    const result = await db.execute({ sql: `SELECT item_id FROM desktop_pending_inbox_seen WHERE item_id IN (${ids.map(() => '?').join(',')})`, args: ids })
+    const result = await db.execute({ sql: `SELECT item_id FROM desktop_pending_inbox_seen_v2 WHERE item_id IN (${ids.map(() => '?').join(',')})`, args: ids })
     const seen = new Set(result.rows.map(row => String(row.item_id)))
     return { items: attention.items.filter(item => !seen.has(item.id)), unavailableAgentIds: attention.unavailableAgentIds, checkedAt: attention.checkedAt }
 }
@@ -30,7 +31,7 @@ export async function readDesktopPendingInbox(runtime: DesktopRuntime): Promise<
 export const desktopPendingInboxReadSchema = z.object({
     items: z.array(z.object({
         id: z.string().min(1).max(8192),
-        kind: z.enum(['question', 'approval']),
+        kind: z.enum(['question', 'approval', 'takeover']),
         agentId: z.string().min(1).max(200),
         sessionId: z.string().min(1).max(200),
     }).strict()).max(500),
@@ -78,6 +79,7 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
                         signal.throwIfAborted()
                         const currentId = item.kind === 'question'
                             ? (await readDesktopQuestion(runtime, session.id, { signal })).question?.id ?? null
+                            : item.kind === 'takeover' ? (await readDesktopTakeover(runtime, session.id, { signal })).takeover?.id ?? null
                             : (await readDesktopApproval(runtime, session.id, { signal })).approval?.id ?? null
                         // The resolver also reads local answer receipts after history arrives.
                         // A result that finishes after the scan deadline is still unknown.
@@ -106,7 +108,7 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
             // engine reads cannot acknowledge a different chat, and receipts cascade with the row.
             const row = (await transaction.execute({ sql: 'SELECT id, agent_id FROM desktop_sessions WHERE id = ?', args: [item.sessionId] })).rows[0]
             if (!row || String(row.agent_id) !== item.agentId) throw new Error('Pending binding changed')
-            await transaction.execute({ sql: 'INSERT INTO desktop_pending_inbox_seen (item_id, agent_id, session_id, kind, seen_at) VALUES (?,?,?,?,?) ON CONFLICT(item_id) DO NOTHING', args: [item.id, item.agentId, item.sessionId, item.kind, seenAt] })
+            await transaction.execute({ sql: 'INSERT INTO desktop_pending_inbox_seen_v2 (item_id, agent_id, session_id, kind, seen_at) VALUES (?,?,?,?,?) ON CONFLICT(item_id) DO NOTHING', args: [item.id, item.agentId, item.sessionId, item.kind, seenAt] })
         }
         await transaction.commit()
     } catch {

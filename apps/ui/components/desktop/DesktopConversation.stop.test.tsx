@@ -36,6 +36,7 @@ beforeEach(() => {
     stopResponse = () => Response.json({ canceled: 1, alreadyFinished: false })
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
         const nativeReview = desktopNativeReviewRead(url, init); if (nativeReview) return nativeReview
+        if (url.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.endsWith('/questions')) return Response.json({ question: null })
         requests.push(`${init?.method ?? 'GET'} ${url}`)
@@ -198,6 +199,7 @@ test('a reopened run is not readable until its final history and both pending-re
             if (delayFinalSnapshot) {
                 if (url.endsWith('/messages')) { pendingReads.push('messages'); return messagesRead }
                 if (url.endsWith('/questions')) { pendingReads.push('question'); return questionRead }
+                if (url.endsWith('/takeover')) return Response.json({ takeover: null })
                 if (url.endsWith('/approvals')) { pendingReads.push('approval'); return approvalRead }
             }
             return originalFetch(input, init)

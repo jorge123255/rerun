@@ -20,6 +20,7 @@ test('switching, failed loads, retry, and New chat keep drafts and never show an
     let sends = 0
     vi.stubGlobal('fetch', vi.fn((url: string) => {
         const nativeReview = desktopNativeReviewRead(url); if (nativeReview) return nativeReview
+        if (url.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.endsWith('/questions')) return Response.json({ question: null })
         if (url.includes('/queue?')) return Response.json({ queued: null })

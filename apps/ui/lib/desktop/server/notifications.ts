@@ -105,7 +105,7 @@ async function mergeAndWritePrefs(db: Client, patch: NotificationPrefsPatch): Pr
 
 export type DesktopNotificationEvent = {
     key: string
-    kind: 'done' | 'error' | 'question' | 'approval'
+    kind: 'done' | 'error' | 'question' | 'approval' | 'takeover'
     source: 'chat' | 'schedule' | 'trigger'
     agentId: string
     agentName: string
@@ -122,7 +122,7 @@ export type DesktopNotificationEvent = {
     requestId?: string
 }
 
-type WantedEvent = { kind: 'done' | 'error' | 'question' | 'approval'; agentId: string; source: 'chat' | 'schedule' | 'trigger'; slug: string | null }
+type WantedEvent = { kind: 'done' | 'error' | 'question' | 'approval' | 'takeover'; agentId: string; source: 'chat' | 'schedule' | 'trigger'; slug: string | null }
 
 // The one question of the settings, mirrored from the original audience rules for the single
 // local member: scope first, then the coworker's own override, then whether the run reaches the
@@ -134,7 +134,7 @@ function wantedByPrefs(prefs: NotificationPrefs, event: WantedEvent): boolean {
     const rule = coworkerRuleOf(prefs, event.agentId)
     if (rule.mode === 'muted') return false
     if (rule.mode === 'everything') return true
-    if (event.kind === 'question' || event.kind === 'approval') return true
+    if (event.kind === 'question' || event.kind === 'approval' || event.kind === 'takeover') return true
     const reaches = event.source === 'chat'
         ? prefs.scope === 'everything' || prefs.scope === 'mine' || prefs.scope === 'needed'
         : event.slug
@@ -269,7 +269,7 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
             if (!wantedByPrefs(prefs, { kind: item.kind, agentId: item.agentId, source: 'chat', slug: null })) continue
             scored.push({ at, event: {
                 key, kind: item.kind, source: 'chat', agentId: item.agentId, agentName: item.agentName, sessionId: item.sessionId,
-                title: item.agentName, subtitle: item.kind === 'question' ? 'Question' : 'Needs approval',
+                title: item.agentName, subtitle: item.kind === 'question' ? 'Question' : item.kind === 'takeover' ? 'Browser help' : 'Needs approval',
                 body: item.summary || null, silent: false, requestId: item.id,
             } })
         }

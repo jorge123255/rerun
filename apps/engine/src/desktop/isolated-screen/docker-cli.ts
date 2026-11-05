@@ -211,11 +211,18 @@ export function createDockerCli(): DockerClient {
             if (result.tooLarge || result.code !== 0) throw new IsolatedScreenRefusal('The screen did not start.', 'closed')
         },
         async removeContainer(name, signal) {
-            const result = await collect(removeContainerArgs(name), signal)
+            const removal = removeContainerArgs(name)
+            // Let Chromium flush cookies and local storage before removing its container.
+            const stopped = await collect(['stop', '--time', '12', '--', name], signal)
+            throwIfAborted(signal)
+            const unavailable = prerequisiteError(stopped)
+            if (unavailable) throw unavailable
+            if (stopped.code !== 0 && !isDockerMiss(stopped.stderr.toString('utf8'))) throw new IsolatedScreenRefusal('The screen did not stop.', 'closed')
+            const result = await collect(removal, signal)
             throwIfAborted(signal)
             const prerequisite = prerequisiteError(result)
             if (prerequisite) throw prerequisite
-            if (result.code !== 0) throw new IsolatedScreenRefusal('The screen did not stop.', 'closed')
+            if (result.code !== 0 && !isDockerMiss(result.stderr.toString('utf8'))) throw new IsolatedScreenRefusal('The screen did not stop.', 'closed')
         },
         async removeVolume(name, signal) {
             const result = await collect(removeVolumeArgs(name), signal)

@@ -90,6 +90,7 @@ beforeEach(() => {
             return Response.json({ proposal: skillProposals[0] })
         }
         if (url.pathname.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return readQuestion()
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return readApproval()
         if (url.pathname.endsWith('/messages')) return Response.json({ messages: histories.get(sessionId) ?? [] })
         if (url.pathname.endsWith('/feedback')) return Response.json({ votes: [] })

@@ -190,7 +190,7 @@ function encodeFailure(reason: unknown, refusal: boolean): Buffer {
     return encodeFrame({ ok: false, reason, refusal })
 }
 
-function encodeFrame(value: unknown, binary: Buffer): Buffer {
+function encodeFrame(value: unknown, binary: Buffer = Buffer.alloc(0)): Buffer {
     const body = Buffer.from(JSON.stringify(value))
     const header = Buffer.alloc(8)
     header.writeUInt32BE(body.length, 0)
@@ -397,7 +397,7 @@ describe('isolated screen lifecycle', () => {
     it('does not remove a container whose generation or labels changed', async () => {
         const stale = await boot()
         stale.docker.containers.get(containerName(owner.engineAgentId))!.labels[LABEL_GENERATION] = generation
-        await expect(stale.service.stop(stale.target, stale.signal)).rejects.toMatchObject({ kind: 'stale' })
+        await expect(stale.service.stop(stale.target, stale.signal)).resolves.toBeUndefined()
         expect(stale.docker.removedContainers).toEqual([])
         const foreign = await boot()
         foreign.docker.containers.get(containerName(owner.engineAgentId))!.labels = { other: '1' }
@@ -734,5 +734,43 @@ describe('isolated screen defaults', () => {
         await service.act(screen.target, { action: 'wait', duration: 0 }, signal)
         await service.act(screen.target, { action: 'wait', duration: 0.001 }, signal)
         expect(docker.execs.filter(call => call.body.op === 'screenshot')).toHaveLength(2)
+    })
+})
+
+describe('root integration lifecycle regressions', () => {
+    it('retries an interrupted Stop and treats repeated Stop as a safe no-op', async () => {
+        const box = await boot()
+        box.docker.inspectMode = 'container-down'
+        await expect(box.service.stop(box.target, box.signal)).rejects.toMatchObject({kind:'prerequisite'})
+        await expect(box.service.act(box.target,{action:'screenshot'},box.signal)).rejects.toMatchObject({kind:'stale'})
+        box.docker.inspectMode = 'ok'
+        await box.service.stop(box.target,box.signal)
+        await box.service.stop(box.target,box.signal)
+        expect(box.docker.removedContainers).toHaveLength(1)
+    })
+    it('drains a pending start before acknowledging shutdown and closes admission', async () => {
+        const {docker,service}=harness()
+        let entered!:()=>void
+        const started=new Promise<void>(resolve=>{entered=resolve})
+        docker.holdOps.add('ping');docker.onHold=entered
+        const work=service.ensure(owner,AbortSignal.timeout(3000))
+        const failed=expect(work).rejects.toMatchObject({name:'AbortError'})
+        await started
+        await service.shutdown(AbortSignal.timeout(3000));await failed
+        expect(docker.containers.size).toBe(0)
+        await expect(service.ensure(owner,AbortSignal.timeout(1000))).rejects.toMatchObject({name:'AbortError'})
+    })
+    it('does not reuse a generation whose guest cancellation could not be confirmed',async()=>{
+        const box=await boot();let entered!:()=>void
+        const started=new Promise<void>(resolve=>{entered=resolve})
+        box.docker.holdOps.add('navigate');box.docker.onHold=entered
+        box.docker.execHook=body=>{if(body.op==='cancel')throw new Error('no ack')}
+        const controller=new AbortController()
+        const work=box.service.navigate(box.target,{url:'https://example.com'},controller.signal)
+        const failed=expect(work).rejects.toThrow(/confirm cancellation/)
+        await started;controller.abort();await failed
+        await expect(box.service.startTakeover(box.target,box.signal)).rejects.toMatchObject({kind:'stale'})
+        await box.service.stop(box.target,box.signal)
+        expect(box.docker.containers.size).toBe(0)
     })
 })

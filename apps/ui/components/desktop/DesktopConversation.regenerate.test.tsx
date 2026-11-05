@@ -25,6 +25,7 @@ test('regenerates the selected saved reply in a separate chat and retries a lost
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
@@ -104,6 +105,7 @@ test('stopping a regenerating reply cancels only the alternate run', async () =>
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
