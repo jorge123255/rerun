@@ -1,3 +1,24 @@
+# Rerun next assignments — round 28
+
+Base: `15dce4a9dcefeb95b0042d01d8b2afc9bbe5c3f6`. Original Rerun: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. **25 capability groups remain; assignments are not acceptance.** Root implements attachment-only sends and owns integration and every test/build/Mac restart check.
+
+| Agent | Assignment | Prompt |
+| --- | --- | --- |
+| A | D5 — Animated GIF and WebP previews | [Open prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent A round 28 prompt.md>) |
+| B | D5 — M4A, Ogg and FLAC playback | [Open prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent B round 28 prompt.md>) |
+| C | D5 — WebM, MOV and M4V playback | [Open prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent C round 28 prompt.md>) |
+| D | D8 — Company Brain proposals and coworker tools | [Open prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent D round 28 prompt.md>) |
+| E | E2 — Review changes made in native temporary workspaces | [Open prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent E round 28 prompt.md>) |
+| F | E5 — Local MCP subprocess connections | [Open prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent F round 28 prompt.md>) |
+| G | D8 — Company Brain pages API and history | [Open prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent G round 28 prompt.md>) |
+| H | D8 — Company Brain editor and version history | [Open prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent H round 28 prompt.md>) |
+
+Root: **C3 — allow image/text attachments without typed prose**, preserving drafts, queues, receipts, history and restart. Actual blank submissions still fail. Root tests the final app from the board and after restart.
+
+A/B/C own separate media families; D/G/H own separate Company Brain layers. E owns native file proposals and F local MCP lifecycle. Shared dispatch, registry, grants and application mounting remain root-owned. Existing worktrees and the installed app are untouched by this preparation.
+
+---
+
 # Next Rerun Mac assignments — 26 remaining groups
 
 Prepared from accepted base `b428751d716efdb3c928c124921502d2a5e4e6c1`. The base acceptance was `742d089`; root’s Control Center Notifications slice is now installed and accepted in `b30aa78`; the previous round closed E6 Skills and E8 Routines, reducing 28 to 26 unfinished capability groups. These eight new slices are assigned, not accepted; the count changes only after applicable native/restart acceptance.
