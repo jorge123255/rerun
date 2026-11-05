@@ -1,5 +1,12 @@
 # What the Rerun Mac app is missing
 
+**Current integration, November 4:** A–H source is integrated with root corrections. Full UI
+4,366 / engine 3,278 tests pass; production staging and isolated built-runtime Skills checks
+also pass. The installed signed
+app is waiting for user Keychain approval, so remaining native checks and final cleanup are
+pending. **28 capability groups remain unfinished.** This supersedes the old assignment
+status below without changing previous accepted releases. [Review and evidence](desktop-handoff-integration-review.md).
+
 **New assignments:** A PDF chat cards; B composer text uploads; C notifications; D Skills corrections; E schedules correction; F MCP corrections; G table cards; H website logos. Root's original Control Center Open → Logs is installed and accepted in `86c35a3`; all eight lane assignments remain pending. Previous accepted deliveries remain accepted. [Assignments and prompts](desktop-next-round.md).
 
 **Previous delivery progress:** **5 of 9 concrete tasks accepted** in the previous round: A, B, G, H and root. The previous Boxes/MP4/Files-navigation delivery remains **3 of 3 accepted**. There are **28 unfinished capability groups**, down from 29 after D7 private/shared tables was completed. D5, C3 and E2 remain partial. See `docs/desktop-progress.md` and [current acceptance](desktop-pdf-attachments-data-web-acceptance.md).

@@ -1,5 +1,16 @@
 # Rerun Mac delivery checklist
 
+## Current handoff integration — November 4, 2026
+
+All A–H handoffs are integrated with root fixes. Full UI **4,366 tests** and engine **3,278
+tests** pass at `922164f`; production import correction `7e8270b` passed type checks, staging
+and isolated built-runtime Skills CRUD/conflict/archive/isolation/restart checks. The canonical
+installed app is `e230a1b`, waiting for the user to approve existing Keychain access. Final
+Skills/routine UI fixes are not installed, and native acceptance/fixture cleanup remain
+pending. The catalog stays **28 unfinished groups**.
+See [current integration review](desktop-handoff-integration-review.md) for exact handoffs,
+findings, evidence and resume point. The ledger below describes earlier accepted releases.
+
 Updated November 4, 2026. Installed source: `86c35a307831da45c5f844bd81995181755f6bfe`.
 
 The parity catalog has **28 unfinished capability groups**, down from 29 because **D7 private/shared data tables is complete**. Individual delivery tasks can complete part of a broader group; partial scope remains listed rather than being removed to reduce the count.

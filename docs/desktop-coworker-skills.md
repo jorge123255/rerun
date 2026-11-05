@@ -4,9 +4,10 @@ This document describes the current root-integrated source contract. The Skills 
 proposal review, tool catalog and grant, runner registration, confined publication, and shutdown
 hooks are wired. It replaces the earlier lane handoff and its unapplied integration snippets.
 
-**Root automated acceptance: pending. Root packaged Mac and restart acceptance: pending.**
-The source and authored regressions below describe intended behavior, not a claim that checks
-have passed. Root owns all execution and will record the final source identity and results.
+**Root automated and production-runtime checks pass. Native Mac window acceptance is pending.**
+Root alone executed the checks. The installed signed app is waiting for its existing Keychain
+access; Skills has not yet been installed into that app. See
+[integration review](desktop-handoff-integration-review.md) for the precise blocker and evidence.
 
 ## Original Rerun provenance and design
 
@@ -172,15 +173,19 @@ does not silently grant tools or replay publication as if it had succeeded.
   enablement. Local desktop skills have no hosted template-content lock; connector ownership
   still makes them read-only. Skill content is displayed as text, never executed by the UI.
 
-## Acceptance to be recorded by root
+## Root verification and pending acceptance
 
 Authored regressions cover confined owner/path/version handling; native cross-process locking
 and queued cancellation; exclusive publication, rollback/recovery, and retained storage;
 manifest/file identities and bounded bodies; exact local-chat proposal routing; enabled/grant
 and cancellation checks; panel/chat editor generations; and proposal acceptance/shutdown.
-They are available for root execution and are not acceptance evidence by themselves.
+They ran in the full suites below; native window acceptance is still separate.
 
-- Final source/build identity: **pending**.
-- Automated checks and exact results: **pending**.
+- Full suites at `922164f`: **4,366 UI tests passed / 39 skipped**, **3,278 engine tests passed**.
+- Production import correction `7e8270b`: type checks, standalone UI/engine build, bundled
+  runtime verification and emitted JavaScript-import checks passed.
+- The staged runtime's actual UI/engine/native helper passed Skills CRUD, stale-write refusal,
+  manifest-alias refusal, archive, sibling isolation and service restart in a fresh temporary
+  workspace. No live model or installed-app data was used.
 - Packaged Mac board → Skills/chat proposal flow, permission refusals, full-restart persistence,
   and preservation of the original workspace after cleanup: **pending**.

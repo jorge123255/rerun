@@ -1,5 +1,12 @@
 # Next Rerun Mac agent assignments
 
+**Current handoff status, November 4:** All eight assignments below have delivered and are
+integrated in source with root fixes. Their original worktrees remain untouched. Root passed
+4,366 UI / 3,278 engine tests, production staging and isolated built-runtime Skills checks.
+Native acceptance remains separate and incomplete.
+The installed signed app awaits user Keychain approval. No new agent assignment is needed
+to finish this review. [Exact handoffs, fixes and resume point](desktop-handoff-integration-review.md).
+
 Updated November 4, 2026. New A/B/G/H worktrees are prepared at `bb45f3a99e2ae2fe2de8e944a9eb4ab329ef0055`, including root's source implementation of Control Center Logs. Installed and accepted source is now `86c35a307831da45c5f844bd81995181755f6bfe`; root's Logs slice passed Mac and restart acceptance. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
 Previous A/B/G/H/root deliveries remain accepted. This round adds four new lane slices and root's Logs navigation; C/D/E/F continue unfinished work. No unfinished lane is reset or counted as accepted. The catalog remains **28 unfinished capability groups**; these smaller deliveries complete parts of C3/C8/B5 rather than pretending entire groups are closed.
