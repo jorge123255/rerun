@@ -33,7 +33,7 @@ type Props = {
     /** `files` keeps the Files header and sibling arrows. `body` is the page frame for a lightbox that already has a title. */
     chrome?: 'files' | 'body'
 }
-type PageMeta = { page: number; pages: number; width: number; height: number; pageWidth: number | null; pageHeight: number | null }
+type PageMeta = { page: number; pages: number; width: number; height: number; pageWidth: number | null; pageHeight: number | null; sha256: string | null }
 type View = { key: string; loading: true } | { key: string; error: string } | { key: string; src: string; meta: PageMeta; release: () => void }
 type TextState = { key: string; status: 'idle' | 'loading' } | { key: string; status: 'error'; message: string } | { key: string; status: 'ready'; document: DesktopPdfTextDocument }
 
@@ -53,14 +53,15 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
     currentKey.current = requestKey
     const [view, setView] = useState<View>({ key: requestKey, loading: true })
     const visible: View = view.key === requestKey ? view : { key: requestKey, loading: true }
-    const textKey = `${srcUrl}\0${path}\0${identity ?? ''}`
+    const [documentHash, setDocumentHash] = useState<string | null>(null)
+    const textKey = `${srcUrl}\0${path}\0${identity ?? ''}\0${documentHash ?? ''}`
     const [text, setText] = useState<TextState>({ key: textKey, status: 'idle' })
     const textRef = useRef(text)
     const [query, setQuery] = useState('')
     const [activeMatch, setActiveMatch] = useState(0)
     const [found, setFound] = useState<{ query: string; matches: DesktopPdfTextMatch[]; limited: boolean }>({ query: '', matches: [], limited: false })
     const findGeneration = useRef(0)
-    const canReadText = 'src' in visible && visible.meta.pageWidth !== null && visible.meta.pageHeight !== null
+    const canReadText = 'src' in visible && visible.meta.pageWidth !== null && visible.meta.pageHeight !== null && visible.meta.sha256 !== null
 
     useEffect(() => { textRef.current = text }, [text])
 
@@ -99,6 +100,7 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
                 objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }))
                 if (cancelled) { release(); return }
                 setPages(meta.pages)
+                setDocumentHash(meta.sha256)
                 setView({ key: requestKey, src: objectUrl, meta, release })
             } catch (error) {
                 if (!cancelled) setView({ key: requestKey, error: error instanceof Error ? error.message : 'Could not preview this PDF page.' })
@@ -107,14 +109,15 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
         return () => { cancelled = true; controller.abort(); release() }
     }, [srcUrl, path, identity, page, scale, requestKey])
 
-    // Text is document-scoped. Page and zoom reuse it. A missing point size means this PNG
-    // response did not identify the displayed crop, so no text request is made.
+    // Text is tied to the exact bytes rendered, not only dev:ino (which survives in-place edits).
+    // Page and zoom reuse it while that content hash is unchanged.
     useEffect(() => {
-        if (!canReadText) return
+        if (!canReadText || !documentHash) return
         const current = textRef.current
         if (current.key === textKey && (current.status === 'ready' || current.status === 'error')) return
         const url = pdfTextRoute(srcUrl, path, identity)
         if (!url) { setText({ key: textKey, status: 'error', message: 'Could not read this PDF.' }); return }
+        url.searchParams.set('sha256', documentHash)
         const controller = new AbortController()
         let cancelled = false
         setText({ key: textKey, status: 'loading' })
@@ -124,7 +127,7 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
                     cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: controller.signal,
                 })
                 if (cancelled) { await response.body?.cancel(); return }
-                const document = await readPdfText(response, path, identity, controller.signal)
+                const document = await readPdfText(response, path, identity, documentHash, controller.signal)
                 if (cancelled) return
                 setText({ key: textKey, status: 'ready', document })
             } catch (error) {
@@ -134,7 +137,7 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
             }
         })()
         return () => { cancelled = true; controller.abort() }
-    }, [canReadText, textKey, srcUrl, path, identity])
+    }, [canReadText, textKey, srcUrl, path, identity, documentHash])
 
     useEffect(() => {
         const generation = ++findGeneration.current
@@ -146,6 +149,7 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
             const result = document ? findDesktopPdfText(document.pages, query) : { matches: [], limited: false }
             setFound({ query, matches: result.matches, limited: result.limited })
             setActiveMatch(0)
+            if (result.matches[0]) setPage(result.matches[0].page)
         })()
         return () => { cancelled = true }
     }, [query, text, textKey])
@@ -192,8 +196,8 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
         <div className="min-h-0 flex-1 overflow-auto bg-muted p-3" data-testid="file-pdf-frame">
             {'src' in visible ? <div className="relative bg-white shadow-sm" style={{ width: `${scale * 100}%`, marginInline: scale <= 1 ? 'auto' : 0 }}>
                 {/* eslint-disable-next-line @next/next/no-img-element -- bounded generated PNG object URLs are not Next Image sources */}
-                <img src={visible.src} alt={`${name}, page ${page} of ${visible.meta.pages}`} width={visible.meta.width} height={visible.meta.height}
-                    data-testid="file-pdf-preview" className="block h-auto w-full bg-white" onError={() => {
+                <img src={visible.src} alt={`${name}, page ${page} of ${visible.meta.pages}`} width={visible.meta.width} height={visible.meta.height} draggable={false}
+                    data-testid="file-pdf-preview" className="block h-auto w-full select-none bg-white" onError={() => {
                         if (currentKey.current !== visible.key) return
                         visible.release()
                         setView(current => 'src' in current && current.src === visible.src ? { key: visible.key, error: 'This PDF page could not be displayed.' } : current)
@@ -236,7 +240,9 @@ function metadata(headers: Headers, requestedPage: number): PageMeta {
     const pageWidth = pointSize(headers.get('x-pdf-page-width'))
     const pageHeight = pointSize(headers.get('x-pdf-page-height'))
     if ((pageWidth === null) !== (pageHeight === null)) throw new Error('This PDF page returned invalid preview information.')
-    return { page, pages, width, height, pageWidth, pageHeight }
+    const sha256 = headers.get('x-pdf-sha256')
+    if (sha256 !== null && !/^[a-f0-9]{64}$/.test(sha256)) throw new Error('This PDF page returned invalid preview information.')
+    return { page, pages, width, height, pageWidth, pageHeight, sha256 }
 }
 
 function pointSize(value: string | null): number | null {
@@ -247,7 +253,7 @@ function pointSize(value: string | null): number | null {
     return number
 }
 
-async function readPdfText(response: Response, path: string, identity: string | undefined, signal: AbortSignal): Promise<DesktopPdfTextDocument> {
+async function readPdfText(response: Response, path: string, identity: string | undefined, expectedHash: string, signal: AbortSignal): Promise<DesktopPdfTextDocument> {
     const type = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
     if (!response.ok) {
         let message = 'Could not read this PDF’s text.'
@@ -258,6 +264,7 @@ async function readPdfText(response: Response, path: string, identity: string | 
         throw new Error(message)
     }
     if (type !== 'application/json') { await response.body?.cancel(); throw new Error('Could not read this PDF’s text.') }
+    if (response.headers.get('x-pdf-sha256') !== expectedHash) { await response.body?.cancel(); throw new Error('This PDF changed. Reopen it to search the current document.') }
     const bytes = await boundedBytes(response, DESKTOP_PDF_TEXT_MAX_RESPONSE, signal, 'PDF text is too large to search.')
     if (bytes.indexOf(0) !== -1) throw new Error('Could not read this PDF’s text.')
     let body: unknown

@@ -605,11 +605,23 @@ export async function importCoworkerFile(runtime: DesktopRuntime, agentId: strin
     })
 }
 
-async function importFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array, publication?: PrivateToolPublication): Promise<{ path: string; name: string }> {
+/** Trusted composer raster import. Reuses the text import's recovery, pinned staging and
+ * create-only publication; the caller pins the private snapshot before the visible link. */
+export async function importCoworkerRasterFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array, beforePublish: (workspace: string) => Promise<void>): Promise<{ path: string; name: string }> {
+    return withCoworkerFiles(runtime, agentId, () => importFile(runtime, agentId, folder, name, bytes, undefined, beforePublish))
+}
+
+async function importFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array, publication?: PrivateToolPublication, beforeRasterPublish?: (workspace: string) => Promise<void>): Promise<{ path: string; name: string }> {
     if (!name || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.')) throw new DesktopHttpError(400, 'That file name can’t be imported.')
-    if (!IMPORTABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be imported.')
-    if (bytes.byteLength > IMPORT_BYTES) throw new DesktopHttpError(413, 'Files can be up to 1 MB.')
-    if (bytes.includes(0)) throw new DesktopHttpError(415, 'Only text files can be imported.')
+    if (beforeRasterPublish) {
+        const kind = desktopRasterKind(name)
+        if (!kind || kind === 'gif' || bytes.byteLength < 1 || bytes.byteLength > DESKTOP_IMAGE_MAX_BYTES) throw new DesktopHttpError(415, 'Choose a supported static image.')
+        try { inspectDesktopImageBytes(kind, bytes) } catch { throw new DesktopHttpError(415, 'Choose a supported static image.') }
+    } else {
+        if (!IMPORTABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be imported.')
+        if (bytes.byteLength > IMPORT_BYTES) throw new DesktopHttpError(413, 'Files can be up to 1 MB.')
+        if (bytes.includes(0)) throw new DesktopHttpError(415, 'Only text files can be imported.')
+    }
     const workspace = await coworkerWorkspace(runtime, agentId)
     if(publication)await assertPrivateToolLocation(workspace,folder?`${folder}/${name}`:name,false)
     let resolved = await containedPath(workspace, folder)
@@ -623,6 +635,16 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
     const path = rel ? `${rel}/${name}` : name
     const privateLocation = publication ? await privateFileLocation(workspace, path) : null
     if (!publication) await recoverInterruptedCoworkerEdits(target, resolved.root!)
+    const rasterUid = beforeRasterPublish ? currentUid() : null
+    const rasterParents = beforeRasterPublish
+        ? await assertImageDirectories(resolved.root!, relative(resolved.root!, target).split(sep).filter(Boolean), rasterUid!, name)
+        : []
+    const assertRasterParents = async () => {
+        for (const parent of rasterParents) {
+            const current = await fileStat(parent.path)
+            if (!current?.isDirectory() || current.isSymbolicLink() || current.uid !== rasterUid || !sameFile(current, parent)) throw new DesktopHttpError(409, 'The image folder changed. Import it again.')
+        }
+    }
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace or is not a folder.')
     const exists = () => new DesktopHttpError(409, `This folder already has a file named “${name}”. The existing file was kept; rename yours and import it again.`)
     const fsError = (error: unknown) => {
@@ -643,16 +665,21 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
     } catch (error) { throw fsError(error) }
     try {
         const pinned = await pinnedDirectory(dir)
-        if (await lstat(join(pinned, name)).then(() => true, () => false)) throw exists()
+        if (beforeRasterPublish) {
+            await assertRasterParents()
+            if (!sameFile(await dir.stat({ bigint: true }), rasterParents.at(-1) ?? null)) throw outside()
+        }
+        if (await lstat(join(/* turbopackIgnore: true */ pinned, name)).then(() => true, () => false)) throw exists()
         let handle: FileHandle
         try {
             // O_NOFOLLOW_ANY (Darwin) must not be combined with O_NOFOLLOW; it already covers every component.
             handle = process.platform === 'darwin'
-                ? await open(join(target, tempName), flags | 0x20000000, 0o644)
+                ? await open(join(/* turbopackIgnore: true */ pinned, tempName), flags | 0x20000000, 0o644)
                 : await open(`${pinned}/${tempName}`, flags | constants.O_NOFOLLOW, 0o644)
         } catch (error) { throw fsError(error) }
-        let tempPath: string | null = join(pinned, tempName)
+        let tempPath: string | null = join(/* turbopackIgnore: true */ pinned, tempName)
         try {
+            let published = false
             try {
                 // The temp file must be the one in the pinned folder, not a swapped-in lookalike.
                 const [opened, listed] = await Promise.all([handle.stat({ bigint: true }), lstat(tempPath, { bigint: true })])
@@ -664,13 +691,28 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
             }
             try {
                 await publication?.beforePublish()
+                await assertRasterParents()
+                await beforeRasterPublish?.(workspace)
+                await assertRasterParents()
                 if(publication){
                     await assertPrivateDirectories(privateLocation!)
                     await assertPrivateToolLocation(workspace,path,false)
                     const [opened,current]=await Promise.all([dir.stat({bigint:true}),lstat(target,{bigint:true})])
                     if(opened.dev!==current.dev || opened.ino!==current.ino)throw outside()
                 }
-                await link(tempPath, join(pinned, name))
+                await link(tempPath, join(/* turbopackIgnore: true */ pinned, name))
+                published = true
+                if (beforeRasterPublish) {
+                    // Publication already happened. A subsequent identity failure must remain
+                    // ambiguous to the upload controller, even if best-effort rollback succeeds.
+                    try { await assertRasterParents() }
+                    catch {
+                        const destination = join(/* turbopackIgnore: true */ pinned, name)
+                        const [created, staged] = await Promise.all([fileStat(destination), fileStat(tempPath)])
+                        if (sameFile(created, staged)) await removeName(destination)
+                        throw new DesktopHttpError(500, 'The image import result could not be confirmed. Check Files before retrying.')
+                    }
+                }
                 // A parent moved during link must not leave our newly created file in another workspace.
                 if (privateLocation) {
                     try { await assertPrivateDirectories(privateLocation) }
@@ -680,7 +722,10 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
                         throw error
                     }
                 }
-            } catch (error) { throw fsError(error) }
+            } catch (error) {
+                if (beforeRasterPublish && published) throw new DesktopHttpError(500, 'The image import result could not be confirmed. Check Files before retrying.')
+                throw fsError(error)
+            }
         } finally {
             if (tempPath) await unlink(tempPath).catch(() => {})
             tempPath = null

@@ -205,5 +205,6 @@ export function useDesktopComposerUploads(options: Options) {
     }, [live])
     const hasBlocked = useCallback(() => !loaded.current || [...jobs.current.values()].some(job => job.item.status === 'error' || job.item.status === 'unresolved'), [])
     const isBusy = useCallback(() => pending.current > 0, [])
-    return { ...state, hasBlocked, isBusy, start, remove, retry, settle }
+    const failureVersion = useCallback(() => admissionFailures.current, [])
+    return { ...state, hasBlocked, isBusy, start, remove, retry, settle, failureVersion }
 }

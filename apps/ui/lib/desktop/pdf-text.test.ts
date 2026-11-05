@@ -74,6 +74,17 @@ test('splits a partial run in proportion and keeps a whole run exact', () => {
     expect(desktopPdfTextRunSlice(run, 5, 9)).toBeNull()
 })
 
+test('partial matches follow the reading axis and direction on rotated pages', () => {
+    const run = { start: 0, end: 4, x: 0.1, y: 0.2, w: 0.2, h: 0.4 }
+    expect(desktopPdfTextRunSlice(run, 0, 2, 90)).toEqual({ x: 0.1, y: 0.2, w: 0.2, h: 0.2 })
+    const upsideDown = desktopPdfTextRunSlice(run, 0, 2, 180)!
+    expect(upsideDown.x).toBeCloseTo(0.2)
+    expect(upsideDown.w).toBeCloseTo(0.1)
+    const counterClockwise = desktopPdfTextRunSlice(run, 0, 2, 270)!
+    expect(counterClockwise.y).toBeCloseTo(0.4)
+    expect(counterClockwise.h).toBeCloseTo(0.2)
+})
+
 test('distinguishes scanned pages, a partial extract, no matches, and a page that is not on screen', () => {
     const ready = { phase: 'ready' as const, error: '', searchable: true, truncated: false, aligned: true, pagePresent: true, query: 'Alpha', matchCount: 2, matchIndex: 1, limited: false }
     expect(desktopPdfFindMessage({ ...ready, phase: 'loading' })).toEqual({ count: '', message: 'Reading PDF text…' })

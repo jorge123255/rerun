@@ -22,6 +22,7 @@ const manifest = {
     uiHost: 'main/ui-host.mjs',
     renameHelperPath: 'runtime/helpers/rerun-rename-entry',
     pdfHelperPath: 'runtime/pdf-helper/rerun-render-pdf',
+    pdfTextHelperPath: 'runtime/pdf-helper/rerun-pdf-text',
 }
 const file = join(resourcesDir, 'runtime-manifest.json')
 await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`)

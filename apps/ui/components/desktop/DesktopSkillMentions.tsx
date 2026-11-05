@@ -31,13 +31,14 @@ export type DesktopSkillMentionsApi = {
  * is never surfaced as a working mention. Insertion syntax, menu labels and keyboard behavior are
  * the original's; picking a row only writes `/slug ` into the draft.
  */
-export function DesktopSkillMentions({ agentId, onTextChange, enabled = true, children }: {
+export function DesktopSkillMentions({ agentId, onTextChange, enabled = true, refreshKey, children }: {
     agentId: string | null
     onTextChange: (text: string) => void
     enabled?: boolean
+    refreshKey?: string
     children: (api: DesktopSkillMentionsApi) => ReactNode
 }) {
-    const suggestions = useDesktopSkillSuggestions(agentId, { enabled })
+    const suggestions = useDesktopSkillSuggestions(agentId, { enabled, refreshKey })
     const mention = useMentionAutocomplete([], suggestions.skills, onTextChange)
 
     const handleChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>) => {

@@ -17,10 +17,12 @@ type FileListProps = {
     // Undefined while the folder is still being listed.
     entries: FileEntry[] | undefined
     onOpen: (entry: FileEntry) => void
-    onRename: (name: string, next: string) => void
-    onDelete: (name: string) => void
-    onDownload: (name: string) => void
+    onRename?: (name: string, next: string) => void
+    onDelete?: (name: string) => void
+    onDownload?: (name: string) => void
     onUpload: (entries: UploadEntry[]) => void
+    emptyDescription?: string
+    uploadDisabled?: boolean
 }
 
 function kindLabel(entry: FileEntry): string {
@@ -81,7 +83,7 @@ function ListSkeleton() {
 
 // A folder of the shared folder as Notion lists a database: the folder name as the page title, one
 // line per entry, actions on hover, and the whole page as a drop zone.
-export function FileList({ title, entries, onOpen, onRename, onDelete, onDownload, onUpload }: FileListProps) {
+export function FileList({ title, entries, onOpen, onRename, onDelete, onDownload, onUpload, emptyDescription, uploadDisabled = false }: FileListProps) {
     const [renaming, setRenaming] = useState<string | null>(null)
     const [deleting, setDeleting] = useState<FileEntry | null>(null)
     const [dragOver, setDragOver] = useState(false)
@@ -89,6 +91,7 @@ export function FileList({ title, entries, onOpen, onRename, onDelete, onDownloa
     const handleDrop = async (event: DragEvent) => {
         event.preventDefault()
         setDragOver(false)
+        if (uploadDisabled) return
         const dropped = await entriesFromDataTransfer(event.dataTransfer)
         if (dropped.length) onUpload(dropped)
     }
@@ -99,7 +102,7 @@ export function FileList({ title, entries, onOpen, onRename, onDelete, onDownloa
         <div
             className="relative min-h-0 flex-1 overflow-y-auto"
             onDragOver={event => {
-                if (!acceptsDrop(event)) return
+                if (uploadDisabled || !acceptsDrop(event)) return
                 event.preventDefault()
                 setDragOver(true)
             }}
@@ -117,7 +120,7 @@ export function FileList({ title, entries, onOpen, onRename, onDelete, onDownloa
             <div className="mx-auto w-full max-w-[900px] px-6 pb-16 pt-8 sm:px-12 sm:pt-12">
                 <div className="mb-6 flex items-center gap-3">
                     <h1 className="min-w-0 flex-1 truncate text-[2rem] font-semibold leading-tight tracking-tight">{title}</h1>
-                    <FileUploadMenu onPick={onUpload} />
+                    <FileUploadMenu onPick={onUpload} disabled={uploadDisabled} />
                 </div>
 
                 <div className="grid grid-cols-[minmax(0,1fr)_5rem_4rem_2rem] items-center gap-x-3 border-b border-border px-2 pb-1.5 text-xs text-muted-foreground max-sm:grid-cols-[minmax(0,1fr)_2rem]">
@@ -130,7 +133,7 @@ export function FileList({ title, entries, onOpen, onRename, onDelete, onDownloa
                 {!entries ? (
                     <ListSkeleton />
                 ) : entries.length === 0 ? (
-                    <p className="px-2 py-6 text-sm text-muted-foreground">Nothing here yet. Anything a coworker downloads, creates or edits for the whole workspace lands in this folder, and so does what you drop on this page.</p>
+                    <p className="px-2 py-6 text-sm text-muted-foreground">{emptyDescription ?? 'Nothing here yet. Anything a coworker downloads, creates or edits for the whole workspace lands in this folder, and so does what you drop on this page.'}</p>
                 ) : (
                     <div className="divide-y divide-border/60">
                         {entries.map(entry => {
@@ -151,7 +154,7 @@ export function FileList({ title, entries, onOpen, onRename, onDelete, onDownloa
                                                 name={entry.name}
                                                 onSubmit={next => {
                                                     setRenaming(null)
-                                                    onRename(entry.name, next)
+                                                    onRename?.(entry.name, next)
                                                 }}
                                                 onCancel={() => setRenaming(null)}
                                             />
@@ -161,7 +164,7 @@ export function FileList({ title, entries, onOpen, onRename, onDelete, onDownloa
                                     </span>
                                     <span className="text-right text-xs tabular-nums text-muted-foreground max-sm:hidden">{entry.type === 'dir' ? '' : formatBytes(entry.size)}</span>
                                     <span className="truncate text-xs text-muted-foreground max-sm:hidden">{kindLabel(entry)}</span>
-                                    <DropdownMenu>
+                                    {(onRename || onDelete || entry.type !== 'dir' && onDownload) && <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
                                             <Button
                                                 size="icon-xs"
@@ -174,20 +177,20 @@ export function FileList({ title, entries, onOpen, onRename, onDelete, onDownloa
                                             </Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end" onClick={event => event.stopPropagation()}>
-                                            {entry.type !== 'dir' && (
+                                            {entry.type !== 'dir' && onDownload && (
                                                 <DropdownMenuItem onSelect={() => onDownload(entry.name)}>
                                                     <DownloadIcon /> Download
                                                 </DropdownMenuItem>
                                             )}
-                                            <DropdownMenuItem onSelect={() => setRenaming(entry.name)}>
+                                            {onRename && <DropdownMenuItem onSelect={() => setRenaming(entry.name)}>
                                                 <PencilIcon /> Rename
-                                            </DropdownMenuItem>
-                                            <DropdownMenuSeparator />
+                                            </DropdownMenuItem>}
+                                            {onDelete && <><DropdownMenuSeparator />
                                             <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(entry)}>
                                                 <Trash2Icon /> Delete
-                                            </DropdownMenuItem>
+                                            </DropdownMenuItem></>}
                                         </DropdownMenuContent>
-                                    </DropdownMenu>
+                                    </DropdownMenu>}
                                 </div>
                             )
                         })}
@@ -201,7 +204,7 @@ export function FileList({ title, entries, onOpen, onRename, onDelete, onDownloa
                 title={`Delete ${deleting?.name ?? ''}?`}
                 description={deleting?.type === 'dir' ? 'The folder and everything inside it are deleted from the box. This cannot be undone.' : 'The file is deleted from the box. This cannot be undone.'}
                 onConfirm={() => {
-                    if (deleting) onDelete(deleting.name)
+                    if (deleting) onDelete?.(deleting.name)
                     setDeleting(null)
                 }}
             />

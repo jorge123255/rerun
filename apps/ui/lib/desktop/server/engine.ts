@@ -1,6 +1,6 @@
 import 'server-only'
 import { startQueuedChat } from './queued-chat'
-import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentPathsOf, desktopRerunGrantsOf, type DesktopQuestionGuard, type DesktopApprovalGuard } from '@rerun/contracts'
+import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, desktopRerunGrantsOf, type DesktopQuestionGuard, type DesktopApprovalGuard, type DesktopAttachmentItem, type DesktopResolvedAttachment } from '@rerun/contracts'
 import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
 import type { DesktopCoworkerPatch, DesktopCoworkerSettings } from '../coworker-settings'
 import { publicDesktopHistory, transformEngineMessages, type HistoryMessage } from '@/lib/chat/engine-history'
@@ -13,6 +13,7 @@ import { disabledCoworkerMessage } from './coworker-enabled'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { assertDesktopCreationSettled, desktopCreationPendingMessage } from './creation-guard'
 import { readCoworkerFile } from './coworker-files'
+import { readDesktopImageSnapshots } from './composer-image-files'
 import { openDesktopDatabase } from './database'
 import { discardTabStart, existingTabStart, recoverTabSession, reserveTabStart } from './tab-starts'
 import type { DesktopRuntime } from './runtime'
@@ -89,7 +90,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; attachmentPath?: string; attachmentPaths?: string[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard }
+    | { sessionId?: string; text: string; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -106,7 +107,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     await assertCoworkerNotDeleting(db, input.agentId)
     const kickoff = await assertDesktopCreationSettled(db, input.agentId, internalCreationRequestId)
     if (kickoff && ('regenerateMessageId' in input || input.sessionId || input.tabUid !== kickoff.requestId || input.text !== kickoff.text ||
-        input.requestId || input.reconcileOnly || input.modelChoice || input.question || input.approval || desktopAttachmentPathsOf(input).length)) {
+        input.requestId || input.reconcileOnly || input.modelChoice || input.question || input.approval || desktopAttachmentSelectionsOf(input).length)) {
         throw new DesktopHttpError(409, desktopCreationPendingMessage)
     }
     const agent = await findDesktopAgent(db, input.agentId)
@@ -115,7 +116,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
     const regenerate = 'regenerateMessageId' in input
-    const attachmentPaths = regenerate ? [] : desktopAttachmentPathsOf(input)
+    const attachmentPaths = regenerate ? [] : desktopAttachmentSelectionsOf(input)
     const attachmentFields = desktopAttachmentFieldsOf(attachmentPaths)
     const uid = !regenerate && !existing ? input.tabUid : undefined
     const previousStart = !regenerate && uid ? await existingTabStart(db, agent, uid, input) : null
@@ -136,15 +137,24 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             if (input.reconcileOnly) throw new DesktopHttpError(404, 'This queued message has not been sent. Review it before sending.')
         } else replay = probe
     }
-    const files = !replay && !regenerate && attachmentPaths.length ? await readDesktopAttachments(runtime, agent.id, attachmentPaths) : []
-    const attachmentBody = files.length === 1
-        ? { workspaceAttachment: { path: files[0]!.path, content: files[0]!.content } }
-        : files.length > 1
-            ? { workspaceAttachments: files.map(file => ({ path: file.path, content: file.content })) }
-            : {}
-    // Existing chats resolve their own saved model. Only a first send can carry an unsaved choice.
+    // Existing chats resolve their own saved model. Only a first send carries an unsaved choice.
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
     const { connectionId, model } = replay ? {} : await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
+    const images = attachmentPaths.filter((item): item is Exclude<typeof item, string> => typeof item !== 'string')
+    if (!replay && images.length) {
+        const { connections } = await readDesktopProviders(runtime)
+        if (connections.find(connection => connection.id === connectionId)?.provider !== 'codex')
+            throw new DesktopHttpError(400, 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
+    }
+    const files = !replay && !regenerate ? await readDesktopAttachments(runtime, agent.id,
+        attachmentPaths.filter((item): item is string => typeof item === 'string')) : []
+    const resolvedImages = !replay && images.length ? await readDesktopImageSnapshots(runtime, agent.id, images) : new Map<string, Uint8Array>()
+    const resolved: DesktopResolvedAttachment[] = (replay ? [] : attachmentPaths).map(item => typeof item === 'string'
+        ? { type: 'text', path: item, content: files.find(file => file.path === item)!.content }
+        : { type: 'image', image: item, dataBase64: Buffer.from(resolvedImages.get(item.sha256)!).toString('base64') })
+    const attachmentBody = images.length ? { desktopAttachments: resolved }
+        : files.length === 1 ? { workspaceAttachment: { path: files[0]!.path, content: files[0]!.content } }
+        : files.length > 1 ? { workspaceAttachments: files.map(file => ({ path: file.path, content: file.content })) } : {}
     const requestId = regenerate ? await regenerationRequestId(db, input.sessionId, input.regenerateMessageId, input.requestId) : undefined
     const start = !regenerate && uid ? previousStart ?? await reserveTabStart(db, agent, uid, input, runtime.launchNonce) : null
     const engineResponse = replay ?? await (queued ? startQueuedChat : chat)(engineOf(runtime), agent.engineAgentId, {
@@ -166,6 +176,13 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (regenerate && !engineResponse.ok) {
         if (engineResponse.status === 404) throw new DesktopHttpError(404, 'This reply is no longer in the selected conversation.')
         if (engineResponse.status === 409) throw new DesktopHttpError(409, 'This reply could not be regenerated. Check that the conversation is idle and the reply is complete.')
+    }
+    if (engineResponse.status === 400) {
+        const failure = await engineResponse.clone().json().catch(() => null)
+        if (typeof failure?.error === 'string' && failure.error.includes('ChatGPT / Codex')) {
+            if (start) await discardTabStart(db, start)
+            throw new DesktopHttpError(400, failure.error)
+        }
     }
     if (start && engineResponse.status >= 400 && engineResponse.status < 500) {
         if (!await recoverTabSession(db, engineOf(runtime), agent, start)) await discardTabStart(db, start)

@@ -23,6 +23,8 @@ import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { DesktopCoworkerData } from './DesktopCoworkerData'
 import { DesktopCoworkerRoutines } from './DesktopCoworkerRoutines'
 import { DesktopCoworkerSkills } from './DesktopCoworkerSkills'
+import { DesktopSkillMentions } from './DesktopSkillMentions'
+import { DesktopCoworkerNotificationControl } from './DesktopCoworkerNotificationBell'
 import { DesktopSkillProposalDock } from './skills/DesktopSkillProposalDock'
 import { useCoworkerSkillProposals } from '@/lib/desktop/use-coworker-skill-proposals'
 import { desktopSkillProposalIds } from '@/lib/desktop/skill-proposal-source'
@@ -35,6 +37,11 @@ import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 import { AttachmentChips, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
 import { DesktopUploadChips } from './DesktopUploadChips'
+import { DesktopImageUploadChips } from './DesktopImageUploadChips'
+import { ChatAttachmentChip } from '@/components/chat/ChatAttachmentChip'
+import { MessageAttachments } from '@/components/chat/MessageAttachments'
+import { DESKTOP_IMAGE_UPLOAD_ACCEPT, desktopImageKindForName } from '@/lib/desktop/composer-image'
+import { useDesktopComposerImageUploads } from '@/lib/desktop/use-composer-image-uploads'
 import { DESKTOP_UPLOAD_ACCEPT } from '@/lib/desktop/composer-upload'
 import { useDesktopComposerUploads } from '@/lib/desktop/use-composer-uploads'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
@@ -42,9 +49,9 @@ import { DesktopModelSelector } from './DesktopModelSelector'
 import type { DesktopModelPick } from '@/lib/desktop/chat-model'
 import { QueuedMessagePill } from '@/components/chat/QueuedMessagePill'
 import { shouldFlush, shouldKeepQueued } from '@/lib/chat/queued-message'
-import { desktopQueuedAttachmentPaths, desktopQueuedPreview, type DesktopQueuedMessage } from '@/lib/desktop/queued-message'
+import { desktopQueuedAttachmentSelections as desktopQueuedAttachmentPaths, desktopQueuedPreview, type DesktopQueuedMessage } from '@/lib/desktop/queued-message'
 import { useDesktopQueuedMessage } from '@/lib/desktop/use-queued-message'
-import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, desktopAttachmentFieldsOf, desktopAttachmentPathsOf, parseScheduledRun, type DesktopAttachmentFields } from '@rerun/contracts'
+import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf as desktopAttachmentPathsOf, parseScheduledRun, type DesktopAttachmentFields, type DesktopAttachmentSelection, type DesktopImageSnapshot } from '@rerun/contracts'
 import { desktopQuestionViewSchema, type DesktopPendingQuestion, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import { DesktopQuestionCard } from './DesktopQuestionCard'
 import { desktopApprovalViewSchema, type DesktopPendingApproval, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
@@ -80,12 +87,12 @@ async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMes
 const stopUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/stop`
 const RUN_POLL_MS = 3000
 
-export type ComposerDraft = { text: string; attachment?: string; attachments?: string[] }
+export type ComposerDraft = { text: string; attachment?: string; attachments?: DesktopAttachmentSelection[] }
 export type TabActivity = { busy: boolean; dirty: boolean; readableSessionId?: string | null }
 
 const draftPaths = (draft: ComposerDraft | undefined) => draft ? (draft.attachments?.length ? draft.attachments : draft.attachment ? [draft.attachment] : []) : []
-const samePaths = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((path, index) => path === b[index])
-const messageAttachmentPaths = (metadata: unknown): string[] =>
+const samePaths = (a: readonly DesktopAttachmentSelection[], b: readonly DesktopAttachmentSelection[]) => JSON.stringify(a) === JSON.stringify(b)
+const messageAttachmentPaths = (metadata: unknown): DesktopAttachmentSelection[] =>
     metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? desktopAttachmentPathsOf(metadata as DesktopAttachmentFields) : []
 
 function scheduledRunOf(message: UIMessage) {
@@ -149,7 +156,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const draftKey = JSON.stringify([agent.id, sessionId])
     const initialPaths = draftPaths(initialDraft)
     const [inputs, setInputs] = useState<ReadonlyMap<string, string>>(() => new Map(initialDraft ? [[draftKey, initialDraft.text]] : []))
-    const [attachments, setAttachments] = useState<ReadonlyMap<string, readonly string[]>>(() => new Map(initialPaths.length ? [[draftKey, initialPaths]] : []))
+    const [attachments, setAttachments] = useState<ReadonlyMap<string, readonly DesktopAttachmentSelection[]>>(() => new Map(initialPaths.length ? [[draftKey, initialPaths]] : []))
     // Ordinary navigation carries the current composer. An alternate and its original keep independent drafts.
     const inputKey = inputs.has(draftKey) ? draftKey : ''
     const composer = useRef<ComposerDraft>({ text: initialDraft?.text ?? '', attachments: initialPaths })
@@ -168,7 +175,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     // Production reads the durable record directly, so newer typing cannot fall off that bind.
     const input = tabUid ? draft.text : inputs.get(inputKey) ?? ''
     const attachmentPaths = tabUid ? desktopAttachmentPathsOf(draft) : attachments.get(draftKey) ?? []
-    const attachmentSignature = attachmentPaths.join('\u0000')
+    const attachmentSignature = JSON.stringify(attachmentPaths)
+    const textAttachments = attachmentPaths.filter((item): item is string => typeof item === 'string')
+    const imageAttachments = attachmentPaths.filter((item): item is DesktopImageSnapshot => typeof item !== 'string')
     const setInput = (value: string) => {
         if (!draft.loaded || draft.error || regenerating.current || isDesktopQuitting()) return
         setInputs(current => new Map(current).set(inputKey, value))
@@ -177,13 +186,13 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the path signature covers inline arrays
     useEffect(() => { composer.current = { text: input, attachments: [...attachmentPaths] } }, [input, attachmentSignature])
-    const pendingAttachment = useRef<{ key: string; inputKey: string; input: string; attachments: readonly string[]; version: number; release: () => void } | null>(null)
+    const pendingAttachment = useRef<{ key: string; inputKey: string; input: string; attachments: readonly DesktopAttachmentSelection[]; version: number; release: () => void } | null>(null)
     const preparingSubmit = useRef(false)
     const [preparingSend, setPreparingSend] = useState(false)
     const regenerationIds = useRef(new Map<string, string>())
     const regenerating = useRef<{ key: string; agentId: string; sessionId: string; draftKey: string; release: () => void } | null>(null)
     const [regenerationSource, setRegenerationSource] = useState<string | null>(null)
-    const setDraftAttachments = useCallback((key: string, paths: readonly string[]): boolean => {
+    const setDraftAttachments = useCallback((key: string, paths: readonly DesktopAttachmentSelection[]): boolean => {
         if (!draft.loaded || (draft.error && !draft.attachmentRejected) || regenerating.current || isDesktopQuitting()) return false
         setAttachments(current => {
             const next = new Map(current)
@@ -198,26 +207,73 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         return true
     }, [draft.loaded, draft.error, draft.attachmentRejected, draft.update, draftKey])
     const [uploadNotice, setUploadNotice] = useState<string | null>(null)
+    const batchNotices = useRef<string[] | null>(null)
+    const reportUploadNotice = useCallback((notice: string | null) => {
+        if (batchNotices.current) {
+            if (notice && !batchNotices.current.includes(notice)) batchNotices.current.push(notice)
+            setUploadNotice(batchNotices.current.join(' ') || null)
+        } else setUploadNotice(notice)
+    }, [])
     const attachUploadedPath = useCallback(async (path: string) => {
         if (!setDraftAttachments(draftKey, [...(composer.current.attachments ?? []).filter(item => item !== path), path])) return false
         return draft.flush()
     }, [draftKey, setDraftAttachments, draft.flush])
-    const {
-        items: uploadItems, active: uploadsActive, loaded: uploadsLoaded, hasBlocked: uploadsHaveBlocked,
-        start: startUploads, remove: removeUpload, retry: retryUpload, settle: settleUploads, isBusy: uploadsBusy,
-    } = useDesktopComposerUploads({
-        agentId: agent.id,
-        ownerKey: JSON.stringify([agent.id, tabUid ?? null, sessionId]),
-        tabUid, active: active && !draft.quitting,
-        attachedPaths: attachmentPaths,
-        onConfirmed: attachUploadedPath,
-        onNotice: setUploadNotice,
+    const attachUploadedImage = useCallback(async (image: DesktopImageSnapshot) => {
+        const current = composer.current.attachments ?? []
+        if (!setDraftAttachments(draftKey, [...current.filter(item => typeof item === 'string' || item.sha256 !== image.sha256), image])) return false
+        return draft.flush()
+    }, [draftKey, setDraftAttachments, draft.flush])
+    const uploadOwner = JSON.stringify([agent.id, tabUid ?? null, sessionId, active])
+    const textUploads = useDesktopComposerUploads({
+        agentId: agent.id, ownerKey: uploadOwner, tabUid, active: active && !draft.quitting,
+        attachedPaths: textAttachments, onConfirmed: attachUploadedPath, onNotice: reportUploadNotice,
     })
+    const imageUploads = useDesktopComposerImageUploads({
+        agentId: agent.id, ownerKey: uploadOwner, tabUid, active: active && !draft.quitting,
+        attachedImages: imageAttachments, onConfirmed: attachUploadedImage, onNotice: reportUploadNotice,
+    })
+    const { items: uploadItems, remove: removeUpload, retry: retryUpload } = textUploads
+    const uploadScope = useRef({ owner: uploadOwner, live: active && !draft.quitting })
+    if (uploadScope.current.owner !== uploadOwner) uploadScope.current = { owner: uploadOwner, live: active && !draft.quitting }
+    uploadScope.current.live = active && !draft.quitting
+    useEffect(() => { const scope = uploadScope.current; scope.live = active && !draft.quitting; return () => { scope.live = false } }, [uploadOwner, active, draft.quitting])
+    const batchUpload = useRef<Promise<boolean> | null>(null)
+    const [batchActive, setBatchActive] = useState(false)
+    const uploadsActive = batchActive || textUploads.active || imageUploads.active
+    const uploadsLoaded = textUploads.loaded && imageUploads.loaded
+    const uploadsBusy = () => !!batchUpload.current || textUploads.isBusy() || imageUploads.isBusy()
+    const uploadsHaveBlocked = () => textUploads.hasBlocked() || imageUploads.hasBlocked()
+    const settleUploads = async () => {
+        const batchOkay = await batchUpload.current
+        const results = await Promise.all([textUploads.settle(), imageUploads.settle()])
+        return batchOkay !== false && results.every(Boolean)
+    }
     const uploadGate = useRef(false)
     const beginUpload = useCallback((files: File[]) => {
-        if (!files.length || uploadGate.current || preparingSubmit.current || isDesktopQuitting()) return
-        void startUploads(files)
-    }, [startUploads])
+        if (!files.length || uploadGate.current || batchUpload.current || preparingSubmit.current || isDesktopQuitting()) return
+        if (files.length > 14) { setUploadNotice('Choose up to 10 text files and 4 images at a time.'); return }
+        const scope = uploadScope.current
+        const release = holdDraftAdmission()
+        setBatchActive(true)
+        batchNotices.current = []
+        setUploadNotice(null)
+        const failures = [textUploads.failureVersion(), imageUploads.failureVersion()]
+        // One ordered drain preserves mixed text/image selection order. Every next file still
+        // belongs to the captured tab; closing it or beginning Quit cancels the remaining batch.
+        const work = (async () => {
+            for (const file of files) {
+                if (uploadScope.current !== scope || !scope.live || isDesktopQuitting()) break
+                if (desktopImageKindForName(file.name)) await imageUploads.start([file])
+                else await textUploads.start([file])
+            }
+            return failures[0] === textUploads.failureVersion() && failures[1] === imageUploads.failureVersion()
+        })().finally(() => {
+            batchNotices.current = null
+            if (batchUpload.current === work) { batchUpload.current = null; setBatchActive(false) }
+            release()
+        })
+        batchUpload.current = work
+    }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion])
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
@@ -382,7 +438,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         conversationRoot.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
         setPanelFocus(null)
     }, [panelFocus, active, detailPanel, cardOpen])
-    const dirty = !draft.loaded || !uploadsLoaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive || uploadItems.length)
+    const dirty = !draft.loaded || !uploadsLoaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive || uploadItems.length || imageUploads.items.length)
     const readable = active && !cardOpen && !detailPanel && !chatsOpen && ready && !generating && history.loadedGeneration === historyGeneration
         && !!history.transcript && history.question !== undefined && history.approval !== undefined
         && engineRunning.id === sessionId
@@ -775,7 +831,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             setUploadDragOver(false)
             if (!event.dataTransfer) return
             if (Array.from(event.dataTransfer.items).some(item => item.webkitGetAsEntry?.()?.isDirectory)) {
-                setUploadNotice('Choose .txt or .md files, not folders.'); return
+                setUploadNotice('Choose text files or images, not folders.'); return
             }
             // Capture files and their owner synchronously. No recursive directory walk can
             // resolve later into a different tab or read unbounded folders before the cap.
@@ -792,7 +848,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             form.removeEventListener('drop', onDrop)
         }
     }, [beginUpload])
-    const blockedUploads = uploadItems.filter(item => item.status === 'error' || item.status === 'unresolved')
+    const blockedUploads = [...uploadItems, ...imageUploads.items].filter(item => item.status === 'error' || item.status === 'unresolved')
     const failedUploads = blockedUploads.filter(item => item.status === 'error').length
     const unknownUploads = blockedUploads.length - failedUploads
     const blockedUploadNotice = [
@@ -842,6 +898,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 <p className="text-sm text-muted-foreground">{agent.description || 'Local coworker'}</p>
                 {panelNotice && <p role="status" className="mt-2 text-sm text-muted-foreground">{panelNotice}</p>}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <DesktopCoworkerNotificationControl agentId={agent.id} name={agent.name} />
                     <DesktopCoworkerFiles agent={agent} dialogControl={dialogControl('files')} />
                     <DesktopCoworkerData agent={agent} dialogControl={dialogControl('data')} />
                     <DesktopCoworkerRoutines agent={agent} dialogControl={dialogControl('scheduled')} onOpenChat={onSelectSession} />
@@ -883,8 +940,13 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             <Message from={message.role} className="min-w-0">
                                 <MessageContent className={cn(message.role === 'user' ? [USER_BUBBLE_SHAPE, USER_BUBBLE_INK, 'whitespace-pre-wrap wrap-anywhere'] : 'overflow-visible')}>
                                     {message.role === 'user' && (() => {
-                                        const paths = messageAttachmentPaths(message.metadata)
-                                        return paths.length ? <div className="mb-1"><AttachmentChips paths={paths} /></div> : null
+                                        const selections = messageAttachmentPaths(message.metadata)
+                                        const paths = selections.filter((item): item is string => typeof item === 'string')
+                                        const files = message.parts.filter(part => part.type === 'file' && part.mediaType.startsWith('image/'))
+                                        const images = files.length ? files.map((part, index) => ({ path: `${index}/${part.filename ?? 'image.png'}`, url: part.url }))
+                                            : selections.filter((item): item is DesktopImageSnapshot => typeof item !== 'string').map(image => ({ path: image.path, url: `/api/desktop/agents/${encodeURIComponent(agent.id)}/images?snapshot=${encodeURIComponent(JSON.stringify(image))}` }))
+                                        return <>{paths.length > 0 && <div className="mb-1"><AttachmentChips paths={paths} /></div>}
+                                            {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}
                                     {message.role === 'assistant'
                                         ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
@@ -939,21 +1001,34 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     {uploadDragOver && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] border border-dashed border-brand bg-background/85">
                         <span className="flex items-center gap-2 text-sm font-medium text-brand"><UploadIcon className="size-4" />Drop files to attach</span>
                     </div>}
-                    {(attachmentPaths.length > 0 || uploadItems.length > 0) && <div className="px-2.5 pt-2"><div className="flex flex-wrap items-center gap-1">
-                        <AttachmentChips paths={attachmentPaths}
-                            disabled={draft.quitting || !!regenerationSource || stopping || queue.pending || uploadsActive}
-                            locked={pendingAttachment.current?.key === draftKey ? pendingAttachment.current.attachments : undefined}
-                            onRemove={path => setDraftAttachments(draftKey, attachmentPaths.filter(item => item !== path))} />
+                    {(attachmentPaths.length > 0 || uploadItems.length > 0 || imageUploads.items.length > 0) && <div className="px-2.5 pt-2"><div className="flex flex-wrap items-center gap-1">
+                        {attachmentPaths.map((item, index) => typeof item === 'string'
+                            ? <AttachmentChips key={`${index}:${item}`} paths={[item]}
+                                disabled={draft.quitting || !!regenerationSource || stopping || queue.pending || uploadsActive}
+                                locked={pendingAttachment.current?.key === draftKey ? pendingAttachment.current.attachments.filter((path): path is string => typeof path === 'string') : undefined}
+                                onRemove={path => setDraftAttachments(draftKey, attachmentPaths.filter(item => item !== path))} />
+                            : <ChatAttachmentChip key={`${index}:${item.sha256}`}
+                                file={{ id: item.sha256, type: 'file', mediaType: item.mediaType, filename: item.name,
+                                    url: `/api/desktop/agents/${encodeURIComponent(agent.id)}/images?snapshot=${encodeURIComponent(JSON.stringify(item))}` }}
+                                upload={undefined} disabled={draft.quitting || !!regenerationSource || stopping || queue.pending || uploadsActive || !!pendingAttachment.current}
+                                onRemove={hash => setDraftAttachments(draftKey, attachmentPaths.filter(value => typeof value === 'string' || value.sha256 !== hash))}
+                                onRetry={() => {}} />)}
                         <DesktopUploadChips items={uploadItems} disabled={uploadDisabled} onRemove={removeUpload} onRetry={retryUpload} />
+                        <DesktopImageUploadChips items={imageUploads.items} disabled={uploadDisabled} onRemove={imageUploads.remove} onRetry={imageUploads.retry} />
                     </div></div>}
-                    <input ref={uploadFileInput} type="file" multiple accept={DESKTOP_UPLOAD_ACCEPT} className="hidden" aria-label="Upload files from this Mac"
+                    <input ref={uploadFileInput} type="file" multiple accept={`${DESKTOP_UPLOAD_ACCEPT},${DESKTOP_IMAGE_UPLOAD_ACCEPT}`} className="hidden" aria-label="Upload files from this Mac"
                         onChange={event => {
                             const files = Array.from(event.target.files ?? [])
                             event.target.value = ''
                             beginUpload(files)
                         }} />
                     <label htmlFor={composerId} className="sr-only">Message {agent.name}</label>
+                    <DesktopSkillMentions agentId={agent.id} onTextChange={setInput}
+                        enabled={active && !inactive && draft.loaded && !draft.error && !draft.quitting && !regenerationSource && !detailPanel}
+                        refreshKey={`${status}:${lastMessage?.id ?? ''}`}>
+                    {mention => <>
                     <Textarea
+                        ref={mention.inputRef}
                         id={composerId}
                         rows={2}
                         className="min-h-12 w-full resize-none rounded-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
@@ -962,20 +1037,30 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         readOnly={!!regenerationSource || !!attachmentPaths.length && status === 'submitted'}
                         placeholder="Send a message…"
                         value={input}
-                        onChange={event => setInput(event.target.value)}
-                        onKeyDown={event => {
-                            if (event.key === 'Enter' && !event.shiftKey) {
-                                event.preventDefault()
-                                event.currentTarget.form?.requestSubmit()
-                            }
+                        {...mention.textareaProps}
+                        onPaste={event => {
+                            const files = Array.from(event.clipboardData.files)
+                            if (!files.length) return
+                            event.preventDefault()
+                            beginUpload(files)
                         }}
                     />
+                    {mention.menu}
+                    {mention.error && /(?:^|\s)\/\S*$/.test(input) && <div role="status" className="flex items-center gap-2 px-2.5 pb-2 text-xs text-muted-foreground">
+                        <span>{mention.error}</span><Button type="button" variant="ghost" size="xs" onClick={mention.retry}>Retry skills</Button>
+                    </div>}
+                    </>}
+                    </DesktopSkillMentions>
                     <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
                             workspaceModel={modelLabel} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} onReady={setModelReady} />
                         <div className="flex shrink-0 items-center gap-1">
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={uploadDisabled || uploadsActive}
-                                paths={attachmentPaths} onChange={paths => { if (!uploadsBusy()) setDraftAttachments(draftKey, paths) }} />
+                                paths={textAttachments} onChange={paths => {
+                                    if (uploadsBusy()) return
+                                    const next = attachmentPaths.filter(item => typeof item !== 'string' || paths.includes(item))
+                                    setDraftAttachments(draftKey, [...next, ...paths.filter(path => !textAttachments.includes(path))])
+                                }} />
                             <Button type="button" size="icon-sm" variant="ghost" title="Upload files from this Mac" disabled={uploadDisabled}
                                 onClick={() => uploadFileInput.current?.click()}>
                                 <UploadIcon aria-hidden className="size-4" /><span className="sr-only">Upload files from this Mac</span>

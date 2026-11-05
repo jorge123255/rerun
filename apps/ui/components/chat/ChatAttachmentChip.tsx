@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { FileUIPart } from 'ai'
 
 type ChatAttachmentChipProps = {
+    disabled?: boolean
     file: FileUIPart & { id: string }
     upload: UploadItem | undefined
     onRemove: (id: string) => void
@@ -23,7 +24,7 @@ function progressLine(upload: UploadItem): string {
     return parts.join(' · ')
 }
 
-export function ChatAttachmentChip({ file, upload, onRemove, onRetry }: ChatAttachmentChipProps) {
+export function ChatAttachmentChip({ file, upload, onRemove, onRetry, disabled = false }: ChatAttachmentChipProps) {
     const isImage = file.mediaType?.startsWith('image/')
     const failed = upload?.status === 'error'
     const pending = upload != null && upload.status !== 'done' && upload.status !== 'error'
@@ -62,7 +63,7 @@ export function ChatAttachmentChip({ file, upload, onRemove, onRetry }: ChatAtta
                 {failed && (
                     <Tooltip>
                         <TooltipTrigger asChild>
-                            <button type="button" onClick={() => onRetry(file.id)} className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Retry upload">
+                            <button type="button" disabled={disabled} onClick={() => onRetry(file.id)} className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Retry upload">
                                 <RefreshCwIcon className="size-3" />
                             </button>
                         </TooltipTrigger>
@@ -71,6 +72,7 @@ export function ChatAttachmentChip({ file, upload, onRemove, onRetry }: ChatAtta
                 )}
                 <button
                     type="button"
+                    disabled={disabled}
                     onClick={() => onRemove(file.id)}
                     className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     title={pending ? 'Cancel upload' : 'Remove attachment'}

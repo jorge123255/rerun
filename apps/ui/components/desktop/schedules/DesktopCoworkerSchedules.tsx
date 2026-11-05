@@ -16,6 +16,7 @@ import { CalendarClockIcon,PlusIcon } from '@/lib/icons'
 import { scheduleSummary } from '@/lib/schedules/cron'
 import { Badge } from '@rerun/ui/primitives'
 import type { DesktopScheduleInput } from '@/lib/desktop/server/schedules/api'
+import { DesktopTaskNotifyField } from '../DesktopTaskNotifyField'
 
 type Chat={agentId:string;sessionId:string;engineSessionId:string;tabUid:string;title:string;runId:string|null}
 type Task=EngineSchedule & {nextRunAt:string|null;lastResultUnknown?:boolean;lastResult:{status:string;runId:string;chat:Chat}|null}
@@ -47,7 +48,7 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
     async function change(method:string,body:unknown){const own=epoch.current;listEpoch.current++;await request(method,body);if(alive.current && own===epoch.current){navigate(null);await load()}}
     const newButton=<Button size="sm" variant="outline" disabled={loading || Boolean(error) || tasks===null} onClick={()=>{if(!loading && !error && tasks!==null)navigate('new')}}><PlusIcon className="size-3.5 mr-1"/>New</Button>
     return <PanelSteps stepKey={editing ? 'editor' : 'list'} depth={editing ? 1 : 0}>{editing ?
-        <ScheduleEditor key={editing==='new'?'new':editing.slug} task={editing==='new'?undefined:editing} onBack={()=>navigate(null)}
+        <ScheduleEditor key={editing==='new'?'new':editing.slug} agentId={agentId} task={editing==='new'?undefined:editing} onBack={()=>navigate(null)}
             onSave={input=>change('PUT',{slug:editing==='new'?undefined:editing.slug,input})}
             onDelete={editing==='new'?undefined:()=>change('DELETE',{slug:editing.slug})}
             onRun={editing==='new'?undefined:async requestId=>{const own=epoch.current;const chat=await request('POST',{slug:editing.slug,action:'run',requestId});if(alive.current && own===epoch.current){onOpenSession(chat);await load()}}}/> :
@@ -62,7 +63,7 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
             <p className="p-3 text-xs text-muted-foreground">Tasks run while Rerun is open. After sleep or reopening, one due occurrence runs. Refresh to see the latest result.</p><Button size="sm" variant="ghost" disabled={loading} onClick={()=>void load()}>Refresh</Button>
         </div>}</PanelSteps>
 }
-function ScheduleEditor({task,onBack,onSave,onDelete,onRun}:{task?:Task;onBack:()=>void;onSave:(input:DesktopScheduleInput)=>Promise<void>;onDelete?:()=>Promise<void>;onRun?:(requestId:string)=>Promise<void>}) {
+function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun}:{agentId:string;task?:Task;onBack:()=>void;onSave:(input:DesktopScheduleInput)=>Promise<void>;onDelete?:()=>Promise<void>;onRun?:(requestId:string)=>Promise<void>}) {
     const [name,setName]=useState(task?.name ?? ''),[description,setDescription]=useState(task?.description ?? ''),[body,setBody]=useState(task?.body ?? '')
     const [mode,setMode]=useState(task?.runAt ? 'runAt' : 'cron'),[cron,setCron]=useState(task?.cron ?? '0 8 * * *'),[runAt,setRunAt]=useState(task?.runAt ?? '')
     const [timezone,setTimezone]=useState(task?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone),[enabled,setEnabled]=useState(task?.enabled ?? true),[busy,setBusy]=useState(false),[error,setError]=useState('')
@@ -77,6 +78,7 @@ function ScheduleEditor({task,onBack,onSave,onDelete,onRun}:{task?:Task;onBack:(
         <Field label="Timezone"><TimezoneCombobox value={timezone} onChange={setTimezone}/></Field>
         <p className="text-xs text-muted-foreground">Raw cron and ISO time are the local fallback. Natural-language schedule parsing is unavailable. This task uses the coworker's configured local provider and model.</p>
         <Field orientation="row" label="Enabled"><Switch checked={enabled} disabled={busy} onCheckedChange={setEnabled}/></Field>
+        {task?.slug && <DesktopTaskNotifyField agentId={agentId} source="schedule" slug={task.slug} disabled={busy}/>}
         <MarkdownTextarea label="Task prompt" dialogTitle="Edit the task prompt" value={body} onChange={setBody} disabled={busy}/>
         {task?.lastResult?.chat && <p className="text-xs">Last result: {task.lastResult.status}</p>}
     </PanelEditorBody><PanelEditorFooter>

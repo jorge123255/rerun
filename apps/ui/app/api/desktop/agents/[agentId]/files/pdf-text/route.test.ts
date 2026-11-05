@@ -5,11 +5,13 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent } from '@/lib/desktop/server/store'
 import { GET } from './route'
+import { createHash } from 'node:crypto'
 
 const extracted = vi.hoisted(() => ({ extract: vi.fn() }))
 vi.mock('@/lib/desktop/server/pdf-text', () => ({ extractDesktopPdfText: extracted.extract }))
 
 const deck = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n')
+const sourceHash = createHash('sha256').update(deck).digest('hex')
 const text = {
     pageCount: 2, truncated: false, reason: '',
     pages: [
@@ -31,7 +33,7 @@ function request(id: string, suffix: string, cookie = token) {
     })
 }
 const read = (id: string, path: string, identity?: string, cookie = token) => {
-    const query = new URLSearchParams({ path })
+    const query = new URLSearchParams({ path, sha256: sourceHash })
     if (identity !== undefined) query.set('identity', identity)
     return GET(request(id, `?${query}`, cookie), { params: Promise.resolve({ agentId: id }) })
 }
@@ -66,6 +68,7 @@ test('returns positioned text for the owned file and passes only its bytes to th
     expect(response.headers.get('x-content-type-options')).toBe('nosniff')
     expect(response.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox")
     expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('x-pdf-sha256')).toBe(sourceHash)
     expect(raw).not.toContain('%PDF')
     expect(JSON.parse(raw)).toMatchObject({ identity, path: 'docs/deck.pdf', pageCount: 2, pages: [{ text: 'Alpha one' }, { rotation: 90, pageWidth: 720, pageHeight: 540 }] })
     expect(extracted.extract).toHaveBeenCalledTimes(1)
@@ -90,5 +93,17 @@ test('an extra query, a replaced identity, another coworker, and a signed-out re
     }), { params: Promise.resolve({ agentId: alice }) })
     expect(closed.status).toBe(499)
     expect(await closed.json()).toMatchObject({ error: 'PDF text was closed.' })
+    expect(extracted.extract).not.toHaveBeenCalled()
+})
+
+test('an in-place rewrite with the same inode cannot overlay new text on the old raster', async () => {
+    const path = join(workspace('engine-alice'), 'docs', 'deck.pdf')
+    const before = await lstat(path, { bigint: true })
+    await writeFile(path, Buffer.from('%PDF-1.4\n1 0 obj<< /Changed true >>endobj\ntrailer<<>>\n%%EOF\n'))
+    const after = await lstat(path, { bigint: true })
+    expect(after.ino).toBe(before.ino)
+    const response = await read(alice, 'docs/deck.pdf', `${before.dev}:${before.ino}`)
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining('changed after the displayed page') })
     expect(extracted.extract).not.toHaveBeenCalled()
 })

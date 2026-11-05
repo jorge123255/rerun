@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb', 'schedule', 'mcp', 'skills'] as const
+export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb', 'schedule', 'mcp', 'skills'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -39,7 +39,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('requestApproval', 'Request approval', 'Ask you to approve or decline proposed actions in chat.', 'request_approval'),
     supported('cardFile', 'Show result files', 'Show this coworker’s existing text, Markdown, static images, WAV/MP3 audio, MP4 video or PDF documents as preview tiles in chat.', 'card_file'),
     supported('privateFileWrite', 'Edit workspace files', 'Create new text or Markdown files and make exact, conflict-checked edits in this coworker’s private Files. Existing names are never replaced by create.', 'fs_write', 'fs_edit'),
-    pending('shared', 'Shared files', 'Work on files visible to multiple coworkers.', 'Requires a shared workspace and its access controls.', 'shared_read', 'shared_write'),
+    supported('sharedFilesRead', 'Read shared files', 'Read and list text and Markdown files in the workspace shared folder. Every coworker with this permission sees the same shared documents.', 'shared_read', 'shared_list'),
     pending('shell', 'Run commands', 'Run Rerun shell commands in a workspace.', 'Requires a confined engine command runner.', 'shell_exec'),
     supported('webFetch', 'Read public web pages', 'Read public HTTP(S) text and HTML pages without cookies or saved files.', 'web_fetch'),
     pending('web', 'Use the web', 'Search or download content.', 'Rerun web search needs a search provider; downloads and saved pages are unavailable.', 'web_search', 'download'),

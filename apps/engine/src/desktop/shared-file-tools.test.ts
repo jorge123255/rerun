@@ -2,8 +2,9 @@ import { mkdtempSync } from 'node:fs'
 import { mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import type { RunContext } from '../runtime/context.js'
+import { prepareSkillHelperFixture } from './skill-publication.test-support.js'
 
 const configs = vi.hoisted(() => new Map<string, { enabled?: boolean; tools?: { shared?: boolean; desktopToolGrants?: Record<string, boolean> } }>())
 vi.mock('../agents/loader.js', () => ({ readAgentConfig: async (id: string) => configs.get(id) ?? null }))
@@ -15,11 +16,18 @@ process.env.RERUN_DESKTOP_APP = '1'
 const { desktopSharedFileTools } = await import('./shared-file-tools.js')
 const { importSharedText, resolveEngineSharedDirectory } = await import('./shared-workspace-files.js')
 
-const granted = { enabled: true, tools: { shared: true, desktopToolGrants: { shared: true } } }
+const granted = { enabled: true, tools: { shared: true, desktopToolGrants: { sharedFilesRead: true } } }
 const call = { toolCallId: 'shared-test', messages: [] }
 const context = (id: string, config = configs.get(id), signal?: AbortSignal) => ({ agent: { id, config }, abortSignal: signal }) as RunContext
 
-afterAll(async () => { await rm(created, { recursive: true, force: true }) })
+let helper: Awaited<ReturnType<typeof prepareSkillHelperFixture>>
+const priorHelper = process.env.RERUN_DESKTOP_RENAME_HELPER
+beforeAll(async () => { helper = await prepareSkillHelperFixture(); process.env.RERUN_DESKTOP_RENAME_HELPER = helper.path })
+afterAll(async () => {
+    if (priorHelper === undefined) delete process.env.RERUN_DESKTOP_RENAME_HELPER; else process.env.RERUN_DESKTOP_RENAME_HELPER = priorHelper
+    await helper?.close()
+    await rm(created, { recursive: true, force: true })
+})
 
 it('registers only shared_read and shared_list, and both coworkers read the same imported file', async () => {
     configs.set('alpha', structuredClone(granted))
@@ -49,7 +57,17 @@ it('omits the tools without the grant and rechecks it before returning text', as
     const config = structuredClone(granted)
     configs.set('alpha', config)
     const tools = desktopSharedFileTools(context('alpha', config))
-    config.tools!.desktopToolGrants!.shared = false
+    config.tools!.desktopToolGrants!.sharedFilesRead = false
     await expect(tools.shared_read!.execute!({ path: 'note.txt', offset: 0 }, call)).rejects.toThrow('turned off')
     await expect(tools.shared_read!.execute!({ path: 'note.txt', offset: 0 }, { ...call, abortSignal: AbortSignal.abort() })).rejects.toMatchObject({ name: 'AbortError' })
+})
+
+it('uses the live run cancellation even when the tool call does not provide a signal', async () => {
+    const config = structuredClone(granted)
+    configs.set('cancelled', config)
+    const controller = new AbortController()
+    const tools = desktopSharedFileTools(context('cancelled', config, controller.signal))
+    controller.abort()
+    await expect(tools.shared_read!.execute!({ path: 'note.txt', offset: 0 }, call)).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(tools.shared_list!.execute!({ path: '.' }, call)).rejects.toMatchObject({ name: 'AbortError' })
 })

@@ -84,7 +84,7 @@ export function useMentionAutocomplete(agents: MentionAgent[], skills: MentionSk
                 setHighlight(h => (h - 1 + items.length) % items.length)
             } else if (e.key === 'Enter' || e.key === 'Tab') {
                 e.preventDefault()
-                pick(items[highlight])
+                pick(items[Math.min(highlight, items.length - 1)])
             } else if (e.key === 'Escape') {
                 e.preventDefault()
                 setMention(null)
@@ -93,7 +93,7 @@ export function useMentionAutocomplete(agents: MentionAgent[], skills: MentionSk
         [open, items, highlight, pick]
     )
 
-    const menu: ReactNode = open ? <MentionMenu trigger={mention.trigger} items={items} highlight={highlight} onHover={setHighlight} onPick={pick} /> : null
+    const menu: ReactNode = open ? <MentionMenu trigger={mention.trigger} items={items} highlight={Math.min(highlight, items.length - 1)} onHover={setHighlight} onPick={pick} /> : null
 
     return { inputRef, menu, tokens, textareaProps: { onChange, onSelect, onKeyDown } }
 }

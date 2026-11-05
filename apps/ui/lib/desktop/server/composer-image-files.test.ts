@@ -1,22 +1,33 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, truncate, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { createDesktopAgent } from './store'
 import { DesktopHttpError } from './auth'
+import { composerTestPng } from './composer-image.test-fixtures'
+import { importCoworkerRasterFile, importCoworkerFile } from './coworker-files'
+const faults = vi.hoisted(() => ({ afterLink: null as ((target: string) => Promise<void>) | null }))
+vi.mock('node:fs/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>()
+    return { ...actual, link: async (...args: Parameters<typeof actual.link>) => {
+        await actual.link(...args)
+        await faults.afterLink?.(String(args[1]))
+    } }
+})
 import {
     importDesktopComposerImage,
     pruneDesktopImageSnapshots,
     readDesktopImageSnapshot,
     readDesktopImageSnapshots,
+    DESKTOP_IMAGE_STORE_MAX_BYTES,
 } from './composer-image-files'
 
 // A real 1x1 PNG: structural checks and the sharp decode pass both run against it.
-const PNG = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'))
-const PNG_2 = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'))
+const PNG = composerTestPng()
+const PNG_2 = composerTestPng(0)
 
 let root: string
 let runtime: DesktopRuntime
@@ -47,6 +58,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+    faults.afterLink = null
     await closeDesktopDatabase(root)
     await rm(root, { recursive: true, force: true })
 })
@@ -103,12 +115,97 @@ test('a replaced snapshot fails verification instead of silently serving new byt
     expect(error.status).toBe(409)
 })
 
-test('prune removes only unreferenced snapshots', async () => {
+test('a stale caller keep-set cannot delete a snapshot held by another draft or pending send', async () => {
     const keep = await importDesktopComposerImage(runtime, agentId, '', 'keep.png', PNG)
     const drop = await importDesktopComposerImage(runtime, agentId, '', 'drop.png', PNG_2)
     const removed = await pruneDesktopImageSnapshots(runtime, agentId, new Set([keep.image.sha256]))
-    expect(removed).toBe(1)
+    expect(removed).toBe(0)
     await expect(readDesktopImageSnapshot(runtime, agentId, keep.image)).resolves.toMatchObject({ byteLength: PNG.byteLength })
-    const error = await errorOf(readDesktopImageSnapshot(runtime, agentId, drop.image))
-    expect(error.status).toBe(404)
+    await expect(readDesktopImageSnapshot(runtime, agentId, drop.image)).resolves.toMatchObject({ byteLength: PNG_2.byteLength })
+})
+
+test('same-size snapshot corruption refuses the next import before its visible publication', async () => {
+    const first = await importDesktopComposerImage(runtime, agentId, '', 'first.png', PNG)
+    const broken = PNG.slice()
+    broken[broken.length - 1] = broken[broken.length - 1]! ^ 1
+    await writeFile(join(agentDir(), 'chat-images', `${first.image.sha256}.png`), broken)
+    expect((await errorOf(importDesktopComposerImage(runtime, agentId, '', 'second.png', PNG))).status).toBe(409)
+    await expect(readFile(join(agentDir(), 'workspace', 'second.png'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await readdir(join(agentDir(), 'workspace'))).filter(name => name.startsWith('.rerun-import-'))).toEqual([])
+})
+
+test('snapshot symlinks, hardlinks and parent symlinks stay unreadable', async () => {
+    const result = await importDesktopComposerImage(runtime, agentId, '', 'shot.png', PNG)
+    const snapshots = join(agentDir(), 'chat-images')
+    const target = join(snapshots, `${result.image.sha256}.png`)
+    const outside = join(root, 'outside.png')
+    await writeFile(outside, PNG)
+    await unlink(target)
+    await symlink(outside, target)
+    expect((await errorOf(readDesktopImageSnapshot(runtime, agentId, result.image))).status).toBe(409)
+    await unlink(target)
+    await link(outside, target)
+    expect((await errorOf(readDesktopImageSnapshot(runtime, agentId, result.image))).status).toBe(409)
+    await unlink(target)
+    await writeFile(target, PNG)
+    await rename(snapshots, `${snapshots}-aside`)
+    await symlink(`${snapshots}-aside`, snapshots)
+    expect((await errorOf(readDesktopImageSnapshot(runtime, agentId, result.image))).status).toBe(409)
+    expect(new Uint8Array(await readFile(outside))).toEqual(PNG)
+})
+
+test('snapshot metadata and coworker ownership are checked against actual bytes', async () => {
+    const result = await importDesktopComposerImage(runtime, agentId, '', 'shot.png', PNG)
+    for (const mismatch of [{ width: 2 }, { height: 2 }, { byteLength: PNG.length + 1 }]) {
+        expect((await errorOf(readDesktopImageSnapshot(runtime, agentId, { ...result.image, ...mismatch }))).status).toBe(409)
+    }
+    const other = await createDesktopAgent(db, { engineAgentId: 'engine-b', name: 'b' })
+    expect((await errorOf(readDesktopImageSnapshot(runtime, other.id, result.image))).status).toBe(404)
+    expect((await errorOf(readDesktopImageSnapshots(runtime, agentId, Array(5).fill(result.image)))).status).toBe(413)
+})
+
+test('bounded storage refuses new bytes before publishing a visible file, without pruning old attachments', async () => {
+    const first = await importDesktopComposerImage(runtime, agentId, '', 'first.png', PNG)
+    const reserve = join(agentDir(), 'chat-images', 'reserved-capacity')
+    await writeFile(reserve, '')
+    await truncate(reserve, DESKTOP_IMAGE_STORE_MAX_BYTES)
+    expect((await errorOf(importDesktopComposerImage(runtime, agentId, '', 'second.png', PNG_2))).status).toBe(413)
+    await expect(readFile(join(agentDir(), 'workspace', 'second.png'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readDesktopImageSnapshot(runtime, agentId, first.image)).resolves.toMatchObject({ byteLength: PNG.length })
+})
+
+test('a moved folder before publication stays unpublished and text import restrictions remain unchanged', async () => {
+    await importDesktopComposerImage(runtime, agentId, '', 'first.png', PNG)
+    const workspace = join(agentDir(), 'workspace')
+    const moved = `${workspace}-aside`
+    const error = await errorOf(importCoworkerRasterFile(runtime, agentId, '', 'moved.png', PNG, async () => {
+        await rename(workspace, moved)
+        await mkdir(workspace)
+    }))
+    expect(error.status).toBe(409)
+    await expect(readFile(join(moved, 'moved.png'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(join(workspace, 'moved.png'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await readdir(moved)).filter(name => name.startsWith('.rerun-import-'))).toEqual([])
+    expect((await errorOf(importCoworkerFile(runtime, agentId, '', 'text-only.png', PNG))).status).toBe(415)
+})
+
+test('cancelled image imports never publish a visible file', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    expect((await errorOf(importDesktopComposerImage(runtime, agentId, '', 'cancelled.png', PNG, { signal: controller.signal }))).status).toBe(499)
+    await expect(readFile(join(agentDir(), 'workspace', 'cancelled.png'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+test('a folder move after visible publication is always reported as ambiguous, even when rollback succeeds', async () => {
+    await importDesktopComposerImage(runtime, agentId, '', 'first.png', PNG)
+    const workspace = join(agentDir(), 'workspace')
+    faults.afterLink = async target => {
+        if (!target.endsWith('/ambiguous.png')) return
+        await rename(workspace, `${workspace}-aside`)
+        await mkdir(workspace)
+    }
+    const error = await errorOf(importDesktopComposerImage(runtime, agentId, '', 'ambiguous.png', PNG))
+    expect(error.status).toBe(500)
+    await expect(readFile(join(workspace, 'ambiguous.png'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(join(`${workspace}-aside`, 'ambiguous.png'))).rejects.toMatchObject({ code: 'ENOENT' })
 })

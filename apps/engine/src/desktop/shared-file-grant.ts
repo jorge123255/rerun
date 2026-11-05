@@ -1,7 +1,6 @@
 // Shared files are explicitly granted per coworker. Importing a document in the
 // shared folder never enables this boolean or changes the hosted tools.shared switch.
-// `shared` is not in desktopRerunGrantIds until root adds it, so this reads the
-// stored object directly. A missing or parsed-away key leaves the tools off.
+// The separate read grant cannot accidentally enable hosted shared writes.
 
 export type SharedGrantConfig = {
     enabled?: boolean
@@ -10,7 +9,7 @@ export type SharedGrantConfig = {
 
 function sharedGrant(config: SharedGrantConfig): boolean {
     const grants = config.tools?.desktopToolGrants as Record<string, boolean> | undefined
-    return grants?.shared === true
+    return grants?.sharedFilesRead === true
 }
 
 export function desktopSharedFilesAllowed(config: SharedGrantConfig | null | undefined): boolean {

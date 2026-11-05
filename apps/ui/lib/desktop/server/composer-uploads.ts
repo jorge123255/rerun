@@ -43,7 +43,7 @@ export function reserveDesktopComposerUpload(db: Client, agentId: string, tabUid
             return { created: false, attempt }
         }
         const count = (await db.execute({ sql: 'SELECT COUNT(*) AS total FROM desktop_composer_uploads WHERE agent_id=? AND tab_uid=?', args: [agentId, tabUid] })).rows[0]
-        if (Number(count.total) >= 10) throw new DesktopHttpError(409, 'Check and dismiss unresolved imports before adding more files.')
+        if (Number(count.total) >= 14) throw new DesktopHttpError(409, 'Check and dismiss unresolved imports before adding more files.')
         signal?.throwIfAborted()
         await db.execute({ sql: 'INSERT INTO desktop_composer_uploads (id,agent_id,tab_uid,name,size,created_at) VALUES (?,?,?,?,?,?)', args: [attempt.id, agentId, tabUid, attempt.name, attempt.size, new Date().toISOString()] })
         return { created: true, attempt }

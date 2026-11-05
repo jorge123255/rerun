@@ -1,4 +1,5 @@
-import { chatRequestSchema, desktopApprovalGuardSchema, desktopQuestionGuardSchema, desktopAttachmentPathsOf, desktopAttachmentPathsSchema, desktopWorkspaceAttachmentSchema, desktopWorkspaceAttachmentsSchema, findDesktopApproval, findDesktopQuestion, type SessionSource } from '@rerun/contracts'
+import { createHash } from 'node:crypto'
+import { chatRequestSchema, desktopApprovalGuardSchema, desktopQuestionGuardSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, desktopAttachmentItemsSchema, hasOneDesktopAttachmentField, desktopResolvedAttachmentsSchema, desktopResolvedAttachmentSelections, desktopStoredAttachmentSelections, type DesktopResolvedAttachment, desktopAttachmentPathsSchema, desktopWorkspaceAttachmentSchema, desktopWorkspaceAttachmentsSchema, findDesktopApproval, findDesktopQuestion, type SessionSource } from '@rerun/contracts'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { desktopApp } from '../../desktop/policy.js'
@@ -25,15 +26,16 @@ export const chatRoutes = new Hono()
 const questionPendingMessage = 'Answer or dismiss the coworker’s questions before sending another message.'
 const approvalPendingMessage = 'Approve or decline the coworker’s proposed actions before sending another message.'
 const desktopFirstTurn = z.object({ sessionId: z.uuid(), runId: z.uuid() }).strict()
-const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional() }).strict()
-    .refine(turn => !(turn.attachmentPath && turn.attachmentPaths), 'Use one attachment field.')
+const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional() }).strict()
+    .refine(hasOneDesktopAttachmentField, 'Use one attachment field.')
     .refine(turn => !turn.question || !turn.approval, 'An answer can target only one pending request.')
 const desktopChatRequest = chatRequestSchema.extend({
     workspaceAttachment: desktopWorkspaceAttachmentSchema.optional(),
     workspaceAttachments: desktopWorkspaceAttachmentsSchema.optional(),
+    desktopAttachments: desktopResolvedAttachmentsSchema.optional(),
     desktopFirstTurn: desktopFirstTurn.optional(),
     desktopQueuedTurn: desktopQueuedTurn.optional(),
-}).refine(body => !(body.workspaceAttachment && body.workspaceAttachments), 'Use one attachment field.')
+}).refine(body => [body.workspaceAttachment, body.workspaceAttachments, body.desktopAttachments].filter(value => value !== undefined).length <= 1, 'Use one attachment field.')
 .refine(body => (!body.desktopFirstTurn || (!body.sessionId && !body.install && !body.foreman && !body.desktopQueuedTurn && (!body.source || body.source === 'dashboard')))
     && (!body.desktopQueuedTurn || (!!body.sessionId && !body.install && !body.foreman && (!body.source || body.source === 'dashboard'))))
 
@@ -43,6 +45,24 @@ const regenerateRequest = chatRequestSchema.pick({ provider: true, model: true, 
     source: z.literal('dashboard').optional(),
     requestId: z.uuid(),
 }).strict()
+
+function verifyImageBytes(attachments: readonly DesktopResolvedAttachment[]) {
+    for (const attachment of attachments) {
+        if (attachment.type !== 'image') continue
+        const bytes = Buffer.from(attachment.dataBase64, 'base64')
+        if (bytes.byteLength !== attachment.image.byteLength || bytes.toString('base64') !== attachment.dataBase64 ||
+            createHash('sha256').update(bytes).digest('hex') !== attachment.image.sha256) {
+            throw new HttpError(400, 'The image bytes do not match the selected snapshot.')
+        }
+    }
+}
+async function assertImageModel(provider: string, agentId: string, attachments: readonly DesktopResolvedAttachment[], sessionId?: string, throughMessageId?: string) {
+    if (!desktopApp() || provider === 'codex') return
+    const hasImages = attachments.some(item => item.type === 'image') || (sessionId &&
+        (await listMessages(agentId, sessionId, throughMessageId)).some(row => row.role === 'user' &&
+            desktopStoredAttachmentSelections(storedContent(row.contentJson)).some(item => typeof item !== 'string')))
+    if (hasImages) throw new HttpError(400, 'Image attachments need a ChatGPT / Codex model. Choose one before sending.')
+}
 
 function identified(response: Response, sessionId: string, runId: string) {
     response.headers.set('x-session-id', sessionId)
@@ -70,6 +90,7 @@ async function regenerateChat(agent: LoadedAgent, body: z.infer<typeof regenerat
 
     const override = { connectionId: body.connectionId, provider: body.provider, model: body.model }
     const { provider, model } = await resolveRunModel(agent, override)
+    await assertImageModel(provider, agent.id, [], source.id, body.regenerateMessageId)
     if (sessionClaim(source.id)) throw new HttpError(409, 'Wait for the current reply to finish before regenerating.')
     const fork = await forkReply(agent.id, source, body)
     if (!fork.user) return identified(resumeStreamResponse(fork.runId), fork.sessionId, fork.runId)
@@ -99,35 +120,38 @@ chatRoutes.post('/chat', async c => {
         const queued = body?.desktopQueuedTurn
         if (body?.desktopFirstTurn && await getDesktopTabRun(agentId, {
             ...body.desktopFirstTurn, message: body.message, author: body.author,
-            attachments: body.workspaceAttachments ?? (body.workspaceAttachment ? [body.workspaceAttachment] : []),
+            attachments: body.workspaceAttachments ?? (body.workspaceAttachment ? [body.workspaceAttachment] : []), desktopAttachments: body.desktopAttachments,
         })) return identified(resumeStreamResponse(body.desktopFirstTurn.runId), body.desktopFirstTurn.sessionId, body.desktopFirstTurn.runId)
         if (body?.sessionId && queued?.replayOnly) {
             const session = await getSession(agentId, body.sessionId)
             if (session?.agentId === agentId && await getDesktopQueuedTurn(agentId, {
                 runId: queued.runId, sessionId: session.id, message: body.message,
-                attachmentPath: queued.attachmentPath, attachmentPaths: queued.attachmentPaths, question: queued.question, approval: queued.approval,
+                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval,
             })) return identified(resumeStreamResponse(queued.runId), session.id, queued.runId)
         }
         throw agentDisabled()
     }
     if (desktopApp() && input && typeof input === 'object' && 'regenerateMessageId' in input) return regenerateChat(agent, regenerateRequest.parse(input))
-    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), workspaceAttachment: undefined, workspaceAttachments: undefined, desktopFirstTurn: undefined, desktopQueuedTurn: undefined }
+    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), workspaceAttachment: undefined, workspaceAttachments: undefined, desktopAttachments: undefined, desktopFirstTurn: undefined, desktopQueuedTurn: undefined }
     const attachments = body.workspaceAttachments ?? (body.workspaceAttachment ? [body.workspaceAttachment] : [])
-    const attachmentPaths = attachments.map(attachment => attachment.path)
+    const resolvedAttachments = body.desktopAttachments ?? []
+    verifyImageBytes(resolvedAttachments)
+    const attachmentSelections = body.desktopAttachments ? desktopResolvedAttachmentSelections(body.desktopAttachments) : attachments.map(attachment => attachment.path)
     // One attachment keeps the original trigger field, so existing runs, tests and queued
     // receipts keep their shape. Two or more travel as the ordered array.
-    const attachmentTrigger = attachments.length === 1 ? { workspaceAttachment: attachments[0] } : attachments.length > 1 ? { workspaceAttachments: attachments } : {}
+    const attachmentTrigger = body.desktopAttachments ? { desktopAttachments: body.desktopAttachments } : attachments.length === 1 ? { workspaceAttachment: attachments[0] } : attachments.length > 1 ? { workspaceAttachments: attachments } : {}
     const runAgentView = agent.config.kind === 'foreman' && body.foreman ? { ...agent, brief: body.foreman } : agent
     const source = body.source ?? 'dashboard'
     if (body.desktopFirstTurn) return withAgentLock(agentId, async () => {
         const { sessionId, runId } = body.desktopFirstTurn!
-        const turn = { sessionId, runId, message: body.message, attachments, author: body.author }
+        const turn = { sessionId, runId, message: body.message, attachments, desktopAttachments: body.desktopAttachments, author: body.author }
         if (await getDesktopTabRun(agentId, turn)) return identified(resumeStreamResponse(runId), sessionId, runId)
         // A disable/config write may have completed while this request awaited the lock.
         const currentAgent = await getAgent(agentId)
         if (!currentAgent.config.enabled) throw agentDisabled()
         const override = { connectionId: body.connectionId, provider: body.provider, model: body.model }
         const { provider, model } = await resolveRunModel(currentAgent, override)
+        await assertImageModel(provider, agentId, resolvedAttachments)
         const holder = claimSession(sessionId, runId, body.author?.id)
         if (holder) throw new HttpError(409, 'This conversation is already starting. Retry the same first message.')
         try {
@@ -142,18 +166,19 @@ chatRoutes.post('/chat', async c => {
         const queued = body.desktopQueuedTurn!
         const session = await getSession(agentId, body.sessionId!)
         if (!session || session.agentId !== agentId) throw new HttpError(404, 'Session not found for this agent')
-        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...(queued.attachmentPath && { attachmentPath: queued.attachmentPath }), ...(queued.attachmentPaths && { attachmentPaths: queued.attachmentPaths }), question: queued.question, approval: queued.approval }
+        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval }
         if (await getDesktopQueuedTurn(agentId, turn)) return identified(resumeStreamResponse(turn.runId), session.id, turn.runId)
         if (await getRun(agentId, turn.runId)) throw new HttpError(409, 'This queued message ID is already in use.')
         // The bridge can reconcile a lost acknowledgement before re-reading a moved file or
         // resolving a changed model. A probe never creates a run or a user message.
         if (queued.replayOnly) return c.json({ code: 'queued_turn_not_found' }, 404)
-        if (JSON.stringify(desktopAttachmentPathsOf(queued)) !== JSON.stringify(attachmentPaths)) throw new HttpError(400, 'The queued attachments do not match this message.')
+        if (JSON.stringify(desktopAttachmentSelectionsOf(queued)) !== JSON.stringify(attachmentSelections)) throw new HttpError(400, 'The queued attachments do not match this message.')
         const override = { connectionId: body.connectionId, provider: body.provider, model: body.model }
         const { provider, model } = await resolveRunModel(agent, override)
         const holder = claimSession(session.id, turn.runId, body.author?.id)
         if (holder) return c.json({ error: 'a run is already in flight on this session', code: 'run_in_flight', runId: holder, sessionId: session.id }, 409)
         try {
+            await assertImageModel(provider, agentId, resolvedAttachments, session.id)
             // Hold the session claim while checking the durable transcript: an ordinary chat
             // cannot append a new turn between this check and the atomic answer reservation.
             const messages = await listMessages(agentId, session.id)
@@ -175,7 +200,7 @@ chatRoutes.post('/chat', async c => {
                 releaseSession(turn.runId)
                 return c.json({ error: pending ? questionPendingMessage : approvalPendingMessage, code: pending ? 'question_pending' : 'approval_pending' }, 409)
             }
-            const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, attachments, body.author)
+            const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, attachments, body.author, body.desktopAttachments)
             return streamChat(agent, session.id, turn.runId, body.message, override, { provider, model }, {
                 source: 'chat', author: body.author, ...attachmentTrigger, queuedUser,
             })
@@ -203,6 +228,7 @@ chatRoutes.post('/chat', async c => {
     }
     if (desktopApp()) {
         try {
+            await assertImageModel(provider, agentId, resolvedAttachments, session.id)
             const messages = await listMessages(agentId, session.id)
             const question = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)

@@ -32,7 +32,7 @@ export type DesktopSkillSuggestionState = {
  * has nothing to abort; only an owner, enablement or retry change re-reads. A failed refresh keeps
  * the last good shelf but reports the failure instead of pretending the list is current.
  */
-export function useDesktopSkillSuggestions(agentId: string | null, options: { enabled?: boolean } = {}): DesktopSkillSuggestionState {
+export function useDesktopSkillSuggestions(agentId: string | null, options: { enabled?: boolean; refreshKey?: string } = {}): DesktopSkillSuggestionState {
     const enabled = options.enabled ?? true
     const [status, setStatus] = useState<DesktopSkillSuggestionStatus>(agentId && enabled ? 'loading' : 'idle')
     const [skills, setSkills] = useState<MentionSkill[]>([])
@@ -73,7 +73,7 @@ export function useDesktopSkillSuggestions(agentId: string | null, options: { en
                 setStatus(cause instanceof TypeError ? 'unavailable' : 'error')
             })
         return () => controller.abort()
-    }, [agentId, enabled, attempt])
+    }, [agentId, enabled, attempt, options.refreshKey])
 
     return { status, skills, error, retry }
 }

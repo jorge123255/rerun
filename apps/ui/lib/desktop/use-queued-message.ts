@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { desktopAttachmentFieldsOf } from '@rerun/contracts'
+import { desktopAttachmentFieldsOf, type DesktopAttachmentSelection } from '@rerun/contracts'
 import { desktopQueuedMessageSchema, type DesktopQueuedMessage, type DesktopQueueWrite } from './queued-message'
 import { pendingTabWrite } from './tab-writes'
 
@@ -82,7 +82,7 @@ export function useDesktopQueuedMessage(agentId: string, sessionId: string | nul
     }, [accept, agentId, key, tabUid, url])
 
     const queued = state.key === key ? state.queued : null
-    const enqueue = useCallback(async (text: string, attachments: readonly string[], behindRunId: string | null) => {
+    const enqueue = useCallback(async (text: string, attachments: readonly DesktopAttachmentSelection[], behindRunId: string | null) => {
         const item: DesktopQueuedMessage = { id: crypto.randomUUID(), text, ...desktopAttachmentFieldsOf(attachments), createdAt: Date.now(), behindRunId, state: 'waiting' }
         uncertain.current.add(item.id)
         return write({ action: 'enqueue', scope, expectedId: queued?.id ?? null, item })

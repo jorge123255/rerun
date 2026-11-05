@@ -87,3 +87,55 @@ test('two quick updates serialize and both land', async () => {
     expect(stored.scope).toBe('mine')
     expect(stored.sound).toBe(false)
 })
+
+test('a failed initial read never permits a write based on invented defaults', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'offline' }, { status: 503 })))
+    await mount()
+    expect(hook.ready).toBe(false)
+    expect(hook.readError).toContain('Could not load')
+    await act(async () => { hook.setCoworkerRule('agent-a', { mode: 'muted' }) })
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+})
+
+test('all mounted surfaces share current rules and one write queue', async () => {
+    const { useDesktopNotificationPrefs } = await import('./use-notification-prefs')
+    let bell!: typeof hook, settings!: typeof hook
+    function Bell() { bell = useDesktopNotificationPrefs(); return null }
+    function Settings() { settings = useDesktopNotificationPrefs(); return null }
+    const container = document.createElement('div'); document.body.append(container); root = createRoot(container)
+    await act(async () => root?.render(<><Bell /><Settings /></>))
+    await act(async () => { settings.setCoworkerRule('agent-a', { mode: 'muted', follow: true }) })
+    expect(bell.ruleOf('agent-a')).toEqual({ mode: 'muted', follow: true })
+    await act(async () => { bell.setCoworkerRule('agent-a', { ...bell.ruleOf('agent-a'), mode: 'everything' }) })
+    expect(settings.ruleOf('agent-a')).toEqual({ mode: 'everything', follow: true })
+    expect(stored.coworkers['agent-a']).toEqual({ mode: 'everything', follow: true })
+})
+
+test('a late settings read cannot overwrite a newer saved bell choice', async () => {
+    await mount()
+    let finish!: (response: Response) => void
+    const previous = fetch
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => init?.method === 'PUT' ? previous(url, init) : new Promise<Response>(resolve => { finish = resolve })))
+    let refresh!: Promise<void>
+    await act(async () => { refresh = hook.refresh() })
+    await act(async () => { hook.update({ scope: 'nothing' }) })
+    await act(async () => { finish(Response.json({ ...stored, scope: 'everything' })); await refresh })
+    expect(hook.prefs.scope).toBe('nothing')
+})
+
+test('a failed queued write retains the later pending optimistic patch', async () => {
+    await mount()
+    const pending: ((response: Response) => void)[] = []
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => {
+        if (init?.method !== 'PUT') return Promise.resolve(Response.json(stored))
+        return new Promise<Response>(resolve => { pending.push(resolve) })
+    }))
+    await act(async () => { hook.update({ scope: 'nothing' }); hook.update({ sound: false }) })
+    expect(pending).toHaveLength(1)
+    await act(async () => { pending[0](Response.json({ error: 'failed' }, { status: 503 })) })
+    expect(pending).toHaveLength(2)
+    expect(hook.prefs.scope).toBe('everything')
+    expect(hook.prefs.sound).toBe(false)
+    await act(async () => { pending[1](Response.json({ ...stored, sound: false })) })
+    expect(hook.prefs.sound).toBe(false)
+})

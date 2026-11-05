@@ -11,7 +11,7 @@ import { desktopTableCardOf } from '@/lib/desktop/table-card'
 import { desktopFileCardOf } from '@/lib/desktop/file-card'
 import { desktopSkillProposalIdOf } from '@/lib/desktop/skill-proposal-source'
 import { hitlKindOf } from '@/lib/chat-hitl'
-import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, desktopAttachmentFieldsOf, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPaths, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
+import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, desktopAttachmentFieldsOf, type DesktopSourcePart, isContextPart, visibleText, desktopStoredAttachmentSelections, desktopImageSnapshotSchema, type DesktopAttachmentFields, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
 
 type TextPart = { type: 'text'; text: string }
 type ToolInvocationPart = {
@@ -24,8 +24,8 @@ type ToolInvocationPart = {
     input: unknown
     output?: unknown
 }
-type UIMessagePart = TextPart | ToolInvocationPart | DesktopSourcePart | { type: 'step-start' } | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
-export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: { authorId?: string; createdAt?: string; attachmentPath?: string; attachmentPaths?: string[] } }
+type UIMessagePart = { type: 'file'; url: string; mediaType: string; filename: string } | TextPart | ToolInvocationPart | DesktopSourcePart | { type: 'step-start' } | { type: 'reasoning'; text: string; providerMetadata: typeof desktopSummaryMetadata }
+export type HistoryMessage = { id: string; role: 'user' | 'assistant'; parts: UIMessagePart[]; metadata?: DesktopAttachmentFields & { authorId?: string; createdAt?: string } }
 
 function safeParse(json: string | null | undefined): unknown {
     if (!json) return null
@@ -83,8 +83,15 @@ export function transformEngineMessages(messages: EngineMessage[], options?: { d
         const content = safeParse(m.contentJson)
 
         if (m.role === 'user') {
-            const attachment = desktopAttachmentFieldsOf(workspaceAttachmentPaths(content))
-            result.push({ id: `engine-${m.id}`, role: 'user', parts: [{ type: 'text', text: extractText(content) }], metadata: { createdAt: m.createdAt, ...(m.authorId && { authorId: m.authorId }), ...attachment } })
+            const attachment = desktopAttachmentFieldsOf(desktopStoredAttachmentSelections(content))
+            const images: UIMessagePart[] = []
+            if (Array.isArray(content)) for (const part of content) {
+                if (part?.type !== 'file' || typeof part.data !== 'string') continue
+                const image = desktopImageSnapshotSchema.safeParse(part.providerOptions?.rerun?.desktopImage)
+                if (!image.success || part.mediaType !== image.data.mediaType || part.data.length > 4 * Math.ceil(image.data.byteLength / 3) || !/^[A-Za-z0-9+/]+={0,2}$/.test(part.data)) continue
+                images.push({ type: 'file', url: `data:${image.data.mediaType};base64,${part.data}`, mediaType: image.data.mediaType, filename: image.data.name })
+            }
+            result.push({ id: `engine-${m.id}`, role: 'user', parts: [{ type: 'text', text: extractText(content) }, ...images], metadata: { createdAt: m.createdAt, ...(m.authorId && { authorId: m.authorId }), ...attachment } })
             continue
         }
 

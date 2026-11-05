@@ -22,6 +22,8 @@ type CoworkerBellMenuProps = {
     modal?: boolean
     align?: 'start' | 'end'
     className?: string
+    disabled?: boolean
+    scheduledCountUnavailable?: boolean
 }
 
 function ItemText({ label, hint }: { label: string; hint: string }) {
@@ -35,7 +37,7 @@ function ItemText({ label, hint }: { label: string; hint: string }) {
 
 // The glyph says the state at a glance: a plain bell follows your setting, a ringing one gets
 // everything, a crossed one is muted, and the dot is a coworker whose scheduled tasks you follow.
-export function CoworkerBellMenu({ name, rule, scope, scheduledCount, onChange, onOpenSettings, open, onOpenChange, modal, align = 'end', className }: CoworkerBellMenuProps) {
+export function CoworkerBellMenu({ name, rule, scope, scheduledCount, onChange, onOpenSettings, open, onOpenChange, modal, align = 'end', className, disabled, scheduledCountUnavailable }: CoworkerBellMenuProps) {
     const openingSettings = useRef(false)
     const ModeIcon = COWORKER_MODE_META[rule.mode].icon
     const following = rule.follow === true
@@ -47,7 +49,7 @@ export function CoworkerBellMenu({ name, rule, scope, scheduledCount, onChange, 
     return (
         <DropdownMenu open={open} onOpenChange={onOpenChange} modal={modal}>
             <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label={`Notifications for ${name}`} className={cn('relative', rule.mode === 'muted' ? 'text-muted-foreground' : 'text-foreground', className)}>
+                <Button variant="ghost" size="icon-sm" disabled={disabled} aria-label={`Notifications for ${name}`} className={cn('relative', rule.mode === 'muted' ? 'text-muted-foreground' : 'text-foreground', className)}>
                     <ModeIcon className="size-4" />
                     {following && rule.mode !== 'muted' && <span className="absolute top-1 right-1 size-1.5 rounded-full bg-primary" />}
                 </Button>
@@ -74,10 +76,10 @@ export function CoworkerBellMenu({ name, rule, scope, scheduledCount, onChange, 
                     })}
                 </DropdownMenuRadioGroup>
                 <DropdownMenuSeparator />
-                <TooltipDisabledReason reason={noSchedule ? `${name} has no scheduled task yet` : undefined} className="flex w-full">
+                <TooltipDisabledReason reason={noSchedule ? scheduledCountUnavailable ? 'Could not check scheduled tasks. Reopen to retry.' : `${name} has no scheduled task yet` : undefined} className="flex w-full">
                     <DropdownMenuCheckboxItem checked={following} disabled={noSchedule} onCheckedChange={checked => onChange({ ...rule, follow: checked === true })} className="w-full items-start py-1.5">
                         <CalendarClock className="mt-0.5" />
-                        <ItemText label="Follow its scheduled tasks" hint={noSchedule ? 'Nothing scheduled yet.' : `${scheduledCount} scheduled, they reach you like your own runs.`} />
+                        <ItemText label="Follow its scheduled tasks" hint={noSchedule ? scheduledCountUnavailable ? 'Scheduled tasks unavailable.' : 'Nothing scheduled yet.' : `${scheduledCount} scheduled, they reach you like your own runs.`} />
                     </DropdownMenuCheckboxItem>
                 </TooltipDisabledReason>
                 <DropdownMenuSeparator />

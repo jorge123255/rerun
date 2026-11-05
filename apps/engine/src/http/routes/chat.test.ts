@@ -542,6 +542,43 @@ describe('POST /agents/:id/chat', () => {
         } finally { vi.unstubAllEnvs() }
     })
 
+    it('admits verified image bytes for Codex and rejects another provider before reserving a run', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const availability = await import('../../agents/availability.js')
+        const resolveModel = vi.spyOn(availability, 'resolveRunModel').mockResolvedValue({ provider: 'codex', model: 'image-test', connection: null })
+        const { createHash } = await import('node:crypto')
+        const { desktopAttachmentFieldsOf, desktopResolvedAttachmentSelections } = await import('@rerun/contracts')
+        const dataBase64 = Buffer.from('pinned bytes').toString('base64')
+        const image = { sha256: createHash('sha256').update(Buffer.from(dataBase64, 'base64')).digest('hex'), name: 'shot.png', path: 'shot.png', mediaType: 'image/png' as const, width: 1, height: 1, byteLength: 12 }
+        const desktopAttachments = [{ type: 'text' as const, path: 'notes.md', content: 'Frozen notes' }, { type: 'image' as const, image, dataBase64 }]
+        const first = { sessionId: crypto.randomUUID(), runId: crypto.randomUUID() }
+        try {
+            const initial = await chat(id, { message: 'Read the image', desktopFirstTurn: first, desktopAttachments })
+            expect(initial.status).toBe(200)
+            await initial.text()
+            const { listMessages } = await import('../../db/repos/messages.js')
+            expect(JSON.parse((await listMessages(id, first.sessionId))[0].contentJson).find((part: { type: string }) => part.type === 'file')).toMatchObject({ data: dataBase64, mediaType: 'image/png' })
+            const queued = { runId: crypto.randomUUID(), ...desktopAttachmentFieldsOf(desktopResolvedAttachmentSelections(desktopAttachments)) }
+            const sent = await chat(id, { sessionId: first.sessionId, message: 'Read them again', desktopQueuedTurn: queued, desktopAttachments })
+            expect(sent.status).toBe(200)
+            await sent.text()
+            // A receipt probe omits image bytes and still reconciles the exact accepted identity.
+            expect([200, 204]).toContain((await chat(id, { sessionId: first.sessionId, message: 'Read them again', desktopQueuedTurn: { ...queued, replayOnly: true } })).status)
+            const refused = { sessionId: crypto.randomUUID(), runId: crypto.randomUUID() }
+            resolveModel.mockResolvedValue({ provider: 'rerun', model: 'text-only-test', connection: null })
+            expect((await chat(id, { message: 'Read the image', desktopFirstTurn: refused, desktopAttachments })).status).toBe(400)
+            expect(await getRun(id, refused.runId)).toBeUndefined()
+            expect(await getSession(id, refused.sessionId)).toBeUndefined()
+            const followup = { runId: crypto.randomUUID() }
+            expect((await chat(id, { sessionId: first.sessionId, message: 'Continue', desktopQueuedTurn: followup })).status).toBe(400)
+            expect(await getRun(id, followup.runId)).toBeUndefined()
+            resolveModel.mockResolvedValue({ provider: 'codex', model: 'image-test', connection: null })
+            expect((await chat(id, { message: 'Tampered bytes', desktopFirstTurn: refused, desktopAttachments: [{ type: 'image', image, dataBase64: 'Y2hhbmdlZA==' }] })).status).toBe(400)
+            expect(await getRun(id, refused.runId)).toBeUndefined()
+            expect(state.calls).toHaveLength(2)
+        } finally { resolveModel.mockRestore(); vi.unstubAllEnvs() }
+    })
+
     it('404s on an unknown agent', async () => {
         const res = await chat('ghost', { message: 'hi' })
         expect(res.status).toBe(404)

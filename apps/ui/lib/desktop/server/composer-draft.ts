@@ -1,11 +1,12 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentFingerprintOf, desktopAttachmentPathsOf, desktopAttachmentPathsSchema, type DesktopAttachmentFields } from '@rerun/contracts'
+import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentFingerprintOf, desktopAttachmentSelectionsOf, desktopAttachmentPathsSchema, desktopAttachmentItemsSchema, type DesktopAttachmentSelection, type DesktopAttachmentFields } from '@rerun/contracts'
 import type { Client, Row } from '@libsql/client'
 import { desktopComposerDraftSchema, type DesktopComposerDraft, type DesktopComposerDraftClear, type DesktopComposerDraftWrite } from '../composer-draft'
 import { DesktopHttpError } from './auth'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { readCoworkerFile } from './coworker-files'
+import { readDesktopImageSnapshots } from './composer-image-files'
 import { openDesktopDatabase } from './database'
 import { withRosterWrite } from './roster-writes'
 import type { DesktopRuntime } from './runtime'
@@ -34,6 +35,8 @@ function ensureAttachmentColumn(db: Client): Promise<void> {
         const columns = await db.execute('PRAGMA table_info(desktop_composer_drafts)')
         if (!columns.rows.some(row => String(row.name) === 'attachment_paths'))
             await db.execute('ALTER TABLE desktop_composer_drafts ADD COLUMN attachment_paths TEXT')
+        if (!columns.rows.some(row => String(row.name) === 'attachment_items'))
+            await db.execute('ALTER TABLE desktop_composer_drafts ADD COLUMN attachment_items TEXT')
     })().catch(error => { attachmentColumn.delete(db); throw error })
     attachmentColumn.set(db, work)
     return work
@@ -52,7 +55,12 @@ async function targetOf(db: Client, agentId: string, tabUid: string) {
 
 // `attachment_path` stays the first path for readers that predate ordered sets.
 // `attachment_paths` carries the ordered JSON array once more than one file is attached.
-function attachmentPathsOfRow(row?: Row): string[] {
+function attachmentPathsOfRow(row?: Row): DesktopAttachmentSelection[] {
+    if (row?.attachment_items !== null && row?.attachment_items !== undefined) {
+        // A corrupt mixed selection must not silently fall back to text-only and lose images.
+        const items = desktopAttachmentItemsSchema.parse(JSON.parse(String(row.attachment_items)))
+        return desktopAttachmentSelectionsOf({ attachmentItems: items })
+    }
     const stored = row?.attachment_paths
     if (stored !== null && stored !== undefined) {
         try {
@@ -70,13 +78,13 @@ function draftOf(row?: Row): DesktopComposerDraft {
 }
 
 async function draftAt(db: Query, agentId: string, tabUid: string) {
-    const found = await db.execute({ sql: 'SELECT revision, text, attachment_path, attachment_paths, updated_at FROM desktop_composer_drafts WHERE agent_id = ? AND tab_uid = ?', args: [agentId, tabUid] })
+    const found = await db.execute({ sql: 'SELECT revision, text, attachment_path, attachment_paths, attachment_items, updated_at FROM desktop_composer_drafts WHERE agent_id = ? AND tab_uid = ?', args: [agentId, tabUid] })
     return draftOf(found.rows[0])
 }
 
 function fingerprint(agentId: string, input: Input, action: 'save' | 'clear') {
     return createHash('sha256').update(JSON.stringify([action, agentId, input.tabUid, 'baseRevision' in input ? input.baseRevision : input.revision,
-        input.text, desktopAttachmentFingerprintOf(desktopAttachmentPathsOf(input))])).digest('hex')
+        input.text, desktopAttachmentFingerprintOf(desktopAttachmentSelectionsOf(input))])).digest('hex')
 }
 
 export function readDesktopComposerDraft(db: Client, agentId: string, tabUid: string) {
@@ -95,8 +103,8 @@ async function mutate(runtime: DesktopRuntime, agentId: string, input: Input, ac
         const transaction = await db.transaction('write')
         try {
             const current = await draftAt(transaction, agentId, input.tabUid)
-            const inputPaths = desktopAttachmentPathsOf(input)
-            const currentPaths = desktopAttachmentPathsOf(current as DesktopAttachmentFields)
+            const inputPaths = desktopAttachmentSelectionsOf(input)
+            const currentPaths = desktopAttachmentSelectionsOf(current as DesktopAttachmentFields)
             const hash = fingerprint(agentId, input, action)
             const previous = (await transaction.execute({ sql: 'SELECT agent_id, tab_uid, fingerprint, result_revision, cleared FROM desktop_composer_draft_writes WHERE request_id = ?', args: [input.requestId] })).rows[0]
             if (previous) {
@@ -121,12 +129,13 @@ async function mutate(runtime: DesktopRuntime, agentId: string, input: Input, ac
                 : current
             // Empty rows are revision tombstones. Clear never resets a version to zero, so an
             // older delayed save cannot restore text after a message has been accepted.
-            const nextPaths = desktopAttachmentPathsOf(next as DesktopAttachmentFields)
-            await transaction.execute({ sql: `INSERT INTO desktop_composer_drafts (agent_id,tab_uid,revision,text,attachment_path,attachment_paths,updated_at) VALUES (?,?,?,?,?,?,?)
-                ON CONFLICT(agent_id,tab_uid) DO UPDATE SET revision=excluded.revision, text=excluded.text, attachment_path=excluded.attachment_path, attachment_paths=excluded.attachment_paths, updated_at=excluded.updated_at`,
+            const nextPaths = desktopAttachmentSelectionsOf(next as DesktopAttachmentFields)
+            await transaction.execute({ sql: `INSERT INTO desktop_composer_drafts (agent_id,tab_uid,revision,text,attachment_path,attachment_paths,attachment_items,updated_at) VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(agent_id,tab_uid) DO UPDATE SET revision=excluded.revision, text=excluded.text, attachment_path=excluded.attachment_path, attachment_paths=excluded.attachment_paths, attachment_items=excluded.attachment_items, updated_at=excluded.updated_at`,
                 args: [agentId, input.tabUid, next.revision, next.text,
-                    nextPaths[0] ?? null,
-                    nextPaths.length > 1 ? JSON.stringify(nextPaths) : null,
+                    typeof nextPaths[0] === 'string' ? nextPaths[0] : null,
+                    !next.attachmentItems && nextPaths.length > 1 ? JSON.stringify(nextPaths) : null,
+                    next.attachmentItems ? JSON.stringify(next.attachmentItems) : null,
                     next.updatedAt ?? new Date().toISOString()] })
             await transaction.execute({ sql: 'INSERT INTO desktop_composer_draft_writes (request_id,agent_id,tab_uid,fingerprint,result_revision,cleared) VALUES (?,?,?,?,?,?)',
                 args: [input.requestId, agentId, input.tabUid, hash, next.revision, matches ? 1 : 0] })
@@ -145,10 +154,11 @@ export async function writeDesktopComposerDraft(runtime: DesktopRuntime, agentId
     if (!('validateAttachments' in first)) return first
     // Files use the same roster queue; validate ownership and bytes outside the draft
     // transaction, then repeat request identity and CAS checks before committing the set.
-    const paths = desktopAttachmentPathsOf(input)
+    const paths = desktopAttachmentSelectionsOf(input)
     let total = 0
     try {
-        for (const path of paths) total += (await readCoworkerFile(runtime, agentId, path, 'attach')).size
+        for (const path of paths) if (typeof path === 'string') total += (await readCoworkerFile(runtime, agentId, path, 'attach')).size
+        await readDesktopImageSnapshots(runtime, agentId, paths.filter((item): item is Exclude<DesktopAttachmentSelection, string> => typeof item !== 'string'))
         if (total > DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 128 KiB or smaller in total.')
     } catch (error) {
         // A known file refusal is safe to correct. Unexpected I/O/server failures remain

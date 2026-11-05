@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ComponentType } from 're
 import { ControlCenterView } from '@/components/control-center/ControlCenterView'
 import type { ControlRow, ControlSection } from '@/components/control-center/types'
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
-import { BellIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, KeyboardIcon, LayoutGridIcon, LockKeyholeIcon, MessageCircle, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
+import { BellIcon, FolderIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, KeyboardIcon, LayoutGridIcon, LockKeyholeIcon, MessageCircle, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
 import { parseQuery, searchItems } from '@/lib/control-center/search'
 import { buildDesktopControlCommands, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
@@ -31,6 +31,7 @@ const MIN_CONVERSATION_QUERY = 2
 const COMMAND_ICONS: Record<DesktopControlCommandId, ComponentType<{ className?: string }>> = {
     add_coworker: CirclePlusIcon,
     new_box: BoxIcon,
+    shared_files: FolderIcon,
     team_board: LayoutGridIcon,
     model_settings: LockKeyholeIcon,
     workspace_settings: SettingsIcon,
@@ -53,6 +54,7 @@ export type DesktopControlCenterProps = {
     onRefreshActivity?: () => Promise<BoardActivitySnapshot | null>
     coworkers: DesktopAgentView[]
     board?: DesktopBoardState
+    onSharedFiles?: () => void
     onAddBox?: () => void
     onMoveCoworker?: (agentId: string, spaceId: string) => void
     // The coworker whose chat is open on the board, or null while the board shows.
@@ -73,7 +75,7 @@ export type DesktopControlCenterProps = {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -123,8 +125,8 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
     const [attentionNotice, setAttentionNotice] = useState<{ scope: string; text: string } | null>(null)
     const selectingAttention = useRef<{ scope: string } | null>(null)
     const selectingChat = useRef<{ scope: string } | null>(null)
-    const latest = useRef({ open, disabled, selectionScope, coworkers, board, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
-    latest.current = { open, disabled, selectionScope, coworkers, board, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
+    const latest = useRef({ open, disabled, selectionScope, coworkers, board, onSharedFiles, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
+    latest.current = { open, disabled, selectionScope, coworkers, board, onSharedFiles, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
     const available = () => latest.current.open && !latest.current.disabled && !isDesktopQuitting() && latest.current.selectionScope === selectionScope
     const sameBoard = () => !!board && latest.current.board?.revision === board.revision
 
@@ -316,7 +318,7 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
             const current = latest.current
             const action = {
                 add_coworker: current.onAddCoworker, team_board: current.onBackToBoard, model_settings: current.onModelSettings,
-                new_box: current.onAddBox,
+                new_box: current.onAddBox, shared_files: current.onSharedFiles,
                 shortcuts: current.onShortcuts, notifications: current.onNotifications, workspace_settings: current.onWorkspaceSettings, recenter_board: current.onRecenterBoard, toggle_theme: current.onToggleTheme,
             }[command.id]
             // A retained row cannot dismiss the center when its action was removed, or invoke
@@ -420,7 +422,7 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
                 : conversationSection('coworker-conversations', 'Conversations', page.coworkerId))]
         }
 
-        const commands = buildDesktopControlCommands({ addBox: !!board && !!onAddBox, shortcuts: !!onShortcuts, notifications: !!onNotifications, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme })
+        const commands = buildDesktopControlCommands({ sharedFiles: !!onSharedFiles, addBox: !!board && !!onAddBox, shortcuts: !!onShortcuts, notifications: !!onNotifications, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme })
         const commandSections: ControlSection[] = [
             { id: 'actions', heading: 'Actions', rows: searchItems(commands.filter(command => command.group === 'actions'), text).map(commandRow) },
             { id: 'settings', heading: 'Settings', rows: searchItems(commands.filter(command => command.group === 'settings'), text).map(commandRow) },

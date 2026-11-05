@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto'
-import { isContextPart, workspaceAttachmentParts, workspaceAttachmentPaths, type DesktopWorkspaceAttachment, type MessageAuthor } from '@rerun/contracts'
+import { isContextPart, workspaceAttachmentParts, desktopStoredAttachmentSelections, desktopResolvedAttachmentParts, type DesktopResolvedAttachment, type DesktopWorkspaceAttachment, type MessageAuthor } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
 import type { MessageRow } from '../schema.js'
 import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
 
-export type DesktopFirstTurn = { sessionId: string; runId: string; message: string; attachments?: DesktopWorkspaceAttachment[]; author?: MessageAuthor }
+export type DesktopFirstTurn = { sessionId: string; runId: string; message: string; attachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; author?: MessageAuthor }
 const conflict = () => new HttpError(409, 'This conversation belongs to a different or incomplete first turn.')
-const initialContent = (turn: DesktopFirstTurn) => [{ type: 'text' as const, text: turn.message }, ...workspaceAttachmentParts(turn.attachments ?? [])]
+const initialContent = (turn: DesktopFirstTurn) => [{ type: 'text' as const, text: turn.message }, ...(turn.desktopAttachments ? desktopResolvedAttachmentParts(turn.desktopAttachments) : workspaceAttachmentParts(turn.attachments ?? []))]
 function fingerprint(turn: DesktopFirstTurn) {
     return createHash('sha256').update(JSON.stringify([turn.sessionId, initialContent(turn), turn.author?.id ?? null, turn.author?.name ?? null])).digest('hex')
 }
@@ -18,12 +18,12 @@ function matchesUser(row: import('@libsql/client').Row, turn: DesktopFirstTurn) 
     if (row.role !== 'user' || row.author_id !== (turn.author?.id ?? null) || row.author_name !== (turn.author?.name ?? null)) return false
     let content: unknown
     try { content = JSON.parse(String(row.content_json)) } catch { return false }
-    if (typeof content === 'string') return content === turn.message && !turn.attachments?.length
+    if (typeof content === 'string') return content === turn.message && !turn.attachments?.length && !turn.desktopAttachments?.length
     if (!Array.isArray(content)) return false
     const prefix = initialContent(turn)
     return JSON.stringify(content.slice(0, prefix.length)) === JSON.stringify(prefix)
         && content.slice(prefix.length).every(isContextPart)
-        && workspaceAttachmentPaths(content).length === (turn.attachments?.length ?? 0)
+        && desktopStoredAttachmentSelections(content).length === (turn.desktopAttachments?.length ?? turn.attachments?.length ?? 0)
 }
 
 /** An exact replay is read-only; a run ID alone is never proof of delivered user input. */

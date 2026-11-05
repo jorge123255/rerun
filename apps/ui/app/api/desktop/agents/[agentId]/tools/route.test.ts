@@ -113,3 +113,19 @@ test('master and permission patches each preserve the rest of the config', async
     expect(config.tools.desktopToolGrants?.verbositySet).toBe(true)
     expect(config.description).toBe('Self tester')
 })
+
+test('shared text reading is an explicit grant and respects the shared-family pause', async () => {
+    const original = await readTools(coworker)
+    expect(rerunRows(original.body).find(row => row.id === 'sharedFilesRead')).toMatchObject({ enabled: false, available: true })
+    const enabled = await patchTools(coworker, { group: 'rerun', id: 'sharedFilesRead', enabled: true })
+    expect(enabled.status).toBe(200)
+    expect(rerunRows(enabled.body).find(row => row.id === 'sharedFilesRead')).toMatchObject({ enabled: true, available: true })
+    const config = agents.get('engine-self')!
+    expect(config.tools.desktopToolGrants?.sharedFilesRead).toBe(true)
+    expect(config.tools.desktopToolGrants?.workspaceRead).not.toBe(true)
+    expect(config.tools.desktopToolGrants?.sharedDb).not.toBe(true)
+    config.tools.shared = false
+    expect(rerunRows((await readTools(coworker)).body).find(row => row.id === 'sharedFilesRead')).toMatchObject({ enabled: false, available: false })
+    expect((await patchTools(coworker, { group: 'rerun', id: 'sharedFilesRead', enabled: true })).status).toBe(400)
+    expect((await patchTools(coworker, { group: 'rerun', id: 'sharedFilesRead', enabled: false })).status).toBe(200)
+})

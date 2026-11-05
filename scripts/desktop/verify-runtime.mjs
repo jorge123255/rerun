@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { existsSync, output, repoRoot, resourcesDir } from './lib.mjs'
 import { readUiSharpManifest } from './ui-sharp.mjs'
 import { verifyPdfHelper } from './pdf-helper-probe.mjs'
+import { verifyPdfTextHelper } from './pdf-text-probe.mjs'
 
 const execFileAsync = promisify(execFile)
 const failures = []
@@ -15,7 +16,7 @@ const manifest = JSON.parse(await readFile(join(resourcesDir, 'runtime-manifest.
 check(manifest.protocolVersion === 1 && typeof manifest.buildId === 'string' && manifest.buildId.length > 0, 'manifest protocolVersion/buildId')
 
 const resolved = {}
-for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'renameHelperPath', 'pdfHelperPath']) {
+for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'renameHelperPath', 'pdfHelperPath', 'pdfTextHelperPath']) {
     const path = resolve(resourcesDir, manifest[field] ?? '')
     resolved[field] = path
     const rel = relative(resourcesDir, path)
@@ -30,6 +31,13 @@ try {
     check(true, 'native PDF helper renders a bounded PNG through the manifest path')
 } catch {
     check(false, 'native PDF helper renders a bounded PNG through the manifest path')
+}
+
+try {
+    await verifyPdfTextHelper(resolved.pdfTextHelperPath)
+    check(true, 'native PDF text helper reads upright, rotated and scanned pages through the manifest path')
+} catch {
+    check(false, 'native PDF text helper reads upright, rotated and scanned pages through the manifest path')
 }
 
 const probeHome = await mkdtemp(join(tmpdir(), 'rerun-verify-codex-'))

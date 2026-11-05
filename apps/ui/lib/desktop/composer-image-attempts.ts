@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { DESKTOP_IMAGE_ATTACHMENT_MAX_BYTES, desktopImageKindForName } from './composer-image'
+import { desktopUploadAttemptsSchema } from './composer-upload-attempts'
 
 export const desktopImageUploadScopeSchema = z.object({ tabUid: z.string().min(1).max(128) }).strict()
 export const desktopImageUploadAttemptSchema = z.object({
@@ -20,7 +21,8 @@ async function request(agentId: string, init: RequestInit, query = '') {
     return body
 }
 export async function readDesktopImageUploadAttempts(agentId: string, tabUid: string, signal?: AbortSignal) {
-    return desktopImageUploadAttemptsSchema.parse(await request(agentId, { signal }, `?${new URLSearchParams({ tabUid })}`)).attempts
+    return desktopUploadAttemptsSchema.parse(await request(agentId, { signal }, `?${new URLSearchParams({ tabUid })}`)).attempts
+        .filter(item => !!desktopImageKindForName(item.name)).map(item => desktopImageUploadAttemptSchema.parse(item))
 }
 export async function reserveDesktopImageUploadAttempt(agentId: string, tabUid: string, attempt: DesktopImageUploadAttempt, signal?: AbortSignal) {
     const result = await request(agentId, { method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tabUid, ...attempt }) })

@@ -7,7 +7,6 @@ import type { NotificationKind } from '@/lib/engine/types'
 import { CalendarClock } from '@/lib/icons'
 import { KIND_BEAM, KIND_ICONS, KIND_ICON_COLORS } from '@/lib/notifications/kind-visuals'
 import type { DesktopNotificationTarget } from './notification-bridge'
-import { resolveDesktopNotificationClick } from './notification-click'
 import type { DesktopNotificationAdmission } from './notifications'
 
 export function desktopNotificationToastTarget(event: DesktopNotificationAdmission): DesktopNotificationTarget {
@@ -19,9 +18,9 @@ export function desktopNotificationToastTarget(event: DesktopNotificationAdmissi
 
 // The in-app half of a desktop notification: the original toast card verbatim — same buddy,
 // beam, copy rules and « Open conversation », which revalidates the exact chat before it
-// navigates, exactly like a native click. The toast id is the event key, so a remount cannot
+// navigates, through the same lifetime-bound callback as a native click. The toast id is the event key, so a remount cannot
 // announce the same admission twice.
-export function showDesktopNotificationToast(event: DesktopNotificationAdmission, onOpenConversation?: (target: { agentId: string; sessionId: string }) => void): void {
+export function showDesktopNotificationToast(event: DesktopNotificationAdmission, onOpenTarget?: (target: DesktopNotificationTarget) => void): void {
     const id = `desktop-notification:${event.key}`
     const scheduled = isScheduledSource(event.source)
     const kind = event.kind as NotificationKind
@@ -38,12 +37,7 @@ export function showDesktopNotificationToast(event: DesktopNotificationAdmission
             iconColor={iconColor}
             beamTone={beamTone}
             onDismiss={() => toast.dismiss(toastId)}
-            onOpen={onOpenConversation ? () => {
-                toast.dismiss(toastId)
-                void resolveDesktopNotificationClick(target, AbortSignal.timeout(5000))
-                    .then(binding => { if (binding) onOpenConversation(binding) })
-                    .catch(() => {})
-            } : undefined}
+            onOpen={onOpenTarget ? () => { toast.dismiss(toastId); onOpenTarget(target) } : undefined}
         />
     ), { id })
 }

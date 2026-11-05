@@ -15,6 +15,8 @@ const attempts = new Map<string, string>()
 const delivered = new Set<string>()
 const receipts: { key: string; attemptId: string; status: string }[] = []
 const navigate = vi.fn(), notify = vi.fn(), audioPlay = vi.fn()
+const toastTargets = new Map<string, (target: DesktopNotificationTarget) => void>()
+vi.mock('@/lib/desktop/notification-toast', () => ({ showDesktopNotificationToast: (event: DesktopNotificationEvent, open: (target: DesktopNotificationTarget) => void) => { toastTargets.set(event.key, open) } }))
 let listener: ((target: DesktopNotificationTarget) => void) | undefined
 let channels = { toast: true, sound: false }, receiptFails = false
 let attention: unknown[] = [], groups: unknown[] = [], terminal: unknown = null
@@ -23,7 +25,7 @@ const event = (key = 'pending:request-a', sessionId = 'chat-a'): DesktopNotifica
 
 beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    channels = { toast: true, sound: false }; receiptFails = false; attentionRead = undefined
+    channels = { toast: true, sound: false }; receiptFails = false; attentionRead = undefined; toastTargets.clear()
     notify.mockReset().mockResolvedValue({ status: 'shown' }); audioPlay.mockReset().mockResolvedValue(undefined); navigate.mockReset()
     vi.stubGlobal('Audio', class { play = audioPlay; pause() {} })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
@@ -137,5 +139,24 @@ test('superseded and unmounted click reads cannot navigate late', async () => {
     attentionRead = () => new Promise(resolve => { release = resolve })
     await act(async () => listener?.(a)); await act(async () => root?.unmount()); root = undefined
     await act(async () => release(Response.json({ items: [pendingItem(a)], unavailableAgentIds: [], checkedAt: '' })))
+    expect(navigate).toHaveBeenCalledTimes(1)
+})
+
+test('toast and native clicks share supersession, unmount and exact target checks', async () => {
+    const a = event(), b = event('pending:request-b', 'chat-b')
+    events.push(a, b)
+    await mount()
+    let release!: (response: Response) => void
+    attentionRead = () => new Promise(resolve => { release = resolve })
+    await act(async () => { toastTargets.get(a.key)?.(a) })
+    attentionRead = undefined; attention = [pendingItem(b)]
+    await act(async () => { listener?.(b) })
+    await act(async () => { release(Response.json({ items: [pendingItem(a)], unavailableAgentIds: [], checkedAt: '' })) })
+    expect(navigate).toHaveBeenCalledTimes(1)
+    expect(navigate).toHaveBeenLastCalledWith({ agentId: 'agent-a', sessionId: 'chat-b', title: '' })
+    const oldToast = toastTargets.get(a.key)!
+    await act(async () => { root?.unmount(); root = undefined })
+    attention = [pendingItem(a)]
+    await act(async () => { oldToast(a) })
     expect(navigate).toHaveBeenCalledTimes(1)
 })

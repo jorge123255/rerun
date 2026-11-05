@@ -1,6 +1,6 @@
 'use client'
 
-import { desktopAttachmentFieldsOf, desktopAttachmentPathsOf, type DesktopAttachmentFields } from '@rerun/contracts'
+import { desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf as desktopAttachmentPathsOf, type DesktopAttachmentFields } from '@rerun/contracts'
 import { flushTabWrites, pendingTabWrite } from './tab-writes'
 import { desktopComposerDraftSchema as savedSchema, type DesktopComposerDraft as Saved } from './composer-draft'
 
@@ -53,7 +53,7 @@ async function read(r: Record) {
     const fields = desktopAttachmentFieldsOf(pathsOf(saved))
     publish(r, r.dirty
         ? { loaded: true, error: undefined, conflict: false }
-        : { text: saved.text, ...fields, attachmentPath: fields.attachmentPath, attachmentPaths: fields.attachmentPaths, loaded: true, error: undefined, conflict: false })
+        : { text: saved.text, ...fields, attachmentPath: fields.attachmentPath, attachmentPaths: fields.attachmentPaths, attachmentItems: fields.attachmentItems, loaded: true, error: undefined, conflict: false })
 }
 
 async function drain(r: Record) {
@@ -114,7 +114,7 @@ export function updateDesktopDraft(r: Record, value: ComposerValue) {
     r.dirty = true
     const fields = desktopAttachmentFieldsOf(pathsOf(value))
     const correctedAttachments = r.state.attachmentRejected && JSON.stringify(pathsOf(r.state)) !== JSON.stringify(pathsOf(value))
-    publish(r, { text: value.text, ...fields, attachmentPath: fields.attachmentPath, attachmentPaths: fields.attachmentPaths, version: r.state.version + 1, saving: true,
+    publish(r, { text: value.text, ...fields, attachmentPath: fields.attachmentPath, attachmentPaths: fields.attachmentPaths, attachmentItems: fields.attachmentItems, version: r.state.version + 1, saving: true,
         ...(correctedAttachments && { error: undefined, attachmentRejected: false }) })
     if (!r.state.error) void saveDesktopDraft(r)
 }

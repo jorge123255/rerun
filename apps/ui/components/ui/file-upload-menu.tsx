@@ -8,17 +8,18 @@ import { useRef } from 'react'
 
 type FileUploadMenuProps = {
     onPick: (entries: UploadEntry[]) => void
+    disabled?: boolean
 }
 
 // Picking files no longer blocks: the upload reports itself in the tray, so this stays a plain
 // trigger with no pending state of its own.
-export function FileUploadMenu({ onPick }: FileUploadMenuProps) {
+export function FileUploadMenu({ onPick, disabled = false }: FileUploadMenuProps) {
     const fileInputRef = useRef<HTMLInputElement>(null)
     const folderInputRef = useRef<HTMLInputElement>(null)
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files
-        if (files?.length) onPick(entriesFromFileList(files))
+        if (!disabled && files?.length) onPick(entriesFromFileList(files))
         e.target.value = ''
     }
 
@@ -28,7 +29,7 @@ export function FileUploadMenu({ onPick }: FileUploadMenuProps) {
             <input ref={folderInputRef} type="file" multiple className="hidden" onChange={handleChange} {...{ webkitdirectory: '' }} />
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon-sm" title="Upload">
+                    <Button variant="ghost" size="icon-sm" title="Upload" disabled={disabled}>
                         <UploadIcon className="size-3.5" />
                     </Button>
                 </DropdownMenuTrigger>

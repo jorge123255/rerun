@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { desktopAttachmentFingerprintOf, desktopAttachmentPathsOf } from '@rerun/contracts'
+import { desktopAttachmentFingerprintOf, desktopAttachmentSelectionsOf, type DesktopAttachmentFields } from '@rerun/contracts'
 import type { Client, Row } from '@libsql/client'
 import { listRuns } from '@/lib/engine/client'
 import type { EngineConnection } from '@/lib/engine/types'
@@ -8,11 +8,11 @@ import type { DesktopModelPick } from '../chat-model'
 import { DesktopHttpError } from './auth'
 import { createDesktopSession, type DesktopAgent } from './store'
 
-type StartInput = { text: string; attachmentPath?: string; attachmentPaths?: string[]; modelChoice?: DesktopModelPick }
+type StartInput = DesktopAttachmentFields & { text: string; modelChoice?: DesktopModelPick }
 
 function fingerprint(input: StartInput) {
     // A single path hashes exactly like the original receipt; two or more bind their order.
-    return createHash('sha256').update(JSON.stringify([input.text, desktopAttachmentFingerprintOf(desktopAttachmentPathsOf(input)), input.modelChoice?.connectionId, input.modelChoice?.model])).digest('hex')
+    return createHash('sha256').update(JSON.stringify([input.text, desktopAttachmentFingerprintOf(desktopAttachmentSelectionsOf(input)), input.modelChoice?.connectionId, input.modelChoice?.model])).digest('hex')
 }
 
 // Keep a tab's session ID stable even if a rejected reservation is released and recreated.

@@ -1,6 +1,6 @@
 import 'server-only'
 import type { Client, Row } from '@libsql/client'
-import { desktopAttachmentPathsSchema } from '@rerun/contracts'
+import { desktopAttachmentPathsSchema, desktopAttachmentItemsSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, type DesktopAttachmentSelection } from '@rerun/contracts'
 import type { DesktopTabLayout, DesktopTabWrite } from '../session-tabs'
 import { DesktopHttpError } from './auth'
 import { desktopSessionsQuery, sessionOf } from './store'
@@ -32,7 +32,10 @@ function layoutQuery(agentId: string) {
     return { sql: 'SELECT revision, layout FROM desktop_agent_tabs WHERE agent_id = ?', args: [agentId] }
 }
 
-function draftAttachmentPaths(row: Row): string[] {
+function draftAttachmentPaths(row: Row): DesktopAttachmentSelection[] {
+    if (row.attachment_items !== null && row.attachment_items !== undefined) {
+        return desktopAttachmentSelectionsOf({ attachmentItems: desktopAttachmentItemsSchema.parse(JSON.parse(String(row.attachment_items))) })
+    }
     if (row.attachment_paths !== null && row.attachment_paths !== undefined) {
         try {
             const parsed = desktopAttachmentPathsSchema.safeParse(JSON.parse(String(row.attachment_paths)))
@@ -87,16 +90,17 @@ export function writeDesktopTabs(db: Client, agentId: string, input: DesktopTabW
                 if (count > 10) throw new DesktopHttpError(409, 'Check unresolved imports before combining these conversation tabs.')
                 finalCounts.set(to, count)
             }
-            const storedDrafts = await transaction.execute({ sql: 'SELECT tab_uid, revision, text, attachment_path, attachment_paths FROM desktop_composer_drafts WHERE agent_id = ?', args: [agentId] })
+            const storedDrafts = await transaction.execute({ sql: 'SELECT tab_uid, revision, text, attachment_path, attachment_paths, attachment_items FROM desktop_composer_drafts WHERE agent_id = ?', args: [agentId] })
             const drafts = new Map(storedDrafts.rows.map(draft => [String(draft.tab_uid), draft]))
             const transfers = new Map<string, Row>()
             const clear = new Set<string>()
-            const writeDraft = async (uid: string, prior: Row | undefined, text: string, attachments: readonly string[]) => {
+            const writeDraft = async (uid: string, prior: Row | undefined, text: string, attachments: readonly DesktopAttachmentSelection[]) => {
                 const version = Number(prior?.revision ?? 0)
                 if (version >= Number.MAX_SAFE_INTEGER - 1) throw new DesktopHttpError(409, 'This draft version cannot be moved. Open a new conversation tab.')
-                await transaction.execute({ sql: `INSERT INTO desktop_composer_drafts (agent_id,tab_uid,revision,text,attachment_path,attachment_paths,updated_at) VALUES (?,?,?,?,?,?,?)
-                    ON CONFLICT(agent_id,tab_uid) DO UPDATE SET revision=excluded.revision,text=excluded.text,attachment_path=excluded.attachment_path,attachment_paths=excluded.attachment_paths,updated_at=excluded.updated_at`,
-                    args: [agentId, uid, version + 1, text, attachments[0] ?? null, attachments.length > 1 ? JSON.stringify(attachments) : null, new Date().toISOString()] })
+                const fields = desktopAttachmentFieldsOf(attachments)
+                await transaction.execute({ sql: `INSERT INTO desktop_composer_drafts (agent_id,tab_uid,revision,text,attachment_path,attachment_paths,attachment_items,updated_at) VALUES (?,?,?,?,?,?,?,?)
+                    ON CONFLICT(agent_id,tab_uid) DO UPDATE SET revision=excluded.revision,text=excluded.text,attachment_path=excluded.attachment_path,attachment_paths=excluded.attachment_paths,attachment_items=excluded.attachment_items,updated_at=excluded.updated_at`,
+                    args: [agentId, uid, version + 1, text, typeof attachments[0] === 'string' ? attachments[0] : null, fields.attachmentPaths ? JSON.stringify(fields.attachmentPaths) : null, fields.attachmentItems ? JSON.stringify(fields.attachmentItems) : null, new Date().toISOString()] })
             }
             for (const before of previous) {
                 const after = input.tabs.find(tab => tab.uid === before.uid)

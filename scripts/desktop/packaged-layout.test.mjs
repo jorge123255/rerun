@@ -23,6 +23,7 @@ async function fakeResources() {
     await writeFile(join(root, 'runtime', 'rerun-codex'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-rename-entry'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-render-pdf'), 'fake')
+    await writeFile(join(root, 'runtime', 'rerun-pdf-text'), 'fake')
     await writeFile(join(root, 'runtime-manifest.json'), JSON.stringify({
         protocolVersion: 1,
         buildId: 'layout-test-desktop-0.1.0',
@@ -34,6 +35,7 @@ async function fakeResources() {
         codexPath: 'runtime/rerun-codex',
         renameHelperPath: 'runtime/rerun-rename-entry',
         pdfHelperPath: 'runtime/rerun-render-pdf',
+        pdfTextHelperPath: 'runtime/rerun-pdf-text',
     }))
     return root
 }
@@ -70,6 +72,7 @@ test('loadBundle resolves the packaged UI host from the manifest inside resource
         assert(existsSync(bundle.uiHost))
         assert(!bundle.uiHost.includes('.asar'))
         assert.equal(bundle.pdfHelperPath, await realpath(resolve(root, 'runtime', 'rerun-render-pdf')))
+        assert.equal(bundle.pdfTextHelperPath, await realpath(resolve(root, 'runtime', 'rerun-pdf-text')))
     } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -120,7 +123,9 @@ test('the supervisor launches the UI child through the real resource path, never
         assert.equal(uiSpawn.command, bundle.nodePath)
         assert.equal(uiSpawn.env.RERUN_DESKTOP_RENAME_HELPER, bundle.renameHelperPath)
         assert.equal(uiSpawn.env.RERUN_DESKTOP_PDF_HELPER, bundle.pdfHelperPath)
+        assert.equal(uiSpawn.env.RERUN_DESKTOP_PDF_TEXT_HELPER, bundle.pdfTextHelperPath)
         assert.equal(spawned[1].env.RERUN_DESKTOP_PDF_HELPER, undefined)
+        assert.equal(spawned[1].env.RERUN_DESKTOP_PDF_TEXT_HELPER, undefined)
         assert.equal(spawned[1].args[0], bundle.engineEntry)
 
         await supervisor.stop()

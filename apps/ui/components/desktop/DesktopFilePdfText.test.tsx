@@ -7,6 +7,7 @@ import { DesktopFilePdfPreview } from './DesktopFilePdfPreview'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const png = () => Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+k7foAAAAASUVORK5CYII='), value => value.charCodeAt(0))
+const sourceHash = 'a'.repeat(64)
 const upright = { page: 1, rotation: 0, crop: { x: 0, y: 0, width: 612, height: 792 }, pageWidth: 612, pageHeight: 792, text: 'Alpha and Alpha', runs: [{ start: 0, end: 5, x: 0.1, y: 0.2, w: 0.2, h: 0.03 }, { start: 10, end: 15, x: 0.4, y: 0.2, w: 0.2, h: 0.03 }] }
 const turned = { page: 2, rotation: 90, crop: { x: 36, y: 36, width: 540, height: 720 }, pageWidth: 720, pageHeight: 540, text: 'Alpha two', runs: [{ start: 0, end: 5, x: 0.25, y: 0.3, w: 0.2, h: 0.04 }] }
 const props: ComponentProps<typeof DesktopFilePdfPreview> = {
@@ -28,11 +29,11 @@ function pageResponse(page = 1, extra: Record<string, string> = {}, points = tru
         ? { 'x-pdf-page-width': '720', 'x-pdf-page-height': '540' }
         : { 'x-pdf-page-width': '612', 'x-pdf-page-height': '792' }
     return new Response(png(), { headers: {
-        'content-type': 'image/png', 'x-pdf-page': String(page), 'x-pdf-pages': '2', 'x-pdf-width': '1', 'x-pdf-height': '1', ...sizes, ...extra,
+        'content-type': 'image/png', 'x-pdf-page': String(page), 'x-pdf-pages': '2', 'x-pdf-width': '1', 'x-pdf-height': '1', 'x-pdf-sha256': sourceHash, ...sizes, ...extra,
     } })
 }
 function textResponse(body: Record<string, unknown> = { identity: '8:1', path: 'docs/report.pdf', pageCount: 2, truncated: false, reason: '', pages: [upright, turned] }) {
-    return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json; charset=utf-8' } })
+    return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json; charset=utf-8', 'x-pdf-sha256': sourceHash } })
 }
 function deferred<T>() {
     let resolve!: (value: T) => void
@@ -92,6 +93,7 @@ test('aligns a selectable layer to the displayed crop and moves Find to the matc
     await render()
     expect(textCalls()).toHaveLength(1)
     expect(textCalls()[0]?.url.searchParams.get('path')).toBe('docs/report.pdf')
+    expect(textCalls()[0]?.url.searchParams.get('sha256')).toBe(sourceHash)
     expect(textCalls()[0]?.url.searchParams.get('page')).toBeNull()
     expect(textCalls()[0]?.url.searchParams.get('scale')).toBeNull()
     expect(layer()?.dataset.pdfRotation).toBe('0')
@@ -141,6 +143,49 @@ test('a newer query replaces the previous match count', async () => {
 test('a partial match uses part of the run', async () => {
     installFetch(); await render(); await typeQuery('Alp')
     expect(Number.parseFloat(document.querySelector<HTMLElement>('[data-pdf-match="active"]')?.style.width ?? '')).toBeCloseTo(12, 5)
+})
+
+test('typing a query jumps directly to its first matching page and rotates its selection layer', async () => {
+    installFetch(); await render(); await typeQuery('two')
+    expect(count()).toBe('1 of 1')
+    expect(pageCalls().map(call => call.url.searchParams.get('page'))).toEqual(['1', '2'])
+    const run = layer()?.querySelector<HTMLElement>('[data-pdf-text-start]')
+    expect(run?.style.transform).toBe('rotate(90deg)')
+})
+
+test('copy across positioned runs preserves the PDF whitespace between them', async () => {
+    installFetch(); await render()
+    const spans = layer()!.querySelectorAll('[data-pdf-text-start] > span')
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(spans[0]!.firstChild!, 0)
+    range.setEnd(spans[1]!.firstChild!, 5)
+    selection.removeAllRanges(); selection.addRange(range)
+    const clipboard = { setData: vi.fn() }
+    const event = new Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', { value: clipboard })
+    await act(async () => { spans[0]!.dispatchEvent(event) })
+    expect(clipboard.setData).toHaveBeenCalledWith('text/plain', 'Alpha and Alpha')
+    expect(event.defaultPrevented).toBe(true)
+    selection.removeAllRanges()
+})
+
+test('a new raster hash drops the old text and refuses an extract of different bytes', async () => {
+    let rasterHash = sourceHash
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://127.0.0.1')
+        calls.push({ url, signal: init?.signal })
+        if (url.pathname.endsWith('/files/pdf-text')) return Promise.resolve(textResponse())
+        return Promise.resolve(pageResponse(1, { 'x-pdf-sha256': rasterHash }))
+    }))
+    await render()
+    expect(layer()).not.toBeNull()
+    rasterHash = 'b'.repeat(64)
+    await click('Zoom in')
+    expect(textCalls()).toHaveLength(2)
+    expect(textCalls()[1]?.url.searchParams.get('sha256')).toBe(rasterHash)
+    expect(layer()).toBeNull()
+    expect(status()).toBe('This PDF changed. Reopen it to search the current document.')
 })
 
 test('a scanned page says there is no searchable text, including while a query is typed', async () => {

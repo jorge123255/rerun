@@ -11,12 +11,13 @@ import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/deskto
 import type { UploadEntry } from '@/lib/files/upload'
 import { ChevronLeftIcon, ChevronRightIcon, FileIcon, FolderIcon } from '@/lib/icons'
 import { Badge } from '@rerun/ui/primitives'
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 
 // The workspace shared folder. Same FileList, breadcrumb, and text preview as the hosted
 // shared Files view. Rename, delete, edit, media, and publication stay out of this slice.
-// FileList still draws those menu items; the handlers refuse them and make no request.
+// Optional FileList actions keep the original layout without advertising unavailable mutations.
 
 const ROOT = 'Files'
 const TEXT = /\.(txt|md)$/i
@@ -39,15 +40,21 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
     const [entries, setEntries] = useState<DesktopSharedEntry[] | undefined>()
     const [truncated, setTruncated] = useState(false)
     const [failed, setFailed] = useState<string | null>(null)
+    const [uploading, setUploading] = useState(false)
+    const [attempt, setAttempt] = useState(0)
+    const current = useRef({ mounted: true, path })
+    current.current.path = path
+    const importing = useRef<AbortController | null>(null)
 
-    const refresh = useCallback(async () => {
-        const listing = await listDesktopSharedFolder(path)
-        setEntries(listing.entries)
-        setTruncated(listing.truncated)
-    }, [path])
+    useEffect(() => {
+        current.current.mounted = true
+        const stop = subscribeDraftShutdown(() => importing.current?.abort())
+        return () => { current.current.mounted = false; importing.current?.abort(); stop() }
+    }, [])
 
     useEffect(() => {
         const controller = new AbortController()
+        importing.current?.abort()
         setEntries(undefined)
         setFailed(null)
         void listDesktopSharedFolder(path, controller.signal)
@@ -62,28 +69,46 @@ function SharedFolder({ path, onOpen }: { path: string; onOpen: (path: string, d
                 setFailed(messageOf(error, 'The shared folder could not be listed.'))
             })
         return () => controller.abort()
-    }, [path])
+    }, [path, attempt])
 
     const upload = async (picked: UploadEntry[]) => {
-        for (const entry of picked) {
-            const folder = [path, entry.subDir].filter(Boolean).join('/')
-            try { await importDesktopSharedFile(folder, entry.file) }
-            catch (error) { toast.error(messageOf(error, `Could not import ${entry.file.name}`)) }
+        if (importing.current || !current.current.mounted || isDesktopQuitting()) return
+        if (picked.length > 100) { toast.error('Import at most 100 files at a time.'); return }
+        const controller = new AbortController()
+        importing.current = controller
+        const release = holdDraftAdmission()
+        setUploading(true)
+        const active = () => current.current.mounted && current.current.path === path && !controller.signal.aborted && !isDesktopQuitting()
+        try {
+            for (const entry of picked) {
+                if (!active()) break
+                const folder = [path, entry.subDir].filter(Boolean).join('/')
+                try { await importDesktopSharedFile(folder, entry.file, controller.signal) }
+                catch (error) { if (active()) toast.error(messageOf(error, `Could not confirm import of ${entry.file.name}. Refresh before retrying.`)) }
+            }
+            if (active()) {
+                try {
+                    const listing = await listDesktopSharedFolder(path, controller.signal)
+                    if (active()) { setEntries(listing.entries); setTruncated(listing.truncated); setFailed(null) }
+                } catch (error) { if (active()) setFailed(messageOf(error, 'The shared folder could not be listed.')) }
+            }
+        } finally {
+            if (importing.current === controller) importing.current = null
+            if (current.current.mounted) setUploading(false)
+            release()
         }
-        try { await refresh() }
-        catch (error) { toast.error(messageOf(error, 'The shared folder could not be listed.')) }
     }
 
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             <BrainTopBar crumbs={folderCrumbs(path, next => onOpen(next, true))} status={truncated ? 'Showing the first 512 entries' : undefined} />
-            {failed ? <p className="px-6 py-6 text-sm text-destructive">{failed}</p> : <FileList
+            {uploading && <p role="status" className="px-6 py-2 text-sm text-muted-foreground">Importing files…</p>}
+            {failed ? <div className="space-y-2 px-6 py-6"><p role="alert" className="text-sm text-destructive">{failed}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FileList
                 title={path.split('/').filter(Boolean).pop() ?? ROOT}
                 entries={entries}
                 onOpen={entry => onOpen(joinPath(path, entry.name), entry.type === 'dir')}
-                onRename={() => toast.error('Shared files can’t be renamed here.')}
-                onDelete={() => toast.error('Shared files can’t be deleted here.')}
-                onDownload={() => toast.error('Open a .txt or .md file to preview it. Download isn’t available for shared files.')}
+                emptyDescription="Nothing here yet. Import a text or Markdown file to share it with coworkers that have Read shared files enabled."
+                uploadDisabled={uploading || !entries}
                 onUpload={picked => void upload(picked)}
             />}
         </div>
@@ -95,6 +120,7 @@ function SharedFile({ path, entries, onOpen }: { path: string; entries: DesktopS
     const name = path.split('/').pop() ?? path
     const text = TEXT.test(name)
     const [preview, setPreview] = useState<{ path: string; content: string | null; truncated: boolean; error: string | null } | null>(null)
+    const [attempt, setAttempt] = useState(0)
 
     useEffect(() => {
         if (!text) return
@@ -104,7 +130,7 @@ function SharedFile({ path, entries, onOpen }: { path: string; entries: DesktopS
             .then(page => { if (!controller.signal.aborted) setPreview({ path, content: page.content, truncated: page.truncated, error: null }) })
             .catch(error => { if (!controller.signal.aborted) setPreview({ path, content: null, truncated: false, error: messageOf(error, 'This file could not be read') }) })
         return () => controller.abort()
-    }, [path, text])
+    }, [path, text, attempt])
 
     const siblings = useSiblingFiles({
         entries: (entries ?? []).filter(entry => entry.type !== 'dir' && TEXT.test(entry.name)),
@@ -125,7 +151,7 @@ function SharedFile({ path, entries, onOpen }: { path: string; entries: DesktopS
             </BrainTopBar>
             <div className="flex min-h-0 flex-1 flex-col border-t border-border">
                 {text ? (
-                    ready?.error ? <p className="p-3 text-xs text-destructive">{ready.error}</p> : <FilePreview fileName={name} content={ready?.content ?? null} rawUrl="" loading={!ready} />
+                    ready?.error ? <div className="space-y-2 p-3"><p role="alert" className="text-xs text-destructive">{ready.error}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FilePreview fileName={name} content={ready?.content ?? null} rawUrl="" loading={!ready} />
                 ) : (
                     <p className="p-3 text-xs text-muted-foreground">Only .txt and .md files can be previewed.</p>
                 )}
@@ -142,6 +168,7 @@ function SharedFilesPanel({ onClose }: { onClose: () => void }) {
     useEffect(() => {
         if (selection.kind !== 'file') return
         const controller = new AbortController()
+        setFolderEntries(undefined)
         void listDesktopSharedFolder(folder, controller.signal)
             .then(listing => { if (!controller.signal.aborted) setFolderEntries(listing.entries) })
             .catch(() => { if (!controller.signal.aborted) setFolderEntries([]) })

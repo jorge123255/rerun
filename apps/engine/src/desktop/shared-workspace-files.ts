@@ -1,8 +1,10 @@
 import { constants } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { link, lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { TEXT_FILE_PAGE_CHARS } from '@rerun/contracts'
+import { acquireSkillLease, renameSkillEntry } from './skill-publication-native.ts'
+import { SkillBoundaryError } from './skill-publication-error.ts'
 
 // One filesystem boundary for the workspace shared folder. The desktop UI and the
 // desktop shared_read / shared_list tools both call this module. Callers pass the
@@ -89,6 +91,7 @@ function validImportName(name: string) {
 
 function rethrow(error: unknown, folder = false): never {
     if (isAbort(error) || error instanceof SharedWorkspaceFileError) throw error
+    if (error instanceof SkillBoundaryError) throw new SharedWorkspaceFileError(error.status, 'Could not confirm the shared file change. Refresh Shared files before trying again. Existing files were preserved.')
     if (!(error as NodeJS.ErrnoException).code) throw error
     throw mapFs(error, folder)
 }
@@ -134,11 +137,11 @@ async function pinDirectory(path: string, signal?: AbortSignal): Promise<Pin> {
     }
 }
 
-async function assertPin(pin: Pin) {
+async function assertPin(pin: Pin, entriesMayChange = false) {
     const again = await openNoFollow(pin.path, true)
     try {
         const info = await again.stat({ bigint: true })
-        if (info.dev !== pin.dev || info.ino !== pin.ino || info.ctimeNs !== pin.ctimeNs || info.uid !== currentUid()) throw outside()
+        if (info.dev !== pin.dev || info.ino !== pin.ino || (!entriesMayChange && info.ctimeNs !== pin.ctimeNs) || info.uid !== currentUid()) throw outside()
     } finally { await again.close() }
 }
 
@@ -149,14 +152,14 @@ function assertTrustedRoot(root: string) {
 async function parentOfShared(root: string, signal?: AbortSignal): Promise<void> {
     throwIfAborted(signal)
     assertTrustedRoot(root)
-    const parent = dirname(root)
+    const parent = dirname(/* turbopackIgnore: true */ root)
     const info = await lstat(parent, { bigint: true }).catch(error => {
         if (missing(error)) throw new SharedWorkspaceFileError(404, 'The shared folder is not ready.')
         throw error
     })
     if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
     if (info.uid !== currentUid()) throw otherUser()
-    if (await realpath(parent) !== parent) throw outside()
+    if (await realpath(/* turbopackIgnore: true */ parent) !== parent) throw outside()
 }
 
 async function openSharedRoot(root: string, signal?: AbortSignal): Promise<Pin> {
@@ -176,9 +179,9 @@ async function ensureSharedRoot(root: string, signal?: AbortSignal): Promise<Pin
     await parentOfShared(root, signal)
     const existing = await lstat(root, { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
     if (!existing) {
-        const parent = await pinDirectory(dirname(root), signal)
+        const parent = await pinDirectory(dirname(/* turbopackIgnore: true */ root), signal)
         try {
-            await mkdir(join(parent.pinned, 'shared'), { mode: 0o755 }).catch(error => {
+            await mkdir(join(/* turbopackIgnore: true */ parent.pinned, 'shared'), { mode: 0o755 }).catch(error => {
                 if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
             })
         } finally { await parent.handle.close() }
@@ -190,13 +193,13 @@ async function descend(root: string, rootPin: Pin, parts: string[], signal?: Abo
     let pin = rootPin
     let close = false
     let rel = ''
-    for (const part of parts) {
+    try { for (const part of parts) {
         throwIfAborted(signal)
-        const listed = await lstat(join(pin.pinned, part), { bigint: true })
+        const listed = await lstat(join(/* turbopackIgnore: true */ pin.pinned, part), { bigint: true })
         if (listed.isSymbolicLink()) throw outside()
         if (!listed.isDirectory()) throw new SharedWorkspaceFileError(400, 'That path is not a folder.')
         if (listed.uid !== currentUid()) throw otherUser()
-        const nextPath = join(root, rel, part)
+        const nextPath = join(/* turbopackIgnore: true */ root, rel, part)
         contained(root, nextPath)
         const next = await pinDirectory(nextPath, signal)
         if (next.dev !== listed.dev || next.ino !== listed.ino) {
@@ -209,16 +212,17 @@ async function descend(root: string, rootPin: Pin, parts: string[], signal?: Abo
         rel = rel ? `${rel}/${part}` : part
     }
     return { pin, close, rel }
+    } catch (error) { if (close) await pin.handle.close(); throw error }
 }
 
-async function withRoot<T>(root: string, access: SharedFileAccess | undefined, openRoot: (root: string, signal?: AbortSignal) => Promise<Pin>, action: (rootPin: Pin) => Promise<T>, folder = false): Promise<T> {
+async function withRoot<T>(root: string, access: SharedFileAccess | undefined, openRoot: (root: string, signal?: AbortSignal) => Promise<Pin>, action: (rootPin: Pin) => Promise<T>, folder = false, entriesMayChange = false): Promise<T> {
     try {
         await commit(access)
         const rootPin = await openRoot(root, access?.signal)
         try {
             await commit(access)
             const result = await action(rootPin)
-            await assertPin(rootPin)
+            await assertPin(rootPin, entriesMayChange)
             await commit(access)
             return result
         } finally { await rootPin.handle.close() }
@@ -227,23 +231,23 @@ async function withRoot<T>(root: string, access: SharedFileAccess | undefined, o
 
 /** App data root to the engine shared directory. Does not create it and does not follow a linked engine or shared folder. */
 export function desktopEngineSharedDirectory(dataRoot: string): string {
-    return join(dataRoot, 'workspaces', '1', 'engine', 'shared')
+    return join(/* turbopackIgnore: true */ dataRoot, 'workspaces', '1', 'engine', 'shared')
 }
 
 export async function resolveDesktopSharedDirectory(dataRoot: string, signal?: AbortSignal): Promise<string> {
     try {
         throwIfAborted(signal)
         if (!isAbsolute(dataRoot)) throw outside()
-        const root = await realpath(dataRoot)
-        const engine = join(root, 'workspaces', '1', 'engine')
+        const root = await realpath(/* turbopackIgnore: true */ dataRoot)
+        const engine = join(/* turbopackIgnore: true */ root, 'workspaces', '1', 'engine')
         const info = await lstat(engine, { bigint: true }).catch(error => {
             if (missing(error)) throw new SharedWorkspaceFileError(404, 'The shared folder is not ready.')
             throw error
         })
         if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
         if (info.uid !== currentUid()) throw otherUser()
-        if (await realpath(engine) !== engine) throw outside()
-        const shared = join(engine, 'shared')
+        if (await realpath(/* turbopackIgnore: true */ engine) !== engine) throw outside()
+        const shared = join(/* turbopackIgnore: true */ engine, 'shared')
         if (shared !== desktopEngineSharedDirectory(root)) throw outside()
         return shared
     } catch (error) { rethrow(error) }
@@ -254,14 +258,15 @@ export async function resolveEngineSharedDirectory(engineDataDir: string, signal
     try {
         throwIfAborted(signal)
         if (!isAbsolute(engineDataDir)) throw outside()
-        const engine = await realpath(engineDataDir)
+        const engine = await realpath(/* turbopackIgnore: true */ engineDataDir)
+        if (engine !== engineDataDir) throw outside()
         const info = await lstat(engine, { bigint: true }).catch(error => {
             if (missing(error)) throw new SharedWorkspaceFileError(404, 'The shared folder is not ready.')
             throw error
         })
         if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
         if (info.uid !== currentUid()) throw otherUser()
-        return join(engine, 'shared')
+        return join(/* turbopackIgnore: true */ engine, 'shared')
     } catch (error) { rethrow(error) }
 }
 
@@ -281,11 +286,11 @@ export async function listSharedDirectory(root: string, path: string, access?: S
                 const entries: SharedDirectoryEntry[] = []
                 let visited = 0
                 let truncated = false
-                for (const name of await readdir(child.pin.pinned)) {
+                for (const name of await readdir(/* turbopackIgnore: true */ child.pin.pinned)) {
                     throwIfAborted(access?.signal)
                     if (++visited > LIST_VISIT_LIMIT || entries.length >= SHARED_LIST_LIMIT) { truncated = true; break }
                     if (!PART.test(name)) continue
-                    const info = await lstat(join(child.pin.pinned, name), { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
+                    const info = await lstat(join(/* turbopackIgnore: true */ child.pin.pinned, name), { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
                     if (!info || info.isSymbolicLink() || info.uid !== currentUid()) continue
                     if (info.isDirectory()) entries.push({ name, type: 'dir', size: 0, modifiedAt: stamp(info.mtimeNs) })
                     else if (info.isFile() && info.nlink === 1n) entries.push({ name, type: 'file', size: Number(info.size), modifiedAt: stamp(info.mtimeNs) })
@@ -299,12 +304,10 @@ export async function listSharedDirectory(root: string, path: string, access?: S
 }
 
 function decodePrefix(bytes: Uint8Array, partial: boolean): string {
-    try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }
-    catch {
-        if (!partial || bytes.length < 4) throw new SharedWorkspaceFileError(415, 'This file must contain UTF-8 text.')
-        try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, bytes.length - 3)) }
-        catch { throw new SharedWorkspaceFileError(415, 'This file must contain UTF-8 text.') }
-    }
+    // Streaming decode retains only an incomplete final code point. Malformed bytes anywhere
+    // in the window still fail; trimming an arbitrary three bytes can cut a valid earlier one.
+    try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes, { stream: partial }) }
+    catch { throw new SharedWorkspaceFileError(415, 'This file must contain UTF-8 text.') }
 }
 
 export async function readSharedText(root: string, path: string, offset = 0, access?: SharedFileAccess): Promise<SharedTextPage> {
@@ -319,12 +322,12 @@ export async function readSharedText(root: string, path: string, offset = 0, acc
         const child = await descend(root, rootPin, parts.slice(0, -1), access?.signal)
         let handle: FileHandle | null = null
         try {
-            const listed = await lstat(join(child.pin.pinned, name), { bigint: true })
+            const listed = await lstat(join(/* turbopackIgnore: true */ child.pin.pinned, name), { bigint: true })
             if (listed.isSymbolicLink()) throw new SharedWorkspaceFileError(400, 'Choose a file, not a symlink.')
             if (!listed.isFile()) throw new SharedWorkspaceFileError(400, 'That path is not a file.')
             if (listed.nlink !== 1n) throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
             if (listed.uid !== currentUid()) throw otherUser()
-            const target = join(root, rel)
+            const target = join(/* turbopackIgnore: true */ root, rel)
             contained(root, target)
             handle = await openNoFollow(target, false)
             const opened = await handle.stat({ bigint: true })
@@ -353,6 +356,11 @@ export async function readSharedText(root: string, path: string, offset = 0, acc
             const content = text.slice(offset, offset + TEXT_FILE_PAGE_CHARS)
             const end = offset + content.length
             const truncated = end < text.length || size > read
+            await assertPin(child.pin)
+            const named = await lstat(join(/* turbopackIgnore: true */ child.pin.pinned, name), { bigint: true })
+            if (named.dev !== after.dev || named.ino !== after.ino || named.ctimeNs !== after.ctimeNs || named.nlink !== 1n) {
+                throw new SharedWorkspaceFileError(409, 'This file changed while it was being read.')
+            }
             return { path: rel, content, size, truncated, offset, nextOffset: truncated ? end : null }
         } finally {
             await handle?.close()
@@ -363,7 +371,7 @@ export async function readSharedText(root: string, path: string, offset = 0, acc
 
 async function mkdirChild(parent: Pin, root: string, rel: string, name: string, signal?: AbortSignal): Promise<Pin> {
     throwIfAborted(signal)
-    const dest = join(parent.pinned, name)
+    const dest = join(/* turbopackIgnore: true */ parent.pinned, name)
     const existing = await lstat(dest, { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
     if (existing) {
         if (existing.isSymbolicLink() || !existing.isDirectory()) throw new SharedWorkspaceFileError(400, 'That path is not a folder.')
@@ -371,7 +379,7 @@ async function mkdirChild(parent: Pin, root: string, rel: string, name: string, 
     } else {
         await mkdir(dest, { mode: 0o755 }).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error })
     }
-    const nextPath = join(root, rel, name)
+    const nextPath = join(/* turbopackIgnore: true */ root, rel, name)
     contained(root, nextPath)
     const pin = await pinDirectory(nextPath, signal)
     const listed = await lstat(dest, { bigint: true })
@@ -392,55 +400,78 @@ export async function importSharedText(root: string, folder: string, name: strin
     const rel = folders.length ? `${folders.join('/')}/${name}` : name
     const kept = () => new SharedWorkspaceFileError(409, `This folder already has a file named “${name}”. The existing file was kept; rename yours and import it again.`)
     return withRoot(root, access, ensureSharedRoot, async rootPin => {
+        const lease = await acquireSkillLease(rootPin.path, rootPin, access?.signal)
         let parent = rootPin
         let closeParent = false
         let parentRel = ''
+        const guard = async () => {
+            await commit(access)
+            lease.assertCurrent()
+            // Directory entry changes are our own normal writes. Named inode identity and
+            // no-follow ancestry still have to match before and after publication.
+            await assertPin(rootPin, true)
+            await assertPin(parent, true)
+        }
         try {
+            await guard()
             for (const part of folders) {
+                await guard()
                 const next = await mkdirChild(parent, root, parentRel, part, access?.signal)
                 if (closeParent) await parent.handle.close()
                 parent = next
                 closeParent = true
                 parentRel = parentRel ? `${parentRel}/${part}` : part
             }
-            await commit(access)
-            const existing = await lstat(join(parent.pinned, name)).catch(error => { if (missing(error)) return null; throw error })
+            await guard()
+            const existing = await lstat(join(/* turbopackIgnore: true */ parent.pinned, name)).catch(error => { if (missing(error)) return null; throw error })
             if (existing) throw kept()
+            if ((await readdir(/* turbopackIgnore: true */ parent.pinned)).filter(entry => entry.startsWith('.rerun-shared-import-')).length >= 128) {
+                throw new SharedWorkspaceFileError(409, 'Unfinished shared imports need review before importing more files.')
+            }
             const tempName = `.rerun-shared-import-${randomBytes(12).toString('hex')}`
             const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (process.platform === 'darwin' ? O_NOFOLLOW_ANY : constants.O_NOFOLLOW)
-            const tempLexical = join(parent.path, tempName)
+            const tempLexical = join(/* turbopackIgnore: true */ parent.path, tempName)
             contained(root, tempLexical)
             const handle = process.platform === 'darwin'
                 ? await open(tempLexical, flags, 0o644)
-                : await open(join(parent.pinned, tempName), flags, 0o644)
-            let published = false
+                : await open(join(/* turbopackIgnore: true */ parent.pinned, tempName), flags, 0o644)
+            let publicationAttempted = false
+            let identity: { dev: bigint; ino: bigint } | undefined
             try {
                 const opened = await handle.stat({ bigint: true })
-                const listed = await lstat(join(parent.pinned, tempName), { bigint: true })
+                identity = opened
+                const listed = await lstat(join(/* turbopackIgnore: true */ parent.pinned, tempName), { bigint: true })
                 if (opened.dev !== listed.dev || opened.ino !== listed.ino || opened.nlink !== 1n || opened.uid !== currentUid()) throw outside()
                 await handle.writeFile(bytes)
                 await handle.sync()
                 const written = await handle.stat({ bigint: true })
                 if (written.size !== BigInt(bytes.byteLength) || written.nlink !== 1n || written.dev !== opened.dev || written.ino !== opened.ino) throw outside()
-                await commit(access)
-                try { await link(join(parent.pinned, tempName), join(parent.pinned, name)) }
+                await guard()
+                publicationAttempted = true
+                // The bundled helper atomically moves the exact staged inode without replacing
+                // an arrival. A crash cannot leave final + staging hardlinks to one document.
+                try { await renameSkillEntry(parent.path, parent, tempName, opened, name) }
                 catch (error) {
-                    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw kept()
+                    const arrival = await lstat(join(/* turbopackIgnore: true */ parent.pinned, name), { bigint: true }).catch(() => null)
+                    if (arrival && (arrival.dev !== opened.dev || arrival.ino !== opened.ino)) throw kept()
                     throw error
                 }
-                published = true
-                await unlink(join(parent.pinned, tempName))
-                const final = await lstat(join(parent.pinned, name), { bigint: true })
-                if (final.isSymbolicLink() || !final.isFile() || final.uid !== currentUid() || final.dev !== opened.dev || final.ino !== opened.ino) throw outside()
+                await guard()
+                const final = await lstat(join(/* turbopackIgnore: true */ parent.pinned, name), { bigint: true })
+                if (final.isSymbolicLink() || !final.isFile() || final.uid !== currentUid() || final.dev !== opened.dev || final.ino !== opened.ino || final.size !== written.size || final.mtimeNs !== written.mtimeNs) throw outside()
                 if (final.nlink !== 1n) {
-                    await unlink(join(parent.pinned, name)).catch(() => {})
                     throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
                 }
             } finally {
                 await handle.close()
-                if (!published) await unlink(join(parent.pinned, tempName)).catch(() => {})
+                // Once the helper was invoked its recovery names are authoritative. Never
+                // remove a late arrival or an uncertain native-move result during cleanup.
+                if (!publicationAttempted && identity) {
+                    const staged = await lstat(join(/* turbopackIgnore: true */ parent.pinned, tempName), { bigint: true }).catch(() => null)
+                    if (staged?.dev === identity.dev && staged.ino === identity.ino && staged.nlink === 1n) await unlink(join(/* turbopackIgnore: true */ parent.pinned, tempName)).catch(() => {})
+                }
             }
             return { path: rel, name }
-        } finally { if (closeParent) await parent.handle.close() }
-    })
+        } finally { if (closeParent) await parent.handle.close(); await lease.release() }
+    }, false, true)
 }

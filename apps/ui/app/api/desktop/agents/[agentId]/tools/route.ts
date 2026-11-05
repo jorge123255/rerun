@@ -18,6 +18,7 @@ type Context = { params: Promise<{ agentId: string }> }
 // master is refused here so the switch never shows a grant that cannot run.
 function pausedReason(id: string, config: AgentConfig): string | undefined {
     if (id === 'privateFileWrite' && !config.tools.filesystem) return 'File editing is paused for this coworker.'
+    if (id === 'sharedFilesRead' && config.tools.shared === false) return 'Shared files access is paused for this coworker.'
     if (id === 'memoryRecall' && !config.tools.memory) return 'Turn on Use saved memories in chat in Edit coworker.'
     if (id === 'memoryWrite' && (!config.selfImprovement.enabled || !config.selfImprovement.autoMemory)) return 'Memory learning is paused for this coworker.'
     if ((id === 'selfInstruction' || id === 'verbositySet') && !config.selfImprovement.enabled) return 'Turn on Improve itself to change this permission.'
@@ -42,6 +43,7 @@ async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToo
             if (!row?.available) throw new DesktopHttpError(400, 'This tool is unavailable for this coworker.')
             if (patch.group === 'rerun' && patch.enabled) {
                 if (patch.id === 'privateFileWrite' && !current.config.tools.filesystem) throw new DesktopHttpError(400, 'File editing is paused for this coworker.')
+                if (patch.id === 'sharedFilesRead' && pausedReason(patch.id, current.config)) throw new DesktopHttpError(400, 'Shared files access is paused for this coworker.')
                 if ((patch.id === 'memoryRecall' || patch.id === 'memoryWrite') && pausedReason(patch.id, current.config)) {
                     throw new DesktopHttpError(400, 'Turn on this coworker’s memory preference first.')
                 }

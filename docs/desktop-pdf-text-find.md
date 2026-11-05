@@ -10,7 +10,9 @@ Text selection and Find came from that viewer. This lane does not bring the ifra
 
 `readCoworkerPdf` in `apps/ui/lib/desktop/server/pdf-read.ts` is reused and was not edited. `coworker-files.ts` already binds it. The private writer and the shared-files lane were not edited.
 
-Checks, typecheck, lint, the helper compile, packaging, and Mac acceptance were not run.
+The lane and integration helper did not run checks, typecheck, lint, helper compilation, packaging, or Mac acceptance. Root owns those checks.
+
+Root integration now wires the helper into packaging, manifest validation and the UI environment. The packaged-runtime verifier invokes it against upright, rotated/cropped and scanned fixture pages. A SHA-256 header binds extraction to the exact bytes rendered by the page route: in-place replacement of a PDF cannot leave cached text over a different page image. A changed raster hash discards the old text layer. Search jumps to its first match; partial highlights and transparent selection spans follow page rotation, and copying across runs preserves source whitespace. Actual glyph placement and native selection still require root's Mac checks; partial-word highlights remain proportional within each word box rather than per-glyph outlines.
 
 ## Helper protocol
 
@@ -52,7 +54,7 @@ These caps are not an operating-system memory quota. The parent spawns with `she
 
 ## Route
 
-`GET /api/desktop/agents/:agentId/files/pdf-text` accepts only `path` and an optional `identity`. It calls `readCoworkerPdf` from `@/lib/desktop/server/coworker-files`, then `extractDesktopPdfText`. The JSON `identity` and `path` are the reader’s values. The helper never sees the path.
+`GET /api/desktop/agents/:agentId/files/pdf-text` accepts only `path`, the displayed raster's `sha256`, and an optional `identity`. It calls `readCoworkerPdf` from `@/lib/desktop/server/coworker-files`, verifies those bytes have the requested hash, then calls `extractDesktopPdfText`. Both raster and text responses carry `x-pdf-sha256`. The JSON `identity` and `path` are the reader’s values. The helper never sees the path.
 
 The response is `application/json; charset=utf-8` with `nosniff`, `content-security-policy: default-src 'none'; sandbox`, `cross-origin-resource-policy: same-origin`, and `cache-control: no-store`. A changed identity is the reader’s 409. A cancel before the read, or during extraction, is 499 `PDF text was closed.` A cancel inside `readCoworkerPdf` still uses that function’s existing 499, `PDF preview was closed.`
 
@@ -71,9 +73,9 @@ Find is local. It folds `A–Z` only, so indexes stay the same length. Enter is 
 
 Exact glyph boxes are not specified here. A fetched JSON payload or a DOM layer is not native alignment.
 
-## Root wiring
+## Root wiring (now integrated; root execution pending)
 
-Do not edit these from this lane. Add the fragments below.
+The integration includes these fragments. They are recorded here for the source-to-runtime map.
 
 `scripts/desktop/package.mjs`, immediately after `stage-pdf-helper.mjs`:
 
@@ -97,7 +99,7 @@ pdfTextHelperPath: 'runtime/pdf-helper/rerun-pdf-text',
 
 `apps/desktop/src/main/runtime.mjs`, add `'pdfTextHelperPath'` to the `loadBundle` field list.
 
-`scripts/desktop/verify-runtime.mjs`, add `'pdfTextHelperPath'` to the manifest field list. A native probe should pipe `mixedPdf()` into that binary with argv `[]` and check the geometry above. This lane does not add that call.
+`scripts/desktop/verify-runtime.mjs` includes `'pdfTextHelperPath'` in the manifest field list and invokes `verifyPdfTextHelper` from `pdf-text-probe.mjs`. That bounded probe pipes `mixedPdf()` into the binary with argv `[]` and checks the geometry above.
 
 `apps/desktop/src/main/supervisor.mjs`, on the UI spawn env next to `RERUN_DESKTOP_PDF_HELPER`:
 

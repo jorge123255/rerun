@@ -305,3 +305,34 @@ test('retry metadata stays bounded and an evicted old operation remains blocked 
     expect((await put(oldest)).status).toBe(409)
     expect(await read()).toMatchObject({ text: 'Draft 65', revision: 66 })
 })
+
+test('mixed image drafts retain snapshot identity through visible replacement, fork transfer, retry and restart', async () => {
+    const sharp = (await import('sharp')).default
+    const { importDesktopComposerImage } = await import('@/lib/desktop/server/composer-image-files')
+    const runtime = { protocolVersion: 1 as const, launchNonce: 'drafts', buildId: 'draft-test', workspaceId: 1 as const, dataRoot: root,
+        app: { origin, sessionToken: token }, engine: { origin: 'http://127.0.0.1:1', apiKey: 'unused' } }
+    const bytes = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ff0000' } }).png().toBuffer()
+    const imported = await importDesktopComposerImage(runtime, alice, '', 'reference.png', bytes)
+    await writeFile(join(workspace('alice-engine'), 'after.txt'), 'After')
+    const attachmentItems = [{ type: 'text', path: 'notes.md' }, { type: 'image', image: imported.image }, { type: 'text', path: 'after.txt' }]
+    const body = { ...input('Compare the notes and image'), attachmentItems }
+    expect((await put(body)).status).toBe(200)
+    const source = await read()
+    expect(source).toMatchObject({ attachmentItems, revision: 1 })
+    expect(source).not.toHaveProperty('attachmentPaths')
+    // Changing the Files copy cannot change or invalidate this already accepted snapshot.
+    await writeFile(join(workspace('alice-engine'), 'reference.png'), 'a replacement visible file')
+    expect((await put(body)).status).toBe(200)
+    expect((await put({ ...body, requestId: crypto.randomUUID() }, bob)).status).toBe(404)
+    const layout = { baseRevision: 1, activeIndex: 1, tabs: [{ uid: 'source-new', id: original }, { uid: 'live', id: alternate }, { uid: 'blank', id: null }] }
+    expect((await tabs(layout)).status).toBe(200)
+    expect(await read('source-new')).toMatchObject({ text: source.text, attachmentItems })
+    const cleared = await read()
+    expect(cleared).toMatchObject({ text: '' })
+    expect(cleared).not.toHaveProperty('attachmentItems')
+    expect((await put({ ...body, requestId: crypto.randomUUID(), baseRevision: source.revision })).status).toBe(409)
+    expect((await tabs(layout)).status).toBe(200)
+    await closeDesktopDatabase(root)
+    expect(await read('source-new')).toMatchObject({ text: source.text, attachmentItems })
+    expect(await read()).toEqual(cleared)
+})

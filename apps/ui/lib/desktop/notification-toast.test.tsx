@@ -3,14 +3,13 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopNotificationAdmission } from './notifications'
 import { showDesktopNotificationToast } from './notification-toast'
 
-const custom = vi.fn(), dismiss = vi.fn(), resolveClick = vi.fn()
+const custom = vi.fn(), dismiss = vi.fn()
 vi.mock('sonner', () => ({ toast: { custom: (...args: unknown[]) => custom(...args), dismiss: (...args: unknown[]) => dismiss(...args) } }))
-vi.mock('@/lib/desktop/notification-click', () => ({ resolveDesktopNotificationClick: (...args: unknown[]) => resolveClick(...args) }))
 vi.mock('@/components/notifications/NotificationToast', () => ({
     NotificationToast: (props: Record<string, unknown>) => <div data-testid="card">{String(props.title)}|{String(props.message)}</div>,
 }))
 
-beforeEach(() => { custom.mockClear(); dismiss.mockClear(); resolveClick.mockReset() })
+beforeEach(() => { custom.mockClear(); dismiss.mockClear() })
 
 const event = (over: Partial<DesktopNotificationAdmission> = {}): DesktopNotificationAdmission => ({
     key: 'pending:request-a', kind: 'question', source: 'chat', agentId: 'agent-a', agentName: 'Ada',
@@ -38,21 +37,10 @@ test('a scheduled event carries the scheduled badge copy and falls back to the s
     expect(card.props.message).toBe('morning-digest · Done')
 })
 
-test('open revalidates the exact target before navigating and dismisses first', async () => {
-    const navigate = vi.fn()
-    showDesktopNotificationToast(event(), navigate)
-    resolveClick.mockResolvedValue({ agentId: 'agent-a', sessionId: 'chat-a' })
+test('open dismisses and hands the pinned target to the shared native/toast navigator', () => {
+    const openTarget = vi.fn()
+    showDesktopNotificationToast(event(), openTarget)
     ;(rendered().props.onOpen as () => void)()
     expect(dismiss).toHaveBeenCalledWith('toast-1')
-    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith({ agentId: 'agent-a', sessionId: 'chat-a' }))
-    expect(resolveClick).toHaveBeenCalledWith(expect.objectContaining({ kind: 'question', agentId: 'agent-a', sessionId: 'chat-a', requestId: 'request-a' }), expect.any(AbortSignal))
-})
-
-test('a failed revalidation navigates nowhere', async () => {
-    const navigate = vi.fn()
-    showDesktopNotificationToast(event(), navigate)
-    resolveClick.mockResolvedValue(null)
-    ;(rendered().props.onOpen as () => void)()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(navigate).not.toHaveBeenCalled()
+    expect(openTarget).toHaveBeenCalledWith(expect.objectContaining({ key: 'pending:request-a', kind: 'question', agentId: 'agent-a', sessionId: 'chat-a', requestId: 'request-a' }))
 })

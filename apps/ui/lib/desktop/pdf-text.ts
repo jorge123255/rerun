@@ -194,12 +194,16 @@ export function desktopPdfTextSearchable(pages: readonly { text: string }[]): bo
 }
 
 /** A partial-word hit splits the run in proportion to its UTF-16 span. A whole run is exact. */
-export function desktopPdfTextRunSlice(run: DesktopPdfTextRun, start: number, end: number): { x: number; y: number; w: number; h: number } | null {
+export function desktopPdfTextRunSlice(run: DesktopPdfTextRun, start: number, end: number, rotation = 0): { x: number; y: number; w: number; h: number } | null {
     const from = Math.max(run.start, start)
     const to = Math.min(run.end, end)
     if (to <= from || run.end <= run.start) return null
     const span = run.end - run.start
-    return { x: run.x + run.w * ((from - run.start) / span), y: run.y, w: run.w * ((to - from) / span), h: run.h }
+    const offset = (from - run.start) / span, length = (to - from) / span
+    if (rotation === 90) return { x: run.x, y: run.y + run.h * offset, w: run.w, h: run.h * length }
+    if (rotation === 180) return { x: run.x + run.w * (1 - offset - length), y: run.y, w: run.w * length, h: run.h }
+    if (rotation === 270) return { x: run.x, y: run.y + run.h * (1 - offset - length), w: run.w, h: run.h * length }
+    return { x: run.x + run.w * offset, y: run.y, w: run.w * length, h: run.h }
 }
 
 export function desktopPdfFindMessage(input: {

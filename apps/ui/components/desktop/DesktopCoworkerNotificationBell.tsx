@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { CoworkerBellMenu } from '@/components/notifications/settings/CoworkerBellMenu'
+import { Button } from '@/components/ui/button'
+import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { DesktopNotificationsDialog } from './DesktopNotificationsDialog'
 import { useDesktopNotificationPrefs } from '@/lib/desktop/use-notification-prefs'
 import type { CoworkerRule } from '@rerun/contracts'
 
@@ -18,33 +21,57 @@ export function DesktopCoworkerNotificationBell({ agentId, name, onOpenSettings,
     align?: 'start' | 'end'
     className?: string
 }) {
-    const { prefs, setCoworkerRule, ruleOf } = useDesktopNotificationPrefs()
+    const { prefs, setCoworkerRule, ruleOf, ready, readError, refresh } = useDesktopNotificationPrefs()
     const [scheduledCount, setScheduledCount] = useState(0)
+    const [countUnavailable, setCountUnavailable] = useState(false)
     const alive = useRef(true)
-    useEffect(() => () => { alive.current = false }, [])
+    const owner = useRef(agentId); owner.current = agentId
+    const countRead = useRef<AbortController | null>(null)
+    useEffect(() => {
+        alive.current = true
+        setScheduledCount(0)
+        setCountUnavailable(false)
+        return () => { alive.current = false; countRead.current?.abort() }
+    }, [agentId])
 
     const countScheduled = (isOpen: boolean) => {
         onOpenChange?.(isOpen)
-        if (!isOpen) return
-        fetch(`/api/desktop/coworkers/${encodeURIComponent(agentId)}/schedules`, { cache: 'no-store' })
+        countRead.current?.abort()
+        if (!isOpen || !ready || isDesktopQuitting()) return
+        const controller = new AbortController()
+        countRead.current = controller
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(5000)])
+        const current = () => alive.current && owner.current === agentId && countRead.current === controller && !signal.aborted && !isDesktopQuitting()
+        setScheduledCount(0)
+        setCountUnavailable(false)
+        fetch(`/api/desktop/coworkers/${encodeURIComponent(agentId)}/schedules`, { cache: 'no-store', signal })
             .then(response => response.ok ? response.json() : Promise.reject(new Error('unreadable')))
-            .then(list => { if (alive.current && Array.isArray(list)) setScheduledCount(list.length) })
-            .catch(() => {})
+            .then(list => { if (!Array.isArray(list)) throw new Error('unreadable'); if (current()) setScheduledCount(list.length) })
+            .catch(() => { if (alive.current && owner.current === agentId && countRead.current === controller && !controller.signal.aborted && !isDesktopQuitting()) setCountUnavailable(true) })
     }
 
     return (
-        <CoworkerBellMenu
+        <><CoworkerBellMenu
             name={name}
             rule={ruleOf(agentId)}
             scope={prefs.scope}
             scheduledCount={scheduledCount}
-            onChange={(rule: CoworkerRule) => setCoworkerRule(agentId, rule)}
+            scheduledCountUnavailable={countUnavailable}
+            disabled={!ready}
+            onChange={(rule: CoworkerRule) => { if (ready && owner.current === agentId) setCoworkerRule(agentId, rule) }}
             onOpenSettings={onOpenSettings}
             open={open}
             onOpenChange={countScheduled}
             modal={modal}
             align={align}
             className={className}
-        />
+        />{readError && <Button type="button" size="sm" variant="ghost" onClick={() => void refresh()}>Retry notifications</Button>}</>
     )
+}
+
+/** The card owns its settings dialog, pinned to this coworker; opening it never creates a rule. */
+export function DesktopCoworkerNotificationControl({ agentId, name }: { agentId: string; name: string }) {
+    const [open, setOpen] = useState(false)
+    return <><DesktopCoworkerNotificationBell key={agentId} agentId={agentId} name={name} onOpenSettings={() => setOpen(true)} />
+        <DesktopNotificationsDialog open={open} onOpenChange={setOpen} pinnedCoworkerId={agentId} /></>
 }

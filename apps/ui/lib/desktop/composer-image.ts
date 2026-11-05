@@ -1,4 +1,5 @@
-import { z } from 'zod'
+import { desktopImageSnapshotSchema, type DesktopImageSnapshot, type DesktopAttachmentItem } from '@rerun/contracts'
+export { desktopImageSnapshotSchema, type DesktopImageSnapshot } from '@rerun/contracts'
 import { DESKTOP_IMAGE_MAX_BYTES, DESKTOP_IMAGE_MAX_EDGE, DESKTOP_IMAGE_MAX_PIXELS } from './server/image-bytes'
 
 export type DesktopImageUploadStatus = 'queued' | 'importing' | 'error' | 'unresolved'
@@ -20,22 +21,7 @@ const KIND_EXT: Record<DesktopImageKind, RegExp> = {
 
 /** The durable, content-addressed identity of one imported image. `sha256` names the private
  * snapshot bytes; `path` is only where the user-visible copy lives in this coworker's Files. */
-export const desktopImageSnapshotSchema = z.object({
-    sha256: z.string().regex(/^[0-9a-f]{64}$/),
-    name: z.string().min(1).max(255),
-    path: z.string().min(1).max(4096),
-    mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
-    width: z.number().int().min(1).max(DESKTOP_IMAGE_MAX_EDGE),
-    height: z.number().int().min(1).max(DESKTOP_IMAGE_MAX_EDGE),
-    byteLength: z.number().int().min(1).max(DESKTOP_IMAGE_MAX_BYTES),
-}).strict()
-export type DesktopImageSnapshot = z.infer<typeof desktopImageSnapshotSchema>
-
-/** One ordered composer attachment: a text workspace path or an imported image snapshot.
- * The array order is the order the user picked, across both kinds. */
-export type DesktopComposerAttachmentItem =
-    | { type: 'text'; path: string }
-    | { type: 'image'; image: DesktopImageSnapshot }
+export type DesktopComposerAttachmentItem = DesktopAttachmentItem
 
 export type DesktopImageUploadItem = {
     id: string

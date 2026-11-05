@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
-import { desktopNotificationsBridge, type DesktopNotificationDeliveryResult } from '@/lib/desktop/notification-bridge'
+import { desktopNotificationsBridge, type DesktopNotificationDeliveryResult, type DesktopNotificationTarget } from '@/lib/desktop/notification-bridge'
 import { resolveDesktopNotificationClick } from '@/lib/desktop/notification-click'
 import { showDesktopNotificationToast } from '@/lib/desktop/notification-toast'
 import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_ADMIT_URL, DESKTOP_NOTIFICATION_DELIVERY_URL, desktopNotificationAdmissionsSchema, desktopNotificationEventsSchema } from '@/lib/desktop/notifications'
@@ -40,6 +40,18 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
     const visible = useRef(visibleSessionId); visible.current = visibleSessionId
     useEffect(() => {
         const lifetime = new AbortController()
+        let click: AbortController | undefined
+        const openTarget = (target: DesktopNotificationTarget) => {
+            click?.abort()
+            const own = new AbortController()
+            click = own
+            const signal = AbortSignal.any([own.signal, lifetime.signal, AbortSignal.timeout(5000)])
+            if (signal.aborted || isDesktopQuitting()) return
+            void resolveDesktopNotificationClick(target, signal).then(binding => {
+                if (click === own && !signal.aborted && !isDesktopQuitting() && binding) navigation.current?.(binding)
+            }).catch(() => {})
+        }
+        const stopClicks = desktopNotificationsBridge().onClick(openTarget)
         let busy = false
         const tick = async () => {
             if (busy || lifetime.signal.aborted || isDesktopQuitting()) return
@@ -63,7 +75,7 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                         if (admitted.channels.toast) {
                             // The in-app card needs no bridge; the native alert is silent because
                             // the original sound asset below is the sole sound, avoiding a double ring.
-                            showDesktopNotificationToast(event, binding => navigation.current?.(binding))
+                            showDesktopNotificationToast(event, openTarget)
                             status = 'shown'
                             if (bridge.available) await boundedDelivery(bridge.notify({ key: event.key, kind: event.kind, agentId: event.agentId, sessionId: event.sessionId,
                                 groupId: event.groupId ?? null, terminalId: event.terminalId ?? null, requestId: event.requestId ?? null,
@@ -81,20 +93,6 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
         }
         void tick()
         const timer = setInterval(() => { void tick() }, DESKTOP_NOTIFICATION_POLL_MS)
-        return () => { lifetime.abort(); clearInterval(timer) }
-    }, [])
-
-    useEffect(() => {
-        let active = true
-        let click: AbortController | undefined
-        const stop = desktopNotificationsBridge().onClick(target => {
-            click?.abort()
-            click = new AbortController()
-            const signal = AbortSignal.any([click.signal, AbortSignal.timeout(5000)])
-            void resolveDesktopNotificationClick(target, signal).then(binding => {
-                if (active && !signal.aborted && !isDesktopQuitting() && binding) navigation.current?.(binding)
-            }).catch(() => {})
-        })
-        return () => { active = false; click?.abort(); stop() }
+        return () => { lifetime.abort(); click?.abort(); stopClicks(); clearInterval(timer) }
     }, [])
 }

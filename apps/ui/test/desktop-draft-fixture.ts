@@ -1,5 +1,5 @@
 import { afterEach } from 'vitest'
-import { desktopAttachmentFieldsOf, desktopAttachmentPathsOf } from '@rerun/contracts'
+import { desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf as desktopAttachmentPathsOf, type DesktopAttachmentFields } from '@rerun/contracts'
 import { cancelDraftShutdown, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
 import type { DesktopComposerDraft } from '@/lib/desktop/composer-draft'
 
@@ -19,7 +19,7 @@ export function createDesktopDraftFixture() {
     const uploads = new Map<string, { agent: string; tabUid: string; id: string; name: string; size: number }>()
     const key = (agent: string, uid: string) => JSON.stringify([agent, uid])
     const read = (agent: string, uid: string): DesktopComposerDraft => saved.get(key(agent, uid)) ?? { revision: 0, text: '' }
-    const write = (agent: string, uid: string, value: { text: string; attachmentPath?: string; attachmentPaths?: string[] }) => {
+    const write = (agent: string, uid: string, value: { text: string } & DesktopAttachmentFields) => {
         const fields = desktopAttachmentFieldsOf(desktopAttachmentPathsOf(value))
         const next = { revision: read(agent, uid).revision + 1, text: value.text, ...fields }
         saved.set(key(agent, uid), next)

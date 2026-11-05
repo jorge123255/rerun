@@ -6,6 +6,7 @@ import { assertCoworkerNotDeleting } from '@/lib/desktop/server/coworker-delete'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { findDesktopAgent } from '@/lib/desktop/server/store'
 import { withRosterWrite } from '@/lib/desktop/server/roster-writes'
+import { createHash } from 'node:crypto'
 
 export const dynamic = 'force-dynamic'
 type Context = { params: Promise<{ agentId: string }> }
@@ -39,6 +40,7 @@ export function GET(request: Request, { params }: Context) {
             'x-pdf-height': String(raster.height),
             'x-pdf-page-width': String(raster.pageWidth),
             'x-pdf-page-height': String(raster.pageHeight),
+            'x-pdf-sha256': createHash('sha256').update(pdf.bytes).digest('hex'),
             'x-content-type-options': 'nosniff',
             'content-security-policy': "default-src 'none'; sandbox",
             'cross-origin-resource-policy': 'same-origin',

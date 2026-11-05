@@ -1,5 +1,5 @@
-// PDF bytes for root's native text-helper check. This module is not wired into
-// packaging. Glyph positions are whatever PDFKit reports; the geometry below is
+// PDF bytes for root's native text-helper check and packaged runtime probe.
+// Glyph positions are whatever PDFKit reports; the geometry below is
 // the crop and rotation the helper must echo.
 
 function pdfTextFixture(pages) {

@@ -24,7 +24,8 @@ function isAbort(error: unknown): boolean {
 function failure(error: unknown): never {
     if (error instanceof DesktopHttpError) throw error
     if (error instanceof SharedWorkspaceFileError) throw new DesktopHttpError(error.status, error.message)
-    if (isAbort(error)) throw new DesktopHttpError(499, 'This request was cancelled.')
+    if (isAbort(error)) throw new DesktopHttpError(499, 'This request was cancelled. Refresh Shared files before trying again.')
+    if (error instanceof Error && error.name === 'TimeoutError') throw new DesktopHttpError(408, 'Shared files took too long to respond. Refresh before trying again.')
     throw new DesktopHttpError(500, 'Shared files could not be opened.')
 }
 

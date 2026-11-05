@@ -12,25 +12,22 @@ described in `desktop-notifications.md`; this file covers only the visible surfa
   pending-merge optimistic updates and one-write-at-a-time queue, persisted through
   `GET/PUT /api/desktop/notifications`. One zustand store is shared by every mounted surface, so
   the bell, the task switch and the settings dialog agree between writes. Failed writes revert
-  the optimistic value and raise a sonner error toast. `ready` reports whether the stored value
-  has loaded; surfaces may render with defaults before it does because every PUT is merged
-  server-side onto the stored preferences.
+  the optimistic value and raise a sonner error toast. `ready` requires a successful stored read; the bell and task switch stay disabled while the initial read is unknown. Read failures offer Retry. Settings now uses this same store and queue; stale reads cannot overwrite later acknowledgements, and an earlier failed write cannot drop a later pending patch.
 - `lib/desktop/notification-click.ts` — `resolveDesktopNotificationClick(target, signal)`, the
   single revalidation used by native clicks and in-app toast opens: completions re-check the
   group still contains the recorded session, terminals re-check the pinned local owner/session
   binding, requests re-check the exact pending item. Stale, deleted or rebound targets resolve
   to `null` and navigate nowhere.
-- `lib/desktop/notification-toast.ts` — `showDesktopNotificationToast(event, onOpen)`, the
+- `lib/desktop/notification-toast.tsx` — `showDesktopNotificationToast(event, onOpen)`, the
   original `NotificationToast` card via `toast.custom`, id `desktop-notification:<key>` so a
   remount cannot announce one admission twice. Scheduled sources get the `CalendarClock` icon,
   violet tint, brand beam and « · Scheduled task » title suffix; other kinds reuse
-  `KIND_ICONS`/`KIND_ICON_COLORS`/`KIND_BEAM`. « Open conversation » dismisses, revalidates and
-  only then navigates. The event now carries `source` so the scheduled treatment survives the
+  `KIND_ICONS`/`KIND_ICON_COLORS`/`KIND_BEAM`. « Open conversation » dismisses and enters the same cancellable revalidation pipeline as native clicks; superseded reads, unmounted delivery and Quit cannot navigate late. The event now carries `source` so the scheduled treatment survives the
   trip from server projection to toast.
-- `components/desktop/DesktopCoworkerNotificationBell.tsx` — `CoworkerBellMenu` verbatim, wired
+- `components/desktop/DesktopCoworkerNotificationBell.tsx` — `CoworkerBellMenu` with its original rows and styling, wired
   to the local prefs. The scheduled-task count is fetched lazily on open from
   `/api/desktop/coworkers/<id>/schedules`; desktop has no trigger surface, so the count is
-  schedules only (the original counts schedules plus triggers).
+  schedules only (the original counts schedules plus triggers). Counts are bounded and owner-keyed, and failure is displayed as unavailable rather than an invented zero. The shared menu gains optional disabled/unavailable flags that leave hosted callers unchanged.
 - `components/desktop/DesktopTaskNotifyField.tsx` — verbatim port of `TaskNotifyField`
   (`Field` + `Switch` + `TooltipDisabledReason`), bound to `taskKey(agentId, source, slug)`.
   Renders nothing for an empty slug, so mount it only for saved tasks.
@@ -45,27 +42,20 @@ described in `desktop-notifications.md`; this file covers only the visible surfa
 
 ## Root-owned integration fragments
 
-Mount the bell on the coworker card in `DesktopConversation` (the `cardOpen` section beside the
-existing action buttons), opening the notifications settings dialog root owns:
+Mount the card control in `DesktopConversation` (the `cardOpen` section beside the existing action buttons). The control owns its pinned settings dialog; opening it does not create a coworker rule:
 
 ```tsx
-<DesktopCoworkerNotificationBell
-    agentId={agent.id}
-    name={agent.name}
-    onOpenSettings={() => /* open DesktopNotificationsDialog */}
-/>
+<DesktopCoworkerNotificationControl agentId={agent.id} name={agent.name} />
 ```
 
-Mount the task switch inside the schedule editor for a saved task only:
+The task switch is now mounted inside the schedule editor for a saved task only (and disabled while a task operation is pending):
 
 ```tsx
 {task?.slug ? <DesktopTaskNotifyField agentId={agentId} source="schedule" slug={task.slug} /> : null}
 ```
 
 `DesktopNotificationDelivery` already supplies `onOpenConversation`; the toast reuses the same
-navigation callback, so no extra wiring is needed there. The settings dialog can keep its own
-write queue — the server merges every patch onto stored preferences, so cross-surface ordering
-only affects which of two simultaneous writes to the same key lands last.
+navigation callback, so no extra wiring is needed there. Settings, the bell and task switch now share one preference store and write queue. Root must mount the delivery component even when the native bridge is unavailable, because the in-app toast still works.
 
 ## Known differences from hosted
 
@@ -73,3 +63,7 @@ only affects which of two simultaneous writes to the same key lands last.
 - Toast and native share the single `toast` channel, matching the original where one preference
   drove both the in-app announce and the browser notification.
 - Hosted email/cloud push rows stay absent, as before.
+
+## Root execution boundary
+
+Integration fixes and regression cases were authored without executing tests, type checks, lint, builds, packaging, or the Mac app. Root owns all execution and native/restart acceptance. New regressions cover failed initial reads, shared surface freshness, stale GET versus newer PUT, retained later optimistic patches, Strict Mode and old-owner counts, plus shared native/toast click cancellation.
