@@ -3,12 +3,16 @@ import {z} from 'zod'
 import {parseServiceRegistryKey,SERVICE_CATEGORIES} from '@rerun/contracts'
 import {authenticateDesktopRequest} from '../auth'
 import {abortable,boundedText} from '../mcp/remote'
-import {serviceManifestSchema} from '@/lib/services/manifest'
+import {serviceManifestSchema,type AuthMethod} from '@/lib/services/manifest'
 import {getDesktopServiceManifest,getDesktopServiceMethodAvailability,listDesktopServiceCatalog} from './catalog/index'
 import {localMethodAvailability} from './compiler'
 import type {ServiceStore} from './store'
 import type {LocalServices} from './lifecycle'
 const text=z.string().min(1).max(200)
+function summarizeMethod(method:AuthMethod){
+ const anonymous=['none','key'].includes(method.kind)&&method.inputs.length===0&&method.mcpServers.length===1&&Object.keys(method.mcpServers[0].headers).length===0&&method.mcpServers[0].oauth===undefined
+ return {id:method.id,label:anonymous?'No sign-in required':method.label,kind:method.kind,recommended:method.recommended,inputs:method.inputs,requiresSecrets:method.inputs.some(i=>i.secret)}
+}
 export const serviceMutation=z.discriminatedUnion('action',[
  z.object({action:z.literal('install'),requestId:z.string().uuid(),slug:text,authMethodId:text,values:z.record(z.string().max(128),z.string().max(8192))}).strict(),
  z.object({action:z.enum(['probe','disconnect','remove']),requestId:z.string().uuid(),key:text,expectedRevision:z.string().uuid()}).strict(),
@@ -33,13 +37,13 @@ export function serviceApi(store:ServiceStore,service:LocalServices){
      const parsed=parseServiceRegistryKey(input.slug);if(parsed.instanceId)throw new Error('Additional accounts are unavailable in this local setup')
      const raw=await getDesktopServiceManifest(parsed.slug);if(!raw)throw new Error('Unknown service')
      const manifest=serviceManifestSchema.parse(raw.manifest),record=await store.read(owner,manifest.slug),installed=record?await service.view(record,signal):null
-     const authMethods=manifest.authMethods.map(method=>({id:method.id,label:method.label,kind:method.kind,recommended:method.recommended,inputs:method.inputs,requiresSecrets:method.inputs.some(i=>i.secret)}))
+     const authMethods=manifest.authMethods.map(summarizeMethod)
      result={key:manifest.slug,slug:manifest.slug,name:manifest.name,category:manifest.category,summary:manifest.summary,description:manifest.description,icon:manifest.icon??null,authMethods,methodAvailability:await Promise.all(authMethods.map(async method=>localMethodAvailability(manifest,method.id,await getDesktopServiceMethodAvailability(manifest.slug,method.id)))),installed:installed?.installed??false,installStatus:installed?.status??null,installedMethodId:record?.plan.methodId,multiInstance:false,instances:record?[{key:record.key,status:installed!.status}]:[],installation:installed,localLimitations:'Only the base service instance is supported. Other sign-in/transport methods are unavailable on this Mac.'}
     }
    }else if(request.method==='POST'){
     const input=serviceMutation.parse(JSON.parse(await boundedText(new Response(request.body),signal,32768)))
     result=await service.mutate(owner,input,signal)
-    if(input.action==='install' && result && typeof result==='object' && 'installed' in result && 'status' in result && ['active','needs_config','error'].includes(String(result.status))){const view=result as unknown as {installed:boolean;key:string;slug:string;name:string;toolNames:string[]};const raw=await getDesktopServiceManifest(input.slug);if(!raw)throw new Error('Unknown service');const manifest=serviceManifestSchema.parse(raw.manifest);result={...result,status:view.installed?'installed':'needs_config',authMethodId:input.authMethodId,authMethods:manifest.authMethods.map(m=>({id:m.id,label:m.label,kind:m.kind,recommended:m.recommended,inputs:m.inputs,requiresSecrets:m.inputs.some(i=>i.secret)})),message:view.installed?`${view.name} installed. Tools are available only while current permissions remain enabled.`:'Configuration saved; runtime health and current tool permission are not established.'}}
+    if(input.action==='install' && result && typeof result==='object' && 'installed' in result && 'status' in result && ['active','needs_config','error'].includes(String(result.status))){const view=result as unknown as {installed:boolean;key:string;slug:string;name:string;toolNames:string[]};const raw=await getDesktopServiceManifest(input.slug);if(!raw)throw new Error('Unknown service');const manifest=serviceManifestSchema.parse(raw.manifest);result={...result,status:view.installed?'installed':'needs_config',authMethodId:input.authMethodId,authMethods:manifest.authMethods.map(summarizeMethod),message:view.installed?`${view.name} installed. Tools are available only while current permissions remain enabled.`:'Configuration saved; runtime health and current tool permission are not established.'}}
    }else throw new Error('Method not allowed')
    const final=await service.current(owner,'manage',undefined,signal);signal.throwIfAborted();if(final.engineAgentId!==initial.engineAgentId||final.runtime.launchNonce!==initial.runtime.launchNonce)throw new Error('Service owner changed')
    if(!final.enabled||!final.granted){

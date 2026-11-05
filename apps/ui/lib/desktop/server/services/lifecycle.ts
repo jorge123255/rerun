@@ -28,7 +28,7 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
  async function view(record:ServiceInstall,signal:AbortSignal){
   const authority=await current(record.owner,'manage',undefined,signal)
   const healthy=authority.engineAgentId===record.engineId&&record.state==='ready'&&authority.enabled&&authority.granted&&record.health.state==='healthy'&&record.healthLaunch===authority.runtime.launchNonce&&Date.now()>=Date.parse(record.health.checkedAt??'')&&Date.now()-Date.parse(record.health.checkedAt??'')<60_000
-  const health:DesktopServiceHealth=healthy?record.health:record.state==='disconnected'?{state:'disconnected',message:'Local credentials removed. This does not revoke the remote API key.'}:record.health.state==='error'?record.health:{state:'unchecked',message:'Connection health is not established for the current permissions and app launch.'}
+  const health:DesktopServiceHealth=healthy?record.health:record.state==='disconnected'?{state:'disconnected',message:'Local credentials removed. This does not revoke the remote API key.'}:!authority.enabled||!authority.granted?{state:'unchecked',message:'Enable Apps in this coworker’s Tools to check the connection.'}:record.health.state==='error'?record.health:{state:'unchecked',message:'Connection health is not established for the current permissions and app launch.'}
   return {key:record.key,slug:record.plan.slug,name:record.plan.name,category:record.plan.category,icon:record.plan.icon,revision:record.revision,health,installed:healthy,status:healthy?'active' as const:record.state==='error'?'error' as const:'needs_config' as const,authMethodId:record.plan.methodId,installedAt:record.installedAt,toolNames:healthy?record.toolNames:[],configured:record.plan.secretInput?{[record.plan.secretInput]:record.configured}:{}}
  }
  async function discover(record:ServiceInstall,run:ServiceRun|undefined,signal:AbortSignal){
@@ -47,6 +47,8 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
  }
  async function probe(owner:string,key:string,revision:string,signal:AbortSignal){
   const record=await liveRecord(owner,key,revision,signal)
+  const authority=await current(owner,'manage',undefined,signal)
+  if(!authority.enabled||!authority.granted){record.toolNames=[];record.health={state:'unchecked'};record.healthLaunch=null;await store.update(record,revision);return view(record,signal)}
   try{await discover(record,undefined,signal)}catch{record.toolNames=[];record.health={state:'error',checkedAt:new Date().toISOString(),message:'Connection unavailable. Check current permission and configuration.'};record.healthLaunch=null;await store.update(record,revision).catch(()=>{})}
   const now=await store.read(owner,key);if(!now)throw new Error('Service removed');return view(now,signal)
  }

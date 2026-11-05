@@ -49,11 +49,13 @@ test('real bundled catalog installs only explicitly supported methods, uses the 
  const service=await getDesktopRemoteMcpService(runtime)
  const detail=await (await service.servicesApi(request('?view=detail&slug=microsoft'),'owner')).json()
  expect(detail.name).toBe('Microsoft Learn'); expect(detail.methodAvailability).toEqual([{id:'default',supported:true}])
+ expect(detail.authMethods[0].label).toBe('No sign-in required')
  const catalog=await (await service.servicesApi(request('?view=catalog&limit=100'),'owner')).json()
  expect(catalog.total).toBe(209); expect(catalog.services).toHaveLength(100)
  const install={action:'install',requestId:randomUUID(),slug:'microsoft',authMethodId:'default',values:{}}
  const saved=await (await service.servicesApi(request('',install),'owner')).json()
  expect(saved.installed).toBe(false); expect(grants.services).toBeUndefined(); expect(providerCalls).toHaveLength(0)
+ expect(saved.health.state).toBe('unchecked'); expect(saved.health.message).toContain('Enable Apps')
  grants.services=true
  const probed=await (await service.servicesApi(request('',{action:'probe',requestId:randomUUID(),key:saved.key,expectedRevision:saved.revision}),'owner')).json()
  expect(probed.installed).toBe(true)
