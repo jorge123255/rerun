@@ -1,6 +1,6 @@
 'use client'
 
-import type { DesktopDelegationSnapshot, DesktopDelegationTask } from '../../../../packages/contracts/src/desktop-delegation'
+import type { DesktopDelegationSnapshot, DesktopDelegationTask } from '@rerun/contracts'
 import type { SubRunCall, SubRunStatus } from '@rerun/contracts'
 
 export const DELEGATION_LIST_UNAVAILABLE = 'Delegated tasks could not be loaded.'

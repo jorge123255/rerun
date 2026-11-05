@@ -23,15 +23,15 @@ export async function browserWorkspaceIdentity(root: string): Promise<string> {
     const handle = await openWithoutLinks(root, true)
     try {
         const info = await handle.stat({ bigint: true })
-        if (!info.isDirectory() || info.uid !== uid() || await realpath(root) !== root) throw conflict()
+        if (!info.isDirectory() || info.uid !== uid() || await realpath(/* turbopackIgnore: true */ root) !== root) throw conflict()
         return JSON.stringify([root, String(info.dev), String(info.ino)])
     } finally { await handle.close() }
 }
 
 async function assertDirectories(directories: Directory[]) {
     for (const entry of directories) {
-        const info = await lstat(entry.path, { bigint: true })
-        if (!info.isDirectory() || info.isSymbolicLink() || !same(info, entry) || info.uid !== uid() || String(info.uid) !== entry.uid || await realpath(entry.path) !== entry.path) throw conflict()
+        const info = await lstat(/* turbopackIgnore: true */ entry.path, { bigint: true })
+        if (!info.isDirectory() || info.isSymbolicLink() || !same(info, entry) || info.uid !== uid() || String(info.uid) !== entry.uid || await realpath(/* turbopackIgnore: true */ entry.path) !== entry.path) throw conflict()
     }
 }
 
@@ -45,19 +45,19 @@ async function directory(root: string, artifact: Pick<ScreenExportArtifact, 'kin
     try {
         for (let index = 0; index <= parts.length; index++) {
             const info = await handle.stat({ bigint: true })
-            const named = await lstat(current, { bigint: true })
-            if (!info.isDirectory() || info.uid !== uid() || !same(named, { dev: String(info.dev), ino: String(info.ino) }) || await realpath(current) !== current) throw conflict()
+            const named = await lstat(/* turbopackIgnore: true */ current, { bigint: true })
+            if (!info.isDirectory() || info.uid !== uid() || !same(named, { dev: String(info.dev), ino: String(info.ino) }) || await realpath(/* turbopackIgnore: true */ current) !== current) throw conflict()
             directories.push({ path: current, dev: String(info.dev), ino: String(info.ino), uid: String(info.uid) })
             await assertDirectories(directories)
             if (index === parts.length) return { handle, directories, name, path: current, pinned: await pin(handle) }
             const child = parts[index]!
-            const pinnedChild = join(await pin(handle), child)
+            const pinnedChild = join(/* turbopackIgnore: true */ await pin(handle), child)
             if (create && generated) {
                 await guard(); await assertDirectories(directories)
-                await mkdir(pinnedChild, { mode: 0o700 }).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error })
+                await mkdir(/* turbopackIgnore: true */ pinnedChild, { mode: 0o700 }).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error })
                 await assertDirectories(directories)
             }
-            current = join(current, child)
+            current = join(/* turbopackIgnore: true */ current, child)
             const next = await openWithoutLinks(current, true)
             await handle.close(); handle = next
         }
@@ -68,9 +68,9 @@ async function directory(root: string, artifact: Pick<ScreenExportArtifact, 'kin
 /** Recovery never publishes a staged file. Only the exact acknowledged inode can be read. */
 export async function inspectBrowserExportFile(root: string, artifact: Pick<ScreenExportArtifact, 'kind' | 'path' | 'sha256'> & { byteLength: number }, recorded: { dev: string; ino: string; parent_json: string }, guard: () => Promise<void>): Promise<Buffer> {
     const parents = JSON.parse(recorded.parent_json) as Directory[]
-    if (!Array.isArray(parents) || parents[0]?.path !== root || parents.at(-1)?.path !== join(root, ...artifact.path.split('/').slice(0, -1))) throw conflict()
+    if (!Array.isArray(parents) || parents[0]?.path !== root || parents.at(-1)?.path !== join(/* turbopackIgnore: true */ root, ...artifact.path.split('/').slice(0, -1))) throw conflict()
     await guard(); await assertDirectories(parents)
-    const target = join(root, artifact.path), handle = await openWithoutLinks(target)
+    const target = join(/* turbopackIgnore: true */ root, artifact.path), handle = await openWithoutLinks(target)
     try {
         const before = await handle.stat({ bigint: true })
         if (!before.isFile() || before.uid !== uid() || before.nlink !== BigInt(1) || !same(before, recorded) || before.size !== BigInt(artifact.byteLength)) throw conflict()
@@ -81,7 +81,7 @@ export async function inspectBrowserExportFile(root: string, artifact: Pick<Scre
             if (!read.bytesRead) break
             used += read.bytesRead
         }
-        const after = await handle.stat({ bigint: true }), named = await lstat(target, { bigint: true })
+        const after = await handle.stat({ bigint: true }), named = await lstat(/* turbopackIgnore: true */ target, { bigint: true })
         if (used !== artifact.byteLength || !same(named, recorded) || after.nlink !== BigInt(1) || named.nlink !== BigInt(1) || after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs || createHash('sha256').update(bytes.subarray(0, used)).digest('hex') !== artifact.sha256) throw conflict()
         await guard(); await assertDirectories(parents)
         return bytes.subarray(0, used)
@@ -96,8 +96,8 @@ export async function publishBrowserExportFile(db: Client, root: string, artifac
         const parent = await directory(root, artifact, true, guard)
         try {
             const tempName = `.rerun-browser-export-${randomBytes(16).toString('hex')}`
-            const temp = join(parent.pinned, tempName)
-            const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (process.platform === 'darwin' ? 0x20000000 : constants.O_NOFOLLOW), 0o600)
+            const temp = join(/* turbopackIgnore: true */ parent.pinned, tempName)
+            const handle = await open(/* turbopackIgnore: true */ temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (process.platform === 'darwin' ? 0x20000000 : constants.O_NOFOLLOW), 0o600)
             let info: BigIntStats
             try {
                 await handle.writeFile(artifact.bytes); await handle.sync()

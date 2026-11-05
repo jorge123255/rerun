@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
-import type { DesktopCoworkerCallTarget } from '../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 import type { DesktopCoworkerMention } from '@/lib/desktop/coworker-mentions'
 import { DesktopCoworkerMentions } from './DesktopCoworkerMentions'
 

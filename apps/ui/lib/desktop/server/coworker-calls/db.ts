@@ -6,7 +6,7 @@ import {
     desktopCoworkerCallStatuses,
     type DesktopCoworkerCallProgress,
     type DesktopCoworkerCallStatus,
-} from '../../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+} from '@rerun/contracts'
 import type { Client, InValue } from '@libsql/client'
 import { z } from 'zod'
 import { DesktopHttpError } from '../auth'

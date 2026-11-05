@@ -8,7 +8,7 @@ import {
     reconcileDesktopCoworkerMentions,
     type DesktopCoworkerMention,
 } from '@/lib/desktop/coworker-mentions'
-import type { DesktopCoworkerCallTarget } from '../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 import { DesktopMentionMenu, type DesktopMentionItem } from './DesktopMentionMenu'
 
 type Trigger = '@' | '/'

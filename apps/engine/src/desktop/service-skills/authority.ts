@@ -23,7 +23,7 @@ export async function trustedSkillOwners(workspace: string, stop?: AbortSignal):
     if (globals[readerKey]) owners = await globals[readerKey]!(workspace, signal)
     else {
         const engineAgentId = basename(dirname(workspace)), root = process.env.RERUN_DATA_DIR
-        if (!root || !/^[A-Za-z0-9_-]{1,128}$/.test(engineAgentId) || resolve(workspace) !== join(resolve(root), 'agents', engineAgentId, 'workspace')) throw unavailable()
+        if (!root || !/^[A-Za-z0-9_-]{1,128}$/.test(engineAgentId) || resolve(/* turbopackIgnore: true */ workspace) !== join(/* turbopackIgnore: true */ resolve(/* turbopackIgnore: true */ root), 'agents', engineAgentId, 'workspace')) throw unavailable()
         const origin = new URL(process.env.RERUN_HUB_BASE_URL ?? '')
         const token = process.env.RERUN_API_KEY
         if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port || origin.pathname !== '/' || origin.username || origin.password || origin.search || origin.hash || !token) throw unavailable()
@@ -49,7 +49,7 @@ export async function trustedSkillOwners(workspace: string, stop?: AbortSignal):
         } finally { void reader.cancel().catch(() => {}) }
     }
     // Unacknowledged, legacy and forged resources in the reserved namespace stay protected.
-    const entries = await readdir(join(dirname(workspace), 'skills')).catch((error: NodeJS.ErrnoException) => {
+    const entries = await readdir(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ dirname(workspace), 'skills')).catch((error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return []
         throw unavailable()
     })

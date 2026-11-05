@@ -1,5 +1,5 @@
 import type { ComposerMention } from '@/lib/chat/composer-links'
-import type { DesktopCoworkerCallTarget } from '../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 
 export const DESKTOP_COWORKER_MENTION_METADATA_VERSION = 1
 

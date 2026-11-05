@@ -4,7 +4,7 @@ import { AgentBuddy } from '@rerun/ui/iso-grid'
 import { useEffect, useRef } from 'react'
 import type { MentionSkill } from '@/components/chat/MentionAutocomplete'
 import { cn } from '@/lib/utils'
-import type { DesktopCoworkerCallTarget } from '../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 
 export type DesktopMentionItem = {
     kind: 'agent'

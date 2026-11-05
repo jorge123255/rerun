@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { TextDecoder } from 'node:util'
-import { IsolatedScreenRefusal } from './refusal.js'
-import type { ScreenExportArtifact, ScreenNavigate } from './types.js'
-import { PAGE_EXPORT_ROOT } from './export-metadata.js'
+import { IsolatedScreenRefusal } from './refusal.ts'
+import type { ScreenExportArtifact, ScreenNavigate } from './types.ts'
+import { PAGE_EXPORT_ROOT } from './export-metadata.ts'
 
 export const EXPORT_HTML_MAX = 1024 * 1024
 export const EXPORT_PNG_MAX = 6 * 1024 * 1024

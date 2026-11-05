@@ -1,5 +1,5 @@
 import { expect, test, vi } from 'vitest'
-import type { DesktopCoworkerCallTarget } from '../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 import {
     createDesktopCoworkerMentionsApi,
     DESKTOP_COWORKER_MENTION_TARGET_LIMIT,

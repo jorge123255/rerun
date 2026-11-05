@@ -2,7 +2,7 @@ import 'server-only'
 import {
     desktopCoworkerCallTargetSchema,
     type DesktopCoworkerCallTarget,
-} from '../../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+} from '@rerun/contracts'
 import type { Client } from '@libsql/client'
 import { z } from 'zod'
 import { DesktopHttpError } from '../auth'

@@ -1,7 +1,7 @@
 import 'server-only'
 import { abortable } from './mcp/remote'
 
-import type { DesktopCoworkerCallTarget } from '../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 import { revalidateDesktopCoworkerMentions, type DesktopCoworkerMention, type DesktopCoworkerMentionRevalidation } from '@/components/desktop/mentions/coworker-mention-model'
 
 export const DESKTOP_COWORKER_MENTION_TARGET_LIMIT = 100

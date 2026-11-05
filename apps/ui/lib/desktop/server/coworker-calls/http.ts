@@ -7,7 +7,7 @@ import {
     desktopCoworkerCallSnapshotOf,
     desktopCoworkerCallStatuses,
     desktopCoworkerCallStopSchema,
-} from '../../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+} from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { openDesktopDatabase } from '../database'
 import type { DesktopRuntime } from '../runtime'

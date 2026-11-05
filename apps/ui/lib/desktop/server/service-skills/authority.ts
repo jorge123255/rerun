@@ -19,14 +19,14 @@ async function resolveScope(runtime: DesktopRuntime, engineId: string, signal: A
         if (rows.length !== 1) throw new Error('Coworker is unavailable')
         return String(rows[0].id)
     }
-    const owner = await resolveOwner(), data = await abortable(realpath(runtime.dataRoot), signal)
-    const agentRoot = join(data, 'workspaces', '1', 'engine', 'agents', engineId)
-    for (const path of [data, join(data, 'workspaces'), join(data, 'workspaces', '1'), join(data, 'workspaces', '1', 'engine'), dirname(agentRoot), agentRoot]) {
-        const info = await abortable(lstat(path), signal)
-        if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.() || await abortable(realpath(path), signal) !== path) throw new Error('Coworker storage changed')
+    const owner = await resolveOwner(), data = await abortable(realpath(/* turbopackIgnore: true */ runtime.dataRoot), signal)
+    const agentRoot = join(/* turbopackIgnore: true */ data, 'workspaces', '1', 'engine', 'agents', engineId)
+    for (const path of [data, join(/* turbopackIgnore: true */ data, 'workspaces'), join(/* turbopackIgnore: true */ data, 'workspaces', '1'), join(/* turbopackIgnore: true */ data, 'workspaces', '1', 'engine'), dirname(agentRoot), agentRoot]) {
+        const info = await abortable(lstat(/* turbopackIgnore: true */ path), signal)
+        if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.() || await abortable(realpath(/* turbopackIgnore: true */ path), signal) !== path) throw new Error('Coworker storage changed')
     }
     if (await resolveOwner() !== owner) throw new Error('Coworker changed')
-    return { owner, engineId, skillsRoot: join(agentRoot, 'skills') }
+    return { owner, engineId, skillsRoot: join(/* turbopackIgnore: true */ agentRoot, 'skills') }
 }
 
 /** Canonical read-only authority. It never initializes MCP, reads a credential or calls the engine. */
@@ -48,7 +48,7 @@ export async function readDesktopServiceSkillOwners(runtime: DesktopRuntime, eng
 export function bindDesktopServiceSkillOwners(runtime: DesktopRuntime): void {
     bindDesktopSkillOwnerReader(async (workspace, signal) => {
         const engineId = basename(dirname(workspace))
-        if (resolve(workspace) !== join(resolve(runtime.dataRoot), 'workspaces', '1', 'engine', 'agents', engineId, 'workspace')) throw new Error('Coworker storage mismatch')
+        if (resolve(/* turbopackIgnore: true */ workspace) !== join(/* turbopackIgnore: true */ resolve(/* turbopackIgnore: true */ runtime.dataRoot), 'workspaces', '1', 'engine', 'agents', engineId, 'workspace')) throw new Error('Coworker storage mismatch')
         return readDesktopServiceSkillOwners(runtime, engineId, signal)
     })
 }

@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import type { DesktopCoworkerCallTarget } from '../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 import { createDesktopCoworkerMentionsApi } from './coworker-mentions'
 
 const target: DesktopCoworkerCallTarget = { agentId: 'peer-1', name: 'Researcher', handle: 'researcher', boxName: 'Research', enabled: true, callable: true }

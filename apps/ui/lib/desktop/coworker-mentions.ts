@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DesktopCoworkerCallTarget } from '../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 import { revalidateDesktopCoworkerMentions, type DesktopCoworkerMention, type DesktopCoworkerMentionRevalidation } from '@/components/desktop/mentions/coworker-mention-model'
 
 export * from '@/components/desktop/mentions/coworker-mention-model'

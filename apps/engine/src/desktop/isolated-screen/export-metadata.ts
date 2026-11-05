@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { assertHttpUrl } from './page.js'
-import type { ScreenExportArtifact, ScreenPage } from './types.js'
+import { assertHttpUrl } from './page.ts'
+import type { ScreenExportArtifact, ScreenPage } from './types.ts'
 
 export const PAGE_EXPORT_ROOT = '.rerun/pages'
 export const PAGE_METADATA_MAX = 16_384

@@ -15,7 +15,7 @@ import {
     type DesktopDelegationClient,
     type DesktopDelegationFilter,
 } from '@/lib/desktop/delegation-client'
-import type { DesktopDelegationSnapshot } from '../../../../../packages/contracts/src/desktop-delegation'
+import type { DesktopDelegationSnapshot } from '@rerun/contracts'
 import { DesktopDelegationBlock } from './DesktopDelegationBlock'
 
 export const DESKTOP_DELEGATION_POLL_MS = 3000

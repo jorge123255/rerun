@@ -16,7 +16,7 @@ import { stripBridgePrefix } from '@/lib/chat/bridge-name'
 import { isSubRunFailing, isSubRunLive, isSubRunStalled, type SubRunCall, type SubRunTask } from '@/lib/chat/sub-run-progress'
 import { CheckIcon, ChevronRightIcon, ClockIcon, SquareIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import type { DesktopDelegationTask } from '../../../../../packages/contracts/src/desktop-delegation'
+import type { DesktopDelegationTask } from '@rerun/contracts'
 import { delegationDetail, delegationOutcome, delegationTaskToSubRun } from './task-view'
 
 type ToolDisplayOf = (toolName: string) => ToolDisplay

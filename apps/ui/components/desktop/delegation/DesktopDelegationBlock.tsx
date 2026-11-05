@@ -7,7 +7,7 @@ import { desktopSubRunToolDisplay } from '@/lib/desktop/sub-run-display'
 import { isSubRunLive, subRunHeadline } from '@/lib/chat/sub-run-progress'
 import { ToolCallRow, type ToolCallStatus } from '@rerun/ui/chat'
 import { useEffect, useRef, useState } from 'react'
-import type { DesktopDelegationSnapshot } from '../../../../../packages/contracts/src/desktop-delegation'
+import type { DesktopDelegationSnapshot } from '@rerun/contracts'
 import { DesktopDelegationTree } from './DesktopDelegationTree'
 import { delegationTaskToSubRun } from './task-view'
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DesktopCoworkerCallTarget } from '../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 import {
     desktopCoworkerMentionFields,
     desktopCoworkerMentionsFromMetadata,

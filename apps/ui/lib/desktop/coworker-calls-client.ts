@@ -4,9 +4,9 @@ import {
     desktopCoworkerCallListSchema,
     desktopCoworkerCallStopResultSchema,
     type DesktopCoworkerCallSnapshot,
-} from '../../../../packages/contracts/src/desktop-coworker-calls'
+} from '@rerun/contracts'
 
-export type { DesktopCoworkerCallSnapshot } from '../../../../packages/contracts/src/desktop-coworker-calls'
+export type { DesktopCoworkerCallSnapshot } from '@rerun/contracts'
 
 export type DesktopCoworkerCallOpenTarget = { agentId: string; sessionId: string }
 

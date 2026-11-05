@@ -1,6 +1,6 @@
-import { detectBotWall } from '../../tools/bot-wall.js'
-import { IsolatedScreenRefusal } from './refusal.js'
-import type { ScreenPage } from './types.js'
+import { detectBotWall } from '../../tools/bot-wall.ts'
+import { IsolatedScreenRefusal } from './refusal.ts'
+import type { ScreenPage } from './types.ts'
 
 const TEXT_LIMIT = 50_000
 const LINK_LIMIT = 300

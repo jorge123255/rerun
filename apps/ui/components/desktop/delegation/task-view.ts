@@ -1,5 +1,5 @@
 import { subRunOutcome, type SubRunCall, type SubRunTask } from '@rerun/contracts'
-import type { DesktopDelegationTask } from '../../../../../packages/contracts/src/desktop-delegation'
+import type { DesktopDelegationTask } from '@rerun/contracts'
 
 /** D's ordered result when a done task saved an empty string. `orderedDelegationResult` in D's runtime. */
 export const DELEGATION_EMPTY_RESULT = '(the sub-coworker returned no text)'

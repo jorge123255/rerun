@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { DESKTOP_COWORKER_CALL_INTERRUPTED_REASON, DESKTOP_COWORKER_CALL_MAX_FANOUT } from '../../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import { DESKTOP_COWORKER_CALL_INTERRUPTED_REASON, DESKTOP_COWORKER_CALL_MAX_FANOUT } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '../database'
 import {
     adoptDesktopCoworkerCallEpoch,

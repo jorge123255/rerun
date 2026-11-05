@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { IsolatedScreenRefusal } from './refusal.js'
-import type { ScreenOwner, ScreenTarget } from './types.js'
+import { IsolatedScreenRefusal } from './refusal.ts'
+import type { ScreenOwner, ScreenTarget } from './types.ts'
 
 export const LABEL_ROLE = 'com.rerun.desktop.role'
 export const LABEL_MANAGED = 'com.rerun.desktop.managed'

@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
 import { TextDecoder } from 'node:util'
-import { abortable } from '../web-fetch/transport.js'
-import { decodePageExports, exportPath, EXPORT_HTML_MAX, EXPORT_PNG_MAX, navigationOptions } from './exports.js'
-import { PAGE_METADATA_MAX, PAGE_RETENTION } from './export-metadata.js'
-import { assertTarget } from './identity.js'
-import { assertHttpUrl } from './page.js'
-import type { ScreenExportArtifact, ScreenNavigate, ScreenSavedExports, ScreenTarget } from './types.js'
+import { abortable } from '../web-fetch/transport.ts'
+import { decodePageExports, exportPath, EXPORT_HTML_MAX, EXPORT_PNG_MAX, navigationOptions } from './exports.ts'
+import { PAGE_METADATA_MAX, PAGE_RETENTION } from './export-metadata.ts'
+import { assertTarget } from './identity.ts'
+import { assertHttpUrl } from './page.ts'
+import type { ScreenExportArtifact, ScreenNavigate, ScreenSavedExports, ScreenTarget } from './types.ts'
 
 export type ScreenExportIdentity = {
     engineAgentId: string; sessionId: string; runId: string; toolCallId: string

@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { DesktopCoworkerCallTarget } from '../../../../../packages/contracts/src/desktop-coworker-calls.ts'
+import type { DesktopCoworkerCallTarget } from '@rerun/contracts'
 import { revalidateDesktopCoworkerMentionsAtSend, useDesktopCoworkerMentionTargets } from '@/lib/desktop/coworker-mentions'
 
 const roots: Root[] = []
