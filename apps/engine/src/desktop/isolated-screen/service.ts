@@ -8,8 +8,10 @@ import { decodeFrame, encodeFrame } from './frame.js'
 import { assertAgentId, assertLaunchNonce, assertOwner, assertTarget, containerName, LABEL_AGENT, LABEL_GENERATION, LABEL_MANAGED, LABEL_NONCE, LABEL_ROLE, ROLE_SCREEN, sameOwnerContainer, sameOwnerVolume, volumeName } from './identity.js'
 import { HUMAN_DRIVING, planAction, viewOf, type ScreenGeometry } from './input.js'
 import { assertHttpUrl, boundPage, publicUrl } from './page.js'
+import { decodePageExports, exportPath, navigationOptions } from './exports.js'
+import { abortable } from '../web-fetch/transport.js'
 import { abortError, isAbortError, IsolatedScreenRefusal, throwIfAborted } from './refusal.js'
-import type { EnsuredScreen, IsolatedScreenService, ScreenComputerInput, ScreenLease, ScreenNavigate, ScreenOwner, ScreenPage, ScreenPrerequisite, ScreenReconcile, ScreenRunState, ScreenShot, ScreenStatus, ScreenTakeover, ScreenTarget, ViewerMode } from './types.js'
+import type { EnsuredScreen, IsolatedScreenService, ScreenComputerInput, ScreenLease, ScreenNavigate, ScreenNavigationExport, ScreenOwner, ScreenPage, ScreenPrerequisite, ScreenReconcile, ScreenRunState, ScreenShot, ScreenStatus, ScreenTakeover, ScreenTarget, ViewerMode } from './types.js'
 
 const READY_ATTEMPTS = 150
 const READY_PAUSE_MS = 200
@@ -276,10 +278,32 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         try { return await work } finally { starts.delete(work) }
     }
 
-    async function navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal): Promise<ScreenPage> {
+    async function navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal, exports?: ScreenNavigationExport): Promise<ScreenPage> {
         throwIfAborted(signal)
         const url = assertHttpUrl(input.url)
-        return action(target, signal, async (_live, linked) => boundPage((await guestCall(target, { op: 'navigate', url }, linked)).value, url))
+        const options = navigationOptions(input)
+        if (options.screenshot && !exports) throw new IsolatedScreenRefusal('Screenshot saving requires current private Files write authority.', 'refused')
+        if (exports) exportPath(exports.htmlPath, 'rendered-html')
+        return action(target, AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs + 35_000)]), async (_live, linked) => {
+            const reply = await guestCall(target, { op: 'navigate', url, ...options, exportHtml: !!exports }, linked)
+            const page = boundPage(reply.value, url, options.links)
+            if (exports && !page.wall) {
+                const artifacts = await decodePageExports(reply.value, reply.binary, { html: exports.htmlPath, screenshot: input.screenshotPath }, linked)
+                current(target)
+                throwIfAborted(linked)
+                page.exports = await abortable(exports.publish(artifacts, linked), linked)
+                if (!['saved', 'unknown', 'refused', 'unavailable'].includes(page.exports.status)
+                    || !Array.isArray(page.exports.files) || page.exports.files.length > artifacts.length
+                    || page.exports.files.some((file, index, files) => files.findIndex(other => other.kind === file.kind) !== index
+                        || !artifacts.some(item => item.kind === file.kind && item.path === file.path && item.sha256 === file.sha256 && item.bytes.length === file.byteLength))
+                    || page.exports.status === 'saved' && page.exports.files.length !== artifacts.length) {
+                    throw new IsolatedScreenRefusal('The browser export acknowledgement is invalid. Inspect Files before retrying.', 'closed')
+                }
+            } else if (exports) page.exports = { status: 'refused', files: [] }
+            current(target)
+            throwIfAborted(linked)
+            return page
+        })
     }
 
     async function act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal): Promise<ScreenShot> {

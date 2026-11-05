@@ -32,7 +32,7 @@ export type EnsuredScreen = {
 
 export type ScreenLink = { href: string; text: string }
 
-// Structured page data. Lane B formats the tool string. HTML is not returned.
+// Raw HTML and image bytes never enter the model-facing page result.
 export type ScreenPage = {
     status: number
     finalUrl: string
@@ -40,6 +40,7 @@ export type ScreenPage = {
     truncated: boolean
     links: ScreenLink[]
     wall: BotWall | null
+    exports?: ScreenSavedExports
 }
 
 export type ScreenShot = {
@@ -72,7 +73,25 @@ export type ScreenComputerInput = {
     duration?: number
 }
 
-export type ScreenNavigate = { url: string }
+export type ScreenNavigate = { url: string; links?: boolean; timeoutMs?: number; screenshotPath?: string }
+
+export type ScreenExportArtifact = {
+    kind: 'rendered-html' | 'screenshot'
+    path: string
+    mediaType: 'text/plain' | 'image/png'
+    bytes: Buffer
+    sha256: string
+    width?: number
+    height?: number
+}
+export type ScreenSavedExports = {
+    files: Array<{ kind: ScreenExportArtifact['kind']; path: string; sha256: string; byteLength: number }>
+    status: 'saved' | 'unknown' | 'refused' | 'unavailable'
+}
+export type ScreenNavigationExport = {
+    htmlPath: string
+    publish(artifacts: ScreenExportArtifact[], signal: AbortSignal): Promise<ScreenSavedExports>
+}
 
 export type ScreenLease = { token: string }
 
@@ -89,7 +108,7 @@ export type ScreenReconcile = {
 export type IsolatedScreenService = {
     status(owner: ScreenOwner, signal: AbortSignal): Promise<ScreenStatus>
     ensure(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen>
-    navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal): Promise<ScreenPage>
+    navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal, exports?: ScreenNavigationExport): Promise<ScreenPage>
     act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal): Promise<ScreenShot>
     startTakeover(target: ScreenTarget, signal: AbortSignal): Promise<ScreenLease>
     finishTakeover(target: ScreenTarget, lease: ScreenLease, signal: AbortSignal): Promise<ScreenTakeover>

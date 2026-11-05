@@ -40,6 +40,12 @@ TYPE_DELAY_MS = '12'
 DOUBLE_CLICK_DELAY_MS = '80'
 WALL_TEXT_MAX = 3_000
 CHALLENGE_MAX_S = 15
+EXPORT_HTML_MAX = 1024 * 1024
+EXPORT_PNG_MAX = 6 * 1024 * 1024
+EXPORT_EDGE_MAX = 8192
+EXPORT_PIXELS_MAX = 16_777_216
+EXPORT_CAPTURE_S = 15
+CDP_MAX = 9 * 1024 * 1024
 
 # Same markers as apps/engine/src/tools/bot-wall.ts. A long page is not a wall.
 WALLS = (
@@ -112,11 +118,22 @@ class GuestError(Exception):
         self.refusal = refusal
 
 
-def read_exact(source, size):
+def read_exact(source, size, deadline=None, client=None):
     chunks = []
     got = 0
     while got < size:
-        chunk = source.read(size - got) if hasattr(source, 'read') else source.recv(size - got)
+        if deadline is not None:
+            if time.monotonic() >= deadline:
+                raise GuestError('The page took too long.')
+            if client is not None and cancelled(client):
+                raise GuestError('The screen action was cancelled.')
+            source.settimeout(min(0.2, max(0.001, deadline - time.monotonic())))
+        try:
+            chunk = source.read(size - got) if hasattr(source, 'read') else source.recv(size - got)
+        except socket.timeout:
+            if deadline is None:
+                raise
+            continue
         if not chunk:
             raise GuestError('The screen connection closed.')
         chunks.append(chunk)
@@ -420,7 +437,7 @@ def dispatch(request, client):
         perform_input(request, client)
         return {'ok': True}, b''
     if op == 'navigate':
-        return navigate(request.get('url'), client), b''
+        return navigate(request, client)
     raise GuestError('That screen action is not available.', refusal=True)
 
 
@@ -603,21 +620,22 @@ def ws_send(sock, payload):
     sock.sendall(bytes(header) + mask + masked)
 
 
-def ws_recv(sock):
+def ws_recv(sock, client=None, deadline=None, limit=JSON_MAX):
     pieces = []
+    total = 0
     while True:
-        header = read_exact(sock, 2)
+        header = read_exact(sock, 2, deadline, client)
         opcode = header[0] & 0x0F
         masked = header[1] & 0x80
         length = header[1] & 0x7F
         if length == 126:
-            length = int.from_bytes(read_exact(sock, 2), 'big')
+            length = int.from_bytes(read_exact(sock, 2, deadline, client), 'big')
         elif length == 127:
-            length = int.from_bytes(read_exact(sock, 8), 'big')
-        if length > JSON_MAX:
+            length = int.from_bytes(read_exact(sock, 8, deadline, client), 'big')
+        if length > limit or total + length > limit:
             raise GuestError('The guest browser returned too much.')
-        mask = read_exact(sock, 4) if masked else b''
-        payload = read_exact(sock, length)
+        mask = read_exact(sock, 4, deadline, client) if masked else b''
+        payload = read_exact(sock, length, deadline, client)
         if masked:
             payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
         if opcode == 9:
@@ -627,18 +645,30 @@ def ws_recv(sock):
             raise GuestError('The guest browser closed.')
         if opcode in (0, 1):
             pieces.append(payload)
+            total += len(payload)
             if header[0] & 0x80:
                 return json.loads(b''.join(pieces).decode())
         elif header[0] & 0x80:
             pieces.clear()
+            total = 0
 
 
 class Cdp:
-    def __init__(self, sock, client=None):
+    def __init__(self, sock, client=None, deadline=None):
         self.sock = sock
         self.client = client
         self.next_id = 1
         self.events = []
+        self.deadline = deadline
+
+    def remember(self, message):
+        method = message.get('method')
+        params = message.get('params') or {}
+        if method in ('Page.loadEventFired', 'Page.domContentEventFired') or method == 'Network.responseReceived' and params.get('type') == 'Document':
+            status = (params.get('response') or {}).get('status')
+            self.events.append({'method': method, 'params': {'type': params.get('type'), 'response': {'status': status}}})
+            if len(self.events) > 256:
+                self.events.pop(0)
 
     def call(self, method, params, timeout):
         if self.client is not None and cancelled(self.client):
@@ -647,20 +677,21 @@ class Cdp:
         self.next_id += 1
         self.sock.settimeout(timeout)
         ws_send(self.sock, {'id': call_id, 'method': method, 'params': params})
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            self.sock.settimeout(max(0.1, deadline - time.time()))
-            message = ws_recv(self.sock)
+        deadline = min(time.monotonic() + timeout, self.deadline if self.deadline is not None else float('inf'))
+        while time.monotonic() < deadline:
+            message = ws_recv(self.sock, self.client, deadline, CDP_MAX)
             if message.get('id') == call_id:
                 if 'error' in message:
                     raise GuestError('The page could not be read.')
                 return message.get('result') or {}
-            self.events.append(message)
+            self.remember(message)
         raise GuestError('The page took too long.')
 
 
 def evaluate(cdp, expression):
     result = cdp.call('Runtime.evaluate', {'expression': expression, 'returnByValue': True}, 10)
+    if result.get('exceptionDetails'):
+        raise GuestError('The page could not be read.')
     return (result.get('result') or {}).get('value')
 
 
@@ -683,45 +714,124 @@ def http_url(value):
     return value
 
 
-def navigate(url, client):
-    target = http_url(url)
+def navigation_options(request):
+    timeout = request.get('timeoutMs', 30_000)
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 120_000:
+        raise GuestError('The navigation timeout must be between 1 and 120000 milliseconds.', refusal=True)
+    for key in ('links', 'screenshot', 'exportHtml'):
+        if key in request and not isinstance(request[key], bool):
+            raise GuestError('The navigation options were not valid.', refusal=True)
+    if request.get('screenshot') and not request.get('exportHtml'):
+        raise GuestError('Screenshot saving requires an export authority.', refusal=True)
+    return timeout
+
+
+def pause_until(cdp, seconds):
+    end = min(time.monotonic() + seconds, cdp.deadline)
+    while time.monotonic() < end:
+        if cancelled(cdp.client):
+            raise GuestError('The screen action was cancelled.')
+        time.sleep(min(0.1, max(0, end - time.monotonic())))
+    if time.monotonic() >= cdp.deadline:
+        raise GuestError('The page took too long.')
+
+
+def rendered_html(cdp):
+    value = evaluate(cdp, f'''(() => {{
+      const html = (document.doctype ? new XMLSerializer().serializeToString(document.doctype) + '\\n' : '') + (document.documentElement?.outerHTML || '');
+      if (!html || html.length > {EXPORT_HTML_MAX} || new TextEncoder().encode(html).length > {EXPORT_HTML_MAX}) return null;
+      return html;
+    }})()''')
+    if not isinstance(value, str) or not value or len(value.encode()) > EXPORT_HTML_MAX or '\x00' in value:
+        raise GuestError('The rendered HTML exceeds the export limit.')
+    return value.encode()
+
+
+def export_dimensions(size):
+    if not isinstance(size, dict):
+        raise GuestError('The full-page dimensions are unavailable.')
+    width, height = size.get('width'), size.get('height')
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not 1 <= value <= EXPORT_EDGE_MAX for value in (width, height)):
+        raise GuestError('The full page exceeds the screenshot dimension limit.')
+    import math
+    width, height = math.ceil(width), math.ceil(height)
+    if width * height > EXPORT_PIXELS_MAX:
+        raise GuestError('The full page exceeds the screenshot pixel limit.')
+    return width, height
+
+
+def full_page_png(cdp):
+    started = time.monotonic()
+    limit = min(cdp.deadline, started + EXPORT_CAPTURE_S)
+    previous = cdp.deadline
+    cdp.deadline = limit
+    try:
+        size = cdp.call('Page.getLayoutMetrics', {}, 5).get('cssContentSize')
+        width, height = export_dimensions(size)
+        result = cdp.call('Page.captureScreenshot', {'format': 'png', 'fromSurface': True, 'captureBeyondViewport': True,
+            'clip': {'x': 0, 'y': 0, 'width': width, 'height': height, 'scale': 1}}, EXPORT_CAPTURE_S)
+        data = result.get('data')
+        if not isinstance(data, str) or not data or len(data) > ((EXPORT_PNG_MAX + 2) // 3) * 4:
+            raise GuestError('The full-page screenshot exceeds the byte limit.')
+        try:
+            png = base64.b64decode(data, validate=True)
+        except ValueError as error:
+            raise GuestError('The full-page screenshot was not valid.') from error
+        after = export_dimensions(cdp.call('Page.getLayoutMetrics', {}, 3).get('cssContentSize'))
+        if after != (width, height):
+            raise GuestError('The page dimensions changed during the full-page screenshot.')
+        if time.monotonic() > limit or len(png) > EXPORT_PNG_MAX or len(png) < 33 or png[:8] != b'\x89PNG\r\n\x1a\n' or int.from_bytes(png[16:20], 'big') != width or int.from_bytes(png[20:24], 'big') != height:
+            raise GuestError('The full-page screenshot was incomplete or exceeds its limits.')
+        return png, width, height
+    finally:
+        cdp.deadline = previous
+
+
+def navigate(request, client):
+    timeout = navigation_options(request)
+    target = http_url(request.get('url'))
+    deadline = time.monotonic() + timeout / 1000
     sock = page_socket()
     try:
-        cdp = Cdp(sock, client)
+        cdp = Cdp(sock, client, deadline)
         cdp.call('Page.enable', {}, 5)
         cdp.call('Network.enable', {}, 5)
-        cdp.call('Page.navigate', {'url': target}, 10)
-        deadline = time.time() + 30
-        while time.time() < deadline:
+        navigation = cdp.call('Page.navigate', {'url': target}, timeout / 1000)
+        if navigation.get('errorText') or navigation.get('isDownload'):
+            raise GuestError('The page could not be opened.')
+        while time.monotonic() < deadline:
             if cancelled(client):
                 raise GuestError('The screen action was cancelled.')
-            if any(event.get('method') == 'Page.loadEventFired' for event in cdp.events):
+            if any(event.get('method') in ('Page.loadEventFired', 'Page.domContentEventFired') for event in cdp.events):
                 break
-            cdp.sock.settimeout(1)
-            try:
-                message = ws_recv(cdp.sock)
-            except socket.timeout:
-                continue
-            if 'method' in message:
-                cdp.events.append(message)
+            cdp.remember(ws_recv(cdp.sock, client, deadline, CDP_MAX))
         else:
             raise GuestError('The page took too long.')
-        for _ in range(CHALLENGE_MAX_S):
+        challenge_end = min(deadline, time.monotonic() + min(CHALLENGE_MAX_S, timeout / 2000))
+        for _ in range(CHALLENGE_MAX_S + 1):
             html = evaluate(cdp, f'(document.documentElement && document.documentElement.outerHTML || "").slice(0, {HTML_MAX})')
-            text = evaluate(cdp, 'document.body ? document.body.innerText : ""')
+            text = evaluate(cdp, f'(document.body ? document.body.innerText : "").slice(0, {TEXT_MAX + 1})')
             wall = detect_wall(html if isinstance(html, str) else '', text if isinstance(text, str) else '')
-            if not wall or wall['clearsByItself'] is False:
+            if not wall or wall['clearsByItself'] is False or time.monotonic() >= challenge_end:
                 break
             if cancelled(client):
                 raise GuestError('The screen action was cancelled.')
-            time.sleep(1)
-        clicked = evaluate(cdp, CONSENT_JS)
+            pause_until(cdp, min(1, max(0, challenge_end - time.monotonic())))
+        clicked = evaluate(cdp, CONSENT_JS) if not wall else False
         if clicked is True:
-            time.sleep(1)
+            pause_until(cdp, 1)
         html = evaluate(cdp, f'(document.documentElement && document.documentElement.outerHTML || "").slice(0, {HTML_MAX})')
-        text = evaluate(cdp, 'document.body ? document.body.innerText : ""')
-        links = evaluate(cdp, LINKS_JS)
+        text = evaluate(cdp, f'(document.body ? document.body.innerText : "").slice(0, {TEXT_MAX + 1})')
+        wall = detect_wall(html if isinstance(html, str) else '', text if isinstance(text, str) else '')
+        links = evaluate(cdp, LINKS_JS) if request.get('links') and not wall else []
         final = evaluate(cdp, 'location.href')
+        html_bytes, png, width, height = b'', b'', 0, 0
+        if request.get('exportHtml') and not wall:
+            html_bytes = rendered_html(cdp)
+            if request.get('screenshot'):
+                png, width, height = full_page_png(cdp)
+        if cancelled(client) or time.monotonic() >= deadline:
+            raise GuestError('The screen action was cancelled or timed out.')
     finally:
         sock.close()
     text = text if isinstance(text, str) else ''
@@ -753,7 +863,11 @@ def navigate(url, client):
         'html': html[:HTML_MAX],
         'truncated': truncated,
         'links': safe_links,
-    }
+        'htmlBytes': len(html_bytes),
+        'screenshotBytes': len(png),
+        'screenshotWidth': width,
+        'screenshotHeight': height,
+    }, html_bytes + png
 
 
 def current_url():

@@ -27,18 +27,20 @@ export function assertHttpUrl(value: string): string {
     return value
 }
 
-export function boundPage(raw: Record<string, unknown>, requestedUrl: string): ScreenPage {
+export function boundPage(raw: Record<string, unknown>, requestedUrl: string, includeLinks = true): ScreenPage {
     const html = typeof raw.html === 'string' ? raw.html : ''
     const fullText = typeof raw.text === 'string' ? raw.text : ''
     const wall = detectBotWall({ html, text: fullText })
     const links: ScreenPage['links'] = []
-    if (!wall && Array.isArray(raw.links)) {
+    const seen = new Set<string>()
+    if (includeLinks && !wall && Array.isArray(raw.links)) {
         for (const link of raw.links) {
             if (links.length === LINK_LIMIT) break
             if (!link || typeof link !== 'object') continue
             const href = (link as { href?: unknown }).href
             const label = (link as { text?: unknown }).text
-            if (typeof href !== 'string' || publicUrl(href) === null) continue
+            if (typeof href !== 'string' || publicUrl(href) === null || seen.has(href)) continue
+            seen.add(href)
             links.push({ href, text: typeof label === 'string' ? label.replace(/\s+/g, ' ').trim().slice(0, LINK_TEXT_LIMIT) : '' })
         }
     }
