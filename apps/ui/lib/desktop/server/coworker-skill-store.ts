@@ -19,7 +19,7 @@ import {
     writeConfinedFile,
     type PublishedSkill,
     type SkillFilePayload,
-} from '../../../../../engine/src/desktop/skill-publication'
+} from '../../../../engine/src/desktop/skill-publication'
 import { DesktopHttpError } from './auth'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { openDesktopDatabase } from './database'

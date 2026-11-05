@@ -53,7 +53,7 @@ const flush = () => act(async () => { await new Promise(resolve => setTimeout(re
 // proposal list/decide endpoints. The connector read-only refusal lives on the server, so the
 // component test only exercises what the panel itself does with the rows it is given. The shelf
 // array is mutable: a create lands in it, so the panel's reload shows the new row.
-function skillsFetcher(options: { skills?: unknown[]; proposals?: unknown[] } = {}) {
+function skillsFetcher(options: { skills?: unknown[]; proposals?: Record<string, unknown>[] } = {}) {
     const proposals = options.proposals ?? []
     const skills = [...(options.skills ?? [])]
     const created: Record<string, unknown>[] = []
