@@ -11,7 +11,11 @@ const stamp = await sourceStamp()
 
 if (flag('--build') || !existsSync(join(dist, 'cli', 'bin.js')) || !await stampMatches(dist, stamp)) {
     await pnpm(['--filter', '@rerun/contracts', 'exec', 'tsc', '--build', '--force'])
+    // Never let a changed compiler output layout leave a stale runnable entry behind.
+    // rootDir pins the layout; a clean build makes the entry check prove this compile.
+    await rm(dist, { recursive: true, force: true })
     await pnpm(['--filter', 'rerun-engine', 'build'])
+    if (!existsSync(join(dist, 'cli', 'bin.js'))) throw new Error('engine build did not produce dist/cli/bin.js')
     await writeStamp(dist, stamp)
 }
 const deploy = await mkdtemp(join(tmpdir(), 'rerun-engine-deploy-'))

@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, readFile, rm, mkdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -41,5 +42,23 @@ test('cached output from another commit or without a build receipt cannot be lab
         await assert.rejects(requireStamp(root, current), /Stale or unverified/)
         await writeStamp(root, current)
         await requireStamp(root, current)
+    } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('engine staging cannot relabel a stale entry after the compiler emits a different directory layout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-engine-layout-'))
+    try {
+        const dist = join(root, 'apps/engine/dist')
+        await mkdir(join(dist, 'cli'), { recursive: true })
+        await writeFile(join(dist, 'cli/bin.js'), 'old engine')
+        const stub = `import {existsSync} from 'node:fs'; import {mkdir,writeFile} from 'node:fs/promises'; export {existsSync}; export const repoRoot=${JSON.stringify(root)}; export const resourcesDir=repoRoot+'/resources'; export const flag=()=>true; export const output=async(command,args)=>args[0]==='status'?'':'b'.repeat(40); export const buildId=async()=> 'layout-test'; export async function pnpm(args){ if(args.includes('build')) { if(existsSync(repoRoot+'/apps/engine/dist/cli/bin.js'))throw new Error('Stale entry survived'); await mkdir(repoRoot+'/apps/engine/dist/apps/engine/src/cli',{recursive:true}); await writeFile(repoRoot+'/apps/engine/dist/apps/engine/src/cli/bin.js','new misplaced engine'); } }`
+        const loader = join(root, 'loader.mjs')
+        await writeFile(loader, `export async function load(url,context,next){if(url===${JSON.stringify(new URL('./lib.mjs', import.meta.url).href)})return {format:'module',shortCircuit:true,source:${JSON.stringify(stub)}};return next(url,context)}`)
+        assert.throws(() => execFileSync(process.execPath, ['--loader', loader, fileURLToPath(new URL('./stage-engine.mjs', import.meta.url)), '--build'], { stdio: ['ignore', 'pipe', 'pipe'] }), error => {
+            assert.match(String(error.stderr), /engine build did not produce dist\/cli\/bin.js/)
+            return true
+        })
+        assert(!existsSync(join(dist, 'cli/bin.js')))
+        assert(!existsSync(join(dist, 'desktop-build.json')))
     } finally { await rm(root, { recursive: true, force: true }) }
 })

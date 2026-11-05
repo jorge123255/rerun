@@ -1,4 +1,4 @@
-import type { DesktopDelegationSnapshot, DesktopDelegationStop } from '../../../../../packages/contracts/src/desktop-delegation.js'
+import type { DesktopDelegationSnapshot, DesktopDelegationStop } from '@rerun/contracts'
 export type { DesktopDelegationSnapshot, DesktopDelegationStop }
 export type Source = Pick<DesktopDelegationSnapshot, 'parentAgentId' | 'parentSessionId' | 'parentRunId' | 'toolCallId'>
 export type Resource = { token: string; identity: string }

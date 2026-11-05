@@ -105,6 +105,10 @@ test('the supervisor launches the UI child through the real resource path, never
             return child
         }
         const fetcher = async (url, options) => {
+            if (url.endsWith('/api/desktop/internal/mcp') && options?.method === 'POST') {
+                assert.deepEqual(JSON.parse(options.body), { action: 'shutdown' })
+                return { ok: true, json: async () => ({ stopped: true }) }
+            }
             const runtimeFile = join(dataRoot, 'runtime.json')
             const runtime = JSON.parse(await readFile(runtimeFile, 'utf8'))
             return { ok: true, json: async () => ({ ...runtime, status: 'ready' }) }

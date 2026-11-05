@@ -104,7 +104,7 @@ function TaskBranch({ task, last, toolDisplay, onStop }: { task: DesktopDelegati
     const idleMinutes = view.idleMs === undefined ? undefined : Math.floor(view.idleMs / 60_000)
     // A Stop that already marked the task stopped can still have unconfirmed cleanup. That attempt stays retryable.
     const cleanupUnconfirmed = task.cleanup === 'blocked' || (view.status === 'stopped' && task.cleanup !== 'complete')
-    const canStop = !!onStop && (running || cleanupUnconfirmed)
+    const canStop = !!onStop && (view.status === 'queued' || running || cleanupUnconfirmed)
 
     useEffect(() => {
         alive.current = true

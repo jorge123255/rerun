@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import type { DesktopDelegationInput, DesktopDelegationStop } from '../../../../../packages/contracts/src/desktop-delegation.js'
+import type { DesktopDelegationInput, DesktopDelegationStop } from '@rerun/contracts'
 import type { Authority, Child, DelegationHost, DelegationStore, Record, Source, ReceiptStore } from './types.js'
 
 export const DELEGATION_LIMITS = {

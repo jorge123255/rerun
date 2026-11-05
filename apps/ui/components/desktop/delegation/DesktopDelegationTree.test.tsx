@@ -176,9 +176,44 @@ test('keeps a long title in a truncating row', async () => {
     expect(label?.className).toContain('min-w-0')
 })
 
-test('hides Stop for queued, done, error, and stopped tasks once cleanup is complete', async () => {
+test('a queued task can be stopped independently without inventing a start or a stopped acknowledgement', async () => {
+    const queuedId = '66666666-6666-4666-8666-666666666666'
+    const active = [2, 3, 4, 5].map(number => task({ taskId: `${number}2222222-2222-4222-8222-222222222222`, title: `Running ${number}` }))
+    const queued = task({ taskId: queuedId, title: 'Waiting for a worker', status: 'queued', steps: 0, toolCalls: 0 })
+    let rejectStop: (error: Error) => void = () => {}
+    let resolveStop: () => void = () => {}
+    const onStop = vi.fn((_taskId: string) => new Promise<void>((resolve, reject) => { resolveStop = resolve; rejectStop = reject }))
+    const root = await render([...active, queued], onStop)
+    const queuedBranch = document.querySelector(`[data-task-id="${queuedId}"]`)!
+    const queuedStop = queuedBranch.querySelector<HTMLButtonElement>('[aria-label="Stop this task"]')!
+    expect(stopButtons()).toHaveLength(5)
+    expect(queuedBranch.querySelector('.font-mono')).toBeNull()
+
+    await act(async () => { queuedStop.click() })
+    expect(onStop).toHaveBeenCalledExactlyOnceWith(queuedId)
+    expect(queuedStop.disabled).toBe(true)
+    expect(stopButtons().filter(button => button !== queuedStop).every(button => !button.disabled)).toBe(true)
+    expect(queuedBranch.textContent).not.toContain('Stopped, partial work kept')
+    await act(async () => { rejectStop(new Error('Task changed. Refresh and retry Stop.')) })
+    expect(queuedStop.disabled).toBe(false)
+    expect(queuedBranch.textContent).toContain('Task changed. Refresh and retry Stop.')
+    expect(queuedBranch.querySelector('.font-mono')).toBeNull()
+
+    await act(async () => { queuedStop.click(); resolveStop() })
+    expect(onStop.mock.calls.map(call => call[0])).toEqual([queuedId, queuedId])
+    expect(queuedBranch.textContent).not.toContain('Stopped, partial work kept')
+    await act(async () => {
+        root.render(<DesktopDelegationTree tasks={[...active, { ...queued, status: 'stopped', cleanup: 'complete' }] as never} toolDisplay={toolDisplay} onStopTask={onStop} />)
+    })
+    expect(queuedBranch.textContent).toContain('Stopped, partial work kept')
+    expect(queuedBranch.querySelector('[aria-label="Stop this task"]')).toBeNull()
+    expect(queuedBranch.querySelector('.font-mono')).toBeNull()
+    expect(stopButtons()).toHaveLength(4)
+    expect(stopButtons().every(button => !button.disabled)).toBe(true)
+})
+
+test('hides Stop for done, error, and stopped tasks once cleanup is complete', async () => {
     await render([
-        task({ status: 'queued', calls: [] }),
         task({ taskId: '33333333-3333-4333-8333-333333333333', status: 'done', preview: 'Done.', cleanup: 'complete' }),
         task({ taskId: '44444444-4444-4444-8444-444444444444', status: 'error', error: 'Sub-coworker failed', cleanup: 'complete' }),
         task({ taskId: '55555555-5555-4555-8555-555555555555', status: 'stopped', cleanup: 'complete' }),
