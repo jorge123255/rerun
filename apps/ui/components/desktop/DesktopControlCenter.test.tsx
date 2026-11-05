@@ -334,6 +334,7 @@ test('coworker drill lists only the supported original Open tabs before its save
     expect(sections[0]!.rows.map(row => [row.id, row.label, row.detail])).toEqual([
         ['tab-chat', 'Chat', 'Talk with this coworker'],
         ['tab-mcp', 'MCP', 'Model Context Protocol servers'],
+        ['tab-skills', 'Skills', 'Reusable skills the coworker can run'],
         ['tab-data', 'Database', "This coworker's data"],
         ['tab-memories', 'Knowledge', 'What this coworker remembers'],
         ['tab-files', 'Files', "This coworker's files"],
@@ -345,7 +346,7 @@ test('coworker drill lists only the supported original Open tabs before its save
     ])
     expect(sections[0]!.rows.every(row => row.leading.kind === 'icon')).toBe(true)
     expect(sections.slice(1).map(section => section.heading)).toEqual(['Open chats', 'Recent conversations'])
-    for (const absent of ['Triggers', 'Apps', 'Skills', 'To handle', 'Install']) {
+    for (const absent of ['Triggers', 'Apps', 'To handle', 'Install']) {
         expect(sections[0]!.rows.some(row => row.label === absent)).toBe(false)
     }
     await clickRow('Knowledge')

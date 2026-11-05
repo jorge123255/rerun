@@ -1,7 +1,7 @@
 'use client'
 
 import { getToolName, isToolUIPart, type UIMessage } from 'ai'
-import { desktopSourceParts, QUICK_REPLIES_TOOL, stripBridgePrefix, type MessageFeedbackRating } from '@rerun/contracts'
+import { desktopSourceParts, QUICK_REPLIES_TOOL, stripBridgePrefix, skillProposalIdOf, isPinnable, type MessageFeedbackRating } from '@rerun/contracts'
 import { useMemo, type ReactNode } from 'react'
 import type { Components, CustomRendererProps, PluginConfig } from 'streamdown'
 import { toast } from 'sonner'
@@ -26,6 +26,8 @@ import { desktopFileCardOf } from '@/lib/desktop/file-card'
 import { useCopy } from '@/lib/use-copy'
 import { splitIntoBubbles } from '@/lib/chat/message-bubbles'
 import { cn } from '@/lib/utils'
+import { DesktopSkillProposalBlock } from './skills/DesktopSkillProposalBlock'
+import type { EngineSkillProposal } from '@/lib/engine/types'
 
 const desktopComponents: Components = {
     a: ({ href, children }) => {
@@ -117,7 +119,7 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent }: {
+export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent, skillProposals }: {
     message: UIMessage
     streaming: boolean
     onRegenerate?: (id: string) => void
@@ -128,6 +130,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
     /** The trusted local coworker id that owns this conversation; needed to open a result card. */
     agentId?: string
     agent?: DesktopAgentView
+    skillProposals?: { rows: ReadonlyMap<string, EngineSkillProposal>; pinnedIds: ReadonlySet<string>; pendingId: string | null; onDecide?: (id: string, decision: 'accept' | 'dismiss') => void; onOpenSkill?: (slug: string) => void }
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const compactions = desktopCompactionSteps(message.parts, streaming)
@@ -146,6 +149,15 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
         } else if (isToolUIPart(part)) {
             const toolName = stripBridgePrefix(getToolName(part))
             if (part.toolCallId === pendingRequestToolCallId || toolName === QUICK_REPLIES_TOOL) continue
+            if (toolName === 'skill_propose' && part.state === 'output-available') {
+                const id = skillProposalIdOf(part.output)
+                const proposal = id ? skillProposals?.rows.get(id) : undefined
+                if (proposal && !skillProposals?.pinnedIds.has(proposal.id)) blocks.push(<DesktopSkillProposalBlock key={part.toolCallId} pinned={false} proposal={proposal}
+                    pending={skillProposals?.pendingId === proposal.id || proposal.status === 'accepted'}
+                    onDecide={skillProposals?.onDecide && isPinnable(proposal.status) ? decision => skillProposals.onDecide?.(proposal.id, decision) : undefined}
+                    onOpenSkill={proposal.appliedSlug && skillProposals?.onOpenSkill ? () => skillProposals.onOpenSkill?.(proposal.appliedSlug!) : undefined} />)
+                continue
+            }
             if (toolName === 'card_file' && part.state === 'output-available') {
                 const card = desktopFileCardOf(part.output)
                 if (card) {

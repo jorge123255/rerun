@@ -22,6 +22,10 @@ import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { DesktopCoworkerData } from './DesktopCoworkerData'
 import { DesktopCoworkerRoutines } from './DesktopCoworkerRoutines'
+import { DesktopCoworkerSkills } from './DesktopCoworkerSkills'
+import { DesktopSkillProposalDock } from './skills/DesktopSkillProposalDock'
+import { useCoworkerSkillProposals } from '@/lib/desktop/use-coworker-skill-proposals'
+import { desktopSkillProposalIds } from '@/lib/desktop/skill-proposal-source'
 import { DesktopScheduledRunBlock } from './DesktopScheduledRunBlock'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopCoworkerMcpDialog } from './DesktopCoworkerMcpDialog'
@@ -40,7 +44,7 @@ import { QueuedMessagePill } from '@/components/chat/QueuedMessagePill'
 import { shouldFlush, shouldKeepQueued } from '@/lib/chat/queued-message'
 import { desktopQueuedAttachmentPaths, desktopQueuedPreview, type DesktopQueuedMessage } from '@/lib/desktop/queued-message'
 import { useDesktopQueuedMessage } from '@/lib/desktop/use-queued-message'
-import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, desktopAttachmentFieldsOf, desktopAttachmentPathsOf, type DesktopAttachmentFields } from '@rerun/contracts'
+import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, desktopAttachmentFieldsOf, desktopAttachmentPathsOf, parseScheduledRun, type DesktopAttachmentFields } from '@rerun/contracts'
 import { desktopQuestionViewSchema, type DesktopPendingQuestion, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import { DesktopQuestionCard } from './DesktopQuestionCard'
 import { desktopApprovalViewSchema, type DesktopPendingApproval, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
@@ -85,17 +89,20 @@ const messageAttachmentPaths = (metadata: unknown): string[] =>
     metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? desktopAttachmentPathsOf(metadata as DesktopAttachmentFields) : []
 
 function scheduledRunOf(message: UIMessage) {
-    if (message.role !== 'user' || !message.metadata || typeof message.metadata !== 'object' || !('scheduledRun' in message.metadata)) return null
-    const value = message.metadata.scheduledRun
-    if (!value || typeof value !== 'object' || !('slug' in value) || !('name' in value) || typeof value.slug !== 'string' || typeof value.name !== 'string') return null
-    return { slug: value.slug, name: value.name, prompt: message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n') }
+    if (message.role !== 'user') return null
+    const prompt = message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n')
+    const value = message.metadata && typeof message.metadata === 'object' && 'scheduledRun' in message.metadata ? message.metadata.scheduledRun : null
+    if (value && typeof value === 'object' && 'slug' in value && 'name' in value && typeof value.slug === 'string' && typeof value.name === 'string') return { slug: value.slug, name: value.name, prompt }
+    // The desktop saved-history pipeline preserves the original marker; the hosted API can
+    // instead lift it into metadata. Rerun's exact whole-message parser supports both paths.
+    return parseScheduledRun(prompt)
 }
 
 export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onClosePanel, modelLabel, onOpenModelSettings }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
-    onSelectSession: (id: string | null) => void
+    onSelectSession: (id: string | null, title?: string) => void
     onStartFork?: (uid: string) => boolean
     onFinishFork?: (uid: string) => void
     tabUid?: string
@@ -114,6 +121,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
 }) {
     const [cardOpen, setCardOpen] = useState(false)
     const [detailPanel, setDetailPanel] = useState<Exclude<DesktopCoworkerPanel, 'chat'> | null>(null)
+    const [focusedSkill, setFocusedSkill] = useState<string | null>(null)
     const [panelNotice, setPanelNotice] = useState('')
     const handledPanel = useRef<DesktopCoworkerPanelRequest | null>(null)
     const conversationRoot = useRef<HTMLDivElement>(null)
@@ -132,6 +140,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             if (open && requestedPanel) { handledPanel.current = requestedPanel; onPanelRequestHandled?.(requestedPanel) }
             setPanelFocus(null)
             setPanelNotice('')
+            if (panel === 'skills') setFocusedSkill(null)
             setDetailPanel(open ? panel : null)
         },
     })
@@ -361,6 +370,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             return
         }
         setPanelFocus(null)
+        if (requestedPanel.panel === 'skills') setFocusedSkill(null)
         setDetailPanel(requestedPanel.panel)
     }, [requestedPanel, active, agent.id, sessionId, busy, engineRunning.id, generating, onPanelRequestHandled])
     useEffect(() => {
@@ -387,6 +397,27 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     // even if its subscription still holds the previous chat's messages.
     const showSaved = ready && (!busy || regenerationSource === sessionId && !!sessionId)
     const transcript = showSaved ? history.transcript ?? messages : busy ? messages : []
+    const proposalSourceIds = useMemo(() => desktopSkillProposalIds(transcript), [transcript])
+    const proposalSessionId = sessionId ?? liveSessionId
+    const proposalsActive = active && !cardOpen && !detailPanel && !!proposalSessionId && proposalSourceIds.size > 0
+    const skillProposals = useCoworkerSkillProposals(agent.id, { sessionId: proposalSessionId ?? undefined, active: proposalsActive, mode: 'chat' })
+    const proposalSourceKey = [...proposalSourceIds].join('\0')
+    const previousProposalSource = useRef(proposalSourceKey)
+    useEffect(() => {
+        if (previousProposalSource.current === proposalSourceKey) return
+        previousProposalSource.current = proposalSourceKey
+        if (proposalsActive) void skillProposals.refresh()
+    }, [proposalSourceKey, proposalsActive, skillProposals.refresh])
+    const pinnedSkillProposals = skillProposals.pinned.filter(row => proposalSourceIds.has(row.id))
+    const proposalScopeKey = JSON.stringify([agent.id, proposalSessionId, tabUid, proposalsActive])
+    const proposalScope = useRef({ key: proposalScopeKey })
+    if (proposalScope.current.key !== proposalScopeKey) proposalScope.current = { key: proposalScopeKey }
+    const capturedProposalScope = proposalScope.current
+    const openProposalSkill = (slug: string) => {
+        if (proposalScope.current !== capturedProposalScope || !proposalsActive || isDesktopQuitting()) return
+        if (![...skillProposals.proposals.values()].some(row => proposalSourceIds.has(row.id) && row.status === 'applied' && row.appliedSlug === slug)) return
+        setFocusedSkill(slug); setCardOpen(true); setDetailPanel('skills')
+    }
 
     useEffect(() => {
         if (busy) return
@@ -811,6 +842,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     <DesktopCoworkerFiles agent={agent} dialogControl={dialogControl('files')} />
                     <DesktopCoworkerData agent={agent} dialogControl={dialogControl('data')} />
                     <DesktopCoworkerRoutines agent={agent} dialogControl={dialogControl('scheduled')} onOpenChat={onSelectSession} />
+                    <DesktopCoworkerSkills agent={agent} dialogControl={dialogControl('skills')} focusSlug={focusedSkill} />
                     <DesktopCoworkerTools agent={agent} dialogControl={dialogControl('tools')} />
                     <DesktopCoworkerMcpDialog agent={agent} dialogControl={dialogControl('mcp')} />
                     <DesktopCoworkerMemories agent={agent} dialogControl={dialogControl('memories')} />
@@ -853,6 +885,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                     })()}
                                     {message.role === 'assistant'
                                         ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
+                                            skillProposals={{ rows: skillProposals.proposals, pinnedIds: skillProposals.pinnedIds, pendingId: skillProposals.pendingId,
+                                                onDecide: proposalsActive ? skillProposals.decide : undefined, onOpenSkill: proposalsActive ? openProposalSkill : undefined }}
                                             pendingRequestToolCallId={pendingRequest?.toolCallId}
                                             quickReplies={{ show: messageIndex === transcript.length - 1 && quickRepliesVisible, disabled: !canSendQuickReply,
                                                 pending: quickReplyBusy || queue.pending, onSend: text => sendQuickReply(message.id, text) }}
@@ -879,6 +913,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
 
             <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} notice="Feedback is stored on this Mac." onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
             <div className="shrink-0 border-t p-2.5">
+                {proposalsActive && <DesktopSkillProposalDock proposals={pinnedSkillProposals} pendingId={skillProposals.pendingId} onDecide={skillProposals.decide} onOpenSkill={openProposalSkill} />}
+                {proposalsActive && skillProposals.unavailable && <p role="status" className="mb-2 text-xs text-muted-foreground">Could not check all proposed changes. <Button type="button" variant="link" size="sm" onClick={() => void skillProposals.refresh()}>Retry</Button></p>}
                 {draft.quitting ? <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">Saving drafts before quitting…</p>
                     : draft.error ? <div role="alert" className="mb-2 flex flex-wrap items-center gap-2 px-1 text-xs text-destructive">
                         <span>{draft.error}</span>

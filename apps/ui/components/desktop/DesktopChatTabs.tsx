@@ -271,7 +271,10 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
                 <DesktopConversation agent={agent} sessionId={tab.id} sessions={sessions} tabUid={tab.uid} active={selected && visible}
                     requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
                     tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={uid => pendingForks.current.delete(uid)}
-                    onSelectSession={id => open(id, sessions.find(s => s.id === id)?.title ?? 'New conversation')}
+                    onSelectSession={(id, title) => {
+                        open(id, title ?? sessions.find(s => s.id === id)?.title ?? 'New conversation')
+                        if (id && !sessions.some(session => session.id === id)) void refreshSessions().catch(() => setNotice('Chat opened. Could not refresh the chat list. Reopen the coworker to retry.'))
+                    }}
                     onChatSession={(id, sourceDraft) => bindSession(tab.uid, id, sourceDraft)}
                     modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel}
                     renderHistory={() => <DesktopChatHistory agentId={agent.id} count={sessions.length} selectedId={tab.id} busy={false} onSelect={id => open(id, sessions.find(s => s.id === id)?.title ?? 'Conversation')} />}

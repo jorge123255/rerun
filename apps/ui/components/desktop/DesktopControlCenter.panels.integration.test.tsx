@@ -158,9 +158,11 @@ function fixture(runStatus?: () => Promise<Response>) {
             if (route === 'control-center-chats') return Response.json({ agentId, openChats: layouts.get(agentId)!.tabs.map(tab => ({
                 agentId, tabUid: tab.uid, sessionId: tab.id, title: tab.title,
             })), recentChats: [], recentStatus: 'ok', hasMore: false })
-            if (['files', 'files/read', 'memories', 'tools', 'monitoring', 'runs', 'settings'].includes(route)) {
+            if (['files', 'files/read', 'memories', 'tools', 'monitoring', 'runs', 'settings', 'skills', 'skills/proposals'].includes(route)) {
                 panelReads.push(url.pathname)
                 if (method !== 'GET') contentWrites.push(`${method} ${url.pathname}`)
+                if (route === 'skills') return Response.json({ skills: [] })
+                if (route === 'skills/proposals') return Response.json({ availability: 'complete', proposals: [] })
                 if (route === 'runs') return Response.json({ runs: [{ id: `${agentId}-run`, status: 'done', startedAt: date, finishedAt: date, stepCount: 1, provider: 'mac-chatgpt', model: `${agent.name} model`, inputTokens: null, outputTokens: null, totalTokens: 42, cachedInputTokens: null, reasoningTokens: null, costMicros: null }] })
                 if (route === 'files') return Response.json({ path: '', entries: [{ name: 'notes.md', type: 'file', size: 32, modifiedAt: date }] })
                 if (route === 'files/read') return Response.json({ path: 'notes.md', content: `# ${agent.name} private file`, size: 32, truncated: false })
@@ -222,6 +224,7 @@ test('original coworker Open rows use existing dialogs without remounting the cu
         ['Knowledge', 'Memories', 'Reviewer private memory'],
         ['Files', 'Files', 'notes.md'],
         ['Capabilities', 'Tools', 'Reviewer file access'],
+        ['Skills', 'Skills', 'No skills yet'],
         ['Monitoring', 'Monitoring', 'No runs in the last 7 days'],
         ['Logs', 'Recent runs', 'Reviewer model'],
         ['Settings', 'Edit coworker', 'Reply length'],

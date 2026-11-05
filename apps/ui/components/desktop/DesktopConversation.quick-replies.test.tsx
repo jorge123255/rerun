@@ -7,6 +7,8 @@ import type { DesktopPendingQuestion } from '@/lib/desktop/questions'
 import type { DesktopPendingApproval } from '@/lib/desktop/approvals'
 import type { DesktopQueuedMessage } from '@/lib/desktop/queued-message'
 import { DesktopConversation, type ComposerDraft } from './DesktopConversation'
+import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
+import type { EngineSkillProposal } from '@/lib/engine/types'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const chat = vi.hoisted(() => ({ messages: [] as UIMessage[], status: 'ready', error: undefined as Error | undefined, sendMessage: vi.fn(), regenerate: vi.fn(), stop: vi.fn(), setMessages: vi.fn(), clearError: vi.fn() }))
@@ -53,6 +55,8 @@ type SendBody = { agentId: string; sessionId: string; requestId: string; text: s
 const histories = new Map<string, UIMessage[]>()
 const queues = new Map<string, DesktopQueuedMessage>()
 const posts: SendBody[] = []
+let skillProposals: EngineSkillProposal[] = []
+const skillDecisions: Array<{ decision: string; sessionId: string }> = []
 const onChatSession = vi.fn()
 let root: Root, container: HTMLDivElement, running: boolean
 let send: (body: SendBody) => Promise<Response>
@@ -69,6 +73,7 @@ function saveAccepted(body: SendBody) {
 beforeEach(() => {
     histories.clear(); histories.set('one', [reply('engine-one')]); histories.set('two', [reply('engine-two', 'Open report')])
     queues.clear(); posts.length = 0; harness.callbacks.clear(); harness.modelReady = true; running = false
+    skillProposals = []; skillDecisions.length = 0
     chat.messages = []; chat.status = 'ready'; chat.error = undefined
     chat.sendMessage.mockReset(); chat.regenerate.mockReset(); chat.setMessages.mockReset(); chat.stop.mockReset(); onChatSession.mockReset()
     chat.clearError.mockImplementation(() => { chat.error = undefined })
@@ -78,6 +83,12 @@ beforeEach(() => {
     send = async body => saveAccepted(body)
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://local'), sessionId = url.pathname.split('/')[4]
+        if (url.pathname === '/api/desktop/agents/agent/skills/proposals') return Response.json({ availability: 'complete', proposals: url.searchParams.get('sessionId') === 'one' ? skillProposals : [] })
+        if (url.pathname === '/api/desktop/agents/agent/skills/proposals/proposal-one' && init?.method === 'POST') {
+            const body = JSON.parse(String(init.body)); skillDecisions.push(body)
+            skillProposals = skillProposals.map(row => ({ ...row, status: 'accepted' }))
+            return Response.json({ proposal: skillProposals[0] })
+        }
         if (url.pathname.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return readQuestion()
         if (url.pathname.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return readApproval()
         if (url.pathname.endsWith('/messages')) return Response.json({ messages: histories.get(sessionId) ?? [] })
@@ -140,6 +151,45 @@ test('renders a recovered routine as the original Scheduled run divider and keep
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Read the daily notes and summarize them.')
     expect(composer()).toBe(field)
     expect(field.value).toBe('Keep my independent draft')
+})
+
+test('raw engine scheduled history uses the same divider after restart and does not expose marker text', async () => {
+    const raw = '<scheduled_run schedule="daily-notes" name="Daily notes">\nRead the saved notes before replying.\n</scheduled_run>'
+    const saved = publicDesktopHistory(transformEngineMessages([{ id: 'scheduled-user', sessionId: 'engine-one', role: 'user', contentJson: JSON.stringify(raw), toolCallsJson: null, createdAt: '2026-11-04T00:00:00Z' }], { desktopSummaries: true }))
+    histories.set('one', [...saved as UIMessage[], reply('engine-answer')])
+    await render({ draft: { text: 'Keep draft beside routine' } })
+    expect(container.textContent).toContain('Scheduled run')
+    expect(container.textContent).not.toContain('<scheduled_run')
+    expect(container.textContent).not.toContain('Read the saved notes before replying.')
+    const field = composer()
+    await click('View prompt')
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Read the saved notes before replying.')
+    expect(field.value).toBe('Keep draft beside routine')
+})
+
+test('reviews only this chat’s source proposal once, keeps its draft, and restores the applied transcript card', async () => {
+    const proposal: EngineSkillProposal = { id: 'proposal-one', sessionId: 'engine-one', toolCallId: 'engine-original-call', mode: 'create', slug: null, title: 'Saved review rule', summary: 'Keep the review rule', instructions: ['Always read the saved notes before a review.'], status: 'proposed', appliedSlug: null, error: null, createdAt: '2026-11-04T00:00:00Z' }
+    skillProposals = [proposal]
+    const source = (id: string, status: 'shown' | 'merged'): UIMessage => ({ id, role: 'assistant', parts: [{ type: 'dynamic-tool', toolName: 'mcp__rerun__skill_propose', toolCallId: `${id}-cli-rewritten`, state: 'output-available', input: {}, output: { type: 'text', value: JSON.stringify({ status, proposalId: proposal.id }) } }] })
+    histories.set('one', [source('engine-proposal', 'shown'), source('engine-joined', 'merged')])
+    histories.set('two', [source('engine-sibling-copy', 'shown')])
+    await render({ draft: { text: 'Keep this independent chat draft' } })
+    expect([...container.querySelectorAll('button')].filter(button => button.textContent?.trim() === 'Remember')).toHaveLength(1)
+    const field = composer()
+    await click('Remember')
+    expect(skillDecisions).toEqual([{ decision: 'accept', sessionId: 'one' }])
+    expect(container.textContent).toContain('Remembering')
+    expect(button('Remember')).toBeUndefined()
+    expect(composer()).toBe(field); expect(field.value).toBe('Keep this independent chat draft')
+    await render({ sessionId: 'two' })
+    expect(container.textContent).not.toContain('Remembering')
+    expect(button('Remember')).toBeUndefined()
+    skillProposals = [{ ...proposal, status: 'applied', appliedSlug: 'saved-review-rule' }]
+    await act(async () => { root.unmount() }); root = createRoot(container)
+    await render({ sessionId: 'one', draft: { text: 'Keep this independent chat draft' } })
+    expect(container.textContent).toContain('Remembered')
+    expect(button('View')).toBeDefined()
+    expect(skillDecisions).toHaveLength(1)
 })
 
 test('a saved suggested reply sends only its label with an identified receipt and preserves the text and file draft', async () => {

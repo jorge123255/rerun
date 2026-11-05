@@ -7,7 +7,7 @@ import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/deskto
 import type { DesktopAgentView } from './DesktopApp'
 import { DesktopCoworkerSchedules } from './schedules/DesktopCoworkerSchedules'
 
-export function DesktopCoworkerRoutines({ agent, dialogControl, onOpenChat }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl; onOpenChat: (id: string) => void }) {
+export function DesktopCoworkerRoutines({ agent, dialogControl, onOpenChat }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl; onOpenChat: (id: string, title?: string) => void }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     const scope = `${agent.id}:${open}`
     const latest = useRef({ scope, setOpen, onOpenChat })
@@ -24,7 +24,7 @@ export function DesktopCoworkerRoutines({ agent, dialogControl, onOpenChat }: { 
                 if (cycle.current !== captured || !open || chat.agentId !== agent.id || !chat.sessionId) return
                 cycle.current = { scope: '' }
                 latest.current.setOpen(false)
-                latest.current.onOpenChat(chat.sessionId)
+                latest.current.onOpenChat(chat.sessionId, chat.title)
             }} />
         </DialogContent>}
     </Dialog>
