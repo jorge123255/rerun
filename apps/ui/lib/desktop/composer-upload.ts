@@ -32,7 +32,7 @@ const parentFolder = (path: string) => path.slice(0, Math.max(0, path.lastIndexO
 // Mirrors the server's importFile name rules plus the attachment path rule, so a file that can
 // never become a draft attachment is refused before its first request.
 function uploadNameProblem(name: string): string | null {
-    if (!name || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.') || /\p{Cc}/u.test(name)) {
+    if (!name || new TextEncoder().encode(name).length > 255 || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.') || /\p{Cc}/u.test(name)) {
         return 'That file name can’t be imported.'
     }
     if (!/\.(?:txt|md)$/i.test(name)) return 'Only .txt and .md files can be attached.'
@@ -72,6 +72,7 @@ export async function preflightDesktopUploads(input: {
         const size = input.attachedSizes.get(path)
         if (size === 'missing') blockers.push('An attached file is no longer available. Remove it before adding files.')
         else if (typeof size !== 'number') blockers.push('Could not check the size of an attached file. Try again.')
+        else if (!Number.isSafeInteger(size) || size < 0 || size > DESKTOP_ATTACHMENT_MAX_BYTES) blockers.push('An attached file is too large. Remove it before adding files.')
         else attachedBytes += size
     }
     if (blockers.length) return { accepted: [], rejected: [], blockers }
@@ -110,6 +111,17 @@ export async function preflightDesktopUploads(input: {
         bytesLeft -= file.size
     }
     return { accepted, rejected, blockers }
+}
+
+/** Cancelling admission must settle even when a local File read finishes later. */
+export function awaitDesktopUpload<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const abort = () => reject(new Error('Upload cancelled'))
+        signal.addEventListener('abort', abort, { once: true })
+        work.then(value => { signal.removeEventListener('abort', abort); signal.aborted ? abort() : resolve(value) },
+            error => { signal.removeEventListener('abort', abort); reject(error) })
+        if (signal.aborted) abort()
+    })
 }
 
 type ListedEntry = { name: string; type: 'file' | 'dir'; size: number }

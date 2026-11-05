@@ -1,186 +1,140 @@
 // @vitest-environment happy-dom
-// Authored for the notifications lane; the integration owner runs all validation.
-import { act, useState } from 'react'
+import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { DESKTOP_ATTENTION_URL, desktopAttentionSchema } from '@/lib/desktop/attention'
-import { DESKTOP_COMPLETIONS_URL, desktopCompletionsSchema } from '@/lib/desktop/completed-actions'
-import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_SEEN_URL, DESKTOP_NOTIFICATION_TERMIALS_URL } from '@/lib/desktop/notifications'
-import { playNotificationSoundOnce } from '@/lib/notifications/browser'
+import { DESKTOP_NOTIFICATION_EVENTS_URL, DESKTOP_NOTIFICATION_ADMIT_URL, DESKTOP_NOTIFICATION_DELIVERY_URL, DESKTOP_NOTIFICATION_TERMIALS_URL, type DesktopNotificationEvent } from '@/lib/desktop/notifications'
+import type { DesktopNotificationTarget } from '@/lib/desktop/notification-bridge'
+import { DESKTOP_ATTENTION_URL } from '@/lib/desktop/attention'
+import { DESKTOP_COMPLETIONS_URL } from '@/lib/desktop/completed-actions'
 import { DesktopNotificationDelivery } from './DesktopNotificationDelivery'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-
-const playSound = vi.fn()
-vi.mock('@/lib/notifications/browser', () => ({ playNotificationSoundOnce, playNotificationSound: vi.fn() }))
-
-const roots: Root[] = []
-const seenKeys: string[][] = []
-const notifications: { key: string; kind: string; title: string; subtitle?: string; body?: string; silent?: boolean; agentId: string; sessionId: string | null; groupId?: string | null; terminalId?: string | null; requestId?: string | null }[] = []
-let clickHandler: ((target: { key: string; kind: 'done' | 'error' | 'question' | 'approval'; agentId: string; sessionId: string | null; groupId?: string | null; terminalId?: string | null; requestId?: string | null }) => void) | undefined
-const queuedEvents: { events: unknown; channels?: { toast: boolean; sound: boolean } }[] = []
-const attentionItems: { id: string; kind: 'question' | 'approval'; agentId: string; agentName: string; agentEnabled: boolean; sessionId: string; title: string; summary: string; requestedAt?: string; updatedAt: string }[] = []
-const completionGroups: { id: string; agentId: string; agentName: string; agentEnabled: boolean; sessionId: string; sessionIds: string[]; title: string; message: string | null; source: 'chat'; slug: null; count: number; completedAt: string; completionIds: string[] }[] = []
-const terminalBindings = new Map<string, { agentId: string; sessionId: string }>()
-const navigations: { agentId: string; sessionId: string; title: string }[] = []
-let setVisibleExternally: (value: string | null) => void = () => {}
-
-const questionEvent = (id: string) => ({
-    key: `pending:${id}`, kind: 'question' as const, agentId: 'ada', agentName: 'Ada', sessionId: 's1',
-    title: 'Ada', subtitle: 'Question', body: 'Which color should I use?', silent: false, requestId: id,
-})
-const approvalEvent = (id: string) => ({
-    key: `pending:${id}`, kind: 'approval' as const, agentId: 'ada', agentName: 'Ada', sessionId: 's1',
-    title: 'Ada', subtitle: 'Needs approval', body: 'Publish the draft', silent: false, requestId: id,
-})
-const doneEvent = (groupId: string) => ({
-    key: `${groupId}:2100-01-01T00:00:01.000Z`, kind: 'done' as const, agentId: 'ada', agentName: 'Ada', sessionId: 's2',
-    title: 'Ada', subtitle: 'Done', body: 'The draft is ready', silent: true, groupId,
-})
+let root: Root | undefined
+const events: DesktopNotificationEvent[] = []
+const attempts = new Map<string, string>()
+const delivered = new Set<string>()
+const receipts: { key: string; attemptId: string; status: string }[] = []
+const navigate = vi.fn(), notify = vi.fn(), audioPlay = vi.fn()
+let listener: ((target: DesktopNotificationTarget) => void) | undefined
+let channels = { toast: true, sound: false }, receiptFails = false
+let attention: unknown[] = [], groups: unknown[] = [], terminal: unknown = null
+let attentionRead: (() => Promise<Response>) | undefined
+const event = (key = 'pending:request-a', sessionId = 'chat-a'): DesktopNotificationEvent => ({ key, kind: 'question', agentId: 'agent-a', agentName: 'Ada', sessionId, title: 'Ada', subtitle: 'Question', body: 'Choose a color', silent: false, requestId: key.slice(8) })
 
 beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    channels = { toast: true, sound: false }; receiptFails = false; attentionRead = undefined
+    notify.mockReset().mockResolvedValue({ status: 'shown' }); audioPlay.mockReset().mockResolvedValue(undefined); navigate.mockReset()
+    vi.stubGlobal('Audio', class { play = audioPlay; pause() {} })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    ;(window as unknown as { desktopApp: unknown }).desktopApp = { notifications: {
+        notify, onNotificationClick: (callback: typeof listener) => { listener = callback; return () => { listener = undefined } },
+    } }
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
-        const path = new URL(url, 'http://local').pathname
-        if (path === DESKTOP_NOTIFICATION_EVENTS_URL) {
-            const body = queuedEvents.splice(0, 1)[0] ?? { events: [], channels: { toast: true, sound: true } }
-            return Response.json(body)
+        if (url === DESKTOP_NOTIFICATION_EVENTS_URL) return Response.json({ events: events.filter(row => !attempts.has(row.key) && !delivered.has(row.key)), channels, unavailableAgentIds: [], checkedAt: '' })
+        if (url === DESKTOP_NOTIFICATION_ADMIT_URL) {
+            const keys = JSON.parse(String(init?.body)).keys as string[]
+            const rows = events.filter(row => keys.includes(row.key) && !attempts.has(row.key) && !delivered.has(row.key)).map(row => {
+                const attemptId = crypto.randomUUID(); attempts.set(row.key, attemptId); return { ...row, attemptId }
+            })
+            return Response.json({ events: rows, channels })
         }
-        if (path === DESKTOP_NOTIFICATION_SEEN_URL) {
-            const body = JSON.parse(String(init?.body)) as { keys: string[] }
-            seenKeys.push(body.keys)
-            return Response.json({ acknowledged: body.keys.length })
+        if (url === DESKTOP_NOTIFICATION_DELIVERY_URL) {
+            if (receiptFails) return Response.json({ error: 'lost' }, { status: 503 })
+            const receipt = JSON.parse(String(init?.body)); receipts.push(receipt)
+            if (attempts.get(receipt.key) === receipt.attemptId && receipt.status !== 'unknown') {
+                attempts.delete(receipt.key)
+                if (receipt.status === 'shown') delivered.add(receipt.key)
+            }
+            return Response.json({ recorded: true })
         }
-        if (path === DESKTOP_ATTENTION_URL) return Response.json({ items: attentionItems, unavailableAgentIds: [], checkedAt: '' })
-        if (path === DESKTOP_COMPLETIONS_URL) return Response.json({ items: completionGroups, unavailableAgentIds: [], enabledAt: '', nextCursor: null, checkedAt: '' })
-        if (path.startsWith(`${DESKTOP_NOTIFICATION_TERMIALS_URL}/`)) {
-            const binding = terminalBindings.get(decodeURIComponent(path.slice(DESKTOP_NOTIFICATION_TERMIALS_URL.length + 1)))
-            return binding ? Response.json(binding) : Response.json({ error: 'gone' }, { status: 404 })
-        }
-        return Response.json({ error: 'Unexpected request' }, { status: 404 })
+        if (url === DESKTOP_ATTENTION_URL) return attentionRead ? attentionRead() : Response.json({ items: attention, unavailableAgentIds: [], checkedAt: '' })
+        if (url === DESKTOP_COMPLETIONS_URL) return Response.json({ items: groups, unavailableAgentIds: [], checkedAt: '', enabledAt: '', nextCursor: null })
+        if (String(url).startsWith(DESKTOP_NOTIFICATION_TERMIALS_URL)) return Response.json(terminal)
+        throw new Error(`Unexpected request ${url}`)
     }))
 })
-
 afterEach(async () => {
-    await act(async () => { for (const root of roots.splice(0)) root.unmount() })
-    document.body.innerHTML = ''
-    ;(window as unknown as { desktopApp?: unknown }).desktopApp = undefined
-    vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers()
-    notifications.length = 0; seenKeys.length = 0; queuedEvents.length = 0
-    attentionItems.length = 0; completionGroups.length = 0; navigations.length = 0; terminalBindings.clear()
-    clickHandler = undefined
+    if (root) await act(async () => root?.unmount())
+    root = undefined; events.length = 0; attempts.clear(); delivered.clear(); receipts.length = 0; attention = []; groups = []; terminal = null; listener = undefined
+    document.body.innerHTML = ''; (window as unknown as { desktopApp?: unknown }).desktopApp = undefined
+    vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers()
 })
-
-function installBridge() {
-    ;(window as unknown as { desktopApp?: unknown }).desktopApp = {
-        notifications: {
-            notify: (payload: { key: string; kind: string; title: string; subtitle?: string; body?: string; silent?: boolean; agentId: string; sessionId: string | null; groupId?: string | null; terminalId?: string | null; requestId?: string | null }) => notifications.push(payload),
-            onNotificationClick: handler => { clickHandler = handler; return () => { if (clickHandler === handler) clickHandler = undefined } },
-        },
-    }
+async function mount(visibleSessionId: string | null = null) {
+    const container = document.createElement('div'); document.body.append(container); root = createRoot(container)
+    await act(async () => { root?.render(<DesktopNotificationDelivery visibleSessionId={visibleSessionId} onOpenConversation={navigate} />) })
 }
+const tick = async () => act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+const pendingItem = (row: DesktopNotificationEvent) => ({ id: row.requestId, kind: row.kind, agentId: row.agentId, agentName: row.agentName, agentEnabled: true, sessionId: row.sessionId, title: '', summary: '', updatedAt: '' })
 
-function render(initialVisible: string | null = null) {
-    const container = document.createElement('div')
-    document.body.append(container)
-    const root = createRoot(container)
-    roots.push(root)
-    const mount = act(async () => {
-        root.render(<Harness onOpen={target => { navigations.push(target) }} initialVisible={initialVisible} />)
-    })
-    return { mount }
-}
-
-function Harness({ onOpen, initialVisible = null }: { onOpen: (target: { agentId: string; sessionId: string; title: string }) => void; initialVisible?: string | null }) {
-    const [visible, setVisible] = useState(initialVisible)
-    setVisibleExternally = setVisible
-    return <DesktopNotificationDelivery onOpenConversation={target => { setVisible(null); onOpen(target) }} visibleSessionId={visible} />
-}
-
-const advance = async (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
-
-test('a new pending question announces through the bridge with the original copy and is acknowledged once', async () => {
-    installBridge()
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    queuedEvents.push({ events: [questionEvent('a'.repeat(64))], channels: { toast: true, sound: true } })
-    await render()
-    expect(notifications).toHaveLength(1)
-    expect(notifications[0]).toMatchObject({ key: `pending:${'a'.repeat(64)}`, kind: 'question', title: 'Ada', subtitle: 'Question', body: 'Which color should I use?', silent: false, agentId: 'ada', sessionId: 's1', requestId: 'a'.repeat(64) })
-    expect(playSound).toHaveBeenCalledWith(`pending:${'a'.repeat(64)}`)
-    expect(seenKeys).toEqual([[`pending:${'a'.repeat(64)}`]])
-    // The same key never announces twice, whatever the next poll brings.
-    await advance(3000)
-    expect(notifications).toHaveLength(1)
-    expect(seenKeys).toHaveLength(1)
+test('durable admission precedes native delivery and a lost receipt does not replay after remount', async () => {
+    events.push(event()); receiptFails = true
+    notify.mockImplementation(async () => { expect(attempts.has(events[0]!.key)).toBe(true); return { status: 'shown' } })
+    await mount(); expect(notify).toHaveBeenCalledTimes(1)
+    await act(async () => root?.unmount()); root = undefined
+    receiptFails = false; await mount(); await tick()
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(attempts.size).toBe(1)
 })
-
-test('sound off silences the announcement but the toast still delivers and acknowledges', async () => {
-    installBridge()
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    queuedEvents.push({ events: [questionEvent('b'.repeat(64))], channels: { toast: true, sound: false } })
-    await render()
-    expect(notifications).toHaveLength(1)
-    expect(playSound).not.toHaveBeenCalled()
-    expect(seenKeys).toEqual([[`pending:${'b'.repeat(64)}`]])
+test('missing bridge and disabled channels never consume events without delivery', async () => {
+    events.push(event()); (window as unknown as { desktopApp?: unknown }).desktopApp = undefined
+    await mount(); expect(attempts.size).toBe(0); expect(delivered.size).toBe(0)
+    channels = { toast: false, sound: false }; await tick()
+    expect(receipts).toEqual([]); expect(audioPlay).not.toHaveBeenCalled()
 })
-
-test('a done group announces silently with the finished-run copy and no sound', async () => {
-    installBridge()
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    queuedEvents.push({ events: [doneEvent('done:ada:chat:s2')], channels: { toast: true, sound: true } })
-    await render()
-    expect(notifications).toHaveLength(1)
-    expect(notifications[0]!.silent).toBe(true)
-    expect(notifications[0]!.body).toBe('The draft is ready')
-    expect(playSound).not.toHaveBeenCalled()
-    expect(seenKeys).toEqual([['done:ada:chat:s2:2100-01-01T00:00:01.000Z']])
+test('definite unavailable delivery releases its exact admission and a later successful retry settles', async () => {
+    events.push(event()); notify.mockResolvedValueOnce({ status: 'unavailable' })
+    await mount(); expect(attempts.size).toBe(0); expect(delivered.size).toBe(0)
+    await tick(); expect(notify).toHaveBeenCalledTimes(2); expect(delivered.has(events[0]!.key)).toBe(true)
+    expect(receipts.map(row => row.status)).toEqual(['unavailable', 'shown'])
 })
-
-test('a question in the visible conversation stays in-app, then announces exactly once it can', async () => {
-    installBridge()
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    queuedEvents.push({ events: [questionEvent('c'.repeat(64))], channels: { toast: true, sound: true } })
-    await render('s1')
-    expect(notifications).toHaveLength(0)
-    expect(seenKeys).toHaveLength(0)
-    // The chat is left: the same request announces exactly once and is acknowledged.
-    await advance(3000)
-    act(() => setVisibleExternally(null))
-    await advance(3000)
-    expect(notifications).toHaveLength(1)
-    expect(seenKeys).toEqual([['pending:' + 'c'.repeat(64)]])
+test('ambiguous bridge outcomes stay admitted without pretending they were shown', async () => {
+    events.push(event()); notify.mockRejectedValueOnce(new Error('IPC disconnected'))
+    await mount(); await tick()
+    expect(notify).toHaveBeenCalledTimes(1); expect(delivered.size).toBe(0); expect(attempts.size).toBe(1)
+    expect(receipts[0]!.status).toBe('unknown')
 })
-
-test('a click revalidates the exact pending request against the live projection before navigating', async () => {
-    installBridge()
-    attentionItems.push({ id: 'fresh', kind: 'question', agentId: 'ada', agentName: 'Ada', agentEnabled: true, sessionId: 's1', title: 'Chat', summary: 'Which color?', updatedAt: '' })
-    await render()
-    await act(async () => { clickHandler!({ key: 'pending:fresh', kind: 'question', agentId: 'ada', sessionId: 's1', requestId: 'fresh' }) })
-    expect(navigations).toEqual([{ agentId: 'ada', sessionId: 's1', title: '' }])
-    // The request was answered while the notification sat: a stale click lands nowhere.
-    attentionItems.length = 0
-    await act(async () => { clickHandler!({ key: 'pending:gone', kind: 'question', agentId: 'ada', sessionId: 's1', requestId: 'gone' }) })
-    expect(navigations).toHaveLength(1)
+test('the original sound is a real acknowledged channel and never rings for Done', async () => {
+    channels = { toast: false, sound: true }; events.push(event())
+    await mount(); expect(audioPlay).toHaveBeenCalledTimes(1); expect(notify).not.toHaveBeenCalled()
+    events.push({ ...event('done:completion'), kind: 'done', groupId: 'group-a', requestId: undefined, silent: true })
+    await tick(); expect(audioPlay).toHaveBeenCalledTimes(1); expect(delivered.size).toBe(1)
 })
-
-test('a stopped-run click revalidates the recorded terminal binding before navigating', async () => {
-    installBridge()
-    terminalBindings.set('run-9', { agentId: 'ada', sessionId: 's7' })
-    await render()
-    await act(async () => { clickHandler!({ key: 'terminal:run-9', kind: 'done', agentId: 'ada', sessionId: 's7', terminalId: 'run-9' }) })
-    expect(navigations).toEqual([{ agentId: 'ada', sessionId: 's7', title: '' }])
-    // The coworker was deleted while the notification sat: the binding is gone and nothing opens.
-    terminalBindings.clear()
-    await act(async () => { clickHandler!({ key: 'terminal:run-9', kind: 'done', agentId: 'ada', sessionId: 's7', terminalId: 'run-9' }) })
-    expect(navigations).toHaveLength(1)
+test('an open chat suppresses visible alerts but a hidden Mac window still receives them', async () => {
+    events.push(event()); await mount('chat-a'); expect(notify).not.toHaveBeenCalled()
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    await tick(); expect(notify).toHaveBeenCalledTimes(1)
 })
-
-test('a done click navigates to the group’s newest conversation only while the group still exists', async () => {
-    installBridge()
-    completionGroups.push({ id: 'done:ada:chat:s2', agentId: 'ada', agentName: 'Ada', agentEnabled: true, sessionId: 's9', sessionIds: ['s2', 's9'], title: 'Chat', message: null, source: 'chat', slug: null, count: 2, completedAt: '', completionIds: ['x', 'y'] })
-    await render()
-    await act(async () => { clickHandler!({ key: 'done:ada:chat:s2:2100-01-01T00:00:01.000Z', kind: 'done', agentId: 'ada', sessionId: 's2', groupId: 'done:ada:chat:s2' }) })
-    expect(navigations).toEqual([{ agentId: 'ada', sessionId: 's9', title: '' }])
-    completionGroups.length = 0
-    await act(async () => { clickHandler!({ key: 'done:ada:chat:s2:2100-01-01T00:00:01.000Z', kind: 'done', agentId: 'ada', sessionId: 's2', groupId: 'done:ada:chat:s2' }) })
-    expect(navigations).toHaveLength(1)
+test('terminal clicks reject a rebound owner or conversation', async () => {
+    await mount(); terminal = { agentId: 'another-owner', sessionId: 'another-chat' }
+    await act(async () => listener?.({ key: 'terminal:run-a', kind: 'error', agentId: 'agent-a', sessionId: 'chat-a', terminalId: 'run-a' }))
+    expect(navigate).not.toHaveBeenCalled()
+})
+test('a folded completion click keeps its original chat and rejects a removed member', async () => {
+    await mount()
+    const group = { id: 'group-a', agentId: 'agent-a', agentName: 'Ada', agentEnabled: true, sessionId: 'newer-chat',
+        sessionIds: ['newer-chat', 'chat-a'], title: 'Morning', message: null, source: 'schedule', slug: 'morning',
+        count: 2, completedAt: '', completionIds: ['newer-run', 'clicked-run'] }
+    groups = [group]
+    const target: DesktopNotificationTarget = { key: 'done:clicked-run', kind: 'done', agentId: 'agent-a', sessionId: 'chat-a', groupId: 'group-a' }
+    await act(async () => listener?.(target))
+    expect(navigate).toHaveBeenLastCalledWith({ agentId: 'agent-a', sessionId: 'chat-a', title: '' })
+    groups = [{ ...group, sessionIds: ['newer-chat'], count: 1, completionIds: ['newer-run'] }]
+    await act(async () => listener?.(target))
+    expect(navigate).toHaveBeenCalledTimes(1)
+})
+test('superseded and unmounted click reads cannot navigate late', async () => {
+    await mount()
+    const a = event(), b = event('pending:request-b', 'chat-b')
+    let release!: (value: Response) => void
+    attentionRead = () => new Promise(resolve => { release = resolve })
+    await act(async () => listener?.(a))
+    attentionRead = undefined; attention = [pendingItem(b)]
+    await act(async () => listener?.(b))
+    await act(async () => release(Response.json({ items: [pendingItem(a)], unavailableAgentIds: [], checkedAt: '' })))
+    expect(navigate).toHaveBeenCalledTimes(1); expect(navigate).toHaveBeenLastCalledWith({ agentId: 'agent-a', sessionId: 'chat-b', title: '' })
+    attentionRead = () => new Promise(resolve => { release = resolve })
+    await act(async () => listener?.(a)); await act(async () => root?.unmount()); root = undefined
+    await act(async () => release(Response.json({ items: [pendingItem(a)], unavailableAgentIds: [], checkedAt: '' })))
+    expect(navigate).toHaveBeenCalledTimes(1)
 })

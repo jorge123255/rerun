@@ -8,6 +8,7 @@ import { engineOf } from '@/lib/desktop/server/settings'
 import { findDesktopAgent } from '@/lib/desktop/server/store'
 import { EngineRequestError, getAgent, patchAgent } from '@/lib/engine/client'
 import type { EngineAgentConfigPatch } from '@/lib/engine/types'
+import { withDesktopMcpOwnerTransition } from '@/lib/desktop/server/mcp-binding'
 
 type Context = { params: Promise<{ agentId: string }> }
 
@@ -75,6 +76,8 @@ export function PATCH(request: Request, { params }: Context) {
     return desktopRoute(request, async runtime => {
         const patch = coworkerToolPatch.safeParse(await request.json().catch(() => null))
         if (!patch.success) throw new DesktopHttpError(400, 'Choose a valid tool permission.')
-        return toolsFor(runtime, (await params).agentId, patch.data)
+        const agentId = (await params).agentId
+        const write = () => toolsFor(runtime, agentId, patch.data)
+        return patch.data.group === 'rerun' && patch.data.id === 'mcp' ? withDesktopMcpOwnerTransition(runtime, agentId, write) : write()
     })
 }

@@ -61,7 +61,10 @@ function withCardAdmission<T>(ctx: RunContext, action: () => Promise<T>): Promis
             clearTimeout(timer)
             ctx.abortSignal?.removeEventListener('abort', abort)
             return action()
-        }).then(resolve, reject)
+        }).then(resolve, reject).finally(() => {
+            clearTimeout(timer)
+            ctx.abortSignal?.removeEventListener('abort', abort)
+        })
     })
 }
 

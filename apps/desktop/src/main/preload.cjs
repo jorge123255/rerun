@@ -17,6 +17,15 @@ ipcRenderer.on('desktop:before-quit', (_event, value) => {
 })
 
 contextBridge.exposeInMainWorld('desktopApp', {
+    notifications: {
+        notify: value => ipcRenderer.invoke('desktop:notify', value),
+        onNotificationClick: listener => {
+            if (typeof listener !== 'function') throw new TypeError('Expected a notification-click listener')
+            const handler = (_event, value) => listener(value)
+            ipcRenderer.on('desktop:notification-click', handler)
+            return () => ipcRenderer.removeListener('desktop:notification-click', handler)
+        },
+    },
     getStatus: () => ipcRenderer.invoke('desktop:status'),
     retry: () => ipcRenderer.invoke('desktop:retry'),
     quit: () => ipcRenderer.invoke('desktop:quit'),

@@ -74,13 +74,13 @@ export class RuntimeSupervisor extends EventEmitter {
                 }
                 const runtimeFile = resolve(this.root, 'runtime.json')
                 await atomicPrivateJSON(runtimeFile, runtime)
-                const shared = { ...childEnvironment(), RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_DATA_DIR: this.root, RERUN_DESKTOP_RUNTIME_FILE: runtimeFile }
+                const shared = { ...childEnvironment(), RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_DATA_DIR: this.root, RERUN_DESKTOP_RUNTIME_FILE: runtimeFile, RERUN_DESKTOP_SECRET_KEY: this.identity.encryptionKey }
                 const ui = this.spawnOwned([this.bundle.uiHost], { ...shared, RERUN_DESKTOP_UI_ROOT: this.bundle.uiRoot, RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath, RERUN_DESKTOP_PDF_HELPER: this.bundle.pdfHelperPath, PORT: String(uiPort), HOSTNAME: '127.0.0.1' })
                 await this.waitForHealth(ui, `${runtime.app.origin}/api/desktop/health`, { Cookie: `rerun-desktop-session=${runtime.app.sessionToken}` }, runtime)
                 const engine = this.spawnOwned([this.bundle.engineEntry, 'desktop-run'], {
                     ...shared, RERUN_HOST: '127.0.0.1', RERUN_PORT: String(enginePort), RERUN_API_KEY: this.identity.engineApiKey,
                     RERUN_DATA_DIR: engineRoot, RERUN_HUB_BASE_URL: runtime.app.origin, RERUN_DESKTOP: 'off',
-                    RERUN_DESKTOP_SECRET_KEY: this.identity.encryptionKey, RERUN_DESKTOP_CODEX_RUNNER: this.bundle.codexPath,
+                    RERUN_DESKTOP_CODEX_RUNNER: this.bundle.codexPath,
                 })
                 const ready = await this.waitForEngine(engine, runtime)
                 if (!ready) throw new Error('The engine did not acknowledge its launch')

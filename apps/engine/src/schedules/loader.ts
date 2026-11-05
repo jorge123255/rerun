@@ -176,7 +176,7 @@ export async function rewriteScheduleText(agentId: string, slug: string, rewrite
 }
 
 export async function deleteSchedule(agentId: string, slug: string): Promise<void> {
-    await rm(scheduleFile(agentId, slug), { force: true })
+    await withScheduleLock(agentId, slug, () => rm(scheduleFile(agentId, slug), { force: true }))
 }
 
 export async function markFired(agentId: string, slug: string, firedAt: string): Promise<void> {
@@ -212,5 +212,16 @@ export async function setScheduleEnabled(agentId: string, slug: string, enabled:
         schedule.enabled = enabled
         if (baselineAt) schedule.lastRunAt = baselineAt
         await writeFileAtomic(scheduleFile(agentId, slug), serialize(schedule))
+    })
+}
+
+/** Compare and consume under the same file lock used by pause/edit. Desktop admission only. */
+export async function consumeDesktopSchedule(agentId:string,expected:Schedule,firedAt:string):Promise<Schedule> {
+    return withScheduleLock(agentId,expected.slug,async()=>{
+        const current=await readScheduleForUpdate(agentId,expected.slug)
+        if(!current.enabled || JSON.stringify(current)!==JSON.stringify(expected))throw new Error('Task changed before admission')
+        const next={...current,lastRunAt:firedAt,enabled:current.runAt ? false : current.enabled}
+        await writeFileAtomic(scheduleFile(agentId,current.slug),serialize(next))
+        return next
     })
 }

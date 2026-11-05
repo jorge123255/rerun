@@ -2,6 +2,8 @@ import 'server-only'
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
+import { ensureDesktopComposerUploadsSchema } from './composer-uploads'
+import { initializeDesktopNotifications } from './notifications'
 import { initializeDesktopCompletions } from './completed-actions-db'
 import { initializeDesktopPendingInbox } from './pending-inbox-db'
 import { initializeDesktopSpaces } from './spaces'
@@ -201,6 +203,8 @@ async function initialize(dataRoot: string): Promise<Client> {
         { sql: 'INSERT OR IGNORE INTO desktop_profile (id, display_name, created_at, updated_at) VALUES (1, ?, ?, ?)', args: ['Local User', now, now] },
         { sql: 'INSERT OR IGNORE INTO desktop_workspace (id, profile_id, name, created_at, updated_at) VALUES (1, 1, ?, ?, ?)', args: ['My workspace', now, now] },
     ], 'write')
+    await ensureDesktopComposerUploadsSchema(client)
+    await initializeDesktopNotifications(client)
     await initializeDesktopCompletions(client)
     await initializeDesktopPendingInbox(client)
     await initializeDesktopSpaces(client)

@@ -1,8 +1,8 @@
-import { createClient } from '@libsql/client'
+import { createClient, type Client } from '@libsql/client'
 import { pathToFileURL } from 'node:url'
-import type { TableCard } from '@rerun/contracts'
+import { CARD_MAX_CELL_CHARS, type TableCard } from '@rerun/contracts'
 import { DATA_INPUT_BYTES, DATA_OUTPUT_BYTES, dataOperationSchema, verifyDesktopDataFile, type DataCardOperation, type DataFilePin, type DataResult } from './data-executor.js'
-import { desktopExecute, desktopQuery, desktopSchema } from './data-store.js'
+import { assertPlainDataSchema, desktopExecute, desktopQuery, desktopSchema } from './data-store.js'
 import { buildTableCard } from '../tools/builtin/table-card.js'
 import { findView, listViews } from '../db/tableViews.js'
 import { SHARED_DB_MIGRATIONS } from '../db/sharedDb.js'
@@ -85,13 +85,29 @@ async function run(pin: DataFilePin, raw: unknown, shared: boolean) {
  * rather than opening a different view. */
 async function desktopCard(db: ReturnType<typeof createClient>, operation: DataCardOperation, shared: boolean): Promise<TableCard> {
     const { table, view, limit, hidden, workspace } = operation
-    const found = await findView(db, table, view, hidden)
-    if (!found) {
-        const names = (await listViews(db, table, hidden)).map(saved => saved.name)
-        throw new Error(names.length
-            ? `No view named "${view}" on ${table}. Its views: ${names.join(', ')}`
-            : `${table} has no saved view yet. Save one in the database view editor, then pass its name in view.`)
-    }
-    const { id: _id, table: _table, name, position: _position, ...config } = found
-    return buildTableCard(db, { ...config, scope: shared ? 'shared' : 'agent', table, view: name, ...(limit ? { limit } : {}) }, { hidden, workspace })
+    const tx = await db.transaction('read')
+    try {
+        await tx.execute('PRAGMA query_only = ON')
+        await assertPlainDataSchema(tx)
+        // Use the same detached read transaction for the view, groups, counts and rows. A card
+        // must neither bypass desktop schema admission nor combine multiple database revisions.
+        const reader = tx as unknown as Client
+        const found = await findView(reader, table, view, hidden)
+        if (!found) {
+            const names = (await listViews(reader, table, hidden)).map(saved => saved.name)
+            throw new Error(names.length
+                ? `No view named "${view}" on ${table}. Its views: ${names.join(', ')}`
+                : `${table} has no saved view yet. Save one in the database view editor, then pass its name in view.`)
+        }
+        const { id: _id, table: _table, name, position: _position, ...config } = found
+        const card = await buildTableCard(reader, { ...config, scope: shared ? 'shared' : 'agent', table, view: name, ...(limit ? { limit } : {}) }, { hidden, workspace })
+        const media = new Set([card.fields?.image, ...Object.entries(card.formats ?? {}).filter(([, format]) => format === 'image' || format === 'url').map(([column]) => column)])
+        // The hosted helper appends its ellipsis after the 120 characters. Include the ellipsis
+        // within the Mac transcript's 120-character cell limit, without changing hosted cards.
+        card.rows = card.rows.map(row => Object.fromEntries(Object.entries(row).map(([column, value]) => [column,
+            !media.has(column) && typeof value === 'string' && value.length > CARD_MAX_CELL_CHARS
+                ? `${value.slice(0, CARD_MAX_CELL_CHARS - 1)}…` : value,
+        ])))
+        return card
+    } finally { try { await tx.rollback() } finally { tx.close() } }
 }

@@ -34,14 +34,25 @@ import { desktopMemoryTools } from '../desktop/memory-tools.js'
 import { desktopWorkspaceReadTools } from '../desktop/workspace-read.js'
 import { desktopQuestionTools } from '../desktop/question-tool.js'
 import { desktopApprovalTools } from '../desktop/approval-tool.js'
+import { desktopTableCardTools } from '../desktop/card-table.js'
+import { hasDesktopToolGrant } from '../desktop/tool-grants.js'
 import { desktopCardFileTools } from '../desktop/card-file.js'
 import { desktopSelfInstructionTools } from '../desktop/self-instruction.js'
 import { desktopWebFetchTools } from '../desktop/web-fetch-tool.js'
 import { desktopDbTools, desktopSharedDbTools } from '../desktop/data-tools.js'
 import { desktopApp } from '../desktop/policy.js'
+import { desktopMcpTools } from '../desktop/mcp-tools.js'
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
-    if (desktopApp()) return { tools: { ...desktopWorkspaceReadTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx) }, close: async () => {} }
+    if (desktopApp()) {
+        const tools: ToolSet = { ...desktopWorkspaceReadTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx) }
+        const remote = await desktopMcpTools(ctx)
+        if (Object.keys(remote.tools).some(name => Object.hasOwn(tools, name))) {
+            await remote.close()
+            throw new Error('An MCP tool conflicts with a built-in tool. Rename the MCP server.')
+        }
+        return { tools: { ...tools, ...remote.tools }, close: remote.close }
+    }
     const cfg = ctx.agent.config.tools
     const tools: ToolSet = {}
     if (ctx.agent.config.kind === 'foreman') Object.assign(tools, foremanTools(ctx), agentFilesTools())

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb'] as const
+export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb', 'schedule', 'mcp'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -37,7 +37,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('memoryDelete', 'Delete memories', 'Remove a specific note from this coworker’s Memories using its last known text.', 'memory_delete'),
     supported('askUser', 'Ask the user', 'Ask questions in chat and continue after you answer.', 'ask_user'),
     supported('requestApproval', 'Request approval', 'Ask you to approve or decline proposed actions in chat.', 'request_approval'),
-    supported('cardFile', 'Show result files', 'Show this coworker’s existing text, Markdown, static images, WAV/MP3 audio or MP4 video as preview tiles in chat.', 'card_file'),
+    supported('cardFile', 'Show result files', 'Show this coworker’s existing text, Markdown, static images, WAV/MP3 audio, MP4 video or PDF documents as preview tiles in chat.', 'card_file'),
     pending('filesystem', 'Edit workspace files', 'Create and change workspace documents.', 'Requires conflict-safe writes in the workspace editor.', 'fs_write', 'fs_edit'),
     pending('shared', 'Shared files', 'Work on files visible to multiple coworkers.', 'Requires a shared workspace and its access controls.', 'shared_read', 'shared_write'),
     pending('shell', 'Run commands', 'Run Rerun shell commands in a workspace.', 'Requires a confined engine command runner.', 'shell_exec'),
@@ -47,7 +47,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('sharedDb', 'Shared database', 'Read and change workspace shared records.', 'shared_db_query', 'shared_db_execute', 'shared_db_schema'),
     pending('brain', 'Company brain', 'Search or propose changes to the team’s knowledge.', 'Requires a team knowledge store and proposal review.'),
     pending('skills', 'Skills', 'Create and use reusable procedures.', 'Requires a scoped skills store and a proposal review flow.'),
-    pending('schedule', 'Schedules', 'Run coworker routines on a schedule.', 'Requires a local scheduling and restart policy.'),
+    supported('schedule', 'Schedules', 'Run this coworker’s routines while Rerun is open. Configure and test tasks in Routines.'),
     pending('trigger', 'Triggers', 'Start a routine from an external event.', 'Requires an authenticated webhook service.'),
     pending('delegate', 'Delegate tasks', 'Spawn a worker for a task.', 'Requires isolated child runs and cancellation.'),
     pending('callAgent', 'Call coworkers', 'Ask another coworker to do work.', 'Requires target selection and scoped access to sibling runs.'),
@@ -57,13 +57,13 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     pending('notify', 'Send notifications', 'Deliver a coworker notification.', 'Requires a Mac notification destination and user permission.'),
     pending('hub', 'Service catalog', 'Discover and configure Rerun services.', 'Requires an authenticated Rerun hub.'),
     pending('paidData', 'Paid data', 'Search external datasets.', 'Requires a configured provider and billing controls.'),
-    pending('cards', 'Table cards', 'Show saved table views in chat.', 'Requires saved table views in the desktop app.', 'card_table'),
+    supported('cardTable', 'Show table cards', 'Show a frozen snapshot of a saved database view in chat. Requires the matching private or shared database permission.', 'card_table'),
     pending('suggestService', 'Suggest services', 'Suggest a connection for the user to configure.', 'Requires the service connection flow.'),
     pending('requestSecret', 'Request a secret', 'Request a credential through a secure field.', 'Requires a secure entry and credential storage flow.'),
     supported('self', 'Improve itself', 'Let this coworker refine its own instructions and how long its answers are over time.', 'soul_update', 'verbosity_set'),
     nested('self', 'selfInstruction', 'Edit own instructions', 'Let this coworker rewrite its own instructions — the identity at the top of its prompt — and have them take effect from the next message.', 'soul_update'),
     nested('self', 'verbositySet', 'Change reply length', 'Let this coworker durably change how long its answers are, from minimal to detailed.', 'verbosity_set'),
-    pending('mcp', 'Custom MCP servers', 'Add external tool servers.', 'Requires credential management and scoped server execution.'),
+    supported('mcp', 'Custom MCP servers', 'Use tools from this coworker’s configured HTTPS MCP servers. Configure connections in MCP servers.'),
     pending('foreman', 'Foreman', 'Build a team and work across coworkers.', 'Requires the board’s Foreman runtime and workspace authorization.'),
 ]
 

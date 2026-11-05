@@ -13,6 +13,7 @@ const CONTROL = /[\p{Cc}]/u
 function candidate(value: unknown, depth = 0): unknown {
     if (depth > 2) return undefined
     if (typeof value === 'string') {
+        if (value.length > CARD_MAX_CHARS) return undefined
         try { return candidate(JSON.parse(value), depth + 1) }
         catch { return undefined }
     }

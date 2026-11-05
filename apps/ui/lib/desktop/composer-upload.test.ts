@@ -2,8 +2,8 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { DESKTOP_ATTACHMENT_MAX_BYTES, DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES } from '@rerun/contracts'
 import { desktopAttachmentSizes, importDesktopUpload, preflightDesktopUploads, type DesktopUploadStatus } from './composer-upload'
 
-const file = (name: string, content: string | Uint8Array = 'hello', type = 'text/plain') => new File([content], name, { type })
-const sized = (bytes: number, name = 'big.txt') => new File([new Uint8Array(bytes)], name)
+const file = (name: string, content: string | Uint8Array = 'hello', type = 'text/plain') => new File([typeof content === 'string' ? content : new Uint8Array(content).buffer], name, { type })
+const sized = (bytes: number, name = 'big.txt') => new File(['a'.repeat(bytes)], name)
 const pending = (size: number, status: DesktopUploadStatus = 'queued') => ({ size, status })
 
 afterEach(() => vi.unstubAllGlobals())
@@ -42,8 +42,8 @@ test('preflight counts existing attachments, in-flight uploads, per-file size, a
 
     const tight = await preflightDesktopUploads({
         files: [sized(30000, 'x.txt'), sized(30000, 'y.txt'), sized(30000, 'z.txt')],
-        attachedPaths: ['a.md'],
-        attachedSizes: new Map([['a.md', DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES - 60000]]),
+        attachedPaths: ['a.md', 'b.md', 'c.md'],
+        attachedSizes: new Map([['a.md', 32768], ['b.md', 32768], ['c.md', DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES - 60000 - 65536]]),
         pending: [],
     })
     expect(tight.accepted.map(item => item.name)).toEqual(['x.txt', 'y.txt'])

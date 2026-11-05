@@ -7,6 +7,8 @@ import { z } from 'zod'
 export const DESKTOP_NOTIFICATION_PREFS_URL = '/api/desktop/notifications'
 export const DESKTOP_NOTIFICATION_EVENTS_URL = '/api/desktop/notifications/events'
 export const DESKTOP_NOTIFICATION_SEEN_URL = '/api/desktop/notifications/seen'
+export const DESKTOP_NOTIFICATION_ADMIT_URL = '/api/desktop/notifications/admit'
+export const DESKTOP_NOTIFICATION_DELIVERY_URL = '/api/desktop/notifications/delivery'
 export const DESKTOP_NOTIFICATION_TERMIALS_URL = '/api/desktop/notifications/terminals'
 
 // The original patch shape the settings surface sends; the stored value merges it exactly like
@@ -24,7 +26,7 @@ export const desktopNotificationEventSchema = z.object({
     body: z.string().nullable(),
     silent: z.boolean(),
     // The revalidation identity: the finished-run group for a completion, the recorded terminal
-    // for a stopped or failed run, the exact pending request hash for a question or approval.
+    // for a failed run, the exact pending request hash for a question or approval.
     groupId: z.string().optional(),
     terminalId: z.string().optional(),
     requestId: z.string().optional(),
@@ -39,6 +41,10 @@ export const desktopNotificationEventsSchema = z.object({
     checkedAt: z.string(),
 })
 export type DesktopNotificationEvents = z.infer<typeof desktopNotificationEventsSchema>
+export const desktopNotificationAdmissionsSchema = z.object({
+    events: z.array(desktopNotificationEventSchema.extend({ attemptId: z.string().uuid() })).max(50),
+    channels: desktopNotificationChannelsSchema,
+})
 
 // What a terminal click revalidates to: the current local owner and conversation of the recorded
 // run, resolved live so a deleted coworker or rebound session lands nowhere.

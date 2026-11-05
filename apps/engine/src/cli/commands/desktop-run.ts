@@ -14,6 +14,10 @@ import { env } from '../../config/env.js'
 import { desktopCodexAction } from '@rerun/contracts'
 import { codexLoginAction, codexLoginStatus, stopCodexLogin } from '../../desktop/codex-login.js'
 import { desktopApp, desktopRouteAllowed } from '../../desktop/policy.js'
+import { bindDesktopSchedules } from '../../desktop/schedule-binding.js'
+import { startScheduler } from '../../runtime/scheduler.js'
+import { stopDesktopMcp } from '../../desktop/mcp-tools.js'
+import { logger } from '../../lib/logger.js'
 
 const secret = z.string().regex(/^[a-f0-9]{64}$/)
 const origin = z.string().url().refine(value => {
@@ -34,8 +38,10 @@ export async function desktopRunCommand(): Promise<void> {
     if (!secret.safeParse(process.env.RERUN_DESKTOP_SECRET_KEY).success) throw new Error('Desktop credential encryption is unavailable')
     if (await realpath(config.RERUN_DATA_DIR) !== await realpath(resolve(runtime.dataRoot, 'workspaces', '1', 'engine'))) throw new Error('Desktop engine data root mismatch')
     await prepareDataDir()
-    await reconcileInterruptedRuns()
+    let schedules: Awaited<ReturnType<typeof bindDesktopSchedules>> | undefined
+    let stopScheduler: ReturnType<typeof startScheduler> | undefined
     let stopping = false
+    let initialized = false
     const app = new Hono()
     app.use('*', async (c, next) => {
         const expected = `Bearer ${runtime.engine.apiKey}`
@@ -43,6 +49,9 @@ export async function desktopRunCommand(): Promise<void> {
         if (Buffer.byteLength(supplied) !== Buffer.byteLength(expected) || !timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) return c.json({ error: 'Unauthorized' }, 401)
         if (c.req.header('host') !== new URL(runtime.engine.origin).host || (c.req.header('origin') && c.req.header('origin') !== runtime.app.origin)) return c.json({ error: 'Forbidden' }, 403)
         if (stopping) return c.json({ error: 'Engine is stopping' }, 503)
+        // Reconciliation callbacks adopt sessions by reading this engine. Permit authenticated
+        // reads while recovering, but no writes or new model runs until all bindings are ready.
+        if (!initialized && c.req.method !== 'GET' && c.req.method !== 'HEAD') return c.json({ error: 'Engine is starting' }, 503)
         if (!desktopRouteAllowed(c.req.method, c.req.path)) return c.json({ error: 'This feature is not enabled in the desktop preview' }, 403)
         return next()
     })
@@ -53,14 +62,21 @@ export async function desktopRunCommand(): Promise<void> {
         if (!parsed.success) return c.json({ error: 'Invalid sign-in action.' }, 400)
         return c.json(await codexLoginAction(parsed.data))
     })
-    app.get('/health', c => c.json(ready))
+    app.get('/health', c => initialized ? c.json(ready) : c.json({ status: 'starting' }, 503))
     app.route('/', createServer())
     let server: Server
     const shutdown = async () => {
         if (stopping) return
         stopping = true
+        stopScheduler?.()
         const closed = new Promise<void>(done => server.close(() => done()))
         stopCodexLogin()
+        // Close admissions before waiting for any preparation. Callback delivery is best effort
+        // during teardown; failure must never reopen either local service or prevent shutdown.
+        const closing = Promise.allSettled([schedules?.close(), stopDesktopMcp()])
+        // Preparing scheduled runs already register a controller in runAgent. Signal those
+        // before draining preparation, otherwise a stuck provider can prevent its own Stop.
+        await Promise.allSettled([closing, abortAllRuns(), stopScheduler?.drain()])
         await abortAllRuns()
         await closeAllMcp()
         server.closeAllConnections()
@@ -69,7 +85,17 @@ export async function desktopRunCommand(): Promise<void> {
         process.exit(0)
     }
     server = serve({ fetch: app.fetch, port: config.RERUN_PORT, hostname: '127.0.0.1' }, () => {
-        process.send?.({ type: 'ready', ...ready })
+        void (async () => {
+            // The UI starts first. Reconcile after listening so its authenticated callbacks can
+            // fetch the exact session and run before persisting a restart failure notification.
+            await reconcileInterruptedRuns()
+            if (stopping) return
+            schedules = await bindDesktopSchedules(runtime)
+            if (stopping) { await schedules.close().catch(() => {}); return }
+            initialized = true
+            stopScheduler = startScheduler()
+            process.send?.({ type: 'ready', ...ready })
+        })().catch(error => { logger.error({ err: String(error) }, 'desktop schedule startup failed'); void shutdown() })
     }) as Server
     process.on('message', message => { if ((message as { type?: string })?.type === 'stop') void shutdown() })
     process.once('disconnect', () => { void shutdown() })

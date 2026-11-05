@@ -7,6 +7,7 @@ import { parseScheduledRun } from '@/lib/schedules/scheduled-run'
 import { encodePeaks } from '@/lib/voice/peaks'
 import { parseVoiceMessage } from '@/lib/voice/marker'
 import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
+import { desktopTableCardOf } from '@/lib/desktop/table-card'
 import { desktopFileCardOf } from '@/lib/desktop/file-card'
 import { hitlKindOf } from '@/lib/chat-hitl'
 import { desktopApprovalInput, desktopQuestionInput, QUICK_REPLIES_TOOL, desktopSourceParts, desktopAttachmentFieldsOf, type DesktopSourcePart, isContextPart, visibleText, workspaceAttachmentPaths, billedMicrosOf, isPaidDataTool, stripBridgePrefix, type ConversationAttachment, type ConversationMessage, type ConversationMessageMetadata } from '@rerun/contracts'
@@ -169,6 +170,13 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
             // the tile survives reopening the chat. A malformed card falls through to the normal step.
             if (toolName === 'card_file' && part.state === 'output-available') {
                 const card = desktopFileCardOf(part.output)
+                if (card) return {
+                    type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                    state: 'output-available' as const, input: {}, output: JSON.stringify(card),
+                }
+            }
+            if (toolName === 'card_table' && part.state === 'output-available') {
+                const card = desktopTableCardOf(part.output)
                 if (card) return {
                     type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
                     state: 'output-available' as const, input: {}, output: JSON.stringify(card),

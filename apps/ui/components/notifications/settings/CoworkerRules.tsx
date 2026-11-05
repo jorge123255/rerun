@@ -30,10 +30,12 @@ type CoworkerRulesProps = {
     onChange: (agentId: string, rule: CoworkerRule) => void
     /** Listed even while it has no rule of its own, and scrolled into view. */
     pinnedId?: string | null
+    /** Keep hosted guidance by default; local surfaces can describe their own entry point. */
+    detail?: string
     renderPicker: (props: CoworkerPickerProps) => ReactNode
 }
 
-export function CoworkerRules({ coworkers, rules, onChange, pinnedId, renderPicker }: CoworkerRulesProps) {
+export function CoworkerRules({ coworkers, rules, onChange, pinnedId, renderPicker, detail = 'Also set from the bell on each coworker.' }: CoworkerRulesProps) {
     const [adding, setAdding] = useState(false)
     const pinnedRow = useRef<HTMLDivElement>(null)
     const ruleOf = (id: string) => rules[id] ?? DEFAULT_COWORKER_RULE
@@ -48,7 +50,7 @@ export function CoworkerRules({ coworkers, rules, onChange, pinnedId, renderPick
     return (
         <SettingsSection
             title="Per coworker"
-            detail="Also set from the bell on each coworker."
+            detail={detail}
             action={
                 <TooltipDisabledReason reason={nothingToAdd ? 'Every coworker is already listed' : undefined}>
                     <Button type="button" variant="ghost" size="sm" disabled={nothingToAdd} aria-expanded={adding} onClick={() => setAdding(a => !a)}>

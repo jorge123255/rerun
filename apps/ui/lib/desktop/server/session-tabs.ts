@@ -67,6 +67,24 @@ export function writeDesktopTabs(db: Client, agentId: string, input: DesktopTabW
             const old: StoredLayout = row ? JSON.parse(String(row.layout)) : { tabs: [], activeIndex: 0 }
             const first = new Map(chats.rows.filter(s => s.first_tab_uid !== null).map(s => [String(s.first_tab_uid), String(s.id)]))
             const previous = old.tabs.map(tab => ({ ...tab, id: tab.id ?? first.get(tab.uid) ?? null }))
+            // Plan warning ownership from the original snapshot. Updating by UID while
+            // walking tabs would move the same records twice during a swap or cycle.
+            const originalTabs = new Map(previous.map(tab => [tab.uid, tab]))
+            const storedUploads = await transaction.execute({ sql: 'SELECT id,tab_uid FROM desktop_composer_uploads WHERE agent_id=?', args: [agentId] })
+            const uploadMoves = storedUploads.rows.map(upload => {
+                const from = String(upload.tab_uid), before = originalTabs.get(from)
+                const to = !before ? null : before.id === null
+                    ? input.tabs.find(tab => tab.uid === from)?.uid ?? null
+                    : input.tabs.find(tab => tab.id === before.id)?.uid ?? null
+                return { id: String(upload.id), from, to }
+            })
+            const finalCounts = new Map<string, number>()
+            for (const { to } of uploadMoves) {
+                if (to === null) continue
+                const count = (finalCounts.get(to) ?? 0) + 1
+                if (count > 10) throw new DesktopHttpError(409, 'Check unresolved imports before combining these conversation tabs.')
+                finalCounts.set(to, count)
+            }
             const storedDrafts = await transaction.execute({ sql: 'SELECT tab_uid, revision, text, attachment_path, attachment_paths FROM desktop_composer_drafts WHERE agent_id = ?', args: [agentId] })
             const drafts = new Map(storedDrafts.rows.map(draft => [String(draft.tab_uid), draft]))
             const transfers = new Map<string, Row>()
@@ -95,10 +113,21 @@ export function writeDesktopTabs(db: Client, agentId: string, input: DesktopTabW
             }
             for (const uid of clear) if (!transfers.has(uid)) await writeDraft(uid, drafts.get(uid), '', [])
             for (const [uid, source] of transfers) await writeDraft(uid, drafts.get(uid), String(source.text), draftAttachmentPaths(source))
+            for (const { id, from, to } of uploadMoves) {
+                if (to === from) continue
+                if (to === null) {
+                    // A removed chat's warning must not attach to a new chat reusing its UID.
+                    await transaction.execute({ sql: 'DELETE FROM desktop_composer_uploads WHERE id=? AND agent_id=? AND tab_uid=?', args: [id, agentId, from] })
+                } else {
+                    await transaction.execute({ sql: 'UPDATE desktop_composer_uploads SET tab_uid=? WHERE id=? AND agent_id=? AND tab_uid=?', args: [to, id, agentId, from] })
+                }
+            }
             await transaction.execute({ sql: `INSERT INTO desktop_agent_tabs (agent_id,revision,layout) VALUES (?,?,?)
                 ON CONFLICT(agent_id) DO UPDATE SET revision=excluded.revision,layout=excluded.layout`, args: [agentId, input.baseRevision + 1, layout] })
             // Closing a tab discards only that tab's ordinary draft and its bounded retry receipts.
             await transaction.execute({ sql: `DELETE FROM desktop_composer_drafts WHERE agent_id = ? AND tab_uid NOT IN
+                (SELECT json_extract(value, '$.uid') FROM json_each(?, '$.tabs'))`, args: [agentId, layout] })
+            await transaction.execute({ sql: `DELETE FROM desktop_composer_uploads WHERE agent_id = ? AND tab_uid NOT IN
                 (SELECT json_extract(value, '$.uid') FROM json_each(?, '$.tabs'))`, args: [agentId, layout] })
             const saved = (await transaction.execute(layoutQuery(agentId))).rows[0]
             await transaction.commit()

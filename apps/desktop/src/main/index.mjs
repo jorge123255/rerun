@@ -1,9 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, session } from 'electron'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdir } from 'node:fs/promises'
 import { loadBundle, loadIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
+import { createDesktopNotifications } from './notifications.mjs'
 import { BeforeQuitDrafts, completeDesktopQuit } from './before-quit.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
@@ -16,6 +17,12 @@ let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const draftQuit = new BeforeQuitDrafts()
+const desktopNotifications = createDesktopNotifications({ Notification, onClick: target => {
+    if (quitting || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return
+    if (window.isMinimized()) window.restore()
+    window.show(); window.focus()
+    window.webContents.send('desktop:notification-click', target)
+} })
 
 if (!app.requestSingleInstanceLock()) app.quit()
 else {
@@ -126,6 +133,11 @@ async function launch() {
         return true
     })
     ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
+    ipcMain.handle('desktop:notify', (event, value) => {
+        trusted(event)
+        if (quitting || !isDesktopPage(event.senderFrame.url)) return { status: 'unavailable' }
+        return desktopNotifications.notify(value)
+    })
     for (const [channel, handle] of [
         ['desktop:drafts-ready', value => draftQuit.register(value?.registrationId)],
         ['desktop:drafts-unready', value => draftQuit.unregister(value?.registrationId)],

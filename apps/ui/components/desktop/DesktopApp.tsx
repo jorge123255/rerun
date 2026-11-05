@@ -13,6 +13,8 @@ import { SidePanel } from '@/components/layout/SidePanel'
 import { SIDE_PANEL_GAP, loadSidePanelWidth } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
+import { desktopNotificationsBridge } from '@/lib/desktop/notification-bridge'
+import { DesktopNotificationDelivery } from './DesktopNotificationDelivery'
 import { DesktopSharedData } from './DesktopSharedData'
 import { DesktopBoard } from './DesktopBoard'
 import { useDesktopBoardState } from './useDesktopBoardState'
@@ -425,6 +427,13 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             </Dialog>
             <DesktopWorkspaceSettings open={workspaceSettings} onOpenChange={setWorkspaceSettings} workspaceName={workspaceName}
                 onSaved={saved => { setWorkspaceName(saved.name); setSavedIcon({ iconCatalogId: saved.iconCatalogId ?? null, iconUploadId: saved.iconUploadId ?? null }) }} />
+            {desktopNotificationsBridge().available && <DesktopNotificationDelivery
+                visibleSessionId={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !sharedDataOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
+                onOpenConversation={target => {
+                    if (controlCenterDisabled || isDesktopQuitting() || !currentAgents.current.some(agent => agent.id === target.agentId)) return
+                    focusFromControlCenter(target.agentId)
+                    selectCoworker(target.agentId, target.sessionId)
+                }} />}
             <DesktopSharedData hideTrigger dialogControl={{ open: sharedDataOpen, onOpenChange: setSharedDataOpen }} onCloseAutoFocus={event => {
                 const target = boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 if (target && !isDesktopQuitting()) { event.preventDefault(); target.focus({ preventScroll: true }) }

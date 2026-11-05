@@ -21,7 +21,9 @@ import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { DesktopCoworkerData } from './DesktopCoworkerData'
+import { DesktopCoworkerRoutines } from './DesktopCoworkerRoutines'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
+import { DesktopCoworkerMcpDialog } from './DesktopCoworkerMcpDialog'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
 import type { DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
@@ -30,7 +32,6 @@ import { AttachmentChips, DesktopAttachmentPicker } from './DesktopAttachmentPic
 import { DesktopUploadChips } from './DesktopUploadChips'
 import { DESKTOP_UPLOAD_ACCEPT } from '@/lib/desktop/composer-upload'
 import { useDesktopComposerUploads } from '@/lib/desktop/use-composer-uploads'
-import { entriesFromDataTransfer } from '@/lib/files/upload'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { DesktopModelSelector } from './DesktopModelSelector'
 import type { DesktopModelPick } from '@/lib/desktop/chat-model'
@@ -45,7 +46,7 @@ import { desktopApprovalViewSchema, type DesktopPendingApproval, type DesktopApp
 import { DesktopApprovalCard } from './DesktopApprovalCard'
 import { desktopQuickRepliesOf } from '@/lib/desktop/quick-replies'
 import { useDesktopComposerDraft } from '@/lib/desktop/use-composer-draft'
-import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { desktopDraftRecord, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 
 const approvalUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/approvals`
 async function approvalFor(sessionId: string, signal: AbortSignal) {
@@ -159,6 +160,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     useEffect(() => { composer.current = { text: input, attachments: [...attachmentPaths] } }, [input, attachmentSignature])
     const pendingAttachment = useRef<{ key: string; inputKey: string; input: string; attachments: readonly string[]; version: number; release: () => void } | null>(null)
     const preparingSubmit = useRef(false)
+    const [preparingSend, setPreparingSend] = useState(false)
     const regenerationIds = useRef(new Map<string, string>())
     const regenerating = useRef<{ key: string; agentId: string; sessionId: string; draftKey: string; release: () => void } | null>(null)
     const [regenerationSource, setRegenerationSource] = useState<string | null>(null)
@@ -177,22 +179,24 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         return true
     }, [draft.loaded, draft.error, draft.attachmentRejected, draft.update, draftKey])
     const [uploadNotice, setUploadNotice] = useState<string | null>(null)
-    const attachUploadedPath = useCallback((path: string) =>
-        setDraftAttachments(draftKey, [...composer.current.attachments.filter(item => item !== path), path]),
-    [draftKey, setDraftAttachments])
+    const attachUploadedPath = useCallback(async (path: string) => {
+        if (!setDraftAttachments(draftKey, [...(composer.current.attachments ?? []).filter(item => item !== path), path])) return false
+        return draft.flush()
+    }, [draftKey, setDraftAttachments, draft.flush])
     const {
-        items: uploadItems, active: uploadsActive, hasBlocked: uploadsHaveBlocked,
-        start: startUploads, remove: removeUpload, retry: retryUpload, settle: settleUploads,
+        items: uploadItems, active: uploadsActive, loaded: uploadsLoaded, hasBlocked: uploadsHaveBlocked,
+        start: startUploads, remove: removeUpload, retry: retryUpload, settle: settleUploads, isBusy: uploadsBusy,
     } = useDesktopComposerUploads({
         agentId: agent.id,
-        ownerKey: JSON.stringify([agent.id, tabUid ?? draftKey]),
+        ownerKey: JSON.stringify([agent.id, tabUid ?? null, sessionId]),
+        tabUid, active: active && !draft.quitting,
         attachedPaths: attachmentPaths,
         onConfirmed: attachUploadedPath,
         onNotice: setUploadNotice,
     })
     const uploadGate = useRef(false)
     const beginUpload = useCallback((files: File[]) => {
-        if (!files.length || uploadGate.current || isDesktopQuitting()) return
+        if (!files.length || uploadGate.current || preparingSubmit.current || isDesktopQuitting()) return
         void startUploads(files)
     }, [startUploads])
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null })
@@ -357,7 +361,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         conversationRoot.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
         setPanelFocus(null)
     }, [panelFocus, active, detailPanel, cardOpen])
-    const dirty = !draft.loaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive)
+    const dirty = !draft.loaded || !uploadsLoaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive || uploadItems.length)
     const readable = active && !cardOpen && !detailPanel && ready && !generating && history.loadedGeneration === historyGeneration
         && !!history.transcript && history.question !== undefined && history.approval !== undefined
         && engineRunning.id === sessionId
@@ -446,36 +450,55 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         }
     }
 
+    const submissionKey = JSON.stringify([agent.id, tabUid, sessionId, active])
+    const submissionScope = useRef({ key: submissionKey, epoch: 0 })
+    if (submissionScope.current.key !== submissionKey) submissionScope.current = { key: submissionKey, epoch: submissionScope.current.epoch + 1 }
+    const submissionMounted = useRef(true)
+    useEffect(() => { submissionMounted.current = true; return () => { submissionMounted.current = false } }, [])
+    const submissionCurrent = useRef({ active, input, draft, generating, busy, queue, liveRunId, engineRunning, inactive, stopping, ready, requestBlocked, pendingRequest })
+    submissionCurrent.current = { active, input, draft, generating, busy, queue, liveRunId, engineRunning, inactive, stopping, ready, requestBlocked, pendingRequest }
+
     async function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if (!draft.loaded || draft.error || isDesktopQuitting() || preparingSubmit.current || (requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || !text || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current || pendingAttachment.current) return
+        if (!active || !draft.loaded || draft.error || isDesktopQuitting() || preparingSubmit.current || (requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || !text || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current || pendingAttachment.current) return
+        const intent = submissionScope.current
+        const currentIntent = () => submissionMounted.current && submissionScope.current === intent && submissionCurrent.current.active && !isDesktopQuitting()
         preparingSubmit.current = true
+        setPreparingSend(true)
         let handedOff = false
         let release: (() => void) | undefined
         try {
             // Enter mid-import is a request to send, not an error: the message waits for the last
             // import and leaves on its own. A refused or unresolved attachment still stops it,
             // since its path would point at a file the agent cannot open.
-            await settleUploads()
-            if (isDesktopQuitting() || uploadsHaveBlocked()) return
+            if (!await settleUploads() || !currentIntent() || uploadsHaveBlocked()) return
+            const current = submissionCurrent.current
+            if (current.input !== input || current.inactive || current.stopping || !current.ready || current.pendingRequest
+                || (current.requestBlocked && !current.generating) || !current.queue.loaded || current.queue.pending || current.queue.error
+                || regenerating.current || pendingAttachment.current) return
             const hold = holdDraftAdmission()
             release = hold
-            const version = draft.version
-            if (!await draft.flush() || isDesktopQuitting()) return
-            const paths = [...composer.current.attachments]
-            if (generating || (queue.queued && draftQueues.current.has(queue.queued.id))) {
-                const queuedPaths = queue.queued ? desktopQueuedAttachmentPaths(queue.queued) : []
-                const sameDraft = !generating && queue.queued && queue.queued.text === text && samePaths(queuedPaths, paths)
-                const item = sameDraft ? queue.queued : await queue.enqueue(text, paths, busy ? liveRunId : engineRunning.runId ?? null)
+            const snapshot = tabUid ? desktopDraftRecord(agent.id, tabUid).state : current.draft
+            const version = snapshot.version
+            if (!snapshot.loaded || snapshot.error || !await current.draft.flush() || !currentIntent() || uploadsBusy() || uploadsHaveBlocked()) return
+            if ((tabUid ? desktopDraftRecord(agent.id, tabUid).state.version !== version : submissionCurrent.current.input !== input)) return
+            const paths = [...(composer.current.attachments ?? [])]
+            const live = submissionCurrent.current
+            if (live.inactive || live.stopping || !live.ready || live.pendingRequest || (live.requestBlocked && !live.generating)
+                || !live.queue.loaded || live.queue.pending || live.queue.error || regenerating.current || pendingAttachment.current) return
+            if (live.generating || (live.queue.queued && draftQueues.current.has(live.queue.queued.id))) {
+                const queuedPaths = live.queue.queued ? desktopQueuedAttachmentPaths(live.queue.queued) : []
+                const sameDraft = !live.generating && live.queue.queued && live.queue.queued.text === text && samePaths(queuedPaths, paths)
+                const item = sameDraft ? live.queue.queued : await live.queue.enqueue(text, paths, live.busy ? live.liveRunId : live.engineRunning.runId ?? null)
                 if (!item) return
-                if (draft.clear(version)) {
+                if (current.draft.clear(version)) {
                     setInputs(current => current.get(inputKey) === input ? new Map(current).set(inputKey, '') : current)
                     setAttachments(current => { const next = new Map(current); if (samePaths(current.get(draftKey) ?? [], paths)) next.delete(draftKey); return next })
                 }
                 draftQueues.current.delete(item.id)
                 setQueueNotice(undefined)
-                if (!generating) setSendQueuedId(item.id)
+                if (!live.generating && currentIntent()) setSendQueuedId(item.id)
                 return
             }
             setLiveSessionId(null)
@@ -491,7 +514,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 hold()
             })
         } catch { /* Draft/queue saves retain the composer and expose their own retry controls. */ }
-        finally { preparingSubmit.current = false; if (!handedOff) release?.() }
+        finally { preparingSubmit.current = false; if (submissionMounted.current) setPreparingSend(false); if (!handedOff) release?.() }
     }
 
     async function sendQueued(item: DesktopQueuedMessage) {
@@ -691,7 +714,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         }
     }
 
-    const uploadDisabled = inactive || stopping || !ready || queue.pending || !draft.loaded || (!!draft.error && !draft.attachmentRejected) || !!regenerationSource || draft.quitting || !!pendingRequest
+    const uploadDisabled = !active || inactive || stopping || !ready || queue.pending || !draft.loaded || !uploadsLoaded || (!!draft.error && !draft.attachmentRejected) || !!regenerationSource || draft.quitting || !!pendingRequest || preparingSend
     uploadGate.current = uploadDisabled
     const composerForm = useRef<HTMLFormElement>(null)
     const uploadFileInput = useRef<HTMLInputElement>(null)
@@ -709,10 +732,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             depth = 0
             setUploadDragOver(false)
             if (!event.dataTransfer) return
-            void entriesFromDataTransfer(event.dataTransfer).then(entries => {
-                const files = entries.map(entry => entry.file)
-                if (files.length) beginUpload(files)
-            })
+            if (Array.from(event.dataTransfer.items).some(item => item.webkitGetAsEntry?.()?.isDirectory)) {
+                setUploadNotice('Choose .txt or .md files, not folders.'); return
+            }
+            // Capture files and their owner synchronously. No recursive directory walk can
+            // resolve later into a different tab or read unbounded folders before the cap.
+            beginUpload(Array.from(event.dataTransfer.files))
         }
         form.addEventListener('dragenter', onDragEnter)
         form.addEventListener('dragleave', onDragLeave)
@@ -730,7 +755,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const unknownUploads = blockedUploads.length - failedUploads
     const blockedUploadNotice = [
         failedUploads ? `${failedUploads} attachment${failedUploads > 1 ? 's' : ''} failed to import. Retry or remove ${failedUploads > 1 ? 'them' : 'it'} before sending.` : '',
-        unknownUploads ? `${unknownUploads} attachment${unknownUploads > 1 ? 's' : ''} may already be in this coworker’s Files. Check Files, then remove ${unknownUploads > 1 ? 'them' : 'it'} here or attach ${unknownUploads > 1 ? 'them' : 'it'} there before sending.` : '',
+        unknownUploads ? `${unknownUploads} attachment${unknownUploads > 1 ? 's' : ''} may already be in this coworker’s Files. Check Files, then dismiss ${unknownUploads > 1 ? 'these upload statuses' : 'this upload status'} before sending.` : '',
     ].filter(Boolean).join(' ')
 
     const composerId = !active && tabUid ? `desktop-message-${tabUid}` : 'desktop-message'
@@ -777,7 +802,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                     <DesktopCoworkerFiles agent={agent} dialogControl={dialogControl('files')} />
                     <DesktopCoworkerData agent={agent} dialogControl={dialogControl('data')} />
+                    <DesktopCoworkerRoutines agent={agent} dialogControl={dialogControl('scheduled')} onOpenChat={onSelectSession} />
                     <DesktopCoworkerTools agent={agent} dialogControl={dialogControl('tools')} />
+                    <DesktopCoworkerMcpDialog agent={agent} dialogControl={dialogControl('mcp')} />
                     <DesktopCoworkerMemories agent={agent} dialogControl={dialogControl('memories')} />
                     {renderRunHistory?.(dialogControl('logs'))}
                     <DesktopCoworkerMonitoring agent={agent} dialogControl={dialogControl('monitoring')} />
@@ -812,7 +839,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                         return paths.length ? <div className="mb-1"><AttachmentChips paths={paths} /></div> : null
                                     })()}
                                     {message.role === 'assistant'
-                                        ? <DesktopAssistantReply message={message} agentId={agent.id} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
+                                        ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} streaming={status === 'streaming' && messageIndex === transcript.length - 1}
                                             pendingRequestToolCallId={pendingRequest?.toolCallId}
                                             quickReplies={{ show: messageIndex === transcript.length - 1 && quickRepliesVisible, disabled: !canSendQuickReply,
                                                 pending: quickReplyBusy || queue.pending, onSend: text => sendQuickReply(message.id, text) }}
@@ -848,6 +875,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 {inactive && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">This coworker is inactive. Enable it from the board to send a message. Your chats are kept.</p>}
                 {(queue.error || queueNotice) && <p role={queue.error ? 'alert' : 'status'} className="mb-2 px-1 text-xs text-muted-foreground">{queue.error || queueNotice}</p>}
                 {uploadNotice && <p role="alert" className="mb-2 px-1 text-xs text-destructive">{uploadNotice}</p>}
+                {uploadsActive && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">Preparing attachments…</p>}
                 {blockedUploadNotice && <p role="alert" className="mb-2 px-1 text-xs text-destructive">{blockedUploadNotice}</p>}
                 {queuedBehindFailure && !queueNotice && <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">The previous reply failed. Your queued message is kept; use Send now when you are ready.</p>}
                 <QueuedMessagePill text={queued && !(draftQueues.current.has(queued.id) && input.trim() === queued.text && samePaths(attachmentPaths, desktopQueuedAttachmentPaths(queued))) ? desktopQueuedPreview(queued) : null}
@@ -861,7 +889,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     </div>}
                     {(attachmentPaths.length > 0 || uploadItems.length > 0) && <div className="px-2.5 pt-2"><div className="flex flex-wrap items-center gap-1">
                         <AttachmentChips paths={attachmentPaths}
-                            disabled={draft.quitting || !!regenerationSource || stopping || queue.pending}
+                            disabled={draft.quitting || !!regenerationSource || stopping || queue.pending || uploadsActive}
                             locked={pendingAttachment.current?.key === draftKey ? pendingAttachment.current.attachments : undefined}
                             onRemove={path => setDraftAttachments(draftKey, attachmentPaths.filter(item => item !== path))} />
                         <DesktopUploadChips items={uploadItems} disabled={uploadDisabled} onRemove={removeUpload} onRetry={retryUpload} />
@@ -894,14 +922,14 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
                             workspaceModel={modelLabel} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} onReady={setModelReady} />
                         <div className="flex shrink-0 items-center gap-1">
-                            <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={uploadDisabled}
-                                paths={attachmentPaths} onChange={paths => setDraftAttachments(draftKey, paths)} />
+                            <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={uploadDisabled || uploadsActive}
+                                paths={attachmentPaths} onChange={paths => { if (!uploadsBusy()) setDraftAttachments(draftKey, paths) }} />
                             <Button type="button" size="icon-sm" variant="ghost" title="Upload files from this Mac" disabled={uploadDisabled}
                                 onClick={() => uploadFileInput.current?.click()}>
                                 <UploadIcon aria-hidden className="size-4" /><span className="sr-only">Upload files from this Mac</span>
                             </Button>
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
-                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || !input.trim() || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive}>
+                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={!draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || !input.trim() || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
                             </Button>
                         </div>

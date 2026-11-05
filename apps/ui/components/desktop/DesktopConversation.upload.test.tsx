@@ -247,3 +247,159 @@ test('a draft that cannot take a confirmed import keeps the file visibly unresol
     expect(document.body.textContent).toContain('could not take it')
     expect(document.body.textContent).toContain('Attach it from Files instead')
 })
+
+test('send waits for file validation before an import job exists', async () => {
+    let release!: (bytes: ArrayBuffer) => void
+    const chosen = txt('checking.txt')
+    Object.defineProperty(chosen, 'arrayBuffer', { value: () => new Promise<ArrayBuffer>(resolve => { release = resolve }) })
+    const { posts, imports } = stubFetch()
+    await render('saved')
+    await writeDraft('Read the chosen file')
+    await pickFiles([chosen])
+    await flush()
+    expect(imports).toEqual([])
+    await submitComposer()
+    expect(posts).toEqual([])
+    await act(async () => release(new TextEncoder().encode('hello').buffer))
+    await flush(); await flush()
+    expect(posts).toEqual([{ agentId: 'alice', sessionId: 'saved', text: 'Read the chosen file', attachmentPath: 'checking.txt' }])
+})
+
+test('closing a conversation cancels a pending send even when the import response arrives later', async () => {
+    let finish!: () => void
+    const { posts } = stubFetch({ imports: name => new Promise<Response>(resolve => { finish = () => resolve(Response.json({ path: name, name }, { status: 201 })) }) })
+    await render('first')
+    await writeDraft('This must not be sent after close')
+    await pickFiles([txt('late.txt')]); await flush()
+    await submitComposer()
+    await render('second')
+    await flush()
+    await act(async () => finish())
+    await flush(); await flush()
+    expect(posts).toEqual([])
+    expect(titles()).not.toContain('late.txt')
+})
+
+test('a durable draft sent after uploading clears the acknowledged version, not the pre-upload version', async () => {
+    const fixture = createDesktopDraftFixture()
+    fixture.seedTabs('alice', [{ uid: 'wait-durable', id: 'saved' }])
+    let finish!: () => void
+    const { posts } = stubFetch({ draft: fixture, imports: name => new Promise<Response>(resolve => { finish = () => resolve(Response.json({ path: name, name }, { status: 201 })) }) })
+    await renderTab('wait-durable'); await flush()
+    await writeDraft('Save and send this attachment')
+    await pickFiles([txt('durable.txt')]); await flush()
+    await submitComposer()
+    await act(async () => finish())
+    for (let attempt = 0; attempt < 8; attempt++) await flush()
+    expect(posts).toEqual([{ agentId: 'alice', sessionId: 'saved', text: 'Save and send this attachment', attachmentPath: 'durable.txt' }])
+    expect(container.querySelector('textarea')!.value).toBe('')
+    expect(titles()).not.toContain('durable.txt')
+    const saved = fixture.handle('/api/desktop/agents/alice/draft?tabUid=wait-durable')!
+    expect((await saved.json()).draft).toMatchObject({ text: '' })
+    expect((await fixture.handle('/api/desktop/agents/alice/upload-attempts?tabUid=wait-durable')!.json()).attempts).toEqual([])
+})
+
+test('an uncertain imported file hydrates after remount and is never silently retried or attached', async () => {
+    const fixture = createDesktopDraftFixture()
+    fixture.seedTabs('alice', [{ uid: 'uncertain-tab', id: 'saved' }])
+    const { imports, posts } = stubFetch({ draft: fixture, imports: () => Promise.reject(new Error('Lost accepted response')) })
+    await renderTab('uncertain-tab'); await flush()
+    await writeDraft('Keep this text')
+    await pickFiles([txt('unknown.txt')]); await flush(); await flush()
+    expect(imports).toEqual(['unknown.txt'])
+    await act(async () => root.unmount())
+    forgetCoworkerDrafts('alice')
+    root = createRoot(container)
+    await renderTab('uncertain-tab'); await flush(); await flush()
+    expect(document.body.textContent).toContain('Unresolved upload:')
+    expect(button('Retry import unknown.txt')).toBeUndefined()
+    await submitComposer(); await flush()
+    expect(posts).toEqual([])
+    expect(imports).toEqual(['unknown.txt'])
+    expect(container.querySelector('textarea')!.value).toBe('Keep this text')
+    await click('Remove upload unknown.txt'); await flush()
+    await submitComposer(); await flush()
+    expect(posts).toEqual([{ agentId: 'alice', sessionId: 'saved', text: 'Keep this text' }])
+})
+
+test('a failed durable warning write prevents the file POST entirely', async () => {
+    const fixture = createDesktopDraftFixture()
+    fixture.seedTabs('alice', [{ uid: 'no-warning', id: 'saved' }])
+    const { imports } = stubFetch({ draft: fixture })
+    const base = vi.mocked(fetch).getMockImplementation()!
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'POST' && String(input).includes('/upload-attempts')) return Response.json({ error: 'Storage unavailable' }, { status: 500 })
+        return base(input, init)
+    }))
+    await renderTab('no-warning'); await flush()
+    await pickFiles([txt('never-posted.txt')]); await flush(); await flush()
+    expect(imports).toEqual([])
+    expect(document.body.textContent).toContain('could not be confirmed')
+})
+
+test('retry rechecks the current attachment budget after other files filled the last slot', async () => {
+    const paths = Array.from({ length: 9 }, (_, i) => 'existing-' + i + '.txt')
+    const { imports } = stubFetch({
+        filesGet: () => Response.json({ entries: [...paths, 'last.txt'].map(name => ({ name, type: 'file', size: 1 })) }),
+        imports: name => name === 'refused.txt' ? Response.json({ error: 'Name exists' }, { status: 409 }) : Response.json({ path: name, name }, { status: 201 }),
+    })
+    await act(async () => root.render(<DesktopConversation agent={agent} sessionId="saved" sessions={[]} initialDraft={{ text: '', attachments: paths }} onSelectSession={() => {}} onChatSession={() => {}} />))
+    await pickFiles([txt('refused.txt')]); await flush()
+    await pickFiles([txt('last.txt')]); await flush()
+    await click('Retry import refused.txt'); await flush()
+    expect(imports).toEqual(['refused.txt', 'last.txt'])
+    expect(document.body.textContent).toContain('10 files')
+})
+
+test('closing and reopening the same mounted chat cancels its waiting send and restores the uncertain status', async () => {
+    const fixture = createDesktopDraftFixture()
+    fixture.seedTabs('alice', [{ uid: 'parked', id: 'saved' }])
+    let finish!: () => void
+    const { imports, posts } = stubFetch({ draft: fixture, imports: name => new Promise<Response>(resolve => { finish = () => resolve(Response.json({ path: name, name }, { status: 201 })) }) })
+    const show = (active: boolean) => act(async () => root.render(<DesktopConversation agent={agent} sessionId="saved" sessions={[]} tabUid="parked" active={active} onSelectSession={() => {}} onChatSession={() => {}} />))
+    await show(true); await flush()
+    await writeDraft('Keep the waiting message')
+    await pickFiles([txt('parked.txt')]); await flush()
+    await submitComposer()
+    await show(false); await flush()
+    await show(true); await flush()
+    await act(async () => finish()); await flush(); await flush()
+    expect(posts).toEqual([])
+    expect(imports).toEqual(['parked.txt'])
+    expect(document.body.textContent).toContain('Unresolved upload:')
+    expect(container.querySelector('textarea')!.value).toBe('Keep the waiting message')
+})
+
+test('an upload joins the exact queued message only after validation, import and draft acknowledgment', async () => {
+    const fixture = createDesktopDraftFixture()
+    fixture.seedTabs('alice', [{ uid: 'queue-upload', id: 'saved' }])
+    let finish!: () => void
+    const { posts } = stubFetch({ draft: fixture, imports: name => new Promise<Response>(resolve => { finish = () => resolve(Response.json({ path: name, name }, { status: 201 })) }) })
+    const base = vi.mocked(fetch).getMockImplementation()!
+    const writes: Array<{ action: string; item?: Record<string, unknown> }> = []
+    let queued: Record<string, unknown> | null = null
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const pathname = new URL(String(input), 'http://local').pathname
+        if (pathname.endsWith('/stop')) return Response.json({ running: true, runId: 'active-run' })
+        if (pathname.endsWith('/queue')) {
+            if (init?.method === 'PUT') {
+                const change = JSON.parse(String(init.body))
+                writes.push(change)
+                if (change.action === 'enqueue') queued = change.item
+            }
+            return Response.json({ queued })
+        }
+        return base(input, init)
+    }))
+    await renderTab('queue-upload'); await flush()
+    await writeDraft('Use this in the next reply')
+    await pickFiles([txt('queued.txt')]); await flush()
+    await submitComposer()
+    expect(writes).toEqual([])
+    await act(async () => finish())
+    for (let attempt = 0; attempt < 8; attempt++) await flush()
+    expect(posts).toEqual([])
+    expect(writes).toHaveLength(1)
+    expect(writes[0]).toMatchObject({ action: 'enqueue', item: { text: 'Use this in the next reply', attachmentPath: 'queued.txt', behindRunId: 'active-run' } })
+    expect(container.querySelector('textarea')!.value).toBe('')
+})

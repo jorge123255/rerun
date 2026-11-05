@@ -10,6 +10,10 @@ process.env.RERUN_LOG_LEVEL = 'fatal'
 type Outcome = { kind: 'done' | 'error' | 'cancelled'; error?: string }
 
 const state = vi.hoisted(() => ({
+    desktop:false,
+    receipts:{} as Record<string,{runId:string;sessionId:string}|'incomplete'>,
+    files: {} as Record<string,unknown>,
+    modelWait:null as Promise<void>|null,
     agents: {} as Record<string, { id: string; config: { enabled: boolean } } | Error>,
     agentIds: [] as string[] | Error,
     schedules: {} as Record<string, unknown[] | Error>,
@@ -19,11 +23,15 @@ const state = vi.hoisted(() => ({
     runs: [] as Array<{ agentId: string; sessionId: string; message: string; override: unknown; trigger: unknown; runId: string; finish: (o: Outcome) => void }>,
     markFired: vi.fn(async (_agentId: string, _slug: string, _at: string) => {}),
     sweep: vi.fn(async (_ids: string[]) => {}),
+    brain: vi.fn(async () => {}),
+    codexHomes: vi.fn(async () => {}),
     sessions: 0,
 }))
 
+vi.mock('../desktop/policy.js',()=>({desktopApp:()=>state.desktop,assertDesktopProvider:()=>{}}))
+vi.mock('./desktop-schedule-state.js',()=>({replayDesktopSchedule:async(a:string,s:string,id:string)=>{const receipt=state.receipts[`${a}/${s}/${id}`];if(receipt==='incomplete')throw new Error('reconciliation required');return receipt ?? null},claimDesktopSchedule:async()=>true,recordDesktopSchedule:async(a:string,s:{slug:string},id:string,sessionId:string,runId:string)=>{state.receipts[`${a}/${s.slug}/${id}`]={sessionId,runId}},finishDesktopSchedule:async()=>{}}))
 vi.mock('../agents/availability.js', () => ({
-    automationModel: async (_agent: unknown, schedule: { model?: string | null }) => ({ provider: state.provider, model: schedule.model ?? 'm' }),
+    automationModel: async (_agent: unknown, schedule: { model?: string | null }) => {await state.modelWait;return { provider: state.provider, model: schedule.model ?? 'm' }},
 }))
 vi.mock('../agents/loader.js', () => ({
     listAgentIdsOnDisk: async () => {
@@ -35,13 +43,14 @@ vi.mock('../agents/registry.js', () => ({
     getAgent: async (id: string) => {
         const agent = state.agents[id]
         if (!agent || agent instanceof Error) throw agent ?? new Error(`no agent ${id}`)
-        return agent
+        return {...agent,resolved:{provider:state.provider,connection:undefined}}
     },
 }))
 vi.mock('../db/repos/sessions.js', () => ({
     createSession: async (_agentId: string, title: string, _origin: unknown, source: string) => ({ id: `sess-${++state.sessions}`, title, source }),
 }))
 vi.mock('../schedules/loader.js', () => ({
+    readSchedule:async (_agentId:string,slug:string)=>state.files[slug],
     listSchedules: async (agentId: string) => {
         const list = state.schedules[agentId] ?? []
         if (list instanceof Error) throw list
@@ -53,6 +62,8 @@ vi.mock('../schedules/cron.js', () => ({
     isDue: (schedule: { slug: string }) => state.due.has(schedule.slug),
 }))
 vi.mock('../memory/maintenance.js', () => ({ sweepMemoriesIfDue: state.sweep }))
+vi.mock('../brain/maintenance.js', () => ({ maintainBrainIfDue: state.brain }))
+vi.mock('../connections/codex-sweep.js', () => ({ sweepCodexHomesIfDue: state.codexHomes }))
 vi.mock('./notify.js', () => ({
     sendNotification: async (input: Record<string, unknown>) => {
         state.sent.push(input)
@@ -70,14 +81,16 @@ vi.mock('./headless-run.js', () => ({
 }))
 
 const { afterEach, beforeEach, describe, expect, it } = await import('vitest')
-const { fireSchedule, startScheduler } = await import('./scheduler.js')
+const { fireSchedule, startScheduler, configureDesktopSchedules } = await import('./scheduler.js')
 const { armBudgetLatch, clearBudgetLatch } = await import('./budget-latch.js')
 const { HttpError } = await import('../lib/errors.js')
 const { logger } = await import('../lib/logger.js')
 type Schedule = import('../schedules/loader.js').Schedule
 
 function schedule(slug: string, extra: Partial<Schedule> = {}): Schedule {
-    return { slug, name: `Name ${slug}`, description: '', enabled: true, cron: '* * * * *', runAt: null, timezone: null, lastRunAt: null, connectionId: null, provider: null, model: null, body: `do ${slug}`, createdAt: '2026-01-01T00:00:00.000Z', ...extra }
+    const value = { slug, name: `Name ${slug}`, description: '', enabled: true, cron: '* * * * *', runAt: null, timezone: null, lastRunAt: null, connectionId: null, provider: null, model: null, body: `do ${slug}`, createdAt: '2026-01-01T00:00:00.000Z', ...extra }
+    state.files[slug]=value
+    return value
 }
 
 const flush = async () => {
@@ -85,6 +98,7 @@ const flush = async () => {
 }
 
 beforeEach(() => {
+    state.desktop=false;state.receipts={};state.files={};state.modelWait=null
     state.agents = { on: { id: 'on', config: { enabled: true } }, off: { id: 'off', config: { enabled: false } } }
     state.agentIds = []
     state.schedules = {}
@@ -99,6 +113,8 @@ afterEach(async () => {
     state.sent = []
     state.markFired.mockClear()
     state.sweep.mockClear()
+    state.brain.mockClear()
+    state.codexHomes.mockClear()
     clearBudgetLatch()
     vi.useRealTimers()
     vi.restoreAllMocks()
@@ -180,12 +196,11 @@ describe('fireSchedule', () => {
         expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ schedule: 'again', err: 'boom' }), 'scheduled run failed')
     })
 
-    it('does not collapse two calls racing before the first run has started', async () => {
+    it('collapses two calls racing before the first run has started', async () => {
         const [a, b] = await Promise.all([fireSchedule('on', schedule('race')), fireSchedule('on', schedule('race'))])
 
-        // Looks wrong: the in-flight entry is only set after startHeadlessRun resolves, so concurrent callers both fire.
-        expect(a.runId).not.toBe(b.runId)
-        expect(state.runs).toHaveLength(2)
+        expect(a).toEqual(b)
+        expect(state.runs).toHaveLength(1)
     })
 })
 
@@ -274,4 +289,76 @@ describe('startScheduler', () => {
         stop()
         expect(errors).toHaveBeenCalledWith({ agent: 'on', schedule: 'skipped', err: 'Error: read-only fs' }, 'scheduled run failed')
     })
+})
+
+
+it('desktop schedule ticks leave hosted memory, brain and credential maintenance inactive', async () => {
+    vi.useFakeTimers()
+    state.desktop = true
+    state.agentIds = ['on']
+    const stop = startScheduler()
+    await vi.advanceTimersByTimeAsync(30_000)
+    await stop.drain()
+    expect(state.sweep).not.toHaveBeenCalled()
+    expect(state.brain).not.toHaveBeenCalled()
+    expect(state.codexHomes).not.toHaveBeenCalled()
+    state.desktop = false
+    const hosted = startScheduler()
+    await vi.advanceTimersByTimeAsync(0)
+    await hosted.drain()
+    expect(state.sweep).toHaveBeenCalledWith(['on'])
+    expect(state.brain).toHaveBeenCalledOnce()
+    expect(state.codexHomes).toHaveBeenCalledOnce()
+})
+
+it('stops a launch suspended in model preparation and drains it before root abortAllRuns',async()=>{
+    state.agentIds=[]
+    const stop=startScheduler()
+    let resume!:()=>void
+    state.modelWait=new Promise<void>(resolve=>{resume=resolve})
+    const pending=fireSchedule('on',schedule('quit-race'))
+    const rejected=expect(pending).rejects.toThrow('Scheduler stopped')
+    await flush()
+    stop()
+    const draining=stop.drain()
+    resume();await rejected;await draining
+    expect(state.runs).toHaveLength(0)
+    await expect(fireSchedule('on',schedule('after-quit'))).rejects.toThrow('Scheduler stopped')
+})
+
+
+it('rejects a stale enabled schedule when the current stored task is paused',async()=>{
+    state.agentIds=[];const stop=startScheduler();state.desktop=true
+    configureDesktopSchedules({authorize:async()=>{},adopt:async()=>{}})
+    const stale=schedule('paused-now')
+    state.files[stale.slug]={...stale,enabled:false}
+    await expect(fireSchedule('on',stale,{markFired:false,manualId:'request'})).rejects.toThrow('paused')
+    expect(state.runs).toHaveLength(0);await stop.drain()
+})
+it('rejects a revoked schedule grant after suspended model preparation',async()=>{
+    state.agentIds=[];const stop=startScheduler();state.desktop=true
+    let granted=true,resume!:()=>void
+    configureDesktopSchedules({authorize:async()=>{if(!granted)throw new Error('grant revoked')},adopt:async()=>{}})
+    state.modelWait=new Promise<void>(resolve=>{resume=resolve})
+    const task=schedule('revoked')
+    const run=fireSchedule('on',task,{markFired:false,manualId:'request'})
+    const rejected=expect(run).rejects.toThrow('grant revoked')
+    await flush();granted=false;resume();await rejected
+    expect(state.runs).toHaveLength(0);await stop.drain()
+})
+
+it('replays the persisted manual receipt after post-launch adoption fails while the model is active',async()=>{
+    const stop=startScheduler();state.desktop=true
+    const adopt=vi.fn(async(_agent:string,_session:string,run:string|null)=>{if(run)throw new Error('post-launch adoption failed')})
+    configureDesktopSchedules({authorize:async()=>{},adopt})
+    const task=schedule('receipt-active')
+    await expect(fireSchedule('on',task,{markFired:false,manualId:'same'})).rejects.toThrow('post-launch adoption failed')
+    expect(adopt.mock.calls.map(call=>call[2])).toEqual([null,'run-1'])
+    const original={runId:state.runs[0].runId,sessionId:state.runs[0].sessionId}
+    await expect(fireSchedule('on',task,{markFired:false,manualId:'same'})).resolves.toEqual(original)
+    await expect(fireSchedule('on',task,{markFired:false,manualId:'other'})).rejects.toThrow('another occurrence')
+    state.receipts['on/receipt-active/incomplete']='incomplete'
+    await expect(fireSchedule('on',task,{markFired:false,manualId:'incomplete'})).rejects.toThrow('reconciliation required')
+    expect(state.runs).toHaveLength(1)
+    await stop.drain()
 })

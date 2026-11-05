@@ -1,222 +1,209 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { desktopAttachmentSizes, importDesktopUpload, preflightDesktopUploads, type DesktopUploadItem, type DesktopUploadStatus } from './composer-upload'
+import { awaitDesktopUpload, desktopAttachmentSizes, importDesktopUpload, preflightDesktopUploads, type DesktopUploadItem } from './composer-upload'
+import { dismissDesktopUploadAttempt, readDesktopUploadAttempts, reserveDesktopUploadAttempt } from './composer-upload-attempts'
+import { pendingTabWrite } from './tab-writes'
 
-type Job = {
-    item: DesktopUploadItem
-    file: File
-    controller: AbortController
-    owner: string
-}
-
+type Job = { item: DesktopUploadItem; file?: File; reserved: boolean; controller?: AbortController }
 type Options = {
-    agentId: string
-    /** Identifies the composer owner (coworker + tab/draft). A change aborts every job: an
-     * in-flight import may still publish server-side, which stays recoverable through Files —
-     * nothing here claims the publication was undone. */
-    ownerKey: string
-    attachedPaths: readonly string[]
-    onConfirmed: (path: string) => boolean
+    agentId: string; ownerKey: string; tabUid?: string; active?: boolean; attachedPaths: readonly string[]
+    onConfirmed: (path: string) => boolean | Promise<boolean>
     onNotice: (message: string | null) => void
 }
+const UNCERTAIN = 'The import result could not be confirmed. This file may already be in this coworker’s Files. Check Files, then dismiss this upload status before sending.'
+type Scope = { owner: string; agentId: string; tabUid?: string; controller: AbortController }
 
-const BLOCKED: readonly DesktopUploadStatus[] = ['error', 'unresolved']
-const IN_FLIGHT: readonly DesktopUploadStatus[] = ['queued', 'importing']
-
-const formatRejections = (rejected: readonly { file: File; reason: string }[]) => {
-    const named = rejected.slice(0, 2).map(item => `“${item.file.name}” ${item.reason}`)
-    const rest = rejected.length > 2 ? ` and ${rejected.length - 2} more` : ''
-    return `${named.join(', ')}${rest}.`
-}
-
-/**
- * Composer uploads for the desktop app: local .txt/.md files imported one at a time through the
- * coworker's files route. Jobs live in a ref and publish on state changes only — there is no
- * byte-level progress to smooth out. Confirmed paths are handed to the draft one at a time in
- * selection order; a definitive refusal becomes a retryable error and an unreadable outcome stays
- * visibly unresolved instead of being retried blindly.
- */
-export function useDesktopComposerUploads({ agentId, ownerKey, attachedPaths, onConfirmed, onNotice }: Options) {
-    const jobs = useRef(new Map<string, Job>())
-    const [items, setItems] = useState<DesktopUploadItem[]>([])
+/** Validation, publication and draft acknowledgment share one cancellable owner-scoped drain.
+ * A durable warning precedes every file POST; it never claims that the file was imported. */
+export function useDesktopComposerUploads(options: Options) {
+    const latest = useRef(options)
+    latest.current = options
     const mounted = useRef(true)
-    const owner = useRef(ownerKey)
-    const generation = useRef(0)
-    const pumping = useRef(false)
-    const starting = useRef<Promise<void>>(Promise.resolve())
-    const waiters = useRef<(() => void)[]>([])
-    const attached = useRef<readonly string[]>(attachedPaths)
-    const callbacks = useRef({ agentId, onConfirmed, onNotice })
-    useEffect(() => {
-        attached.current = attachedPaths
-        callbacks.current = { agentId, onConfirmed, onNotice }
-    })
-
+    const scope = useRef<Scope | null>(null)
+    const jobs = useRef(new Map<string, Job>())
+    const attached = useRef<readonly string[]>(options.attachedPaths)
+    attached.current = options.attachedPaths
+    const chain = useRef<Promise<void>>(Promise.resolve())
+    const pending = useRef(0)
+    const loaded = useRef(false)
+    const admissionFailures = useRef(0)
+    const [state, setState] = useState<{ items: DesktopUploadItem[]; active: boolean; loaded: boolean }>({ items: [], active: false, loaded: false })
     const publish = useCallback(() => {
-        if (mounted.current) setItems([...jobs.current.values()].map(job => job.item))
+        if (mounted.current) setState({ items: [...jobs.current.values()].map(job => ({ ...job.item })), active: pending.current > 0, loaded: loaded.current })
     }, [])
-
-    const settleWaiters = useCallback(() => {
-        if ([...jobs.current.values()].some(job => IN_FLIGHT.includes(job.item.status))) return
-        const pending = waiters.current
-        waiters.current = []
-        pending.forEach(resolve => resolve())
-    }, [])
-
-    const abortAll = useCallback(() => {
-        for (const job of jobs.current.values()) job.controller.abort()
-        jobs.current.clear()
-        publish()
-        settleWaiters()
-    }, [publish, settleWaiters])
+    const live = useCallback((target: Scope) => mounted.current && scope.current === target && !target.controller.signal.aborted
+        && latest.current.ownerKey === target.owner && latest.current.agentId === target.agentId && latest.current.active !== false, [])
 
     useEffect(() => {
         mounted.current = true
-        return () => {
-            mounted.current = false
-            generation.current += 1
-            abortAll()
-        }
-    }, [abortAll])
+        return () => { mounted.current = false; scope.current?.controller.abort() }
+    }, [])
 
     useEffect(() => {
-        if (owner.current === ownerKey) return
-        owner.current = ownerKey
-        generation.current += 1
-        abortAll()
-    }, [ownerKey, abortAll])
-
-    const pump = useCallback(async () => {
-        if (pumping.current) return
-        pumping.current = true
-        try {
-            for (;;) {
-                const job = [...jobs.current.values()].find(item => item.item.status === 'queued')
-                if (!job) break
-                job.item.status = 'importing'
-                job.item.error = null
-                publish()
-                const gen = generation.current
-                const live = () => mounted.current && gen === generation.current && job.owner === owner.current && jobs.current.has(job.item.id)
-                try {
-                    const result = await importDesktopUpload(callbacks.current.agentId, job.file, job.controller.signal)
-                    if (!live()) continue
-                    if (result.ok) {
-                        jobs.current.delete(job.item.id)
-                        publish()
-                        if (callbacks.current.onConfirmed(result.path) === false) {
-                            const orphan: Job = { item: { id: job.item.id, name: job.item.name, size: job.item.size, status: 'unresolved', error: 'The file was imported, but this draft could not take it. Attach it from Files instead.' }, file: job.file, controller: new AbortController(), owner: job.owner }
-                            jobs.current.set(orphan.item.id, orphan)
-                            publish()
-                        }
-                    } else {
-                        job.item.status = result.kind === 'rejected' ? 'error' : 'unresolved'
-                        job.item.error = result.message
-                        publish()
-                    }
-                } catch {
-                    if (!live()) continue
-                    if (job.controller.signal.aborted) {
-                        jobs.current.delete(job.item.id)
-                        publish()
-                        continue
-                    }
-                    job.item.status = 'unresolved'
-                    job.item.error = 'The import result could not be confirmed. Check Files before attaching this file again.'
-                    publish()
+        scope.current?.controller.abort()
+        const previous = scope.current
+        const target: Scope = { owner: options.ownerKey, agentId: options.agentId, tabUid: options.tabUid, controller: new AbortController() }
+        scope.current = target
+        chain.current = Promise.resolve()
+        pending.current = 0
+        loaded.current = false
+        // Already-reserved attempts remain on disk even if this owner disappears. Reopening
+        // hydrates them as uncertain, never as successful attachments or automatically retried jobs.
+        if (previous?.owner !== target.owner) jobs.current.clear()
+        else for (const [id, job] of jobs.current) {
+            job.controller?.abort()
+            if (job.reserved) { job.item.status = 'unresolved'; job.item.error = UNCERTAIN }
+            else jobs.current.delete(id)
+        }
+        if (options.active === false) { publish(); return () => target.controller.abort() }
+        pending.current++
+        publish()
+        const hydrate = async () => {
+            try {
+                if (target.tabUid) {
+                    await awaitDesktopUpload(Promise.resolve(pendingTabWrite(target.agentId)), target.controller.signal)
+                    const attempts = await awaitDesktopUpload(readDesktopUploadAttempts(target.agentId, target.tabUid, target.controller.signal), target.controller.signal)
+                    if (!live(target)) return
+                    for (const attempt of attempts) jobs.current.set(attempt.id, { item: { ...attempt, status: 'unresolved', error: UNCERTAIN }, reserved: true })
                 }
-                settleWaiters()
+                if (live(target)) loaded.current = true
+            } catch {
+                if (live(target)) latest.current.onNotice('Could not check unfinished imports. Reopen this chat to try again.')
+            } finally {
+                if (scope.current === target) { pending.current--; publish() }
             }
-        } finally {
-            pumping.current = false
-            publish()
-            settleWaiters()
         }
-    }, [publish, settleWaiters])
+        chain.current = hydrate()
+        return () => target.controller.abort()
+        // Each active cycle owns its async callbacks, including a close and immediate reopen.
+    }, [options.ownerKey, options.agentId, options.tabUid, options.active, publish, live])
 
-    const enqueue = useCallback((accepted: File[], owner: string) => {
-        for (const file of accepted) {
-            const id = crypto.randomUUID()
-            jobs.current.set(id, { item: { id, name: file.name, size: file.size, status: 'queued', error: null }, file, controller: new AbortController(), owner })
-        }
+    const schedule = useCallback((work: (target: Scope) => Promise<void>) => {
+        const target = scope.current
+        if (!target || !live(target)) return Promise.resolve()
+        pending.current++
         publish()
-        void pump()
-    }, [publish, pump])
+        const next = chain.current.catch(() => {}).then(async () => {
+            if (!live(target) || !loaded.current) return
+            await work(target)
+        }).catch(() => {
+            if (live(target)) { admissionFailures.current++; latest.current.onNotice('Could not finish preparing the upload. Check Files before trying again.') }
+        }).finally(() => {
+            if (scope.current === target) { pending.current--; publish() }
+        })
+        chain.current = next
+        return next
+    }, [publish, live])
 
-    const doStart = useCallback(async (files: File[], pickedOwner: string) => {
-        if (!files.length || !mounted.current) return
-        const gen = generation.current
-        const stale = () => !mounted.current || gen !== generation.current || pickedOwner !== owner.current
-        callbacks.current.onNotice(null)
+    const importJob = useCallback(async (target: Scope, job: Job) => {
+        if (!live(target) || !job.file) return
+        const signal = AbortSignal.any([target.controller.signal, (job.controller = new AbortController()).signal])
+        let uncertainty = UNCERTAIN
+        job.item.status = 'importing'; job.item.error = null
+        publish()
+        try {
+            if (target.tabUid) {
+                // Mark uncertain before awaiting admission: a lost reservation ACK is itself
+                // unresolved, and must not become permission to POST the file a second time.
+                job.reserved = true
+                const reservation = await awaitDesktopUpload(reserveDesktopUploadAttempt(target.agentId, target.tabUid, {
+                    id: job.item.id, name: job.item.name, size: job.item.size,
+                }, signal), signal)
+                if (!live(target) || signal.aborted) return
+                if (!reservation.created) throw new Error('Previous admission is uncertain')
+            }
+            if (!live(target) || signal.aborted) return
+            const result = await awaitDesktopUpload(importDesktopUpload(target.agentId, job.file, signal), signal)
+            if (!live(target) || signal.aborted) return
+            if (!result.ok) {
+                if (result.kind === 'ambiguous') throw new Error('Unknown publication')
+                if (target.tabUid) await awaitDesktopUpload(dismissDesktopUploadAttempt(target.agentId, target.tabUid, job.item.id, signal), signal)
+                if (!live(target)) return
+                job.reserved = false; job.item.status = 'error'; job.item.error = result.message
+                return
+            }
+            if (!await awaitDesktopUpload(Promise.resolve(latest.current.onConfirmed(result.path)), signal)) {
+                uncertainty = 'The file was imported, but this draft could not take it. Attach it from Files instead after resolving the draft save.'
+                throw new Error('Draft not saved')
+            }
+            if (!live(target) || signal.aborted) return
+            attached.current = [...attached.current.filter(path => path !== result.path), result.path]
+            if (target.tabUid) await awaitDesktopUpload(dismissDesktopUploadAttempt(target.agentId, target.tabUid, job.item.id, signal), signal)
+            if (live(target) && !signal.aborted) jobs.current.delete(job.item.id)
+        } catch {
+            if (scope.current === target && mounted.current) { job.item.status = 'unresolved'; job.item.error = uncertainty }
+        } finally { publish() }
+    }, [publish, live])
+
+    const start = useCallback((files: File[]) => schedule(async target => {
+        if (!files.length) return
+        latest.current.onNotice(null)
         const paths = [...attached.current]
-        let sizes: Map<string, number | 'missing'>
-        try {
-            sizes = await desktopAttachmentSizes(callbacks.current.agentId, paths)
-        } catch {
-            if (!stale()) callbacks.current.onNotice('Could not check the size of attached files. Try again.')
-            return
+        const sizes = await awaitDesktopUpload(desktopAttachmentSizes(target.agentId, paths, target.controller.signal), target.controller.signal)
+        const preflight = await awaitDesktopUpload(preflightDesktopUploads({ files, attachedPaths: paths, attachedSizes: sizes, pending: [] }), target.controller.signal)
+        if (!live(target)) return
+        // The picker/removal are disabled during this drain. A programmatic draft update is
+        // still allowed; if its attachment set changed, require a fresh selection and budget.
+        if (JSON.stringify(paths) !== JSON.stringify(attached.current)) {
+            admissionFailures.current++
+            latest.current.onNotice('The attached files changed. Choose these files again.'); return
         }
-        if (stale()) return
-        let preflight: Awaited<ReturnType<typeof preflightDesktopUploads>>
-        try {
-            preflight = await preflightDesktopUploads({
-                files,
-                attachedPaths: paths,
-                attachedSizes: sizes,
-                pending: [...jobs.current.values()].map(job => ({ size: job.item.size, status: job.item.status })),
-            })
-        } catch {
-            if (!stale()) callbacks.current.onNotice('Could not read one of the selected files. Try again.')
-            return
-        }
-        if (stale()) return
-        if (preflight.blockers.length) {
-            callbacks.current.onNotice(preflight.blockers.join(' '))
-            return
-        }
-        if (preflight.rejected.length) callbacks.current.onNotice(formatRejections(preflight.rejected))
-        if (preflight.accepted.length) enqueue(preflight.accepted, pickedOwner)
-    }, [enqueue])
-
-    // Preflights are async, so two quick selections must not race past the shared attachment
-    // budget: each start waits for the previous one's jobs to be queued first. The owner is
-    // captured at pick time so a selection made before a tab/coworker switch can never land in
-    // the next owner's draft.
-    const start = useCallback((files: File[]) => {
-        const pickedOwner = owner.current
-        starting.current = starting.current.then(() => doStart(files, pickedOwner)).catch(() => {})
-        return starting.current
-    }, [doStart])
-
-    const remove = useCallback((id: string) => {
-        const job = jobs.current.get(id)
-        if (!job) return
-        if (job.item.status === 'importing') {
-            job.controller.abort()
-            return
-        }
-        jobs.current.delete(id)
+        const notices = [...preflight.blockers, ...preflight.rejected.map(item => '“' + item.file.name + '” ' + item.reason)]
+        if (notices.length) { admissionFailures.current++; latest.current.onNotice(notices.slice(0, 3).join(' ')) }
+        const batch = preflight.accepted.map(file => ({ item: { id: crypto.randomUUID(), name: file.name, size: file.size, status: 'queued' as const, error: null }, file, reserved: false } as Job))
+        for (const job of batch) jobs.current.set(job.item.id, job)
         publish()
-        settleWaiters()
-    }, [publish, settleWaiters])
+        for (const job of batch) {
+            if (!live(target)) break
+            if (jobs.current.has(job.item.id)) await importJob(target, job)
+        }
+    }), [schedule, publish, importJob, live])
 
     const retry = useCallback((id: string) => {
         const job = jobs.current.get(id)
-        if (!job || job.item.status !== 'error') return
-        job.item.status = 'queued'
-        job.item.error = null
-        job.controller = new AbortController()
-        publish()
-        void pump()
-    }, [publish, pump])
+        if (!job?.file || job.item.status !== 'error' || job.reserved) return
+        return schedule(async target => {
+            const paths = [...attached.current]
+            const sizes = await awaitDesktopUpload(desktopAttachmentSizes(target.agentId, paths, target.controller.signal), target.controller.signal)
+            const result = await awaitDesktopUpload(preflightDesktopUploads({ files: [job.file!], attachedPaths: paths, attachedSizes: sizes, pending: [] }), target.controller.signal)
+            if (!live(target)) return
+            if (!result.accepted.length || JSON.stringify(paths) !== JSON.stringify(attached.current)) {
+                job.item.error = result.blockers[0] ?? result.rejected[0]?.reason ?? 'The attached files changed. Try again.'; publish(); return
+            }
+            await importJob(target, job)
+        })
+    }, [schedule, publish, importJob, live])
 
-    const settle = useCallback(() => {
-        if (![...jobs.current.values()].some(job => IN_FLIGHT.includes(job.item.status))) return Promise.resolve()
-        return new Promise<void>(resolve => waiters.current.push(resolve))
-    }, [])
+    const remove = useCallback((id: string) => {
+        const job = jobs.current.get(id), target = scope.current
+        if (!job || !target || !live(target)) return
+        if (job.item.status === 'importing') {
+            job.controller?.abort()
+            job.item.status = 'unresolved'; job.item.error = UNCERTAIN
+            publish(); return
+        }
+        if (!job.reserved) { jobs.current.delete(id); publish(); return }
+        void schedule(async current => {
+            await awaitDesktopUpload(dismissDesktopUploadAttempt(current.agentId, current.tabUid!, id, current.controller.signal), current.controller.signal)
+            if (live(current)) { jobs.current.delete(id); publish() }
+        })
+    }, [schedule, publish, live])
 
-    const hasBlocked = useCallback(() => [...jobs.current.values()].some(job => BLOCKED.includes(job.item.status)), [])
-
-    return { items, active: items.some(item => IN_FLIGHT.includes(item.status)), hasBlocked, start, remove, retry, settle }
+    const settle = useCallback(async () => {
+        const target = scope.current
+        const failures = admissionFailures.current
+        if (!target || !live(target)) return false
+        try {
+            for (;;) {
+                const work = chain.current
+                await awaitDesktopUpload(work, target.controller.signal)
+                if (!live(target)) return false
+                if (work === chain.current) return loaded.current && failures === admissionFailures.current
+            }
+        } catch { return false }
+    }, [live])
+    const hasBlocked = useCallback(() => !loaded.current || [...jobs.current.values()].some(job => job.item.status === 'error' || job.item.status === 'unresolved'), [])
+    const isBusy = useCallback(() => pending.current > 0, [])
+    return { ...state, hasBlocked, isBusy, start, remove, retry, settle }
 }

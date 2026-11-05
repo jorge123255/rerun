@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdtemp, rm, access } from 'node:fs/promises'
+import { mkdtemp, rm, access, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { once } from 'node:events'
@@ -15,9 +15,11 @@ const identity = () => ({ installId: randomUUID(), engineApiKey: randomBytes(32)
 test('real supervised processes require authenticated nonce readiness and Quit removes owned children', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-supervisor-'))
     const children = []
+    const workspaceIdentity = identity()
     const supervisor = new RuntimeSupervisor({
-        root, identity: identity(), bundle: { nodePath: process.execPath, uiRoot: root, engineEntry: 'fixture', buildId: 'example-build' },
+        root, identity: workspaceIdentity, bundle: { nodePath: process.execPath, uiRoot: root, engineEntry: 'fixture', buildId: 'example-build' },
         launch: (command, args, options) => {
+            assert.equal(options.env.RERUN_DESKTOP_SECRET_KEY, workspaceIdentity.encryptionKey)
             const child = spawn(command, [fixture], { ...options, env: { ...options.env, FIXTURE_KIND: args.includes('desktop-run') ? 'engine' : 'ui' } })
             children.push(child)
             return child
@@ -27,6 +29,7 @@ test('real supervised processes require authenticated nonce readiness and Quit r
         const runtime = await supervisor.start()
         assert.equal(supervisor.status.state, 'ready')
         assert.equal(children.length, 2)
+        assert(!(await readFile(join(root, 'runtime.json'), 'utf8')).includes(workspaceIdentity.encryptionKey))
         assert.equal((await fetch(`${runtime.engine.origin}/health`)).status, 401)
         assert.equal((await fetch(`${runtime.app.origin}/api/desktop/health`)).status, 401)
         await supervisor.stop()

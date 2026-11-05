@@ -3,6 +3,7 @@ import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopNotificationPrefs, writeDesktopNotificationPrefs } from '@/lib/desktop/server/notifications'
+import { readNotificationBody } from '@/lib/desktop/server/notification-body'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +19,7 @@ export function GET(request: Request) {
 
 export function PUT(request: Request) {
     return desktopRoute(request, async runtime => {
-        const parsed = notificationPrefsPatchSchema.safeParse(await request.json().catch(() => null))
+        const parsed = notificationPrefsPatchSchema.safeParse(await readNotificationBody(request))
         if (!parsed.success) throw new DesktopHttpError(400, 'Choose a valid notification scope, channel or coworker rule.')
         const prefs = await writeDesktopNotificationPrefs(await openDesktopDatabase(runtime.dataRoot), parsed.data)
         return Response.json(prefs, { headers: { 'cache-control': 'no-store' } })

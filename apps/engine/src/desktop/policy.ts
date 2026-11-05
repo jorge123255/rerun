@@ -17,6 +17,10 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (path === '/desktop/codex-login') return (method === 'GET' || method === 'POST') && desktopCodexAvailable()
     if (/^\/agents\/(?:import|foreman|default)(?:\/|$)/.test(path)) return false
     const id = '[A-Za-z0-9_-]+'
+    const schedules = `/agents/${id}/schedules`
+    if (new RegExp(`^${schedules}$`).test(path)) return method === 'GET' || method === 'POST'
+    if (new RegExp(`^${schedules}/${id}$`).test(path)) return method === 'GET' || method === 'PATCH' || method === 'DELETE'
+    if (new RegExp(`^${schedules}/${id}/run$`).test(path)) return method === 'POST'
     const data = `/(?:agents/${id}/data|shared/data)/tables`
     const item = '[^/]+'
     if (new RegExp(`^${data}$`).test(path)) return method === 'GET'
@@ -27,7 +31,7 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (new RegExp(`^${data}/${item}/views/${item}$`).test(path)) return method === 'PUT' || method === 'DELETE'
     if (new RegExp(`^${data}/${item}/(?:groups|export)$`).test(path)) return method === 'GET'
     if (new RegExp(`^${data}/${item}/purge$`).test(path)) return method === 'POST'
-    if (method === 'GET') return new RegExp(`^/(?:health|agents|connections|agents/${id}(?:/memories|/sessions(?:/${id}(?:/messages)?)?|/runs(?:/completions|/${id}/(?:stream|steps|tools))?|/stats)?)$`).test(path)
+    if (method === 'GET') return new RegExp(`^/(?:health|agents|connections|agents/${id}(?:/memories|/sessions(?:/${id}(?:/messages)?)?|/runs(?:/completions|/${id}(?:/(?:stream|steps|tools))?)?|/stats)?)$`).test(path)
     if (method === 'POST') return new RegExp(`^/(?:agents|connections|agents/${id}/(?:duplicate|chat|memories(?:/recall)?)|agents/${id}/runs/${id}/cancel)$`).test(path)
     if (method === 'DELETE') return new RegExp(`^/agents/${id}(?:/memories(?:/(?!recall$)${id})?)?$`).test(path)
     if (method === 'PATCH') return new RegExp(`^/(?:agents/${id}|connections/${id}(?:/keys)?)$`).test(path)

@@ -149,6 +149,34 @@ beforeEach(() => {
 afterEach(async () => { await cleanup(); vi.clearAllMocks() })
 
 describe('DataBrowser durable preferred views', () => {
+    it('a card target deleted after Open cannot select the remembered view or fetch its rows', async () => {
+        const f = fixture(), lookup = deferred<Awaited<ReturnType<DataSource['listViews']>>>()
+        f.source.listViews = vi.fn(() => lookup.promise)
+        f.source.preferredView = { read: async () => 'alpha-view', write: vi.fn(async () => {}) }
+        await render(<DataBrowser source={f.source} initial={{ table: 'alpha', view: 'removed-view' }} requireInitialView />)
+        expect(f.source.readRows).not.toHaveBeenCalled()
+        await act(async () => lookup.resolve({ success: true, views: f.views.alpha }))
+        await screen.findByText('Saved view unavailable')
+        expect(f.source.readRows).not.toHaveBeenCalled()
+        expect(screen.queryByText('Owner alpha')).toBeNull()
+    })
+
+    it('a missing card table cannot silently open the first table', async () => {
+        const f = fixture()
+        await render(<DataBrowser source={f.source} initial={{ table: 'removed-table', view: 'removed-view' }} requireInitialView />)
+        await screen.findByText('Saved view unavailable')
+        expect(f.source.readRows).not.toHaveBeenCalled()
+        expect(f.source.listViews).not.toHaveBeenCalled()
+    })
+
+    it('ordinary opens retain their remembered fallback when an old requested view is gone', async () => {
+        const f = fixture()
+        f.source.preferredView = { read: async () => 'alpha-view', write: vi.fn(async () => {}) }
+        await render(<DataBrowser source={f.source} initial={{ table: 'alpha', view: 'removed-view' }} />)
+        await screen.findByText('Owner alpha')
+        expect(screen.getByLabelText('Active view').textContent).toBe('alpha-view')
+    })
+
     it('restores a desktop choice after remount despite a different browser-origin preference', async () => {
         const f = fixture()
         f.views.alpha.push({ ...view('alpha', 'Gallery choice'), id: 'alpha-gallery' })

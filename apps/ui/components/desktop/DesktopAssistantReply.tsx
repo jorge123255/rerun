@@ -12,6 +12,9 @@ import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
 import { CompactionStep } from '@/components/chat/CompactionBlock'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
 import { DesktopToolStep } from './DesktopToolStep'
+import { DesktopTableResult } from './DesktopTableResult'
+import { desktopTableCardOf } from '@/lib/desktop/table-card'
+import type { DesktopAgentView } from './DesktopApp'
 import { DesktopFileCard } from './DesktopFileCard'
 import { DesktopQuickReplies } from './DesktopQuickReplies'
 import type { DesktopQuickReplySend } from '@/lib/desktop/quick-replies'
@@ -114,7 +117,7 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId }: {
+export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent }: {
     message: UIMessage
     streaming: boolean
     onRegenerate?: (id: string) => void
@@ -124,6 +127,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
     quickReplies?: { show: boolean; disabled: boolean; pending: boolean; onSend: DesktopQuickReplySend }
     /** The trusted local coworker id that owns this conversation; needed to open a result card. */
     agentId?: string
+    agent?: DesktopAgentView
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
     const compactions = desktopCompactionSteps(message.parts, streaming)
@@ -146,6 +150,13 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
                 const card = desktopFileCardOf(part.output)
                 if (card) {
                     blocks.push(<DesktopFileCard key={part.toolCallId} agentId={agentId} card={card} />)
+                    continue
+                }
+            }
+            if (toolName === 'card_table' && part.state === 'output-available') {
+                const card = desktopTableCardOf(part.output)
+                if (card) {
+                    blocks.push(<DesktopTableResult key={part.toolCallId} agent={agent} card={card} />)
                     continue
                 }
             }

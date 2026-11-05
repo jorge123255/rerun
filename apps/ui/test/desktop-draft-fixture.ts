@@ -16,6 +16,7 @@ export function createDesktopDraftFixture() {
     const saved = new Map<string, DesktopComposerDraft>()
     const layouts = new Map<string, Tab[]>()
     const receipts = new Map<string, string>()
+    const uploads = new Map<string, { agent: string; tabUid: string; id: string; name: string; size: number }>()
     const key = (agent: string, uid: string) => JSON.stringify([agent, uid])
     const read = (agent: string, uid: string): DesktopComposerDraft => saved.get(key(agent, uid)) ?? { revision: 0, text: '' }
     const write = (agent: string, uid: string, value: { text: string; attachmentPath?: string; attachmentPaths?: string[] }) => {
@@ -28,11 +29,25 @@ export function createDesktopDraftFixture() {
         seedTabs(agent: string, tabs: Tab[]) { owners.add(agent); layouts.set(agent, tabs) },
         handle(input: RequestInfo | URL, init?: RequestInit): Response | undefined {
             const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://127.0.0.1')
-            const match = url.pathname.match(/^\/api\/desktop\/agents\/([^/]+)\/(draft|tabs)$/)
+            const match = url.pathname.match(/^\/api\/desktop\/agents\/([^/]+)\/(draft|tabs|upload-attempts)$/)
             if (!match) return
             const agent = decodeURIComponent(match[1])
             owners.add(agent)
             const method = init?.method ?? 'GET'
+            if (match[2] === 'upload-attempts') {
+                const body = method === 'GET' ? { tabUid: url.searchParams.get('tabUid')! } : JSON.parse(String(init?.body))
+                if (!(layouts.get(agent) ?? []).some(tab => tab.uid === body.tabUid)) return Response.json({ error: 'Tab closed' }, { status: 404 })
+                const selected = [...uploads.values()].filter(row => row.agent === agent && row.tabUid === body.tabUid)
+                if (method === 'GET') return Response.json({ attempts: selected.map(({ id, name, size }) => ({ id, name, size })) })
+                if (method === 'DELETE') {
+                    if (selected.some(row => row.id === body.id)) uploads.delete(body.id)
+                    return Response.json({ dismissed: true })
+                }
+                const old = uploads.get(body.id)
+                if (old && (old.agent !== agent || old.tabUid !== body.tabUid || old.name !== body.name || old.size !== body.size)) return Response.json({ error: 'Changed attempt' }, { status: 409 })
+                if (!old) uploads.set(body.id, { agent, tabUid: body.tabUid, id: body.id, name: body.name, size: body.size })
+                return Response.json({ created: !old, attempt: { id: body.id, name: body.name, size: body.size } })
+            }
             if (match[2] === 'tabs') {
                 if (method !== 'PUT') return
                 const next = (JSON.parse(String(init?.body)) as { tabs: Tab[] }).tabs

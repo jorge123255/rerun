@@ -51,7 +51,7 @@ export function desktopDataSource(scope: DesktopDataScope): DataSource {
         scope: scope.kind,
         storageKey: desktopDataStorageKey(scope),
         preferredView: desktopPreferredView(scope),
-        supportsTableCards: false,
+        supportsTableCards: true,
         listTables: async (): Promise<EngineDbTable[]> => {
             const { tables } = await readJson<{ tables: EngineDbTable[] }>(base, { method: 'GET' }, 'Could not reach this database.')
             return tables

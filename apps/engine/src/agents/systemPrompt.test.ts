@@ -41,7 +41,7 @@ describe('desktop media card instructions', () => {
         expect(cards).toContain('one album')
         expect(cards).toContain('mixed document/image/audio/video cards')
         expect(cards).toContain('up to 12 files')
-        expect(cards).toContain('32 KiB per document')
+        expect(cards).toContain('32 KiB per text document')
         expect(cards).toContain('8 MiB per image')
         expect(cards).toContain('16 MiB per audio file')
         expect(cards).toContain('16 MiB per video')
@@ -50,11 +50,27 @@ describe('desktop media card instructions', () => {
         expect(cards).toContain('Audio is fetched only when the file is opened and plays only after the user presses play')
         expect(cards).toContain('MP4 previews show the first frame and play only after the user acts')
         expect(cards).toContain('only the visible album previews are loaded, and the rest are fetched when opened')
-        expect(cards).toContain('Animated images, SVG, PDF, other audio formats, other video formats and shared files are unavailable')
+        expect(cards).toContain('Animated images, SVG, other audio formats, other video formats and shared files are unavailable')
         expect(cards).toContain('cannot save, import or publish')
-        expect(cards).toContain('Table cards are unavailable')
+        expect(cards).toContain('16 MiB per PDF')
+        expect(cards).not.toContain('card_table shows')
         expect(cards).not.toContain('only for existing .txt or .md')
         expect(await buildSystemPrompt(agent, { source: 'chat' })).not.toContain('<chat_cards>')
+    })
+})
+
+describe('desktop table card instructions', () => {
+    afterEach(() => vi.unstubAllEnvs())
+    it('describes saved views only with the separate table display grant', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const enabled = { ...agent, config: agentConfigSchema.parse({ name: 'Table prompt', tools: { desktopToolGrants: { cardTable: true } } }) }
+        const prompt = await buildSystemPrompt(enabled, { source: 'chat' })
+        const cards = prompt.slice(prompt.indexOf('<chat_cards>'), prompt.indexOf('</chat_cards>'))
+        expect(cards).toContain('card_table shows')
+        expect(cards).toContain('Database view editor')
+        expect(cards).not.toContain('table_view_save')
+        expect(cards).not.toContain('card_file')
+        expect(cards).not.toContain('unavailable on this Mac')
     })
 })
 

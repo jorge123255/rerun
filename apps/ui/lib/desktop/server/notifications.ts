@@ -8,18 +8,17 @@ import { readDesktopAttention } from './attention'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
+import { withRosterWrite } from './roster-writes'
 
-// The desktop notification slice keeps its own tables beside the central schema, so the central
-// database/store files stay untouched: this module owns the initializer and runs it lazily on the
-// same pooled client before the first read or write.
+// The database initializer calls this before engines start, establishing the
+// installation cutoff before a new run can finish. Public helpers also ensure it.
 //
 // `desktop_notifications_state` seeds one install-time cutoff the way the completions store does:
 // everything raised before the slice's first boot is old history that must never replay as a new
 // notification, whatever a later restart does to the seen ledger.
 //
-// `desktop_notification_terminals` records the engine's cancelled/error run terminals, which the
-// completion store deliberately never keeps: they are the only local trace a stopped or failed
-// run leaves for a « Done »-style notification.
+// Failed runs use a separate, owner-pinned ledger because the completion store
+// deliberately keeps successful runs only. Canceled runs never announce.
 const CREATE_DESKTOP_NOTIFICATIONS = `
     CREATE TABLE IF NOT EXISTS desktop_notification_prefs (
         workspace_id INTEGER PRIMARY KEY REFERENCES desktop_workspace(id),
@@ -35,9 +34,16 @@ const CREATE_DESKTOP_NOTIFICATIONS = `
         event_key TEXT PRIMARY KEY,
         notified_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS desktop_notification_attempts (
+        event_key TEXT PRIMARY KEY,
+        attempt_id TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS desktop_notification_terminals (
         id TEXT PRIMARY KEY,
         agent_engine_id TEXT NOT NULL,
+        agent_local_id TEXT REFERENCES desktop_agents(id) ON DELETE CASCADE,
+        session_local_id TEXT REFERENCES desktop_sessions(id) ON DELETE CASCADE,
         session_engine_id TEXT,
         run_id TEXT,
         source TEXT NOT NULL CHECK (source IN ('chat', 'schedule', 'trigger')),
@@ -57,6 +63,9 @@ export async function initializeDesktopNotifications(db: Client): Promise<void> 
     if (!ready) {
         ready = (async () => {
             await db.executeMultiple(CREATE_DESKTOP_NOTIFICATIONS)
+            const columns = new Set((await db.execute('PRAGMA table_info(desktop_notification_terminals)')).rows.map(row => String(row.name)))
+            if (!columns.has('agent_local_id')) await db.execute('ALTER TABLE desktop_notification_terminals ADD COLUMN agent_local_id TEXT REFERENCES desktop_agents(id) ON DELETE CASCADE')
+            if (!columns.has('session_local_id')) await db.execute('ALTER TABLE desktop_notification_terminals ADD COLUMN session_local_id TEXT REFERENCES desktop_sessions(id) ON DELETE CASCADE')
             await db.execute({ sql: 'INSERT INTO desktop_notifications_state (id,enabled_at) VALUES (1,?) ON CONFLICT(id) DO NOTHING', args: [new Date().toISOString()] })
         })()
         ensured.set(db, ready)
@@ -81,7 +90,11 @@ export async function writeDesktopNotificationPrefs(db: Client, patch: Notificat
     const parsed = notificationPrefsPatchSchema.safeParse(patch)
     if (!parsed.success) throw new DesktopHttpError(400, 'Choose a valid notification scope, channel or coworker rule.')
     await initializeDesktopNotifications(db)
-    const merged = mergeNotificationPrefs(await readDesktopNotificationPrefs(db), parsed.data)
+    return withRosterWrite(() => mergeAndWritePrefs(db, parsed.data))
+}
+
+async function mergeAndWritePrefs(db: Client, patch: NotificationPrefsPatch): Promise<NotificationPrefs> {
+    const merged = mergeNotificationPrefs(await readDesktopNotificationPrefs(db), patch)
     const now = new Date().toISOString()
     await db.execute({
         sql: 'INSERT INTO desktop_notification_prefs (workspace_id,prefs,created_at,updated_at) VALUES (1,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET prefs=excluded.prefs,updated_at=excluded.updated_at',
@@ -101,7 +114,7 @@ export type DesktopNotificationEvent = {
     body: string | null
     silent: boolean
     // The revalidation identity a notification click resolves against: the finished-run group
-    // for a completion, the recorded terminal for a stopped or failed run, the exact pending
+    // for a completion, the recorded terminal for a failed run, the exact pending
     // request hash for a question or approval.
     groupId?: string
     terminalId?: string
@@ -150,25 +163,29 @@ function metadataString(metadata: Record<string, unknown> | null | undefined, ke
 // user, merged through the same patch path the settings surface writes. It runs for every
 // schedule/trigger terminal, kept or not, like the original audience resolution.
 async function followScheduledTask(db: Client, agentId: string, source: 'schedule' | 'trigger', slug: string | null): Promise<void> {
+    // Caller owns the roster lock, shared with explicit preference patches.
     const prefs = await readDesktopNotificationPrefs(db)
     const rule = coworkerRuleOf(prefs, agentId)
     if (rule.follow !== undefined || rule.mode === 'muted' || taskRuleOf(prefs, agentId, source, slug) !== undefined) return
-    await writeDesktopNotificationPrefs(db, { coworkers: { [agentId]: { ...rule, follow: true } } })
+    await mergeAndWritePrefs(db, { coworkers: { [agentId]: { ...rule, follow: true } } })
 }
 
-// The engine's terminal webhook is the only place a cancelled or failed run is ever announced on
-// the desktop: the completion store deliberately keeps genuine `done` terminals only, so this
-// intake records just those. The row keeps engine identities; reads re-map them onto the current
-// local coworker/session like the completions projection does. Returns whether a row was kept.
+// Failed terminal intake pins both local and engine identities. Successful runs
+// use the completion store; canceled/contradictory terminal classifications fail closed.
 export async function recordDesktopRunTerminal(runtime: DesktopRuntime, payload: NotificationPayload): Promise<boolean> {
     const source = terminalSourceOf(payload.event)
-    if (!source || !payload.agentId) return false
+    const engineAgentId = payload.agentId
+    if (!source || !engineAgentId) return false
     const db = await openDesktopDatabase(runtime.dataRoot)
     await initializeDesktopNotifications(db)
+    return withRosterWrite(() => recordTerminalWithRosterLock(db, payload, source, engineAgentId))
+}
+
+async function recordTerminalWithRosterLock(db: Client, payload: NotificationPayload, source: WantedEvent['source'], engineAgentId: string): Promise<boolean> {
     const agent = (await db.execute({
         sql: `SELECT a.id FROM desktop_agents a LEFT JOIN desktop_deletions d ON d.agent_id = a.id
               WHERE a.engine_agent_id = ? AND a.workspace_id = 1 AND d.agent_id IS NULL`,
-        args: [payload.agentId],
+        args: [engineAgentId],
     })).rows[0]
     if (!agent) return false
     const agentId = String(agent.id)
@@ -176,22 +193,28 @@ export async function recordDesktopRunTerminal(runtime: DesktopRuntime, payload:
     const slug = source === 'schedule' ? metadataString(metadata, 'scheduleSlug') : source === 'trigger' ? metadataString(metadata, 'triggerSlug') : null
     if (source !== 'chat') await followScheduledTask(db, agentId, source, slug)
     const status = metadataString(metadata, 'status') ?? (payload.kind === 'error' ? 'error' : 'done')
-    if (status !== 'cancelled' && payload.kind !== 'error') return false
-    const id = payload.runId ?? `${payload.agentId}:${payload.sessionId ?? ''}:${payload.timestamp}`
+    // Stopped runs are never completed notifications. Only explicit failures
+    // enter this side table; genuine successes use the completion store.
+    if (status === 'cancelled' || payload.kind !== 'error' || status !== 'error') return false
+    // Root adopts automated chats before recording their terminal. Bind the
+    // current local identities permanently, so engine-ID reuse cannot transfer
+    // an old failure notification to a different coworker or conversation.
+    const session = (await db.execute({ sql: 'SELECT id FROM desktop_sessions WHERE agent_id=? AND engine_session_id=?', args: [agentId, payload.sessionId ?? ''] })).rows[0]
+    if (!session) return false
+    const id = `${agentId}:${String(session.id)}:${payload.runId ?? payload.timestamp}`
     const message = payload.message.replace(/\s+/g, ' ').trim().slice(0, TERMINAL_MESSAGE_MAX) || null
     await db.execute({
-        sql: `INSERT INTO desktop_notification_terminals (id, agent_engine_id, session_engine_id, run_id, source, slug, status, message, completed_at, created_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`,
-        args: [id, payload.agentId, payload.sessionId ?? null, payload.runId ?? null, source, slug, status, message, payload.timestamp, new Date().toISOString()],
+        sql: `INSERT INTO desktop_notification_terminals (id, agent_engine_id, agent_local_id, session_local_id, session_engine_id, run_id, source, slug, status, message, completed_at, created_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`,
+        args: [id, engineAgentId, agentId, String(session.id), payload.sessionId ?? null, payload.runId ?? null, source, slug, status, message, payload.timestamp, new Date().toISOString()],
     })
-    // Kept rows live as long as the seen ledger: long enough to deduplicate across restarts,
-    // pruned on write so the table never grows forever.
+    // Old failure detail can expire; permanent admission/seen identities prevent replay.
     await db.execute({ sql: 'DELETE FROM desktop_notification_terminals WHERE completed_at < ?', args: [new Date(Date.now() - TERMINAL_PRUNE_MS).toISOString()] })
     return true
 }
 
-// The click revalidation for a stopped or failed run: the recorded terminal re-mapped onto the
-// current local coworker and conversation. A deleted coworker, a rebound session or a pruned row
+// A failed-run click must retain its recorded local and engine ownership.
+// A deleted coworker, a rebound session or a pruned row
 // resolves to nothing and the click lands nowhere.
 export async function readDesktopTerminalBinding(db: Client, id: string): Promise<{ agentId: string; sessionId: string } | null> {
     await initializeDesktopNotifications(db)
@@ -199,10 +222,10 @@ export async function readDesktopTerminalBinding(db: Client, id: string): Promis
     const row = (await db.execute({
         sql: `SELECT a.id AS agent_id, s.id AS session_id
               FROM desktop_notification_terminals t
-              JOIN desktop_agents a ON a.engine_agent_id = t.agent_engine_id AND a.workspace_id = 1
-              JOIN desktop_sessions s ON s.agent_id = a.id AND s.engine_session_id = t.session_engine_id
+              JOIN desktop_agents a ON a.id = t.agent_local_id AND a.engine_agent_id = t.agent_engine_id AND a.workspace_id = 1
+              JOIN desktop_sessions s ON s.id = t.session_local_id AND s.agent_id = a.id AND s.engine_session_id = t.session_engine_id
               LEFT JOIN desktop_deletions d ON d.agent_id = a.id
-              WHERE t.id = ? AND d.agent_id IS NULL`,
+              WHERE t.id = ? AND t.status = 'error' AND d.agent_id IS NULL`,
         args: [id],
     })).rows[0]
     return row ? { agentId: String(row.agent_id), sessionId: String(row.session_id) } : null
@@ -219,7 +242,7 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
     const state = (await db.execute('SELECT enabled_at FROM desktop_notifications_state WHERE id=1')).rows[0]
     const enabledAt = state ? String(state.enabled_at) : new Date().toISOString()
     const enabledAtMs = Date.parse(enabledAt)
-    const seen = new Set((await db.execute('SELECT event_key FROM desktop_notifications_seen')).rows.map(row => String(row.event_key)))
+    const seen = new Set((await db.execute('SELECT event_key FROM desktop_notifications_seen UNION SELECT event_key FROM desktop_notification_attempts')).rows.map(row => String(row.event_key)))
     const scored: { at: number; event: DesktopNotificationEvent }[] = []
     let unavailableAgentIds: string[] = []
     if (prefs.scope !== 'nothing') {
@@ -252,24 +275,25 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
         const terminalRows = (await db.execute({
             sql: `SELECT t.id, t.source, t.slug, t.status, t.message, t.completed_at, a.id AS agent_id, a.name AS agent_name, s.id AS session_id
                   FROM desktop_notification_terminals t
-                  JOIN desktop_agents a ON a.engine_agent_id = t.agent_engine_id AND a.workspace_id = 1
-                  JOIN desktop_sessions s ON s.agent_id = a.id AND s.engine_session_id = t.session_engine_id
+                  JOIN desktop_agents a ON a.id = t.agent_local_id AND a.engine_agent_id = t.agent_engine_id AND a.workspace_id = 1
+                  JOIN desktop_sessions s ON s.id = t.session_local_id AND s.agent_id = a.id AND s.engine_session_id = t.session_engine_id
                   LEFT JOIN desktop_deletions d ON d.agent_id = a.id
                   WHERE d.agent_id IS NULL
                   ORDER BY t.completed_at DESC LIMIT 200`,
         })).rows
         for (const row of terminalRows) {
+            if (row.status !== 'error') continue
             const key = `terminal:${String(row.id)}`
             const at = Date.parse(String(row.completed_at))
             if (seen.has(key) || !Number.isFinite(at) || at < enabledAtMs) continue
             const agentId = String(row.agent_id)
             const slug = row.slug == null ? null : String(row.slug)
-            const terminalKind: 'done' | 'error' = row.status === 'error' ? 'error' : 'done'
+            const terminalKind = 'error' as const
             if (!wantedByPrefs(prefs, { kind: terminalKind, agentId, source: String(row.source) as WantedEvent['source'], slug })) continue
             scored.push({ at, event: {
                 key, kind: terminalKind, agentId, agentName: String(row.agent_name), sessionId: String(row.session_id),
-                title: String(row.agent_name), subtitle: slug ? `${slug} · Done` : 'Done',
-                body: row.message ? String(row.message) : null, silent: terminalKind === 'done', terminalId: String(row.id),
+                title: String(row.agent_name), subtitle: slug ? `${slug} · Failed` : 'Failed',
+                body: row.message ? String(row.message).slice(0, 180) : null, silent: false, terminalId: String(row.id),
             } })
         }
     }
@@ -277,16 +301,64 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime): Pr
     return { events: scored.map(entry => entry.event), channels: { toast: prefs.toast, sound: prefs.sound }, unavailableAgentIds, checkedAt: new Date().toISOString() }
 }
 
-// Recorded only after the mounted delivery announced the event; a failed delivery keeps its key
-// out of the ledger, so the next poll can try again. Acknowledged rows live for a month, long
-// enough to deduplicate across restarts without growing forever.
+// Legacy acknowledgment adapter. New delivery uses durable admission followed
+// by the exact attempt receipt below; identities are never expired by age alone.
 export async function acknowledgeDesktopNotificationEvents(db: Client, keys: readonly string[]): Promise<void> {
     await initializeDesktopNotifications(db)
     const now = new Date().toISOString()
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
     for (const key of keys.slice(0, 200)) {
         if (!/^[A-Za-z0-9:._-]{8,600}$/.test(key)) continue
         await db.execute({ sql: 'INSERT INTO desktop_notifications_seen (event_key,notified_at) VALUES (?,?) ON CONFLICT(event_key) DO UPDATE SET notified_at=excluded.notified_at', args: [key, now] })
     }
-    await db.execute({ sql: 'DELETE FROM desktop_notifications_seen WHERE notified_at < ?', args: [cutoff] })
+    // Do not expire identities while their pending/completed source can still
+    // exist. Expiration by age alone replays old requests after a restart.
+}
+
+export type DesktopNotificationAdmission = DesktopNotificationEvent & { attemptId: string }
+
+/** Persist admission before asking the OS to display. An interrupted attempt is
+ * intentionally not retried: we cannot know whether the OS already showed it.
+ * A definite unavailable/failed response releases only that exact attempt. */
+export async function admitDesktopNotificationEvents(runtime: DesktopRuntime, keys: readonly string[]): Promise<{ events: DesktopNotificationAdmission[]; channels: { toast: boolean; sound: boolean } }> {
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    const prefsBefore = await readDesktopNotificationPrefs(db)
+    const snapshot = await readDesktopNotificationEvents(runtime)
+    const wanted = new Set(keys.slice(0, 50))
+    return withRosterWrite(async () => {
+        const prefs = await readDesktopNotificationPrefs(db)
+        if (JSON.stringify(prefs) !== JSON.stringify(prefsBefore)) return { events: [], channels: { toast: prefs.toast, sound: prefs.sound } }
+        const events: DesktopNotificationAdmission[] = []
+        if (!prefs.toast && !prefs.sound) return { events, channels: snapshot.channels }
+        const tx = await db.transaction('write')
+        try {
+            for (const event of snapshot.events) {
+                if (!wanted.has(event.key) || (!prefs.toast && event.kind === 'done')) continue
+                const owner = await tx.execute({ sql: `SELECT s.id FROM desktop_sessions s JOIN desktop_agents a ON a.id=s.agent_id
+                    LEFT JOIN desktop_deletions d ON d.agent_id=a.id WHERE s.id=? AND a.id=? AND a.workspace_id=1 AND d.agent_id IS NULL`, args: [event.sessionId, event.agentId] })
+                if (!owner.rows.length) continue
+                const attemptId = crypto.randomUUID()
+                const result = await tx.execute({ sql: `INSERT INTO desktop_notification_attempts (event_key,attempt_id,created_at)
+                    SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM desktop_notifications_seen WHERE event_key=?) ON CONFLICT(event_key) DO NOTHING`,
+                    args: [event.key, attemptId, new Date().toISOString(), event.key] })
+                if (result.rowsAffected) events.push({ ...event, attemptId })
+            }
+            await tx.commit()
+        } finally { tx.close() }
+        return { events, channels: snapshot.channels }
+    })
+}
+
+export async function finishDesktopNotificationAttempt(db: Client, input: { key: string; attemptId: string; status: 'shown' | 'unavailable' | 'failed' | 'unknown' }): Promise<void> {
+    await initializeDesktopNotifications(db)
+    await withRosterWrite(async () => {
+        const tx = await db.transaction('write')
+        try {
+            const owned = await tx.execute({ sql: 'SELECT 1 FROM desktop_notification_attempts WHERE event_key=? AND attempt_id=?', args: [input.key, input.attemptId] })
+            if (owned.rows.length && input.status !== 'unknown') {
+                if (input.status === 'shown') await tx.execute({ sql: 'INSERT INTO desktop_notifications_seen (event_key,notified_at) VALUES (?,?) ON CONFLICT(event_key) DO NOTHING', args: [input.key, new Date().toISOString()] })
+                await tx.execute({ sql: 'DELETE FROM desktop_notification_attempts WHERE event_key=? AND attempt_id=?', args: [input.key, input.attemptId] })
+            }
+            await tx.commit()
+        } finally { tx.close() }
+    })
 }

@@ -15,11 +15,11 @@ import type { DesktopAgentView } from './DesktopApp'
  * adapter. The browser is handed a bound source, so it never learns which database it drew and
  * cannot be pointed at another one.
  */
-function CoworkerDataPanel({ agent, initial }: { agent: DesktopAgentView; initial?: DataFocus | null }) {
+function CoworkerDataPanel({ agent, initial, requireInitialView }: { agent: DesktopAgentView; initial?: DataFocus | null; requireInitialView?: boolean }) {
     const [expanded, setExpanded] = useState<DataFocus | null>(null)
     const source = useMemo(() => desktopDataSource({ kind: 'agent', agentId: agent.id }), [agent.id])
     return <>
-        <DataBrowser source={source} initial={initial ?? null} onExpand={setExpanded} />
+        <DataBrowser source={source} initial={initial ?? null} requireInitialView={requireInitialView} onExpand={setExpanded} />
         {/* The dialog is too narrow for a board or a gallery: the same table and view open here
             at full size, as a second browser that reads the same private database. */}
         <Dialog open={expanded !== null} onOpenChange={open => !open && setExpanded(null)}>
@@ -34,16 +34,16 @@ function CoworkerDataPanel({ agent, initial }: { agent: DesktopAgentView; initia
     </>
 }
 
-export function DesktopCoworkerData({ agent, dialogControl, initial }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl; initial?: DataFocus | null }) {
+export function DesktopCoworkerData({ agent, dialogControl, initial, hideTrigger = false, onCloseAutoFocus, requireInitialView }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl; initial?: DataFocus | null; hideTrigger?: boolean; onCloseAutoFocus?: (event: Event) => void; requireInitialView?: boolean }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
-        <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Database</Button></DialogTrigger>
-        {open && <DialogContent className="flex h-[80dvh] flex-col sm:max-w-5xl">
+        {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Database</Button></DialogTrigger>}
+        {open && <DialogContent onCloseAutoFocus={onCloseAutoFocus} className="flex h-[80dvh] flex-col sm:max-w-5xl">
             <DialogHeader>
                 <DialogTitle>Database</DialogTitle>
                 <DialogDescription>{agent.name}’s private database. Browse, filter, edit a row, or save a view. Only {agent.name} reads and writes it.</DialogDescription>
             </DialogHeader>
-            <CoworkerDataPanel key={agent.id} agent={agent} initial={initial} />
+            <CoworkerDataPanel key={agent.id} agent={agent} initial={initial} requireInitialView={requireInitialView} />
         </DialogContent>}
     </Dialog>
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { CARD_MAX_CELL_CHARS, CARD_MAX_COLUMNS, CARD_MAX_GROUPS, CARD_MAX_MEDIA_CHARS, CARD_MAX_ROWS } from '@rerun/contracts'
 import { desktopTableCardFocus, desktopTableCardImageUrl, desktopTableCardOf } from './table-card'
 
@@ -20,6 +20,15 @@ describe('desktopTableCardOf', () => {
         expect(desktopTableCardOf(JSON.stringify(card()))).toMatchObject({ table: 'deals' })
         expect(desktopTableCardOf({ type: 'text', value: JSON.stringify(card()) })).toMatchObject({ table: 'deals' })
         expect(desktopTableCardOf({ type: 'json', value: card() })).toMatchObject({ table: 'deals' })
+    })
+
+    it('refuses an oversized serialized result before parsing it', () => {
+        const oversized = JSON.stringify(card({ rows: [{ name: 'x'.repeat(60_000) }] }))
+        const parse = vi.spyOn(JSON, 'parse')
+        try {
+            expect(desktopTableCardOf(oversized)).toBeUndefined()
+            expect(parse).not.toHaveBeenCalled()
+        } finally { parse.mockRestore() }
     })
 
     it('rejects anything that is not a bounded table card', () => {

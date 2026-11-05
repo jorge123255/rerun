@@ -14,11 +14,11 @@ import { useMemo, useState } from 'react'
  * authenticated desktop adapter. It is a different file, a different permission and a different
  * URL prefix from any coworker's private database.
  */
-function SharedDataPanel({ initial }: { initial?: DataFocus | null }) {
+function SharedDataPanel({ initial, requireInitialView }: { initial?: DataFocus | null; requireInitialView?: boolean }) {
     const [expanded, setExpanded] = useState<DataFocus | null>(null)
     const source = useMemo(() => desktopDataSource({ kind: 'shared' }), [])
     return <>
-        <DataBrowser source={source} initial={initial ?? null} onExpand={setExpanded} />
+        <DataBrowser source={source} initial={initial ?? null} requireInitialView={requireInitialView} onExpand={setExpanded} />
         {/* Unlike the web panel, the Mac entry is a dialog. Board and gallery views need the row
             width a dialog does not have, so they open at full size in a second browser. */}
         <Dialog open={expanded !== null} onOpenChange={open => !open && setExpanded(null)}>
@@ -33,7 +33,7 @@ function SharedDataPanel({ initial }: { initial?: DataFocus | null }) {
     </>
 }
 
-export function DesktopSharedData({ dialogControl, hideTrigger = false, onCloseAutoFocus, initial }: { dialogControl?: DesktopDialogControl; hideTrigger?: boolean; onCloseAutoFocus?: (event: Event) => void; initial?: DataFocus | null }) {
+export function DesktopSharedData({ dialogControl, hideTrigger = false, onCloseAutoFocus, initial, requireInitialView }: { dialogControl?: DesktopDialogControl; hideTrigger?: boolean; onCloseAutoFocus?: (event: Event) => void; initial?: DataFocus | null; requireInitialView?: boolean }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
         {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Shared database</Button></DialogTrigger>}
@@ -42,7 +42,7 @@ export function DesktopSharedData({ dialogControl, hideTrigger = false, onCloseA
                 <DialogTitle>Shared database</DialogTitle>
                 <DialogDescription>The workspace database. Coworkers with shared database permission read and write these tables. Browse, filter, edit a row, or save a view.</DialogDescription>
             </DialogHeader>
-            <SharedDataPanel initial={initial} />
+            <SharedDataPanel initial={initial} requireInitialView={requireInitialView} />
         </DialogContent>}
     </Dialog>
 }

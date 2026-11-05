@@ -10,15 +10,19 @@ import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET as readPrefs, PUT as writePrefs } from './route'
 import { GET as readEvents } from './events/route'
 import { POST as acknowledge } from './seen/route'
+import { POST as admit } from './admit/route'
+import { POST as delivery } from './delivery/route'
 import { GET as terminalBinding } from './terminals/[id]/route'
 import { handleDesktopEngineCallback } from '@/lib/desktop/server/engine-callback'
+import type { DesktopNotificationEvent } from '@/lib/desktop/notifications'
+import type { CompletionRow } from '@/lib/desktop/completed-actions'
 
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime
 let alice: DesktopAgent, bob: DesktopAgent, aliceChat: DesktopSession, bobChat: DesktopSession
 // Far past the install cutoff: the fixture runs finish well after this slice's first boot.
 const raised = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString()
-const histories = new Map<string, { owner: string; rows: Message[] }>(), completions: { owner: string; rows: { id: string; runId: string; agentId: string; sessionId: string; source: 'chat'; slug: null; completedAt: string; text: string; provider: string; model: string; costMicros: null; stepCount: number }[] }[] = []
+const histories = new Map<string, { owner: string; rows: Message[] }>(), completions: { owner: string; rows: Omit<CompletionRow, 'title'>[] }[] = []
 const calls: string[] = []
 
 function history(sessionId: string, createdAt: string): Message[] {
@@ -40,6 +44,11 @@ const seenPost = (keys: string[]) => new Request(`${runtime.app.origin}/api/desk
         cookie: `rerun-desktop-session=${runtime.app.sessionToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ keys }),
 })
 const terminalGet = (id: string) => new Request(`${runtime.app.origin}/api/desktop/notifications/terminals/${encodeURIComponent(id)}`, { headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin, cookie: `rerun-desktop-session=${runtime.app.sessionToken}`, 'sec-fetch-site': 'same-origin' } })
+const notificationPost = (path: string, body: unknown) => new Request(`${runtime.app.origin}/api/desktop/notifications/${path}`, {
+    method: 'POST', headers: { host: new URL(runtime.app.origin).host, origin: runtime.app.origin,
+        cookie: `rerun-desktop-session=${runtime.app.sessionToken}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
+})
+const terminalId = (runId: string, agent = alice, session = aliceChat) => `${agent.id}:${session.id}:${runId}`
 const enginePost = (payload: unknown) => handleDesktopEngineCallback(new Request(`${runtime.app.origin}/api/webhooks/engine`, {
     method: 'POST', headers: { host: new URL(runtime.app.origin).host, authorization: `Bearer ${runtime.engine.apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify(payload),
 }))
@@ -106,7 +115,7 @@ test('events follow the scope and coworker rules, and an acknowledged event neve
     // Alice is muted; Bob follows the default scope, so only Bob's pending question announces.
     await writePrefs(prefsRequest({ coworkers: { [alice.id]: { mode: 'muted' } } }))
     const first = await readEvents(eventsGet())
-    const body = await first.json() as { events: { key: string; kind: string; agentId: string; subtitle: string; body: string | null; requestId?: string }[]; channels: { toast: boolean; sound: boolean } }
+    const body = await first.json() as { events: DesktopNotificationEvent[]; channels: { toast: boolean; sound: boolean } }
     expect(body.channels).toEqual({ toast: true, sound: true })
     expect(body.events.map(event => [event.agentId, event.kind, event.subtitle])).toEqual([[bob.id, 'question', 'Question']])
     expect(body.events).toHaveLength(1)
@@ -134,6 +143,7 @@ test('done events follow the chat/schedule decision: started runs under mine, ot
     expect(announced[0]!.body).toBe('The draft is ready')
     expect(announced[0]!.silent).toBe(true)
     expect(announced[0]!.groupId).toBeTruthy()
+    await acknowledge(seenPost(announced.map(event => event.key)))
 
     // A scheduled task with its own « notify me » switch announces under the same rules.
     await writePrefs(prefsRequest({ tasks: { [`${bob.id}:schedule:morning-digest`]: true } }))
@@ -143,27 +153,26 @@ test('done events follow the chat/schedule decision: started runs under mine, ot
     expect(scheduled[0]!.subtitle).toBe('morning-digest · Done')
 })
 
-test('cancelled and error terminals announce as silent Done events and revalidate their binding', async () => {
+test('only explicit failed terminals announce as Failed; stopped and successful runs stay out of the failure ledger', async () => {
     const failed = terminalPayload({ kind: 'error', runId: 'run-failed', message: 'Message failed: provider timeout', metadata: { status: 'error', source: 'chat' } })
     const stopped = terminalPayload({ kind: 'done', runId: 'run-stopped', message: 'Message stopped', metadata: { status: 'cancelled', source: 'chat' } })
     const finished = terminalPayload({ kind: 'done', runId: 'run-done', metadata: { status: 'done', source: 'chat' } })
     expect((await enginePost(finished)).status).toBe(202)
     expect(await (await enginePost(finished)).json()).toMatchObject({ persisted: false })
     expect(await (await enginePost(failed)).json()).toMatchObject({ persisted: true })
-    expect(await (await enginePost(stopped)).json()).toMatchObject({ persisted: true })
+    expect(await (await enginePost(stopped)).json()).toMatchObject({ persisted: false })
+    expect(await (await enginePost(terminalPayload({ kind: 'error', metadata: { status: 'done', source: 'chat' } }))).json()).toMatchObject({ persisted: false })
 
     const body = await (await readEvents(eventsGet())).json() as { events: { key: string; kind: string; agentId: string; sessionId: string; subtitle: string; body: string | null; silent: boolean; terminalId?: string; groupId?: string }[] }
     const terminals = body.events.filter(event => event.terminalId)
-    // The successful `done` terminal stays on the completions store: only the two kept rows announce.
-    expect(terminals.map(event => event.terminalId).sort()).toEqual(['run-failed', 'run-stopped'])
-    const failedEvent = terminals.find(event => event.terminalId === 'run-failed')!
+    expect(terminals.map(event => event.terminalId)).toEqual([terminalId('run-failed')])
+    const failedEvent = terminals[0]!
     // A failed run keeps the original urgent 'error' kind: it still announces under « needed ».
-    expect(failedEvent).toMatchObject({ kind: 'error', agentId: alice.id, sessionId: aliceChat.id, subtitle: 'Done', body: 'Message failed: provider timeout', silent: false })
-    expect(terminals.find(event => event.terminalId === 'run-stopped')).toMatchObject({ kind: 'done', subtitle: 'Done', silent: true })
-    expect(failedEvent.key).toBe('terminal:run-failed')
+    expect(failedEvent).toMatchObject({ kind: 'error', agentId: alice.id, sessionId: aliceChat.id, subtitle: 'Failed', body: 'Message failed: provider timeout', silent: false })
+    expect(failedEvent.key).toBe(`terminal:${terminalId('run-failed')}`)
     expect(failedEvent.groupId).toBeUndefined()
 
-    const binding = await terminalBinding(terminalGet('run-failed'), { params: Promise.resolve({ id: 'run-failed' }) })
+    const binding = await terminalBinding(terminalGet(terminalId('run-failed')), { params: Promise.resolve({ id: terminalId('run-failed') }) })
     expect(binding.status).toBe(200)
     expect(await binding.json()).toEqual({ agentId: alice.id, sessionId: aliceChat.id })
     expect((await terminalBinding(terminalGet('run-unknown'), { params: Promise.resolve({ id: 'run-unknown' }) })).status).toBe(404)
@@ -171,7 +180,7 @@ test('cancelled and error terminals announce as silent Done events and revalidat
     // Acknowledged terminal keys never replay, exactly like completion and request keys.
     await acknowledge(seenPost(terminals.map(event => event.key)))
     await closeDesktopDatabase(root)
-    expect((await (await readEvents(eventsGet())).json()).events).toEqual([])
+    expect((await (await readEvents(eventsGet())).json()).events.filter((event: DesktopNotificationEvent) => event.terminalId)).toEqual([])
 })
 
 test('a scheduled terminal gives the local owner the original follow, which then admits its done runs', async () => {
@@ -190,8 +199,9 @@ test('a scheduled terminal gives the local owner the original follow, which then
     // The failed terminal and the followed task's completion both announce, each with its own
     // revalidation identity: the recorded terminal and the finished-run group.
     expect(bobs).toHaveLength(2)
-    expect(bobs.every(event => event.subtitle === 'morning-digest · Done')).toBe(true)
-    expect(bobs.filter(event => event.terminalId === 'run-bob-failed')).toHaveLength(1)
+    expect(bobs.find(event => event.kind === 'done')?.subtitle).toBe('morning-digest · Done')
+    expect(bobs.find(event => event.kind === 'error')?.subtitle).toBe('morning-digest · Failed')
+    expect(bobs.filter(event => event.terminalId === terminalId('run-bob-failed', bob, bobChat))).toHaveLength(1)
     expect(bobs.filter(event => event.groupId)).toHaveLength(1)
 })
 
@@ -204,7 +214,7 @@ test('scope « needed » keeps finished and stopped runs quiet while failures an
     // The original 'error' kind is urgent: a broken run still reaches under « needed », a stopped
     // or finished one does not.
     expect(body.events.filter(event => event.kind === 'done')).toEqual([])
-    expect(body.events.filter(event => event.kind === 'error').map(event => event.terminalId)).toEqual(['run-needed'])
+    expect(body.events.filter(event => event.kind === 'error').map(event => event.terminalId)).toEqual([terminalId('run-needed')])
     expect(body.events.some(event => event.kind === 'question' && event.subtitle === 'Question')).toBe(true)
 })
 
@@ -216,7 +226,81 @@ test('scope « nothing » and the install cutoff never announce, and nothing rep
     expect(Date.parse(String(stale.rows[0]!.enabled_at))).toBeLessThan(Date.now())
     // A request raised before the slice's first boot is old history, never a new notification.
     histories.set('alice-ask', { owner: alice.engineAgentId, rows: history('alice-ask', '2020-01-01T00:00:00.000Z') })
+    histories.set('bob-ask', { owner: bob.engineAgentId, rows: history('bob-ask', '2020-01-01T00:00:00.000Z') })
     expect((await (await readEvents(eventsGet())).json()).events).toEqual([])
     await closeDesktopDatabase(root)
     expect((await (await readEvents(eventsGet())).json()).events).toEqual([])
+})
+
+test('concurrent preference patches and automatic follow preserve independent choices', async () => {
+    await Promise.all([
+        writePrefs(prefsRequest({ toast: false })),
+        writePrefs(prefsRequest({ sound: false })),
+        writePrefs(prefsRequest({ coworkers: { [alice.id]: { mode: 'muted' } } })),
+        enginePost(terminalPayload({ event: 'agent.schedule.completed', agentId: bob.engineAgentId, sessionId: bobChat.engineSessionId,
+            kind: 'error', metadata: { status: 'error', scheduleSlug: 'morning' } })),
+    ])
+    expect(await (await readPrefs(prefsGet())).json()).toMatchObject({ toast: false, sound: false,
+        coworkers: { [alice.id]: { mode: 'muted' }, [bob.id]: { mode: 'default', follow: true } } })
+})
+
+test('one durable admission wins concurrent polls and an ambiguous delivery remains suppressed after restart', async () => {
+    const { events } = await (await readEvents(eventsGet())).json() as { events: DesktopNotificationEvent[] }
+    const key = events[0]!.key
+    const replies = await Promise.all([admit(notificationPost('admit', { keys: [key] })), admit(notificationPost('admit', { keys: [key] }))])
+    const admitted = (await Promise.all(replies.map(reply => reply.json()))).flatMap(reply => reply.events) as (DesktopNotificationEvent & { attemptId: string })[]
+    expect(admitted).toHaveLength(1)
+    expect((await delivery(notificationPost('delivery', { key, attemptId: admitted[0]!.attemptId, status: 'unknown' }))).status).toBe(200)
+    await closeDesktopDatabase(root)
+    const reopened = await openDesktopDatabase(root)
+    expect((await reopened.execute('SELECT * FROM desktop_notification_attempts')).rows).toHaveLength(1)
+    expect((await reopened.execute('SELECT * FROM desktop_notifications_seen')).rows).toHaveLength(0)
+    expect((await (await readEvents(eventsGet())).json()).events.some((event: DesktopNotificationEvent) => event.key === key)).toBe(false)
+})
+
+test('definite nondelivery retries with a fresh token and late old receipts cannot release that attempt', async () => {
+    const { events } = await (await readEvents(eventsGet())).json() as { events: DesktopNotificationEvent[] }
+    const key = events[0]!.key
+    const first = (await (await admit(notificationPost('admit', { keys: [key] }))).json()).events[0] as { attemptId: string }
+    await delivery(notificationPost('delivery', { key, attemptId: first.attemptId, status: 'unavailable' }))
+    const second = (await (await admit(notificationPost('admit', { keys: [key] }))).json()).events[0] as { attemptId: string }
+    expect(second.attemptId).not.toBe(first.attemptId)
+    await delivery(notificationPost('delivery', { key, attemptId: first.attemptId, status: 'failed' }))
+    const db = await openDesktopDatabase(root)
+    expect((await db.execute('SELECT attempt_id FROM desktop_notification_attempts')).rows[0]!.attempt_id).toBe(second.attemptId)
+    await delivery(notificationPost('delivery', { key, attemptId: second.attemptId, status: 'shown' }))
+    await closeDesktopDatabase(root)
+    expect((await (await readEvents(eventsGet())).json()).events.some((event: DesktopNotificationEvent) => event.key === key)).toBe(false)
+    expect((await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_notification_attempts')).rows).toHaveLength(0)
+})
+
+test('old acknowledged identities do not expire while a pending source still exists', async () => {
+    const { events } = await (await readEvents(eventsGet())).json() as { events: DesktopNotificationEvent[] }
+    const key = events[0]!.key
+    await acknowledge(seenPost([key]))
+    await (await openDesktopDatabase(root)).execute({ sql: 'UPDATE desktop_notifications_seen SET notified_at=? WHERE event_key=?', args: ['2020-01-01T00:00:00.000Z', key] })
+    await acknowledge(seenPost(['pending:some-other-request']))
+    await closeDesktopDatabase(root)
+    expect((await (await readEvents(eventsGet())).json()).events.some((event: DesktopNotificationEvent) => event.key === key)).toBe(false)
+})
+
+test('terminal IDs are owner-scoped and an engine session rebound cannot retarget an old click', async () => {
+    const payload = { kind: 'error', runId: 'shared-run-id', metadata: { status: 'error', source: 'chat' } }
+    await enginePost(terminalPayload(payload))
+    await enginePost(terminalPayload({ ...payload, agentId: bob.engineAgentId, sessionId: bobChat.engineSessionId }))
+    const { events } = await (await readEvents(eventsGet())).json() as { events: DesktopNotificationEvent[] }
+    expect(events.filter(event => event.kind === 'error').map(event => event.agentId).sort()).toEqual([alice.id, bob.id].sort())
+    const oldId = terminalId('shared-run-id')
+    const db = await openDesktopDatabase(root)
+    await db.execute({ sql: 'UPDATE desktop_sessions SET engine_session_id=? WHERE id=?', args: ['alice-rebound', aliceChat.id] })
+    await createDesktopSession(db, { agentId: alice.id, engineSessionId: 'alice-ask', title: 'Replacement chat' })
+    expect((await terminalBinding(terminalGet(oldId), { params: Promise.resolve({ id: oldId }) })).status).toBe(404)
+    expect((await (await readEvents(eventsGet())).json()).events.some((event: DesktopNotificationEvent) => event.terminalId === oldId)).toBe(false)
+})
+
+test('delivery routes authenticate, reject invalid receipts and bound their actual request bytes', async () => {
+    expect((await admit(new Request(`${runtime.app.origin}/api/desktop/notifications/admit`, { method: 'POST', body: '{}' }))).status).not.toBe(200)
+    expect((await delivery(notificationPost('delivery', { key: 'pending:example', attemptId: 'not-a-uuid', status: 'shown' }))).status).toBe(400)
+    expect((await admit(notificationPost('admit', { keys: ['x'.repeat(40_001)] }))).status).toBe(413)
+    expect((await writePrefs(prefsRequest({ scope: 'mine', extra: 'x'.repeat(40_001) }))).status).toBe(413)
 })

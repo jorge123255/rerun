@@ -5,9 +5,10 @@
 // only hands over a payload and hears back about clicks. Nothing here requests a permission.
 
 export type DesktopNotificationCopy = { title: string; subtitle?: string; body?: string; silent?: boolean }
+export type DesktopNotificationDeliveryResult = { status: 'shown' | 'unavailable' | 'failed' | 'unknown' }
 
 // The identity a click must revalidate before navigating: the finished-run group for a completion,
-// the recorded terminal for a stopped or failed run, the exact pending request hash for a
+// the recorded terminal for a failed run, the exact pending request hash for a
 // question or approval.
 export type DesktopNotificationTarget = {
     key: string
@@ -20,22 +21,28 @@ export type DesktopNotificationTarget = {
 }
 
 type DesktopNotificationsBridge = {
-    notify?: (notification: DesktopNotificationCopy & DesktopNotificationTarget) => void
+    notify?: (notification: DesktopNotificationCopy & DesktopNotificationTarget) => Promise<DesktopNotificationDeliveryResult>
     onNotificationClick?: (handler: (target: DesktopNotificationTarget) => void) => () => void
 }
 
 export type DesktopNotificationsHandle = {
     available: boolean
-    notify: (notification: DesktopNotificationCopy & DesktopNotificationTarget) => void
+    notify: (notification: DesktopNotificationCopy & DesktopNotificationTarget) => Promise<DesktopNotificationDeliveryResult>
     onClick: (handler: (target: DesktopNotificationTarget) => void) => () => void
 }
 
 export function desktopNotificationsBridge(): DesktopNotificationsHandle {
-    if (typeof window === 'undefined') return { available: false, notify: () => {}, onClick: () => () => {} }
+    if (typeof window === 'undefined') return { available: false, notify: async () => ({ status: 'unavailable' }), onClick: () => () => {} }
     const bridge = (window as Window & { desktopApp?: { notifications?: DesktopNotificationsBridge } }).desktopApp?.notifications
     return {
         available: typeof bridge?.notify === 'function',
-        notify: payload => { if (typeof bridge?.notify === 'function') bridge.notify(payload) },
+        notify: async payload => {
+            if (typeof bridge?.notify !== 'function') return { status: 'unavailable' }
+            try {
+                const result = await bridge.notify(payload)
+                return result && ['shown', 'unavailable', 'failed', 'unknown'].includes(result.status) ? result : { status: 'unknown' }
+            } catch { return { status: 'unknown' } }
+        },
         onClick: handler => (typeof bridge?.onNotificationClick === 'function' ? bridge.onNotificationClick(handler) : () => {}),
     }
 }

@@ -32,6 +32,8 @@ type DataBrowserProps = {
     source: DataSource
     /** Table, and view, a card in chat asked to land on. Captured at mount and honoured once. */
     initial?: DataFocus | null
+    /** Chat cards supply a resolved view id and require it; ordinary opens may restore a preferred view. */
+    requireInitialView?: boolean
     onInitialConsumed?: () => void
     /** Opens the same table and view somewhere larger. */
     onExpand?: (focus: DataFocus) => void
@@ -43,7 +45,7 @@ type DataBrowserProps = {
 type ViewDialog = { open: boolean; generation: number; view?: TableView; layout?: CardLayout }
 type BrowserScope = { source: DataSource; table: string | null }
 
-export function DataBrowser({ source, initial, onInitialConsumed, onExpand, table: pinnedTable, onTableDropped }: DataBrowserProps) {
+export function DataBrowser({ source, initial, requireInitialView = false, onInitialConsumed, onExpand, table: pinnedTable, onTableDropped }: DataBrowserProps) {
     const [requested] = useState(() => initial ?? null)
     const requestedTableRef = useRef(requested?.table ?? null)
     const requestedViewRef = useRef(requested?.view)
@@ -58,6 +60,7 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
     const [loadingTables, setLoadingTables] = useState(true)
     const [loadingRows, setLoadingRows] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const [initialTargetError, setInitialTargetError] = useState<string | null>(null)
     const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set())
     const [refreshKey, setRefreshKey] = useState(0)
     const [rowsRefreshKey, setRowsRefreshKey] = useState(0)
@@ -124,13 +127,18 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
                         setSelected(requestedTable)
                         return
                     }
+                    if (requireInitialView) {
+                        setSelected(null)
+                        setInitialTargetError(`The table “${requestedTable}” is no longer available. Open Database to choose another table.`)
+                        return
+                    }
                     toast.error('Table not found', { description: requestedTable })
                 }
                 setSelected(prev => pinnedTable ?? (prev && result.some(t => t.name === prev) ? prev : (result[0]?.name ?? null)))
             })
             .catch((e: unknown) => { if (current()) setError(e instanceof Error && e.message ? e.message : source.unreachableMessage) })
             .finally(() => { if (current()) setLoadingTables(false) })
-    }, [source, pinnedTable])
+    }, [source, pinnedTable, requireInitialView])
     const reloadTablesRef = useRef(loadTables)
     reloadTablesRef.current = loadTables
 
@@ -175,14 +183,21 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
             setPreferenceError(preference.error)
             const wanted = requestedViewRef.current
             requestedViewRef.current = undefined
+            const requestedView = requireInitialView ? list.find(view => view.id === wanted) : findView(list, wanted)
+            if (requireInitialView && wanted && !requestedView) {
+                setInitialTargetError(result.success
+                    ? 'This saved view is no longer available. Open Database to choose another view.'
+                    : result.error)
+                return
+            }
             const remembered = preference.viewId
-            const picked = findView(list, wanted) ?? (remembered && remembered !== ALL_ROWS ? findView(list, remembered) : undefined)
+            const picked = requestedView ?? (remembered && remembered !== ALL_ROWS ? findView(list, remembered) : undefined)
             setActiveId(picked?.id ?? (remembered === ALL_ROWS ? ALL_ROWS : (list[0]?.id ?? ALL_ROWS)))
         })
         return () => {
             cancelled = true
         }
-    }, [source, selected, viewsRefreshKey])
+    }, [source, selected, viewsRefreshKey, requireInitialView])
 
     const activeView = activeId && activeId !== ALL_ROWS ? views.find(view => view.id === activeId) : undefined
     const boardView = activeView?.layout === 'board' && activeView.groupBy ? (activeView as TableView & { groupBy: string }) : undefined
@@ -473,6 +488,10 @@ export function DataBrowser({ source, initial, onInitialConsumed, onExpand, tabl
 
     if (error) {
         return <EmptyState className="h-full" icon={DatabaseIcon} title="Database unavailable" description={error} />
+    }
+
+    if (initialTargetError) {
+        return <EmptyState className="h-full" icon={DatabaseIcon} title="Saved view unavailable" description={initialTargetError} />
     }
 
     if (tables.length === 0) {

@@ -130,3 +130,24 @@ it('propagates Stop as cancellation instead of a successful failure string', asy
     controller.abort()
     await expect(run(cardTools(controller.signal), 'card_table', { scope: 'agent', table: 'deals', view: 'Pipeline' })).rejects.toMatchObject({ name: 'AbortError' })
 })
+
+it('keeps long ordinary text within the recorded card bound, including its ellipsis', async () => {
+    grant({ cardTable: true, db: true })
+    const db = await getAgentDb(AGENT)
+    await db.execute('CREATE TABLE long_notes (body TEXT)')
+    await db.execute({ sql: 'INSERT INTO long_notes VALUES (?)', args: ['x'.repeat(500)] })
+    await saveView(db, 'long_notes', { name: 'Notes', layout: 'list', fields: { title: 'body' } })
+    const drawn = await card(cardTools(), { scope: 'agent', table: 'long_notes', view: 'Notes' })
+    expect(drawn.rows).toEqual([{ body: `${'x'.repeat(119)}…` }])
+})
+
+it('uses the same plain-schema refusal as database reads, even for an ordinary target table', async () => {
+    grant({ cardTable: true, db: true })
+    const db = await getAgentDb(AGENT)
+    await db.execute('CREATE VIEW forbidden_program AS SELECT * FROM deals')
+    try {
+        await expect(run(cardTools(), 'card_table', { scope: 'agent', table: 'deals', view: 'Names' }))
+            .rejects.toThrow('Views, triggers and virtual tables are unavailable in desktop data tools.')
+    } finally { await db.execute('DROP VIEW forbidden_program') }
+    expect((await card(cardTools(), { scope: 'agent', table: 'deals', view: 'Names' })).view).toBe('Names')
+})

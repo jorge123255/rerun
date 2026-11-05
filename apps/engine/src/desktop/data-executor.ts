@@ -224,9 +224,11 @@ const writeResultSchema = z.object({ statements: z.number().int().min(1).max(100
 /** The renderer's own bounds: a card is replayed into later model context, so the parent refuses
  * one that is larger than the layouts can draw rather than passing it through. */
 function boundedCard(card: TableCard): boolean {
-    if (!Number.isInteger(card.total) || card.total < 0) return false
+    if (!Number.isSafeInteger(card.total) || card.total < 0) return false
     if (card.rows.length > CARD_MAX_ROWS || card.columns.length > CARD_MAX_COLUMNS) return false
     if ((card.groups?.length ?? 0) > CARD_MAX_GROUPS) return false
+    if (card.groups?.some(group => group.value.length > CARD_MAX_CELL_CHARS || !Number.isSafeInteger(group.total) || group.total < 0
+        || (group.sum !== undefined && !Number.isFinite(group.sum)))) return false
     const formats = card.formats ?? {}
     const media = new Set([card.fields?.image, ...Object.entries(formats).filter(([, format]) => format === 'image' || format === 'url').map(([column]) => column)].filter((column): column is string => !!column))
     return card.rows.every(row => Object.entries(row).every(([column, value]) =>
