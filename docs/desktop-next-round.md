@@ -1,11 +1,15 @@
 # Next Rerun Mac agent assignments
 
-**Current handoff status, November 4:** All eight assignments below have delivered and are
-integrated in installed source `742d089` with root fixes. Their worktrees remain preserved.
-Root alone ran the checks, packaging and extensive Mac QA. The final new build is waiting for
-protected Keychain approval before the last restart cases and recovery-backed fixture cleanup.
-No new agent assignment is needed to finish this review. The prompts below are the historical
-assignments, not invitations to repeat completed work. [Exact evidence and remaining gates](desktop-handoff-integration-review.md).
+**Current handoff acceptance, November 4:** All eight assignments below have delivered and are
+integrated in installed source `742d089` with root fixes. Root completed native/restart checks
+and recovery-backed cleanup. **E6 Skills and E8 Routines are complete; 26 groups remain.**
+The other delivered slices and notification limitations are recorded in the
+[acceptance review](desktop-handoff-integration-review.md). Original **23 chats / 88 messages**,
+workspace/defaults and board are preserved. All external worktrees remain untouched.
+
+The prompts below are historical assignments, not invitations to repeat completed work.
+Choose subsequent tasks from the remaining parity checklist. Root continues to own every test,
+build, install and live Mac/restart check.
 
 Updated November 4, 2026. New A/B/G/H worktrees are prepared at `bb45f3a99e2ae2fe2de8e944a9eb4ab329ef0055`, including root's source implementation of Control Center Logs. Installed and accepted source is now `86c35a307831da45c5f844bd81995181755f6bfe`; root's Logs slice passed Mac and restart acceptance. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 

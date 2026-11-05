@@ -4,12 +4,12 @@ This document describes the current root-integrated source contract. The Skills 
 proposal review, tool catalog and grant, runner registration, confined publication, and shutdown
 hooks are wired. It replaces the earlier lane handoff and its unapplied integration snippets.
 
-**Root automated and production-runtime checks pass; native Skills checks are in progress.**
-Skills is installed and has been exercised in the Mac app at `464332f`. The earlier Keychain
-startup block is resolved. Build `742d089` is installed and is waiting for another protected Keychain approval;
-final restart acceptance and cleanup are not yet claimed complete. Root alone
-executes these checks. The [integration review](desktop-handoff-integration-review.md) is the
-acceptance ledger for exact builds, results, and remaining gates.
+**Accepted in installed source `742d089` after root automated, native and full-restart QA.**
+Original Skills editors and proposal presentation are retained. Exact applied/dismissed
+proposal state and skill bytes survived restart; real Codex read the approved skill and
+returned **63**. Recovery-backed cleanup preserved the original workspace. Root alone ran
+checks; the [integration review](desktop-handoff-integration-review.md) records exact source
+identities, evidence and local scope limits.
 
 ## Original Rerun provenance and design
 
@@ -175,7 +175,7 @@ does not silently grant tools or replay publication as if it had succeeded.
   enablement. Local desktop skills have no hosted template-content lock; connector ownership
   still makes them read-only. Skill content is displayed as text, never executed by the UI.
 
-## Root verification and pending acceptance
+## Root verification and acceptance
 
 Authored regressions cover confined owner/path/version handling; native cross-process locking
 and queued cancellation; exclusive publication, rollback/recovery, and retained storage;
@@ -193,8 +193,11 @@ not claim a rerun on the final candidate. Native window evidence is recorded sep
 - Native Mac checks at `464332f` passed UI authoring, editing, and importing skills; actual
   `skill_read` and `skill_read_file` calls returned **42**. Accepting the Codex-generated
   `qa-answer-check` proposal successfully published the skill.
-- Final candidate `742d089` is installed, awaiting Keychain approval. The final chat proposal row, restored approval,
-  rejection flow, and use of the approved skill returning **63** remain **pending**, along with
-  final restart/state comparison and preservation of the original workspace after cleanup.
-  Root will replace this pending statement only after those checks finish; see the
-  [acceptance ledger](desktop-handoff-integration-review.md).
+- Final `742d089` proposal/history checks: **75 passed**, and UI typecheck passed. Complete
+  engine rerun at `0a74b58`: **3,285 passed**; later commits do not change engine source.
+- Native final chat restored Remembered → View for the accepted proposal and only the pending
+  proposal belonging to the other chat. Clicking **No** persisted the dismissal without creating a skill.
+  Actual Read Skill used the approved procedure for **63** after restart. Another full
+  quit/reopen restored that reply, both decisions, skill bytes and the unrelated draft.
+- Recovery-backed cleanup and final restart preserved all original **23 chats / 88 messages**,
+  workspace/provider defaults and board. E6 is checked in the parity catalog.

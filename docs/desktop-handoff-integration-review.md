@@ -6,10 +6,12 @@ Installed canonical source: `742d089bcd3b1383f862d4e5cf5301540d71e75d` at
 `/Users/gszulc/Applications/Rerun Desktop Preview.app`. Packaging, runtime receipts and strict
 local signature verification passed. No dependency upgrades, push or second preview app.
 
-**Final acceptance is in progress.** The user's first Keychain approval restored Codex and
-allowed the native checks below. After the final chat-history fix was installed, macOS again
-paused startup in `SecItemCopyMatching` / Keychain decryption. Root requested approval of the
-new protected prompt. The pending final checks and cleanup are not marked passed.
+**Final native/restart acceptance and cleanup are complete for the delivered slices below.**
+After the user approved Keychain, root verified the exact saved state before making changes.
+The final skill decision/reply survived another full quit/reopen. Recovery-backed cleanup and
+a final clean-workspace restart preserved the original **2 coworkers / 23 chats / 88 messages**.
+E6 Skills and E8 Routines are now checked: **26 capability groups remain unfinished**.
+C7 notifications remains partial because the OS banner/click was not observed.
 
 ## Handoffs and native evidence
 
@@ -18,11 +20,11 @@ new protected prompt. The pending final checks and cleanup are not marked passed
 | A — PDF cards | `4ca41a20617f7de8d259a7aeb09655ad1fae3f91` | Real Codex PDF/text cards, two pages, zoom and mixed attachment navigation passed. Reopened PDF page 2 and mixed text attachment from saved history after restart at `464332f`. |
 | B — Uploads | `5c2665698902622be6b92e4cc739e22f065b3d3e` | Native picker upload, real HARBOR 25 reply and restart passed. Sibling Markdown attachment/draft restored unchanged. Drop/paste and uncertain-upload recovery have automated coverage; native queue transition remains unobserved. |
 | C — Notifications | `b4444f3735b56e36a183d93220152c3fe5135ed8` | Preferences, request age, Actions navigation, pending restart and Blue/Amber answers passed. Signed Electron delivery receipts now report shown. An actual macOS banner and its click were not observed; C7 stays partial. |
-| D — Skills | `d1c158585fc628d7542cadc6bedc3542abb62512` | Native author/edit/import, bundled file editing, grant-off refusal, actual skill_read/skill_read_file reply 42 and Codex-generated proposal acceptance passed. Skills bytes/proposals survived restart. Final chat review/rejection/approved-skill use after the history fix are pending. |
-| E — Routines | `32dd3efb5d244b879e842632eccc097e93e2bf97` | Real manual, due one-shot and automatic recurring replies passed. Native edit/pause/timezone, next/last result, original Scheduled run/View prompt, immediate result title, disabled/grant refusal and no duplicate after restart passed. Final restart comparison pending. |
+| D — Skills | `d1c158585fc628d7542cadc6bedc3542abb62512` | Native author/edit/import, bundled file editing, grant-off refusal, actual skill_read/skill_read_file reply 42 and Codex-generated proposal acceptance passed. Skills bytes/proposals survived restart. Restored chat showed Remembered → View for the accepted skill; the other chat showed its own proposal. Clicking **No** persisted the dismissal without creating a skill. Actual Read Skill returned 63 after restart; rejection and reply survived another restart. E6 accepted. |
+| E — Routines | `32dd3efb5d244b879e842632eccc097e93e2bf97` | Real manual, due one-shot and automatic recurring replies passed. Native edit/pause/timezone, next/last result, original Scheduled run/View prompt, immediate result title, disabled/grant refusal and no duplicate after restart passed. Final exact restart comparison and original scheduled prompt/result navigation passed. All three paused routines stayed paused and no occurrence was duplicated. E8 accepted. |
 | F — MCP | `5c825c4bcf6a14285be4a4f90d7de9ffdb830283` | Anonymous public DeepWiki connection, three-tool discovery and actual replies before/after restart passed. Native Disconnect cleared the list; revoking MCP produced real MCP OFF; sibling had no servers. OAuth, local subprocesses and legacy SSE remain outside this slice. Untracked alternate adapter excluded. |
-| G — Table cards | `75beb31d5a06d0b97ee6e75469b150d12c8942c6` | Private frozen 17/live 99 passed after restart. Renaming its saved view showed an explicit unavailable-view message without leaving chat. Shared frozen 73/live 74 opened the exact Shared database Table view. Final shared-card restart check pending. |
-| H — Website logos | `3ff13530145e0a936ea7fec2acd628a70de333c3` | Native github.com preview, Cancel and Save passed. Exact local WebP bytes, identity and workspace name survived two restarts. Original-icon restoration remains part of final cleanup. |
+| G — Table cards | `75beb31d5a06d0b97ee6e75469b150d12c8942c6` | Private frozen 17/live 99 passed after restart. Renaming its saved view showed an explicit unavailable-view message without leaving chat. Shared frozen 73/live 74 opened the exact Shared database Table view. After full restart the shared card still showed 73 and opened its exact Table view with 74. |
+| H — Website logos | `3ff13530145e0a936ea7fec2acd628a70de333c3` | Native github.com preview, Cancel and Save passed. Exact local WebP bytes, identity and workspace name survived two restarts. Cleanup restored the original no-icon selection and removed the QA image bytes; final restart verified both. |
 
 ## Root fixes
 
@@ -72,24 +74,54 @@ were made after root checks exposed them. No dependencies were updated and no co
 Root alone executed checks, builds, installation and live app actions. Logs are in the
 coordinator task's `work/handoffs-*` files. Source checks are distinct from native acceptance.
 
-## Preserved state and remaining acceptance
+## Restart, cleanup and original workspace
 
-Before the final update, exact checks preserved all original **23 chats / 88 messages**,
-workspace/provider defaults, Box geometry and original coworkers. The two named disposable
-coworkers remain: Handoff Integration QA (9 chats / 38 messages) and Handoff Sibling QA
-(0 chats, its unsent text/Markdown draft intact). All three QA routines are paused. The
-shared QA table and website logo remain until verified cleanup.
+The final installed build passed exact saved-state comparison before mutation:
+`work/handoffs-integration-before-final-build.json`,
+`work/handoffs-extra-before-final-build.json` and the recorded logo hash. Root then rejected
+only QA Rejection Check, used the approved QA Answer Check through real Codex for **63**,
+and rechecked shared-card and routine navigation in the native window.
 
-The current recovery snapshot is
-`work/handoffs-before-final-build-recovery/verified-manifest.json`. Exact saved-state files are
-`work/handoffs-integration-before-final-build.json` and
-`work/handoffs-extra-before-final-build.json`. After Keychain approval, compare both before
-mutating data and verify the logo bytes. Finish chat proposal accept-state/rejection and use
-the approved skill, shared card reopening, and routine result/pause checks. Then take the
-completed recovery copy, remove only the named fixtures, restore preferences/icon/shared
-baseline and verify the original state after another full restart.
+A further full quit/reopen matched `work/handoffs-integration-completed.json` and
+`work/handoffs-extra-completed.json` exactly: Skills bytes, applied/dismissed proposals,
+routines and occurrence records, nine QA chats/40 messages, both drafts, tool grants, files,
+private/shared databases, saved views, board and notification preferences. Native chat still
+showed **Not remembered** and **63**. The other chat retained its unrelated unsent draft.
 
-The parity catalog remains **28 unfinished groups** until final acceptance. E6 Skills and E8
-Routines can close after those gates pass, reducing the count to **26**. C7 notifications
-stays partial; Electron's shown receipt is not proof of a visible banner/click. Broader C3/C8,
-B5 and E5 scope stays listed separately.
+Root created and hash-verified the complete recovery copy at
+`work/handoffs-integration-completed-recovery/verified-manifest.json`. Cleanup removed only
+Handoff Integration QA and Handoff Sibling QA, their shared table/view/preference, and the QA
+website logo; original notification settings were restored. The shared table API retains
+ownership metadata, so while fully quit root removed only the exact backed-up QA receipt
+inside a transaction that required the complete original shared schema/rows to match before
+commit. The pre-existing unrelated ownership row was preserved.
+
+Final full restart checks passed:
+`work/handoffs-clean-after-final-restart.log` and
+`work/handoffs-original-after-final-restart.log`. Original workspace/provider defaults,
+Box geometry/membership, shared database and all **23 chats / 88 messages** are unchanged.
+No QA coworkers, shared table, logo selection or logo bytes remain. The native board shows
+only My workspace, Settings QA and Codex connection check, with Codex connected.
+
+## Remaining scope
+
+**26 unfinished groups**, down from 28 by closing E6 and E8. Other delivered slices reduce
+partial scope without closing their broader groups:
+
+- C7: Electron shown receipts and restored preferences are verified; an actual OS banner and
+  click were not observed. Original in-app toasts, tile bell and task Notify me editing remain.
+- C3: local text picker upload/send/draft/restart passed; drop/paste, uncertain receipt and
+  queue handling have automated coverage. Native queued transition was not observed. Model
+  media input remains.
+- C8/D5: PDF and private/shared table cards are verified; broader media/PDF interactions,
+  child runs and other request presentations remain.
+- E5: anonymous HTTPS MCP discovery, invocation, disconnect, revocation and owner isolation
+  passed natively. Bearer handling has automated coverage; OAuth, stdio and legacy SSE remain.
+- B5: website logos and Skills/Routines/MCP navigation are available. Apps, Triggers, Setup,
+  To handle and other contextual actions remain.
+
+Routines run only while the app is open, with one due occurrence after sleep/reopen rather
+than interval-by-interval catch-up. Cron/ISO and timezone replace hosted natural-language
+parsing; model-side schedule tools are outside this slice. Skill use requires its explicit
+coworker grant; approving a proposal never enables other tools. Connector-owned skills remain
+read-only; no marketplace/dependency installer is included.

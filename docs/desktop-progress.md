@@ -2,19 +2,24 @@
 
 ## Current handoff integration — November 4, 2026
 
-All A–H handoffs are integrated and installed with root fixes in `742d089`. Full UI
-**4,366 tests** passed at `922164f`; the full engine rerun passed **3,285** at `0a74b58`.
-Final proposal checks **75**, native runner checks **22**, type checks, production packaging
-and runtime verification passed. Live Mac checks exercised uploads, PDF/table cards, Skills,
-Routines, MCP, notifications and website logos. The new final build is waiting for protected
-Keychain approval before the last restart checks and fixture cleanup. The catalog stays
-**28 unfinished groups**, with E6/E8 proposed for closure after those gates pass.
-See [current integration review](desktop-handoff-integration-review.md) for exact evidence.
-The ledger below describes earlier accepted releases and the original assignment round.
+All A–H handoffs and root corrections are installed in `742d089`. **E6 Skills and E8 Routines
+are accepted after native and full-restart checks: 26 unfinished capability groups remain,
+down from 28.** Other delivered slices passed as detailed in the
+[current review](desktop-handoff-integration-review.md); C7 keeps the unobserved OS banner/click
+and missing original notification surfaces open.
 
-Updated November 4, 2026. Installed source: `86c35a307831da45c5f844bd81995181755f6bfe`.
+Root passed the full UI suite **4,366** at `922164f`, full engine rerun **3,285** at `0a74b58`,
+final proposal checks **75** at `742d089`, native runner checks **22**, type checks, packaging
+and runtime verification. Live Mac checks verified real Codex skill use **63** after restart,
+scoped applied/dismissed proposals, routine execution/results with no duplicate on restart,
+uploads, PDF/private/shared cards, MCP permission isolation and exact saved website-logo bytes.
+Recovery-backed cleanup and a final restart preserved the original **2 coworkers / 23 chats /
+88 messages**, workspace/defaults, Box geometry and shared data. No QA fixtures remain.
+The ledger below preserves previous releases and historical assignments.
 
-The parity catalog has **28 unfinished capability groups**, down from 29 because **D7 private/shared data tables is complete**. Individual delivery tasks can complete part of a broader group; partial scope remains listed rather than being removed to reduce the count.
+Historical Logs delivery: installed source `86c35a307831da45c5f844bd81995181755f6bfe`.
+
+At the Logs delivery, the parity catalog had **28 unfinished capability groups**, down from 29 because **D7 private/shared data tables is complete**. Individual delivery tasks can complete part of a broader group; partial scope remains listed rather than being removed to reduce the count.
 
 ## Original assignments — handoffs now integrated; final acceptance above
 
@@ -66,9 +71,9 @@ Evidence: `desktop-pending-inbox-acceptance.md` and `desktop-workspace-logo-acce
 
 | Area | Accepted work | Remaining work |
 | --- | --- | --- |
-| B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local logo upload; Box search/member drill, Move to another Box and New Box | Website logos; remaining contextual actions and unsupported coworker-panel commands as their features land. Board Boxes are complete under B2 |
-| C7: Actions and notifications | Pending and Done inbox; exact navigation; persistent individual/bulk read; live closed counts | Pending-request age/order from the request's timestamp; notifications; per-coworker notification preferences |
+| B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local/website logo upload; Skills/Routines/MCP navigation; Box search/member drill, Move to another Box and New Box | Apps, Triggers, Setup, To handle and remaining contextual actions. Board Boxes are complete under B2 |
+| C7: Actions and notifications | Pending and Done inbox; exact navigation; persistent individual/bulk read; live closed counts; source-message request age; notification preferences and native shown receipts | Actual OS banner/click acceptance; original in-app toasts, tile bell and task Notify me editing |
 | D5: Files | Text editing/conflicts; rename/Delete; static raster, WAV/MP3/MP4 and PDF previews; previous/next navigation | Additional media formats and animation; remaining PDF interactions |
-| C8: Conversation activity and results | File steps; suggested replies; live compaction; text/static-image/audio/MP4 result cards | Child runs; tables; additional formats and request presentations |
+| C8: Conversation activity and results | File steps; suggested replies; live compaction; text/static-image/audio/MP4/PDF and private/shared table result cards; scheduled run presentation and Skills proposals | Child runs; additional formats and request presentations |
 
 These rows explain partial completion; they are not four new tasks added to the scope. The full parity catalog retains the original source references and connected-workspace decisions. C5 and C6 currently describe overlapping credential/service/sign-in/takeover work; they must not be counted as two independent tasks in the delivery ledger.
