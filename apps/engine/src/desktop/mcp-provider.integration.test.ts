@@ -10,7 +10,7 @@ vi.mock('../config/env.js', () => ({ env: () => ({ RERUN_HUB_BASE_URL: 'http://1
 vi.mock('../agents/lock.js', () => ({ withAgentLock: async (_id: string, action: () => Promise<unknown>) => action() }))
 vi.mock('../agents/loader.js', () => ({ readAgentConfig: async () => captured.config }))
 vi.mock('./agent-lifecycle.js', () => ({ beginDesktopAgentWork: () => () => {} }))
-vi.mock('./codex-runtime.js', () => ({ signedInFlag: 'RERUN_CHATGPT_CONNECTED', desktopCodexRuntime: () => ({ codexPath: '/fixture/codex', cwd: '/fixture/work', env: {} }) }))
+vi.mock('./codex-runtime.js', () => ({ signedInFlag: 'RERUN_CHATGPT_CONNECTED', DESKTOP_CODEX_ID: 'mac-chatgpt', desktopCodexAvailable: () => true, desktopCodexRuntime: () => ({ codexPath: '/fixture/codex', cwd: '/fixture/work', env: {} }) }))
 vi.mock('ai-sdk-provider-codex-cli', async original => {
     const actual = await original<typeof import('ai-sdk-provider-codex-cli')>()
     return { ...actual, createCodexAppServer: (options: { defaultSettings: Record<string, any> }) => {
@@ -29,7 +29,7 @@ function setup(name = 'public_add') {
     captured.config = config
     const agent = {
         id: 'engine-owner', config, soul: '', install: '', env: {},
-        resolved: { provider: 'codex', model: 'fixture', connection: { id: 'mac-chatgpt', config: connectionConfigSchema.parse({ name: 'ChatGPT', provider: 'codex' }), env: { RERUN_CHATGPT_CONNECTED: '1' } } },
+        resolved: { provider: 'codex', model: 'fixture', connection: { id: 'mac-chatgpt', config: connectionConfigSchema.parse({ name: 'ChatGPT', provider: 'codex', createdAt: '2026-11-04T00:00:00.000Z' }), env: { RERUN_CHATGPT_CONNECTED: '1' } } },
     } as LoadedAgent
     const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
         const body = JSON.parse(String(init.body))
