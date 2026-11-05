@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ComponentType } from 're
 import { ControlCenterView } from '@/components/control-center/ControlCenterView'
 import type { ControlRow, ControlSection } from '@/components/control-center/types'
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
-import { BoxIcon, CirclePlusIcon, FocusCenterIcon, KeyboardIcon, LayoutGridIcon, LockKeyholeIcon, MessageCircle, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
+import { BellIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, KeyboardIcon, LayoutGridIcon, LockKeyholeIcon, MessageCircle, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
 import { parseQuery, searchItems } from '@/lib/control-center/search'
 import { buildDesktopControlCommands, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
@@ -37,6 +37,7 @@ const COMMAND_ICONS: Record<DesktopControlCommandId, ComponentType<{ className?:
     recenter_board: FocusCenterIcon,
     toggle_theme: SunIcon,
     shortcuts: KeyboardIcon,
+    notifications: BellIcon,
 }
 
 function pageKey(page: Page): string {
@@ -64,6 +65,7 @@ export type DesktopControlCenterProps = {
     onModelSettings: () => void
     onBackToBoard: () => void
     onShortcuts?: () => void
+    onNotifications?: (agentId?: string) => void
     onWorkspaceSettings?: () => void
     onRecenterBoard?: () => void
     onToggleTheme?: () => void
@@ -71,7 +73,7 @@ export type DesktopControlCenterProps = {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -121,8 +123,8 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
     const [attentionNotice, setAttentionNotice] = useState<{ scope: string; text: string } | null>(null)
     const selectingAttention = useRef<{ scope: string } | null>(null)
     const selectingChat = useRef<{ scope: string } | null>(null)
-    const latest = useRef({ open, disabled, selectionScope, coworkers, board, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
-    latest.current = { open, disabled, selectionScope, coworkers, board, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
+    const latest = useRef({ open, disabled, selectionScope, coworkers, board, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
+    latest.current = { open, disabled, selectionScope, coworkers, board, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
     const available = () => latest.current.open && !latest.current.disabled && !isDesktopQuitting() && latest.current.selectionScope === selectionScope
     const sameBoard = () => !!board && latest.current.board?.revision === board.revision
 
@@ -315,7 +317,7 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
             const action = {
                 add_coworker: current.onAddCoworker, team_board: current.onBackToBoard, model_settings: current.onModelSettings,
                 new_box: current.onAddBox,
-                shortcuts: current.onShortcuts, workspace_settings: current.onWorkspaceSettings, recenter_board: current.onRecenterBoard, toggle_theme: current.onToggleTheme,
+                shortcuts: current.onShortcuts, notifications: current.onNotifications, workspace_settings: current.onWorkspaceSettings, recenter_board: current.onRecenterBoard, toggle_theme: current.onToggleTheme,
             }[command.id]
             // A retained row cannot dismiss the center when its action was removed, or invoke
             // the opposite of the theme choice the user saw before the appearance changed.
@@ -340,14 +342,25 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
         })),
     }] : []
 
-    const coworkerMoveSection = (coworkerId: string): ControlSection[] => {
+    const coworkerActionsSection = (coworkerId: string): ControlSection[] => {
+        const rows: (ControlRow & { keywords?: string[] })[] = []
         const spaceId = membership(coworkerId)
-        if (!board || board.spaces.length < 2 || !spaceId || !onMoveCoworker) return []
-        const enter = drill({ kind: 'move', coworkerId })
-        return [{ id: 'coworker-actions', heading: 'Actions', rows: searchItems([{
-            id: 'coworker-move', label: 'Move to another Box', detail: boxName(spaceId), keywords: ['box', 'team'],
-            leading: { kind: 'icon' as const, icon: BoxIcon }, onSelect: enter, onDrill: enter,
-        }], text) }]
+        if (board && board.spaces.length > 1 && spaceId && onMoveCoworker) {
+            const enter = drill({ kind: 'move', coworkerId })
+            rows.push({ id: 'coworker-move', label: 'Move to another Box', detail: boxName(spaceId), keywords: ['box', 'team'],
+                leading: { kind: 'icon', icon: BoxIcon }, onSelect: enter, onDrill: enter })
+        }
+        if (onNotifications) rows.push({
+            id: 'coworker-notifications', label: 'Notifications', detail: 'When this agent reaches you', keywords: ['alerts'],
+            leading: { kind: 'icon', icon: BellIcon }, onSelect: () => {
+                const current = latest.current
+                if (!available() || !current.onNotifications || !current.coworkers.some(owner => owner.id === coworkerId)) return
+                const action = current.onNotifications
+                close()
+                action(coworkerId)
+            },
+        })
+        return rows.length ? [{ id: 'coworker-actions', heading: 'Actions', rows: searchItems(rows, text) }] : []
     }
 
     const moveSections = (coworkerId: string): ControlSection[] => {
@@ -380,12 +393,12 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
         // prefixes cannot turn "Settings" here into a workspace/provider navigation action.
         if (page.kind === 'coworker') {
             if (!pageCoworker) return []
-            return [...coworkerPanelSection(page.coworkerId), ...coworkerMoveSection(page.coworkerId), ...(query.trim() === ''
+            return [...coworkerPanelSection(page.coworkerId), ...coworkerActionsSection(page.coworkerId), ...(query.trim() === ''
                 ? coworkerChatSections()
                 : conversationSection('coworker-conversations', 'Conversations', page.coworkerId))]
         }
 
-        const commands = buildDesktopControlCommands({ addBox: !!board && !!onAddBox, shortcuts: !!onShortcuts, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme })
+        const commands = buildDesktopControlCommands({ addBox: !!board && !!onAddBox, shortcuts: !!onShortcuts, notifications: !!onNotifications, workspaceSettings: !!onWorkspaceSettings, recenterBoard: !!onRecenterBoard, toggleTheme: !!onToggleTheme, darkTheme })
         const commandSections: ControlSection[] = [
             { id: 'actions', heading: 'Actions', rows: searchItems(commands.filter(command => command.group === 'actions'), text).map(commandRow) },
             { id: 'settings', heading: 'Settings', rows: searchItems(commands.filter(command => command.group === 'settings'), text).map(commandRow) },

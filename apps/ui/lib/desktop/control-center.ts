@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { desktopChatSearchSchema, type DesktopConversationHit } from './chat-search'
 import { isDesktopQuitting } from './draft-writes'
 
-export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'shortcuts'] as const
+export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'notifications', 'shortcuts'] as const
 
 export type DesktopControlCommandId = (typeof DESKTOP_CONTROL_COMMAND_IDS)[number]
 
@@ -22,6 +22,7 @@ export type DesktopControlCommand = {
 export type DesktopControlCommandOptions = {
     addBox?: boolean
     shortcuts?: boolean
+    notifications?: boolean
     workspaceSettings?: boolean
     recenterBoard?: boolean
     toggleTheme?: boolean
@@ -38,6 +39,7 @@ export function buildDesktopControlCommands(options: DesktopControlCommandOption
     if (options.recenterBoard) commands.push({ id: 'recenter_board', group: 'actions', label: 'Recenter the board', keywords: ['camera', 'zoom', 'fit', 'reset view'] })
     if (options.toggleTheme) commands.push({ id: 'toggle_theme', group: 'actions', label: options.darkTheme ? 'Switch to light theme' : 'Switch to dark theme', keywords: ['appearance', 'mode', 'dark', 'light'] })
     if (options.workspaceSettings) commands.push({ id: 'workspace_settings', group: 'settings', label: 'Workspace settings', keywords: ['name', 'logo', 'rename'] })
+    if (options.notifications) commands.push({ id: 'notifications', group: 'settings', label: 'Notifications', keywords: ['alerts', 'push', 'sound'] })
     if (options.shortcuts) commands.push({ id: 'shortcuts', group: 'settings', label: 'Keyboard shortcuts', keywords: ['keys', 'hotkeys'] })
     return commands
 }

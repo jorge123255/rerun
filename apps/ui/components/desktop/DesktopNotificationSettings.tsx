@@ -62,7 +62,7 @@ function DesktopNotificationChannels({ prefs, onChange }: { prefs: NotificationP
 
 // Hosted email and cloud push never leave the Mac: the original email rows and the account-emails
 // tab have no local channel to configure, so the settings surface carries nothing for them.
-export function DesktopNotificationSettings() {
+export function DesktopNotificationSettings({ pinnedCoworkerId }: { pinnedCoworkerId?: string | null }) {
     const [prefs, setPrefs] = useState<NotificationPrefs | null>(null)
     const [coworkers, setCoworkers] = useState<DesktopCoworker[]>([])
     const [readFailed, setReadFailed] = useState(false)
@@ -143,11 +143,13 @@ export function DesktopNotificationSettings() {
     }
     if (!prefs) return <p role="status" className="text-sm text-muted-foreground">Loading your notification settings…</p>
 
+    if (pinnedCoworkerId && !coworkers.some(owner => owner.id === pinnedCoworkerId)) return <p role="alert" className="text-sm text-muted-foreground">This coworker is no longer available.</p>
+
     return (
         <div className="flex flex-col gap-6">
             <ScopeRadioList scope={prefs.scope} onChange={scope => update({ scope })} />
             <DesktopNotificationChannels prefs={prefs} onChange={update} />
-            <CoworkerRules coworkers={coworkers} rules={prefs.coworkers} onChange={setCoworkerRule} detail="Choose a different notification rule for a coworker."
+            <CoworkerRules coworkers={coworkers} rules={prefs.coworkers} pinnedId={pinnedCoworkerId} onChange={setCoworkerRule} detail="Choose a different notification rule for a coworker."
                 renderPicker={({ exclude, onPick }) => <DesktopCoworkerPicker coworkers={coworkers} exclude={exclude} onPick={onPick} />} />
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         </div>
