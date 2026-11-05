@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { prepareSkillHelperFixture } from './skill-publication.test-support.js'
-import { listPublishedSkills, parseSkillDraft, publishNewSkill, readConfinedFile, readPublishedSkill, replaceSkillManifest, setSkillPublishHooksForTests, writeConfinedFile } from './skill-publication.js'
+import { deleteConfinedFile, listPublishedSkills, parseSkillDraft, publishNewSkill, readConfinedFile, readPublishedSkill, replaceSkillManifest, setSkillPublishHooksForTests, writeConfinedFile } from './skill-publication.js'
 
 const previousHelper = process.env.RERUN_DESKTOP_RENAME_HELPER
 let fixture: Awaited<ReturnType<typeof prepareSkillHelperFixture>>
@@ -30,6 +30,16 @@ test('creates and reads full text, refuses duplicate names, and retains prior in
     expect(kept).toHaveLength(1)
     expect(await readFile(join(folder, 'references', kept[0]!), 'utf8')).toBe('first')
     expect((await readPublishedSkill(skills, 'notes'))?.files).toEqual(['references/steps.md'])
+})
+
+test.each(['SKILL.md', 'skill.md', './sKiLl.Md'])('bundled file tools cannot overwrite, delete, or import a manifest alias %s', async path => {
+    const folder = join(skills, 'notes')
+    const before = await readFile(join(folder, 'SKILL.md'))
+    await expect(writeConfinedFile(folder, path, 'Changed manifest')).rejects.toThrow('other than SKILL.md')
+    await expect(deleteConfinedFile(folder, path)).rejects.toThrow('other than SKILL.md')
+    await expect(publishNewSkill(skills, 'imported', { name: 'Imported', description: '', body: 'Procedure', files: [{ path, content: 'Changed manifest' }] })).rejects.toThrow('Use the skill body')
+    expect(await readFile(join(folder, 'SKILL.md'))).toEqual(before)
+    expect(await readPublishedSkill(skills, 'imported')).toBeNull()
 })
 
 test('an in-place edit changes the opaque version and a truncated page cannot overwrite its tail', async () => {

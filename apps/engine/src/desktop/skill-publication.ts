@@ -539,7 +539,7 @@ export async function writeConfinedFile(root: string, path: string, content: str
     const parts = relativeParts(path)
     const name = parts.at(-1)
     if (!name || reserved(name) || parts.length > MAX_TREE_DEPTH) throw new SkillBoundaryError(400, 'Send a file path to save.')
-    if (parts.length === 1 && name.toUpperCase() === MANIFEST) throw new SkillBoundaryError(400, 'Send a file path other than SKILL.md.')
+    if (parts.length === 1 && name.toUpperCase() === MANIFEST.toUpperCase()) throw new SkillBoundaryError(400, 'Send a file path other than SKILL.md.')
     await withPublication(dirname(root), options, async (skills, check) => {
         const rootDir = await openDirectory(root)
         const opened: PinnedDir[] = [rootDir]
@@ -559,7 +559,7 @@ export async function deleteConfinedFile(root: string, path: string, options: Pu
     const parts = relativeParts(path)
     const name = parts.at(-1)
     if (!name || reserved(name) || parts.length > MAX_TREE_DEPTH) throw new SkillBoundaryError(400, 'Send a file path to delete.')
-    if (parts.length === 1 && name.toUpperCase() === MANIFEST) throw new SkillBoundaryError(400, 'Send a file path other than SKILL.md.')
+    if (parts.length === 1 && name.toUpperCase() === MANIFEST.toUpperCase()) throw new SkillBoundaryError(400, 'Send a file path other than SKILL.md.')
     await withPublication(dirname(root), options, async (_skills, check) => {
         const parentPath = join(root, ...parts.slice(0, -1))
         let parent: PinnedDir
@@ -607,7 +607,7 @@ async function writeTree(root: PinnedDir, files: { path: string; content: string
     for (const file of files) {
         const parts = relativeParts(file.path)
         const name = parts[parts.length - 1]
-        if (!name || reserved(name) || (parts.length === 1 && name.toUpperCase() === MANIFEST)) throw new SkillBoundaryError(400, 'Use the skill body to change SKILL.md')
+        if (!name || reserved(name) || (parts.length === 1 && name.toUpperCase() === MANIFEST.toUpperCase())) throw new SkillBoundaryError(400, 'Use the skill body to change SKILL.md')
         const bytes = Buffer.byteLength(file.content, 'utf8')
         if (bytes > MAX_SKILL_FILE_BYTES) throw new SkillBoundaryError(413, `${file.path} is too large (max 10 MB per file)`)
         total += bytes

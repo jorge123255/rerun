@@ -5,7 +5,7 @@ import { SkillBoundaryError } from './skill-publication-error.js'
 
 type Identity = { dev: bigint; ino: bigint }
 const exec = promisify(execFile)
-const env = { PATH: '/usr/bin:/bin', LANG: 'C' }
+const env = { PATH: '/usr/bin:/bin', LANG: 'C', NODE_ENV: process.env.NODE_ENV ?? 'production' }
 function helper(): string {
     const path = process.env.RERUN_DESKTOP_RENAME_HELPER
     if (!path || !isAbsolute(path)) throw new SkillBoundaryError(503, 'The safe Skills helper is unavailable. Reopen the app and try again.')
