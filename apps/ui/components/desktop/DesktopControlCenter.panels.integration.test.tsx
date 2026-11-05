@@ -161,7 +161,7 @@ function fixture(runStatus?: () => Promise<Response>) {
             if (['files', 'files/read', 'memories', 'tools', 'monitoring', 'runs', 'settings'].includes(route)) {
                 panelReads.push(url.pathname)
                 if (method !== 'GET') contentWrites.push(`${method} ${url.pathname}`)
-                if (route === 'runs') return Response.json({ runs: [] })
+                if (route === 'runs') return Response.json({ runs: [{ id: `${agentId}-run`, status: 'done', startedAt: date, finishedAt: date, stepCount: 1, provider: 'mac-chatgpt', model: `${agent.name} model`, inputTokens: null, outputTokens: null, totalTokens: 42, cachedInputTokens: null, reasoningTokens: null, costMicros: null }] })
                 if (route === 'files') return Response.json({ path: '', entries: [{ name: 'notes.md', type: 'file', size: 32, modifiedAt: date }] })
                 if (route === 'files/read') return Response.json({ path: 'notes.md', content: `# ${agent.name} private file`, size: 32, truncated: false })
                 if (route === 'memories') return Response.json({ memories: [{ id: `${agentId}-note`, content: `${agent.name} private memory`, kind: 'fact', tags: [], createdAt: date, strength: 1, status: 'active' }] })
@@ -223,7 +223,7 @@ test('original coworker Open rows use existing dialogs without remounting the cu
         ['Files', 'Files', 'notes.md'],
         ['Capabilities', 'Tools', 'Reviewer file access'],
         ['Monitoring', 'Monitoring', 'No runs in the last 7 days'],
-        ['Logs', 'Recent runs', 'No runs yet for this coworker.'],
+        ['Logs', 'Recent runs', 'Reviewer model'],
         ['Settings', 'Edit coworker', 'Reply length'],
         ['Files', 'Files', 'notes.md'],
     ]
@@ -266,6 +266,12 @@ test('a contextual action launched from the board binds to the chosen coworker, 
         expect(dialog.textContent).not.toContain(`# ${agent.id === reviewer.id ? auditor.name : reviewer.name} private file`)
         await dismissPanel('Files')
         await openCoworkerPage(agent.name)
+        await chooseOpenRow('Logs')
+        const runs = await until(() => panelDialog('Recent runs'))
+        await until(() => runs.textContent?.includes(`${agent.name} model`))
+        expect(runs.textContent).not.toContain(`${agent.id === reviewer.id ? auditor.name : reviewer.name} model`)
+        await dismissPanel('Recent runs')
+        await openCoworkerPage(agent.name)
         await chooseOpenRow('Chat')
         const input = await until(composer)
         await until(() => input.closest('[data-desktop-tab-active]')?.textContent?.includes(app.answer(`${agent.id}-first`)))
@@ -287,13 +293,13 @@ test('only the selected chat opens a coworker dialog and both distinct drafts re
     await until(() => second.closest('[data-desktop-tab-active]')?.textContent?.includes(app.answer(`${reviewer.id}-second`)))
     await enter(second, 'Second chat unsent draft')
     await openCoworkerPage('Reviewer')
-    await chooseOpenRow('Knowledge')
-    await until(() => panelDialog('Memories')?.textContent?.includes('Reviewer private memory'))
+    await chooseOpenRow('Logs')
+    await until(() => panelDialog('Recent runs')?.textContent?.includes('Reviewer model'))
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
-    expect(app.panelReads.filter(path => path.endsWith('/memories'))).toHaveLength(1)
+    expect(app.panelReads.filter(path => path.endsWith('/runs'))).toHaveLength(1)
     expect(first.value).toBe('First chat unsent draft')
     expect(second.value).toBe('Second chat unsent draft')
-    await dismissPanel('Memories')
+    await dismissPanel('Recent runs')
     await openCoworkerPage('Reviewer')
     await chooseOpenRow('Chat')
     expect(composer()).toBe(second)
@@ -307,10 +313,10 @@ test('only the selected chat opens a coworker dialog and both distinct drafts re
     const reopened = await app.mount()
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
     await openCoworkerPage('Reviewer')
-    await chooseOpenRow('Files')
-    await until(() => panelDialog('Files')?.textContent?.includes('notes.md'))
+    await chooseOpenRow('Logs')
+    await until(() => panelDialog('Recent runs')?.textContent?.includes('Reviewer model'))
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
-    await dismissPanel('Files')
+    await dismissPanel('Recent runs')
     await openCoworkerPage('Reviewer')
     await chooseOpenRow('Chat')
     await until(() => composer()?.value === 'Second chat unsent draft')

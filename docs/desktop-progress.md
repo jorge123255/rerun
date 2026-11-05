@@ -4,7 +4,13 @@ Updated November 4, 2026. Installed source: `c41e83743cb969fc9814a2c64850d04cd76
 
 The parity catalog has **28 unfinished capability groups**, down from 29 because **D7 private/shared data tables is complete**. Individual delivery tasks can complete part of a broader group; partial scope remains listed rather than being removed to reduce the count.
 
-## Current delivery — 5 of 9 tasks accepted
+## Active assignments — source work and root acceptance
+
+A: PDF chat cards; B: composer text uploads; C: finish notifications; D: confined Skills/tool corrections; E: schedule retry correction; F: MCP corrections; G: table chat cards; H: website logos. Root takes original Control Center **Open → Logs** and all integration/testing. Four new clean lane worktrees are prepared at `bb45f3a`; existing C/D/E/F worktrees are preserved. Previous accepted deliveries remain accepted. The new work is not yet accepted and does not reduce the 28 unfinished capability groups. See [current prompts](desktop-next-round.md).
+
+Root's Logs source now passes **4,039 UI tests, 39 existing skips**, plus UI typecheck; native/restart acceptance is pending. Engine/contracts trees are unchanged from the previously validated release.
+
+## Previous delivery — 5 of 9 tasks accepted; four continue
 
 All eight lane worktrees were prepared from `927c5e17da6b6db84657261695a98e0533b264de`. Root owns integration and every check, build, installation, live model call and Mac/restart test.
 

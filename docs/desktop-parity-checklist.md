@@ -1,5 +1,7 @@
 # What the Rerun Mac app is missing
 
+
+**New assignments:** A PDF chat cards; B composer text uploads; C notifications; D Skills corrections; E schedules correction; F MCP corrections; G table cards; H website logos. Root ports original Control Center Open → Logs. New work remains pending acceptance; the prior five accepted deliveries remain accepted. [Assignments and prompts](desktop-next-round.md).
 **Delivery progress:** **5 of 9 concrete tasks accepted** in the current round: A, B, G, H and root. The previous Boxes/MP4/Files-navigation delivery remains **3 of 3 accepted**. There are **28 unfinished capability groups**, down from 29 after D7 private/shared tables was completed. D5, C3 and E2 remain partial. See `docs/desktop-progress.md` and [current acceptance](desktop-pdf-attachments-data-web-acceptance.md).
 
 Use this list to port user-facing capabilities from [original Rerun](https://github.com/jorge123255/rerun/tree/a6d63a4b542674ddd002e51b39ba0df6e0807bcc). The installed comparison source is `c41e83743cb969fc9814a2c64850d04cd762777f` on November 4, 2026. Checked rows have passed root integration and native/restart acceptance; unchecked rows retain missing or partial scope. The Mac has one installed preview at `~/Applications/Rerun Desktop Preview.app`; build updates from a clean build worktree using `pnpm desktop:install`.

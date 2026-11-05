@@ -131,3 +131,29 @@ test('closing aborts the request and reopening reads again without reusing a lat
         expect(document.querySelector('[role="dialog"]')?.textContent).toContain('No runs yet')
     } finally { await act(async () => { root.unmount() }) }
 })
+
+
+test('controlled Logs navigation aborts an old owner and ignores its late run response', async () => {
+    let finish!: (response: Response) => void
+    const slow = new Promise<Response>(resolve => { finish = resolve })
+    const fetcher = vi.fn().mockImplementationOnce(() => slow).mockResolvedValue(Response.json({ runs: [] }))
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    const onOpenChange = vi.fn()
+    try {
+        await act(async () => { root.render(<DesktopRunHistory agent={alice} dialogControl={{ open: true, onOpenChange }} />) })
+        expect(document.querySelector('[role="status"]')?.textContent).toBe('Loading runs…')
+        await act(async () => { root.render(<DesktopRunHistory agent={bob} dialogControl={{ open: true, onOpenChange }} />) })
+        expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true)
+        expect(fetcher.mock.calls[1][0]).toBe('/api/desktop/agents/bob/runs')
+        await act(async () => { finish(Response.json({ runs: [running] })) })
+        expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Latest 50 runs for Bob.')
+        expect(document.querySelector('[role="dialog"]')?.textContent).toContain('No runs yet')
+        expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('local-test')
+        await click('Done')
+        expect(onOpenChange).toHaveBeenCalledWith(false)
+        await act(async () => { root.render(<DesktopRunHistory agent={bob} dialogControl={{ open: false, onOpenChange }} />) })
+        expect(document.querySelector('[role="dialog"]')).toBeNull()
+    } finally { await act(async () => { root.unmount() }) }
+})

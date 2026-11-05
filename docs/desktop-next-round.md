@@ -1,5 +1,31 @@
 # Next Rerun Mac agent assignments
 
+Updated November 4, 2026. New A/B/G/H worktrees are prepared at `bb45f3a99e2ae2fe2de8e944a9eb4ab329ef0055`, including root's source implementation of Control Center Logs. Installed acceptance remains `c41e83743cb969fc9814a2c64850d04cd762777f` until the new native checks finish. Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+
+Previous A/B/G/H/root deliveries remain accepted. This round adds four new lane slices and root's Logs navigation; C/D/E/F continue unfinished work. No unfinished lane is reset or counted as accepted. The catalog remains **28 unfinished capability groups**; these smaller deliveries complete parts of C3/C8/B5 rather than pretending entire groups are closed.
+
+| Agent | Assignment | Worktree under rerun-desktop-worktrees | State / prompt |
+| --- | --- | --- | --- |
+| A | C8 — PDF result cards | `chat-pdf-cards` / `desktop/chat-pdf-cards` | New clean worktree; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent A next prompt.md>) |
+| B | C3 — Composer text-file uploads | `composer-file-upload` / `desktop/composer-file-upload` | New clean worktree; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent B next prompt.md>) |
+| C | C7 — Notifications and request age | `coworker-notifications` / `desktop/coworker-notifications` | Continue existing uncommitted work; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent C next prompt.md>) |
+| D | E6 — Confined Skills store and actual tools | `coworker-skills` / `desktop/coworker-skills` | Finish corrections on 2dde647; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent D next prompt.md>) |
+| E | E8 — Schedule receipt replay and integration contract | `coworker-schedules` / `desktop/coworker-schedules` | Finish correction on 267c832; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent E next prompt.md>) |
+| F | E5 — MCP list/admission corrections | `coworker-mcp` / `desktop/coworker-mcp` | Finish corrections on 0df850c; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent F next prompt.md>) |
+| G | C8 — Private/shared table result cards | `chat-table-cards` / `desktop/chat-table-cards` | New clean worktree; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent G next prompt.md>) |
+| H | B5 — Website/direct-image workspace logos | `workspace-website-logo` / `desktop/workspace-website-logo` | New clean worktree; [copy prompt](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Agent H next prompt.md>) |
+| Root | B5 — Original Control Center coworker Open → Logs | Coding checkout `rerun-desktop`, `desktop/m1` | Source checks passed; native/restart acceptance pending |
+
+Root alone runs all checks, builds, installation, live model requests and native Mac/restart acceptance. Agent prompts forbid running these checks or controlling the app. Root owns central integration files. B owns the composer area only; its base already includes root's Logs navigation, avoiding that overlap. A and G provide independent card components/adapters; root integrates shared history/render/grant wiring. H supplies isolated link-preview modules and an exact workspace-form integration fragment.
+
+A/B/G/H old completed worktrees are preserved. C keeps its existing dirty notification work. D advanced during preparation to clean `2dde64793cf909781e73e9afe6719c3cf4535295`; root's source review confirmed several fixes but found remaining destructive truncation, confinement/publication, tool-adapter, ownership, editor and proposal problems, all listed in the updated prompt. E/F keep their reviewed correction tasks. F's untracked alternate tool adapter remains excluded.
+
+See each prompt for exact original sources, ownership, limits, authored-regression scope and handoff requirements. New tasks are not accepted until root has reviewed the returned commits and completed applicable checks and Mac QA.
+
+---
+
+# Previous delivery assignments
+
 Prepared agent base: `927c5e17da6b6db84657261695a98e0533b264de`. Installed root source: `c41e83743cb969fc9814a2c64850d04cd762777f`. Original Rerun: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
 **A, B, G and H are installed and accepted in `c41e837`, alongside root’s previously accepted Control Center Box work: 5 of 9 delivery tasks are accepted.** A’s blank iframe was replaced by root’s bundled macOS PDF page renderer after native failure; the original Files header, frame and sibling navigation remain. B supplies multiple existing text attachments; G supplies private/shared tables and original views; H supplies bounded public-page fetching. Root also corrected saved-view route identity, stale Board previews and selected-view persistence across changing local app origins. C is still working and its uncommitted work is untouched. D `a34f5ce`, E `267c832` and F `0df850c` remain outside acceptance and need the reviewed corrections/root integration. Uncommitted alternatives remain excluded. Root alone ran all checks, builds, installation and Mac acceptance.
