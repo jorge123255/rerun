@@ -5,6 +5,8 @@
 (deny file-read-data file-write* process-exec)
 (allow file-read-data (literal "/") (subpath "/System") (subpath "/usr") (subpath "/Library/Apple") (subpath "/Library/Keychains") (subpath "/private/etc") (subpath "/dev") (literal (param "BINARY")))
 (allow file-read-data file-write* (subpath (param "PROFILE")) (literal (param "OUTPUT")) (literal "/dev/null"))
+; Structured output adds no directory read or write permission.
+(allow file-read-data (literal (param "SCHEMA")))
 (allow process-exec (literal (param "BINARY")))
 (if (equal? (param "HOST_ALLOWED") "1")
     (allow file-read-data process-exec (literal (param "HOST"))))
