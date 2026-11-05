@@ -80,9 +80,7 @@ test.each([
     ['an empty pdf', card([pdf({ size: 0 })])],
     ['an oversized pdf', card([pdf({ size: DESKTOP_CARD_PDF_MAX_BYTES + 1 })])],
     ['a mismatched pdf name', card([pdf({ name: 'other.pdf' })])],
-    ['an unsupported OGG audio', card([audio({ path: 'voice/tone.ogg', name: 'tone.ogg' })])],
-    ['an unsupported M4A audio', card([audio({ path: 'voice/tone.m4a', name: 'tone.m4a' })])],
-    ['an unsupported FLAC audio', card([audio({ path: 'voice/tone.flac', name: 'tone.flac' })])],
+    ['an unsupported AAC audio', card([audio({ path: 'voice/tone.aac', name: 'tone.aac' })])],
     ['a mismatched name', card([file({ name: 'other.md' })])],
     ['a mismatched image name', card([image({ name: 'other.png' })])],
     ['a mismatched audio name', card([audio({ name: 'other.wav' })])],
@@ -210,4 +208,19 @@ test('reports missing, replaced or invalid video without returning stale bytes',
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', '12:35')).rejects.toThrow('can’t be played')
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', undefined)).rejects.toThrow('Send this video')
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mov', '12:35')).rejects.toThrow('not a supported video')
+})
+
+
+test.each([['m4a', 'audio/mp4'], ['ogg', 'audio/ogg'], ['flac', 'audio/flac']])('restores %s cards and reads their current owner-bound audio with identity', async (extension, contentType) => {
+    const entry = audio({ path: `voice/tone.${extension}`, name: `tone.${extension}` })
+    expect(desktopFileCardOf(card([entry]))?.files).toEqual([entry])
+    expect(desktopFileCardOf(card([audio({ ...entry, identity: undefined })]))).toBeUndefined()
+    expect(desktopFileCardOf(card([audio({ ...entry, size: CARD_MAX_AUDIO_BYTES + 1 })]))).toBeUndefined()
+    const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': contentType } }))
+    vi.stubGlobal('fetch', fetch)
+    const result = await readDesktopCardAudio('owner a', String(entry.path), '12:34')
+    expect(result.contentType).toBe(contentType)
+    expect(fetch).toHaveBeenCalledWith(`/api/desktop/agents/owner%20a/files/audio?path=voice%2Ftone.${extension}&identity=12%3A34`, { cache: 'no-store' })
+    fetch.mockImplementation(async () => Response.json({ error: 'File was replaced' }, { status: 409 }))
+    await expect(readDesktopCardAudio('owner a', String(entry.path), '12:34')).rejects.toThrow('File was replaced')
 })

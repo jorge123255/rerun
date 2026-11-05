@@ -37,7 +37,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('memoryDelete', 'Delete memories', 'Remove a specific note from this coworker’s Memories using its last known text.', 'memory_delete'),
     supported('askUser', 'Ask the user', 'Ask questions in chat and continue after you answer.', 'ask_user'),
     supported('requestApproval', 'Request approval', 'Ask you to approve or decline proposed actions in chat.', 'request_approval'),
-    supported('cardFile', 'Show result files', 'Show this coworker’s existing text, Markdown, static images, WAV/MP3 audio, MP4 video or PDF documents as preview tiles in chat.', 'card_file'),
+    supported('cardFile', 'Show result files', 'Show this coworker’s existing text, Markdown, static images, WAV/MP3/M4A/Ogg/FLAC audio, MP4 video or PDF documents as preview tiles in chat.', 'card_file'),
     supported('privateFileWrite', 'Edit workspace files', 'Create new text or Markdown files and make exact, conflict-checked edits in this coworker’s private Files. Existing names are never replaced by create.', 'fs_write', 'fs_edit'),
     supported('sharedFilesRead', 'Read shared files', 'Read and list text and Markdown files in the workspace shared folder. Every coworker with this permission sees the same shared documents.', 'shared_read', 'shared_list'),
     pending('shell', 'Run commands', 'Run Rerun shell commands in a workspace.', 'Requires a confined engine command runner.', 'shell_exec'),

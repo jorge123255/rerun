@@ -120,7 +120,7 @@ test('a playback error removes the player and releases its object URL', async ()
     await act(async () => root.render(<DesktopFileCard agentId="owner a" card={cardOf([audio()])} />))
     await flush()
     await click('Open tone.wav')
-    const player = dialog()?.querySelector<HTMLAudioElement>('audio')!
+    const player = dialog()!.querySelector<HTMLAudioElement>('audio')!
     const url = player.getAttribute('src')
     await act(async () => { player.dispatchEvent(new Event('error')) })
     expect(dialog()?.querySelector('audio')).toBeNull()
@@ -165,4 +165,36 @@ test('paging and owner changes abort old audio reads and never show their late p
     await act(async () => root.unmount())
     roots.delete(root)
     expect(bravoSignal?.aborted).toBe(true)
+})
+
+
+test('new audio formats keep original inert waveform tiles and lazy player cleanup when paged', async () => {
+    const urls = objectUrls()
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause')
+    const formats = [['m4a', 'audio/mp4'], ['ogg', 'audio/ogg'], ['flac', 'audio/flac']]
+    const calls = audioFetch(path => {
+        const mime = formats.find(([ext]) => path.endsWith(`.${ext}`))![1]!
+        return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': mime } })
+    })
+    const root = mount()
+    const files = formats.map(([ext]) => ({ ...audio(), path: `voice/tone.${ext}`, name: `tone.${ext}` }))
+    await act(async () => root.render(<DesktopFileCard agentId="owner a" card={cardOf(files)} />))
+    await flush()
+    expect(calls).toEqual([])
+    expect(document.querySelectorAll('[data-file-card] audio')).toHaveLength(0)
+    await click('Open tone.m4a')
+    for (let index = 0; index < formats.length; index++) {
+        const player = dialog()?.querySelector<HTMLAudioElement>('audio')
+        expect(player).not.toBeNull()
+        expect(player?.hasAttribute('controls')).toBe(true)
+        expect(player?.hasAttribute('autoplay')).toBe(false)
+        expect(calls).toHaveLength(index + 1)
+        const url = player!.getAttribute('src')
+        if (index < formats.length - 1) await click('Next attachment')
+        else await click('Close')
+        expect(urls.revoke).toHaveBeenCalledWith(url)
+    }
+    expect(calls).toEqual(['audio:voice/tone.m4a', 'audio:voice/tone.ogg', 'audio:voice/tone.flac'])
+    expect(pause).toHaveBeenCalled()
+    expect(dialog()).toBeNull()
 })

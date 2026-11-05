@@ -57,7 +57,9 @@ beforeAll(async () => {
         await writeFile(join(workspaceDir(id), 'shots', 'one-byte.png'), Buffer.from([1]))
         await writeFile(join(workspaceDir(id), 'voice', 'tone.wav'), Buffer.alloc(1024, 7))
         await writeFile(join(workspaceDir(id), 'voice', 'tone.mp3'), Buffer.alloc(1024, 7))
-        await writeFile(join(workspaceDir(id), 'voice', 'tone.ogg'), Buffer.alloc(1024, 7))
+        for (const ext of ['ogg', 'm4a', 'flac']) {
+            await writeFile(join(workspaceDir(id), 'voice', `tone.${ext}`), Buffer.alloc(1024, 7))
+        }
         await writeFile(join(workspaceDir(id), 'voice', 'empty.wav'), '')
         await writeFile(join(workspaceDir(id), 'voice', 'big.mp3'), '')
         await truncate(join(workspaceDir(id), 'voice', 'big.mp3'), CARD_MAX_AUDIO_BYTES + 1)
@@ -152,9 +154,7 @@ it('refuses shared, foreign, hidden, linked, directory, unsupported and oversize
         ['reports/image.svg', 'agent', /relative .* path/],
         ['shots/clip.mov', 'agent', /relative .* path/],
         ['shots/clip.webm', 'agent', /relative .* path/],
-        ['voice/tone.ogg', 'agent', /relative .* path/],
-        ['voice/tone.m4a', 'agent', /relative .* path/],
-        ['voice/tone.flac', 'agent', /relative .* path/],
+        ['voice/tone.aac', 'agent', /relative .* path/],
         ['big.md', 'agent', /32 KiB/],
         ['shots/big.png', 'agent', /8 MB/],
         ['shots/big.mp4', 'agent', /16 MB/],
@@ -344,4 +344,24 @@ it('accepts an absolute path only when it resolves inside the granted workspace'
     const foreign = await show(tool, join(workspaceDir(bravo), 'reports', 'summary.md'))
     expect(foreign).toContain('nothing was shown')
     expect(foreign).toMatch(/relative .* path/)
+})
+
+
+it.each(['m4a', 'ogg', 'flac'])('delivers persistent %s audio with identity and rejects a mixed card when one entry exceeds the audio bound', async ext => {
+    await grant(alpha, true)
+    const tool = await toolFor(alpha)
+    const path = `voice/tone.${ext}`
+    const card = fileCardSchema.parse(JSON.parse(await show(tool, path)))
+    expect(card.files).toEqual([{ path, name: `tone.${ext}`, size: 1024, scope: 'agent', identity: expect.stringMatching(/^\d+:\d+$/) }])
+    await truncate(join(workspaceDir(alpha), path), CARD_MAX_AUDIO_BYTES)
+    expect(fileCardSchema.parse(JSON.parse(await show(tool, path))).files[0]!.size).toBe(CARD_MAX_AUDIO_BYTES)
+    await truncate(join(workspaceDir(alpha), path), CARD_MAX_AUDIO_BYTES + 1)
+    const rejected = String(await tool.execute!({ files: [{ path: 'reports/notes.txt' }, { path }] }, options))
+    expect(rejected).toContain('16 MB')
+    expect(rejected).not.toContain('"kind":"file"')
+    await truncate(join(workspaceDir(alpha), path), 0)
+    expect(await show(tool, path)).toContain('empty')
+    await writeFile(join(workspaceDir(alpha), path), Buffer.alloc(1024, 7))
+    await grant(alpha, false)
+    await expect(show(tool, path)).rejects.toThrow()
 })
