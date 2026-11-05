@@ -1,0 +1,77 @@
+'use client'
+
+import { TEMPLATE_CATEGORY_LABELS } from '@rerun/contracts'
+import { CardCarousel, ScrollFade, Stripes } from '@rerun/ui/primitives'
+import { TemplateBoardPreview } from '@rerun/ui/iso-grid'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Icon } from '@/components/ui/icon'
+import { ShieldCheck } from '@/lib/icons'
+import { cn } from '@/lib/utils'
+import type { DesktopTemplatesClient } from '@/lib/desktop/templates-client'
+import { DesktopTemplateDetailAgentCard } from './DesktopTemplateDetailAgentCard'
+import type { DesktopTemplateDetail, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt } from './types'
+import { useDesktopTemplateInstall } from './useDesktopTemplateInstall'
+
+export function DesktopTemplateDetailPanel({ client, template, resume = null, onInstalled, onInterrupted }: {
+    client: DesktopTemplatesClient
+    template: DesktopTemplateDetail
+    resume?: DesktopTemplateInstallIntent | null
+    onInstalled: (receipt: DesktopTemplateInstallReceipt) => void
+    onInterrupted?: (intent: DesktopTemplateInstallIntent | null) => void
+}) {
+    const install = useDesktopTemplateInstall({ client, template, resume, onInstalled, onInterrupted })
+    const canInstall = template.capturedAt !== null && template.agents.length > 0
+    return <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+        <ScrollFade className="min-h-0 flex-1">
+            <div className="relative flex aspect-video shrink-0 items-center justify-center overflow-hidden border-b bg-muted/40">
+                {template.agents.length > 0 ? <TemplateBoardPreview key={template.revision} agents={template.agents} connectors={[]} className="size-full" /> : <Icon icon={ShieldCheck} size="lg" className="opacity-40" />}
+                <span className="absolute right-3 top-3 rounded-full bg-background/70 px-2.5 py-1 text-[10px] text-muted-foreground backdrop-blur">Private</span>
+            </div>
+            <div className="flex flex-col gap-5 p-5">
+                <div className="space-y-1.5"><h3 className="text-base font-medium">{template.title}</h3>{template.tagline && <p className="text-xs text-muted-foreground">{template.tagline}</p>}</div>
+                <div className="relative flex flex-col gap-2.5 overflow-hidden rounded-lg border border-border/60 bg-muted/30 p-3">
+                    <Stripes />
+                    <MetaRow label="Coworkers" value={String(template.agents.length)} />
+                    <MetaRow label="Category" value={TEMPLATE_CATEGORY_LABELS[template.category] ?? TEMPLATE_CATEGORY_LABELS.other} />
+                    <MetaRow label="Captured" value={template.capturedAt ?? 'Draft — not captured'} />
+                    <div className="relative flex flex-col gap-1 text-xs"><span className="text-muted-foreground">Saved revision</span><code className="break-all rounded bg-background/60 px-1.5 py-1 font-medium">{template.revision}</code></div>
+                </div>
+                {template.description && <Section title="About"><p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">{template.description}</p></Section>}
+                {template.agents.length > 0 && <Section title="Coworkers" count={template.agents.length}>
+                    <CardCarousel label="coworkers in this template" fadeClassName="from-popover" className="gap-3" itemClassName={cn('shrink-0 snap-center', template.agents.length > 1 ? 'w-[85%]' : 'w-full')}>
+                        {template.agents.map(agent => <DesktopTemplateDetailAgentCard key={agent.key} agent={agent} />)}
+                    </CardCarousel>
+                </Section>}
+                <SavedIssues title="Exclusions saved with this revision" issues={template.exclusions} />
+                <SavedIssues title="Unsupported entries" issues={template.unsupportedEntries} />
+                <Alert variant="warning" stripes className="grid-cols-[auto_1fr] gap-x-3 gap-y-0">
+                    <Icon icon={ShieldCheck} size="sm" className="row-span-2 self-center" />
+                    <AlertTitle className="col-start-2 leading-tight">Local template security</AlertTitle>
+                    <AlertDescription className="col-start-2 leading-snug">Credential stores, histories, grants and connector skills do not travel. Private prose in selected files and instructions was left for the author to review, not automatically stripped.</AlertDescription>
+                </Alert>
+            </div>
+        </ScrollFade>
+        <div className="border-t bg-muted/50 px-5 py-4 max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
+            {install.receipt && <p role="status" className="mb-2 text-center text-xs text-muted-foreground">Installed {install.receipt.coworkers.length} coworker{install.receipt.coworkers.length === 1 ? '' : 's'} · Receipt <code>{install.receipt.receiptId}</code></p>}
+            {install.error && <p role="alert" className="mb-2 text-center text-xs text-destructive">{install.error}{install.interrupted ? ' The same request ID is kept for an ambiguous retry.' : ''}</p>}
+            <Button type="button" className="w-full" loading={install.busy} disabled={!canInstall || install.busy} title={!canInstall ? 'Capture at least one coworker before installing.' : undefined} onClick={install.receipt ? install.again : install.run}>
+                {install.receipt ? 'Use again' : install.interrupted ? 'Retry installation' : 'Use template'}
+            </Button>
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">{canInstall ? 'Creates fresh coworkers with empty histories. Durable board placement and the receipt are saved together before this callback.' : 'Capture at least one coworker before installing this draft.'}</p>
+        </div>
+    </div>
+}
+
+function MetaRow({ label, value }: { label: string; value: string }) {
+    return <div className="relative flex items-center justify-between gap-4 text-xs"><span className="text-muted-foreground">{label}</span><span className="text-right font-medium">{value}</span></div>
+}
+
+function Section({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
+    return <div className="space-y-2"><p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}{count !== undefined && <span className="text-muted-foreground/60"> · {count}</span>}</p>{children}</div>
+}
+
+function SavedIssues({ title, issues }: { title: string; issues: { path: string; reason: string }[] }) {
+    if (issues.length === 0) return null
+    return <Section title={title} count={issues.length}><ul className="flex flex-col gap-2">{issues.map(issue => <li key={`${issue.path}:${issue.reason}`} className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2"><code className="block break-all text-xs">{issue.path}</code><p className="mt-1 text-[11px] text-muted-foreground">{issue.reason}</p></li>)}</ul></Section>
+}

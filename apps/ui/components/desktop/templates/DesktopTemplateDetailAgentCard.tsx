@@ -1,0 +1,58 @@
+'use client'
+
+import type { TemplateAgent } from '@rerun/contracts'
+import { Stripes } from '@rerun/ui/primitives'
+import { CalendarClock, FolderIcon, ShieldCheck, WebhookIcon, Zap, type LucideIcon } from '@/lib/icons'
+import { scheduleLabel } from '@/lib/templates/labels'
+
+const MAX_SKILLS = 4
+const MAX_SCHEDULES = 3
+const MAX_TRIGGERS = 3
+
+export function DesktopTemplateDetailAgentCard({ agent }: { agent: TemplateAgent }) {
+    const shownSkills = agent.skills.slice(0, MAX_SKILLS)
+    const shownSchedules = agent.schedules.slice(0, MAX_SCHEDULES)
+    const shownTriggers = agent.triggers.slice(0, MAX_TRIGGERS)
+    return <article className="relative flex h-full flex-col gap-3 overflow-hidden rounded-lg border border-border/60 bg-card p-3">
+        <header className="relative -mx-3 -mt-3 flex flex-col gap-1.5 px-3 pt-3">
+            <Stripes />
+            <div className="relative flex items-center justify-between gap-2"><p className="truncate text-sm font-medium">{agent.name}</p>{agent.role && <span className="shrink-0 text-[10px] text-muted-foreground">{agent.role}</span>}</div>
+            {agent.description && <p className="relative line-clamp-2 text-xs text-muted-foreground">{agent.description}</p>}
+        </header>
+
+        <CardSection title="Comes with">
+            <AgentListRow icon={FolderIcon} title="Fresh folder and empty history" subtitle="A separate local identity, never a source overwrite" />
+            <AgentListRow icon={ShieldCheck} title={agent.setupRequired === null ? 'Setup answer not recorded' : agent.setupRequired ? 'Guided setup required' : 'No guided setup requested'} subtitle="No inherited credentials, grants or active routines" />
+        </CardSection>
+
+        {agent.skills.length > 0 && <CardSection title="User-owned skills" count={agent.skills.length}>
+            {shownSkills.map(skill => <AgentListRow key={skill.name} icon={Zap} title={skill.name} subtitle={skill.description} />)}
+            {agent.skills.length > shownSkills.length && <MoreRow count={agent.skills.length - shownSkills.length} />}
+        </CardSection>}
+
+        {agent.schedules.length > 0 && <CardSection title="Captured schedules" count={agent.schedules.length} note="Imported inactive.">
+            {shownSchedules.map(schedule => <AgentListRow key={schedule.name} icon={CalendarClock} title={schedule.name} subtitle={scheduleLabel(schedule.cron)} />)}
+            {agent.schedules.length > shownSchedules.length && <MoreRow count={agent.schedules.length - shownSchedules.length} />}
+        </CardSection>}
+
+        {agent.triggers.length > 0 && <CardSection title="Captured webhooks" count={agent.triggers.length} note="Imported inactive; no source tokens travel.">
+            {shownTriggers.map(trigger => <AgentListRow key={trigger.name} icon={WebhookIcon} title={trigger.name} subtitle={trigger.description || trigger.methods.join(' · ')} />)}
+            {agent.triggers.length > shownTriggers.length && <MoreRow count={agent.triggers.length - shownTriggers.length} />}
+        </CardSection>}
+    </article>
+}
+
+function CardSection({ title, count, note, children }: { title: string; count?: number; note?: string; children: React.ReactNode }) {
+    return <div className="flex flex-col gap-2 border-t border-border/60 pt-3">
+        <div className="flex flex-col gap-0.5"><h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}{count !== undefined && <span className="text-muted-foreground/60"> · {count}</span>}</h4>{note && <p className="text-[11px] text-muted-foreground/80">{note}</p>}</div>
+        {children}
+    </div>
+}
+
+function AgentListRow({ icon: Glyph, title, subtitle }: { icon: LucideIcon; title: string; subtitle?: string }) {
+    return <div className="flex items-center gap-2.5"><Glyph className="size-3.5 shrink-0 text-muted-foreground" /><div className="min-w-0"><p className="truncate text-xs">{title}</p>{subtitle && <p className="truncate text-[11px] text-muted-foreground">{subtitle}</p>}</div></div>
+}
+
+function MoreRow({ count }: { count: number }) {
+    return <p className="pl-6 text-[11px] text-muted-foreground">+{count} more</p>
+}
