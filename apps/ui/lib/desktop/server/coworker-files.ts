@@ -568,27 +568,39 @@ const IMPORTABLE = /\.(txt|md)$/i
  * name (including a symlink) is reported as 409. The folder must resolve inside the workspace, and
  * the create itself refuses symlinks in any component, so a swapped folder cannot redirect the write.
  */
-export async function importCoworkerFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array): Promise<{ path: string; name: string }> {
+async function assertPrivateToolLocation(workspace:string,path:string,mustExist:boolean) {
+    const located=await containedPath(workspace,path)
+    if(!located.root || path.split('/').some(part=>!part || part.startsWith('.')))throw new DesktopHttpError(400,'Choose an existing visible private Files location.')
+    const expected=join(located.root,path)
+    const parent=await realpath(dirname(expected)).catch(()=>null)
+    if(parent!==dirname(expected) || located.target && located.target!==expected || mustExist && !located.target)throw new DesktopHttpError(400,'Private file tools cannot follow symlinks or create folders.')
+}
+
+export type PrivateToolPublication = { beforePublish: () => Promise<void>; existingDirectoryOnly: true }
+
+export async function importCoworkerFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array, publication?: PrivateToolPublication): Promise<{ path: string; name: string }> {
     // Imports can create a previously absent workspace. Keep that whole mutation ordered with
     // deletion so an old file picker cannot recreate the removed coworker's folder.
     return withRosterWrite(async () => {
         await assertCoworkerNotDeleting(await openDesktopDatabase(runtime.dataRoot), agentId)
-        return importFile(runtime, agentId, folder, name, bytes)
+        return importFile(runtime, agentId, folder, name, bytes, publication)
     })
 }
 
-async function importFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array): Promise<{ path: string; name: string }> {
+async function importFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array, publication?: PrivateToolPublication): Promise<{ path: string; name: string }> {
     if (!name || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.')) throw new DesktopHttpError(400, 'That file name can’t be imported.')
     if (!IMPORTABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be imported.')
     if (bytes.byteLength > IMPORT_BYTES) throw new DesktopHttpError(413, 'Files can be up to 1 MB.')
     if (bytes.includes(0)) throw new DesktopHttpError(415, 'Only text files can be imported.')
     const workspace = await coworkerWorkspace(runtime, agentId)
+    if(publication)await assertPrivateToolLocation(workspace,folder?`${folder}/${name}`:name,false)
     let resolved = await containedPath(workspace, folder)
-    if (!resolved.root && !resolved.rel) {
+    if (!resolved.root && !resolved.rel && !publication?.existingDirectoryOnly) {
         await createWorkspace(runtime, workspace)
         resolved = await containedPath(workspace, folder)
     }
     const { target, rel } = resolved
+    if(publication && target!==join(resolved.root ?? '',folder))throw new DesktopHttpError(400,'Private file tools cannot follow symlinks.')
     if (!target) throw new DesktopHttpError(404, 'Folder not found')
     await recoverInterruptedCoworkerEdits(target, resolved.root!)
     const path = rel ? `${rel}/${name}` : name
@@ -632,6 +644,12 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
                 await handle.close()
             }
             try {
+                await publication?.beforePublish()
+                if(publication){
+                    await assertPrivateToolLocation(workspace,path,false)
+                    const [opened,current]=await Promise.all([dir.stat({bigint:true}),lstat(target,{bigint:true})])
+                    if(opened.dev!==current.dev || opened.ino!==current.ino)throw outside()
+                }
                 await link(tempPath, join(pinned, name))
             } catch (error) { throw fsError(error) }
         } finally {
@@ -1027,15 +1045,18 @@ async function withSaveLock<T>(key: string, run: () => Promise<T>): Promise<T> {
  * backup back, or keeps the name when the draft was already committed. A hidden draft is not a
  * second copy to edit.
  */
-export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string, identity?: string): Promise<SaveCoworkerFileResult> {
-    return withCoworkerFiles(runtime, agentId, () => saveFile(runtime, agentId, path, content, baseHash, identity))
+export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string, identity?: string, publication?: PrivateToolPublication): Promise<SaveCoworkerFileResult> {
+    return withCoworkerFiles(runtime, agentId, () => saveFile(runtime, agentId, path, content, baseHash, identity, publication))
 }
 
-async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string, identity?: string): Promise<SaveCoworkerFileResult> {
+async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string, identity?: string, publication?: PrivateToolPublication): Promise<SaveCoworkerFileResult> {
     const bytes = Buffer.from(content, 'utf8')
     if (bytes.byteLength > EDIT_BYTES) throw new DesktopHttpError(413, 'Files over 256 KB can’t be edited here.')
     if (content.includes('\0') || looksBinary(content)) throw new DesktopHttpError(415, 'Only text can be saved here.')
-    const { root, target, rel } = await containedPath(await coworkerWorkspace(runtime, agentId), path)
+    const workspace=await coworkerWorkspace(runtime,agentId)
+    if(publication)await assertPrivateToolLocation(workspace,path,true)
+    const { root, target, rel } = await containedPath(workspace, path)
+    if(publication && target!==join(root ?? '',path))throw new DesktopHttpError(400,'Private file tools cannot follow symlinks.')
     const name = rel.split('/').pop() ?? ''
     if (!rel || name.startsWith('.') || !EDITABLE.test(name)) throw new DesktopHttpError(415, 'Only .txt and .md files can be edited here.')
     if (!root || !target) throw new DesktopHttpError(404, 'File not found')
@@ -1221,6 +1242,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                 crashPublish('prepared')
                 const displaced = await fileStat(finalPath)
                 if (!displaced) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+                await publication?.beforePublish()
                 try { await rename(finalPath, backupPath) } catch (error) {
                     if (missing(error)) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
                     throw error
@@ -1232,7 +1254,8 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                 const preserved = await readCurrent(backupName)
                 await assertFolderUnmoved()
                 if (!preserved) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
-                if (preserved.hash !== baseHash) throw new CoworkerFileConflict({ content: preserved.content, hash: preserved.hash })
+                if (preserved.hash !== baseHash || (identity && preserved.identity !== identity)) throw new CoworkerFileConflict({ content: preserved.content, hash: preserved.hash })
+                await publication?.beforePublish()
                 try { await link(tempPath, finalPath) } catch (error) {
                     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
                     keepWinner = true
@@ -1259,6 +1282,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                 const after = await readCurrent(backupName)
                 await assertFolderUnmoved()
                 if (!after || after.hash !== baseHash) throw new CoworkerFileConflict(after ? { content: after.content, hash: after.hash } : null)
+                await publication?.beforePublish()
                 await writeJournal('linked')
                 crashPublish('linked')
                 await retireBackup()
