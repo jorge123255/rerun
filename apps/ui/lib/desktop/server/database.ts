@@ -8,6 +8,9 @@ import { initializeDesktopCompletions } from './completed-actions-db'
 import { initializeDesktopPendingInbox } from './pending-inbox-db'
 import { initializeDesktopSpaces } from './spaces'
 import { initializeDesktopDataPreferences } from './data-preferences-db'
+import { initializeDesktopMcp } from './mcp/schema'
+import { ensureDesktopPrivateFileToolsSchema } from './private-file-tools/schema'
+import { initializeDesktopCreation } from './new-agent-schema'
 
 const opening = new Map<string, Promise<Client>>()
 
@@ -207,8 +210,11 @@ async function initialize(dataRoot: string): Promise<Client> {
     await initializeDesktopNotifications(client)
     await initializeDesktopCompletions(client)
     await initializeDesktopPendingInbox(client)
+    await initializeDesktopCreation(client)
     await initializeDesktopSpaces(client)
     await initializeDesktopDataPreferences(client)
+    await initializeDesktopMcp(client)
+    await ensureDesktopPrivateFileToolsSchema(client)
     return client
 }
 

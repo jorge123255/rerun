@@ -329,12 +329,34 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
 
     const coworkerPanelSection = (coworkerId: string): ControlSection[] => onOpenCoworkerPanel ? [{
         id: 'coworker-open', heading: 'Open',
-        rows: searchItems(DESKTOP_COWORKER_PANEL_TABS, text).map(tab => ({
+        rows: searchItems(DESKTOP_COWORKER_PANEL_TABS.filter(tab => tab.id !== 'actions' ||
+            !!onRefreshActivity && activity?.statuses[coworkerId] === 'waiting_human' && !!latestBoardAttention(activity.attention, coworkerId)), text).map(tab => ({
             id: `tab-${tab.id}`, label: tab.label, detail: tab.description,
             leading: { kind: 'icon', icon: tab.icon },
             onSelect: () => {
                 const current = latest.current
                 if (!available() || !current.onOpenCoworkerPanel || !current.coworkers.some(owner => owner.id === coworkerId)) return
+                if (tab.id === 'actions') {
+                    if (!current.onRefreshActivity || selectingAttention.current) return
+                    const attempt = { scope: selectionScope }
+                    selectingAttention.current = attempt
+                    void (async () => {
+                        try {
+                            const fresh = await current.onRefreshActivity!()
+                            if (!available() || selectingAttention.current !== attempt) return
+                            if (!fresh || fresh.statuses[coworkerId] !== 'waiting_human' || !latestBoardAttention(fresh.attention, coworkerId)) {
+                                setAttentionNotice({ scope: selectionScope, text: fresh ? 'Nothing is waiting for this coworker now.' : 'Could not check pending requests. Try again.' })
+                                return
+                            }
+                            const now = latest.current
+                            if (!now.onOpenCoworkerPanel || !now.coworkers.some(owner => owner.id === coworkerId)) return
+                            close()
+                            now.onOpenCoworkerPanel(coworkerId, 'actions')
+                        } catch { if (available()) setAttentionNotice({ scope: selectionScope, text: 'Could not check pending requests. Try again.' }) }
+                        finally { if (selectingAttention.current === attempt) selectingAttention.current = null }
+                    })()
+                    return
+                }
                 const action = current.onOpenCoworkerPanel
                 close()
                 action(coworkerId, tab.id)

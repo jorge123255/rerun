@@ -9,6 +9,7 @@ import { PanelListHeader, PanelScroller } from '@/components/ui/panel-list'
 import { PanelSteps } from '@/components/ui/panel-steps'
 import { PanelDeleteButton, PanelEditorBody, PanelEditorFooter, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
 import type { RemoteServer } from '@/lib/desktop/server/mcp/model'
+import { DesktopMcpOAuthAuthorize } from './DesktopMcpOAuthAuthorize'
 
 export function DesktopCoworkerMcp({agentId}:{agentId:string}) {
     return <CoworkerMcpPanel key={agentId} agentId={agentId}/>
@@ -49,7 +50,9 @@ function CoworkerMcpPanel({agentId}:{agentId:string}) {
         <div className="flex flex-col h-full"><PanelListHeader count={servers.length} noun="MCP server"><Button size="sm" variant="outline" onClick={()=>navigate('new')}><PlusIcon className="size-3.5 mr-1"/>New</Button></PanelListHeader>
         {error && <p role="alert" className="p-3 text-xs text-destructive">{error}</p>}
         {!servers.length ? <EmptyState icon={PlugIcon} title="No MCP servers yet" description="Add an HTTPS Streamable HTTP server to extend this coworker's tools."/> :
-        <PanelScroller>{servers.map(server=><div key={server.name} className="p-3 border-b border-border space-y-2"><Button variant="ghost" onClick={()=>navigate(server)}>{server.name}</Button><p className="text-xs text-muted-foreground break-all">http · {server.url}</p><div className="flex gap-2"><Button size="sm" disabled={busy} onClick={()=>action(server,'probe')}>Connect / probe</Button><Button size="sm" variant="outline" disabled={busy} onClick={()=>action(server,'disconnect')}>Disconnect</Button></div>{tools[server.name] && <p className="text-xs">{tools[server.name].length} tools: {tools[server.name].join(', ')}</p>}</div>)}</PanelScroller>}
+        <PanelScroller>{servers.map(server=><div key={server.name} className="p-3 border-b border-border space-y-2"><Button variant="ghost" onClick={()=>navigate(server)}>{server.name}</Button><p className="text-xs text-muted-foreground break-all">http · {server.url}</p><div className="flex gap-2"><Button size="sm" disabled={busy} onClick={()=>action(server,'probe')}>Connect / probe</Button><Button size="sm" variant="outline" disabled={busy} onClick={()=>action(server,'disconnect')}>Disconnect</Button></div>
+        {server.hasBearer?<p className="text-xs text-muted-foreground">Bearer credential configured.</p>:<DesktopMcpOAuthAuthorize agentId={agentId} name={server.name} revision={server.revision}/>}
+        {tools[server.name] && <p className="text-xs">{tools[server.name].length} tools: {tools[server.name].join(', ')}</p>}</div>)}</PanelScroller>}
         <p className="p-3 text-xs text-muted-foreground">Remote tool use requires this coworker's current MCP permission. Probe results describe one completed connection.</p></div>}
     </PanelSteps>
 }

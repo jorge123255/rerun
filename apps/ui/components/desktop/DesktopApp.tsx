@@ -18,6 +18,9 @@ import { DesktopNotificationDelivery } from './DesktopNotificationDelivery'
 import { DesktopSharedData } from './DesktopSharedData'
 import { DesktopBoard } from './DesktopBoard'
 import { useDesktopBoardState } from './useDesktopBoardState'
+import { useDesktopCreation } from './useDesktopCreation'
+import { DesktopNewAgentDialog } from './DesktopNewAgentDialog'
+import type { DesktopCreationIntent } from '@/lib/desktop/new-agent'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import { useBoardActivity } from './useBoardActivity'
 import { DesktopControlCenter } from './DesktopControlCenter'
@@ -26,9 +29,6 @@ import { DesktopNotificationsDialog } from './DesktopNotificationsDialog'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { GridPosition } from '@rerun/ui/iso-grid'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { DesktopChatTabs } from './DesktopChatTabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
@@ -157,11 +157,22 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const panelRequestHandled = useCallback((request: DesktopCoworkerPanelRequest) => {
         setRequestedPanel(current => current === request ? null : current)
     }, [])
-    const [name, setName] = useState('')
-    const [description, setDescription] = useState('')
-    const [busy, setBusy] = useState<string | null>(null)
-    const [error, setError] = useState<string | null>(null)
-    const connected = providers.connections.some(c => c.connected)
+    const creation = useDesktopCreation(async (agent, sessionId) => {
+        mergeBoardAgents([agent])
+        const refreshed = await boardState.refresh()
+        selectCoworker(agent.id, sessionId)
+        if (!refreshed && initialData.board) throw new Error('Could not refresh the created coworker’s board placement.')
+    })
+    const busy = creation.placement?.saving === true
+    const resumedCreation = useRef<string | null>(null)
+    useEffect(() => {
+        const pending = creation.placement
+        if (!pending || !pending.submitted || resumedCreation.current === pending.intent.requestId) return
+        resumedCreation.current = pending.intent.requestId
+        setCreating(false)
+        setPanelOpen(false)
+        setSettings(false)
+    }, [creation.placement?.intent.requestId])
     const available = providers.connections.filter(c => c.connected && !c.credentialRejected)
     const defaultProvider = available.find(c => c.id === providers.default?.connectionId)
     const sidebarProvider = defaultProvider ?? available[0]
@@ -219,27 +230,12 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         }
     }
 
-    async function createCoworker(event: React.FormEvent) {
-        event.preventDefault()
-        if (!connected || !name.trim() || busy) return
-        setBusy('agent')
-        setError(null)
-        try {
-            const body = await json<{ agent: DesktopAgentView }>(await fetch('/api/desktop/agents', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ name, description, ...(creatingSpaceId && { spaceId: creatingSpaceId }) }),
-            }))
-            setAgents(current => [...current, body.agent])
-            await boardState.refresh()
-            setName('')
-            setDescription('')
-            selectCoworker(body.agent.id)
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : 'Could not create coworker')
-        } finally {
-            setBusy(null)
-        }
+    function prepareCoworker(intent: DesktopCreationIntent) {
+        // Like Rerun's startScratchAgent, dismiss the form and write nothing until tile drop.
+        const outcome = creation.begin(intent, creatingSpaceId)
+        setCreating(false)
+        setPanelOpen(false)
+        return outcome
     }
 
     async function renameCoworker(id: string, name: string) {
@@ -308,12 +304,12 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
 
     function showBoard(create = false, spaceId?: string) {
+        if (create && (creation.checking || creation.checkError || creation.placement || isDesktopQuitting())) return
         setRequestedPanel(null)
         setSettings(false)
         setCreating(create)
         setCreatingSpaceId(create ? spaceId : undefined)
         setPanelOpen(false)
-        setError(null)
     }
 
     function closePanel() {
@@ -333,7 +329,6 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setSelectedAgentId(agentId)
         setPanelOpen(true)
         setRequestedSession(openChat ? { tabUid: openChat.tabUid, sessionId: openChat.sessionId } : sessionId ? { id: sessionId } : null)
-        setError(null)
     }
 
     function focusFromControlCenter(agentId: string) {
@@ -384,6 +379,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
+                    newCoworker={creation.placement} onPlaceCoworker={creation.place} onCancelCoworker={creation.cancel}
+                    creationChecking={creation.checking} creationError={creation.checkError} onRetryCreation={creation.refresh}
                     boardDisabled={settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
                     onBoardInteractionChange={setBoardInteraction}
                     visibleSessionId={panelOpen && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
@@ -413,29 +410,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 </div>
                 <DesktopSettings providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} />
             </div>}
-            <Dialog open={creating} onOpenChange={open => { if (!busy) setCreating(open) }} asSheet={false}>
-                {creating && <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>{agents.length ? 'Add a coworker' : 'Create your first coworker'}</DialogTitle>
-                        <DialogDescription>{connected ? 'Give your coworker a name and a task, then start a local conversation.' : 'Connect an AI provider in Settings, then create a coworker.'}</DialogDescription>
-                    </DialogHeader>
-                    {error && <div role="alert" className="text-sm text-destructive">{error}</div>}
-                    <form onSubmit={createCoworker} className="space-y-3">
-                        <div>
-                            <label htmlFor="coworker-name" className="mb-1.5 block text-sm font-medium">Name</label>
-                            <Input id="coworker-name" placeholder="Researcher" maxLength={60} value={name} onChange={event => setName(event.target.value)} />
-                        </div>
-                        <div>
-                            <label htmlFor="coworker-description" className="mb-1.5 block text-sm font-medium">What should they do?</label>
-                            <Textarea id="coworker-description" placeholder="Finds answers and drafts a summary." maxLength={2000} rows={4} value={description} onChange={event => setDescription(event.target.value)} />
-                        </div>
-                        <div className="flex gap-2">
-                            <Button type="button" variant="outline" disabled={!!busy} onClick={() => setCreating(false)}>Cancel</Button>
-                            <Button type="submit" disabled={!connected || !name.trim() || busy === 'agent'}>{busy === 'agent' ? 'Creating…' : 'Create coworker'}</Button>
-                        </div>
-                    </form>
-                </DialogContent>}
-            </Dialog>
+            <DesktopNewAgentDialog open={creating} onOpenChange={setCreating} onCreate={prepareCoworker} first={!agents.length}
+                resolvingReceipt={creation.checking} />
             <DesktopWorkspaceSettings open={workspaceSettings} onOpenChange={setWorkspaceSettings} workspaceName={workspaceName}
                 onSaved={saved => { setWorkspaceName(saved.name); setSavedIcon({ iconCatalogId: saved.iconCatalogId ?? null, iconUploadId: saved.iconUploadId ?? null }) }} />
             {desktopNotificationsBridge().available && <DesktopNotificationDelivery

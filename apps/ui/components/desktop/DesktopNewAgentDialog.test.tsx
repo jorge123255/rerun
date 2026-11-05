@@ -20,7 +20,7 @@ beforeAll(() => {
     })) as typeof window.matchMedia
 })
 
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); document.body.innerHTML = '' })
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
 const TEXT = 'Read every new support ticket and draft a reply for the ones about billing.'
 
@@ -71,7 +71,7 @@ test('typing and the name hint create nothing: no coworker, no chat, no message'
 })
 
 test('Create hands root one intent carrying the description word for word', async () => {
-    const onCreate = vi.fn(async () => ({ kind: 'created' as const }))
+    const onCreate = vi.fn(async (_intent: DesktopCreationIntent) => ({ kind: 'created' as const }))
     const onOpenChange = await withDialog(onCreate, async () => {
         await type(TEXT)
         await createButton()
@@ -120,7 +120,7 @@ test('an uncertain creation is resumed with the same request id, never a second 
     expect(onOpenChange).toHaveBeenCalledWith(false)
 })
 
-test('Start over is the only way to begin a different creation after an uncertain one', async () => {
+test('an uncertain attempt cannot be abandoned for another request id', async () => {
     const ids: string[] = []
     const onCreate = vi.fn(async (intent: DesktopCreationIntent): Promise<DesktopCreateOutcome> => {
         ids.push(intent.requestId)
@@ -129,16 +129,95 @@ test('Start over is the only way to begin a different creation after an uncertai
     await withDialog(onCreate, async () => {
         await type(TEXT)
         await createButton()
-        await click('Start over')
-        expect(field()).not.toBeNull()
-        expect(field().value).toBe(TEXT)
-
-        await type(`${TEXT} Ask before refunds.`)
-        await createButton()
+        expect([...document.querySelectorAll('button')].some(button => button.textContent === 'Start over')).toBe(false)
+        expect(field()).toBeNull()
+        await click('Try again')
         expect(ids).toHaveLength(2)
-        expect(ids[1]).not.toBe(ids[0])
-        expect(onCreate.mock.calls[1][0]).toMatchObject({ kickoff: `${TEXT} Ask before refunds.` })
+        expect(ids[1]).toBe(ids[0])
+        expect(onCreate.mock.calls[1][0]).toMatchObject({ kickoff: TEXT })
     })
+})
+
+test('closing during a delayed hint prevents creation and an old hint cannot populate a reopened form', async () => {
+    let finishRead!: (value: { name: string; apps: string[]; schedule: null }) => void
+    const delayedRead = vi.fn(() => new Promise<{ name: string; apps: string[]; schedule: null }>(resolve => { finishRead = resolve }))
+    const onCreate = vi.fn(async () => ({ kind: 'created' as const }))
+    const onOpenChange = vi.fn()
+    const localRoot = createRoot(document.body.appendChild(document.createElement('div')))
+    const render = (open: boolean) => act(async () => localRoot.render(<DesktopNewAgentDialog open={open} onOpenChange={onOpenChange} onCreate={onCreate} read={delayedRead} />))
+    try {
+        await render(true)
+        await type(TEXT)
+        await createButton()
+        expect(delayedRead).toHaveBeenCalledTimes(1)
+        expect(document.querySelector<HTMLButtonElement>('[data-aim="create"]')?.disabled).toBe(true)
+        await render(false)
+        await render(true)
+        await type('A different job for the new dialog.')
+        await act(async () => { finishRead({ name: 'Late old name', apps: [], schedule: null }) })
+        expect(onCreate).not.toHaveBeenCalled()
+        expect(field().value).toBe('A different job for the new dialog.')
+        expect(document.body.textContent).not.toContain('Late old name')
+        expect(onOpenChange).not.toHaveBeenCalled()
+    } finally { await act(async () => localRoot.unmount()) }
+})
+
+test('unmount during hint settlement never admits a creation', async () => {
+    let finishRead!: (value: { name: string; apps: string[]; schedule: null }) => void
+    const onCreate = vi.fn(async () => ({ kind: 'created' as const }))
+    const localRoot = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => localRoot.render(<DesktopNewAgentDialog open onOpenChange={() => {}} onCreate={onCreate} read={() => new Promise(resolve => { finishRead = resolve })} />))
+    await type(TEXT)
+    await createButton()
+    await act(async () => localRoot.unmount())
+    await act(async () => { finishRead({ name: 'Late', apps: [], schedule: null }) })
+    expect(onCreate).not.toHaveBeenCalled()
+})
+
+test('completion of an admitted attempt cannot close a newer dialog or replay its kickoff', async () => {
+    let finish!: (outcome: DesktopCreateOutcome) => void
+    const onCreate = vi.fn(() => new Promise<DesktopCreateOutcome>(resolve => { finish = resolve }))
+    const onOpenChange = vi.fn()
+    const localRoot = createRoot(document.body.appendChild(document.createElement('div')))
+    const reader = read()
+    const render = (open: boolean) => act(async () => localRoot.render(<DesktopNewAgentDialog open={open} onOpenChange={onOpenChange} onCreate={onCreate} read={reader} />))
+    try {
+        await render(true)
+        await type(TEXT)
+        await createButton()
+        expect(onCreate).toHaveBeenCalledTimes(1)
+        await render(false)
+        await render(true)
+        await act(async () => { finish({ kind: 'created' }) })
+        expect(onOpenChange).not.toHaveBeenCalled()
+        expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+        expect(document.body.textContent).toContain('Your coworker was created.')
+        expect(document.querySelector('[data-aim="create"]')).toBeNull()
+        expect(onCreate).toHaveBeenCalledTimes(1)
+    } finally { await act(async () => localRoot.unmount()) }
+})
+
+test('receipt hydration blocks admission and remount resumes the exact durable intent without reading a new name', async () => {
+    const resumeIntent: DesktopCreationIntent = { requestId: '4d6c8d52-616b-4434-a6bd-c270aa646e52', name: 'Saved name', kickoff: TEXT, suggestionId: null, scheduled: false }
+    const onCreate = vi.fn(async () => ({ kind: 'uncertain' as const, error: 'still waiting' }))
+    const reader = read()
+    let localRoot = createRoot(document.body.appendChild(document.createElement('div')))
+    try {
+        await act(async () => localRoot.render(<DesktopNewAgentDialog open resolvingReceipt onOpenChange={() => {}} onCreate={onCreate} read={reader} />))
+        expect(document.body.textContent).toContain('Checking your previous creation')
+        expect(document.querySelector('[data-aim="create"]')).toBeNull()
+        await act(async () => localRoot.render(<DesktopNewAgentDialog open resumeIntent={resumeIntent} onOpenChange={() => {}} onCreate={onCreate} read={reader} />))
+        expect(field()).toBeNull()
+        await click('Try again')
+        expect(onCreate).toHaveBeenLastCalledWith(resumeIntent)
+        await act(async () => localRoot.unmount())
+        localRoot = createRoot(document.body.appendChild(document.createElement('div')))
+        await act(async () => localRoot.render(<DesktopNewAgentDialog open resumeIntent={resumeIntent} onOpenChange={() => {}} onCreate={onCreate} read={reader} />))
+        await click('Try again')
+        expect(onCreate).toHaveBeenCalledTimes(2)
+        expect(onCreate).toHaveBeenLastCalledWith(resumeIntent)
+        expect(reader).not.toHaveBeenCalled()
+    } finally { await act(async () => localRoot.unmount()) }
 })
 
 test('a refused creation keeps the description and says why, without closing', async () => {

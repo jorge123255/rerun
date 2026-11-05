@@ -1,6 +1,24 @@
-# E5 MCP OAuth with a Mac loopback callback — source handoff
+# E5 MCP OAuth with a Mac loopback callback
 
-Worktree `mcp-oauth-loopback`, branch `desktop/mcp-oauth-loopback`, prepared base `b428751d716efdb3c928c124921502d2a5e4e6c1`. Isolated source only. No sign-in, provider registration, discovery, token request, credential use or app execution was performed. Root integration and Mac acceptance remain pending.
+## Integrated source status
+
+The reviewed Agent F handoff `9c8959e021cc3318cca824223191a544c4c1e8eb` is integrated into the coding worktree, with the corrections below. Automated checks, packaging and native acceptance are root-owned. This document does **not** claim a live OAuth provider sign-in, refresh or restart acceptance: that requires a user-selected compatible provider and an explicit browser authorization.
+
+The existing process-wide `mcp-binding.ts` now owns one store/lifecycle, OAuth service and MCP runtime. Its runtime uses `oauth.credential`, including real runner catalog/call requests through the existing bridge. The authenticated POST route is `/api/desktop/coworkers/[agentId]/mcp/oauth`. Saved-server rows mount the authorization controls only when no bearer is configured. Mounting reads status; it does not register a client or start a sign-in. The explicit HTTPS link uses the existing external browser handler. `initializeDesktopMcp` in `mcp/schema.ts` applies the two additive tables after desktop agent prerequisites; startup and lazy service creation use it. The existing UI proxy admits authenticated desktop routes, so no separate wildcard or new engine HTTP route was added.
+
+Shutdown sets the common authority terminal and aborts its signal immediately, then shuts the OAuth listeners before the bridge. An initializer still pending at shutdown cannot publish a later service. The shared `access` and `authorizeRun` methods accept the exact `mcp` or `privateFileWrite` grant and recheck owner/generation/grant; this is one authority, not an additional OAuth store or engine token file.
+
+Integration corrections:
+
+- Validate exact current owner/server revision before replacing an attempt. Stale start requests cannot cancel newer work.
+- Keep only active listeners in the 128-attempt limit; retain at most 128 small terminal statuses. Successful state is read from encrypted storage, including after restart.
+- Reject non-global IPv6, site-local/NAT64/special ranges, mixed DNS answers and local hostnames. HTTPS requests retain pinned DNS/TLS identity and refuse redirects. Add the original path-based OIDC metadata location while preserving exact issuer identity.
+- Preserve the preceding encrypted credential row on a cancelled late replacement, using an exact ciphertext comparison. In particular, an uncertain rotating-refresh receipt cannot disappear and silently become anonymous.
+- Abort stale/unmounted renderer requests, pause polling while hidden, bound and validate replies, and keep Cancel available during a pending status poll. The callback listener closes even if its bind completes after cancellation.
+
+Authored regression coverage includes these cases, encrypted persistence/service reconstruction, bearer coexistence, exact run/grant checks, shutdown during initialization and explicit browser-link behavior. The remaining sections describe the original handoff and its intentionally restricted protocol; the historical root-integration checklist below has now been implemented as described above, rather than remaining pending work.
+
+Original handoff provenance: worktree `mcp-oauth-loopback`, branch `desktop/mcp-oauth-loopback`, prepared base `b428751d716efdb3c928c124921502d2a5e4e6c1`. That handoff was source-only; the external agent performed no sign-in, provider registration, discovery, token request, credential use or app execution.
 
 ## Original source references
 
@@ -38,9 +56,9 @@ Store bundles include resource/issuer/token endpoint/client ID/access/refresh/ex
 
 Refreshes share one per-owner/server in-flight promise. Before submitting a rotating refresh token, a durable encrypted refreshPending claim is stored. A crash, cancellation or unknown token response retains an unconfirmed claim (or removes an invalid late write) and requires reconnect; it never blindly reuses the old refresh token. Fresh resource/issuer/token endpoint metadata and current owner/grant are checked again before refresh and token publication. Credential persistence reserves the same lifecycle queue, checks cancellation/generation before and after storage, and conditionally deletes only its own encrypted late write if invalidated. Admission stays blocked until rollback settles. A stalled database operation may outlive caller cancellation; it must remain unavailable until storage cleanup settles, never be reported as completed persistence. Root must preserve the one-authority process contract below.
 
-## Mandatory root integration before activation
+## Historical integration contract
 
-Central schemas, app/shell lifecycle, route admission, grant UI and engine integration remain root-owned. None were edited or activated here.
+The source wiring above implements this handoff contract. The examples below retain the original division of ownership; they are not a second set of pending integration instructions. Root still owns execution and native acceptance.
 
 1. Add remoteMcpOAuthSchema as a NEW additive numbered desktop database migration after remoteMcpSchema for existing and new databases. Do not edit a shipped migration. Keep this internal encrypted table outside coworker data tools. Enable foreign keys. Use the existing master key boundary; no second token store/engine token-file authority.
 2. Use exactly one store, lifecycle, OAuth service and runtime in the supervised UI process. The same current access callback must resolve exact local coworker to current engine identity, reject missing/deleting/reassigned owners and return current enabled and explicit MCP grant. Never cache board permissions. Separate engine/UI processes must forward authenticated catalog/call/mutation/invalidation to THIS authority via the existing desktop MCP bridge. Independent copies are not integration.

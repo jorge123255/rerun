@@ -21,6 +21,10 @@ const openTile = (name: string) => act(async () => {
 const session = (id: string, agentId: string, title: string): DesktopSessionView => ({ id, agentId, title, createdAt, updatedAt: '2026-11-01T12:00:00.000Z' })
 const conversation = (value: DesktopSessionView): DesktopChatHistoryConversation => ({ ...value, engineSessionId: `engine-${value.id}`, source: 'dashboard', needsYou: false, pendingQuestion: null })
 const historyOf = (values: DesktopSessionView[]) => ({ conversations: values.map(conversation), enrichment: 'ok', questions: 'ok' })
+const inboxOf = (rows: DesktopChatHistoryConversation[]) => ({ items: rows.filter(row => row.needsYou).map(row => ({
+    id: `pending-${row.id}`, kind: row.id === 'question' ? 'question' : 'approval', agentId: row.agentId, agentName: 'Alice', agentEnabled: true,
+    sessionId: row.id, title: row.title, summary: row.pendingQuestion ?? '', requestedAt: row.createdAt, updatedAt: row.updatedAt,
+})), unavailableAgentIds: [], checkedAt: createdAt })
 const click = (label: string) => act(async () => {
     const button = [...document.querySelectorAll('button')].find(b => !b.closest('[hidden]') && (b.textContent?.trim() === label || b.getAttribute('aria-label') === label))
     expect(button, `button ${label}`).toBeTruthy()
@@ -92,7 +96,7 @@ test('combines the original filters with search and opens the local question or 
         { ...conversation(session('trigger', 'alice', 'Green routine')), source: 'trigger' },
         conversation(session('ordinary', 'alice', 'Ordinary chat')),
     ]
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ conversations: rows, enrichment: 'ok', questions: 'ok' })))
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url === '/api/desktop/pending-inbox' ? inboxOf(rows) : { conversations: rows, enrichment: 'ok', questions: 'ok' })))
     const container = document.createElement('div'); document.body.append(container)
     const root = createRoot(container), select = vi.fn()
     const dialog = () => document.querySelector('[role="dialog"]')!
@@ -112,8 +116,8 @@ test('combines the original filters with search and opens the local question or 
         expect(dialog().textContent).toContain('Which color?')
         expect(dialog().textContent).toContain('Use the orange heading')
         expect(dialog().textContent).not.toContain('Green routine')
-        const approvalRow = [...dialog().querySelectorAll('button')].find(button => button.textContent?.includes('Orange routine'))!
-        await click(approvalRow.textContent!)
+        const approvalRow = [...dialog().querySelectorAll<HTMLElement>('[role="button"]')].find(button => button.textContent?.includes('Orange routine'))!
+        await act(async () => { approvalRow.click(); await new Promise(resolve => setTimeout(resolve, 50)) })
         expect(select).toHaveBeenCalledExactlyOnceWith('approval')
     } finally { await act(async () => { root.unmount() }) }
 })
@@ -121,7 +125,9 @@ test('combines the original filters with search and opens the local question or 
 test('shows retry states instead of empty filters when classification or pending requests are unavailable', async () => {
     const known = { ...conversation(session('saved', 'alice', 'Saved routine')), source: 'schedule' as const, needsYou: true, pendingQuestion: 'Approve the title' }
     let reads = 0
-    vi.stubGlobal('fetch', vi.fn(async () => {
+    let inboxReads = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url === '/api/desktop/pending-inbox') return Response.json(++inboxReads === 1 ? { items: [], unavailableAgentIds: ['alice'], checkedAt: createdAt } : inboxOf([known]))
         reads++
         return Response.json(reads === 1
             ? { conversations: [{ ...known, source: null, needsYou: false, pendingQuestion: null }], enrichment: 'unavailable', questions: 'ok' }
@@ -147,7 +153,8 @@ test('shows retry states instead of empty filters when classification or pending
         await click('Retry')
         expect(dialog().textContent).not.toContain('Pending requests could not be loaded.')
         expect(dialog().textContent).toContain('Approve the title')
-        expect(reads).toBe(3)
+        expect(reads).toBe(2)
+        expect(inboxReads).toBe(2)
     } finally { await act(async () => { root.unmount() }) }
 })
 

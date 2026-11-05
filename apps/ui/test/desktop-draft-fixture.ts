@@ -29,6 +29,9 @@ export function createDesktopDraftFixture() {
         seedTabs(agent: string, tabs: Tab[]) { owners.add(agent); layouts.set(agent, tabs) },
         handle(input: RequestInfo | URL, init?: RequestInit): Response | undefined {
             const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://127.0.0.1')
+            // App startup reconciles creation receipts. Creation-focused fixtures override this
+            // exact read before delegating here; unrelated routes remain intentionally unhandled.
+            if (url.pathname === '/api/desktop/new-agent' && (init?.method ?? 'GET') === 'GET') return Response.json({ pending: null })
             const match = url.pathname.match(/^\/api\/desktop\/agents\/([^/]+)\/(draft|tabs|upload-attempts)$/)
             if (!match) return
             const agent = decodeURIComponent(match[1])

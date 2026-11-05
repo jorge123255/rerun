@@ -1,13 +1,13 @@
 import 'server-only'
 import {authenticateDesktopEngineRequest} from '../auth'
-import {boundedText} from '../mcp/remote'
+import {abortable,boundedText} from '../mcp/remote'
 import {privateFileCall,type privateFilePublisher} from './publication'
 export function privateFilePublicationApi(publish:ReturnType<typeof privateFilePublisher>) {
     return async(request:Request)=>{
+        const signal=AbortSignal.any([request.signal,AbortSignal.timeout(30_000)])
         try {
-            await authenticateDesktopEngineRequest(request)
+            await abortable(authenticateDesktopEngineRequest(request),signal)
             if(request.method!=='POST')return Response.json({error:'Method not allowed'},{status:405})
-            const signal=AbortSignal.any([request.signal,AbortSignal.timeout(30_000)])
             const body=privateFileCall.parse(JSON.parse(await boundedText(new Response(request.body),signal,2*1024*1024)))
             const result=await publish(body,signal)
             return Response.json(result,{headers:{'Cache-Control':'no-store'}})

@@ -96,6 +96,38 @@ test('Needs you precedes Recent in roster order without the ordinary eight-cowor
     expect(section('needs-you')!.rows.every(entry => entry.badge?.label === 'Needs you' && entry.badge.tone === 'orange')).toBe(true)
 })
 
+test('coworker To handle rechecks attention and opens the original Needs you chat surface', async () => {
+    const onOpenCoworkerPanel = vi.fn(), onOpenChange = vi.fn()
+    let fresh = activity()
+    const onRefreshActivity = vi.fn(async () => fresh)
+    await render(mount(), { activity: activity(), onOpenCoworkerPanel, onOpenChange, onRefreshActivity })
+    await act(async () => { row().onDrill!() })
+    const action = row('tab-actions')
+    expect(action.label).toBe('To handle')
+    fresh = activity([], { ada: 'idle', bob: 'idle' })
+    await select(action)
+    expect(onOpenCoworkerPanel).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalled()
+    fresh = activity()
+    await select(row('tab-actions'))
+    expect(onOpenCoworkerPanel).toHaveBeenCalledExactlyOnceWith('ada', 'actions')
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false)
+})
+
+test('a delayed To handle read cannot reopen a dismissed Control Center', async () => {
+    let finish!: (value: BoardActivitySnapshot) => void
+    const onOpenCoworkerPanel = vi.fn(), onOpenChange = vi.fn()
+    const root = mount()
+    const props = { activity: activity(), onOpenCoworkerPanel, onOpenChange, onRefreshActivity: () => new Promise<BoardActivitySnapshot>(resolve => { finish = resolve }) }
+    await render(root, props)
+    await act(async () => { row().onDrill!() })
+    await select(row('tab-actions'))
+    await render(root, { ...props, open: false })
+    await act(async () => { finish(activity()) })
+    expect(onOpenCoworkerPanel).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalled()
+})
+
 test('the fallback excludes waiting rows and retains Off, Working and unavailable precedence', async () => {
     const coworkers = [coworker('ada', 'Ada'), coworker('working', 'Working'), coworker('off', 'Off', false), coworker('lost', 'Lost'), coworker('empty', 'No confirmed request')]
     await render(mount(), { coworkers, activity: activity([pending(), pending('working'), pending('off'), pending('lost')], {

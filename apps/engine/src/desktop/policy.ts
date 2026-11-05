@@ -14,6 +14,8 @@ export function assertDesktopProvider(provider: string, id?: string): void {
 }
 
 export function desktopRouteAllowed(method: string, path: string): boolean {
+    if (path === '/desktop/agents/create') return method === 'POST'
+    if (path === '/desktop/new-agent/read') return method === 'POST'
     if (path === '/desktop/codex-login') return (method === 'GET' || method === 'POST') && desktopCodexAvailable()
     if (/^\/agents\/(?:import|foreman|default)(?:\/|$)/.test(path)) return false
     const id = '[A-Za-z0-9_-]+'

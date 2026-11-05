@@ -12,7 +12,7 @@ vi.mock('./mcp/remote', async original => {
     const actual = await original<typeof import('./mcp/remote')>()
     return { ...actual, remoteMcpRuntime: (...args: Parameters<typeof actual.remoteMcpRuntime>) => { mocks.access = args[1]; return actual.remoteMcpRuntime(...args) } }
 })
-import { getDesktopRemoteMcpService, handleDesktopMcpBridge, handleDesktopMcpManagement, shutdownDesktopRemoteMcp, withDesktopMcpOwnerTransition } from './mcp-binding'
+import { getDesktopRemoteMcpService, handleDesktopMcpBridge, handleDesktopMcpManagement, handleDesktopMcpOAuth, shutdownDesktopRemoteMcp, withDesktopMcpOwnerTransition } from './mcp-binding'
 const runtime: DesktopRuntime = { protocolVersion: 1, workspaceId: 1, dataRoot: '/test-only-mcp', launchNonce: 'launch', buildId: 'test', app: { origin: 'http://127.0.0.1:3001', sessionToken: 'unused' }, engine: { origin: 'http://127.0.0.1:3002', apiKey: 'engine-only' } }
 const db = { execute: mocks.execute, executeMultiple: mocks.schema }
 beforeEach(() => {
@@ -82,4 +82,44 @@ test('failed in-progress initialization does not prevent an owner disable or del
     expect(await transition).toBe('disabled')
     expect(write).toHaveBeenCalledTimes(1)
     expect(mocks.createStore).not.toHaveBeenCalled()
+})
+
+test('OAuth shares authentication and initializes both encrypted tables before use', async () => {
+    const denied = new Request(`${runtime.app.origin}/api/desktop/coworkers/local-owner/mcp/oauth`, { method:'POST', headers:{host:'127.0.0.1:3001',origin:runtime.app.origin,authorization:'Bearer engine-only'}, body:JSON.stringify({action:'status'}) })
+    expect((await handleDesktopMcpOAuth(denied,'local-owner')).status).toBe(401)
+    expect(mocks.open).not.toHaveBeenCalled()
+    const service = await getDesktopRemoteMcpService(runtime)
+    expect(mocks.schema.mock.calls[0][0]).toContain('CREATE TABLE IF NOT EXISTS desktop_remote_mcp_oauth')
+    expect(service.oauth).toBeDefined()
+    const shutdown = vi.spyOn(service.oauth,'shutdown'), bridgeShutdown=vi.spyOn(service.bridge,'shutdown')
+    await shutdownDesktopRemoteMcp(runtime)
+    expect(service.shutdownSignal.aborted).toBe(true)
+    expect(shutdown).toHaveBeenCalledTimes(1)
+    expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(bridgeShutdown.mock.invocationCallOrder[0])
+})
+
+test('shutdown during initialization cannot publish a new OAuth authority', async () => {
+    let open!: (value:typeof db)=>void
+    mocks.open.mockImplementationOnce(()=>new Promise(resolve=>{open=resolve}))
+    const initializing=getDesktopRemoteMcpService(runtime),rejected=expect(initializing).rejects.toThrow()
+    const shutdown=shutdownDesktopRemoteMcp(runtime)
+    open(db);await rejected;await shutdown
+    expect(mocks.createStore).not.toHaveBeenCalled()
+    await expect(getDesktopRemoteMcpService(runtime)).rejects.toThrow('stopped')
+})
+
+test('shared run authority checks the requested grant, exact run, final permission and shutdown', async () => {
+    let granted=true
+    vi.stubGlobal('fetch',vi.fn(async(input:string)=>{
+        if(input.endsWith('/sessions/session'))return Response.json({id:'session',agentId:'engine-owner'})
+        if(input.endsWith('/runs/run'))return Response.json({id:'run',agentId:'engine-owner',sessionId:'session',status:'running'})
+        return Response.json({id:'engine-owner',config:{enabled:true,tools:{desktopToolGrants:{mcp:false,privateFileWrite:granted}}}})
+    }))
+    const service=await getDesktopRemoteMcpService(runtime),identity={engineAgentId:'engine-owner',sessionId:'session',runId:'run'}
+    expect(await service.authorizeRun(identity,new AbortController().signal,'privateFileWrite')).toBe('local-owner')
+    await expect(service.authorizeRun(identity,new AbortController().signal)).rejects.toThrow('disabled')
+    granted=false
+    await expect(service.authorizeRun(identity,new AbortController().signal,'privateFileWrite')).rejects.toThrow('disabled')
+    await shutdownDesktopRemoteMcp(runtime)
+    await expect(service.authorizeRun(identity,new AbortController().signal,'privateFileWrite')).rejects.toThrow()
 })

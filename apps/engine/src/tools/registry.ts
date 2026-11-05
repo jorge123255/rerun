@@ -42,11 +42,12 @@ import { desktopWebFetchTools } from '../desktop/web-fetch-tool.js'
 import { desktopDbTools, desktopSharedDbTools } from '../desktop/data-tools.js'
 import { desktopApp } from '../desktop/policy.js'
 import { desktopSkillTools } from '../desktop/skill-tools.js'
+import { desktopPrivateFileTools } from '../desktop/private-file-tools.js'
 import { desktopMcpTools } from '../desktop/mcp-tools.js'
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
     if (desktopApp()) {
-        const tools: ToolSet = { ...desktopWorkspaceReadTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx) }
+        const tools: ToolSet = { ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx) }
         const remote = await desktopMcpTools(ctx)
         if (Object.keys(remote.tools).some(name => Object.hasOwn(tools, name))) {
             await remote.close()

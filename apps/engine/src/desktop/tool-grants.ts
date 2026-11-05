@@ -5,6 +5,7 @@ import type { RunContext } from '../runtime/context.js'
 export function hasDesktopToolGrant(config: AgentConfig, id: DesktopRerunGrantId): boolean {
     if (!desktopRerunGrantsOf(config.tools)[id]) return false
     if (id === 'skills') return config.tools.skills !== false
+    if (id === 'privateFileWrite') return config.tools.filesystem
     if (id === 'memoryRecall') return config.tools.memory
     if (id === 'memoryWrite') return config.selfImprovement.enabled && config.selfImprovement.autoMemory
     // The self-instruction permissions sit under the same master switch the Tools settings

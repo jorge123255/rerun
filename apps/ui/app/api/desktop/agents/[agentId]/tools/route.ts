@@ -17,6 +17,7 @@ type Context = { params: Promise<{ agentId: string }> }
 // rechecked against the current config at execution. Enabling a permission behind an off
 // master is refused here so the switch never shows a grant that cannot run.
 function pausedReason(id: string, config: AgentConfig): string | undefined {
+    if (id === 'privateFileWrite' && !config.tools.filesystem) return 'File editing is paused for this coworker.'
     if (id === 'memoryRecall' && !config.tools.memory) return 'Turn on Use saved memories in chat in Edit coworker.'
     if (id === 'memoryWrite' && (!config.selfImprovement.enabled || !config.selfImprovement.autoMemory)) return 'Memory learning is paused for this coworker.'
     if ((id === 'selfInstruction' || id === 'verbositySet') && !config.selfImprovement.enabled) return 'Turn on Improve itself to change this permission.'
@@ -40,6 +41,7 @@ async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToo
             const row = coworkerToolCatalogs[patch.group].find(entry => entry.id === patch.id)
             if (!row?.available) throw new DesktopHttpError(400, 'This tool is unavailable for this coworker.')
             if (patch.group === 'rerun' && patch.enabled) {
+                if (patch.id === 'privateFileWrite' && !current.config.tools.filesystem) throw new DesktopHttpError(400, 'File editing is paused for this coworker.')
                 if ((patch.id === 'memoryRecall' || patch.id === 'memoryWrite') && pausedReason(patch.id, current.config)) {
                     throw new DesktopHttpError(400, 'Turn on this coworker’s memory preference first.')
                 }
@@ -56,7 +58,7 @@ async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToo
             rerun: coworkerToolCatalogs.rerun.map(row => {
                 const nested = row.parent === 'self'
                 const reason = pausedReason(row.id, agent.config)
-                const enabled = row.id === 'self' ? master : nested ? master && rerun[row.id] === true : rerun[row.id] === true
+                const enabled = !reason && (row.id === 'self' ? master : nested ? master && rerun[row.id] === true : rerun[row.id] === true)
                 return { ...row, ...(reason && { available: false, unavailableReason: reason }), enabled: row.available && enabled }
             }),
             codex: coworkerToolCatalogs.codex.map(row => ({ ...row, enabled: row.available && codex[row.id] === true })),
@@ -78,6 +80,6 @@ export function PATCH(request: Request, { params }: Context) {
         if (!patch.success) throw new DesktopHttpError(400, 'Choose a valid tool permission.')
         const agentId = (await params).agentId
         const write = () => toolsFor(runtime, agentId, patch.data)
-        return patch.data.group === 'rerun' && patch.data.id === 'mcp' ? withDesktopMcpOwnerTransition(runtime, agentId, write) : write()
+        return patch.data.group === 'rerun' && (patch.data.id === 'mcp' || patch.data.id === 'privateFileWrite') ? withDesktopMcpOwnerTransition(runtime, agentId, write) : write()
     })
 }

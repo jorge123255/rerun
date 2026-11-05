@@ -5,15 +5,18 @@ import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { remoteMcpApi } from './mcp/api'
 import { abortable, boundedText, remoteMcpRuntime } from './mcp/remote'
-import { remoteMcpSchema, remoteMcpStore } from './mcp/store'
+import { remoteMcpStore } from './mcp/store'
+import { initializeDesktopMcp } from './mcp/schema'
+import { loopbackMcpOAuth } from './mcp/oauth-loopback'
+import { loopbackOAuthApi } from './mcp/oauth-api'
 import { desktopMcpBridge, desktopMcpBridgeRequest, type McpRunIdentity } from './mcp/bridge'
 
-const authority = z.object({ id: z.string(), config: z.object({ enabled: z.boolean(), tools: z.object({ desktopToolGrants: z.record(z.string(), z.boolean()).optional() }) }) })
+const authority = z.object({ id: z.string(), config: z.object({ enabled: z.boolean(), tools: z.object({ filesystem: z.boolean().optional(), desktopToolGrants: z.record(z.string(), z.boolean()).optional() }) }) })
 const session = z.object({ id: z.string(), agentId: z.string() })
 const run = z.object({ id: z.string(), agentId: z.string(), sessionId: z.string(), status: z.string() })
 const SERVICE_KEY = Symbol.for('rerun.desktop.remote-mcp.services.v1')
 type Service = Awaited<ReturnType<typeof createService>>
-type RegistryEntry = { service?: Promise<Service>; pendingOwners: Map<string, number>; generations: Map<string, number>; closed: boolean }
+type RegistryEntry = { service?: Promise<Service>; pendingOwners: Map<string, number>; generations: Map<string, number>; closed: boolean; shutdown: AbortController }
 const registry = () => {
     const globals = globalThis as unknown as Record<symbol, Map<string, RegistryEntry>>
     return globals[SERVICE_KEY] ??= new Map()
@@ -22,7 +25,7 @@ const keyOf = (runtime: DesktopRuntime) => JSON.stringify([runtime.dataRoot, run
 const entryOf = (runtime: DesktopRuntime) => {
     const services = registry(), key = keyOf(runtime)
     let entry = services.get(key)
-    if (!entry) { entry = { pendingOwners: new Map(), generations: new Map(), closed: false }; services.set(key, entry) }
+    if (!entry) { entry = { pendingOwners: new Map(), generations: new Map(), closed: false, shutdown: new AbortController() }; services.set(key, entry) }
     return entry
 }
 const masterKey = () => {
@@ -34,7 +37,8 @@ const masterKey = () => {
 async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     masterKey()
     const db = await openDesktopDatabase(runtime.dataRoot)
-    await db.executeMultiple(remoteMcpSchema)
+    await initializeDesktopMcp(db)
+    entry.shutdown.signal.throwIfAborted()
     const store = remoteMcpStore(db, masterKey)
     async function localOwner(localId?: string, engineId?: string) {
         const result = await db.execute({ sql: `SELECT a.id,a.engine_agent_id FROM desktop_agents a
@@ -49,24 +53,27 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (!response.ok) { await abortable(response.body?.cancel() ?? Promise.resolve(), signal).catch(() => {}); throw new Error('Coworker authority is unavailable') }
         return JSON.parse(await boundedText(response, signal))
     }
-    async function access(localId: string) {
+    async function access(localId: string, grant: 'mcp' | 'privateFileWrite' = 'mcp') {
         const generation = entry.generations.get(localId) ?? 0
         const current = () => { if (entry.closed || entry.pendingOwners.get(localId) || (entry.generations.get(localId) ?? 0) !== generation) throw new Error('Coworker permission is changing') }
         current()
-        const signal = AbortSignal.timeout(5_000)
+        const signal = AbortSignal.any([entry.shutdown.signal, AbortSignal.timeout(5_000)])
         const owner = await abortable(localOwner(localId), signal)
         const detail = authority.parse(await engineJson(`/agents/${encodeURIComponent(owner.engineId)}`, signal))
         const final = await abortable(localOwner(localId), signal)
         current()
         if (detail.id !== owner.engineId || final.engineId !== owner.engineId) throw new Error('Coworker identity changed')
-        return { enabled: detail.config.enabled, granted: detail.config.tools.desktopToolGrants?.mcp === true }
+        signal.throwIfAborted()
+        return { enabled: detail.config.enabled, granted: detail.config.tools.desktopToolGrants?.[grant] === true && (grant !== 'privateFileWrite' || detail.config.tools.filesystem === true) }
     }
-    const remote = remoteMcpRuntime(store, access)
-    const authorize = async (identity: McpRunIdentity, stop: AbortSignal) => {
-        const signal = AbortSignal.any([stop, AbortSignal.timeout(5_000)])
+    const oauth = loopbackMcpOAuth(store, access)
+    const remote = remoteMcpRuntime(store, access, fetch, oauth.credential)
+    const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' = 'mcp') => {
+        const signal = AbortSignal.any([stop, entry.shutdown.signal, AbortSignal.timeout(5_000)])
         const owner = await abortable(localOwner(undefined, identity.engineAgentId), signal)
-        const permission = await abortable(access(owner.id), signal)
-        if (!permission.enabled || !permission.granted) throw new Error('MCP is disabled for this coworker')
+        const generation = entry.generations.get(owner.id) ?? 0
+        const permission = await abortable(access(owner.id, grant), signal)
+        if (!permission.enabled || !permission.granted) throw new Error('Tool permission is disabled for this coworker')
         const prefix = `/agents/${encodeURIComponent(identity.engineAgentId)}`
         const [currentSession, currentRun] = await Promise.all([
             engineJson(`${prefix}/sessions/${encodeURIComponent(identity.sessionId)}`, signal).then(value => session.parse(value)),
@@ -76,11 +83,13 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             || currentRun.agentId !== identity.engineAgentId || currentRun.sessionId !== identity.sessionId || currentRun.status !== 'running') throw new Error('MCP request does not belong to this active run')
         const final = await abortable(localOwner(owner.id), signal)
         if (final.engineId !== identity.engineAgentId) throw new Error('Coworker identity changed')
+        const finalPermission = await abortable(access(owner.id, grant), signal)
+        if (!finalPermission.enabled || !finalPermission.granted || entry.closed || entry.pendingOwners.get(owner.id) || (entry.generations.get(owner.id) ?? 0) !== generation) throw new Error('Coworker permission changed')
         signal.throwIfAborted()
         return owner.id
     }
-    const bridge = desktopMcpBridge(store, remote, authorize)
-    return { store, runtime: remote, bridge, api: remoteMcpApi(store, remote, access) }
+    const bridge = desktopMcpBridge(store, remote, authorizeRun)
+    return { store, runtime: remote, bridge, access, authorizeRun, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access) }
 }
 
 /** Next may bundle each route independently. This process-wide promise is the single authority. */
@@ -116,7 +125,21 @@ export async function withDesktopMcpOwnerTransition<T>(runtime: DesktopRuntime, 
 export async function shutdownDesktopRemoteMcp(runtime: DesktopRuntime) {
     const entry = entryOf(runtime)
     entry.closed = true
-    if (entry.service) (await entry.service).bridge.shutdown()
+    entry.shutdown.abort()
+    if (entry.service) {
+        const service = await entry.service.catch(() => undefined)
+        service?.oauth.shutdown()
+        service?.bridge.shutdown()
+    }
+}
+
+export async function handleDesktopMcpOAuth(request: Request, agentId: string): Promise<Response> {
+    try {
+        const runtime = await authenticateDesktopRequest(request)
+        return await (await getDesktopRemoteMcpService(runtime)).oauthApi(request, agentId)
+    } catch (error) {
+        return Response.json({ state: 'error', message: 'Authorization is unavailable.' }, { status: error instanceof DesktopHttpError ? error.status : 503, headers: { 'Cache-Control': 'no-store' } })
+    }
 }
 
 export async function handleDesktopMcpManagement(request: Request, agentId: string): Promise<Response> {

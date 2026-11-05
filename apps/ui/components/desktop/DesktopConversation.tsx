@@ -113,13 +113,15 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     initialDraft?: ComposerDraft
     onTabActivity?: (uid: string, state: TabActivity) => void
     onChatSession: (id: string, sourceDraft?: ComposerDraft) => void | boolean | Promise<boolean>
-    renderHistory?: (busy: boolean) => ReactNode
+    renderHistory?: (busy: boolean, control: { needsRequest: number | null; active: boolean; onOpenChange: (open: boolean) => void }) => ReactNode
     renderRunHistory?: (control: DesktopDialogControl) => ReactNode
     onClosePanel?: () => void
     modelLabel?: string
     onOpenModelSettings?: () => void
 }) {
     const [cardOpen, setCardOpen] = useState(false)
+    const [needsRequest, setNeedsRequest] = useState<number | null>(null)
+    const [chatsOpen, setChatsOpen] = useState(false)
     const [detailPanel, setDetailPanel] = useState<Exclude<DesktopCoworkerPanel, 'chat'> | null>(null)
     const [focusedSkill, setFocusedSkill] = useState<string | null>(null)
     const [panelNotice, setPanelNotice] = useState('')
@@ -363,6 +365,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         onPanelRequestHandled?.(requestedPanel)
         setPanelNotice('')
         if (requestedPanel.panel === 'chat') { setDetailPanel(null); setCardOpen(false); setPanelFocus('chat'); return }
+        if (requestedPanel.panel === 'actions') { setDetailPanel(null); setCardOpen(false); setPanelFocus(null); setNeedsRequest(requestedPanel.nonce); return }
         setCardOpen(true)
         if (requestedPanel.panel === 'settings' && generating) {
             setPanelNotice('Wait for this reply to finish before editing the coworker.')
@@ -380,7 +383,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         setPanelFocus(null)
     }, [panelFocus, active, detailPanel, cardOpen])
     const dirty = !draft.loaded || !uploadsLoaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive || uploadItems.length)
-    const readable = active && !cardOpen && !detailPanel && ready && !generating && history.loadedGeneration === historyGeneration
+    const readable = active && !cardOpen && !detailPanel && !chatsOpen && ready && !generating && history.loadedGeneration === historyGeneration
         && !!history.transcript && history.question !== undefined && history.approval !== undefined
         && engineRunning.id === sessionId
     useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty, readableSessionId: readable ? sessionId : null }) }, [tabUid, generating, dirty, readable, sessionId, onTabActivity])
@@ -810,7 +813,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         }}>
             <header className="relative z-40 grid shrink-0 grid-cols-[minmax(2.5rem,1fr)_minmax(0,max-content)_minmax(2.5rem,1fr)] items-center gap-1 px-3 pt-3">
                 <div className="flex min-w-0 items-center justify-start">
-                    {renderHistory ? renderHistory(busy) : sessions.length > 0 && (
+                    {renderHistory ? renderHistory(busy, { needsRequest, active: active && !cardOpen && !detailPanel, onOpenChange: setChatsOpen }) : sessions.length > 0 && (
                         <select
                             disabled={busy}
                             aria-label="Conversation history"

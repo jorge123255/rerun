@@ -8,9 +8,8 @@ import { buildKickoff, DESCRIBED, type ScheduleChoice } from '@rerun/ui/new-agen
  * What this Mac build can offer a new coworker, next to what the hosted surfaces offer.
  *
  * The Apps picker installs connectors, Templates import another agent's setup and the planner
- * writes an automatic schedule: none of the three has a store here yet, so the description dialog
- * does not draw them at all. A capability that turns true later is the same dialog with one more
- * entry point, not a second flow.
+ * writes an automatic schedule. Those setup actions are not wired to description-based creation,
+ * so the description dialog hides them. Existing coworkers have a separate Routines panel.
  */
 export type DesktopNewAgentCapabilities = { apps: boolean; templates: boolean; schedule: boolean }
 export const DESKTOP_NEW_AGENT_CAPABILITIES: DesktopNewAgentCapabilities = { apps: false, templates: false, schedule: false }
@@ -20,6 +19,8 @@ export const DESKTOP_DESCRIPTION_MAX = 2000
 /** The route root mounts to read a description with the connected local provider. */
 export const DESKTOP_JOB_READ_ENDPOINT = '/api/desktop/new-agent/read'
 export const DESKTOP_JOB_READ_TIMEOUT_MS = 6000
+/** Includes the JSON envelope and escaping of the bounded model reply. */
+export const DESKTOP_JOB_READ_BYTES = 64 * 1024
 
 /**
  * Everything creating a coworker needs, and nothing that creates it. The dialog returns this to
@@ -57,7 +58,7 @@ export function desktopCreationIntent(input: DesktopCreationInput, id: string): 
     const capabilities = input.capabilities ?? DESKTOP_NEW_AGENT_CAPABILITIES
     const reading = input.reading ?? EMPTY_READING
     // A timing is only ever mentioned when this host can set one up: the description stays the
-    // opening message either way, and the Mac app has no schedule store yet.
+    // opening message either way. Description-based creation does not set up routines.
     const choice = capabilities.schedule ? input.schedule ?? DESCRIBED : DESCRIBED
     const name = (input.pinnedName?.trim() || reading.name?.trim() || fallbackAgentName(text)).slice(0, AGENT_NAME_MAX).trimEnd()
     if (!name) return { refusal: 'no-name' }
@@ -76,6 +77,44 @@ export function desktopCreationIntent(input: DesktopCreationInput, id: string): 
 export type DesktopJobReader = { read: JobReader; cancel: () => void }
 
 const readReply = z.object({ reply: z.string().max(8_000) }).strict()
+
+async function boundedReply(response: Response, signal: AbortSignal): Promise<unknown> {
+    const length = response.headers.get('content-length')
+    if (length !== null && (!/^\d+$/.test(length) || Number(length) > DESKTOP_JOB_READ_BYTES)) {
+        void response.body?.cancel().catch(() => {})
+        return null
+    }
+    if (!response.body || signal.aborted) {
+        void response.body?.cancel().catch(() => {})
+        return null
+    }
+    const reader = response.body.getReader()
+    const cancel = () => { void reader.cancel().catch(() => {}) }
+    signal.addEventListener('abort', cancel, { once: true })
+    try {
+        const decoder = new TextDecoder('utf-8', { fatal: true })
+        let bytes = 0
+        let body = ''
+        while (!signal.aborted) {
+            const chunk = await reader.read()
+            if (signal.aborted) return null
+            if (chunk.done) return JSON.parse(body + decoder.decode())
+            bytes += chunk.value.byteLength
+            if (bytes > DESKTOP_JOB_READ_BYTES) {
+                cancel()
+                return null
+            }
+            body += decoder.decode(chunk.value, { stream: true })
+        }
+        return null
+    } catch {
+        cancel()
+        return null
+    } finally {
+        signal.removeEventListener('abort', cancel)
+        reader.releaseLock()
+    }
+}
 
 /**
  * The bounded adapter over this Mac's connected provider. Root mounts one route that asks the
@@ -96,27 +135,41 @@ export function createDesktopJobReader({ endpoint = DESKTOP_JOB_READ_ENDPOINT, t
 } = {}): DesktopJobReader {
     let current: AbortController | null = null
     const read: JobReader = async description => {
+        current?.abort()
+        current = null
         const text = description.trim().slice(0, MAX_READABLE_LENGTH)
         if (text.length < minLength) return EMPTY_READING
-        current?.abort()
         const controller = new AbortController()
         current = controller
+        let abort!: () => void
+        const cancelled = new Promise<JobReading>(resolve => { abort = () => resolve(EMPTY_READING) })
+        controller.signal.addEventListener('abort', abort, { once: true })
         const timer = setTimeout(() => controller.abort(), timeoutMs)
         try {
-            const response = await (fetchImpl ?? fetch)(endpoint, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ text }),
-                cache: 'no-store',
-                signal: controller.signal,
-            })
-            if (!response.ok) return EMPTY_READING
-            const body = readReply.safeParse(await response.json().catch(() => null))
-            return body.success ? parseJobReading(body.data.reply, text, catalogSlugs) : EMPTY_READING
+            const work = (async (): Promise<JobReading> => {
+                const response = await (fetchImpl ?? fetch)(endpoint, {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ text }),
+                    cache: 'no-store',
+                    signal: controller.signal,
+                })
+                if (controller.signal.aborted || !response.ok) {
+                    void response.body?.cancel().catch(() => {})
+                    return EMPTY_READING
+                }
+                const body = readReply.safeParse(await boundedReply(response, controller.signal))
+                return !controller.signal.aborted && current === controller && body.success
+                    ? parseJobReading(body.data.reply, text, catalogSlugs) : EMPTY_READING
+            })().catch(() => EMPTY_READING)
+            // A fetch implementation or response body need not cooperate with AbortSignal.
+            // Racing it makes the deadline real; the observed work still discards any late reply.
+            return await Promise.race([work, cancelled])
         } catch {
             return EMPTY_READING
         } finally {
             clearTimeout(timer)
+            controller.signal.removeEventListener('abort', abort)
             if (current === controller) current = null
         }
     }

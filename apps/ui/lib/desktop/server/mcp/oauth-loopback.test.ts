@@ -9,7 +9,7 @@ import {loopbackMcpOAuth} from './oauth-loopback'
 import {discoverLoopbackOAuth,type OAuthJson} from './oauth-network'
 const clients:ReturnType<typeof createClient>[]=[]
 const services:ReturnType<typeof loopbackMcpOAuth>[]=[]
-afterEach(()=>{for(const service of services.splice(0))service.shutdown();for(const db of clients.splice(0))db.close();vi.useRealTimers();vi.clearAllMocks()})
+afterEach(()=>{for(const service of services.splice(0))service.shutdown();vi.restoreAllMocks();for(const db of clients.splice(0))db.close();vi.useRealTimers();vi.clearAllMocks()})
 const resource='https://mcp.example/mcp',issuer='https://auth.example/'
 function fixture(){
  let exchanges=0,refreshes=0
@@ -73,4 +73,80 @@ it('serializes rotating refreshes and never falls back to an expired OAuth token
  await store.writeOAuth('a','x',revision,{accessToken:'old',refreshToken:'rotating',expiresAt:1,resource,issuer,tokenEndpoint:issuer+'token',clientId:'public-client'},new AbortController().signal)
  expect(await Promise.all([oauth.credential('a','x',revision,new AbortController().signal),oauth.credential('a','x',revision,new AbortController().signal)])).toEqual(['access','access'])
  expect(refreshes()).toBe(1)
+})
+
+it('a stale start cannot close or replace a newer authorized attempt',async()=>{
+ const {oauth,revision,store}=await setup()
+ await store.save('a',{name:'x',url:resource,revision})
+ const nextRevision=(await store.list('a'))[0].revision
+ const started=await oauth.start('a','x',nextRevision,new AbortController().signal)
+ const before=http.closed.mock.calls.length
+ await expect(oauth.start('a','x',revision,new AbortController().signal)).rejects.toThrow('authority')
+ expect(http.closed).toHaveBeenCalledTimes(before)
+ expect(await oauth.status('a','x',nextRevision,new AbortController().signal)).toEqual({state:'waiting'})
+ callback(new URL(started.authorizationUrl!).searchParams.get('state')!)
+ await vi.waitFor(async()=>expect((await oauth.status('a','x',nextRevision,new AbortController().signal)).state).toBe('connected'))
+})
+
+it('finished attempts do not exhaust the active listener budget',async()=>{
+ const {store}=await setup()
+ const unavailable=loopbackMcpOAuth(store,async()=>({enabled:true,granted:true}),async()=>{throw new Error('Unavailable')});services.push(unavailable)
+ for(let index=0;index<129;index++){
+  const name=`server-${index}`
+  await store.save('a',{name,url:resource})
+  const revision=(await store.read('a',name)).revision
+  expect((await unavailable.start('a',name,revision,new AbortController().signal)).status.state).toBe('unsupported')
+ }
+ const last=await store.read('a','server-128')
+ expect((await unavailable.start('a','server-128',last.revision,new AbortController().signal)).status.state).toBe('unsupported')
+})
+
+it('restores connected state from encrypted storage after service restart while preserving configured bearer servers',async()=>{
+ const {oauth,revision,store,db,json}=await setup()
+ const started=await oauth.start('a','x',revision,new AbortController().signal)
+ callback(new URL(started.authorizationUrl!).searchParams.get('state')!)
+ await vi.waitFor(async()=>expect((await oauth.status('a','x',revision,new AbortController().signal)).state).toBe('connected'))
+ await store.save('a',{name:'bearer',url:resource,bearer:'configured-secret'})
+ oauth.shutdown()
+ const restored=remoteMcpStore(db,()=>Buffer.alloc(32,7)),next=loopbackMcpOAuth(restored,async()=>({enabled:true,granted:true}),json);services.push(next)
+ expect(await next.status('a','x',revision,new AbortController().signal)).toEqual({state:'connected'})
+ expect(await next.credential('a','x',revision,new AbortController().signal)).toBe('access')
+ const bearer=await restored.read('a','bearer')
+ expect(await next.credential('a','bearer',bearer.revision,new AbortController().signal)).toBeNull()
+ await expect(next.start('a','bearer',bearer.revision,new AbortController().signal)).rejects.toThrow('bearer')
+ expect((await restored.read('a','bearer')).bearer).toBe('configured-secret')
+})
+
+it('keeps a durable uncertain refresh receipt after cancellation and refuses replay after restart',async()=>{
+ const {store,revision,db,json}=await setup()
+ await store.writeOAuth('a','x',revision,{accessToken:'old',refreshToken:'rotating',expiresAt:1,resource,issuer,tokenEndpoint:issuer+'token',clientId:'public-client'},new AbortController().signal)
+ let entered!:()=>void,finish!:(value:Record<string,unknown>)=>void
+ const exchanging=new Promise<void>(resolve=>{entered=resolve})
+ const delayed:OAuthJson=(url,signal,body)=>body instanceof URLSearchParams && body.get('grant_type')==='refresh_token'?new Promise(resolve=>{finish=resolve;entered()}):json(url,signal,body)
+ const oauth=loopbackMcpOAuth(store,async()=>({enabled:true,granted:true}),delayed);services.push(oauth)
+ const controller=new AbortController(),pending=oauth.credential('a','x',revision,controller.signal),rejected=expect(pending).rejects.toThrow()
+ await exchanging;controller.abort();await rejected
+ finish({access_token:'late-token',refresh_token:'new-rotation',expires_in:3600,token_type:'Bearer'});await flush()
+ const saved=await store.readOAuth('a','x')
+ expect(saved?.refreshPending).toBeTruthy();expect(saved?.accessToken).toBe('old')
+ oauth.shutdown()
+ const next=loopbackMcpOAuth(remoteMcpStore(db,()=>Buffer.alloc(32,7)),async()=>({enabled:true,granted:true}),json);services.push(next)
+ expect((await next.status('a','x',revision,new AbortController().signal)).state).toBe('error')
+ await expect(next.credential('a','x',revision,new AbortController().signal)).rejects.toThrow('acknowledgement')
+})
+
+it('restores the exact refresh receipt when cancellation arrives after SQLite replaced its ciphertext',async()=>{
+ const {store,revision,db}=await setup()
+ const previous={accessToken:'old',refreshToken:'rotating',refreshPending:'unconfirmed-rotation',expiresAt:1,resource,issuer,tokenEndpoint:issuer+'token',clientId:'public-client'}
+ await store.writeOAuth('a','x',revision,previous,new AbortController().signal)
+ const ciphertext=String((await db.execute('SELECT bundle FROM desktop_remote_mcp_oauth')).rows[0].bundle)
+ const stop=new AbortController(),execute=db.execute.bind(db)
+ vi.spyOn(db,'execute').mockImplementation(async input=>{
+  const result=await execute(input)
+  if(typeof input!=='string' && input.sql.startsWith('INSERT INTO desktop_remote_mcp_oauth'))stop.abort()
+  return result
+ })
+ await expect(store.writeOAuth('a','x',revision,{...previous,refreshPending:undefined,accessToken:'cancelled-new-token'},stop.signal)).rejects.toThrow()
+ expect(await store.readOAuth('a','x')).toEqual(previous)
+ expect(String((await db.execute('SELECT bundle FROM desktop_remote_mcp_oauth')).rows[0].bundle)).toBe(ciphertext)
 })

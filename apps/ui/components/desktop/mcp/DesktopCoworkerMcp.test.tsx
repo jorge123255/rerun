@@ -64,6 +64,7 @@ it('ignores an old probe after editing the same server',async()=>{
  let finish!:(response:Response)=>void
  const old={name:'x',url:'https://example.com/mcp',revision:'1',hasBearer:false}
  vi.stubGlobal('fetch',vi.fn((_url:string,init:RequestInit)=>{
+  if(_url.endsWith('/oauth'))return Promise.resolve(Response.json({state:'idle'}))
   if(init.method==='GET')return Promise.resolve(Response.json([old]))
   if(init.method==='POST')return new Promise<Response>(r=>{finish=r})
   return Promise.resolve(Response.json([{...old,revision:'2'}]))
@@ -81,7 +82,7 @@ for(const outcome of ['empty','failure'] as const)it(`keeps a saved list authori
  let resolve!:(response:Response)=>void,reject!:(error:Error)=>void
  const initial=new Promise<Response>((yes,no)=>{resolve=yes;reject=no})
  const saved={name:'saved',url:'https://example.com/mcp',revision:'1',hasBearer:false}
- vi.stubGlobal('fetch',vi.fn((_url:string,init:RequestInit)=>init.method==='GET'?initial:Promise.resolve(Response.json([saved]))))
+ vi.stubGlobal('fetch',vi.fn((_url:string,init:RequestInit)=>_url.endsWith('/oauth')?Promise.resolve(Response.json({state:'idle'})):init.method==='GET'?initial:Promise.resolve(Response.json([saved]))))
  render(<DesktopCoworkerMcp agentId="a"/>)
  fireEvent.click(screen.getByRole('button',{name:'New'}))
  fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'saved'}})

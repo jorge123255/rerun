@@ -107,7 +107,8 @@ export async function readDesktopBoardState(db: Client | Transaction): Promise<D
 }
 
 async function reservations(reader: Reader) {
-    const result = await reader.execute('SELECT agent_id, space_id, board_col, board_row FROM desktop_duplicates WHERE completed = 0')
+    const result = await reader.execute(`SELECT agent_id, space_id, board_col, board_row FROM desktop_duplicates WHERE completed = 0
+        UNION ALL SELECT agent_id, space_id, board_col, board_row FROM desktop_creations WHERE phase='reserved'`)
     return result.rows.map(row => ({ agentId: String(row.agent_id), spaceId: String(row.space_id), col: Number(row.board_col), row: Number(row.board_row) }))
 }
 
@@ -145,7 +146,8 @@ function rejectOverlap(board: DesktopBoardState, rect: Rect, except?: string) {
 }
 
 async function rejectPending(reader: Reader, spaceId: string) {
-    const pending = await reader.execute({ sql: 'SELECT 1 FROM desktop_duplicates WHERE space_id = ? AND completed = 0 LIMIT 1', args: [spaceId] })
+    const pending = await reader.execute({ sql: `SELECT 1 FROM desktop_duplicates WHERE space_id = ? AND completed = 0
+        UNION ALL SELECT 1 FROM desktop_creations WHERE space_id = ? AND phase='reserved' LIMIT 1`, args: [spaceId, spaceId] })
     if (pending.rows.length) throw new DesktopHttpError(409, pendingMessage)
 }
 

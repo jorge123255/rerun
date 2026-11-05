@@ -1,9 +1,9 @@
 import 'server-only'
 import {z} from 'zod'
-import {authenticateDesktopRequest} from '../auth'
+import {authenticateDesktopRequest,DesktopHttpError} from '../auth'
 import {abortable,boundedText,type McpAccess} from './remote'
 import type {loopbackMcpOAuth} from './oauth-loopback'
-const input=z.object({name:z.string().min(1).max(64),revision:z.string().uuid(),action:z.enum(['start','status','cancel'])}).strict()
+const input=z.object({name:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),revision:z.string().uuid(),action:z.enum(['start','status','cancel'])}).strict()
 export function loopbackOAuthApi(oauth:ReturnType<typeof loopbackMcpOAuth>,access:McpAccess) {
  return async(request:Request,agent:string)=>{
   try {
@@ -21,6 +21,6 @@ export function loopbackOAuthApi(oauth:ReturnType<typeof loopbackMcpOAuth>,acces
    else result=await oauth.status(agent,body.name,body.revision,signal)
    signal.throwIfAborted()
    return Response.json(result,{headers:{'Cache-Control':'no-store'}})
-  }catch{return Response.json({state:'error',message:'Authorization unavailable. Check configuration and current permission.'},{status:400})}
+  }catch(error){return Response.json({state:'error',message:'Authorization unavailable. Check configuration and current permission.'},{status:error instanceof DesktopHttpError?error.status:400,headers:{'Cache-Control':'no-store'}})}
  }
 }

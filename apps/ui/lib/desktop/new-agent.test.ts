@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EMPTY_READING } from '@rerun/ui/new-agent/reading'
 import {
-    DESKTOP_NEW_AGENT_CAPABILITIES, IDLE_CREATION, createDesktopJobReader, desktopCreationIntent,
+    DESKTOP_JOB_READ_BYTES, DESKTOP_NEW_AGENT_CAPABILITIES, IDLE_CREATION, createDesktopJobReader, desktopCreationIntent,
     requestDesktopCreation, settleDesktopCreation, type DesktopCreateState, type DesktopCreationIntent,
 } from './new-agent'
 
@@ -130,19 +130,79 @@ describe('createDesktopJobReader', () => {
         expect(await createDesktopJobReader({ fetchImpl, timeoutMs: 5 }).read(TEXT)).toEqual(EMPTY_READING)
     })
 
-    it('aborts the read of a description that was already replaced', async () => {
+    it('discards a replaced read even when fetch ignores abort and resolves late', async () => {
         const signals: AbortSignal[] = []
-        const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const finishes: ((response: Response) => void)[] = []
+        const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
             signals.push(init!.signal!)
-            await new Promise(resolve => setTimeout(resolve, 10))
-            return reply({ reply: '{"name":"Later"}' })
+            return new Promise<Response>(resolve => { finishes.push(resolve) })
         })
         const reader = createDesktopJobReader({ fetchImpl })
         const first = reader.read('A first description that is long enough')
         const second = reader.read('A second description that is long enough')
-        await Promise.all([first, second])
+        expect(await first).toEqual(EMPTY_READING)
+        finishes[1](reply({ reply: '{"name":"Current"}' }))
+        expect(await second).toEqual({ name: 'Current', apps: [], schedule: null })
+        const late = reply({ reply: '{"name":"Old name"}' })
+        finishes[0](late)
+        await Promise.resolve()
+        expect(late.bodyUsed).toBe(true)
         expect(signals).toHaveLength(2)
         expect(signals[0].aborted).toBe(true)
         expect(signals[1].aborted).toBe(false)
+    })
+
+    it('shortening below the readable minimum cancels the previous request immediately', async () => {
+        let finish!: (response: Response) => void
+        let signal!: AbortSignal
+        const reader = createDesktopJobReader({ fetchImpl: vi.fn((_input, init) => {
+            signal = init!.signal!
+            return new Promise<Response>(resolve => { finish = resolve })
+        }) })
+        const first = reader.read(TEXT)
+        expect(await reader.read('tiny')).toEqual(EMPTY_READING)
+        expect(signal.aborted).toBe(true)
+        expect(await first).toEqual(EMPTY_READING)
+        finish(reply({ reply: '{"name":"Old"}' }))
+    })
+
+    it('enforces its deadline when fetch never responds to abort', async () => {
+        vi.useFakeTimers()
+        try {
+            const reader = createDesktopJobReader({ timeoutMs: 50, fetchImpl: vi.fn(() => new Promise<Response>(() => {})) })
+            const pending = reader.read(TEXT)
+            await vi.advanceTimersByTimeAsync(50)
+            expect(await pending).toEqual(EMPTY_READING)
+        } finally { vi.useRealTimers() }
+    })
+
+    it('cancels a stalled body and will not parse a late name after cancel', async () => {
+        const cancel = vi.fn()
+        const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode('{"reply":')) }, cancel })
+        const reader = createDesktopJobReader({ fetchImpl: vi.fn(async () => new Response(body)) })
+        const pending = reader.read(TEXT)
+        await Promise.resolve()
+        await Promise.resolve()
+        reader.cancel()
+        expect(await pending).toEqual(EMPTY_READING)
+        expect(cancel).toHaveBeenCalledTimes(1)
+    })
+
+    it('caps actual streamed response bytes even without a Content-Length header', async () => {
+        const cancel = vi.fn()
+        const response = new Response(new ReadableStream<Uint8Array>({ start(controller) {
+            controller.enqueue(new Uint8Array(DESKTOP_JOB_READ_BYTES + 1).fill(32))
+        }, cancel }))
+        const reader = createDesktopJobReader({ fetchImpl: vi.fn(async () => response) })
+        expect(await reader.read(TEXT)).toEqual(EMPTY_READING)
+        expect(cancel).toHaveBeenCalledTimes(1)
+    })
+
+    it('rejects an advertised oversized response before reading and releases it', async () => {
+        const cancel = vi.fn()
+        const response = new Response(new ReadableStream<Uint8Array>({ cancel }), { headers: { 'content-length': String(DESKTOP_JOB_READ_BYTES + 1) } })
+        const reader = createDesktopJobReader({ fetchImpl: vi.fn(async () => response) })
+        expect(await reader.read(TEXT)).toEqual(EMPTY_READING)
+        expect(cancel).toHaveBeenCalledTimes(1)
     })
 })

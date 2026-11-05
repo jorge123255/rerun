@@ -5,9 +5,10 @@ import type {RemoteMcpStore,OAuthTokenBundle} from './store'
 import {abortable,type McpAccess} from './remote'
 import {discoverLoopbackOAuth,oauthJson,publicOAuthAddress,type OAuthJson,type OAuthMetadata} from './oauth-network'
 export type OAuthStatus={state:'idle'|'waiting'|'connected'|'error'|'unsupported';message?:string}
-type Attempt={controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;status:OAuthStatus;revision:string;url:string;used:boolean;release:()=>void}
+type Attempt={slot:string;ended:boolean;controller:AbortController;server?:Server;timer:ReturnType<typeof setTimeout>;status:OAuthStatus;revision:string;url:string;used:boolean;release:()=>void}
 export function loopbackMcpOAuth(store:RemoteMcpStore,access:McpAccess,json:OAuthJson=oauthJson) {
  const attempts=new Map<string,Attempt>(),refreshes=new Map<string,Promise<string>>()
+ const terminal=new Map<string,{revision:string;url:string;status:OAuthStatus}>()
  const key=(agent:string,name:string)=>JSON.stringify([agent,name])
  let closed=false
  async function authority(agent:string,name:string,revision:string,signal:AbortSignal,check:()=>void) {
@@ -18,7 +19,18 @@ export function loopbackMcpOAuth(store:RemoteMcpStore,access:McpAccess,json:OAut
   return server
  }
  function end(attempt:Attempt,status:OAuthStatus) {
-  attempt.status=status;clearTimeout(attempt.timer);attempt.server?.close();attempt.server?.closeIdleConnections();attempt.server?.removeAllListeners?.('request');attempt.controller.abort();attempt.release()
+  if(attempt.ended)return
+  attempt.ended=true;attempt.status=status
+  clearTimeout(attempt.timer);attempt.server?.close()
+  // Let the successful callback response flush; all cancelled/error attempts are force-closed.
+  if(status.state==='connected')attempt.server?.closeIdleConnections?.();else attempt.server?.closeAllConnections?.()
+  attempt.controller.abort();attempt.release()
+  if(attempts.get(attempt.slot)===attempt){
+   attempts.delete(attempt.slot);terminal.delete(attempt.slot)
+   // Connected state comes from the encrypted store, never a process-local success flag.
+   if(status.state==='error' || status.state==='unsupported')terminal.set(attempt.slot,{revision:attempt.revision,url:attempt.url,status})
+   while(terminal.size>128)terminal.delete(terminal.keys().next().value!)
+  }
  }
  function tokens(data:Record<string,unknown>,meta:OAuthMetadata,clientId:string,previous?:OAuthTokenBundle):OAuthTokenBundle {
   if(data.resource!==undefined && data.resource!==meta.resource || data.iss!==undefined && data.iss!==meta.issuer)throw new Error('Token identity mismatch')
@@ -27,13 +39,21 @@ export function loopbackMcpOAuth(store:RemoteMcpStore,access:McpAccess,json:OAut
   return {accessToken:data.access_token,refreshToken:typeof data.refresh_token==='string'?data.refresh_token:previous?.refreshToken,expiresAt:Date.now()+data.expires_in*1000,resource:meta.resource,issuer:meta.issuer,tokenEndpoint:meta.token,clientId,scope:typeof data.scope==='string'?data.scope:previous?.scope}
  }
  async function start(agent:string,name:string,revision:string,stop:AbortSignal) {
-  if(closed || attempts.size>=128)throw new Error('OAuth unavailable')
+  if(closed)throw new Error('OAuth unavailable')
+  // A stale dialog must not invalidate a newer attempt or an active bearer/OAuth call.
+  const admission=store.lifecycle.watch(agent,name)
+  const admitted=await authority(agent,name,revision,AbortSignal.any([stop,AbortSignal.timeout(30_000)]),admission)
+  if(admitted.bearer)throw new Error('Clear the configured bearer before OAuth')
+  admission();stop.throwIfAborted()
   const slot=key(agent,name),old=attempts.get(slot)
+  if(attempts.size>=128 && !old)throw new Error('OAuth unavailable')
   if(old)end(old,{state:'idle'})
+  terminal.delete(slot)
   store.lifecycle.disconnect(agent,name)
   const controller=new AbortController(),ticket=store.lifecycle.admit(agent,name,controller)
   const signal=AbortSignal.any([controller.signal,stop,AbortSignal.timeout(30_000)])
-  const attempt:Attempt={controller,revision,url:'',used:false,release:ticket.release,status:{state:'waiting'},timer:setTimeout(()=>end(attempt,{state:'error',message:'Authorization expired. Retry.'}),300_000)}
+  const attempt:Attempt={slot,ended:false,controller,revision,url:admitted.url,used:false,release:ticket.release,status:{state:'waiting'},timer:setTimeout(()=>end(attempt,{state:'error',message:'Authorization expired. Retry.'}),300_000)}
+  attempt.timer.unref?.()
   attempts.set(slot,attempt)
   controller.signal.addEventListener('abort',()=>{if(attempt.status.state==='waiting')end(attempt,{state:'error',message:'Authorization cancelled. Retry.'})},{once:true})
   try {
@@ -66,7 +86,11 @@ export function loopbackMcpOAuth(store:RemoteMcpStore,access:McpAccess,json:OAut
     })()
    })
    attempt.server=listener;listener.requestTimeout=10_000;listener.headersTimeout=10_000;listener.maxHeadersCount=32
-   await abortable(new Promise<void>((resolve,reject)=>{listener.once('error',reject);listener.listen(0,'127.0.0.1',resolve)}),signal)
+   await abortable(new Promise<void>((resolve,reject)=>{listener.once('error',reject);listener.listen(0,'127.0.0.1',()=>{
+    // An aborted listen can complete after close() ran before the socket was bound.
+    if(attempt.ended || signal.aborted){listener.close();listener.closeAllConnections?.();reject(new Error('Callback cancelled'));return}
+    resolve()
+   })}),signal)
    const address=listener.address();if(!address || typeof address==='string')throw new Error('Callback unavailable')
    redirectUri=`http://127.0.0.1:${address.port}/callback`
    const registered=await json(meta.registration,signal,{client_name:'Rerun',redirect_uris:[redirectUri],grant_types:['authorization_code','refresh_token'],response_types:['code'],token_endpoint_auth_method:'none'})
@@ -76,16 +100,17 @@ export function loopbackMcpOAuth(store:RemoteMcpStore,access:McpAccess,json:OAut
    await publicOAuthAddress(meta.authorization,signal)
    const url=new URL(meta.authorization)
    for(const [k,v] of Object.entries({response_type:'code',client_id:clientId,redirect_uri:redirectUri,state,code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256',resource:meta.resource,...(meta.scope?{scope:meta.scope}:{})}))url.searchParams.set(k,v)
+   if(url.href.length>8192)throw new Error('Authorization link exceeds limit')
    await authority(agent,name,revision,signal,ticket.assertCurrent)
    ticket.assertCurrent();signal.throwIfAborted()
    return {authorizationUrl:url.href,status:attempt.status}
-  }catch{end(attempt,{state:'unsupported',message:'Unsupported or unavailable provider. Public PKCE and dynamic loopback registration are required.'});return {status:attempt.status}}
+  }catch{end(attempt,signal.aborted?{state:'error',message:'Authorization cancelled or timed out. Retry.'}:{state:'unsupported',message:'Unsupported or unavailable provider. Public PKCE and dynamic loopback registration are required.'});return {status:attempt.status}}
  }
  async function status(agent:string,name:string,revision:string,signal:AbortSignal):Promise<OAuthStatus> {
   const check=store.lifecycle.watch(agent,name)
   const server=await authority(agent,name,revision,signal,check)
-  const attempt=attempts.get(key(agent,name))
-  if(attempt && attempt.revision===revision && attempt.url===server.url && attempt.status.state!=='connected')return attempt.status
+  const attempt=attempts.get(key(agent,name))??terminal.get(key(agent,name))
+  if(attempt && attempt.revision===revision && attempt.url===server.url)return attempt.status
   const token=await abortable(store.readOAuth(agent,name),signal);check();signal.throwIfAborted()
   if(token && token.expiresAt<=Date.now()+60_000 && !token.refreshToken)return {state:'error',message:'Authorization expired. Reconnect required.'}
   if(token?.refreshPending)return {state:'error',message:'Refresh acknowledgement unavailable. Reconnect required.'}
@@ -129,6 +154,6 @@ export function loopbackMcpOAuth(store:RemoteMcpStore,access:McpAccess,json:OAut
    return result
   }finally{controller.abort();ticket.release()}
  }
- async function cancel(agent:string,name:string,revision:string,signal:AbortSignal){const check=store.lifecycle.watch(agent,name);await authority(agent,name,revision,signal,check);check();signal.throwIfAborted();const attempt=attempts.get(key(agent,name));if(attempt?.revision===revision)end(attempt,{state:'idle'});store.lifecycle.disconnect(agent,name)}
- return {start,status,credential,cancel,shutdown(){closed=true;for(const attempt of attempts.values())end(attempt,{state:'idle'});attempts.clear();store.lifecycle.shutdown()}}
+ async function cancel(agent:string,name:string,revision:string,signal:AbortSignal){const check=store.lifecycle.watch(agent,name);await authority(agent,name,revision,signal,check);check();signal.throwIfAborted();const slot=key(agent,name),attempt=attempts.get(slot);if(attempt?.revision===revision)end(attempt,{state:'idle'});terminal.delete(slot);store.lifecycle.disconnect(agent,name)}
+ return {start,status,credential,cancel,shutdown(){closed=true;for(const attempt of attempts.values())end(attempt,{state:'idle'});attempts.clear();terminal.clear();store.lifecycle.shutdown()}}
 }

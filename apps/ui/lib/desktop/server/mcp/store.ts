@@ -40,13 +40,19 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
         async writeOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal) {
             return lifecycle.commitCredentials(agent,name,signal,async check=>{
                 check()
+                const previous=(await db.execute({sql:'SELECT revision,bundle FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
+                check()
                 const encrypted=seal(agent,`oauth:${name}`,JSON.stringify(bundle))
                 try {
                     const result=await db.execute({sql:'INSERT INTO desktop_remote_mcp_oauth(agent_id,name,revision,bundle) SELECT agent_id,name,revision,? FROM desktop_remote_mcp WHERE agent_id=? AND name=? AND revision=? ON CONFLICT(agent_id,name) DO UPDATE SET revision=excluded.revision,bundle=excluded.bundle',args:[encrypted,agent,name,revision]})
                     check()
                     if(result.rowsAffected!==1)throw new Error('MCP server changed')
                 } catch(error) {
-                    await db.execute({sql:'DELETE FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=? AND bundle=?',args:[agent,name,encrypted]})
+                    // Restore only the row displaced by this exact write. In particular, a
+                    // cancelled refresh must retain its prior uncertain-rotation receipt,
+                    // rather than looking anonymous on the next request or after restart.
+                    if(previous)await db.execute({sql:'UPDATE desktop_remote_mcp_oauth SET revision=?,bundle=? WHERE agent_id=? AND name=? AND bundle=?',args:[String(previous.revision),String(previous.bundle),agent,name,encrypted]})
+                    else await db.execute({sql:'DELETE FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=? AND bundle=?',args:[agent,name,encrypted]})
                     throw error
                 }
             })

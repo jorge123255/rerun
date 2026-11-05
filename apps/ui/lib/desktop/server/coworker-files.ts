@@ -17,6 +17,7 @@ import type { DesktopRuntime } from './runtime'
 import { findDesktopAgent } from './store'
 import { withRosterWrite } from './roster-writes'
 import { assertCoworkerNotDeleting } from './coworker-delete'
+import { assertPrivateBackupBudget, assertPrivateDirectories, assertPrivateSnapshot, privateFileLocation, readPrivateSnapshot, readPrivateTextAt, type PrivateFileSnapshot } from './private-file-tools/snapshot'
 
 export type CoworkerFileEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string; identity?: string }
 /** `hash` is set only when the whole file was read as valid UTF-8 .txt/.md, i.e. when it can be edited. */
@@ -576,12 +577,29 @@ async function assertPrivateToolLocation(workspace:string,path:string,mustExist:
     if(parent!==dirname(expected) || located.target && located.target!==expected || mustExist && !located.target)throw new DesktopHttpError(400,'Private file tools cannot follow symlinks or create folders.')
 }
 
-export type PrivateToolPublication = { beforePublish: () => Promise<void>; existingDirectoryOnly: true }
+export type PrivateToolPublication = { beforePublish: () => Promise<void>; existingDirectoryOnly: true; snapshot?: PrivateFileSnapshot }
+
+/** Model reads are complete snapshots, do not follow hardlinks and cannot recover unrelated edits. */
+export async function readPrivateCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, beforeRead: () => Promise<void>): Promise<PrivateFileSnapshot> {
+    return withCoworkerFiles(runtime, agentId, async () => {
+        await beforeRead()
+        const workspace = await coworkerWorkspace(runtime, agentId)
+        return withSaveLock(join(workspace, path), async () => {
+            await beforeRead()
+            const location = await privateFileLocation(workspace, path)
+            const snapshot = await readPrivateSnapshot(location)
+            await beforeRead()
+            await assertPrivateSnapshot(snapshot)
+            return snapshot
+        })
+    })
+}
 
 export async function importCoworkerFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array, publication?: PrivateToolPublication): Promise<{ path: string; name: string }> {
     // Imports can create a previously absent workspace. Keep that whole mutation ordered with
     // deletion so an old file picker cannot recreate the removed coworker's folder.
     return withRosterWrite(async () => {
+        await publication?.beforePublish()
         await assertCoworkerNotDeleting(await openDesktopDatabase(runtime.dataRoot), agentId)
         return importFile(runtime, agentId, folder, name, bytes, publication)
     })
@@ -602,8 +620,9 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
     const { target, rel } = resolved
     if(publication && target!==join(resolved.root ?? '',folder))throw new DesktopHttpError(400,'Private file tools cannot follow symlinks.')
     if (!target) throw new DesktopHttpError(404, 'Folder not found')
-    await recoverInterruptedCoworkerEdits(target, resolved.root!)
     const path = rel ? `${rel}/${name}` : name
+    const privateLocation = publication ? await privateFileLocation(workspace, path) : null
+    if (!publication) await recoverInterruptedCoworkerEdits(target, resolved.root!)
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace or is not a folder.')
     const exists = () => new DesktopHttpError(409, `This folder already has a file named “${name}”. The existing file was kept; rename yours and import it again.`)
     const fsError = (error: unknown) => {
@@ -646,11 +665,21 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
             try {
                 await publication?.beforePublish()
                 if(publication){
+                    await assertPrivateDirectories(privateLocation!)
                     await assertPrivateToolLocation(workspace,path,false)
                     const [opened,current]=await Promise.all([dir.stat({bigint:true}),lstat(target,{bigint:true})])
                     if(opened.dev!==current.dev || opened.ino!==current.ino)throw outside()
                 }
                 await link(tempPath, join(pinned, name))
+                // A parent moved during link must not leave our newly created file in another workspace.
+                if (privateLocation) {
+                    try { await assertPrivateDirectories(privateLocation) }
+                    catch (error) {
+                        const [created, staged] = await Promise.all([fileStat(join(pinned, name)), fileStat(tempPath)])
+                        if (sameFile(created, staged)) await removeName(join(pinned, name))
+                        throw error
+                    }
+                }
             } catch (error) { throw fsError(error) }
         } finally {
             if (tempPath) await unlink(tempPath).catch(() => {})
@@ -824,7 +853,7 @@ async function recoveryLinks(directory: string, finalName: string, tempPath: str
 
 const simpleName = (name: unknown): name is string => typeof name === 'string' && name.length > 0 && !name.includes('/') && !name.includes('\\') && !name.includes('\0') && name !== '.' && name !== '..'
 
-type PublishJournal = { v: 1, final: string, temp: string, backup: string, phase: 'prepared' | 'linked', baseHash: string }
+type PublishJournal = { v: 1, final: string, temp: string, backup: string, phase: 'prepared' | 'linked', baseHash: string, retainBackup?: true }
 export type InterruptedCoworkerRecovery = { final: string; recovery: CoworkerFileRecovery }
 
 function parseJournal(raw: string): PublishJournal | null {
@@ -835,7 +864,7 @@ function parseJournal(raw: string): PublishJournal | null {
         if (!simpleName(value.temp) || !value.temp.startsWith(EDIT_PREFIX)) return null
         if (!simpleName(value.backup) || !value.backup.startsWith(BACKUP_PREFIX)) return null
         if (typeof value.baseHash !== 'string' || !value.baseHash) return null
-        return { v: 1, final: value.final, temp: value.temp, backup: value.backup, phase: value.phase, baseHash: value.baseHash }
+        return { v: 1, final: value.final, temp: value.temp, backup: value.backup, phase: value.phase, baseHash: value.baseHash, ...(value.retainBackup === true && {retainBackup: true as const}) }
     } catch { return null }
 }
 
@@ -985,6 +1014,23 @@ async function recoverInDirectory(directory: string, pinned: string, assertUnmov
             try { await link(backupPath, finalPath) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
         }
         const kept = await fileStat(finalPath)
+        if (journal.retainBackup) {
+            // Only remove an extra name when the displaced inode remains at the final name.
+            // Otherwise it stays available even to a writer that opens it after recovery.
+            if (backupStat && sameFile(kept, backupStat)) await retireName(backupPath, backupStat)
+            if (tempStat && kept && !sameFile(tempStat, kept)) {
+                // A refused/interrupted proposal remains inspectable too. This reserved name is
+                // included in the tool's bounded backup budget and is not orphan-temp cleanup.
+                const retainedDraft = join(pinned, `.rerun-backup-draft-${journal.temp.slice(EDIT_PREFIX.length)}`)
+                try { await link(tempPath, retainedDraft) }
+                catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || !sameFile(await fileStat(retainedDraft), tempStat)) throw error
+                }
+            }
+            if (tempStat && kept) await retireName(tempPath, tempStat)
+            if (kept || !backupStat) await removeName(journalPath)
+            continue
+        }
         if (backupStat?.isFile() && kept) {
             // A writer can close after changing the displaced inode. Check for held handles
             // first, then compare its final bytes before retiring the last backup name.
@@ -1046,7 +1092,10 @@ async function withSaveLock<T>(key: string, run: () => Promise<T>): Promise<T> {
  * second copy to edit.
  */
 export async function saveCoworkerFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string, identity?: string, publication?: PrivateToolPublication): Promise<SaveCoworkerFileResult> {
-    return withCoworkerFiles(runtime, agentId, () => saveFile(runtime, agentId, path, content, baseHash, identity, publication))
+    return withCoworkerFiles(runtime, agentId, async () => {
+        await publication?.beforePublish()
+        return saveFile(runtime, agentId, path, content, baseHash, identity, publication)
+    })
 }
 
 async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, content: string, baseHash: string, identity?: string, publication?: PrivateToolPublication): Promise<SaveCoworkerFileResult> {
@@ -1066,8 +1115,15 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
     const finalName = basename(target)
     if (!inside(root, folder)) throw outside()
     return withSaveLock(target, async () => {
+        await publication?.beforePublish()
+        if (publication) {
+            if (!publication.snapshot || publication.snapshot.target !== target) throw outside()
+            await privateFileLocation(workspace, path)
+            await assertPrivateSnapshot(publication.snapshot)
+            await assertPrivateBackupBudget(publication.snapshot)
+        }
         let savedIdentity: string | undefined
-        const interrupted = (await recoverInterruptedCoworkerEdits(folder, root!)).find(item => item.final === finalName)
+        const interrupted = publication ? undefined : (await recoverInterruptedCoworkerEdits(folder, root!)).find(item => item.final === finalName)
         claim(folder, finalName)
         try {
         const interruptedRecovery = interrupted ? {
@@ -1082,6 +1138,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
         try {
             const pinned = await pinnedDirectory(dir)
             const assertFolderUnmoved = async () => {
+                if (publication?.snapshot) await assertPrivateDirectories(publication.snapshot)
                 const [opened, listed, actual] = await Promise.all([
                     dir.stat({ bigint: true }),
                     lstat(folder, { bigint: true }).catch(() => null),
@@ -1090,6 +1147,12 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                 if (!listed || !actual || actual !== folder || !inside(root, actual) || opened.dev !== listed.dev || opened.ino !== listed.ino) throw outside()
             }
             const readCurrent = async (fileName = finalName) => {
+                if (publication) {
+                    await assertFolderUnmoved()
+                    const current = await readPrivateTextAt(join(folder, fileName)).catch(error => { if (missing(error)) return null; throw error })
+                    await assertFolderUnmoved()
+                    return current
+                }
                 const info = await lstat(join(pinned, fileName)).catch(error => { if (missing(error)) return null; throw error })
                 if (!info) return null
                 if (!info.isFile()) throw outside()
@@ -1114,6 +1177,16 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                     return { content: text, hash: hashText(text), mode: opened.mode & 0o777, identity: `${identified.dev}:${identified.ino}` }
                 } finally { await handle.close() }
             }
+            const assertPrivateDisplaced = async (fileName: string) => {
+                if (!publication?.snapshot) return
+                const current = await readPrivateTextAt(join(folder, fileName))
+                await assertFolderUnmoved()
+                const expected = publication.snapshot
+                // Rename changes ctime, but it must not change the data, owner, link count,
+                // inode or mtime of the complete snapshot used for the exact-string edit.
+                if (current.identity !== expected.identity || current.hash !== expected.hash ||
+                    current.mtime !== expected.mtime || current.size !== expected.size) throw outside()
+            }
             // Folder identity is checked after the read. A moved directory is rejected with no file bytes.
             const check = async () => {
                 const current = await readCurrent()
@@ -1125,6 +1198,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                     throw new CoworkerFileConflict({ content: current.content, hash: current.hash, identity: current.identity }, interruptedRecovery, true)
                 }
                 if (current.hash !== baseHash) throw new CoworkerFileConflict({ content: current.content, hash: current.hash, identity: current.identity }, interruptedRecovery)
+                if (publication?.snapshot) await assertPrivateSnapshot(publication.snapshot)
                 return current
             }
             const { mode } = await check()
@@ -1166,7 +1240,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                     : constants.O_WRONLY | constants.O_TRUNC
                 const journal = await openHidden(journalName, openFlags, 0o600)
                 try {
-                    await journal.writeFile(JSON.stringify({ v: 1, final: finalName, temp: tempName, backup: backupName, phase, baseHash }))
+                    await journal.writeFile(JSON.stringify({ v: 1, final: finalName, temp: tempName, backup: backupName, phase, baseHash, ...(publication && {retainBackup: true}) }))
                     await journal.sync()
                 } finally { await journal.close() }
             }
@@ -1179,6 +1253,13 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
             const retireBackup = async (currentName = backupName) => {
                 if (!backupCreated) return
                 if (!backupIdentity) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
+                if (publication) {
+                    // Keep the old inode after commit or when another writer won. During rollback
+                    // its final name is restored, so only the redundant backup name is retired.
+                    if (sameFile(await fileStat(finalPath), backupIdentity)) await retireName(backupPath, backupIdentity)
+                    backupCreated = false
+                    return
+                }
                 if (await inodeMayBeHeld(backupPath)) {
                     const latest = await readCurrent(currentName)
                     await assertFolderUnmoved()
@@ -1243,6 +1324,10 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                 const displaced = await fileStat(finalPath)
                 if (!displaced) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
                 await publication?.beforePublish()
+                if (publication?.snapshot) {
+                    await assertPrivateSnapshot(publication.snapshot)
+                    await assertFolderUnmoved()
+                }
                 try { await rename(finalPath, backupPath) } catch (error) {
                     if (missing(error)) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
                     throw error
@@ -1256,6 +1341,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                 if (!preserved) throw new DesktopHttpError(404, 'This file was moved or deleted since you opened it.')
                 if (preserved.hash !== baseHash || (identity && preserved.identity !== identity)) throw new CoworkerFileConflict({ content: preserved.content, hash: preserved.hash })
                 await publication?.beforePublish()
+                if (publication) { await assertFolderUnmoved(); await assertPrivateDisplaced(backupName) }
                 try { await link(tempPath, finalPath) } catch (error) {
                     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
                     keepWinner = true
@@ -1283,6 +1369,7 @@ async function saveFile(runtime: DesktopRuntime, agentId: string, path: string, 
                 await assertFolderUnmoved()
                 if (!after || after.hash !== baseHash) throw new CoworkerFileConflict(after ? { content: after.content, hash: after.hash } : null)
                 await publication?.beforePublish()
+                if (publication) { await assertFolderUnmoved(); await assertPrivateDisplaced(backupName) }
                 await writeJournal('linked')
                 crashPublish('linked')
                 await retireBackup()

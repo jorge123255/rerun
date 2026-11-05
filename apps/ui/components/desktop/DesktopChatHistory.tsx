@@ -20,6 +20,7 @@ import {
 } from '@/lib/desktop/chat-history'
 import { fullDateTime, messageTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
+import { DesktopNeedsChats } from './DesktopNeedsChats'
 
 function ChatHistoryRow({ conversation, active, busy, onOpen }: {
     conversation: DesktopChatHistoryConversation
@@ -111,7 +112,8 @@ function ChatHistoryList({ history, filter, query, selectedId, busy, onSelect, o
     )
 }
 
-function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descriptionId }: {
+function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descriptionId, initialFilter = 'all' }: {
+    initialFilter?: DesktopChatFilter
     agentId: string
     selectedId: string | null
     busy: boolean
@@ -123,7 +125,7 @@ function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descri
     const [error, setError] = useState<string | null>(null)
     const [attempt, setAttempt] = useState(0)
     const [query, setQuery] = useState('')
-    const [filter, setFilter] = useState<DesktopChatFilter>('all')
+    const [filter, setFilter] = useState<DesktopChatFilter>(initialFilter)
 
     useEffect(() => {
         const controller = new AbortController()
@@ -165,15 +167,15 @@ function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descri
                 {DESKTOP_CHAT_FILTERS.map(({ value, label }) => (
                     <Chip key={value} selected={filter === value} onClick={() => setFilter(value)}>
                         {label}
-                        {value === 'needs' && history?.questions === 'ok' && (
-                            <span className={cn('ml-1 tabular-nums', filter === 'needs' ? 'text-background/60' : 'text-muted-foreground/70')}>
+                        {value === 'needs' && filter !== 'needs' && history?.questions === 'ok' && (
+                            <span className="ml-1 tabular-nums text-muted-foreground/70">
                                 {countChatsNeedingYou(history.conversations)}
                             </span>
                         )}
                     </Chip>
                 ))}
             </div>
-            {error ? (
+            {filter === 'needs' ? <DesktopNeedsChats agentId={agentId} query={query} onSelect={onSelect} busy={busy} /> : error ? (
                 <div role="alert" className="flex flex-col items-center gap-2 px-3 py-6 text-center text-xs">
                     <p className="text-destructive">{error}</p>
                     <Button type="button" size="sm" variant="outline" onClick={retry}>Retry conversations</Button>
@@ -190,7 +192,8 @@ function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descri
     )
 }
 
-export function DesktopChatHistory({ agentId, count, selectedId, busy, onSelect }: {
+export function DesktopChatHistory({ agentId, count, selectedId, busy, onSelect, control }: {
+    control?: { needsRequest: number | null; active: boolean; onOpenChange: (open: boolean) => void }
     agentId: string
     count?: number
     selectedId: string | null
@@ -198,19 +201,30 @@ export function DesktopChatHistory({ agentId, count, selectedId, busy, onSelect 
     onSelect: (id: string) => void
 }) {
     const [open, setOpen] = useState(false)
+    const [seenRequest, setSeenRequest] = useState<number | null>(null)
+    const [initialFilter, setInitialFilter] = useState<DesktopChatFilter>('all')
+    if (control?.active && control.needsRequest !== null && control.needsRequest !== seenRequest) {
+        setSeenRequest(control.needsRequest); setInitialFilter('needs'); setOpen(true)
+    }
+    const visible = open && control?.active !== false
+    useEffect(() => { control?.onOpenChange(visible); return () => control?.onOpenChange(false) }, [visible, control?.onOpenChange])
+    useEffect(() => { if (control?.active === false) setOpen(false) }, [control?.active])
+    const changeOpen = (next: boolean) => { if (next) setInitialFilter('all'); setOpen(next) }
     const titleId = useId()
     const descriptionId = useId()
     return (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover open={visible} onOpenChange={changeOpen}>
             <PopoverTrigger asChild>
                 <Button type="button" size="icon" variant="outline" className="size-10 rounded-full border-border/50 bg-background/85 shadow-sm" title="Chats" disabled={busy}
                     aria-label={count === undefined ? 'Conversation history' : `Conversation history (${count})`}>
                     <MessageCircle aria-hidden className="size-4 text-muted-foreground" /><span className="sr-only">Chats</span>
                 </Button>
             </PopoverTrigger>
-            <PopoverContent align="end" collisionPadding={12} aria-labelledby={titleId} aria-describedby={descriptionId}
+            <PopoverContent align="end" collisionPadding={12}
+                onInteractOutside={event => { if (document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault() }}
+                onEscapeKeyDown={event => { if (document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault() }} aria-labelledby={titleId} aria-describedby={descriptionId}
                 className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1.5rem)] gap-2 overflow-hidden p-2">
-                {open && <ChatHistoryPanel key={agentId} agentId={agentId} selectedId={selectedId} busy={busy}
+                {visible && <ChatHistoryPanel key={`${agentId}/${seenRequest}`} initialFilter={initialFilter} agentId={agentId} selectedId={selectedId} busy={busy}
                     titleId={titleId} descriptionId={descriptionId}
                     onSelect={id => { onSelect(id); setOpen(false) }} />}
             </PopoverContent>
