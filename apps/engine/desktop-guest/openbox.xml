@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+<theme><name>Rerun</name><titleLayout>LMC</titleLayout><font place="ActiveWindow"><name>Liberation Sans</name><size>10</size><weight>bold</weight></font><font place="InactiveWindow"><name>Liberation Sans</name><size>10</size><weight>bold</weight></font></theme>
+<keyboard></keyboard>
+</openbox_config>
+
