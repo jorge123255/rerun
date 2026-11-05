@@ -182,7 +182,8 @@ function DesktopMediaAlbum({ items, onOpen, onError }: {
 }
 
 /**
- * A recorded card_file result on the Mac. Text keeps the original tile and text preview. Images and
+ * A recorded card_file result on the Mac. Text and PDF keep the original document glyph. A PDF is
+ * never an album entry and is fetched only when its lightbox opens. Images and
  * MP4 videos use the original single-item album, two-column album and captions; mixed cards keep the
  * original flex row of square tiles. Audio keeps the original square waveform tile and is fetched
  * only when its lightbox opens. Media bytes come only from this conversation's authenticated routes,

@@ -19,17 +19,24 @@ const audioTooLarge = 'Result card audio files can only be up to 16 MB.'
 const audioEmpty = 'That audio file is empty and can’t be previewed.'
 const videoTooLarge = 'Result card videos can only be up to 16 MB.'
 const videoEmpty = 'That video is empty and can’t be previewed.'
+const pdfTooLarge = 'Result card PDFs can only be up to 16 MB.'
+const pdfEmpty = 'That PDF is empty and can’t be previewed.'
 const imageBudget = 'Those images and videos would exceed the 24 MB result-card preview budget. Show fewer media files.'
-const badPath = 'Use a visible .txt, .md, .png, .jpg, .jpeg, .webp, .gif, .wav, .mp3 or .mp4 relative file path inside this coworker’s workspace.'
+const badPath = 'Use a visible .txt, .md, .pdf, .png, .jpg, .jpeg, .webp, .gif, .wav, .mp3 or .mp4 relative file path inside this coworker’s workspace.'
 const shared = 'Shared files are not available in a Mac result card.'
+
+/** Matches DESKTOP_PDF_MAX_BYTES. The shared card contract is unchanged, so the cap stays local. */
+export const DESKTOP_CARD_PDF_MAX_BYTES = 16 * 1024 * 1024
 
 const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
 const CARD_AUDIO = /\.(?:wav|mp3)$/i
 const CARD_VIDEO = /\.mp4$/i
+const CARD_PDF = /\.pdf$/i
 const isCardImage = (path: string) => CARD_IMAGE.test(path)
 const isCardAudio = (path: string) => CARD_AUDIO.test(path)
 const isCardVideo = (path: string) => CARD_VIDEO.test(path)
-const isCardPath = (path: string) => isDesktopAttachmentPath(path) || isCardImage(path) || isCardAudio(path) || isCardVideo(path)
+const isCardPdf = (path: string) => CARD_PDF.test(path)
+const isCardPath = (path: string) => isDesktopAttachmentPath(path) || isCardImage(path) || isCardAudio(path) || isCardVideo(path) || isCardPdf(path)
 
 function assertScope(scope: 'agent' | 'shared' | undefined) {
     // A card is only a reference to a file this coworker owns. The shared space has no desktop
@@ -68,11 +75,13 @@ async function entryFor(ctx: RunContext, path: string, scope: 'agent' | 'shared'
             const image = isCardImage(rel)
             const audio = isCardAudio(rel)
             const video = isCardVideo(rel)
+            const pdf = isCardPdf(rel)
             if (image && info.size === 0n) throw new CardFileError(imageEmpty)
             if (audio && info.size === 0n) throw new CardFileError(audioEmpty)
             if (video && info.size === 0n) throw new CardFileError(videoEmpty)
-            const max = image ? CARD_MAX_IMAGE_BYTES : video ? CARD_MAX_VIDEO_BYTES : audio ? CARD_MAX_AUDIO_BYTES : DESKTOP_ATTACHMENT_MAX_BYTES
-            if (info.size > BigInt(max)) throw new CardFileError(image ? imageTooLarge : video ? videoTooLarge : audio ? audioTooLarge : tooLarge)
+            if (pdf && info.size === 0n) throw new CardFileError(pdfEmpty)
+            const max = image ? CARD_MAX_IMAGE_BYTES : video ? CARD_MAX_VIDEO_BYTES : audio ? CARD_MAX_AUDIO_BYTES : pdf ? DESKTOP_CARD_PDF_MAX_BYTES : DESKTOP_ATTACHMENT_MAX_BYTES
+            if (info.size > BigInt(max)) throw new CardFileError(image ? imageTooLarge : video ? videoTooLarge : audio ? audioTooLarge : pdf ? pdfTooLarge : tooLarge)
             // Pin the same inode twice: a path moved into another workspace, or replaced while this
             // card is being made, must not appear as this coworker's file.
             const current = await openWithoutLinks(target)
@@ -82,7 +91,7 @@ async function entryFor(ctx: RunContext, path: string, scope: 'agent' | 'shared'
                     || check.size !== info.size || check.ctimeNs !== info.ctimeNs) throw new CardFileError(unavailable)
             } finally { await current.close() }
             await requireDesktopToolGrant(ctx, 'cardFile')
-            return { path: rel, name: basename(rel), size: Number(info.size), scope: 'agent', ...(image || audio || video ? { identity: `${info.dev}:${info.ino}` } : {}) }
+            return { path: rel, name: basename(rel), size: Number(info.size), scope: 'agent', ...(image || audio || video || pdf ? { identity: `${info.dev}:${info.ino}` } : {}) }
         } finally { await handle.close() }
     } catch (error) {
         ctx.abortSignal?.throwIfAborted()
@@ -97,7 +106,7 @@ export function desktopCardFileTools(ctx: RunContext): ToolSet {
     return {
         card_file: tool({
             description:
-                'Show existing .txt, .md, static .png/.jpg/.jpeg/.webp/.gif, .wav/.mp3, or .mp4 files already saved in this coworker’s persistent Files workspace as preview tiles in chat. Pass visible paths relative to Files; up to 12 files, 32 KiB per text file, 8 MB per image, 16 MB per audio file, 16 MB per video, and 24 MB of images and videos combined per card. Animated GIF/APNG/WebP, SVG, PDF, other audio formats, other video formats and other formats are unavailable. Audio is fetched only when opened and plays only after the user presses play. MP4 previews show the first frame and play only after the user acts; only visible album previews are loaded. This does not save, import or publish a file. Native Codex commands and edits use a separate temporary folder whose changes are discarded: never use this tool to deliver those changes, because a matching relative path here would show the persistent original instead. Use it before asking the user to review or choose among existing Files documents, images, audio or video. Opening a tile reads the current persistent file, not frozen bytes; the media endpoints recheck the bytes, dimensions and identity when they open. The tool does not read content back to you. Shared files, folders and links are unavailable.',
+                'Show existing .txt, .md, .pdf, static .png/.jpg/.jpeg/.webp/.gif, .wav/.mp3, or .mp4 files already saved in this coworker’s persistent Files workspace as preview tiles in chat. Pass visible paths relative to Files; up to 12 files, 32 KiB per text file, 16 MB per PDF, 8 MB per image, 16 MB per audio file, 16 MB per video, and 24 MB of images and videos combined per card. PDFs are document tiles, not image or video album entries. Animated GIF/APNG/WebP, SVG, other audio formats, other video formats and other formats are unavailable. Audio is fetched only when opened and plays only after the user presses play. A PDF page is fetched only when that PDF is opened. MP4 previews show the first frame and play only after the user acts; only visible album previews are loaded. This does not save, import, publish or search a file, and it does not read PDF content back to you. Native Codex commands and edits use a separate temporary folder whose changes are discarded: never use this tool to deliver those changes, because a matching relative path here would show the persistent original instead. Use it before asking the user to review or choose among existing Files documents, PDFs, images, audio or video. Opening a tile reads the current persistent file, not frozen bytes; the media and PDF page endpoints recheck the bytes and identity when they open. The tool does not read content back to you. Shared files, folders and links are unavailable.',
             inputSchema: z.object({
                 files: jsonTolerantArray(
                     z.array(z.object({
@@ -119,6 +128,7 @@ export function desktopCardFileTools(ctx: RunContext): ToolSet {
                 }
                 // A partial card would hide from the model that one of the files was missing.
                 if (failures.length) return `Could not show ${failures.length === 1 ? 'that file' : 'those files'}, nothing was shown:\n${failures.join('\n')}`
+                // PDFs and audio stay outside the image/video preview budget.
                 const mediaBytes = shown.reduce((sum, file) => sum + (isCardImage(file.path) || isCardVideo(file.path) ? file.size : 0), 0)
                 if (mediaBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return `Could not show those files, nothing was shown:\n${imageBudget}`
                 await requireDesktopToolGrant(ctx, 'cardFile')

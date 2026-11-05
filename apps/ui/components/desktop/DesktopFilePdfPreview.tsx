@@ -27,6 +27,8 @@ type Props = {
     onBack: () => void
     siblings?: SiblingFiles | null
     viewerRef?: Ref<HTMLDivElement>
+    /** `files` keeps the Files header and sibling arrows. `body` is the page frame for a lightbox that already has a title. */
+    chrome?: 'files' | 'body'
 }
 type PageMeta = { page: number; pages: number; width: number; height: number }
 type View = { key: string; loading: true } | { key: string; error: string } | { key: string; src: string; meta: PageMeta; release: () => void }
@@ -37,7 +39,7 @@ export function DesktopFilePdfPreview(props: Props) {
 }
 
 /** Rerun's FileDetail header and white PDF frame, using raster pages rather than an embedded PDF. */
-function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef }: Props) {
+function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef, chrome = 'files' }: Props) {
     const [page, setPage] = useState(1)
     const [scale, setScale] = useState(1)
     const [pages, setPages] = useState<number | null>(null)
@@ -92,7 +94,7 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
     }, [srcUrl, path, identity, page, scale, requestKey])
 
     return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
-        <PanelEditorHeader title={name} onBack={onBack} mono><FileSiblingControls siblings={siblings} /></PanelEditorHeader>
+        {chrome === 'files' && <PanelEditorHeader title={name} onBack={onBack} mono><FileSiblingControls siblings={siblings} /></PanelEditorHeader>}
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2 text-xs">
             <div className="flex items-center gap-1">
                 <Button type="button" variant="ghost" size="icon-xs" aria-label="Previous page" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}><ChevronLeftIcon className="size-3.5" /></Button>

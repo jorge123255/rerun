@@ -15,6 +15,7 @@ const { writeAgentConfig } = await import('../agents/config-write.js')
 const { readAgentConfig } = await import('../agents/loader.js')
 const { buildTools } = await import('../tools/registry.js')
 const { createServer } = await import('../http/server.js')
+const { DESKTOP_CARD_PDF_MAX_BYTES } = await import('./card-file.js')
 const alpha = 'cards-alpha', bravo = 'cards-bravo'
 const app = createServer()
 const options = { messages: [], toolCallId: 'card-test' }
@@ -41,6 +42,10 @@ beforeAll(async () => {
         await writeAgentConfig(id, config(id))
         await writeFile(join(workspaceDir(id), 'reports', 'summary.md'), 'Summary')
         await writeFile(join(workspaceDir(id), 'reports', 'notes.txt'), 'Notes')
+        await writeFile(join(workspaceDir(id), 'reports', 'deck.pdf'), Buffer.alloc(1024, 7))
+        await writeFile(join(workspaceDir(id), 'reports', 'empty.pdf'), '')
+        await writeFile(join(workspaceDir(id), 'reports', 'big.pdf'), '')
+        await truncate(join(workspaceDir(id), 'reports', 'big.pdf'), DESKTOP_CARD_PDF_MAX_BYTES + 1)
         await writeFile(join(workspaceDir(id), 'shots', 'photo.png'), Buffer.alloc(1024, 7))
         await writeFile(join(workspaceDir(id), 'shots', 'empty.png'), Buffer.alloc(0))
         await writeFile(join(workspaceDir(id), 'shots', 'big.png'), '')
@@ -95,32 +100,40 @@ it('refuses shared, foreign, hidden, linked, directory, unsupported and oversize
     await link(join(other, 'voice', 'tone.wav'), join(root, 'alias.wav'))
     await symlink(join(other, 'shots', 'clip.mp4'), join(root, 'linked.mp4'))
     await link(join(other, 'shots', 'clip.mp4'), join(root, 'alias.mp4'))
+    await symlink(join(other, 'reports', 'deck.pdf'), join(root, 'linked.pdf'))
+    await link(join(other, 'reports', 'deck.pdf'), join(root, 'alias.pdf'))
     await mkdir(join(root, 'folder.md'))
     await mkdir(join(root, 'folder.png'))
     await mkdir(join(root, 'folder.wav'))
     await mkdir(join(root, 'folder.mp4'))
+    await mkdir(join(root, 'folder.pdf'))
     await writeFile(join(root, 'big.md'), Buffer.alloc(DESKTOP_ATTACHMENT_MAX_BYTES + 1, 65))
     const cases: [string, 'agent' | 'shared', RegExp][] = [
         ['reports/summary.md', 'shared', /Shared files are not available/],
         ['shots/photo.png', 'shared', /Shared files are not available/],
         ['voice/tone.wav', 'shared', /Shared files are not available/],
         ['shots/clip.mp4', 'shared', /Shared files are not available/],
+        ['reports/deck.pdf', 'shared', /Shared files are not available/],
         ['/etc/passwd.md', 'agent', /relative .* path/],
         ['/etc/passwd.png', 'agent', /relative .* path/],
         ['/etc/passwd.wav', 'agent', /relative .* path/],
         ['/etc/passwd.mp4', 'agent', /relative .* path/],
+        ['/tmp/codex-edit/deck.pdf', 'agent', /relative .* path/],
         ['../cards-bravo/workspace/reports/summary.md', 'agent', /relative .* path/],
         ['../cards-bravo/workspace/shots/photo.png', 'agent', /relative .* path/],
         ['../cards-bravo/workspace/voice/tone.wav', 'agent', /relative .* path/],
         ['../cards-bravo/workspace/shots/clip.mp4', 'agent', /relative .* path/],
+        ['../cards-bravo/workspace/reports/deck.pdf', 'agent', /relative .* path/],
         ['.secret/summary.md', 'agent', /relative .* path/],
         ['.secret/photo.png', 'agent', /relative .* path/],
         ['.secret/tone.wav', 'agent', /relative .* path/],
         ['.secret/clip.mp4', 'agent', /relative .* path/],
+        ['.secret/deck.pdf', 'agent', /relative .* path/],
         ['reports\\summary.md', 'agent', /relative .* path/],
         ['shots\\photo.png', 'agent', /relative .* path/],
         ['voice\\tone.wav', 'agent', /relative .* path/],
         ['shots\\clip.mp4', 'agent', /relative .* path/],
+        ['reports\\deck.pdf', 'agent', /relative .* path/],
         ['linked.md', 'agent', /unavailable/],
         ['alias.md', 'agent', /unavailable/],
         ['linked.png', 'agent', /unavailable/],
@@ -129,12 +142,14 @@ it('refuses shared, foreign, hidden, linked, directory, unsupported and oversize
         ['alias.wav', 'agent', /unavailable/],
         ['linked.mp4', 'agent', /unavailable/],
         ['alias.mp4', 'agent', /unavailable/],
+        ['linked.pdf', 'agent', /unavailable/],
+        ['alias.pdf', 'agent', /unavailable/],
         ['folder.md', 'agent', /folder, not a file/],
         ['folder.png', 'agent', /folder, not a file/],
         ['folder.wav', 'agent', /folder, not a file/],
         ['folder.mp4', 'agent', /folder, not a file/],
+        ['folder.pdf', 'agent', /folder, not a file/],
         ['reports/image.svg', 'agent', /relative .* path/],
-        ['reports/image.pdf', 'agent', /relative .* path/],
         ['shots/clip.mov', 'agent', /relative .* path/],
         ['shots/clip.webm', 'agent', /relative .* path/],
         ['voice/tone.ogg', 'agent', /relative .* path/],
@@ -151,6 +166,9 @@ it('refuses shared, foreign, hidden, linked, directory, unsupported and oversize
         ['shots/missing.png', 'agent', /unavailable/],
         ['shots/missing.mp4', 'agent', /unavailable/],
         ['voice/missing.wav', 'agent', /unavailable/],
+        ['reports/empty.pdf', 'agent', /empty/],
+        ['reports/big.pdf', 'agent', /16 MB/],
+        ['reports/missing.pdf', 'agent', /unavailable/],
     ]
     for (const [path, scope, message] of cases) {
         const result = await show(tool, path, scope)
@@ -179,6 +197,31 @@ it('returns an audio card with the authenticated endpoint identity and byte size
     expect(card.files[0]?.identity).toMatch(/^\d+:\d+$/)
     expect(await show(tool, join(workspaceDir(alpha), 'voice', 'tone.wav'))).toContain('voice/tone.wav')
     expect((await registry(alpha)).card_file!.description).toContain('16 MB per audio')
+})
+
+it('returns a PDF card with the authenticated endpoint identity and leaves it out of the media budget', async () => {
+    await grant(alpha, true)
+    const tool = await toolFor(alpha)
+    const card = fileCardSchema.parse(JSON.parse(await show(tool, 'reports/deck.pdf')))
+    expect(card.files[0]).toMatchObject({ path: 'reports/deck.pdf', name: 'deck.pdf', size: 1024, scope: 'agent' })
+    expect(card.files[0]?.identity).toMatch(/^\d+:\d+$/)
+    expect(JSON.stringify(card)).not.toContain('%PDF')
+    expect(await show(tool, join(workspaceDir(alpha), 'reports', 'deck.pdf'))).toContain('reports/deck.pdf')
+    const description = (await registry(alpha)).card_file!.description
+    expect(description).toContain('16 MB per PDF')
+    expect(description).toContain('document tiles')
+    expect(description).toContain('does not read PDF content back to you')
+    const mixed = fileCardSchema.parse(JSON.parse(String(await tool.execute!({ files: [
+        { path: 'shots/eight-0.png' }, { path: 'shots/eight-1.png' }, { path: 'shots/eight-2.png' }, { path: 'reports/deck.pdf' },
+    ] }, options))))
+    expect(mixed.files.map(file => file.path)).toEqual(['shots/eight-0.png', 'shots/eight-1.png', 'shots/eight-2.png', 'reports/deck.pdf'])
+    expect(mixed.files[3]?.identity).toMatch(/^\d+:\d+$/)
+    const blocked = String(await tool.execute!({ files: [
+        { path: 'reports/summary.md' }, { path: 'reports/missing.pdf' },
+    ] }, options))
+    expect(blocked).toContain('nothing was shown')
+    expect(blocked).toContain('reports/missing.pdf')
+    expect(blocked).not.toContain('kind')
 })
 
 it('returns an MP4 card with the authenticated endpoint identity, byte size and video wording', async () => {

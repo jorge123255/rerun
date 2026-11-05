@@ -13,9 +13,13 @@ const textPath = (path: string) => isDesktopAttachmentPath(path) && !path.includ
 const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
 const CARD_AUDIO = /\.(?:wav|mp3)$/i
 const CARD_VIDEO = /\.mp4$/i
+const CARD_PDF = /\.pdf$/i
+/** Matches DESKTOP_PDF_MAX_BYTES. The shared card contract is unchanged, so the cap stays local. */
+export const DESKTOP_CARD_PDF_MAX_BYTES = 16 * 1024 * 1024
 const imagePath = (path: string) => visiblePath(path) && CARD_IMAGE.test(path)
 const audioPath = (path: string) => visiblePath(path) && CARD_AUDIO.test(path)
 const videoPath = (path: string) => visiblePath(path) && CARD_VIDEO.test(path)
+const pdfPath = (path: string) => visiblePath(path) && CARD_PDF.test(path)
 const validName = (name: string) => name.length > 0 && name.length <= 255 && !/[\\/\p{Cc}]/u.test(name)
 const CARD_IDENTITY = /^\d{1,24}:\d{1,24}$/
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
@@ -37,6 +41,11 @@ export function isDesktopCardVideo(path: string): boolean {
     return videoPath(path)
 }
 
+/** A card's file is a PDF document tile, never an image or video album entry. */
+export function isDesktopCardPdf(path: string): boolean {
+    return pdfPath(path)
+}
+
 function candidate(value: unknown, depth = 0): unknown {
     if (depth > 2) return undefined
     if (typeof value === 'string') {
@@ -54,11 +63,12 @@ function candidate(value: unknown, depth = 0): unknown {
 /**
  * Validate one recorded card_file result for the Mac conversation. It accepts the live tool output
  * (a JSON string), a stored text/json wrapper, a parsed card, and the legacy single-file card. Every
- * file must still look like a visible reference of this coworker: a .txt/.md document, a static
+ * file must still look like a visible reference of this coworker: a .txt/.md document, a PDF, a static
  * PNG/JPEG/WebP/GIF image, a WAV/MP3 audio file, or an MP4 video. Images and videos share the
  * endpoint identity and the 24 MiB combined preview budget; images stay 8 MiB, video 16 MiB, audio
- * 16 MiB; text keeps its 32 KiB bound. Anything else returns undefined so the reply can fall back to
- * the real tool result instead of drawing a fabricated, replaced or partial card.
+ * 16 MiB, and each PDF 16 MiB. PDFs carry the same identity and do not join that budget. Text keeps
+ * its 32 KiB bound. Anything else returns undefined so the reply can fall back to the real tool
+ * result instead of drawing a fabricated, replaced or partial card.
  */
 export function desktopFileCardOf(value: unknown): FileCard | undefined {
     const parsed = fileCardSchema.safeParse(candidate(value))
@@ -87,6 +97,10 @@ export function desktopFileCardOf(value: unknown): FileCard | undefined {
             if (file.size === 0 || file.size > CARD_MAX_AUDIO_BYTES) return undefined
             if (!file.identity || !CARD_IDENTITY.test(file.identity)) return undefined
             normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
+        } else if (pdfPath(file.path)) {
+            if (file.size === 0 || file.size > DESKTOP_CARD_PDF_MAX_BYTES) return undefined
+            if (!file.identity || !CARD_IDENTITY.test(file.identity)) return undefined
+            normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
         } else if (textPath(file.path)) {
             if (file.size > DESKTOP_ATTACHMENT_MAX_BYTES) return undefined
             normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent' })
@@ -97,6 +111,14 @@ export function desktopFileCardOf(value: unknown): FileCard | undefined {
 
 /** A route or validation error safe to show in the card's preview. */
 export class DesktopCardError extends Error {}
+
+/** Same-origin PDF page route for one opened card. The page renderer adds page and scale. This does not fetch. */
+export function desktopCardPdfSrc(agentId: string, path: string, identity: string | undefined): string {
+    if (!pdfPath(path)) throw new DesktopCardError('This file is not a supported PDF.')
+    if (!identity || !CARD_IDENTITY.test(identity)) throw new DesktopCardError('Send this PDF to preview again.')
+    const query = new URLSearchParams({ path, identity })
+    return `/api/desktop/agents/${encodeURIComponent(agentId)}/files/pdf?${query}`
+}
 
 /** Read a card's text through the authenticated desktop Files route, at the moment it is opened. */
 export async function readDesktopCardFile(agentId: string, path: string, signal?: AbortSignal): Promise<{ content: string; truncated: boolean }> {

@@ -7,9 +7,10 @@ import type { FileCardEntry } from '@rerun/contracts'
 import { ChevronLeftIcon, ChevronRightIcon } from '@/lib/icons'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-    DesktopCardError, isDesktopCardAudio, isDesktopCardImage, isDesktopCardVideo,
+    DesktopCardError, desktopCardPdfSrc, isDesktopCardAudio, isDesktopCardImage, isDesktopCardPdf, isDesktopCardVideo,
     readDesktopCardAudio, readDesktopCardFile, readDesktopCardImage, readDesktopCardVideo,
 } from '@/lib/desktop/file-card'
+import { DesktopFilePdfPreview } from './DesktopFilePdfPreview'
 import { stopDesktopCardVideo } from './DesktopCardVideoTile'
 
 type PreviewState =
@@ -18,9 +19,10 @@ type PreviewState =
     | { key: string; status: 'image'; src: string }
     | { key: string; status: 'audio'; src: string }
     | { key: string; status: 'video'; src: string }
+    | { key: string; status: 'pdf' }
     | { key: string; status: 'error'; message: string }
 
-type PreviewKind = 'text' | 'image' | 'audio' | 'video'
+type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf'
 
 const loading = (key: string): PreviewState => ({ key, status: 'loading' })
 
@@ -41,9 +43,10 @@ function stopAudio(node: HTMLAudioElement | null) {
 /**
  * The Mac version of the original attachment lightbox. It keeps the same title bar, paging and
  * preview, but has no raw URL and no download. Text uses the authenticated Files read route; an
- * image, audio or MP4 video uses its authenticated media route and a released object URL. Audio and
+ * image, audio or MP4 video uses its authenticated media route and a released object URL. A PDF
+ * uses the Files page renderer, which fetches one PNG page and releases that blob. Audio and
  * video start only from the player controls and are stopped and released when the page, owner or
- * dialog changes, or when the component unmounts.
+ * dialog changes, or when the component unmounts. PDF requests and blobs follow the same cleanup.
  */
 export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onClose }: {
     agentId: string
@@ -57,7 +60,8 @@ export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onCl
     const audio = isDesktopCardAudio(file.path)
     const video = !audio && isDesktopCardVideo(file.path)
     const image = !audio && !video && isDesktopCardImage(file.path)
-    const kind: PreviewKind = audio ? 'audio' : video ? 'video' : image ? 'image' : 'text'
+    const pdf = !audio && !video && !image && isDesktopCardPdf(file.path)
+    const kind: PreviewKind = audio ? 'audio' : video ? 'video' : image ? 'image' : pdf ? 'pdf' : 'text'
     const key = `${agentId}\u0000${file.path}\u0000${file.identity ?? ''}\u0000${kind}`
     const [preview, setPreview] = useState<PreviewState>(() => loading(key))
     const current = preview.key === key ? preview : loading(key)
@@ -81,6 +85,14 @@ export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onCl
         audioFailed.current = false
         videoFailed.current = false
         setPreview(loading(key))
+        if (kind === 'pdf') {
+            if (!file.identity) {
+                setPreview({ key, status: 'error', message: 'Send this PDF to preview again.' })
+                return () => controller.abort()
+            }
+            setPreview({ key, status: 'pdf' })
+            return () => { active = false; controller.abort() }
+        }
         if (kind !== 'text' && !file.identity) {
             setPreview({
                 key,
@@ -126,7 +138,7 @@ export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onCl
                 objectUrl.current = null
             }
         }
-    }, [agentId, audio, file.identity, file.path, image, key, kind, video])
+    }, [agentId, audio, file.identity, file.path, image, key, kind, pdf, video])
 
     function failImage(src: string) {
         URL.revokeObjectURL(src)
@@ -192,6 +204,11 @@ export function DesktopFileLightbox({ agentId, files, index, onIndexChange, onCl
                             <div className="flex h-full items-center justify-center overflow-auto bg-muted p-3">
                                 {/* eslint-disable-next-line @next/next/no-img-element -- authenticated bytes as a released object URL */}
                                 <img src={current.src} alt={name} className="max-h-full max-w-full object-contain" onError={() => failImage(current.src)} />
+                            </div>
+                        ) : current.status === 'pdf' ? (
+                            <div className="flex h-full min-h-0 flex-col">
+                                <DesktopFilePdfPreview name={name} path={file.path} identity={file.identity} chrome="body"
+                                    srcUrl={desktopCardPdfSrc(agentId, file.path, file.identity)} onBack={onClose} />
                             </div>
                         ) : current.status === 'text' ? (
                             <FilePreview fileName={name} content={current.content} rawUrl="" loading={false} />

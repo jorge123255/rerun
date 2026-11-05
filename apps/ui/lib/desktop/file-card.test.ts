@@ -1,6 +1,6 @@
 import { CARD_MAX_AUDIO_BYTES, CARD_MAX_FILES, CARD_MAX_IMAGE_BYTES, CARD_MAX_IMAGE_TOTAL_BYTES, CARD_MAX_VIDEO_BYTES, DESKTOP_ATTACHMENT_MAX_BYTES } from '@rerun/contracts'
 import { afterEach, expect, test, vi } from 'vitest'
-import { DesktopCardError, desktopFileCardOf, readDesktopCardAudio, readDesktopCardFile, readDesktopCardImage, readDesktopCardVideo } from './file-card'
+import { DESKTOP_CARD_PDF_MAX_BYTES, DesktopCardError, desktopCardPdfSrc, desktopFileCardOf, readDesktopCardAudio, readDesktopCardFile, readDesktopCardImage, readDesktopCardVideo } from './file-card'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -8,6 +8,7 @@ const file = (over: Record<string, unknown> = {}) => ({ path: 'reports/summary.m
 const image = (over: Record<string, unknown> = {}) => ({ path: 'shots/photo.png', name: 'photo.png', size: 1024, scope: 'agent', identity: '12:34', ...over })
 const audio = (over: Record<string, unknown> = {}) => ({ path: 'voice/tone.wav', name: 'tone.wav', size: 1024, scope: 'agent', identity: '12:34', ...over })
 const video = (over: Record<string, unknown> = {}) => ({ path: 'shots/clip.mp4', name: 'clip.mp4', size: 1024, scope: 'agent', identity: '12:35', ...over })
+const pdf = (over: Record<string, unknown> = {}) => ({ path: 'reports/deck.pdf', name: 'deck.pdf', size: 1024, scope: 'agent', identity: '12:36', ...over })
 const card = (files: unknown[] = [file()]) => ({ kind: 'file', files })
 
 test('accepts the tool output, a stored wrapper and the legacy single-file card', () => {
@@ -35,12 +36,19 @@ test('keeps the endpoint identity for images, audio and video, and preserves a t
     expect(desktopFileCardOf(card([video()]))).toEqual({
         kind: 'file', files: [{ path: 'shots/clip.mp4', name: 'clip.mp4', size: 1024, scope: 'agent', identity: '12:35' }],
     })
-    expect(desktopFileCardOf(card([file(), image(), audio(), video()]))).toEqual({
+    expect(desktopFileCardOf(card([pdf()]))).toEqual({
+        kind: 'file', files: [{ path: 'reports/deck.pdf', name: 'deck.pdf', size: 1024, scope: 'agent', identity: '12:36' }],
+    })
+    expect(desktopFileCardOf(card([pdf({ path: 'reports/Deck.PDF', name: 'Deck.PDF' })]))).toEqual({
+        kind: 'file', files: [{ path: 'reports/Deck.PDF', name: 'Deck.PDF', size: 1024, scope: 'agent', identity: '12:36' }],
+    })
+    expect(desktopFileCardOf(card([file(), image(), audio(), video(), pdf()]))).toEqual({
         kind: 'file', files: [
             { path: 'reports/summary.md', name: 'summary.md', size: 7, scope: 'agent' },
             { path: 'shots/photo.png', name: 'photo.png', size: 1024, scope: 'agent', identity: '12:34' },
             { path: 'voice/tone.wav', name: 'tone.wav', size: 1024, scope: 'agent', identity: '12:34' },
             { path: 'shots/clip.mp4', name: 'clip.mp4', size: 1024, scope: 'agent', identity: '12:35' },
+            { path: 'reports/deck.pdf', name: 'deck.pdf', size: 1024, scope: 'agent', identity: '12:36' },
         ],
     })
 })
@@ -64,7 +72,14 @@ test.each([
     ['an unsupported image', card([image({ path: 'shots/photo.avif', name: 'photo.avif' })])],
     ['an unsupported video', card([video({ path: 'shots/clip.mov', name: 'clip.mov' })])],
     ['a webm video', card([video({ path: 'shots/clip.webm', name: 'clip.webm' })])],
-    ['a pdf', card([image({ path: 'shots/deck.pdf', name: 'deck.pdf' })])],
+    ['a shared pdf', card([pdf({ scope: 'shared' })])],
+    ['an absolute pdf path', card([pdf({ path: '/tmp/codex-edit/deck.pdf', name: 'deck.pdf' })])],
+    ['a hidden pdf', card([pdf({ path: '.secret/deck.pdf', name: 'deck.pdf' })])],
+    ['a pdf without identity', card([pdf({ identity: undefined })])],
+    ['a pdf with malformed identity', card([pdf({ identity: 'not-an-inode' })])],
+    ['an empty pdf', card([pdf({ size: 0 })])],
+    ['an oversized pdf', card([pdf({ size: DESKTOP_CARD_PDF_MAX_BYTES + 1 })])],
+    ['a mismatched pdf name', card([pdf({ name: 'other.pdf' })])],
     ['an unsupported OGG audio', card([audio({ path: 'voice/tone.ogg', name: 'tone.ogg' })])],
     ['an unsupported M4A audio', card([audio({ path: 'voice/tone.m4a', name: 'tone.m4a' })])],
     ['an unsupported FLAC audio', card([audio({ path: 'voice/tone.flac', name: 'tone.flac' })])],
@@ -116,9 +131,18 @@ test('bounds the text edge, image edge, video edge and aggregate media preview b
     expect(desktopFileCardOf(card([
         video({ size: ten }), video({ path: 'shots/other.mp4', name: 'other.mp4', size: ten }), image({ size: CARD_MAX_IMAGE_BYTES }),
     ]))).toBeUndefined()
-    // Audio is not part of the combined image-and-video budget.
+    // Audio and PDF are not part of the combined image-and-video budget.
     expect(desktopFileCardOf(card([...withinBudget, audio()]))?.files).toHaveLength(4)
+    expect(desktopFileCardOf(card([...withinBudget, pdf({ size: DESKTOP_CARD_PDF_MAX_BYTES })]))?.files).toHaveLength(4)
+    expect(desktopFileCardOf(card([pdf({ size: DESKTOP_CARD_PDF_MAX_BYTES })]))?.files[0].size).toBe(DESKTOP_CARD_PDF_MAX_BYTES)
     expect(CARD_MAX_IMAGE_TOTAL_BYTES).toBe(CARD_MAX_IMAGE_BYTES * 3)
+})
+
+test('builds a PDF page URL without fetching or accepting a missing identity', () => {
+    expect(desktopCardPdfSrc('agent 1', 'reports/deck.pdf', '12:36')).toBe('/api/desktop/agents/agent%201/files/pdf?path=reports%2Fdeck.pdf&identity=12%3A36')
+    expect(desktopCardPdfSrc('agent 1', 'reports/deck.pdf', '12:36')).not.toContain('page=')
+    expect(() => desktopCardPdfSrc('agent 1', 'reports/deck.pdf', undefined)).toThrow('Send this PDF')
+    expect(() => desktopCardPdfSrc('agent 1', 'reports/notes.txt', '12:36')).toThrow('not a supported PDF')
 })
 
 test('reads a card file through the authenticated desktop files route', async () => {

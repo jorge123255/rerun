@@ -86,6 +86,18 @@ test('renders only a PNG page in the original white frame, with separate file/pa
     expect(calls.at(-1)?.url.searchParams.get('page')).toBe('1')
 })
 
+test('a lightbox body keeps page controls and omits the Files header and sibling arrows', async () => {
+    installFetch()
+    await render({ chrome: 'body', siblings: { index: 0, total: 2, previous: vi.fn(), next: vi.fn() } })
+    expect(image()?.src).toBe('blob:pdf-1')
+    expect(button('Previous page')).toBeDefined()
+    expect(button('Back')).toBeUndefined()
+    expect(button('Previous file')).toBeUndefined()
+    expect(button('Next file')).toBeUndefined()
+    expect(document.querySelector('iframe, object, embed')).toBeNull()
+    expect(calls[0]?.url.searchParams.get('page')).toBe('1')
+})
+
 test('a newer zoom request aborts a pending page and ignores its late response without creating another URL', async () => {
     const oldPage = deferred<Response>()
     installFetch((url, call) => call === 2 ? oldPage.promise : pageResponse(Number(url.searchParams.get('page'))))
