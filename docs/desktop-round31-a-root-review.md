@@ -1,6 +1,6 @@
 # Agent A round31 — root review and source verification
 
-Author handoff: **5847b73a9f415cd2657d210fb8824d9ddba14435**, clean branch `desktop/round31-coworker-calls` in `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round31-coworker-calls`. Root preserved that checkout and imported the handoff as **84042ef** in the coding worktree. The repairs below belong to root; no correction prompt was returned to the external agent.
+Author handoff: **5847b73a9f415cd2657d210fb8824d9ddba14435**, initially clean branch `desktop/round31-coworker-calls` in `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round31-coworker-calls`. Root preserved that checkout and imported the handoff as **84042ef** in the coding worktree. The repairs below belong to root commit **126064c**; no correction prompt was returned to the external agent. A final custody check found additional uncommitted source edits in the author worktree, including `setup-admission.ts`. Root did not make or integrate those edits; they are outside this tested version and await a committed handoff.
 
 **Source verified, not installed or Mac accepted.** Persistent coworker calls remain unavailable until the original call UI/mentions, explicit allowed-target Settings and central startup/registry callbacks are integrated. The installed Mac preview remains **aa35cc8**, which passed round30 native/full-restart acceptance. Do not decrease the checklist count for A yet.
 
@@ -24,7 +24,7 @@ The original Rerun call-agent/sub-run/headless design remains the reference. The
 | Final call routes/authority/database/projection plus setup and service-request suites | **6 files / 62 tests passed** (`work/round31-a-final-ui-tests.log`). Covers concurrent Stops, wrong-parent receipt replay, database reopen, pending resolution, generation fences and read-only projection. |
 | Engine and UI type checks | Passed (`work/round31-a-engine-types-final.log`, `work/round31-a-final-ui-types.log`). Engine resolves the freshly built coding-checkout contracts, without modifying the accepted build worktree's dependency artifacts. |
 | UI lint | Zero errors; an unused test-only import was removed after the first final pass. |
-| Diff and author custody | Whitespace check passed; original A worktree stays clean. |
+| Diff and author custody | Whitespace check passed. A was clean when its committed handoff was captured; later uncommitted author edits are preserved and excluded. |
 
 Counts overlap earlier targeted runs; do not sum them. Tests used disposable local fixtures. A's new runtime was not bound to the live Mac workspace, no capability was enabled, and no additional app build was installed for this source-only stage.
 
