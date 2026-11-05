@@ -8,8 +8,10 @@ export const delegationMigrationSql = [
 ] as const
 function decode(raw: unknown): Record {
     const record = JSON.parse(String(raw)) as Record
-    if (record.version !== 1 || !record.snapshot || !Array.isArray(record.resources)) throw new Error('Unsupported delegation record')
-    return record
+    if (record.version !== 1 || !record.snapshot || !Array.isArray(record.snapshot.tasks) || !Array.isArray(record.resources)) throw new Error('Unsupported delegation record')
+    const outputs = Array.isArray(record.outputs) ? record.outputs : record.resources.map(() => null)
+    if (record.resources.length !== record.snapshot.tasks.length || outputs.length !== record.resources.length) throw new Error('Delegation record length mismatch')
+    return { ...record, outputs }
 }
 export function delegationStore(db: Client): DelegationStore {
     const source = (r: Record) => JSON.stringify([r.snapshot.parentAgentId, r.snapshot.parentSessionId, r.snapshot.parentRunId, r.snapshot.toolCallId])
