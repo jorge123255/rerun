@@ -24,6 +24,16 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
     const providerTools = []
     const waiting = []
     const provider = createServer(async (req, res) => {
+        // This disposable callback server owns no MCP processes. The real engine
+        // still requires an authenticated drain acknowledgement during shutdown.
+        if (req.url === '/api/desktop/internal/mcp' && req.method === 'POST') {
+            if (req.headers.authorization !== `Bearer ${apiKey}`) return res.writeHead(401).end()
+            const bytes = []
+            for await (const chunk of req) bytes.push(chunk)
+            const body = JSON.parse(Buffer.concat(bytes))
+            if (body.action !== 'shutdown') return res.writeHead(400).end()
+            return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ stopped: true }))
+        }
         if (req.url !== '/v1/chat/completions' || req.method !== 'POST') return res.writeHead(404).end()
         const body = []
         for await (const piece of req) body.push(piece)
@@ -48,7 +58,10 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
         for (const item of waiting.filter(item => item.count <= providerMessages.length)) item.resolve()
     })
     await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve))
-    const providerOrigin = `http://127.0.0.1:${provider.address().port}/v1`
+    // Always use an owned ephemeral endpoint, never a fixed port another local
+    // app may occupy. Existing callers' origin argument is retained for compatibility.
+    appOrigin = `http://127.0.0.1:${provider.address().port}`
+    const providerOrigin = `${appOrigin}/v1`
     const engineEntry = resolve(import.meta.dirname, '../../engine/dist/cli/bin.js')
     async function start() {
         const reservation = createServer()
@@ -59,6 +72,9 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
             app: { origin: appOrigin, sessionToken: randomBytes(32).toString('hex') }, engine: { origin: `http://127.0.0.1:${port}`, apiKey } }
         await writeFile(runtimeFile, JSON.stringify(runtime), { mode: 0o600 })
         const env = Object.fromEntries(['PATH', 'TMPDIR', 'LANG'].filter(k => process.env[k]).map(k => [k, process.env[k]]))
+        // Root supplies the already built native helper for isolated filesystem
+        // lease/recovery checks. No live profile or credentials enter this fixture.
+        if (process.env.RERUN_DESKTOP_RENAME_HELPER) env.RERUN_DESKTOP_RENAME_HELPER = process.env.RERUN_DESKTOP_RENAME_HELPER
         Object.assign(env, { HOME: home, RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_SECRET_KEY: encryptionKey, RERUN_DESKTOP_RUNTIME_FILE: runtimeFile,
             RERUN_DATA_DIR: engineRoot, RERUN_PORT: String(port), RERUN_HOST: '127.0.0.1', RERUN_API_KEY: apiKey, RERUN_HUB_BASE_URL: appOrigin, RERUN_LOG_LEVEL: 'error' })
         let output = ''
