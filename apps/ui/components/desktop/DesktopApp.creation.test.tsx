@@ -48,6 +48,7 @@ async function mount(options:{pending?:Submitted&{phase?:'reserved'|'created'|'s
   if(url==='/api/desktop/pending-inbox')return Response.json({items:[],unavailableAgentIds:[],checkedAt:'2026-11-04T00:00:00Z'})
   if(url==='/api/desktop/completions')return Response.json({items:[],unavailableAgentIds:[],enabledAt:'2026-11-04T00:00:00Z',checkedAt:'2026-11-04T00:00:00Z',nextCursor:null})
   if(url.includes('/sessions')){sessionReads.push(url);const agentId=url.includes(owner)?owner:newOwner;return Response.json({sessions:[{id:agentId===owner?'original-chat':'first-chat',agentId,title:'First chat',createdAt:'',updatedAt:''}]})}
+  const background = desktopBackgroundRead(url, init); if (background) return background
   unexpected.push(`${init?.method??'GET'} ${url}`);throw new Error('Unexpected request')
  }))
  root=createRoot(document.body.appendChild(document.createElement('div')))

@@ -2,6 +2,7 @@
 
 import { ThemeProvider } from '@rerun/ui/theme'
 import type { ConnectionsList } from '@rerun/contracts'
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act } from 'react'
 import { MotionConfig } from 'motion/react'
 import { createRoot } from 'react-dom/client'
@@ -38,6 +39,7 @@ function mockDesktopFetch(reply: (url: string, init?: RequestInit) => Response |
         if (/\/api\/desktop\/agents\/[^/]+\/model(?:\?|$)/.test(url)) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
         if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url) && !init?.method) return Response.json({ votes: [] })
         const message = `${init?.method ?? 'GET'} ${url}`
+        const background = desktopBackgroundRead(url, init); if (background) return background
         unexpectedRequests.push(message)
         throw new Error(`Unexpected request: ${message}`)
     })
@@ -85,10 +87,11 @@ test('the open board follows sign-in, default provider changes, and sign-out', a
 
         visibility.mockReturnValue('hidden')
         await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
-        const readCount = fetcher.mock.calls.length
+        const providerReads = () => fetcher.mock.calls.filter(([url]) => url === '/api/desktop/settings').length
+        const readCount = providerReads()
         providers = disconnected
         await tick()
-        expect(fetcher).toHaveBeenCalledTimes(readCount)
+        expect(providerReads()).toBe(readCount)
         visibility.mockReturnValue('visible')
         await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
         expect(workspaceMenu.textContent).toContain('Set up provider')

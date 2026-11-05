@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -32,7 +33,7 @@ test('a coworker can open memories, retry and refresh without losing a chat draf
         .mockResolvedValueOnce(Response.json({ memories: [] }))
     vi.stubGlobal('fetch', (url: string, init: RequestInit) => url === '/api/desktop/agents/local-id/model'
         ? Promise.resolve(Response.json({ error: 'No test model' }, { status: 404 }))
-        : fetcher(url, init))
+        : desktopBackgroundRead(url, init) ?? fetcher(url, init))
     try {
         await act(async () => { root.render(<DesktopConversation agent={coworker('local-id')} sessionId={null} sessions={[]} onSelectSession={() => {}} onChatSession={() => {}} />) })
         const input = document.querySelector<HTMLTextAreaElement>('#desktop-message')!

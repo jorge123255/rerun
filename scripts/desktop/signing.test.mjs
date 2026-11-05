@@ -20,3 +20,11 @@ test('does not silently select a different certificate or fall back when a reque
     assert.throws(() => choosePreviewSigningIdentity(listing, 'missing'), /not uniquely available/)
     assert.equal(choosePreviewSigningIdentity(listing, 'Apple Development: Second (OTHER)').hash, dist)
 })
+
+test('preserves the installed signer when a new distribution certificate becomes available', () => {
+    const name = 'Apple Development: Preview (TEAM)'
+    const listing = row(dev, name) + row(dist, 'Developer ID Application: Other (OTHER)')
+    assert.equal(choosePreviewSigningIdentity(listing, undefined, name).hash, dev)
+    assert.throws(() => choosePreviewSigningIdentity(row(dist, 'Developer ID Application: Other (OTHER)'), undefined, name), /installed preview signing certificate/)
+    assert.equal(choosePreviewSigningIdentity(listing, dist, name).hash, dist)
+})

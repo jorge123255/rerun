@@ -190,7 +190,7 @@ test('a folder swapped for a sibling symlink after validation cannot redirect an
     const real = await realpath(docs)
     let swapped = false
     race.beforeOpen = async path => {
-        if (swapped || !(String(path).startsWith(join(real, '.rerun-import-')) || (process.platform !== 'darwin' && String(path).endsWith('/docs')))) return
+        if (swapped || !(String(path).includes('/.rerun-import-') || (process.platform !== 'darwin' && String(path).endsWith('/docs')))) return
         swapped = true
         await rename(docs, docs + '-original')
         await symlink(join(workspace('engine-bob'), 'docs'), docs, 'dir')

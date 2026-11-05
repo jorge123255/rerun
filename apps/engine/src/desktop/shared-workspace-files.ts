@@ -293,7 +293,7 @@ export async function listSharedDirectory(root: string, path: string, access?: S
                     const info = await lstat(join(/* turbopackIgnore: true */ child.pin.pinned, name), { bigint: true }).catch(error => { if (missing(error)) return null; throw error })
                     if (!info || info.isSymbolicLink() || info.uid !== currentUid()) continue
                     if (info.isDirectory()) entries.push({ name, type: 'dir', size: 0, modifiedAt: stamp(info.mtimeNs) })
-                    else if (info.isFile() && info.nlink === 1n) entries.push({ name, type: 'file', size: Number(info.size), modifiedAt: stamp(info.mtimeNs) })
+                    else if (info.isFile() && info.nlink === BigInt(1)) entries.push({ name, type: 'file', size: Number(info.size), modifiedAt: stamp(info.mtimeNs) })
                 }
                 entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
                 await assertPin(child.pin)
@@ -325,13 +325,13 @@ export async function readSharedText(root: string, path: string, offset = 0, acc
             const listed = await lstat(join(/* turbopackIgnore: true */ child.pin.pinned, name), { bigint: true })
             if (listed.isSymbolicLink()) throw new SharedWorkspaceFileError(400, 'Choose a file, not a symlink.')
             if (!listed.isFile()) throw new SharedWorkspaceFileError(400, 'That path is not a file.')
-            if (listed.nlink !== 1n) throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
+            if (listed.nlink !== BigInt(1)) throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
             if (listed.uid !== currentUid()) throw otherUser()
             const target = join(/* turbopackIgnore: true */ root, rel)
             contained(root, target)
             handle = await openNoFollow(target, false)
             const opened = await handle.stat({ bigint: true })
-            if (opened.dev !== listed.dev || opened.ino !== listed.ino || opened.nlink !== 1n || opened.uid !== currentUid() || !opened.isFile()) {
+            if (opened.dev !== listed.dev || opened.ino !== listed.ino || opened.nlink !== BigInt(1) || opened.uid !== currentUid() || !opened.isFile()) {
                 throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
             }
             if (opened.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new SharedWorkspaceFileError(413, 'This shared file is too large to read from that offset.')
@@ -346,7 +346,7 @@ export async function readSharedText(root: string, path: string, offset = 0, acc
                 read += chunk.bytesRead
             }
             const after = await handle.stat({ bigint: true })
-            if (after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== 1n || after.size !== opened.size || after.ctimeNs !== opened.ctimeNs) {
+            if (after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== BigInt(1) || after.size !== opened.size || after.ctimeNs !== opened.ctimeNs) {
                 throw new SharedWorkspaceFileError(409, 'This file changed while it was being read.')
             }
             const bytes = buffer.subarray(0, read)
@@ -358,7 +358,7 @@ export async function readSharedText(root: string, path: string, offset = 0, acc
             const truncated = end < text.length || size > read
             await assertPin(child.pin)
             const named = await lstat(join(/* turbopackIgnore: true */ child.pin.pinned, name), { bigint: true })
-            if (named.dev !== after.dev || named.ino !== after.ino || named.ctimeNs !== after.ctimeNs || named.nlink !== 1n) {
+            if (named.dev !== after.dev || named.ino !== after.ino || named.ctimeNs !== after.ctimeNs || named.nlink !== BigInt(1)) {
                 throw new SharedWorkspaceFileError(409, 'This file changed while it was being read.')
             }
             return { path: rel, content, size, truncated, offset, nextOffset: truncated ? end : null }
@@ -441,11 +441,11 @@ export async function importSharedText(root: string, folder: string, name: strin
                 const opened = await handle.stat({ bigint: true })
                 identity = opened
                 const listed = await lstat(join(/* turbopackIgnore: true */ parent.pinned, tempName), { bigint: true })
-                if (opened.dev !== listed.dev || opened.ino !== listed.ino || opened.nlink !== 1n || opened.uid !== currentUid()) throw outside()
+                if (opened.dev !== listed.dev || opened.ino !== listed.ino || opened.nlink !== BigInt(1) || opened.uid !== currentUid()) throw outside()
                 await handle.writeFile(bytes)
                 await handle.sync()
                 const written = await handle.stat({ bigint: true })
-                if (written.size !== BigInt(bytes.byteLength) || written.nlink !== 1n || written.dev !== opened.dev || written.ino !== opened.ino) throw outside()
+                if (written.size !== BigInt(bytes.byteLength) || written.nlink !== BigInt(1) || written.dev !== opened.dev || written.ino !== opened.ino) throw outside()
                 await guard()
                 publicationAttempted = true
                 // The bundled helper atomically moves the exact staged inode without replacing
@@ -459,7 +459,7 @@ export async function importSharedText(root: string, folder: string, name: strin
                 await guard()
                 const final = await lstat(join(/* turbopackIgnore: true */ parent.pinned, name), { bigint: true })
                 if (final.isSymbolicLink() || !final.isFile() || final.uid !== currentUid() || final.dev !== opened.dev || final.ino !== opened.ino || final.size !== written.size || final.mtimeNs !== written.mtimeNs) throw outside()
-                if (final.nlink !== 1n) {
+                if (final.nlink !== BigInt(1)) {
                     throw new SharedWorkspaceFileError(400, 'This shared file is linked elsewhere. It was left unopened.')
                 }
             } finally {
@@ -468,7 +468,7 @@ export async function importSharedText(root: string, folder: string, name: strin
                 // remove a late arrival or an uncertain native-move result during cleanup.
                 if (!publicationAttempted && identity) {
                     const staged = await lstat(join(/* turbopackIgnore: true */ parent.pinned, tempName), { bigint: true }).catch(() => null)
-                    if (staged?.dev === identity.dev && staged.ino === identity.ino && staged.nlink === 1n) await unlink(join(/* turbopackIgnore: true */ parent.pinned, tempName)).catch(() => {})
+                    if (staged?.dev === identity.dev && staged.ino === identity.ino && staged.nlink === BigInt(1)) await unlink(join(/* turbopackIgnore: true */ parent.pinned, tempName)).catch(() => {})
                 }
             }
             return { path: rel, name }

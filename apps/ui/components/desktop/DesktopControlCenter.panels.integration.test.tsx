@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 // Authored without execution. Root owns all test runs and native acceptance.
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -183,6 +184,7 @@ function fixture(runStatus?: () => Promise<Response>) {
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/stop') && method === 'GET') return runStatus ? runStatus() : Response.json({ running: false })
         if (url.pathname.endsWith('/feedback') && method === 'GET') return Response.json({ votes: [] })
+        const background = desktopBackgroundRead(input, init); if (background) return background
         unexpected.push(`${method} ${raw}`)
         throw new Error(`Unexpected request: ${method} ${raw}`)
     }))

@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -62,6 +63,7 @@ test('same-title results open their exact older transcripts, preserve Chats sele
         if (messages) { reads.push(messages[1]); return Response.json({ messages: [{ id: messages[1], role: 'assistant', parts: [{ type: 'text', text: `Reply for ${messages[1]}` }] }] }) }
         if (url.endsWith('/stop')) return Response.json({ running: false })
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        const background = desktopBackgroundRead(url, init); if (background) return background
         throw new Error(`Unexpected request ${url}`)
     }))
     const container = document.createElement('div'); document.body.append(container)
@@ -136,6 +138,7 @@ test('a stale search selection never falls back to the coworker’s newest conve
         if (url.includes('/search?')) return Response.json({ hits: [hits[0]], hasMore: false })
         if (url.endsWith('/sessions')) return Response.json({ sessions: [{ id: 'alice-newest', agentId: 'alice', title: 'Newest', createdAt: '', updatedAt: '' }] })
         if (url.includes('/model') || url.endsWith('/stop')) return Response.json(url.includes('/model') ? { catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } } : { running: false })
+        const background = desktopBackgroundRead(url, init); if (background) return background
         throw new Error(`Unexpected request ${url}`)
     }))
     const container = document.createElement('div'); document.body.append(container)

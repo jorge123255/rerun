@@ -17,7 +17,7 @@ type Pending = { url: string; resolve: (response: Response) => void; reject: (ca
 function deferredFetch() {
     const pending: Pending[] = []
     const fetcher = vi.fn((url: string, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
-        const request: Pending = { url, resolve, reject, signal: init?.signal }
+        const request: Pending = { url, resolve, reject, signal: init?.signal ?? undefined }
         if (init?.signal?.aborted) {
             reject(new DOMException('The operation was aborted.', 'AbortError'))
             return

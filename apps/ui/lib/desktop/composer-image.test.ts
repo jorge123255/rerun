@@ -67,8 +67,8 @@ test('preflight enforces the four-image cap and the 16 MiB aggregate across atta
     expect(capped.rejected.slice(1).every(item => item.reason.includes('4 images'))).toBe(true)
 
     const result = await preflightDesktopImages({
-        files: [file('a.png', PNG_HEAD, DESKTOP_IMAGE_ATTACHMENT_TOTAL_MAX_BYTES - 2000), file('b.png', PNG_HEAD, 2000)],
-        attached: [snapshot({ byteLength: 1000 })],
+        files: [file('a.png', PNG_HEAD, DESKTOP_IMAGE_ATTACHMENT_MAX_BYTES - 1000), file('b.png', PNG_HEAD, 2000)],
+        attached: [snapshot({ byteLength: DESKTOP_IMAGE_ATTACHMENT_MAX_BYTES })],
         pending: [],
     })
     expect(result.accepted.map(item => item.name)).toEqual(['a.png'])
@@ -79,8 +79,8 @@ test('preflight enforces the four-image cap and the 16 MiB aggregate across atta
 test('the snapshot schema pins the immutable identity fields', () => {
     expect(desktopImageSnapshotSchema.safeParse(snapshot()).success).toBe(true)
     expect(desktopImageSnapshotSchema.safeParse(snapshot({ sha256: 'not-hex' })).success).toBe(false)
-    expect(desktopImageSnapshotSchema.safeParse(snapshot({ mediaType: 'image/gif' })).success).toBe(false)
-    expect(desktopImageSnapshotSchema.safeParse(snapshot({ width: DESKTOP_IMAGE_MAX_BYTES })).success).toBe(false)
+    expect(desktopImageSnapshotSchema.safeParse({ ...snapshot(), mediaType: 'image/gif' }).success).toBe(false)
+    expect(desktopImageSnapshotSchema.safeParse(snapshot({ width: 8193 })).success).toBe(false)
     expect(desktopImageSnapshotSchema.safeParse({ ...snapshot(), extra: 1 }).success).toBe(false)
 })
 

@@ -42,8 +42,10 @@ export function reserveDesktopComposerUpload(db: Client, agentId: string, tabUid
             if (existing.agent_id !== agentId || existing.tab_uid !== tabUid || existing.name !== attempt.name || Number(existing.size) !== attempt.size) throw new DesktopHttpError(409, 'This upload status belongs to another attempt.')
             return { created: false, attempt }
         }
-        const count = (await db.execute({ sql: 'SELECT COUNT(*) AS total FROM desktop_composer_uploads WHERE agent_id=? AND tab_uid=?', args: [agentId, tabUid] })).rows[0]
-        if (Number(count.total) >= 14) throw new DesktopHttpError(409, 'Check and dismiss unresolved imports before adding more files.')
+        const current = (await db.execute({ sql: 'SELECT name FROM desktop_composer_uploads WHERE agent_id=? AND tab_uid=?', args: [agentId, tabUid] })).rows
+        const isImage = (name: string) => /\.(png|jpe?g|webp)$/i.test(name)
+        const image = isImage(attempt.name)
+        if (current.length >= 14 || current.filter(row => isImage(String(row.name)) === image).length >= (image ? 4 : 10)) throw new DesktopHttpError(409, 'Check and dismiss unresolved imports before adding more files.')
         signal?.throwIfAborted()
         await db.execute({ sql: 'INSERT INTO desktop_composer_uploads (id,agent_id,tab_uid,name,size,created_at) VALUES (?,?,?,?,?,?)', args: [attempt.id, agentId, tabUid, attempt.name, attempt.size, new Date().toISOString()] })
         return { created: true, attempt }

@@ -25,7 +25,7 @@ const textCalls = () => calls.filter(call => call.url.pathname.endsWith('/files/
 const pageCalls = () => calls.filter(call => call.url.pathname.endsWith('/files/pdf'))
 
 function pageResponse(page = 1, extra: Record<string, string> = {}, points = true) {
-    const sizes = !points ? {} : page === 2
+    const sizes: Record<string, string> = !points ? {} : page === 2
         ? { 'x-pdf-page-width': '720', 'x-pdf-page-height': '540' }
         : { 'x-pdf-page-width': '612', 'x-pdf-page-height': '792' }
     return new Response(png(), { headers: {

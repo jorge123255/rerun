@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 // Root-owned acceptance regressions. Helpers author; the integration owner executes them.
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -190,6 +191,7 @@ function fixture(initialTheme: ThemePreference = 'system') {
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/stop') && method === 'GET') return Response.json({ running: false })
         if (url.pathname.endsWith('/feedback') && method === 'GET') return Response.json({ votes: [] })
+        const background = desktopBackgroundRead(input, init); if (background) return background
         unexpected.push(`${method} ${raw}`)
         throw new Error(`Unexpected request: ${method} ${raw}`)
     }))

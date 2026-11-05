@@ -1,0 +1,11 @@
+import { normalizeNotificationPrefs } from '@rerun/contracts'
+
+/** Neutral reads for newly mounted chat surfaces. Call after feature-specific handlers so
+ * notification/skill tests keep their own state and every unexpected write still fails. */
+export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestInit): Response | undefined {
+    if ((init?.method ?? 'GET') !== 'GET') return
+    const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
+    if (url.pathname === '/api/desktop/notifications') return Response.json(normalizeNotificationPrefs(undefined))
+    if (url.pathname === '/api/desktop/notifications/events') return Response.json({ events: [], channels: { toast: false, sound: false }, unavailableAgentIds: [], checkedAt: '2026-11-05T00:00:00Z' })
+    if (/^\/api\/desktop\/agents\/[^/]+\/skills$/.test(url.pathname)) return Response.json({ skills: [] })
+}

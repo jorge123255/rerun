@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -71,6 +72,7 @@ function fixture(initialLayout: DesktopTabLayout) {
             return chat()
         }
         const request = `${method} ${url.pathname}${url.search}`
+        const background = desktopBackgroundRead(input, init); if (background) return background
         unexpected.push(request)
         throw new Error(`Unexpected request: ${request}`)
     })

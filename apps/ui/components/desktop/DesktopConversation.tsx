@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useChat } from '@ai-sdk/react'
-import { DefaultChatTransport, type UIMessage } from 'ai'
+import { DefaultChatTransport, type UIMessage, type FileUIPart } from 'ai'
 import { AgentBuddy } from '@rerun/ui/iso-grid'
 import { Message, MessageContent } from '@rerun/ui/chat'
 import { FloatingPill } from '@/components/agent/sheet/floating'
@@ -261,10 +261,13 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         // One ordered drain preserves mixed text/image selection order. Every next file still
         // belongs to the captured tab; closing it or beginning Quit cancels the remaining batch.
         const work = (async () => {
-            for (const file of files) {
+            for (let index = 0; index < files.length;) {
                 if (uploadScope.current !== scope || !scope.live || isDesktopQuitting()) break
-                if (desktopImageKindForName(file.name)) await imageUploads.start([file])
-                else await textUploads.start([file])
+                const images = !!desktopImageKindForName(files[index].name)
+                const group: File[] = []
+                while (index < files.length && !!desktopImageKindForName(files[index].name) === images) group.push(files[index++])
+                if (images) await imageUploads.start(group)
+                else await textUploads.start(group)
             }
             return failures[0] === textUploads.failureVersion() && failures[1] === imageUploads.failureVersion()
         })().finally(() => {
@@ -942,7 +945,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                     {message.role === 'user' && (() => {
                                         const selections = messageAttachmentPaths(message.metadata)
                                         const paths = selections.filter((item): item is string => typeof item === 'string')
-                                        const files = message.parts.filter(part => part.type === 'file' && part.mediaType.startsWith('image/'))
+                                        const files = message.parts.filter((part): part is FileUIPart => part.type === 'file' && part.mediaType.startsWith('image/'))
                                         const images = files.length ? files.map((part, index) => ({ path: `${index}/${part.filename ?? 'image.png'}`, url: part.url }))
                                             : selections.filter((item): item is DesktopImageSnapshot => typeof item !== 'string').map(image => ({ path: image.path, url: `/api/desktop/agents/${encodeURIComponent(agent.id)}/images?snapshot=${encodeURIComponent(JSON.stringify(image))}` }))
                                         return <>{paths.length > 0 && <div className="mb-1"><AttachmentChips paths={paths} /></div>}

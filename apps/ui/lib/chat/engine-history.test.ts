@@ -404,7 +404,7 @@ it('hydrates durable desktop image parts without reopening mutable workspace pat
     const { desktopResolvedAttachmentParts } = await import('@rerun/contracts')
     const image = { sha256: 'a'.repeat(64), name: 'reference.png', path: 'reference.png', mediaType: 'image/png' as const, width: 1, height: 1, byteLength: 3 }
     const stored = desktopResolvedAttachmentParts([{ type: 'text', path: 'before.md', content: 'Private reference text' }, { type: 'image', image, dataBase64: 'AQID' }, { type: 'text', path: 'after.txt', content: 'Other reference' }])
-    const [message] = publicDesktopHistory(transformEngineMessages([{ id: 'image-user', role: 'user', sessionId: 'session', createdAt: '2026-11-05T00:00:00.000Z', contentJson: JSON.stringify([{ type: 'text', text: 'Read these' }, ...stored]), toolCallsJson: null, sourcesJson: null, authorId: null, authorName: null }], { desktopSummaries: true }))
+    const [message] = publicDesktopHistory(transformEngineMessages([{ id: 'image-user', role: 'user', sessionId: 'session', createdAt: '2026-11-05T00:00:00.000Z', contentJson: JSON.stringify([{ type: 'text', text: 'Read these' }, ...stored]), toolCallsJson: null, sourcesJson: null, authorId: null }], { desktopSummaries: true }))
     expect(message.metadata?.attachmentItems).toEqual([{ type: 'text', path: 'before.md' }, { type: 'image', image }, { type: 'text', path: 'after.txt' }])
     expect(message.parts).toEqual([{ type: 'text', text: 'Read these' }, { type: 'file', url: 'data:image/png;base64,AQID', mediaType: 'image/png', filename: 'reference.png' }])
     expect(JSON.stringify(message)).not.toContain('Private reference text')

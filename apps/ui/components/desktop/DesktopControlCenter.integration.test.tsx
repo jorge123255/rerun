@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { EditorView } from '@codemirror/view'
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -192,6 +193,7 @@ async function mount(completed: DesktopCompletionItem[] = []) {
             if (resource === 'stop') return Response.json({ running: false })
             if (resource === 'feedback') return Response.json({ votes: [] })
         }
+        const background = desktopBackgroundRead(input, init); if (background) return background
         unexpected.push(`${method} ${raw}`)
         throw new Error(`Unexpected request: ${method} ${raw}`)
     })
