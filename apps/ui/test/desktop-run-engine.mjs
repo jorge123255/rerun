@@ -17,6 +17,7 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
     const home = resolve(dataRoot, 'home')
     await Promise.all([mkdir(engineRoot, { recursive: true }), mkdir(home, { recursive: true })])
     let child, runtime, releaseReply
+    let output = ''
     let notifyProvider
     const providerStarted = new Promise(resolve => { notifyProvider = resolve })
     const providerMessages = []
@@ -77,7 +78,7 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
         if (process.env.RERUN_DESKTOP_RENAME_HELPER) env.RERUN_DESKTOP_RENAME_HELPER = process.env.RERUN_DESKTOP_RENAME_HELPER
         Object.assign(env, { HOME: home, RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_SECRET_KEY: encryptionKey, RERUN_DESKTOP_RUNTIME_FILE: runtimeFile,
             RERUN_DATA_DIR: engineRoot, RERUN_PORT: String(port), RERUN_HOST: '127.0.0.1', RERUN_API_KEY: apiKey, RERUN_HUB_BASE_URL: appOrigin, RERUN_LOG_LEVEL: 'error' })
-        let output = ''
+        output = ''
         child = fork(engineEntry, ['desktop-run'], { execArgv: [], env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
         for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk.toString()).slice(-8000) })
         await new Promise((resolve, reject) => {
@@ -93,11 +94,11 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
         if (!child || child.exitCode !== null) return
         const active = child
         await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => { active.kill('SIGKILL'); reject(new Error('Engine shutdown timed out')) }, 10000)
-            active.once('exit', code => {
+            const timer = setTimeout(() => { active.kill('SIGKILL'); reject(new Error(`Engine shutdown timed out: ${output}`)) }, 10000)
+            active.once('exit', (code, signal) => {
                 clearTimeout(timer)
                 if (code === 0) resolve()
-                else reject(new Error(`Engine shutdown code ${code}`))
+                else reject(new Error(`Engine shutdown code ${code}, signal ${signal}: ${output}`))
             })
             active.send({ type: 'stop' })
         })
