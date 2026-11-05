@@ -79,11 +79,11 @@ export async function desktopScreenTicket(runtime: DesktopRuntime, agentId: stri
     return { socketUrl: viewerSocketUrl(runtime, ticket.ticket), ticket }
 }
 
-export async function desktopScreenTakeover(runtime: DesktopRuntime, agentId: string, signal: AbortSignal, url?: string): Promise<DesktopScreenTakeover> {
+export async function desktopScreenTakeover(runtime: DesktopRuntime, agentId: string, signal: AbortSignal, url?: string, lease?: string): Promise<DesktopScreenTakeover> {
     const agent = await screenAgent(runtime, agentId)
     return request(engineOf(runtime), `${screenBase(agent)}/takeover`, {
         method: 'POST',
-        body: JSON.stringify({ launchNonce: runtime.launchNonce, ...(url ? { url } : {}) }),
+        body: JSON.stringify({ launchNonce: runtime.launchNonce, ...(url ? { url } : {}), ...(lease ? { lease } : {}) }),
         signal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]),
     }, d => takeoverSchema.parse(d))
 }

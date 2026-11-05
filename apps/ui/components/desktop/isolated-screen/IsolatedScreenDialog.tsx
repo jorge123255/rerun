@@ -47,6 +47,7 @@ function IsolatedScreenSession({ agentId, takeover, onHandBack, onClose, screenA
         try {
             const result = await sessionRef.current.connect(next, takeover?.url)
             if (!alive.current || version !== epoch.current) return
+            returned.current = null
             setMode(next)
             setScreen('socketUrl' in result ? { status: 'live', socketUrl: result.socketUrl! } : { status: 'unavailable', reason: result.unavailable })
         } catch (error) {
@@ -76,7 +77,11 @@ function IsolatedScreenSession({ agentId, takeover, onHandBack, onClose, screenA
         try {
             sessionRef.current.cancelConnection()
             returned.current ??= await sessionRef.current.finish()
-            if (takeover && returned.current.expired) { returned.current = null; throw new Error('Browser control expired. Reconnect before pressing Done.') }
+            if (takeover && returned.current.expired) {
+                returned.current = null
+                if (alive.current) setScreen({ status: 'disconnected' })
+                return
+            }
             if (takeover) {
                 if (!onHandBack) throw new Error('The hand-back request is unavailable.')
                 await onHandBack(takeover.callId, returned.current.url)

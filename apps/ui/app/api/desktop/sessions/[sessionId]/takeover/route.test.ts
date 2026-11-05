@@ -47,7 +47,11 @@ beforeEach(async () => {
         }
         const screen = req.url?.match(/^\/agents\/(engine-alice|engine-bob)\/screen\/(takeover|takeover\/finish)$/)
         if (screen && req.method === 'POST') {
-            if (screen[2] === 'takeover') { const lease=crypto.randomUUID();activeLeases.set(screen[1],lease);return reply(200,{lease}) }
+            if (screen[2] === 'takeover') {
+                const held=activeLeases.get(screen[1])
+                if(held) return held===body.lease ? reply(200,{lease:held}) : reply(409,{error:'Already controlled'})
+                const lease=crypto.randomUUID();activeLeases.set(screen[1],lease);return reply(200,{lease})
+            }
             if (activeLeases.get(screen[1]) !== body.lease) return reply(200,{url:null,expired:true})
             activeLeases.delete(screen[1]);finished.push(body.lease);return reply(200,{url:'https://example.com/verified'})
         }
@@ -113,6 +117,18 @@ test('Done needs its own verified lease and never accepts a renderer URL',async(
  await closeDesktopDatabase(root)
  expect((await post(payload)).status).toBe(200);expect(dispatches).toHaveLength(1)
  expect(await pending()).toBeNull()
+})
+test('Open reconciles an expired viewer lease and saves the fresh exact lease',async()=>{
+ const request=await pending(),open=()=>post({action:'open',takeoverId:request.id,requestId:crypto.randomUUID()})
+ const first=await (await open()).json()
+ expect(await (await open()).json()).toEqual(first)
+ activeLeases.delete('engine-alice')
+ const fresh=await (await open()).json()
+ expect(fresh.lease).not.toBe(first.lease)
+ expect(await (await post({action:'release',takeoverId:request.id,requestId:crypto.randomUUID(),lease:first.lease})).json()).toEqual({url:null,expired:true})
+ expect(activeLeases.get('engine-alice')).toBe(fresh.lease)
+ expect((await post({action:'release',takeoverId:request.id,requestId:crypto.randomUUID(),lease:fresh.lease})).status).toBe(200)
+ expect((await post(answer(request))).status).toBe(200)
 })
 test('restart expires an unfinished lease and Skip never releases a different coworker',async()=>{
  const first=await pending(),other=await pending(b.id)

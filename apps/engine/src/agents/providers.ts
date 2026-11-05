@@ -225,8 +225,9 @@ function codexBridgedTools(tools: ToolSet, screenshots?: ScreenshotLookup): Loca
                 const shot = typeof metadata.screenshotId === 'string' ? screenshots?.(metadata.screenshotId) : undefined
                 if (!shot || shot.mediaType !== 'image/jpeg' || !Buffer.isBuffer(shot.image) || shot.image.length < 1 || shot.image.length > 8 * 1024 * 1024 || !Array.isArray(metadata.screen) || metadata.screen.length !== 2 || !metadata.screen.every(n => Number.isInteger(n) && n > 0 && n <= 8192)) throw new Error('The screenshot could not be delivered. Request a fresh screenshot.')
                 const wrapped = { [Symbol.for('rerun.desktop.codexMcpResult')]: {
+                    // Codex prioritizes structuredContent over rich content. Keep metadata
+                    // in the text block so the accompanying image reaches the model.
                     content: [{ type: 'text', text: JSON.stringify(metadata) }, { type: 'image', data: shot.image.toString('base64'), mimeType: shot.mediaType }],
-                    structuredContent: metadata,
                 } }
                 Object.defineProperty(wrapped, 'toJSON', { value: () => { throw new Error('Screenshot delivery is unavailable.') } })
                 return wrapped

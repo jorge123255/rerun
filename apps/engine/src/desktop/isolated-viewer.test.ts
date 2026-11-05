@@ -74,6 +74,44 @@ it('releases a lease acquired after caller cancellation', async () => {
     expect((await f.post('takeover', {}, abort.signal)).status).toBe(409)
     expect(f.service.finishTakeover).toHaveBeenCalledWith(target, 'late', expect.any(AbortSignal))
 })
+it('reuses only an exact live lease and replaces a released lease in one open', async () => {
+    const f = setup()
+    await f.post('takeover', { url: 'https://example.com/start' })
+    expect(await (await f.post('takeover', { lease: 'lease-1', url: 'https://example.com/ignored' })).json()).toEqual({ lease: 'lease-1' })
+    expect(f.service.navigate).toHaveBeenCalledTimes(1)
+    expect(f.service.startTakeover).toHaveBeenCalledTimes(1)
+    expect((await f.post('takeover', { lease: 'foreign' })).status).toBe(409)
+    expect(f.service.finishTakeover).not.toHaveBeenCalled()
+    await f.post('takeover/finish', { lease: 'lease-1' })
+    f.service.startTakeover.mockResolvedValue('lease-2')
+    expect(await (await f.post('takeover', { lease: 'lease-1' })).json()).toEqual({ lease: 'lease-2' })
+})
+it('rechecks a pending release after ensure before replacing control', async () => {
+    const f = setup(); await f.post('takeover')
+    let complete!: () => void
+    f.service.finishTakeover.mockImplementation(() => new Promise(resolve => { complete = () => resolve({ url: null }) }))
+    let ending!: Promise<Response>
+    f.service.ensure.mockImplementationOnce(async () => {
+        ending = f.post('takeover/finish', { lease: 'lease-1' })
+        await vi.waitFor(() => expect(complete).toBeDefined())
+        return { target, width: 1200, height: 800 }
+    })
+    f.service.startTakeover.mockResolvedValue('lease-2')
+    const opening = f.post('takeover', { lease: 'lease-1' })
+    await vi.waitFor(() => expect(complete).toBeDefined())
+    expect(f.service.startTakeover).toHaveBeenCalledTimes(1)
+    complete(); await ending
+    expect(await (await opening).json()).toEqual({ lease: 'lease-2' })
+    f.service.finishTakeover.mockResolvedValue({ url: 'https://example.com' })
+})
+it('replaces only the old exact generation when reopening', async () => {
+    const f = setup(); await f.post('takeover')
+    f.service.ensure.mockResolvedValue({ target: { ...target, sessionGeneration: 'new' }, width: 1200, height: 800 })
+    f.service.startTakeover.mockResolvedValue('lease-2')
+    expect(await (await f.post('takeover', { lease: 'lease-1' })).json()).toEqual({ lease: 'lease-2' })
+    expect(f.service.finishTakeover).toHaveBeenCalledWith(target, 'lease-1', expect.any(AbortSignal))
+    expect(f.service.stop).not.toHaveBeenCalled()
+})
 it('rechecks authority after ensure and refuses wrong runtime owner', async () => {
     const f = setup()
     f.service.ensure.mockImplementation(async () => { f.authority.authorize.mockRejectedValue(new Error('revoked')); return { target, width: 1200, height: 800 } })

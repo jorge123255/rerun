@@ -206,11 +206,11 @@ export async function answerDesktopTakeover(runtime: DesktopRuntime, sessionId: 
         if (!target.agent.enabled) throw new DesktopHttpError(403, disabledCoworkerMessage)
         const pending = await pendingTakeover(runtime, target)
         if (!pending || identity(target, pending) !== input.takeoverId || await byTakeover(target.db, sessionId, input.takeoverId)) throw new DesktopHttpError(409, 'This browser request is no longer waiting. Reload the conversation.')
-        if (existing && existing.launch_nonce === runtime.launchNonce && !Number(existing.released)) {
-            // A lost Open response may be retried. Reuse only this exact request's lease.
-            return Response.json({ lease: String(existing.lease) }, { headers: { 'x-takeover-id': input.takeoverId } })
-        }
-        const acquired = await desktopScreenTakeover(runtime, target.agent.id, AbortSignal.timeout(45_000), pending.url)
+        // Only the live viewer authority can reuse this exact lease. It may have expired
+        // after a lost response or disconnected viewer while the durable row remained.
+        const previousLease = existing && existing.launch_nonce === runtime.launchNonce && !Number(existing.released) ? String(existing.lease) : undefined
+        const acquired = await desktopScreenTakeover(runtime, target.agent.id, AbortSignal.timeout(45_000), pending.url, previousLease)
+        if (acquired.lease === previousLease) return Response.json(acquired, { headers: { 'x-takeover-id': input.takeoverId } })
         try {
             await target.db.execute({ sql: `INSERT INTO desktop_takeover_screens(takeover_id,agent_id,session_id,launch_nonce,lease,result_url,released,created_at) VALUES (?,?,?,?,?,NULL,0,?)
                 ON CONFLICT(takeover_id) DO UPDATE SET launch_nonce=excluded.launch_nonce,lease=excluded.lease,result_url=NULL,released=0,created_at=excluded.created_at`, args: [input.takeoverId, target.agent.id, sessionId, runtime.launchNonce, acquired.lease, new Date().toISOString()] })

@@ -67,11 +67,11 @@ export function createIsolatedViewerTickets() {
 
 const launch = z.strictObject({ launchNonce: id })
 const viewInput = launch.extend({ mode: modeSchema, lease: z.string().min(1).max(500).optional() })
-const takeoverInput = launch.extend({ url: z.string().url().refine(url => /^https?:\/\//i.test(url)).optional() })
+const takeoverInput = launch.extend({ url: z.string().url().refine(url => /^https?:\/\//i.test(url)).optional(), lease: z.string().min(1).max(500).optional() })
 const finishInput = launch.extend({ lease: z.string().min(1).max(500) })
 
-/** Deliberately unmounted until A/B and the required current-authority hooks are integrated.
- * No global tickets, implicit grants, host desktop fallback or unowned background connections. */
+/** Owns viewer tickets and exact human-control leases for the isolated runtime.
+ * No implicit grants, host desktop fallback or unowned background connections. */
 export function createIsolatedViewer(service: IsolatedScreenService, authority: IsolatedViewerAuthority) {
     const tickets = createIsolatedViewerTickets()
     const targets = new Map<string, IsolatedScreenTarget>()
@@ -180,15 +180,33 @@ export function createIsolatedViewer(service: IsolatedScreenService, authority: 
         acquiring.add(keyOf(value))
         try {
             const result = await operation(value, 'drive', c.req.raw.signal, async signal => {
-                if (leases.has(keyOf(value))) throw new Error('Screen already controlled')
+                if (input.lease) await releasing.get(`${keyOf(value)}:${input.lease}`)
+                const before = leases.get(keyOf(value))
+                if (before && before.lease !== input.lease) throw new Error('Screen already controlled')
                 const ensured = await ensure(value, signal)
+                if (input.lease) await releasing.get(`${keyOf(value)}:${input.lease}`)
+                const held = leases.get(keyOf(value))
+                if (held && held.lease !== input.lease) throw new Error('Screen already controlled')
+                if (held) {
+                    if (sameTarget(held.target, ensured.target)) {
+                        // Give a lost Open response a fresh connection window, without
+                        // adding an expiry timer to an already connected drive viewer.
+                        if (leaseTimers.has(keyOf(value))) {
+                            clearTimeout(leaseTimers.get(keyOf(value)))
+                            const timer = setTimeout(() => { void cleanup(value, held).catch(() => {}) }, ISOLATED_VIEWER_TICKET_TTL_MS)
+                            timer.unref?.(); leaseTimers.set(keyOf(value), timer)
+                        }
+                        return { lease: held.lease }
+                    }
+                    await release(value, held.lease)
+                }
                 if (input.url) await service.navigate(ensured.target, { url: input.url }, signal)
                 const lease = await service.startTakeover(ensured.target, signal)
                 acquired = { target: ensured.target, lease }
                 leases.set(keyOf(value), acquired)
                 // A lost HTTP response must not hold human control forever without a viewer.
-                const held = acquired
-                const timer = setTimeout(() => { void cleanup(value, held).catch(() => {}) }, ISOLATED_VIEWER_TICKET_TTL_MS)
+                const acquiredLease = acquired
+                const timer = setTimeout(() => { void cleanup(value, acquiredLease).catch(() => {}) }, ISOLATED_VIEWER_TICKET_TTL_MS)
                 timer.unref?.(); leaseTimers.set(keyOf(value), timer)
                 signal.throwIfAborted()
                 return { lease }

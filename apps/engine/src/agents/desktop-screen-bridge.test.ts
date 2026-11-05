@@ -17,7 +17,7 @@ it('delivers actual MCP image blocks through the patched SDK, without allowing J
     try {
         const result=await call('computer')
         expect(result.error).toBeUndefined()
-        expect(result.result.structuredContent).toEqual(metadata)
+        expect(result.result.structuredContent).toBeUndefined()
         expect(result.result.content).toEqual([{type:'text',text:JSON.stringify(metadata)},{type:'image',data:Buffer.from('jpeg-fixture').toString('base64'),mimeType:'image/jpeg'}])
         expect((await call('fake')).result.content.map((part:any)=>part.type)).toEqual(['text'])
     } finally { await sdk._stop() }
