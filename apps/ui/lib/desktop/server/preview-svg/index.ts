@@ -2,7 +2,7 @@ import 'server-only'
 import sharp from 'sharp'
 import { DesktopHttpError } from '../auth'
 import { DesktopImageBytesError, inspectDesktopImageBytes } from '../image-bytes'
-import { DesktopSvgError } from './budgets'
+import { DesktopSvgError, DESKTOP_SVG_MAX_PNG_BYTES } from './budgets'
 import { xmlTokens } from './xml-tokens'
 import { validateSvg, type ValidatedSvg } from './svg-subset'
 
@@ -66,6 +66,13 @@ export function assertSvgPreviewOpen(signal?: AbortSignal): void {
  * event handlers, external styles/fonts/images, and resource URLs cannot reach it.
  * A rendered PNG that exceeds the 8 MB response ceiling is downscaled and retried. */
 export async function rasterizeDesktopSvg(bytes: Uint8Array, signal?: AbortSignal): Promise<DesktopSvgRaster> {
+    const deadline = new AbortController(), timer = setTimeout(() => deadline.abort(), 12_000)
+    try { return await rasterizeSvg(bytes, AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])])) }
+    catch (error) { assertSvgPreviewOpen(signal); if (deadline.signal.aborted) throw new DesktopSvgError('complex'); throw error }
+    finally { clearTimeout(timer) }
+}
+
+async function rasterizeSvg(bytes: Uint8Array, signal: AbortSignal): Promise<DesktopSvgRaster> {
     assertSvgPreviewOpen(signal)
     const parsed = parseDesktopSvg(bytes)
     assertSvgPreviewOpen(signal)
@@ -74,16 +81,22 @@ export async function rasterizeDesktopSvg(bytes: Uint8Array, signal?: AbortSigna
     for (let attempt = 0; attempt < DESKTOP_SVG_RASTERIZE_ATTEMPTS; attempt++) {
         assertSvgPreviewOpen(signal)
         let png: Buffer
+        const pipeline = sharp(Buffer.from(parsed.render(width, height), 'utf8'), { failOn: 'warning', limitInputPixels: 16_777_216, unlimited: false })
+            .png().timeout({ seconds: 10 })
+        let cancel = () => {}
         try {
-            png = await sharp(Buffer.from(parsed.render(width, height), 'utf8'), { failOn: 'warning' })
-                .png()
-                .timeout({ seconds: 10 })
-                .toBuffer()
+            png = await new Promise<Buffer>((resolve, reject) => {
+                cancel = () => { pipeline.destroy(); reject(new DesktopHttpError(499, 'SVG preview was closed.')) }
+                signal?.addEventListener('abort', cancel, { once: true })
+                if (signal?.aborted) { cancel(); return }
+                void pipeline.toBuffer().then(resolve, reject)
+            })
         } catch {
             // The input here is our own canonical XML; a renderer failure means it could
             // not rasterize the validated document, which is a damaged-preview condition.
+            assertSvgPreviewOpen(signal)
             throw new DesktopSvgError('corrupt', 'SVG rasterization failed')
-        }
+        } finally { signal?.removeEventListener('abort', cancel); pipeline.destroy() }
         assertSvgPreviewOpen(signal)
         if (png.byteLength > DESKTOP_SVG_MAX_PNG_BYTES) {
             width = Math.max(1, Math.floor(width / 2))

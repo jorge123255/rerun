@@ -32,6 +32,7 @@ import { DesktopScheduledRunBlock } from './DesktopScheduledRunBlock'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopNativeWritebackReview } from './DesktopNativeWritebackReview'
 import { DesktopCoworkerMcpDialog } from './DesktopCoworkerMcpDialog'
+import { DesktopServicesDialog } from './services/DesktopServicesDialog'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
 import type { DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
@@ -910,6 +911,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     <DesktopCoworkerSkills agent={agent} dialogControl={dialogControl('skills')} focusSlug={focusedSkill} />
                     <DesktopCoworkerTools agent={agent} dialogControl={dialogControl('tools')} />
                     <DesktopCoworkerMcpDialog agent={agent} dialogControl={dialogControl('mcp')} />
+                    <DesktopServicesDialog agent={agent} dialogControl={dialogControl('services')} />
                     <DesktopCoworkerMemories agent={agent} dialogControl={dialogControl('memories')} />
                     {renderRunHistory?.(dialogControl('logs'))}
                     <DesktopCoworkerMonitoring agent={agent} dialogControl={dialogControl('monitoring')} />

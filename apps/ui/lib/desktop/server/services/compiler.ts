@@ -5,6 +5,7 @@ import {endpoint,serverName} from '../mcp/model'
 export type ServicePlan={slug:string;key:string;name:string;category:string;icon:string|null;methodId:string;serverName:string;url:string;secretInput?:string;skills:{name:string;description:string;body:string}[]}
 export function compileLocalService(raw:ServiceManifest,methodId:string,values:Record<string,string>,availability:DesktopServiceMethodAvailability):{plan:ServicePlan;bearer:string}{
  const manifest=serviceManifestSchema.parse(raw),method=manifest.authMethods.find(m=>m.id===methodId)
+ if(manifest.skills.length)throw new Error('Service usage-skill bundles are not available on this Mac yet')
  if(!method || availability.id!==methodId || !availability.supported)throw new Error('This authentication method is unavailable on this Mac')
  if(!['none','key'].includes(method.kind) || method.managed!==undefined || method.composio!==undefined || method.app!==undefined || method.mcpServers.length!==1)throw new Error('Unsupported local service method')
  const server=method.mcpServers[0]
@@ -29,6 +30,7 @@ export function compileLocalService(raw:ServiceManifest,methodId:string,values:R
  return {plan:{slug:manifest.slug,key,name:manifest.name,category:manifest.category,icon:manifest.icon??null,methodId,serverName:serverName(server.name),url,secretInput,skills:manifest.skills},bearer}
 }
 export function localMethodAvailability(manifest:ServiceManifest,methodId:string,availability:DesktopServiceMethodAvailability):DesktopServiceMethodAvailability{
+ if(manifest.skills.length)return {id:methodId,supported:false,reason:'This app also installs usage skills. Those bundles are not available on this Mac yet.'}
  if(!availability.supported)return availability
  const method=manifest.authMethods.find(value=>value.id===methodId)
  if(!method)return {id:methodId,supported:false,reason:'Unknown authentication method.'}

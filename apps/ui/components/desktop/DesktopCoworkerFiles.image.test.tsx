@@ -80,8 +80,8 @@ test('an existing raster opens the original image frame from the desktop image r
     await flush()
     await click('draw.svg')
     await flush()
-    expect(calls.some(call => call.includes('/files/image') && call.includes('draw.svg'))).toBe(false)
-    expect(calls.some(call => call.includes('/files/read') && call.includes('draw.svg'))).toBe(true)
+    expect(calls.some(call => call.includes('/files/image') && call.includes('draw.svg'))).toBe(true)
+    expect(calls.some(call => call.includes('/files/read') && call.includes('draw.svg'))).toBe(false)
     act(() => root.unmount())
 })
 

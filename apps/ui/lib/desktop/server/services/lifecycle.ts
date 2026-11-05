@@ -35,13 +35,15 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
   const initial=await current(record.owner,'use',run,signal);if(initial.engineAgentId!==record.engineId)throw new Error('Service owner changed');for(const skill of record.skills)await verifyServiceSkill(initial.skillsRoot,skill)
   const runtime=transport(record,run,signal),result=await runtime.probe(record.owner,idName(record),record.revision,signal)
   await current(record.owner,'use',run,signal);await liveRecord(record.owner,record.key,record.revision,signal)
+  if(!result.tools)throw new Error('Connection discovery failed')
   const names=result.tools.map(tool=>`${record.plan.serverName}_${tool.name}`)
+  if(names.some(name=>! /^[\w.-]{1,128}$/.test(name)))throw new Error('Service tool name exceeds limit')
   await assertToolNames(record.owner,record.id,names,signal)
   const authority=await current(record.owner,'use',run,signal)
   if(authority.engineAgentId!==record.engineId||authority.skillsRoot!==initial.skillsRoot)throw new Error('Service owner changed');for(const skill of record.skills)await verifyServiceSkill(authority.skillsRoot,skill)
   record.toolNames=names;record.health={state:'healthy',checkedAt:new Date().toISOString(),toolCount:names.length};record.healthLaunch=authority.runtime.launchNonce
   await store.update(record,record.revision)
-  await current(record.owner,'use',run,signal);return result
+  await current(record.owner,'use',run,signal);return {...result,tools:result.tools}
  }
  async function probe(owner:string,key:string,revision:string,signal:AbortSignal){
   const record=await liveRecord(owner,key,revision,signal)
@@ -61,7 +63,7 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
    if(input.action==='install'){
     const raw=await getDesktopServiceManifest(input.slug);if(!raw)throw new Error('Unknown service')
     const availability=await getDesktopServiceMethodAvailability(input.slug,input.authMethodId)
-    const compiled=compileLocalService(raw,input.authMethodId,input.values,availability)
+    const compiled=compileLocalService(raw.manifest,input.authMethodId,input.values,availability)
     const existing=await store.read(owner,compiled.plan.key)
     if(existing&&existing.engineId!==authority.engineAgentId)throw new Error('Service installation belongs to a previous engine identity')
     if(existing?.state==='ready')throw new Error('Existing service must be disconnected before configuring again')

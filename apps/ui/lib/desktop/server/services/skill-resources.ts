@@ -9,7 +9,7 @@ const version=(s:import('node:fs').BigIntStats)=>`${s.dev}:${s.ino}:${s.size}:${
 async function inspect(root:string,slug:string):Promise<OwnedSkill>{
  if(!/^svc-[a-f0-9]{16}-[0-9]+$/.test(slug))throw new Error('Invalid owned skill')
  const directory=await openWithoutLinks(join(root,slug),true)
- try{const stat=await directory.stat({bigint:true}),file=await openWithoutLinks(join(root,slug,'SKILL.md'));try{const current=await file.stat({bigint:true});if(!current.isFile() || current.nlink!==1n || current.uid!==BigInt(process.getuid?.()??-1) || (await readdir(join(root,slug))).some(name=>name!=='SKILL.md'))throw new Error('Service skill changed');return {slug,directoryIdentity:`${stat.dev}:${stat.ino}`,manifestVersion:version(current)}}finally{await file.close()}}finally{await directory.close()}
+ try{const stat=await directory.stat({bigint:true}),file=await openWithoutLinks(join(root,slug,'SKILL.md'));try{const current=await file.stat({bigint:true});if(!current.isFile() || current.nlink!==BigInt(1) || current.uid!==BigInt(process.getuid?.()??-1) || (await readdir(join(root,slug))).some(name=>name!=='SKILL.md'))throw new Error('Service skill changed');return {slug,directoryIdentity:`${stat.dev}:${stat.ino}`,manifestVersion:version(current)}}finally{await file.close()}}finally{await directory.close()}
 }
 export async function createServiceSkill(root:string,id:string,index:number,skill:ServicePlan['skills'][number],guard:()=>Promise<void>){
  const slug=`svc-${id.replaceAll('-','').slice(0,16)}-${index}`

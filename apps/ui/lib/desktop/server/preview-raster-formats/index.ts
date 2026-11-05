@@ -1,5 +1,6 @@
 import 'server-only'
-import type { Sharp } from 'sharp'
+import type sharp from 'sharp'
+type Sharp = ReturnType<typeof sharp>
 import { DESKTOP_IMAGE_MAX_BYTES, DESKTOP_IMAGE_MAX_PIXELS, inspectDesktopImageBytes } from '../image-bytes'
 import { inspectAvif } from './avif'
 import { decodeBitmap, inspectBitmap, type BitmapPlan } from './bitmap'

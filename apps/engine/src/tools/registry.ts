@@ -46,6 +46,7 @@ import { desktopPrivateFileTools } from '../desktop/private-file-tools.js'
 import { desktopSharedFileTools } from '../desktop/shared-file-tools.js'
 import { desktopMcpTools } from '../desktop/mcp-tools.js'
 import { desktopStdioTools } from '../desktop/mcp-stdio/client.js'
+import { desktopServiceTools } from '../desktop/service-tools.js'
 import { desktopBrainTools } from '../desktop/brain-tools.js'
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
@@ -57,12 +58,16 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
             throw new Error('An MCP tool conflicts with a built-in tool. Rename the MCP server.')
         }
         let local: Awaited<ReturnType<typeof desktopStdioTools>> | undefined
+        let services: Awaited<ReturnType<typeof desktopServiceTools>> | undefined
         try {
             if (hasDesktopToolGrant(ctx.agent.config, 'localMcpStdio')) local = await desktopStdioTools(ctx, () => requireDesktopToolGrant(ctx, 'localMcpStdio'))
             const merged = { ...tools, ...remote.tools }
             if (Object.keys(local?.tools ?? {}).some(name => Object.hasOwn(merged, name))) throw new Error('A local MCP tool conflicts with another tool. Rename the MCP server.')
-            return { tools: { ...merged, ...local?.tools }, close: async () => { try { await local?.close() } finally { await remote.close() } } }
-        } catch (error) { try { await local?.close() } finally { await remote.close() }; throw error }
+            const existing = { ...merged, ...local?.tools }
+            if (hasDesktopToolGrant(ctx.agent.config, 'services')) services = await desktopServiceTools(ctx)
+            if (Object.keys(services?.tools ?? {}).some(name => Object.hasOwn(existing, name))) throw new Error('An app tool conflicts with another tool.')
+            return { tools: { ...existing, ...services?.tools }, close: async () => { try { await services?.close() } finally { try { await local?.close() } finally { await remote.close() } } } }
+        } catch (error) { try { await services?.close() } finally { try { await local?.close() } finally { await remote.close() } }; throw error }
     }
     const cfg = ctx.agent.config.tools
     const tools: ToolSet = {}

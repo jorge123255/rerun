@@ -1,4 +1,4 @@
-import {localServicesBinding} from '@/lib/desktop/server/services/binding'
+import {handleDesktopServices} from '@/lib/desktop/server/mcp-binding'
 export const runtime='nodejs'
 export const dynamic='force-dynamic'
-export async function POST(request:Request){try{return await localServicesBinding().bridge.api(request)}catch{return Response.json({error:'Local services unavailable until initialization.'},{status:503})}}
+export async function POST(request:Request){return handleDesktopServices(request)}

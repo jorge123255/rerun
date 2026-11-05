@@ -10,6 +10,8 @@ import { createDesktopAgent } from '@/lib/desktop/server/store'
 import { GET as read } from '../read/route'
 import { GET as list, POST as upload } from '../route'
 import { GET } from './route'
+import sharp from 'sharp'
+import { bmp24, ico, iconDib } from '@/lib/desktop/server/preview-raster-formats/fixtures'
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 const gif = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
@@ -118,6 +120,23 @@ afterEach(async () => {
     await closeDesktopDatabase(root)
     process.env = { ...env }
     await rm(root, { recursive: true, force: true })
+})
+
+test('confined Files previews convert SVG AVIF ICO and BMP to inert PNG without changing the source', async () => {
+    const safeSvg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="red"/></svg>')
+    const avif = await sharp({ create: { width: 16, height: 16, channels: 4, background: '#ff0000' } }).avif({ lossless: true }).toBuffer()
+    for (const [name, bytes] of [['safe.svg', safeSvg], ['safe.avif', avif], ['safe.bmp', bmp24()], ['safe.ico', ico([{ bytes: iconDib(), width: 1, height: 1 }])]] as const) {
+        const path = join(workspace('engine-alice'), 'docs', name)
+        await writeFile(path, bytes)
+        const result = await image(`docs/${name}`, undefined, alice, true)
+        expect(result.status, name).toBe(200)
+        expect(result.headers.get('content-type')).toBe('image/png')
+        expect(result.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox")
+        expect((await sharp(Buffer.from(await result.arrayBuffer())).metadata()).format).toBe('png')
+        expect(await readFile(path)).toEqual(bytes)
+        await link(path, `${path}.linked`)
+        expect((await image(`docs/${name}`, undefined, alice, true)).status).toBe(400)
+    }
 })
 
 test('serves one owned raster and refuses the other formats, paths, and coworkers', async () => {

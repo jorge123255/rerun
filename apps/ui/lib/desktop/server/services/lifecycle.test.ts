@@ -2,7 +2,7 @@ import {createClient} from '@libsql/client'
 import {afterEach,expect,it,vi} from 'vitest'
 vi.mock('server-only',()=>({}))
 const catalog=vi.hoisted(()=>({manifest:undefined as unknown}))
-vi.mock('./catalog/index',()=>({getDesktopServiceManifest:async()=>catalog.manifest,getDesktopServiceMethodAvailability:async(_slug:string,id:string)=>({id,supported:true})}))
+vi.mock('./catalog/index',()=>({getDesktopServiceManifest:async()=>({manifest:catalog.manifest}),getDesktopServiceMethodAvailability:async(_slug:string,id:string)=>({id,supported:true})}))
 vi.mock('./skill-resources',()=>({createServiceSkill:vi.fn(),removeServiceSkill:vi.fn(),verifyServiceSkill:vi.fn()}))
 import {serviceManifestSchema} from '@/lib/services/manifest'
 import {desktopServicesSchema} from './schema'
@@ -40,16 +40,11 @@ it('never claims usable merely because a record was saved, and restart makes hea
  expect((await store.read('owner','microsoft'))?.health.state).toBe('unchecked')
 })
 
-it('rolls back only recorded owned skills after a partial install and never retries its claimed request',async()=>{
+it('refuses usage-skill bundles before publishing files or storing credentials',async()=>{
  const {service,store,network}=await setup(),signal=new AbortController().signal
- catalog.manifest=serviceManifestSchema.parse({slug:'fixture',name:'Fixture',skills:[{name:'First',body:'Static instructions'},{name:'Second',body:'Static instructions'}],authMethods:[{id:'token',kind:'key',inputs:[{key:'TOKEN',label:'Token',type:'password',secret:true,required:true}],mcpServers:[{name:'fixture',transport:'http',url:'https://example.com/mcp',headers:{Authorization:'Bearer ${input.TOKEN}'}}]}]})
- vi.mocked(createServiceSkill).mockResolvedValueOnce({slug:'svc-0000000000000000-0',directoryIdentity:'1:2',manifestVersion:'version'}).mockRejectedValueOnce(new Error('fixture publication refusal'))
- vi.mocked(removeServiceSkill).mockResolvedValue(undefined)
+ catalog.manifest=serviceManifestSchema.parse({slug:'fixture',name:'Fixture',skills:[{name:'First',body:'Static instructions'}],authMethods:[{id:'token',kind:'key',inputs:[{key:'TOKEN',label:'Token',type:'password',secret:true,required:true}],mcpServers:[{name:'fixture',transport:'http',url:'https://example.com/mcp',headers:{Authorization:'Bearer ${input.TOKEN}'}}]}]})
  const request={action:'install' as const,requestId:crypto.randomUUID(),slug:'fixture',authMethodId:'token',values:{TOKEN:'fixture-only'}}
- await expect(service.mutate('owner',request,signal)).rejects.toThrow('incomplete')
- const record=await store.read('owner','fixture')
- expect(record?.state).toBe('error');expect(record?.configured).toBe(false);expect(record?.skills).toEqual([])
- expect(removeServiceSkill).toHaveBeenCalledTimes(1);expect(network).not.toHaveBeenCalled()
- expect((await service.mutate('owner',request,signal) as {status:string}).status).toBe('unknown')
- expect(createServiceSkill).toHaveBeenCalledTimes(2)
+ await expect(service.mutate('owner',request,signal)).rejects.toThrow('usage-skill')
+ expect(await store.read('owner','fixture')).toBeNull()
+ expect(createServiceSkill).not.toHaveBeenCalled();expect(network).not.toHaveBeenCalled()
 })

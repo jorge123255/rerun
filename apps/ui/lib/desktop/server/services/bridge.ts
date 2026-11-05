@@ -29,7 +29,7 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
      const output=[];const names=new Set<string>()
      for(const record of await store.list(owner)){
       if(record.state!=='ready')continue
-      const active=AbortSignal.any([signal,controller.signal]),runtime=service.transport(record,body,active)
+      const active=AbortSignal.any([signal,controller.signal])
       const result=await service.discover(record,body,active)
       await service.current(owner,'use',body,active)
       for(const tool of result.tools){const name=`${record.plan.serverName}_${tool.name}`;if(names.has(name)||names.size>=256)throw new Error('Service tool collision');names.add(name);const capabilityId=randomUUID();tools.set(capabilityId,{key:record.key,revision:record.revision,name:tool.name});output.push({capabilityId,name,description:tool.description??tool.name,inputSchema:tool.inputSchema})}

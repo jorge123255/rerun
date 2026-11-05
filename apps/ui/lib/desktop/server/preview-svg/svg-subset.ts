@@ -149,16 +149,19 @@ function clampToBudgets(width: number, height: number): { width: number; height:
     if (width * height * scale * scale > DESKTOP_SVG_MAX_PIXELS) {
         scale = Math.sqrt(DESKTOP_SVG_MAX_PIXELS / (width * height))
     }
-    return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
+    return { width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) }
 }
 
 function checkValue(name: string, value: string): void {
     const trimmed = value.trim()
+    // CSS escapes/comments can disguise a resource function. This static subset
+    // has no need for either; reject them before passing values to the renderer.
+    if (/[\\\u0000-\u001f\u007f]/.test(value) || value.includes('/*') || value.includes('*/')) throw new DesktopSvgError('unsupported', name)
     if (/expression\s*\(/i.test(trimmed)) throw new DesktopSvgError('unsupported', name)
     if (SCHEME.test(trimmed)) {
         throw new DesktopSvgError(SCRIPT_SCHEME.test(trimmed) ? 'unsupported' : 'external', name)
     }
-    if (trimmed.includes('url(') && !URL_ID.test(trimmed)) throw new DesktopSvgError('external', name)
+    if (/url\s*\(/i.test(trimmed) && !URL_ID.test(trimmed)) throw new DesktopSvgError('external', name)
 }
 
 function validateAttribute(element: string, name: string, value: string): void {
@@ -229,6 +232,36 @@ function renderDocument(tokens: XmlToken[], viewBox: string | null, width: numbe
 }
 
 export function validateSvg(tokens: XmlToken[]): ValidatedSvg {
+    // Bound reference expansion, including repeated use of a small shared subtree.
+    // Source element counts alone do not bound an SVG's expanded drawing graph.
+    const nodes: { children: number[]; refs: string[] }[] = []
+    const ids = new Map<string, number>(), stack: number[] = []
+    for (const token of tokens) {
+        if (token.kind === 'end') { stack.pop(); continue }
+        if (token.kind !== 'start') continue
+        const index = nodes.length, refs: string[] = []
+        const id = token.attributes.id
+        if (id) { if (ids.has(id)) throw new DesktopSvgError('unsupported', 'duplicate id'); ids.set(id, index) }
+        for (const [name, value] of Object.entries(token.attributes)) {
+            if (name === 'href' || name === 'xlink:href') refs.push(value.slice(1))
+            const match = /^url\(\s*#([A-Za-z_][A-Za-z0-9_.:-]*)\s*\)$/.exec(value.trim())
+            if (match) refs.push(match[1]!)
+        }
+        nodes.push({ children: [], refs })
+        if (stack.length) nodes[stack[stack.length - 1]!]!.children.push(index)
+        if (!token.selfClosing) stack.push(index)
+    }
+    let expanded = 0
+    const ancestors = new Set<number>()
+    function visit(index: number, depth: number) {
+        if (++expanded > 16_384 || depth > 128 || ancestors.has(index)) throw new DesktopSvgError('complex')
+        ancestors.add(index)
+        const node = nodes[index]!
+        for (const child of node.children) visit(child, depth + 1)
+        for (const ref of node.refs) { const target = ids.get(ref); if (target !== undefined) visit(target, depth + 1) }
+        ancestors.delete(index)
+    }
+    if (nodes.length) visit(0, 0)
     let rootSeen = false
     let rootClosed = false
     let rootAttributes: Record<string, string> | null = null
@@ -274,6 +307,8 @@ export function validateSvg(tokens: XmlToken[]): ValidatedSvg {
         height = viewBox !== null ? width * (viewBox.height / viewBox.width) : width
     }
     const target = clampToBudgets(width!, height!)
+    // Preserve the source coordinate space when the output is clamped or retried.
+    rootViewBox ??= `0 0 ${width!} ${height!}`
     return {
         width: target.width,
         height: target.height,

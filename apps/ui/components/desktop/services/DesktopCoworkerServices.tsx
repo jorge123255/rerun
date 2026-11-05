@@ -53,7 +53,7 @@ function Services({agentId}:{agentId:string}){
   }catch{if(source.current===client&&navigation.current===epoch)setError('Operation refused or acknowledgement unknown. Refresh connection state before retrying.')}
   finally{mutation.current=false;if(source.current===client)setBusy(false)}
  }
- const health=(row:DesktopInstalledService)=>row.health.state==='healthy'&&row.installed?'Connected':row.health.state==='unchecked'?'Unchecked':row.health.state==='disconnected'?'Disconnected':'Connection failed'
+ const health=(row:DesktopInstalledService)=>row.health.state==='healthy'&&row.installed?'Connected (last check)':row.health.state==='unchecked'?'Unchecked':row.health.state==='disconnected'?'Disconnected':'Connection failed'
  if(!client)return <SkeletonPanelRows rows={6}/>
  return <ServiceSetupDriverProvider value={client.driver}><PanelSteps stepKey={detail?'setup':'list'} depth={detail?1:0}>
   {detail?<PanelEditorShell><PanelEditorHeader title={detail.name} onBack={busy?undefined:()=>{navigation.current++;setDetail(null)}}/><PanelEditorBody>
@@ -68,7 +68,7 @@ function Services({agentId}:{agentId:string}){
    </div></div>}
    <DesktopServiceConfigForm key={`${agentId}/${detail.slug}/${detail.installation?.revision??'new'}`} agentId={agentId} details={detail} localDriver={client.driver} onChanged={changed} onBusy={value=>{mutation.current=value;setBusy(value)}}/>
   </PanelEditorBody></PanelEditorShell>:<div className="flex flex-col h-full min-w-0">
-   <div className="space-y-2 px-3 py-2"><Input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search apps…"/><HScrollFade className="flex gap-1"><Chip selected={!category} onClick={()=>setCategory('')}>All</Chip>{SERVICE_CATEGORIES.map(item=><Chip key={item} selected={category===item} onClick={()=>setCategory(item)}>{SERVICE_CATEGORY_LABELS[item]}</Chip>)}</HScrollFade></div>
+   <div className="space-y-2 border-b p-3"><Input className="h-8 text-sm" value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search apps…"/><HScrollFade className="flex gap-1"><Chip selected={!category} onClick={()=>setCategory('')}>All</Chip>{SERVICE_CATEGORIES.map(item=><Chip key={item} selected={category===item} onClick={()=>setCategory(item)}>{SERVICE_CATEGORY_LABELS[item]}</Chip>)}</HScrollFade></div>
    <PanelScroller className="space-y-4">
     {error&&<div className="space-y-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button size="sm" variant="outline" onClick={()=>load()}>Retry</Button></div>}
     {opening&&<p role="status" className="text-xs text-muted-foreground">Loading app details…</p>}

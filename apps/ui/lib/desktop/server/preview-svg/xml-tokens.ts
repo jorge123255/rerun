@@ -29,9 +29,7 @@ const nameChar = (char: string) => /[A-Za-z0-9_.:-]/.test(char)
 function legalText(text: string): void {
     if (text.includes('&')) throw new DesktopSvgError('unsupported', 'entity reference')
     if (text.includes(']]>')) throw new DesktopSvgError('corrupt')
-    for (let i = 0; i < text.length; i++) {
-        if (!isLegalChar(text.charCodeAt(i))) throw new DesktopSvgError('corrupt')
-    }
+    for (const char of text) if (!isLegalChar(char.codePointAt(0)!)) throw new DesktopSvgError('corrupt')
 }
 
 /** Scan the whole document and return its tokens. Throws DesktopSvgError on any
@@ -109,11 +107,12 @@ export function xmlTokens(bytes: Uint8Array): XmlToken[] {
                 const char = source[i]!
                 if (char === '&') throw new DesktopSvgError('unsupported', 'entity reference')
                 if (char === '<') throw new DesktopSvgError('corrupt')
-                if (!isLegalChar(source.charCodeAt(i))) throw new DesktopSvgError('corrupt')
-                i++
+                const point = source.codePointAt(i)!
+                if (!isLegalChar(point)) throw new DesktopSvgError('corrupt')
+                i += point > 0xffff ? 2 : 1
             }
             if (i >= source.length) throw new DesktopSvgError('corrupt')
-            const value = source.slice(valueStart, i)
+            const value = source.slice(valueStart, i).replace(/\r\n|[\r\n\t]/g, ' ')
             i++
             if (value.length > DESKTOP_SVG_MAX_ATTRIBUTE_VALUE_CHARS) throw new DesktopSvgError('complex')
             if (++attrCount > DESKTOP_SVG_MAX_ATTRIBUTES) throw new DesktopSvgError('complex')

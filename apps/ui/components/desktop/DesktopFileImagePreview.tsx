@@ -6,7 +6,7 @@ import type { SiblingFiles } from '@/components/files/useSiblingFiles'
 import { useEffect, useState, type Ref } from 'react'
 import { FileSiblingControls } from './DesktopFileSiblingNav'
 
-const RASTER_NAME = /^.+\.(?:png|jpe?g|gif|webp)$/i
+const RASTER_NAME = /^.+\.(?:png|jpe?g|gif|webp|svg|avif|ico|bmp)$/i
 const RASTER_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 /** Matches DESKTOP_IMAGE_MAX_BYTES in the desktop image reader. */
 const IMAGE_MAX_BYTES = 8 * 1024 * 1024

@@ -1,5 +1,10 @@
 import 'server-only'
 import { z } from 'zod'
+import { desktopRerunToolCatalog, desktopCodexToolCatalog } from '@rerun/contracts'
+import { serviceStore } from './services/store'
+import { localServiceLifecycle, type ServiceAuthority } from './services/lifecycle'
+import { serviceApi } from './services/api'
+import { serviceEngineBridge } from './services/bridge'
 import { lstat, realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import { stdioStore } from './mcp-stdio/store'
@@ -61,7 +66,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (!response.ok) { await abortable(response.body?.cancel() ?? Promise.resolve(), signal).catch(() => {}); throw new Error('Coworker authority is unavailable') }
         return JSON.parse(await boundedText(response, signal))
     }
-    async function access(localId: string, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' = 'mcp') {
+    async function access(localId: string, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' = 'mcp') {
         const generation = entry.generations.get(localId) ?? 0
         const current = () => { if (entry.closed || entry.pendingOwners.get(localId) || (entry.generations.get(localId) ?? 0) !== generation) throw new Error('Coworker permission is changing') }
         current()
@@ -76,7 +81,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     }
     const oauth = loopbackMcpOAuth(store, access)
     const remote = remoteMcpRuntime(store, access, fetch, oauth.credential)
-    const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' = 'mcp') => {
+    const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' = 'mcp') => {
         const signal = AbortSignal.any([stop, entry.shutdown.signal, AbortSignal.timeout(5_000)])
         const owner = await abortable(localOwner(undefined, identity.engineAgentId), signal)
         const generation = entry.generations.get(owner.id) ?? 0
@@ -147,6 +152,34 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (action !== 'release') return authorizeRun(identity, signal, 'localMcpStdio')
         return (await historicalOwner(identity, signal)).owner.id
     })
+    const installedServices = serviceStore(db, masterKey)
+    const serviceAuthority: ServiceAuthority = async (owner, action, identity, signal) => {
+        const stop = AbortSignal.any([signal, entry.shutdown.signal])
+        const current = identity ? await historicalOwner(identity, stop) : await currentOwner(owner, stop)
+        if (current.owner.id !== owner) throw new Error('Service owner changed')
+        const enabled = current.config.enabled, granted = current.config.tools.desktopToolGrants?.services === true
+        if (action === 'use' && (!enabled || !granted || identity && (!('run' in current) || run.parse(current.run).status !== 'running'))) throw new Error('Service permission is off or the run stopped')
+        current.check()
+        return { engineAgentId: current.owner.engineId, runtime, skillsRoot: join(/* turbopackIgnore: true */ current.workspaceRoot, '..', 'skills'), enabled, granted }
+    }
+    const services = localServiceLifecycle(installedServices, serviceAuthority, async (owner, installationId, names, signal) => {
+        signal.throwIfAborted()
+        const reserved = new Set([...desktopRerunToolCatalog, ...desktopCodexToolCatalog].flatMap(entry => entry.tools))
+        const [remoteRows, localRows, serviceRows] = await Promise.all([store.list(owner), localStore.list(owner), installedServices.list(owner)])
+        const prefixes = [...remoteRows.map(row => row.name), ...localRows.map(row => row.name), ...serviceRows.filter(row => row.id !== installationId && row.state !== 'disconnected').map(row => row.plan.serverName)]
+        if (new Set(names).size !== names.length || names.some(name => !/^[\w.-]{1,128}$/.test(name) || reserved.has(name) || prefixes.some(prefix => name.startsWith(`${prefix}_`)))) throw new Error('Service tool conflicts with another tool')
+        signal.throwIfAborted()
+    })
+    const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
+        if (action !== 'release') return authorizeRun(identity, signal, 'services')
+        return (await historicalOwner(identity, signal)).owner.id
+    })
+    // Restart never replays a remote call or makes unrelated connections depend on
+    // an online engine. Fresh use repeats the full owner/grant checks above.
+    await db.execute(`UPDATE desktop_service_installs SET health='{"state":"unchecked"}',health_launch=NULL,tool_names='[]'`)
+    await db.execute(`UPDATE desktop_service_installs SET state='error',bearer=NULL,health='{"state":"error","message":"Interrupted setup. Remove this installation before trying again."}'
+        WHERE state IN ('preparing','removing') OR engine_id != (SELECT engine_agent_id FROM desktop_agents WHERE id=owner)`)
+    entry.shutdown.signal.throwIfAborted()
     const writeback = nativeWritebackService(db, async (identity, action, signal) => {
         const stop = AbortSignal.any([signal, entry.shutdown.signal])
         const current = await historicalOwner(identity, stop)
@@ -160,7 +193,8 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     })
     const bridge = desktopMcpBridge(store, remote, authorizeRun)
     return { store, runtime: remote, bridge, access, authorizeRun, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
-        localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback) }
+        localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback),
+        services, servicesBridge, servicesApi: serviceApi(installedServices, services) }
 
 }
 
@@ -187,7 +221,9 @@ export async function withDesktopMcpOwnerTransition<T>(runtime: DesktopRuntime, 
         // deleting a coworker; the global reservation still excludes concurrent admission.
         const service = entry.service ? await entry.service.catch(() => undefined) : undefined
         if (!service) return await write()
-        return await service.store.lifecycle.transitionOwner(localAgentId, () => service.localRuntime.transitionOwner(localAgentId, async () => { service.bridge.invalidateOwner(localAgentId); await service.localBridge.releaseOwner(localAgentId); return write() }))
+        service.servicesBridge.releaseOwner(localAgentId)
+        service.services.lifecycle.disconnect(localAgentId)
+        return await service.store.lifecycle.transitionOwner(localAgentId, () => service.services.transitionOwner(localAgentId, () => service.localRuntime.transitionOwner(localAgentId, async () => { service.bridge.invalidateOwner(localAgentId); await service.localBridge.releaseOwner(localAgentId); return write() })))
     } finally {
         const count = (entry.pendingOwners.get(localAgentId) ?? 1) - 1
         if (count) entry.pendingOwners.set(localAgentId, count); else entry.pendingOwners.delete(localAgentId)
@@ -202,7 +238,9 @@ export async function shutdownDesktopRemoteMcp(runtime: DesktopRuntime) {
         const service = await entry.service.catch(() => undefined)
         service?.oauth.shutdown()
         service?.bridge.shutdown()
-        await service?.localBridge.shutdown()
+        const stopped = await Promise.allSettled([service?.localBridge.shutdown(), service?.servicesBridge.shutdown()])
+        const failures = stopped.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+        if (failures.length) throw new AggregateError(failures, 'Connection shutdown is not confirmed')
     }
 }
 
@@ -245,6 +283,15 @@ export async function handleDesktopLocalMcp(request: Request, agentId?: string):
         return agentId ? service.localApi(request, agentId) : service.localBridge.api(request)
     } catch (error) {
         return Response.json({ error: 'Local MCP is unavailable.' }, { status: error instanceof DesktopHttpError ? error.status : 503 })
+    }
+}
+export async function handleDesktopServices(request: Request, agentId?: string): Promise<Response> {
+    try {
+        const runtime = agentId ? await authenticateDesktopRequest(request) : await authenticateDesktopEngineRequest(request)
+        const service = await getDesktopRemoteMcpService(runtime)
+        return agentId ? service.servicesApi(request, agentId) : service.servicesBridge.api(request)
+    } catch (error) {
+        return Response.json({ error: 'Apps are unavailable. Refresh connection state before retrying.' }, { status: error instanceof DesktopHttpError ? error.status : 503, headers: { 'Cache-Control': 'no-store' } })
     }
 }
 export async function handleDesktopNativeWriteback(request: Request, agentId?: string): Promise<Response> {

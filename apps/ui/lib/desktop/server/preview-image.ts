@@ -5,6 +5,8 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { DesktopHttpError } from './auth'
 import { DESKTOP_IMAGE_MAX_BYTES, desktopRasterKind, type DesktopImageContentType } from './image-bytes'
 import { DesktopPreviewImageError, inspectDesktopPreviewImageBytes } from './animated-image'
+import { convertRasterPreviewImage, rasterPreviewFailure } from './preview-raster-formats'
+import { rasterizeDesktopSvg, DesktopSvgError } from './preview-svg'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { findDesktopAgent } from './store'
@@ -105,7 +107,8 @@ async function readPreviewImage(runtime: DesktopRuntime, agentId: string, path: 
     const name = parts[parts.length - 1]!
     if (parts.some(part => !simpleName(part) || reservedName(part))) throw new DesktopHttpError(400, 'That name can’t be previewed.')
     const kind = desktopRasterKind(name)
-    if (!kind) throw new DesktopHttpError(415, 'Only PNG, JPEG, WebP, and GIF files can be previewed.')
+    const extension = name.split('.').pop()!.toLowerCase()
+    if (!kind && !['svg', 'avif', 'ico', 'bmp'].includes(extension)) throw new DesktopHttpError(415, 'This image format cannot be previewed.')
     const workspace = await coworkerWorkspace(runtime, agentId)
     const root = await containedPath(workspace, '')
     if (!root.root) throw new DesktopHttpError(404, `“${name}” was not found.`)
@@ -173,6 +176,20 @@ async function readPreviewImage(runtime: DesktopRuntime, agentId: string, path: 
             }
             assertPreviewOpen(signal)
             const fileBytes = new Uint8Array(buffer.subarray(0, got))
+            if (!kind) {
+                try {
+                    const display = extension === 'svg' ? await rasterizeDesktopSvg(fileBytes, signal)
+                        : await convertRasterPreviewImage(fileBytes, extension, signal ?? new AbortController().signal)
+                    assertPreviewOpen(signal)
+                    return { ...display, path: rel, name, identity: `${listed.dev}:${listed.ino}` }
+                } catch (error) {
+                    if (error instanceof DesktopHttpError) throw error
+                    if (extension === 'svg') throw new DesktopHttpError(error instanceof DesktopSvgError && ['dimensions','complex'].includes(error.reason) ? 413 : 415,
+                        'This SVG is too complex or uses features that cannot be safely previewed.')
+                    const failure = rasterPreviewFailure(error)
+                    throw new DesktopHttpError(failure.status, failure.message)
+                }
+            }
             let inspected: ReturnType<typeof inspectDesktopPreviewImageBytes>
             try { inspected = inspectDesktopPreviewImageBytes(kind, fileBytes) }
             catch (error) { throw previewFailure(error) }
