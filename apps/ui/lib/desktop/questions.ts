@@ -19,6 +19,9 @@ export const desktopPendingQuestionSchema = z.object({
     messageId: z.string().min(1),
     toolCallId: z.string().min(1),
     questions: z.array(questionItem).min(1).max(32),
+    // The source request message's own timestamp: the pending request's age and order, not the
+    // chat's latest activity.
+    requestedAt: z.string().optional(),
     attempt: z.discriminatedUnion('action', [answer.extend({ requestId: z.string().uuid() }), cancel.extend({ requestId: z.string().uuid() })]).optional(),
 })
 export const desktopQuestionViewSchema = z.object({ question: desktopPendingQuestionSchema.nullable() })

@@ -29,7 +29,7 @@ export function boardActivityForAgents(activity: BoardActivity, agentIds: string
 
 export function latestBoardAttention(attention: DesktopAttention, agentId: string) {
     return attention.items.filter(item => item.agentId === agentId).sort((a, b) =>
-        (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0) || a.id.localeCompare(b.id))[0]
+        (Date.parse(b.requestedAt ?? b.updatedAt) || 0) - (Date.parse(a.requestedAt ?? a.updatedAt) || 0) || a.id.localeCompare(b.id))[0]
 }
 export const BOARD_ACTIVITY_URL = '/api/desktop/board-activity'
 export const BOARD_ACTIVITY_POLL_MS = 3000

@@ -69,7 +69,7 @@ function ActionRow({ item, onOpen, onMarkRead }: { item: DesktopPendingInboxItem
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex items-baseline justify-between gap-2">
                     <span title={item.summary || undefined} className="truncate text-sm font-medium text-foreground">{item.summary || item.title}</span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{shortRelativeTime(item.updatedAt)}</span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{shortRelativeTime(item.requestedAt ?? item.updatedAt)}</span>
                 </div>
                 <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                     <span className="truncate">{item.summary ? `${item.agentName} · ${item.title}` : `${item.agentName} ${KIND_SENTENCE[item.kind]}`}</span>
@@ -249,7 +249,7 @@ export function DesktopActionsInbox({ agents, onOpenConversation, visibleSession
     const rootRef = useRef<HTMLDivElement>(null)
     const pillRef = useRef<HTMLButtonElement>(null)
     const cardId = useId()
-    const sorted = useMemo(() => [...items].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [items])
+    const sorted = useMemo(() => [...items].sort((a, b) => (b.requestedAt ?? b.updatedAt).localeCompare(a.requestedAt ?? a.updatedAt)), [items])
     const partial = unavailableAgentIds.length > 0
 
     const openItem = useCallback(

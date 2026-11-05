@@ -18,6 +18,8 @@ export const desktopPendingApprovalSchema = z.object({
     messageId: z.string().min(1),
     toolCallId: z.string().min(1),
     approvals: z.array(approvalItem).min(1).max(20),
+    // The source request message's own timestamp: the pending request's age and order.
+    requestedAt: z.string().optional(),
     attempt: desktopApprovalPayloadSchema.extend({ requestId: z.string().uuid() }).optional(),
 })
 export const desktopApprovalViewSchema = z.object({ approval: desktopPendingApprovalSchema.nullable() })

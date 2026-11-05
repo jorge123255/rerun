@@ -153,3 +153,26 @@ test('the scan deadline reaches real HTTP history reads, cancels stalled request
     }
     expect((await (await get()).json()).items).toHaveLength(3)
 })
+
+test('a pending item ages by its source request message, not by the chat that raised it', async () => {
+    // The older request sits in the session that sorts first and was created last, so a chat
+    // activity timestamp would order it first; the request message's own timestamp must win.
+    const db = await openDesktopDatabase(root)
+    const newerSession = await createDesktopSession(db, { agentId: alice.id, engineSessionId: 'age-new', title: 'Newer request' })
+    const olderSession = await createDesktopSession(db, { agentId: alice.id, engineSessionId: 'age-old', title: 'Older request' })
+    await closeDesktopDatabase(root)
+    const ageRows = (sessionId: string, createdAt: string): Message[] => [
+        { id: sessionId + '-request', sessionId, role: 'assistant', contentJson: JSON.stringify([{ type: 'tool-call', toolName: 'ask_user', toolCallId: sessionId + '-call', input: { questions: [{ question: 'Which color should I use?', options: ['Blue'] }] } }]), toolCallsJson: null, createdAt },
+        { id: sessionId + '-result', sessionId, role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolName: 'ask_user', toolCallId: sessionId + '-call', output: { type: 'json', value: { status: 'delivered' } } }]), toolCallsJson: null, createdAt },
+    ]
+    histories.set('age-new', { owner: alice.engineAgentId, rows: ageRows('age-new', '2099-01-01T00:00:00.000Z') })
+    histories.set('age-old', { owner: alice.engineAgentId, rows: ageRows('age-old', '2020-01-01T00:00:00.000Z') })
+    const body = await (await get()).json() as { items: { sessionId: string; requestedAt?: string }[] }
+    const newItem = body.items.find(item => item.sessionId === newerSession.id)!
+    const oldItem = body.items.find(item => item.sessionId === olderSession.id)!
+    expect(newItem.requestedAt).toBe('2099-01-01T00:00:00.000Z')
+    expect(oldItem.requestedAt).toBe('2020-01-01T00:00:00.000Z')
+    expect(body.items[0]!.sessionId).toBe(newerSession.id)
+    expect(body.items.at(-1)!.sessionId).toBe(olderSession.id)
+    histories.delete('age-new'); histories.delete('age-old')
+})

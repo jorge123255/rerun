@@ -94,6 +94,7 @@ export async function readDesktopQuestion(runtime: DesktopRuntime, sessionId: st
     const receipt = await byQuestion(target.db, sessionId, id)
     if (receipt?.accepted) return { question: null }
     return { question: { id, messageId: pending.sourceMessageId, toolCallId: pending.toolCallId, questions: pending.questions,
+        ...(pending.requestedAt ? { requestedAt: pending.requestedAt } : {}),
         ...(receipt && { attempt: { ...receipt.payload, requestId: receipt.requestId } }),
     } }
 }

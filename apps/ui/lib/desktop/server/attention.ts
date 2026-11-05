@@ -39,17 +39,17 @@ async function collect(runtime: DesktopRuntime): Promise<DesktopAttention> {
             const task = tasks[next++]
             if (!task) return
             const { agent, session } = task
-            let pending: Pick<DesktopAttentionItem, 'id' | 'kind' | 'summary'> | undefined
+            let pending: Pick<DesktopAttentionItem, 'id' | 'kind' | 'summary' | 'requestedAt'> | undefined
             let failed = false
             try {
                 // Sequential resolvers preserve the workspace-wide bound of four active
                 // history reads. Both already exclude accepted answer/decision receipts.
                 const { question } = await readDesktopQuestion(runtime, session.id, { signal })
-                if (question) pending = { id: question.id, kind: 'question', summary: summary(question.questions[0].question) }
+                if (question) pending = { id: question.id, kind: 'question', summary: summary(question.questions[0].question), requestedAt: question.requestedAt ?? undefined }
                 else {
                     signal.throwIfAborted()
                     const { approval } = await readDesktopApproval(runtime, session.id, { signal })
-                    if (approval) pending = { id: approval.id, kind: 'approval', summary: summary(approval.approvals[0].action) }
+                    if (approval) pending = { id: approval.id, kind: 'approval', summary: summary(approval.approvals[0].action), requestedAt: approval.requestedAt ?? undefined }
                 }
             } catch { failed = true }
             try {
@@ -79,10 +79,13 @@ async function collect(runtime: DesktopRuntime): Promise<DesktopAttention> {
             const original = tasks.find(task => task.session.id === item.sessionId)
             if (!current || current.agentId !== agent.id || current.engineSessionId !== original?.session.engineSessionId) continue
             await assertCoworkerNotDeleting(db, agent.id)
-            ownedItems.push({ ...item, agentName: agent.name, agentEnabled: agent.enabled, title: current.title, updatedAt: current.updatedAt })
+                ownedItems.push({ ...item, agentName: agent.name, agentEnabled: agent.enabled, title: current.title, updatedAt: current.updatedAt,
+                // A request without its own timestamp ages by the chat that raised it.
+                requestedAt: item.requestedAt ?? current.updatedAt })
         } catch { unavailable.add(agent.id) }
     }
-    ownedItems.sort((a, b) => time(b.updatedAt) - time(a.updatedAt) || a.agentId.localeCompare(b.agentId) || a.sessionId.localeCompare(b.sessionId) || a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id))
+    // Newest request first: the source request message's own timestamp, never the chat activity.
+    ownedItems.sort((a, b) => time(b.requestedAt ?? b.updatedAt) - time(a.requestedAt ?? a.updatedAt) || a.agentId.localeCompare(b.agentId) || a.sessionId.localeCompare(b.sessionId) || a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id))
     return { items: ownedItems, unavailableAgentIds: [...unavailable].filter(id => currentAgents.has(id)).sort(), checkedAt: new Date().toISOString() }
 }
 

@@ -9,8 +9,8 @@ export const desktopQuestionGuardSchema = z.object({
     fingerprint: z.string().min(1).max(MAX_QUESTION_CHARS),
 }).strict()
 export type DesktopQuestionGuard = z.infer<typeof desktopQuestionGuardSchema>
-export type DesktopQuestion = DesktopQuestionGuard & { questions: QuestionItem[] }
-type QuestionRow = { id: string; role: string; contentJson: string; toolCallsJson?: string | null }
+export type DesktopQuestion = DesktopQuestionGuard & { questions: QuestionItem[]; requestedAt?: string | null }
+type QuestionRow = { id: string; role: string; contentJson: string; toolCallsJson?: string | null; createdAt?: string | null }
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 function json(value: unknown): unknown {
     if (typeof value !== 'string') return value
@@ -73,7 +73,7 @@ export function findDesktopQuestion(rows: readonly QuestionRow[]): DesktopQuesti
             acknowledged = false
             if (name !== 'ask_user' || typeof callId !== 'string' || !callId || callId.length > 256 || !row.id || row.id.length > 256) continue
             const input = desktopQuestionInput(part.input ?? part.args ?? part.arguments ?? record(part.function).arguments)
-            if (input) candidate = { sourceMessageId: row.id, toolCallId: callId, questions: input.questions, fingerprint: JSON.stringify(input.questions) }
+            if (input) candidate = { sourceMessageId: row.id, toolCallId: callId, questions: input.questions, fingerprint: JSON.stringify(input.questions), requestedAt: row.createdAt ?? null }
         }
     }
     return acknowledged ? candidate : null

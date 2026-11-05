@@ -94,6 +94,7 @@ export async function readDesktopApproval(runtime: DesktopRuntime, sessionId: st
     const receipt = await byApproval(target.db, sessionId, id)
     if (receipt?.accepted) return { approval: null }
     return { approval: { id, messageId: pending.sourceMessageId, toolCallId: pending.toolCallId, approvals: pending.approvals,
+        ...(pending.requestedAt ? { requestedAt: pending.requestedAt } : {}),
         ...(receipt && { attempt: { ...receipt.payload, requestId: receipt.requestId } }),
     } }
 }

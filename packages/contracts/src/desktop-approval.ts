@@ -9,8 +9,8 @@ export const desktopApprovalGuardSchema = z.object({
     fingerprint: z.string().min(1).max(MAX_APPROVAL_CHARS),
 }).strict()
 export type DesktopApprovalGuard = z.infer<typeof desktopApprovalGuardSchema>
-export type DesktopApproval = DesktopApprovalGuard & { approvals: ApprovalItem[] }
-type ApprovalRow = { id: string; role: string; contentJson: string; toolCallsJson?: string | null }
+export type DesktopApproval = DesktopApprovalGuard & { approvals: ApprovalItem[]; requestedAt?: string | null }
+type ApprovalRow = { id: string; role: string; contentJson: string; toolCallsJson?: string | null; createdAt?: string | null }
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 function json(value: unknown): unknown {
     if (typeof value !== 'string') return value
@@ -70,7 +70,7 @@ export function findDesktopApproval(rows: readonly ApprovalRow[]): DesktopApprov
             acknowledged = false
             if (name !== 'request_approval' || typeof callId !== 'string' || !callId || callId.length > 256 || !row.id || row.id.length > 256) continue
             const input = desktopApprovalInput(part.input ?? part.args ?? part.arguments ?? record(part.function).arguments)
-            if (input) candidate = { sourceMessageId: row.id, toolCallId: callId, approvals: input.approvals, fingerprint: JSON.stringify(input.approvals) }
+            if (input) candidate = { sourceMessageId: row.id, toolCallId: callId, approvals: input.approvals, fingerprint: JSON.stringify(input.approvals), requestedAt: row.createdAt ?? null }
         }
     }
     return acknowledged ? candidate : null

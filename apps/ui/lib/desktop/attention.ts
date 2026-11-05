@@ -11,6 +11,9 @@ export const desktopAttentionItemSchema = z.object({
     sessionId: z.string().min(1),
     title: z.string(),
     summary: z.string().max(280),
+    // The source request message's own timestamp when it is known; the chat's latest activity is
+    // the fallback, never the pending request's age on its own.
+    requestedAt: z.string().optional(),
     updatedAt: z.string(),
 })
 export const desktopAttentionSchema = z.object({

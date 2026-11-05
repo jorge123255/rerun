@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
+import { DesktopNotificationSettings } from './DesktopNotificationSettings'
 import { BaseUrlField } from '@/components/connections/BaseUrlField'
 import { CustomModelList } from '@/components/connections/CustomModelList'
 import { ModelBuckets } from '@/components/connections/ModelBuckets'
@@ -20,7 +21,7 @@ type Props = {
 }
 
 const selectClass = 'w-full rounded-md border bg-background px-3 py-2 text-sm'
-const panels = ['AI providers', 'Workspace', 'Shortcuts'] as const
+const panels = ['AI providers', 'Workspace', 'Notifications', 'Shortcuts'] as const
 function effortLabel(effort: string) {
     return effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)
 }
@@ -149,6 +150,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders 
                         <dt>Open Settings</dt><dd>⌘ ,</dd><dt>Send a chat message</dt><dd>Return</dd><dt>New line in chat</dt><dd>Shift Return</dd>
                         <dt>Open a focused coworker</dt><dd>Return or Space</dd>
                     </dl>}
+                    {tab === 'Notifications' && <DesktopNotificationSettings />}
                 </fieldset>
             </div>
         </section>
