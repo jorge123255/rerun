@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { TextDecoder } from 'node:util'
 import { IsolatedScreenRefusal } from './refusal.js'
 import type { ScreenExportArtifact, ScreenNavigate } from './types.js'
+import { PAGE_EXPORT_ROOT } from './export-metadata.js'
 
 export const EXPORT_HTML_MAX = 1024 * 1024
 export const EXPORT_PNG_MAX = 6 * 1024 * 1024
@@ -13,13 +14,19 @@ export const NAVIGATION_DEFAULT_MS = 30_000
 const unavailable = () => new IsolatedScreenRefusal('The browser export is invalid or exceeds its limits.', 'refused')
 
 export function exportPath(value: string, kind: ScreenExportArtifact['kind']): string {
+    const cache = typeof value === 'string' && kind !== 'screenshot' && value.startsWith(`${PAGE_EXPORT_ROOT}/`)
+    const parts = typeof value === 'string' ? value.split('/') : []
+    const checked = cache ? parts.slice(2) : parts
     if (typeof value !== 'string' || value.length === 0 || value.length > 1024 || /[\\\p{Cc}]/u.test(value)
-        || value.split('/').some(part => !part || part.startsWith('.') || part.length > 120)
-        || !(kind === 'screenshot' ? value.endsWith('.png') : value.endsWith('.browser.html.txt'))) throw unavailable()
+        || checked.some(part => !part || (cache ? part === '.' || part === '..' : part.startsWith('.')) || part.length > (cache ? 200 : 120))
+        || !(kind === 'screenshot' ? value.endsWith('.png') : cache
+            ? new RegExp(`\\.browser-[a-f0-9]{32}\\.${kind === 'page-metadata' ? 'meta' : 'html'}\\.txt$`).test(value)
+            : value.endsWith(kind === 'page-metadata' ? '.browser.meta.txt' : '.browser.html.txt'))) throw unavailable()
     return value
 }
 
 export function navigationOptions(input: ScreenNavigate) {
+    if (!input || typeof input !== 'object' || Object.keys(input).some(key => !['url', 'links', 'timeoutMs', 'screenshotPath'].includes(key))) throw unavailable()
     const timeoutMs = input.timeoutMs ?? NAVIGATION_DEFAULT_MS
     if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > NAVIGATION_MAX_MS
         || input.links !== undefined && typeof input.links !== 'boolean') throw unavailable()
@@ -36,15 +43,17 @@ export async function decodePageExports(raw: Record<string, unknown>, binary: Bu
     signal.throwIfAborted()
     const htmlLength = raw.htmlBytes
     const pngLength = raw.screenshotBytes
-    if (!Number.isInteger(htmlLength) || (htmlLength as number) < 1 || (htmlLength as number) > EXPORT_HTML_MAX
+    const errors = Array.isArray(raw.exportErrors) ? raw.exportErrors as Array<{ kind: string }> : []
+    if (!Number.isInteger(htmlLength) || (htmlLength as number) < 0 || (htmlLength as number) > EXPORT_HTML_MAX
         || !Number.isInteger(pngLength) || (pngLength as number) < 0 || (pngLength as number) > EXPORT_PNG_MAX
         || (htmlLength as number) + (pngLength as number) !== binary.length
-        || (paths.screenshot ? (pngLength as number) === 0 : pngLength !== 0)) throw unavailable()
+        || (htmlLength === 0 && !errors.some(item => item.kind === 'rendered-html'))
+        || (paths.screenshot ? (pngLength === 0 && !errors.some(item => item.kind === 'screenshot')) : pngLength !== 0)) throw unavailable()
     const html = Buffer.from(binary.subarray(0, htmlLength as number))
     try { new TextDecoder('utf-8', { fatal: true }).decode(html) } catch { throw unavailable() }
     if (html.includes(0)) throw unavailable()
-    const artifacts = [artifact('rendered-html', paths.html, html)]
-    if (paths.screenshot) {
+    const artifacts: ScreenExportArtifact[] = html.length ? [artifact('rendered-html', paths.html, html)] : []
+    if (paths.screenshot && pngLength !== 0) {
         const png = binary.subarray(htmlLength as number)
         const width = raw.screenshotWidth, height = raw.screenshotHeight
         if (typeof width !== 'number' || typeof height !== 'number' || !Number.isInteger(width) || !Number.isInteger(height)

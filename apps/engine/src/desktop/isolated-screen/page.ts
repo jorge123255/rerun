@@ -27,6 +27,13 @@ export function assertHttpUrl(value: string): string {
     return value
 }
 
+export function safePageLink(value: unknown): value is string {
+    const safe = publicUrl(value)
+    if (!safe) return false
+    const host = new URL(safe).hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '')
+    return !host.startsWith('::ffff:') && !(/^(?:localhost|.*\.localhost|127(?:\.\d+){3}|0\.0\.0\.0|::1|host\.docker\.internal|gateway\.docker\.internal)$/.test(host))
+}
+
 export function boundPage(raw: Record<string, unknown>, requestedUrl: string, includeLinks = true): ScreenPage {
     const html = typeof raw.html === 'string' ? raw.html : ''
     const fullText = typeof raw.text === 'string' ? raw.text : ''
@@ -39,7 +46,7 @@ export function boundPage(raw: Record<string, unknown>, requestedUrl: string, in
             if (!link || typeof link !== 'object') continue
             const href = (link as { href?: unknown }).href
             const label = (link as { text?: unknown }).text
-            if (typeof href !== 'string' || publicUrl(href) === null || seen.has(href)) continue
+            if (!safePageLink(href) || seen.has(href)) continue
             seen.add(href)
             links.push({ href, text: typeof label === 'string' ? label.replace(/\s+/g, ' ').trim().slice(0, LINK_TEXT_LIMIT) : '' })
         }
@@ -53,4 +60,19 @@ export function boundPage(raw: Record<string, unknown>, requestedUrl: string, in
         links,
         wall,
     }
+}
+
+export function formatScreenPage(page: ScreenPage, requestedUrl: string, includeLinks: boolean): string {
+    const body = page.wall
+        ? `Blocked by ${page.wall.provider} bot protection, so this page cannot be read from here. If the user can get past it by hand, call request_takeover with this URL; otherwise use another source.`
+        : page.text
+    const files = page.exports?.files ?? []
+    const html = files.find(file => file.kind === 'rendered-html')
+    const screenshot = files.find(file => file.kind === 'screenshot')
+    const saved = html ? `\nSaved whole: ${html.path} (the rendered HTML: read or grep it for anything this text leaves out)` : ''
+    const links = includeLinks ? `\n\nLinks:\n${page.wall ? 'unavailable (blocked)' : page.links.length ? page.links.map(link => link.text ? `- ${link.text} — ${link.href}` : `- ${link.href}`).join('\n') : 'none'}${page.linksTruncated ? '\n[link list truncated at the bounded limit]' : ''}` : ''
+    const shot = screenshot ? `\n\n[screenshot saved to ${screenshot.path}]` : ''
+    const note = page.exports && page.exports.status !== 'saved'
+        ? `\n\n[exports ${page.exports.status}${page.exports.failure ? `: ${page.exports.failure}` : ''}; only the listed acknowledged files were saved. Inspect Files before retrying an uncertain attempt.]` : ''
+    return `[${page.status}] ${requestedUrl}${saved}\n\n${body}${links}${shot}${note}`
 }

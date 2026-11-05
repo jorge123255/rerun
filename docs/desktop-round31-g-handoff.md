@@ -1,317 +1,370 @@
-# Round 31 G — E3 browser navigation and confined export source handoff
+# Round 31 G — expanded E3 browser options and exports handoff
 
+Worktree: `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round31-browser-exports`.
 Branch: `desktop/round31-browser-exports`.
-Exact parent: `136f318e931a4433ea6d178f3f9e961e1a2d8a86`.
-Original source: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+Prepared base: `136f318e931a4433ea6d178f3f9e961e1a2d8a86`.
+Prior local handoff preserved: `2e00ceb0cc6352eee3ef743f996b93d02d6a14d3`.
+Original pin: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
-This is an unexecuted source handoff. No tests, type checks, lint, builds, guest
-decoder execution, Docker, app servers, external APIs, packaging, installations,
-Mac UI, Keychain, live workspace access or restart checks were run. Root execution
-and native acceptance are pending. E3 is not marked tested, accepted or complete.
-There is no push, merge or publication.
+This continues the existing dispatch; no reset, switch, squash, cherry-pick or other
+lane edit was performed. The final SHA is reported in the chat handoff. This file
+supersedes the prior version of this document, including its flat HTML filename,
+no-metadata description and two-artifact publication signature.
 
-## Changed files
+**Source implementation and authored regressions only.** No tests, type checks,
+lint, builds, decoder execution, guest/Chromium, Docker, app servers, external API
+calls, Keychain, live workspace reads, installations, packaging, native UI or
+restart checks were executed. Root runs every check and native acceptance.
+No push, merge, deployment or publication. E3 is not tested, accepted or marked
+complete, and no shared checklist count is changed.
+
+## Owned changed files, cumulative from the prepared base
 
 1. `apps/engine/src/desktop/isolated-screen/types.ts`
 2. `apps/engine/src/desktop/isolated-screen/page.ts`
 3. `apps/engine/src/desktop/isolated-screen/service.ts`
-4. `apps/engine/src/desktop/isolated-screen/tools.ts`
-5. `apps/engine/src/desktop/isolated-screen/exports.ts` (new)
-6. `apps/engine/src/desktop/isolated-screen/transport.ts` (new)
-7. `apps/engine/src/desktop/isolated-screen/exports.test.ts` (new)
-8. `apps/engine/src/desktop/isolated-screen/export-publication.test.ts` (new)
-9. `apps/engine/src/desktop/isolated-screen/navigation-export-service.test.ts` (new)
-10. `apps/engine/desktop-guest/guest.py`
-11. `apps/engine/desktop-guest/guest_exports_test.py` (new)
-12. `docs/desktop-round31-g-handoff.md` (new)
+4. `apps/engine/src/desktop/isolated-screen/transport.ts`
+5. `apps/engine/src/desktop/isolated-screen/tools.ts`
+6. `apps/engine/src/desktop/isolated-screen/exports.ts`
+7. `apps/engine/src/desktop/isolated-screen/exports.test.ts`
+8. `apps/engine/src/desktop/isolated-screen/export-publication.test.ts`
+9. `apps/engine/src/desktop/isolated-screen/navigation-export-service.test.ts`
+10. `apps/engine/src/desktop/isolated-screen/navigation-protocol.ts`
+11. `apps/engine/src/desktop/isolated-screen/navigation-protocol.test.ts`
+12. `apps/engine/src/desktop/isolated-screen/export-metadata.ts`
+13. `apps/engine/src/desktop/isolated-screen/export-metadata.test.ts`
+14. `apps/engine/src/desktop/isolated-screen/export-retention.ts`
+15. `apps/engine/desktop-guest/guest.py`
+16. `apps/engine/desktop-guest/guest_exports_test.py`
+17. `docs/desktop-round31-g-handoff.md`
 
-All changes are in G's permitted paths plus this document. No shared renderer,
-contract export, registry, UI route, migration/bootstrap, provider, run/queue,
-Control Center, lifecycle binding, packaging or other lane source was edited.
+No paired contracts, central exports/schema/registry, provider/run/queue/admission
+or lifecycle integration, route mounts, shared UI/renderers, Control Center,
+packaging, installed app, credentials or round30 worktrees were changed.
 
-## Original implementation and necessary Mac adaptations
+## Source mapping and Mac adaptations
 
-Read the actual pinned sources with `git show` before implementing:
+Read the actual original source via `git show` at the pin before editing:
 
-- `apps/engine/src/tools/builtin/browser.ts`: `Visit`, `browserTools`, `readPage`,
-  `readLinks`, `waitOutBotWall` and consent handling. Preserve `browser_navigate`,
-  `url`, optional `screenshotPath`, `links: false`, `timeoutMs: 30000`, positive
-  integer ceiling `120000`, ordered/deduplicated HTTP links (300, 80-character
-  labels), and the existing text/bot-wall result. The accepted desktop structured
-  page result is extended with an export receipt instead of replacing its shape
-  with the hosted tool's free-form text.
-- `apps/engine/src/tools/builtin/page-file.ts`: `PageToSave`, `PageView`,
-  `pageFileBase`, `savePage`. Retain the saved rendered-HTML meaning. Do not port
-  the host filesystem resolver, overwrite-by-URL writes, hidden recursive folder
-  creation, best-effort swallowed save errors or pruning/deletion. The Mac saves
-  one flat visible deterministic `browser-<32 hex>.browser.html.txt` per exact
-  invocation; current Files write authority is mandatory. Raw rendered HTML is
-  preserved as UTF-8 text, not sanitized into a different document and not served
-  as trusted HTML. The `.txt` suffix intentionally prevents active HTML preview.
-- `apps/ui/lib/files/preview.ts`: original image/text classification supports
-  using the existing PNG frame and inert text preview. There is no new visual
-  design, dialog, card, renderer or responsive layout in this lane. Existing
-  narrow/short-width behavior remains with root's accepted Files/viewer UI.
+| Original source | Reused behavior | Necessary Mac adaptation |
+| --- | --- | --- |
+| `apps/engine/src/tools/builtin/browser.ts`: `Visit`, `browserTools` | `browser_navigate`, `url`, optional `screenshotPath`, `links=false`, `timeoutMs=30000`, positive integer ceiling 120000 | Existing isolated service/guest only; strict option schema; no host Patchright/browser/profile/mount access |
+| Same file: `readLinks` | Unique HTTP(S) destinations in document order, whitespace-normalized 80-character labels, 300-link cap, `Links:` / `none` notes | Additional 160 KiB aggregate link budget, credential/transport destination filtering, explicit truncation |
+| Same file: `readPage`, `waitOutBotWall`, `settle`, `acceptCookieBanner` | Main-document HTTP status, final URL, 50,000 visible-text limit, existing wall/consent selectors, render settling and save notes | One guest deadline; main-frame status tracking; bounded 5-second resource settling, no exports for a blocked/failed/unknown-status page; errors remain errors |
+| `apps/engine/src/tools/builtin/page-file.ts`: `pageFileBase`, `savePage`, `PageView` / `PageToSave` | Private `.rerun/pages`, original host/path/index/query-loss hierarchy, browser rendered-HTML view, URL/status/final URL/time metadata, 30-day / 200 MiB retention intent | Complete HTML is inert `.html.txt`; immutable attempt and full-URL hash suffixes; per-attempt `.meta.txt`; no blind overwrite, cross-view metadata mutation, broad walk or deletion |
+| `apps/ui/lib/files/preview.ts` | Existing image/text classification | PNG and inert UTF-8 text use existing Files previews; no new visual design, card, dialog or responsive layout |
 
-Read the full `docs/desktop-round31-interfaces.md`, root `CLAUDE.md`, the supplied
-AGENTS instructions, and the installed Next.js route-handler guide at
-`/Users/gszulc/OpenBot/Shared/rerun-desktop/apps/ui/node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/route.md`.
-No Next.js route or UI module is changed. The assigned engine subtree has no
-additional AGENTS/CLAUDE file. Existing accepted `binding.ts`, `frame.ts`,
-`docker-cli.ts`, `identity.ts`, `encode.ts`, `service.ts`, `tools.ts`, guest and
-current private Files publication helpers were read as local integration context.
+Read the full round31 agreement, applicable supplied AGENTS instructions, root
+`CLAUDE.md`, current isolated-screen modules and guest, authority/deletion binding,
+private-file publication/binding and Files import primitives. The engine subtree
+has no additional AGENTS/CLAUDE file. The installed Next.js route-handler guide
+was read at `/Users/gszulc/OpenBot/Shared/rerun-desktop/apps/ui/node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/route.md`.
+No UI/Next route is authored here. H's passive viewer is unchanged; original
+responsive behavior remains with the accepted UI, pending root native checks.
 
-## Implemented engine/guest boundary
+## Exported source surface and strict guest protocol
 
-`IsolatedScreenService.navigate(target, input, signal, exports?)` remains additive:
+The exact types live in `types.ts`, `navigation-protocol.ts` and `transport.ts`;
+root should import them rather than invent another document/browser protocol.
 
 ```ts
-type ScreenNavigate = {
-    url: string
-    links?: boolean
-    timeoutMs?: number
-    screenshotPath?: string
-}
-type ScreenNavigationExport = {
-    htmlPath: string
-    publish(artifacts: ScreenExportArtifact[], signal: AbortSignal): Promise<ScreenSavedExports>
-}
+navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal,
+         exports?: ScreenNavigationExport): Promise<ScreenPage>
+
+// types.ts
+// ScreenNavigate: {url, links?, timeoutMs?, screenshotPath?}
+// ScreenNavigationExport: {htmlPath, publish(artifacts, signal)}
+// ScreenExportArtifact: kind/path/mediaType/bytes/sha256 plus PNG dimensions
+// ScreenSavedExports: status/files plus bounded failure category
 ```
 
-The existing framed guest `navigate` operation is extended, not replaced with
-another route/session/controller. Its JSON carries only `url`, `links`,
-`timeoutMs`, `screenshot` (boolean), `exportHtml` (boolean), and the existing
-internal `requestId`. **No destination path, Mac filesystem resolver, arbitrary
-expression, file read/write operation, browser endpoint or host port reaches the
-guest.** The response has existing structured page fields plus `htmlBytes`,
-`screenshotBytes`, `screenshotWidth`, `screenshotHeight`. Its existing binary
-frame contains exactly UTF-8 HTML followed by optional PNG. Length mismatches,
-missing output and surplus bytes refuse publication. Existing frame caps remain
-unchanged (1,000,000 JSON bytes and 8 MiB binary).
+Other exported helpers/factories:
 
-Limits:
+- `navigationOptions`, `exportPath`, `decodePageExports` (`exports.ts`).
+- `PAGE_OPTIONS_VERSION=1`, `LINKS_BYTES_MAX`, `parseGuestNavigation`
+  (`navigation-protocol.ts`).
+- `publicUrl`, `safePageLink`, `boundPage`, `formatScreenPage` (`page.ts`).
+- `browserPageBase`, `browserHtmlPath`, `browserMetadataArtifact`,
+  `PAGE_EXPORT_ROOT`, `PAGE_METADATA_MAX`, `PAGE_RETENTION` (`export-metadata.ts`).
+- `planBrowserExportRetention` / `BrowserExportRetentionRecord`
+  (`export-retention.ts`).
+- `createScreenExportPublisher`, `createScreenExportReader`,
+  `screenExportIdentity`, `screenExportFailure`, `validateScreenExportManifest`,
+  `validateScreenExportResult`, and their injected dependency types (`transport.ts`).
 
-| Item | Limit/behavior |
+The existing framed guest `navigate` operation is extended in place. Its only
+request fields are `op`, existing internal `requestId`, `pageOptionsVersion=1`,
+`url`, `links`, `timeoutMs`, `screenshot` and `exportHtml`. The last two are booleans;
+no workspace path, arbitrary expression/command or filesystem operation reaches
+the guest. Guest and host reject unknown/incorrect fields and invalid bounds.
+
+A successful response carries `ok`, matching version, main-document `status`,
+`finalUrl`, bounded `text` and wall-detection `html`, `truncated`, bounded `links`,
+`linksTruncated`, `htmlBytes`, `screenshotBytes`, `screenshotWidth`,
+`screenshotHeight`, and at most two typed `exportErrors` (one per output kind).
+Binary data is exactly UTF-8 HTML followed by PNG. Frame caps are unchanged:
+1,000,000 JSON bytes and 8 MiB binary. Host validates lengths, UTF-8, raster
+structure and decoder output before passing artifacts to root publication.
+Metadata is generated on the host, never supplied as guest authority.
+
+`ScreenPage.outcome` is `ok`, `blocked` or `failed`; unknown HTTP status (0) is
+conservatively failed. The model-facing tool result keeps `page`, adds original
+formatted `text` notes and `failed`, and never contains raw HTML/PNG. `Saved whole`
+and `screenshot saved` refer only to acknowledged files. Partial failures state
+that only acknowledged files were saved. Capture failure can preserve valid HTML
+(and vice versa) with an explicit unknown/capture-failed outcome. Full-disk,
+conflict, revocation, transport and invalid-acknowledgment categories are bounded;
+raw exception bodies/paths/headers are not returned or logged.
+
+Old guests without the versioned response are explicitly incompatible even for
+ordinary navigation. Root must rebuild/install the current guest before wiring
+this version. There is no silent assumption that the old fixed timeout honors
+the new option. No extra guest module/package or Dockerfile edit is required.
+
+## Bounds and navigation/control behavior
+
+| Boundary | Bound |
 | --- | --- |
-| Navigation | Default 30,000 ms; integer 1–120,000 ms; one monotonic guest deadline includes page reading, wall/consent and export |
-| Challenge wait | At most 15 seconds or half the requested timeout; static walls return immediately |
-| Guest capture | At most 15 seconds, further bounded by remaining navigation time |
-| HTML | Complete UTF-8, at most 1 MiB; oversized/invalid/NUL HTML is refused, never labeled whole after truncation |
-| Full-page PNG | At most 8192 per edge, 16,777,216 pixels, 6 MiB encoded |
-| Host PNG decode | Header/chunk/dimension checks before Sharp; APNG and trailing bytes refused; 5-second Sharp processing timeout and pixel cap; re-encode to stripped static PNG |
-| Host publication | 30-second publisher observation deadline; service budget is navigation timeout + 35 seconds |
-| Tool budget | Navigation timeout + 70 seconds including accepted screen startup and host processing |
-| Destination | Visible relative path, 1024 characters total, 120 characters per segment; no hidden/dot/traversal/empty segments, backslashes, controls or absolute paths; exact `.png` or `.browser.html.txt` suffix |
+| Navigation | Default 30000 ms, integer 1–120000 ms; one monotonic guest deadline covers navigation, settling, consent, wall polling and capture |
+| Render settling | At most 5 seconds per settle, at most 512 active resource IDs; original 500 ms quiet intent; no retained request headers |
+| Wall polling | At most 15 seconds / half requested timeout, within whole deadline; static wall returns immediately |
+| Text / links | 50000 visible text characters; 300 links, 80 label characters, 160 KiB link JSON; truncation reported |
+| Full-page PNG | At most 8192 on each edge, 16,777,216 aggregate pixels and 6 MiB encoded; capture at most 15 seconds within remaining guest deadline |
+| Host decode | Header/dimension/chunk/APNG/trailing-byte checks before Sharp; 5-second pixel-limited decode/re-encode; publisher also validates raster bytes |
+| HTML / metadata | Complete valid UTF-8 HTML at most 1 MiB, metadata at most 16 KiB; no NUL; no silently truncated whole-file claim |
+| Host service / publisher | Service timeout is requested navigation + 35 seconds; publisher observation max 30 seconds; read-only recovery max 15 seconds |
+| Tool incl. startup | Requested navigation + 70 seconds; all paths remain cancellable |
+| Guest CDP memory | 9 MiB aggregate fragmented-message cap; 256 small main-document/load summaries; no cookie/header supplemental metadata |
 
-Before capture the guest reads CSS content dimensions; after capture it checks
-them again. Growth/shrinkage, PNG dimensions differing from the requested full
-rectangle, over-budget output or elapsed capture time fail rather than returning
-a crop called full-page. Device-scale mismatches are refused rather than resized
-and mislabeled. Full-page means the current document layout rectangle; infinite
-scroll, offscreen lazy content, closed shadow roots and content in nested scrolling
-containers are not expanded. Same-size dynamic changes are not a frozen DOM
-snapshot; HTML and screenshot are sequential bounded observations.
+Main-document responses are filtered by the navigation's frame ID so an iframe
+cannot replace page status. Browser tab/profile selection stays with the accepted
+guest. Consent selectors and wall markers are retained. HTTP failure, wall,
+timeout, corrupt response or unknown status cannot be reported as a usable saved
+page. Screenshot failures are not relabeled viewport captures.
 
-Bot walls retain existing wall detection and suppress exports and links. Consent
-buttons use the accepted original selectors; they are not clicked through a known
-bot wall. Refusing a bot-wall screenshot is a deliberate Mac difference from the
-original optional screenshot-on-wall behavior: no partial export batch or wall
-HTML is presented as a saved ordinary page. Use the existing viewer/takeover path.
+The guest checks layout dimensions before expensive capture and checks them
+again afterwards. Mismatched PNG dimensions, changing layout size, output/decode
+limits and elapsed limits refuse the screenshot. A successful export additionally
+rejects a changed final URL. Full-page means the current document layout rectangle;
+it does not expand infinite scrolling, hidden lazy content or nested scrolling
+containers. HTML and PNG are sequential observations, not a frozen same-instant DOM.
+Known walls suppress exports; existing takeover/viewer remains the way to inspect
+or clear them. This deliberately refuses original screenshot-on-wall behavior.
 
-Cancellation retains the same per-coworker service action lock, model ownership,
-generation checks, takeover exclusion, Stop/revocation signal and guest cancel
-request/acknowledgment path. CDP reads now poll cancellation during partial WebSocket
-frames without discarding fragments. Fragmented message totals are bounded;
-navigation event retention is bounded to 256 small status/load summaries rather
-than retaining request headers. Current target checks occur after guest data,
-after decoding and before/after publication. No raw HTML/PNG enters the model
-result; only acknowledged relative paths, hashes and sizes do.
+Existing action locks, per-run screen ownership, human takeover exclusion,
+generation/launch checks, owner revocation, guest cancel request/tombstone/ack and
+Stop behavior remain. CDP partial-frame reads poll cancellation without losing
+fragments. Publication sees the same linked signal and current-target checks;
+a delayed old capture cannot become output for a replacement generation. There
+is no H subscription/control change, host port, CDP connection or host browser.
 
-## Root integration: exact additive entry points
+## Artifact layout, collision/retention and current Files dependencies
 
-Root must supply the publisher. The current registry calls
-`isolatedScreenTools(ctx)` at `apps/engine/src/tools/registry.ts`; that file is
-unchanged. Its one-line integration is:
+Automatic rendered HTML is deterministic for an exact URL and invocation:
+
+```text
+.rerun/pages/<original URL base>-<full URL hash>.browser-<attempt hash>.html.txt
+.rerun/pages/<same base and attempt>.meta.txt
+```
+
+The URL base retains the original host/path/index and lossy/query hash logic;
+very long hierarchies use a bounded hash fallback. Full URL and attempt suffixes
+avoid cross-URL collisions and keep previous/user-edited snapshots intact.
+Metadata retains `{url, views:{browser:{file,savedAt,status,finalUrl,contentType,
+sha256,byteLength}}, screenshot?}`. Other original served/rendered views are not
+rewritten or merged with untrusted sidecars. Metadata remains inert untrusted
+text, never a grant or ownership proof. Existing files are always preserved.
+
+Explicit screenshots allow only visible relative `.png` paths with existing
+parents. Only generated HTML/metadata may use the narrow `.rerun/pages` namespace.
+No traversal/dot/empty segment, backslash, control, absolute path, symlink,
+hardlink alias, changed parent/owner or replacement overwrite is permitted.
+Paths are bounded to 1024 characters, ordinary segments 120 and generated cache
+segments 200. Root must safely provision/pin only the deterministic cache parents
+inside an already-authorized existing private workspace; no guest mkdir RPC or
+new owner/workspace creation is allowed. This is an explicit root sink/migration
+dependency, not a filesystem implementation hidden inside G.
+
+`PAGE_RETENTION` passes the original 30-day / 200 MiB intent into the atomic claim.
+Root must reserve aggregate owned bytes with the claim, refusing over-budget
+storage (`EXPORT_BUDGET`/`EDQUOT`) rather than silently growing without limit.
+`planBrowserExportRetention` accepts at most 4096 root-authenticated durable
+operation records and returns exact key/digest candidates; it performs no I/O.
+Changed, active, future-dated and foreign records are preserved. Root's existing
+retention authority may remove only still-owned unchanged artifacts after fresh
+inode/hash/owner checks; otherwise reject the new export. No directory traversal,
+auto-prune timer, deletion of unrelated views or cleanup of replacement files.
+
+**Concrete adjacent accepted behavior requiring root changes:**
+`apps/engine/src/desktop/workspace-read.ts` `validPath` rejects hidden segments, so
+plain `fs_read` cannot read the original `.rerun/pages` cache. Root must wire an
+exact-receipt bounded cache read/Files preview path before activating save/read
+notes; do not widen ordinary `validPath` to every hidden file. A saved .txt can be
+rendered only as escaped/plain text. Root must preserve the original cache's
+exclusion from templates/capture/share. G does not edit these central paths.
+
+Root Files source references:
+`apps/ui/lib/desktop/server/coworker-files.ts` has pinned/create-only import
+machinery; `private-file-tools/publication.ts` and `binding.ts` show authenticated
+exact-run authority and durable publication. Existing `importCoworkerFile` is
+text-only and its strict private-tool path accepts visible paths. The raster
+import does not expose the same full private-tool publication argument. Root
+must provide a strict generated-cache/PNG sink using those protected primitives;
+calling a generic raster upload is not write permission. G does not silently
+relax uploads, hidden paths or shared Files policy.
+
+## Precise root wiring
+
+The existing registry integration remains one additive call; registry is unchanged:
 
 ```ts
 const screen = isolatedScreenTools(ctx, { publishExports: desktopBrowserExportPublisher })
 ```
 
-`desktopBrowserExportPublisher` must implement the **exported existing source
-type** `ScreenExportPublisher` from
-`apps/engine/src/desktop/isolated-screen/transport.ts`. Do not duplicate its types
-in a paired contract. It receives only a trusted engine invocation plus bounded
-validated artifacts and an AbortSignal:
+`desktopBrowserExportPublisher` implements the source `ScreenExportPublisher` type.
+Root owns its authenticated bridge when Files authority is in the UI process.
+There is no G-defined export HTTP route in the agreement, so none is invented.
+Transport at most 1 MiB HTML + 6 MiB PNG + 16 KiB metadata, with bounded metadata/
+headers and hashes checked before storage. Do not serialize Buffer objects into
+unbounded JSON arrays, expose an arbitrary file RPC, log bodies or inherit hosted
+hub headers. Renderer/model grants/paths cannot choose the owner or run.
+
+Import and inject the actual source types/factories:
 
 ```ts
-type ScreenExportIdentity = {
-    engineAgentId: string
-    sessionId: string
-    runId: string
-    toolCallId: string
-    target: ScreenTarget
-    url: string
-}
-type ScreenExportCall = ScreenExportIdentity & { artifacts: ScreenExportArtifact[] }
-type ScreenExportPublisher =
-    (call: ScreenExportCall, signal: AbortSignal) => Promise<ScreenSavedExports>
-```
+import {
+    createScreenExportPublisher, createScreenExportReader,
+    type ScreenExportDependencies, type ScreenExportReadDependencies,
+} from '../desktop/isolated-screen/transport.js'
 
-There is no root route mount in this patch and no new arbitrary filesystem RPC.
-G's agreement specifies the guest operation but no export HTTP route. Root owns
-the authenticated bridge/transport if the UI process holds Files authority. Do
-not send the export callback through a renderer, reuse `fs_write` as though it
-accepted PNG, route to the host browser, or create an unauthenticated file endpoint.
-If transported across processes, preserve the exact source identity, enforce
-body/framing caps before parsing (7 MiB binary maximum, no unconstrained JSON
-Buffer expansion), revalidate byte hashes/types and never log payload bodies.
-There is no hub authorization/header inheritance or hosted request here.
-
-The provided `createScreenExportPublisher(deps)` supplies claim/replay logic.
-Root binds it to the existing local authority, durable store and confined Files
-publication primitive:
-
-```ts
-import { createScreenExportPublisher } from '../desktop/isolated-screen/transport.js'
-import type { ScreenExportDependencies } from '../desktop/isolated-screen/transport.js'
-
-export function bindBrowserExportPublisher(deps: ScreenExportDependencies) {
-    return createScreenExportPublisher(deps)
-}
-```
-
-The exact required dependency interface is exported in `transport.ts`:
-
-```ts
-type ScreenExportDependencies = {
-    authorize(call: ScreenExportIdentity, signal: AbortSignal): Promise<{
-        ownerId: string
-        workspaceIdentity: string
-        runIdentity: string
-        launchNonce: string
-    }>
-    receipts: {
-        read(key: string): Promise<ScreenExportReceipt | null>
-        claim(key: string, digest: string): Promise<boolean>
-        settle(key: string, digest: string, result: ScreenSavedExports): Promise<void>
+export function bindBrowserExports(
+    publication: ScreenExportDependencies,
+    history: ScreenExportReadDependencies,
+) {
+    return {
+        publish: createScreenExportPublisher(publication),
+        readAttempt: createScreenExportReader(history),
     }
-    createOnly(
-        artifact: ScreenExportArtifact,
-        authority: ScreenExportAuthority,
-        guard: () => Promise<void>,
-        signal: AbortSignal,
-    ): Promise<void>
 }
 ```
 
-These callbacks are required root implementation, **not implemented authority or
-filesystem guarantees merely because the types exist**:
+Required dependency semantics (these types alone do not implement storage):
 
-1. `authorize`: freshly map engine coworker/session/run/tool-call to the exact
-   local owner and current active invocation. Reject disabled/deleting owners,
-   revoked browser/computer/privateFileWrite, mismatched session/run provenance,
-   stale `target.launchNonce`/`sessionGeneration`, or human ownership. Return a
-   stable workspace fingerprint containing the canonical workspace identity and
-   immutable local owner; `runIdentity` pins the current run/source revision.
-   A model/renderer supplied workspace path or boolean grant is never authority.
-2. `receipts`: implement in root's durable database/migration ladder. `claim` is
-   atomic insert-if-absent by exact opaque key; `settle` is compare-by-key-and-digest,
-   durable and idempotent. Store metadata only, never HTML/screenshots. Root owns
-   its schema name, exports and initialization; no competing table/schema is
-   introduced here. Missing/unavailable storage must throw, not become an empty
-   journal or a saved result.
-3. `createOnly`: use the root Files mutation lock/deletion ordering, existing owned
-   workspace and existing destination parent. Pin/recheck all ancestors and
-   workspace inode identity; refuse symlinks and aliases and any existing final
-   name (including a hardlink). Stage bounded bytes in the pinned owned directory,
-   sync, call `guard` immediately before visibility, and atomically publish with
-   no replacement. Refuse/recover only owned staged resources and never remove a
-   foreign replacement. Check final identity/one-link ownership after staging is
-   removed. Reject changed parents and interrupted file-operation journals.
-   This is create-only: there is no overwrite exception, baseHash bypass, automatic
-   suffix retry or replacement of an edited page/screenshot.
+- `authorize(identity, signal)` freshly resolves exact engine/local owner,
+  session/run/tool-call and source, enabled/deleting state, current browser,
+  computer and privateFileWrite grants, target launch/generation and absence of
+  human control. Its `{ownerId,workspaceIdentity,runIdentity,launchNonce}` pins
+  immutable owner, canonical workspace inode/location and current source. Both
+  tool and publisher recheck authority; sink calls `guard` at final visibility.
+- `receipts.read(key)` reads durable exact-attempt state. `claim(key,digest,details)`
+  atomically inserts absent state and reserves storage budget. `details` includes
+  canonical server-only `source`, `sourceFingerprint`, ordered `files` manifest
+  and `retention`. Persist these, not HTML/PNG bytes; old internal target identity
+  must remain recoverable privately. `settle(key,digest,result)` is durable,
+  compare-by-digest and idempotent. Storage unavailability/corruption throws;
+  never treat it as an empty store or successful acknowledgement.
+- `createOnly(artifact,authority,guard,signal,{key,digest,index})` retains root's
+  actual work/deletion lease, pins parents without links, stages/syncs exact
+  bounded bytes, durably records exact stage/final inode ownership under that
+  operation/index, calls guard immediately before publishing and atomically
+  creates without replacement. Confirm final identity/one-link ownership after
+  removing the exact owned staging name. Refuse journals, moved parents, foreign
+  replacements and any existing final name. Root may safely provision generated
+  cache directories only; explicit screenshot parents must exist. Cleanup only
+  exact owned resources, even after a lost reply or cancellation.
+- Optional publication `reconcile(operation,authority,guard,signal)` inspects only
+  that operation's existing receipt/stage/final identities. It never navigates,
+  captures, creates a new final file, overwrites, or infers ownership from matching
+  names/hashes alone. Match persisted key/digest/index, inode, size, hash, single
+  link and owner; report only verified acknowledged files. Persist its result.
+- History uses separate `authorizeRead` and required `reconcile`, plus receipt
+  reads. It checks authenticated current owner/session/read authority while
+  allowing an ended historical run and old guest generation. It never grants
+  write or resumes that run. Root loads private `source` from the owned record,
+  not a renderer-supplied engine target. `readAttempt` has no browser/capture or
+  create callback and does not mutate receipt storage.
 
-Existing source references for root's sink adaptation:
-`apps/ui/lib/desktop/server/private-file-tools/publication.ts` already demonstrates
-claim-before-write, exact-call receipts and live authority guards;
-`coworker-files.ts` has `importCoworkerFile`, `importCoworkerRasterFile` and pinned
-create-only import machinery. They are not interchangeable as supplied:
-`importCoworkerFile` is text-only (1 MiB) and accepts `PrivateToolPublication`;
-`importCoworkerRasterFile` is the raster path but does not expose the same complete
-existing-directory/private-tool publication argument. Root must adapt the strict
-publication primitive for PNG rather than assuming a raster upload grants model
-write access or silently weakening the private-file checks. G did not edit these
-root-owned files.
+Root owns numbered migrations/bootstrap, budget/receipt/operation tables and
+shared exports, bridge authentication/routes, current target/run authority,
+protected sink/cache read, catalog/system instruction text, stop/revoke/delete
+wiring, packaging and guest rebuild. Do not supply the publisher until these
+concrete dependencies exist. Navigation without export works with only existing
+browser/computer authority; screenshot requests refuse when write/publisher is
+absent and implicit HTML saving reports refused/unavailable. No new grant.
 
-Root must retain its central run Stop/deletion/revocation wiring and the existing
-isolated browser lifecycle. `beginDesktopAgentWork` covers the tool publication
-observer, while **the root sink must retain its own work/deletion lease until any
-late filesystem operation actually settles**. Guard checks and aborted signals
-prohibit a late pending operation from publishing after cancellation. Engine
-observer timeout does not mean a database/fs operation was physically cancelled.
+## Retry, restart, cancellation and errors
 
-No new grant is invented. Browser-only navigation still works with current
-browser/computer grants when Files write is absent. Optional screenshots refuse
-before navigation if the publisher/current write authority is unavailable;
-HTML saving is reported `refused` or `unavailable` rather than claimed saved.
-Root must update the existing catalog/system instruction text to describe the
-original optional fields and current write requirement; no automatic grant.
+Publication keys bind authoritative local owner + session/run/tool-call; digests
+bind canonical source/target/options and ordered artifact hashes/sizes. In-process
+exact calls coalesce. A completed exact receipt replays without writes; different
+bytes/options/source under that identity refuse. Claimed/unknown attempts may be
+read-only reconciled from exact operation ownership. Without a reconciler they
+remain honestly unknown, with no automatic new path, overwrite or capture.
+Partial batches retain acknowledged files and static failure category. A lost
+reply after commit can be recognized after restart from the durable operation
+record; user-edited/replaced/hardlinked files cannot be silently reclaimed.
 
-## Durable and restart behavior
+Root run/tool receipt recovery must retain the actual tool outcome rather than
+replay navigation. The history reader validates persisted source and manifests,
+rechecks read ownership, and inspects existing operation records only. It never
+starts a stopped guest or creates a replacement target. Existing artifacts remain
+private Files after restart; read/preview/polling performs no browser action.
 
-Publication keys include authoritative local owner plus exact session/run/tool
-call; digests also bind target generation, URL and ordered artifact metadata/hashes.
-The same pending call coalesces in-process. A settled durable receipt replays
-without another write, subject to fresh authority. Different bytes or source
-under the same identity refuse. A persisted `claimed` receipt after process death
-returns `unknown`; no automatic re-execution, cleanup, new filename or overwrite.
-A partial batch keeps only positively acknowledged file metadata and remains
-`unknown`. Files remain ordinary private Files after restart; this lane adds no
-auto-prune or background process and does not copy profiles or private contexts.
+Observer deadlines/Stop do not physically cancel an already-issued filesystem or
+SQLite syscall. Pending operation identity stays reserved until it actually
+settles. Root's sink must retain its own lease, use the aborted guard before
+visibility and record late completed ownership even when the caller already
+returned unknown. The engine action/target signal prevents stale results; only
+root can safely clean exact late staging resources. No claim is discarded to
+allow a competing retry. No raw host paths, headers, cookies or secrets are
+added to output, logs or another coworker's environment.
 
-The publication helper does not persist or replay navigation, HTML bytes, PNG
-bytes or a live browser target. Root's existing run/tool receipt machinery must
-retain the actual tool result rather than re-executing an old navigation after
-restart. A later call with a new run/tool identity may capture the then-current
-page into a new HTML name. An old target is not revived to make receipt replay
-look like current browser work. If a response is lost, inspect Files and the
-durable receipt; an uncertain call must not be automatically retried as a new call.
+## Implemented / dependent / unsupported matrix
 
-## Root execution and honest limits
+| Task | Implemented owned source | Required root dependency | Unsupported / deliberately refused |
+| --- | --- | --- | --- |
+| 1 options/protocol | Strict original fields/defaults, versioned guest response, formatter | Catalog/worker result wiring; current guest | Old guest response, unknown fields, arbitrary command/fs RPC |
+| 2 page semantics | Main-frame status/final URL, bounded settle/consent/wall, failed outcomes | Real browser/redirect/consent QA | Unknown status saved as usable, failed/wall HTML exports |
+| 3 links | Unique ordered HTTP links, original caps, aggregate budget, notes | Worker display checks | Credentials/internal transport metadata; unbounded list |
+| 4 screenshot | Guest full-document capture, dimensions/pixels/bytes/time, host static PNG decode | Packaged guest/Sharp and actual capture QA | Oversize/crop/APNG, tiled/infinite capture, device-scale mismatch |
+| 5 HTML/metadata | Complete inert bytes, URL/view metadata, deterministic cache names, owned retention planner | Protected cache parents/read, exclusion and quota/retention integration | Active HTML, blind overwrite or broad prune, mutation of unrelated views |
+| 6 publication | Current injected guard, manifest/digest/claim, exact-operation sink/reconcile API | Actual authenticated run/write authority, protected Files sink, durable store | Renderer permission, changed file/parent, links/aliases, new workspace |
+| 7 races | Existing generation/action/takeover/cancel path; publication linked signal | Root lifecycle/sink drain and exact resource cleanup | Publishing delayed old target/run into replacement |
+| 8 recovery | Exact receipt coalescing/replay, read-only historical reconciliation factory | Durable operation inode records, history authority/cache read | Auto-recapture/re-navigation, ownership inferred from path/hash alone |
+| 9 regressions | Six focused host/guest source suites described below | All execution and real filesystem/race checks | Any tested/pass/acceptance claim by G |
+| 10 handoff | Full source map, API surface, wiring, limits and this matrix | Root integration/build/install/native/full restart acceptance | Marking full E3 complete or changing checklist counts |
 
-Authored cases only:
+## Authored and unrun regression sources
 
-- `exports.test.ts`: original defaults/ceiling, links ordering/deduplication,
-  path refusal, inert exact UTF-8, malformed/oversized/surplus bytes, cancellation,
-  real Sharp-generated PNG fixture, dimension mismatch and trailing PNG refusal.
-- `export-publication.test.ts`: concurrent exact calls, receipt replay/new
-  publisher instance, uncertain claims, reused identity, create-only conflict,
-  revoke/replaced workspace and Stop during a late claim.
-- `navigation-export-service.test.ts`: no-writer navigation, explicit links,
-  guest options without paths, verified bytes/receipt, invalid acknowledgments,
-  takeover cancelling pending publication.
-- `desktop-guest/guest_exports_test.py`: pure mocked guest options, dimensions,
-  HTML byte limits, fragmented WebSocket aggregate cap, cancellation while reading
-  and page-dimension change. It does not start Chromium, Docker or any server.
+- `exports.test.ts`: options/defaults/bounds, path refusal, inert UTF-8, oversized/
+  truncated/surplus data, cancellation, Sharp-generated PNG fixture, dimensions
+  and trailing bytes. No decoder was executed here.
+- `navigation-protocol.test.ts`: strict/version/extra fields, redirect URL,
+  ordered/capped links, aggregate budget, credential/internal URL refusal,
+  Cloudflare wall, `Links: none`, acknowledged save/partial-failure notes.
+- `export-metadata.test.ts`: original URL layout/query/collision behavior,
+  immutable attempt names, URL/browser-view metadata and conservative owned
+  retention preserving edited, active and foreign rows.
+- `export-publication.test.ts`: exact-call concurrency/replay, unknown claims,
+  changed identity and existing names, revoke/replaced workspace, late claim
+  after Stop, lost reply reconciliation/new reader, wrong owner, corrupt
+  inventory, simulated hardlink/replacement identity and sink error categories.
+- `navigation-export-service.test.ts`: no-writer navigation, guest options
+  without paths, exact bytes/metadata acknowledgement, HTTP/wall refusal,
+  partial screenshot failure, corrupt/old/timeout responses, takeover and
+  Stop/replacement generation invalidation.
+- `guest_exports_test.py`: pure mocked options/version/unknown fields, main frame
+  vs iframe/final redirect status, render deadline, bounded event/resource
+  retention with no headers, whole HTML limits, full-page dimensions, fragmented
+  CDP aggregate cap, cancellation and changed screenshot dimensions. These tests
+  do not start a guest/Chromium/server when root runs them.
 
-Root must execute these and the existing suites after integrating the dependencies.
-The existing `service.test.ts` navigation assertion at the base assumes implicit
-links; root must change that fixture invocation to `links: true` or expect `[]`
-to reflect the requested original default. G did not edit that older test file.
-
-Root must rebuild/package the guest with this changed `guest.py`; no extra Python
-module/package needs to be added to its Dockerfile. An old guest has no export
-response fields and is refused as incomplete rather than producing a fake save.
-Sharp is already declared; no dependency was installed or version changed.
-Root must verify the packaged Sharp decoder, Chromium full-document capture,
-timeout/Stop/takeover/revocation races, exact writer/owner/parent confinement,
-symlink/hardlink/changed-file refusal, durable lost-response/restart handling,
-and the existing Files PNG/text preview in the native Mac app.
-
-Unsupported: arbitrary filesystem paths/RPC, overwriting existing destinations,
-creating missing parent folders/workspaces through export, active HTML rendering,
-PDF/JPEG screenshot export, tiled/unbounded/infinite-page screenshots, guaranteed
-same-instant DOM and screenshot, browser access to host profiles/ports/files,
-export without current write authority, and automatic retry of uncertain saves.
-The feature remains unaccepted until root supplies the sink/receipt/bridge wiring
-and runs all checks/native acceptance. No checklist item is marked complete.
+The link/hardlink/parent cases are explicitly fake-sink/identity regressions, not
+claims that the not-yet-bound native filesystem sink has passed races. Root must
+execute real protected Files race/full-disk/lost-ack and full-restart checks.
+Existing base `service.test.ts` fixtures assume the old response/default implicit
+links: root must adapt them to versioned response fields, explicit links and new
+outcome fields. That older test file is not modified here. Root owns repairs and
+runs all tests/type checks/lint/builds, guest rebuild/install, live worker/browser,
+Files, Mac board and restart acceptance. No package install or dependency change
+was made in this lane.

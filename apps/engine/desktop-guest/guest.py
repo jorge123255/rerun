@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import urlsplit
 
 DISPLAY = ':1'
 SCREEN = '1920x1080x24'
@@ -46,6 +47,8 @@ EXPORT_EDGE_MAX = 8192
 EXPORT_PIXELS_MAX = 16_777_216
 EXPORT_CAPTURE_S = 15
 CDP_MAX = 9 * 1024 * 1024
+PAGE_OPTIONS_VERSION = 1
+LINKS_BYTES_MAX = 160 * 1024
 
 # Same markers as apps/engine/src/tools/bot-wall.ts. A long page is not a wall.
 WALLS = (
@@ -76,14 +79,29 @@ LINKS_JS = r"""
 (() => {
   const seen = new Set();
   const links = [];
+  let bytes = 2;
+  let truncated = false;
   for (const anchor of document.querySelectorAll('a[href]')) {
     const href = anchor.href || '';
-    if (!/^https?:\/\//.test(href) || seen.has(href)) continue;
-    seen.add(href);
-    links.push({ href, text: (anchor.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80) });
-    if (links.length === 300) break;
+    if (!/^https?:\/\//.test(href) || href.length > 2048 || /[\x00-\x1f\x7f]/.test(href) || seen.has(href)) continue;
+    const url = new URL(href);
+    const host = url.hostname.toLowerCase().replace(/\.$/, '');
+    if (url.username || url.password || host.startsWith('[::ffff:') || /^(localhost|.*\.localhost|127(?:\.\d+){3}|0\.0\.0\.0|\[::1\]|host\.docker\.internal|gateway\.docker\.internal)$/i.test(host)) continue;
+    const label = (anchor.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const item = { href, text: new TextDecoder().decode(new TextEncoder().encode(label)) };
+    const size = new TextEncoder().encode(JSON.stringify(item)).length + (links.length ? 1 : 0);
+    if (links.length === 300 || bytes + size > 163840) { truncated = true; break; }
+    seen.add(href); bytes += size; links.push(item);
   }
-  return links;
+  return { links, truncated };
+})()
+"""
+TEXT_JS = r"""
+(() => {
+  const full = (document.body ? document.body.innerText : '').replace(/\s+\n/g, '\n').trim();
+  let text = full.slice(0, 50000);
+  if (/[\uD800-\uDBFF]$/.test(text)) text = text.slice(0, -1);
+  return { text: new TextDecoder().decode(new TextEncoder().encode(text)), truncated: full.length > text.length };
 })()
 """
 KEY_COMBO = re.compile(r'^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$')
@@ -142,7 +160,7 @@ def read_exact(source, size, deadline=None, client=None):
 
 
 def encode_frame(value, binary=b''):
-    body = json.dumps(value, separators=(',', ':')).encode()
+    body = json.dumps(value, separators=(',', ':'), ensure_ascii=False).encode()
     if len(body) > JSON_MAX or len(binary) > BINARY_MAX:
         raise GuestError('The screen response is too large.')
     return len(body).to_bytes(4, 'big') + len(binary).to_bytes(4, 'big') + body + binary
@@ -660,13 +678,25 @@ class Cdp:
         self.next_id = 1
         self.events = []
         self.deadline = deadline
+        self.inflight = set()
+        self.last_network = time.monotonic()
 
     def remember(self, message):
         method = message.get('method')
         params = message.get('params') or {}
+        if method in ('Network.requestWillBeSent', 'Network.loadingFinished', 'Network.loadingFailed'):
+            request_id = params.get('requestId')
+            if isinstance(request_id, str) and len(request_id) <= 128:
+                if method == 'Network.requestWillBeSent':
+                    self.inflight.add(request_id)
+                    if len(self.inflight) > 512:
+                        raise GuestError('The page exceeds the active resource limit.')
+                else:
+                    self.inflight.discard(request_id)
+                self.last_network = time.monotonic()
         if method in ('Page.loadEventFired', 'Page.domContentEventFired') or method == 'Network.responseReceived' and params.get('type') == 'Document':
             status = (params.get('response') or {}).get('status')
-            self.events.append({'method': method, 'params': {'type': params.get('type'), 'response': {'status': status}}})
+            self.events.append({'method': method, 'params': {'type': params.get('type'), 'frameId': params.get('frameId'), 'response': {'status': status}}})
             if len(self.events) > 256:
                 self.events.pop(0)
 
@@ -711,10 +741,16 @@ def http_url(value):
     match = re.match(r'^(https?)://([^/@\s]+)(/.*)?$', value, re.I)
     if not match or match.group(2).startswith('.') or '..' in match.group(2):
         raise GuestError('Open an http or https page.', refusal=True)
+    parsed = urlsplit(value)
+    if parsed.username or parsed.password or '\x7f' in value:
+        raise GuestError('Open an http or https page.', refusal=True)
     return value
 
 
 def navigation_options(request):
+    version = request.get('pageOptionsVersion')
+    if set(request) - {'op', 'requestId', 'pageOptionsVersion', 'url', 'timeoutMs', 'links', 'screenshot', 'exportHtml'} or not isinstance(version, int) or isinstance(version, bool) or version != PAGE_OPTIONS_VERSION:
+        raise GuestError('The navigation protocol is incompatible or invalid.', refusal=True)
     timeout = request.get('timeoutMs', 30_000)
     if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 120_000:
         raise GuestError('The navigation timeout must be between 1 and 120000 milliseconds.', refusal=True)
@@ -724,6 +760,43 @@ def navigation_options(request):
     if request.get('screenshot') and not request.get('exportHtml'):
         raise GuestError('Screenshot saving requires an export authority.', refusal=True)
     return timeout
+
+
+def main_document_status(events, frame_id):
+    status = 0
+    for event in events:
+        params = event.get('params') or {}
+        if event.get('method') == 'Network.responseReceived' and params.get('type') == 'Document' and params.get('frameId') == frame_id:
+            candidate = (params.get('response') or {}).get('status')
+            if isinstance(candidate, (int, float)) and not isinstance(candidate, bool) and 0 <= candidate <= 599:
+                status = int(candidate)
+    return status
+
+
+def settle_render(cdp):
+    end = min(cdp.deadline, time.monotonic() + 5)
+    while time.monotonic() < end:
+        ready = evaluate(cdp, 'document.readyState')
+        if ready in ('interactive', 'complete') and not cdp.inflight and time.monotonic() - cdp.last_network >= 0.5:
+            return
+        pause_until(cdp, min(0.1, max(0, end - time.monotonic())))
+
+
+def export_error(kind, error):
+    reason = error.reason if isinstance(error, GuestError) else ''
+    code = 'too-large' if 'exceeds' in reason else 'timeout' if 'too long' in reason else 'invalid-data' if 'valid UTF-8' in reason else 'capture-failed'
+    return {'kind': kind, 'code': code}
+
+
+def bounded_text(cdp):
+    value = evaluate(cdp, TEXT_JS)
+    if not isinstance(value, dict) or not isinstance(value.get('text'), str) or not isinstance(value.get('truncated'), bool):
+        raise GuestError('The page text could not be read.')
+    return value
+
+
+def wall_html(cdp):
+    return evaluate(cdp, f'new TextDecoder().decode(new TextEncoder().encode((document.documentElement && document.documentElement.outerHTML || "").slice(0, {HTML_MAX})))')
 
 
 def pause_until(cdp, seconds):
@@ -742,9 +815,15 @@ def rendered_html(cdp):
       if (!html || html.length > {EXPORT_HTML_MAX} || new TextEncoder().encode(html).length > {EXPORT_HTML_MAX}) return null;
       return html;
     }})()''')
-    if not isinstance(value, str) or not value or len(value.encode()) > EXPORT_HTML_MAX or '\x00' in value:
+    if not isinstance(value, str) or not value or '\x00' in value:
         raise GuestError('The rendered HTML exceeds the export limit.')
-    return value.encode()
+    try:
+        encoded = value.encode()
+    except UnicodeEncodeError as error:
+        raise GuestError('The rendered HTML is not valid UTF-8.') from error
+    if len(encoded) > EXPORT_HTML_MAX:
+        raise GuestError('The rendered HTML exceeds the export limit.')
+    return encoded
 
 
 def export_dimensions(size):
@@ -799,49 +878,64 @@ def navigate(request, client):
         navigation = cdp.call('Page.navigate', {'url': target}, timeout / 1000)
         if navigation.get('errorText') or navigation.get('isDownload'):
             raise GuestError('The page could not be opened.')
+        frame_id = navigation.get('frameId')
+        if not isinstance(frame_id, str):
+            raise GuestError('The main browser document was unavailable.')
         while time.monotonic() < deadline:
             if cancelled(client):
                 raise GuestError('The screen action was cancelled.')
-            if any(event.get('method') in ('Page.loadEventFired', 'Page.domContentEventFired') for event in cdp.events):
+            if not navigation.get('loaderId') or any(event.get('method') in ('Page.loadEventFired', 'Page.domContentEventFired') for event in cdp.events):
                 break
             cdp.remember(ws_recv(cdp.sock, client, deadline, CDP_MAX))
         else:
             raise GuestError('The page took too long.')
         challenge_end = min(deadline, time.monotonic() + min(CHALLENGE_MAX_S, timeout / 2000))
         for _ in range(CHALLENGE_MAX_S + 1):
-            html = evaluate(cdp, f'(document.documentElement && document.documentElement.outerHTML || "").slice(0, {HTML_MAX})')
-            text = evaluate(cdp, f'(document.body ? document.body.innerText : "").slice(0, {TEXT_MAX + 1})')
+            html = wall_html(cdp)
+            text_data = bounded_text(cdp)
+            text = text_data['text']
             wall = detect_wall(html if isinstance(html, str) else '', text if isinstance(text, str) else '')
             if not wall or wall['clearsByItself'] is False or time.monotonic() >= challenge_end:
                 break
             if cancelled(client):
                 raise GuestError('The screen action was cancelled.')
             pause_until(cdp, min(1, max(0, challenge_end - time.monotonic())))
+        if not wall:
+            settle_render(cdp)
         clicked = evaluate(cdp, CONSENT_JS) if not wall else False
         if clicked is True:
             pause_until(cdp, 1)
-        html = evaluate(cdp, f'(document.documentElement && document.documentElement.outerHTML || "").slice(0, {HTML_MAX})')
-        text = evaluate(cdp, f'(document.body ? document.body.innerText : "").slice(0, {TEXT_MAX + 1})')
+            settle_render(cdp)
+        html = wall_html(cdp)
+        text_data = bounded_text(cdp)
+        text = text_data['text']
         wall = detect_wall(html if isinstance(html, str) else '', text if isinstance(text, str) else '')
-        links = evaluate(cdp, LINKS_JS) if request.get('links') and not wall else []
+        link_result = evaluate(cdp, LINKS_JS) if request.get('links') and not wall else {'links': [], 'truncated': False}
+        links = link_result.get('links') if isinstance(link_result, dict) else []
+        links_truncated = link_result.get('truncated') is True if isinstance(link_result, dict) else False
         final = evaluate(cdp, 'location.href')
+        http_url(final)
+        status = main_document_status(cdp.events, frame_id)
         html_bytes, png, width, height = b'', b'', 0, 0
-        if request.get('exportHtml') and not wall:
-            html_bytes = rendered_html(cdp)
+        errors = []
+        if request.get('exportHtml') and not wall and 200 <= status < 400:
+            try:
+                html_bytes = rendered_html(cdp)
+            except GuestError as error:
+                errors.append(export_error('rendered-html', error))
             if request.get('screenshot'):
-                png, width, height = full_page_png(cdp)
+                try:
+                    png, width, height = full_page_png(cdp)
+                except GuestError as error:
+                    errors.append(export_error('screenshot', error))
+            if not errors and evaluate(cdp, 'location.href') != final:
+                raise GuestError('The page changed while its export was captured.')
         if cancelled(client) or time.monotonic() >= deadline:
             raise GuestError('The screen action was cancelled or timed out.')
     finally:
         sock.close()
     text = text if isinstance(text, str) else ''
     html = html if isinstance(html, str) else ''
-    status = 0
-    for event in cdp.events:
-        params = event.get('params') or {}
-        response = params.get('response') or {}
-        if event.get('method') == 'Network.responseReceived' and params.get('type') == 'Document':
-            status = int(response.get('status') or 0)
     safe_links = []
     if isinstance(links, list):
         for link in links:
@@ -854,19 +948,22 @@ def navigate(request, client):
             safe_links.append({'href': href, 'text': label[:LINK_TEXT_MAX]})
             if len(safe_links) == LINKS_MAX:
                 break
-    truncated = len(text) > TEXT_MAX
+    truncated = text_data['truncated']
     return {
         'ok': True,
+        'pageOptionsVersion': PAGE_OPTIONS_VERSION,
         'status': status,
         'finalUrl': final if isinstance(final, str) and final.startswith(('http://', 'https://')) else target,
         'text': text[:TEXT_MAX],
         'html': html[:HTML_MAX],
         'truncated': truncated,
         'links': safe_links,
+        'linksTruncated': links_truncated,
         'htmlBytes': len(html_bytes),
         'screenshotBytes': len(png),
         'screenshotWidth': width,
         'screenshotHeight': height,
+        'exportErrors': errors,
     }, html_bytes + png
 
 

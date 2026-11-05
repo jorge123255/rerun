@@ -40,6 +40,8 @@ export type ScreenPage = {
     truncated: boolean
     links: ScreenLink[]
     wall: BotWall | null
+    outcome?: 'ok' | 'blocked' | 'failed'
+    linksTruncated?: boolean
     exports?: ScreenSavedExports
 }
 
@@ -76,7 +78,7 @@ export type ScreenComputerInput = {
 export type ScreenNavigate = { url: string; links?: boolean; timeoutMs?: number; screenshotPath?: string }
 
 export type ScreenExportArtifact = {
-    kind: 'rendered-html' | 'screenshot'
+    kind: 'rendered-html' | 'screenshot' | 'page-metadata'
     path: string
     mediaType: 'text/plain' | 'image/png'
     bytes: Buffer
@@ -87,6 +89,7 @@ export type ScreenExportArtifact = {
 export type ScreenSavedExports = {
     files: Array<{ kind: ScreenExportArtifact['kind']; path: string; sha256: string; byteLength: number }>
     status: 'saved' | 'unknown' | 'refused' | 'unavailable'
+    failure?: 'storage-full' | 'conflict' | 'revoked' | 'transport' | 'invalid-data' | 'capture-failed' | 'unknown'
 }
 export type ScreenNavigationExport = {
     htmlPath: string

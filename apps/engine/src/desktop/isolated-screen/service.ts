@@ -8,6 +8,9 @@ import { decodeFrame, encodeFrame } from './frame.js'
 import { assertAgentId, assertLaunchNonce, assertOwner, assertTarget, containerName, LABEL_AGENT, LABEL_GENERATION, LABEL_MANAGED, LABEL_NONCE, LABEL_ROLE, ROLE_SCREEN, sameOwnerContainer, sameOwnerVolume, volumeName } from './identity.js'
 import { HUMAN_DRIVING, planAction, viewOf, type ScreenGeometry } from './input.js'
 import { assertHttpUrl, boundPage, publicUrl } from './page.js'
+import { browserMetadataArtifact } from './export-metadata.js'
+import { PAGE_OPTIONS_VERSION, parseGuestNavigation } from './navigation-protocol.js'
+import { screenExportFailure, validateScreenExportResult } from './transport.js'
 import { decodePageExports, exportPath, navigationOptions } from './exports.js'
 import { abortable } from '../web-fetch/transport.js'
 import { abortError, isAbortError, IsolatedScreenRefusal, throwIfAborted } from './refusal.js'
@@ -285,20 +288,32 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         if (options.screenshot && !exports) throw new IsolatedScreenRefusal('Screenshot saving requires current private Files write authority.', 'refused')
         if (exports) exportPath(exports.htmlPath, 'rendered-html')
         return action(target, AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs + 35_000)]), async (_live, linked) => {
-            const reply = await guestCall(target, { op: 'navigate', url, ...options, exportHtml: !!exports }, linked)
-            const page = boundPage(reply.value, url, options.links)
-            if (exports && !page.wall) {
-                const artifacts = await decodePageExports(reply.value, reply.binary, { html: exports.htmlPath, screenshot: input.screenshotPath }, linked)
+            const reply = await guestCall(target, { op: 'navigate', pageOptionsVersion: PAGE_OPTIONS_VERSION, url, ...options, exportHtml: !!exports }, linked)
+            const raw = parseGuestNavigation(reply.value)
+            const page = boundPage(raw, url, options.links)
+            page.outcome = page.wall ? 'blocked' : page.status >= 200 && page.status < 400 ? 'ok' : 'failed'
+            page.linksTruncated = raw.linksTruncated
+            if ((!exports || page.outcome !== 'ok') && (reply.binary.length || raw.htmlBytes || raw.screenshotBytes)
+                || !exports && raw.exportErrors.length || !options.links && raw.links.length || !options.screenshot && raw.exportErrors.some(error => error.kind === 'screenshot')) {
+                throw new IsolatedScreenRefusal('The guest returned unrequested page data.', 'closed')
+            }
+            if (exports && page.outcome === 'ok') {
+                const artifacts = await decodePageExports(raw, reply.binary, { html: exports.htmlPath, screenshot: input.screenshotPath }, linked)
+                if (!artifacts.length) {
+                    page.exports = { status: 'unknown', files: [], failure: 'capture-failed' }
+                    return page
+                }
+                artifacts.push(browserMetadataArtifact(exports.htmlPath, url, page, artifacts, new Date().toISOString()))
                 current(target)
                 throwIfAborted(linked)
-                page.exports = await abortable(exports.publish(artifacts, linked), linked)
-                if (!['saved', 'unknown', 'refused', 'unavailable'].includes(page.exports.status)
-                    || !Array.isArray(page.exports.files) || page.exports.files.length > artifacts.length
-                    || page.exports.files.some((file, index, files) => files.findIndex(other => other.kind === file.kind) !== index
-                        || !artifacts.some(item => item.kind === file.kind && item.path === file.path && item.sha256 === file.sha256 && item.bytes.length === file.byteLength))
-                    || page.exports.status === 'saved' && page.exports.files.length !== artifacts.length) {
-                    throw new IsolatedScreenRefusal('The browser export acknowledgement is invalid. Inspect Files before retrying.', 'closed')
+                try {
+                    const result = await abortable(exports.publish(artifacts, linked), linked)
+                    page.exports = validateScreenExportResult(result, artifacts.map(item => ({ kind: item.kind, path: item.path, sha256: item.sha256, byteLength: item.bytes.length })))
+                } catch (error) {
+                    throwIfAborted(linked)
+                    page.exports = { status: 'unknown', files: [], failure: screenExportFailure(error) }
                 }
+                if (raw.exportErrors.length) page.exports = { ...page.exports, status: 'unknown', failure: 'capture-failed' }
             } else if (exports) page.exports = { status: 'refused', files: [] }
             current(target)
             throwIfAborted(linked)

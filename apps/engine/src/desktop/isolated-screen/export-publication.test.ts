@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import { createScreenExportPublisher, type ScreenExportCall, type ScreenExportDependencies, type ScreenExportReceipt } from './transport.js'
+import { createScreenExportPublisher, createScreenExportReader, type ScreenExportCall, type ScreenExportDependencies, type ScreenExportReceipt } from './transport.js'
 
 const signal = () => new AbortController().signal
 function fixture() {
@@ -14,8 +14,8 @@ function fixture() {
         }),
         receipts: {
             read: async key => receipts.get(key) ?? null,
-            claim: async (key, digest) => { if (receipts.has(key)) return false; receipts.set(key, { digest, state: 'claimed' }); return true },
-            settle: async (key, digest, result) => { if (receipts.get(key)?.digest !== digest) throw new Error('changed claim'); receipts.set(key, { digest, state: 'settled', result }) },
+            claim: async (key, digest, details) => { if (receipts.has(key)) return false; receipts.set(key, { digest, state: 'claimed', sourceFingerprint: details.sourceFingerprint, source: details.source, files: details.files }); return true },
+            settle: async (key, digest, result) => { if (receipts.get(key)?.digest !== digest) throw new Error('changed claim'); receipts.set(key, { ...receipts.get(key)!, state: 'settled', result }) },
         },
         createOnly: vi.fn(async (artifact, _authority, guard) => {
             await guard()
@@ -70,9 +70,62 @@ describe('browser export durable publication (root-injected storage)', () => {
     it('leaves a late successful claim durable but cannot publish after Stop', async () => {
         const f = fixture(), stop = new AbortController()
         const claim = f.deps.receipts.claim
-        f.deps.receipts.claim = async (key, digest) => { const accepted = await claim(key, digest); stop.abort(); return accepted }
+        f.deps.receipts.claim = async (key, digest, details) => { const accepted = await claim(key, digest, details); stop.abort(); return accepted }
         await expect(createScreenExportPublisher(f.deps)(f.call, stop.signal)).rejects.toThrow()
         expect(f.written).toEqual([])
         expect((await createScreenExportPublisher(f.deps)(f.call, signal())).status).toBe('unknown')
+    })
+
+    it('reads and reconciles a lost acknowledgement after restart without another create or browser action', async () => {
+        const f = fixture()
+        const owned = new Map<string, { key: string; digest: string; sha256: string; inode: string; nlink: number }>()
+        f.deps.createOnly = vi.fn(async (artifact, _authority, guard, _signal, operation) => {
+            await guard()
+            owned.set(artifact.path, { key: operation.key, digest: operation.digest, sha256: artifact.sha256, inode: 'fixture-inode', nlink: 1 })
+            throw Object.assign(new Error('lost reply after committed create'), { code: 'ECONNRESET' })
+        })
+        const first = await createScreenExportPublisher(f.deps)(f.call, signal())
+        expect(first).toMatchObject({ status: 'unknown', failure: 'transport' })
+        const reconcile: NonNullable<ScreenExportDependencies['reconcile']> = vi.fn(async (operation, _authority, guard) => {
+            await guard()
+            const files = operation.files.filter(file => {
+                const actual = owned.get(file.path)
+                return actual?.key === operation.key && actual.digest === operation.digest && actual.sha256 === file.sha256 && actual.inode === 'fixture-inode' && actual.nlink === 1
+            })
+            return files.length === operation.files.length ? { status: 'saved', files } : { status: 'unknown', files, failure: 'conflict' }
+        })
+        const { artifacts: _bytes, ...identity } = f.call
+        const read = createScreenExportReader({ authorizeRead: f.deps.authorize, receipts: f.deps.receipts, reconcile })
+        expect((await read(identity, signal())).status).toBe('saved')
+        expect(f.deps.createOnly).toHaveBeenCalledTimes(1)
+        owned.get(f.call.artifacts[0]!.path)!.nlink = 2
+        expect((await read(identity, signal())).status).toBe('unknown')
+        owned.get(f.call.artifacts[0]!.path)!.inode = 'replacement'
+        expect((await read(identity, signal())).files).toEqual([])
+        f.revoke()
+        await expect(read(identity, signal())).rejects.toThrow('revoked')
+        expect(f.deps.createOnly).toHaveBeenCalledTimes(1)
+    })
+
+    it('surfaces full disk, link/parent conflicts and revocation with no false saved files', async () => {
+        for (const [code, failure] of [['ENOSPC', 'storage-full'], ['ELOOP', 'conflict'], ['EMLINK', 'conflict'], ['ENOTDIR', 'conflict'], ['EXPORT_REVOKED', 'revoked']] as const) {
+            const f = fixture()
+            f.deps.createOnly = async (_artifact, _authority, guard) => { await guard(); throw Object.assign(new Error('fixture sink refusal'), { code }) }
+            expect(await createScreenExportPublisher(f.deps)(f.call, signal())).toMatchObject({ status: 'unknown', failure, files: [] })
+            expect(f.written).toEqual([])
+        }
+    })
+
+    it('refuses a wrong owner, unknown source fields and corrupt recovery inventory', async () => {
+        const f = fixture(), publish = createScreenExportPublisher(f.deps)
+        await expect(publish({ ...f.call, engineAgentId: 'another-owner' }, signal())).rejects.toThrow('owner')
+        await expect(publish({ ...f.call, arbitraryPath: '/tmp/no' } as ScreenExportCall, signal())).rejects.toThrow('input')
+        await publish(f.call, signal())
+        const receipt = [...f.receipts.values()][0]!
+        receipt.files![0]!.path = '../replacement'
+        const { artifacts: _bytes, ...identity } = f.call
+        const reconcile = vi.fn(async () => ({ status: 'saved' as const, files: [] }))
+        await expect(createScreenExportReader({ authorizeRead: f.deps.authorize, receipts: f.deps.receipts, reconcile })(identity, signal())).rejects.toThrow()
+        expect(reconcile).not.toHaveBeenCalled()
     })
 })

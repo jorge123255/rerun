@@ -13,14 +13,58 @@ spec.loader.exec_module(guest)
 
 class GuestExports(unittest.TestCase):
     def test_original_options_are_bounded_and_do_not_accept_paths_or_truthy_flags(self):
-        self.assertEqual(guest.navigation_options({}), 30_000)
-        self.assertEqual(guest.navigation_options({'timeoutMs': 120_000, 'links': True}), 120_000)
+        base = {'pageOptionsVersion': 1}
+        self.assertEqual(guest.navigation_options(base), 30_000)
+        self.assertEqual(guest.navigation_options({**base, 'timeoutMs': 120_000, 'links': True}), 120_000)
         for value in (False, True, 0, -1, 120_001, 1.5):
             with self.assertRaises(guest.GuestError):
-                guest.navigation_options({'timeoutMs': value})
-        for request in ({'links': 'yes'}, {'screenshot': '/Users/fixture.png'}, {'screenshot': True}):
+                guest.navigation_options({**base, 'timeoutMs': value})
+        for request in ({'links': 'yes'}, {'screenshot': '/Users/fixture.png'}, {'screenshot': True}, {'hostPath': '/tmp/forbidden'}, {'pageOptionsVersion': 1.0}):
             with self.assertRaises(guest.GuestError):
-                guest.navigation_options(request)
+                guest.navigation_options({**base, **request})
+        with self.assertRaises(guest.GuestError):
+            guest.navigation_options({})
+
+    def test_main_document_status_ignores_iframes_and_keeps_final_redirect_response(self):
+        events = [
+            {'method': 'Network.responseReceived', 'params': {'type': 'Document', 'frameId': 'main', 'response': {'status': 302}}},
+            {'method': 'Network.responseReceived', 'params': {'type': 'Document', 'frameId': 'main', 'response': {'status': 200}}},
+            {'method': 'Network.responseReceived', 'params': {'type': 'Document', 'frameId': 'iframe', 'response': {'status': 500}}},
+        ]
+        self.assertEqual(guest.main_document_status(events, 'main'), 200)
+        self.assertEqual(guest.main_document_status(events, 'unknown'), 0)
+
+    def test_render_settling_and_partial_reads_obey_complete_deadline(self):
+        class Clock:
+            at = 0
+            def monotonic(self):
+                self.at += 0.2
+                return self.at
+        class Cdp:
+            deadline = 1
+            inflight = {'pending-resource'}
+            last_network = 0
+        clock = Clock()
+        with patch.object(guest.time, 'monotonic', side_effect=clock.monotonic), patch.object(guest, 'evaluate', return_value='loading'), patch.object(guest, 'pause_until', return_value=None):
+            guest.settle_render(Cdp())
+        self.assertGreaterEqual(clock.at, 1)
+        left, right = socket.socketpair()
+        try:
+            with self.assertRaises(guest.GuestError):
+                guest.read_exact(left, 1, guest.time.monotonic() - 1)
+        finally:
+            left.close(); right.close()
+
+    def test_event_retention_drops_headers_and_bounds_resource_tracking(self):
+        cdp = guest.Cdp(None)
+        for _ in range(300):
+            cdp.remember({'method': 'Network.responseReceived', 'params': {'type': 'Document', 'frameId': 'main', 'response': {'status': 200, 'headers': {'Cookie': 'fixture-secret'}}}})
+        self.assertEqual(len(cdp.events), 256)
+        self.assertNotIn('fixture-secret', str(cdp.events))
+        for index in range(512):
+            cdp.remember({'method': 'Network.requestWillBeSent', 'params': {'requestId': str(index)}})
+        with self.assertRaises(guest.GuestError):
+            cdp.remember({'method': 'Network.requestWillBeSent', 'params': {'requestId': 'overflow'}})
 
     def test_inspects_dimensions_before_capture_and_rejects_pixel_budget(self):
         self.assertEqual(guest.export_dimensions({'width': 10.1, 'height': 20.2}), (11, 21))
