@@ -10,6 +10,7 @@ import { openDesktopDatabase } from './database'
 import { initializeDesktopCompletions } from './completed-actions-db'
 import type { DesktopRuntime } from './runtime'
 import { engineOf } from './settings'
+import { adoptDesktopScheduledSession } from './schedules/adoption'
 export { initializeDesktopCompletions, DESKTOP_COMPLETIONS_SCHEMA } from './completed-actions-db'
 
 export const DESKTOP_COMPLETIONS_CONCURRENCY = 4
@@ -23,6 +24,9 @@ const ownersOf = (rows: Row[]) => new Map(rows.map(row => [String(row.id), { id:
 const compare = (a: string, b: string) => a === b ? 0 : a < b ? -1 : 1
 const rawOrder = (a: Raw, b: Raw) => compare(b.row.completedAt, a.row.completedAt) || compare(b.row.id, a.row.id) || compare(b.owner.id, a.owner.id)
 const identity = ({ row, owner }: Raw) => completionIdentityOf({ agentId: owner.id, engineAgentId: owner.engineId, engineSessionId: row.sessionId, terminalId: row.id })
+const recoveryKey = Symbol.for('rerun.desktop.schedule.completion-retry.v1')
+const recoveryGlobal = globalThis as typeof globalThis & { [recoveryKey]?: Map<string, number> }
+const recoveryRetry = recoveryGlobal[recoveryKey] ??= new Map<string, number>()
 
 async function workers<T>(tasks: T[], signal: AbortSignal, work: (task: T) => Promise<void>, skipped: (task: T) => void) {
     let next = 0
@@ -69,6 +73,31 @@ async function collect(runtime: DesktopRuntime, options: { limit: number; before
     const nextCursor = last && (raw.length > page.length || hasUnfetched)
         ? cursorOf({ completedAt: last.row.completedAt, id: last.row.id, agentId: last.owner.id }) : null
     const ids = page.map(identity)
+    // New launches adopt before running. Recover an older/lost scheduled mapping before its
+    // completed row is dropped, using the SAME bounded read deadline and existing cutoff.
+    const scheduled = page.filter(item => item.row.source === 'schedule' && item.row.completedAt >= enabledAt)
+    if (scheduled.length) {
+        const existingRows = await db.execute({ sql: `SELECT agent_id,engine_session_id FROM desktop_sessions WHERE ${scheduled.map(() => '(agent_id=? AND engine_session_id=?)').join(' OR ')}`, args: scheduled.flatMap(item => [item.owner.id, item.row.sessionId]) })
+        const existing = new Set(existingRows.rows.map(row => `${row.agent_id}\0${row.engine_session_id}`))
+        const targets = scheduled.filter(item => {
+            const key = `${item.owner.id}\0${item.row.sessionId}`
+            if (existing.has(key)) return false
+            existing.add(key)
+            return true
+        })
+        await workers(targets, signal, async item => {
+            const key = JSON.stringify([runtime.dataRoot, runtime.launchNonce, item.owner.id, item.owner.engineId, item.row.sessionId, item.row.runId])
+            if ((recoveryRetry.get(key) ?? 0) > Date.now()) { unavailable.add(item.owner.id); return }
+            try {
+                await adoptDesktopScheduledSession(db, engineOf(runtime), { agentId: item.owner.id, engineAgentId: item.owner.engineId, engineSessionId: item.row.sessionId, runId: item.row.runId }, { signal })
+                recoveryRetry.delete(key)
+            } catch {
+                unavailable.add(item.owner.id)
+                recoveryRetry.set(key, Date.now() + 30_000)
+                if (recoveryRetry.size > 500) recoveryRetry.delete(recoveryRetry.keys().next().value!)
+            }
+        }, item => unavailable.add(item.owner.id))
+    }
     const [ownerRows, sessionRows, seenRows] = await db.batch([
         ownerSql,
         { sql: `SELECT s.id,s.agent_id,s.engine_session_id,s.title FROM desktop_sessions s JOIN desktop_agents a ON a.id=s.agent_id

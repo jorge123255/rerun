@@ -129,6 +129,19 @@ async function invoke(callback: (text: string) => Promise<boolean>, text: string
     return accepted
 }
 
+test('renders a recovered routine as the original Scheduled run divider and keeps its prompt behind View prompt', async () => {
+    histories.set('one', [{ id: 'engine-scheduled-input', role: 'user', parts: [{ type: 'text', text: 'Read the daily notes and summarize them.' }], metadata: { scheduledRun: { slug: 'daily-notes', name: 'Daily notes' } } }, reply('engine-answer')])
+    await render({ draft: { text: 'Keep my independent draft' } })
+    expect(container.textContent).toContain('Scheduled run')
+    expect(container.textContent).toContain('Daily notes')
+    expect(container.textContent).not.toContain('Read the daily notes and summarize them.')
+    const field = composer()
+    await click('View prompt')
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Read the daily notes and summarize them.')
+    expect(composer()).toBe(field)
+    expect(field.value).toBe('Keep my independent draft')
+})
+
 test('a saved suggested reply sends only its label with an identified receipt and preserves the text and file draft', async () => {
     await render({ draft: { text: 'My independent draft', attachment: 'notes.md' } })
     expect(button(suggestion)?.disabled).toBe(false)

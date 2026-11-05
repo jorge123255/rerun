@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { z } from 'zod'
-import { desktopApprovalInput, desktopRerunGrantsOf, desktopRerunToolCatalog, findDesktopApproval, findDesktopQuestion, serializeApprovalDecisions } from '@rerun/contracts'
+import { desktopApprovalGuardSchema, desktopApprovalInput, desktopRerunGrantsOf, desktopRerunToolCatalog, findDesktopApproval, findDesktopQuestion, serializeApprovalDecisions } from '@rerun/contracts'
 import type { RunContext } from '../runtime/context.js'
 
 const root = mkdtempSync(join(tmpdir(), 'rerun-mac-approval-tool-'))
@@ -95,11 +95,25 @@ const call = (toolName = 'request_approval', raw: unknown = input) => row('appro
 const result = (output: unknown = { type: 'json', value: { status: 'delivered' } }) => row('result', 'tool', [{ type: 'tool-result', toolCallId: 'call', toolName: 'request_approval', output }])
 
 describe('saved desktop approvals', () => {
+    it('keeps source age out of the strict, stable decision guard', () => {
+        const sourceTime = '2026-11-04T12:00:00.000Z'
+        const laterTime = '2026-11-04T12:05:00.000Z'
+        const pending = findDesktopApproval([{ ...call(), createdAt: sourceTime }, { ...result(), createdAt: laterTime }, { ...row('explain', 'assistant', 'Review these changes.'), createdAt: laterTime }])!
+        expect(pending.requestedAt).toBe(sourceTime)
+        const guard = { sourceMessageId: pending.sourceMessageId, toolCallId: pending.toolCallId, fingerprint: pending.fingerprint }
+        expect(desktopApprovalGuardSchema.parse(guard)).toEqual(guard)
+        expect(desktopApprovalGuardSchema.safeParse({ ...guard, requestedAt: sourceTime }).success).toBe(false)
+        expect(desktopApprovalGuardSchema.safeParse({ ...guard, extra: true }).success).toBe(false)
+        const corrected = findDesktopApproval([{ ...call(), createdAt: laterTime }, result()])!
+        expect(corrected.requestedAt).toBe(laterTime)
+        expect({ sourceMessageId: corrected.sourceMessageId, toolCallId: corrected.toolCallId, fingerprint: corrected.fingerprint }).toEqual(guard)
+    })
+
     it('reads bounded batches, legacy singular fields, JSON arrays and nullable details with a stable canonical identity', () => {
         expect(desktopApprovalInput({ action: 'Use blue', detail: null })).toEqual({ approvals: [{ action: 'Use blue', detail: undefined }] })
         const batch = { approvals: JSON.stringify(input.approvals) }
         const approval = findDesktopApproval([row('user', 'user', 'Ask first'), call('mcp__rerun__request_approval', batch), result(), row('explanation', 'assistant', 'Please review these two changes.')])
-        expect(approval).toEqual({ sourceMessageId: 'approve', toolCallId: 'call', approvals: input.approvals, fingerprint: JSON.stringify(input.approvals) })
+        expect(approval).toEqual({ sourceMessageId: 'approve', toolCallId: 'call', approvals: input.approvals, fingerprint: JSON.stringify(input.approvals), requestedAt: null })
         const legacy = { ...row('approve', 'assistant', 'Review the title.'), toolCallsJson: JSON.stringify([{ id: 'call', name: 'rerun__request_approval', args: { action: 'Use blue', detail: null } }]) }
         expect(findDesktopApproval([legacy, result({ type: 'json', value: { content: [{ type: 'text', text: '{"status":"delivered"}' }], structuredContent: null } })])?.approvals)
             .toEqual([{ action: 'Use blue', detail: undefined }])

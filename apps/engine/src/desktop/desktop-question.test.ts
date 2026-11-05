@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { desktopQuestionInput, findDesktopQuestion } from '@rerun/contracts'
+import { desktopQuestionGuardSchema, desktopQuestionInput, findDesktopQuestion } from '@rerun/contracts'
 
 const input = { questions: [{ question: 'Which color?', options: ['Blue', 'Green'], multiple: true }] }
 const row = (id: string, role: string, content: unknown) => ({ id, role, contentJson: JSON.stringify(content), toolCallsJson: null })
@@ -9,7 +9,21 @@ const result = (output: unknown = { type: 'json', value: { status: 'delivered' }
 describe('saved desktop questions', () => {
     it('uses the original questions protocol and stable source identity through bridge names and a closing explanation', () => {
         const question = findDesktopQuestion([row('user', 'user', 'Please ask'), call('mcp__rerun__ask_user', JSON.stringify(input)), result(), row('explain', 'assistant', 'Choose the color I will use.')])
-        expect(question).toEqual({ sourceMessageId: 'ask', toolCallId: 'call', questions: input.questions, fingerprint: JSON.stringify(input.questions) })
+        expect(question).toEqual({ sourceMessageId: 'ask', toolCallId: 'call', questions: input.questions, fingerprint: JSON.stringify(input.questions), requestedAt: null })
+    })
+
+    it('keeps source age out of the strict, stable answer guard', () => {
+        const sourceTime = '2026-11-04T12:00:00.000Z'
+        const laterTime = '2026-11-04T12:05:00.000Z'
+        const pending = findDesktopQuestion([{ ...call(), createdAt: sourceTime }, { ...result(), createdAt: laterTime }, { ...row('explain', 'assistant', 'Choose a color.'), createdAt: laterTime }])!
+        expect(pending.requestedAt).toBe(sourceTime)
+        const guard = { sourceMessageId: pending.sourceMessageId, toolCallId: pending.toolCallId, fingerprint: pending.fingerprint }
+        expect(desktopQuestionGuardSchema.parse(guard)).toEqual(guard)
+        expect(desktopQuestionGuardSchema.safeParse({ ...guard, requestedAt: sourceTime }).success).toBe(false)
+        expect(desktopQuestionGuardSchema.safeParse({ ...guard, extra: true }).success).toBe(false)
+        const corrected = findDesktopQuestion([{ ...call(), createdAt: laterTime }, result()])!
+        expect(corrected.requestedAt).toBe(laterTime)
+        expect({ sourceMessageId: corrected.sourceMessageId, toolCallId: corrected.toolCallId, fingerprint: corrected.fingerprint }).toEqual(guard)
     })
 
     it('accepts legacy calls and the Codex MCP delivered envelope', () => {

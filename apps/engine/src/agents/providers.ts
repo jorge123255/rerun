@@ -138,7 +138,7 @@ function isZodSchema(schema: unknown): boolean {
 }
 
 function bridgeableTools(tools: ToolSet): ToolSet {
-    const out: ToolSet = {}
+    const out: ToolSet = Object.create(null)
     for (const [name, t] of Object.entries(tools)) {
         if (typeof t.execute === 'function' && isZodSchema(t.inputSchema)) out[name] = t
     }

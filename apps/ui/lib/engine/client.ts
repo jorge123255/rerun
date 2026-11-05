@@ -438,14 +438,14 @@ export async function deleteAgent(conn: EngineConnection, id: string): Promise<v
 
 // --- Sessions ---
 
-export async function listSessions(conn: EngineConnection, agentId: string): Promise<EngineSession[]> {
-    return request(conn, `/agents/${encodeURIComponent(agentId)}/sessions`, { method: 'GET' }, d => engineSessionsListSchema.parse(d).sessions)
+export async function listSessions(conn: EngineConnection, agentId: string, options: { signal?: AbortSignal } = {}): Promise<EngineSession[]> {
+    return request(conn, `/agents/${encodeURIComponent(agentId)}/sessions`, { method: 'GET', signal: options.signal }, d => engineSessionsListSchema.parse(d).sessions)
 }
 
 // Null when the session does not exist, and when the engine predates this route: the caller falls
 // back to the full listing then.
-export async function getSession(conn: EngineConnection, agentId: string, sessionId: string): Promise<EngineSession | null> {
-    const res = await fetch(`${conn.baseUrl}/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}`, { headers: buildHeaders(conn), signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS) })
+export async function getSession(conn: EngineConnection, agentId: string, sessionId: string, options: { signal?: AbortSignal } = {}): Promise<EngineSession | null> {
+    const res = await fetch(`${conn.baseUrl}/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}`, { headers: buildHeaders(conn), signal: options.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS) })
     if (res.status === 404) return null
     if (!res.ok) throw new Error(`rerun-engine GET /agents/${agentId}/sessions/${sessionId} failed: ${res.status}`)
     return engineSessionSchema.parse(await res.json())
@@ -884,8 +884,8 @@ export async function listAgentCompletions(conn: EngineConnection, agentId: stri
     return request(conn, `/agents/${encodeURIComponent(agentId)}/runs/completions?${params}`, { method: 'GET', ...(options.signal ? { signal: options.signal } : {}) }, d => engineRunCompletionsListSchema.parse(d).completions)
 }
 
-export async function getRun(conn: EngineConnection, agentId: string, runId: string): Promise<EngineRunDetail> {
-    return request(conn, `/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}`, { method: 'GET' }, d => engineRunDetailSchema.parse(d))
+export async function getRun(conn: EngineConnection, agentId: string, runId: string, options: { signal?: AbortSignal } = {}): Promise<EngineRunDetail> {
+    return request(conn, `/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}`, { method: 'GET', signal: options.signal }, d => engineRunDetailSchema.parse(d))
 }
 
 export async function getRunSteps(conn: EngineConnection, agentId: string, runId: string): Promise<EngineRunStep[]> {

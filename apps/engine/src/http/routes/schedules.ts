@@ -76,7 +76,7 @@ scheduleRoutes.patch('/:slug', async c => {
     if (body.runAt && Number.isNaN(new Date(body.runAt).getTime())) return c.json({ error: 'invalid runAt timestamp' }, 400)
     const before=await readSchedule(agentId,slug)
     const merged={...before,...body}
-    if(Boolean(merged.cron)===Boolean(merged.runAt))return c.json({error:'Provide exactly one of cron or runAt'},400)
+    if(desktopApp() && Boolean(merged.cron)===Boolean(merged.runAt))return c.json({error:'Provide exactly one of cron or runAt'},400)
     if(body.timezone) {try {new Intl.DateTimeFormat('en',{timeZone:body.timezone})}catch{return c.json({error:'Invalid timezone'},400)}}
     await authorize(agentId)
     const schedule = await updateScheduleAt(agentId, slug, body)

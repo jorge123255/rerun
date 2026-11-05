@@ -106,3 +106,18 @@ test('Stop during discovery explicitly releases the run before a catalog id is k
     expect(bodies[1]).toMatchObject({ engineAgentId: 'engine-owner', sessionId: 'session', runId: 'run' })
     expect(bodies[1]).not.toHaveProperty('catalogId')
 })
+
+test('a legal __proto__ remote tool name is an own tool entry and cannot replace the tool-set prototype', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => Response.json(JSON.parse(String(init.body)).action === 'catalog'
+        ? { ...catalog, tools: [{ ...catalog.tools[0], name: '__proto__' }] } : { released: true })))
+    const built = await desktopMcpTools(ctx())
+    try {
+        expect(Object.getPrototypeOf(built.tools)).toBeNull()
+        expect(Object.keys(built.tools)).toEqual(['__proto__'])
+        expect(Object.hasOwn(built.tools, '__proto__')).toBe(true)
+        expect(isDesktopMcpTool(built.tools.__proto__)).toBe(true)
+        const merged = { ...built.tools }
+        expect(Object.getPrototypeOf(merged)).toBe(Object.prototype)
+        expect(Object.hasOwn(merged, '__proto__')).toBe(true)
+    } finally { await built.close() }
+})

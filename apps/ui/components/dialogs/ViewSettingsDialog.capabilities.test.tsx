@@ -18,12 +18,12 @@ const markup = (source: ReturnType<typeof desktopDataSource>) => renderToStaticM
     sample={{ rows: [], total: 0 }} onSaved={() => {}}
 />)
 
-it('does not promise unavailable chat table cards for either desktop database scope', () => {
+it('offers the installed chat table-card capability for both desktop database scopes', () => {
     for (const source of [desktopDataSource({ kind: 'agent', agentId: 'owner' }), desktopDataSource({ kind: 'shared' })]) {
-        expect(source.supportsTableCards).toBe(false)
+        expect(source.supportsTableCards).toBe(true)
         const html = markup(source)
         expect(html).toContain('Everyone who opens this table sees it.')
-        expect(html).not.toContain('the coworker can draw it in chat')
+        expect(html).toContain('the coworker can draw it in chat')
     }
 })
 

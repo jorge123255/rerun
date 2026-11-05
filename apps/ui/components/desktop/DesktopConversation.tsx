@@ -22,6 +22,7 @@ import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { DesktopCoworkerData } from './DesktopCoworkerData'
 import { DesktopCoworkerRoutines } from './DesktopCoworkerRoutines'
+import { ScheduledRunBlock } from '@/components/chat/ScheduledRunBlock'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopCoworkerMcpDialog } from './DesktopCoworkerMcpDialog'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
@@ -82,6 +83,13 @@ const draftPaths = (draft: ComposerDraft | undefined) => draft ? (draft.attachme
 const samePaths = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((path, index) => path === b[index])
 const messageAttachmentPaths = (metadata: unknown): string[] =>
     metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? desktopAttachmentPathsOf(metadata as DesktopAttachmentFields) : []
+
+function scheduledRunOf(message: UIMessage) {
+    if (message.role !== 'user' || !message.metadata || typeof message.metadata !== 'object' || !('scheduledRun' in message.metadata)) return null
+    const value = message.metadata.scheduledRun
+    if (!value || typeof value !== 'object' || !('slug' in value) || !('name' in value) || typeof value.slug !== 'string' || typeof value.name !== 'string') return null
+    return { slug: value.slug, name: value.name, prompt: message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n') }
+}
 
 export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onClosePanel, modelLabel, onOpenModelSettings }: {
     agent: DesktopAgentView
@@ -830,7 +838,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             <div className="mt-1 text-sm text-muted-foreground">Messages stream from the local engine and remain available after restart.</div>
                         </div>
                     )}
-                    {transcript.map((message, messageIndex) => (
+                    {transcript.map((message, messageIndex) => {
+                        const scheduledRun = scheduledRunOf(message)
+                        // Reuse Rerun's routine divider and prompt dialog. No hosted file-link
+                        // navigation: the desktop Files panel owns this coworker's documents.
+                        if (scheduledRun) return <ScheduledRunBlock key={message.id} agentId={undefined} run={scheduledRun} />
+                        return (
                         <div key={message.id} className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
                             <Message from={message.role} className="min-w-0">
                                 <MessageContent className={cn(message.role === 'user' ? [USER_BUBBLE_SHAPE, USER_BUBBLE_INK, 'whitespace-pre-wrap wrap-anywhere'] : 'overflow-visible')}>
@@ -851,7 +864,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             </Message>
                             {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
                         </div>
-                    ))}
+                    )})}
                     {generating && <div className="text-sm text-muted-foreground">{agent.name} is working…</div>}
                     {stopError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopError}</div>}
                     {(error || historyError) && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">

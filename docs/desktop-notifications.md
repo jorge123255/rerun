@@ -1,213 +1,129 @@
-# Desktop notification preferences, local delivery and request age (lane handoff)
+# Desktop notifications and request age
 
-Ports Rerun's per-coworker notification choices (C7 scope, channels, per-coworker rules) and
-local desktop delivery for genuine completed runs and unanswered question/approval requests,
-plus the pending request age/order fix. Source-only lane — the integration owner runs all
-validation and Mac testing.
+Original reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. Agent C's source handoff was
+`b4444f3735b56e36a183d93220152c3fe5135ed8`, based on `927c5e17da6b6db84657261695a98e0533b264de`.
+The integration review corrected delivery admission, failure classification, ownership and lifecycle
+behavior described below. These are source changes and authored regressions; root owns all checks,
+packaging and native acceptance. This document does not claim those checks have passed.
 
-Base: `927c5e17da6b6db84657261695a98e0533b264de`. Branch: `desktop/coworker-notifications`.
+## Original code and design
 
-## Request age and order fix
+The preferences reuse `ScopeRadioList`, `SettingsSection`, `CoworkerRules`, the contracts'
+`notificationPrefsPatchSchema`, `mergeNotificationPrefs`, `coworkerRuleOf` and `taskNotifies`.
+Sources are `components/notifications/settings/`, `components/dialogs/NotificationsDialog.tsx`,
+`lib/notifications/prefs.ts` and `packages/contracts/src/notifications.ts`.
 
-- `packages/contracts/src/desktop-question.ts` / `desktop-approval.ts` — `findDesktopQuestion` /
-  `findDesktopApproval` capture the source request message's `createdAt` as `requestedAt` on the
-  pending request (the row types gain an optional `createdAt`, the types an optional
-  `requestedAt`). Additive: existing callers are unaffected.
-- `apps/ui/lib/desktop/questions.ts` / `approvals.ts` — the pending view schemas carry the
-  optional `requestedAt`.
-- `apps/ui/lib/desktop/server/questions.ts` / `approvals.ts` — the resolvers thread the source
-  message's timestamp through.
-- `apps/ui/lib/desktop/attention.ts` / `server/attention.ts` — the attention item carries
-  `requestedAt` (the request message's timestamp, falling back to the chat's latest activity
-  only when the request carries none), and the projection sorts newest request first. The
-  `updatedAt` field keeps the chat's latest activity, so nothing else changes meaning.
-- `apps/ui/components/desktop/DesktopActionsInbox.tsx` — the row's age and the list order use
-  `requestedAt ?? updatedAt`.
-- `apps/ui/lib/desktop/board-activity.ts` — `latestBoardAttention` orders by
-  `requestedAt ?? updatedAt`.
-- `apps/ui/app/api/desktop/attention/route.test.ts` — an authored regression: two pending
-  requests whose sessions were created in the opposite order still order by the request
-  message's timestamp, and each item carries its own `requestedAt`.
+`lib/notifications/push-copy.ts` supplies the copy hierarchy: coworker, state/task, short detail.
+Successful runs say **Done** and are silent. Failures say **Failed**; questions and approvals use
+their original urgent labels. Canceled or contradictory terminals never become notifications.
+The original sound asset is `/sounds/notification.mp3`. `useInboxAnnouncer`,
+`lib/notifications/announcement.ts` and `WorkspaceInbox` are the original delivery/navigation
+references. This Mac slice uses the native notification surface; it does not implement the hosted
+in-app toast. The channel is therefore labeled **Desktop notification**.
 
-Request identity, per-row and bulk read receipts and the multiple-requests-in-one-chat
-semantics are untouched: the fix only replaces the timestamp source.
+The settings keep the original scopes, channel rows and per-coworker rules, with a local roster
+picker. Hosted email, cloud push and account-email settings are omitted. Preference patches merge
+under the roster write lock, including automated-task owner-follow, so concurrent independent
+changes cannot overwrite one another. Settings writes serialize across remounts, hold Quit
+admission until their bounded response settles, and show a save error on failure.
 
-## Notification preferences
+## Request age
 
-- `apps/ui/lib/desktop/server/notifications.ts` — the durable local adapter, owning its tables:
-  - `desktop_notification_prefs` (one row per workspace, the normalized v2 prefs JSON from
-    `@rerun/contracts`);
-  - `desktop_notifications_state` (one install-time cutoff, seeded on first use: everything
-    raised before the slice's first boot is old history that never replays as new);
-  - `desktop_notifications_seen` (the announced event keys, pruned to a month on acknowledge).
-  `readDesktopNotificationPrefs`/`writeDesktopNotificationPrefs` normalize and merge with the
-  original `notificationPrefsPatchSchema` + `mergeNotificationPrefs`, so a surface that only
-  touches one field never clobbers the rest.
-- `apps/ui/app/api/desktop/notifications/route.ts` — `GET` the authoritative prefs, `PUT` the
-  original patch (validated by the contracts' schema), both through `desktopRoute`.
-- `apps/ui/components/desktop/DesktopNotificationSettings.tsx` — the original composition:
-  `ScopeRadioList`, the « How » channel rows (only the two local channels: the in-app toast via
-  the native bridge and the sound; hosted email/cloud push is not rendered and not delivered)
-  and `CoworkerRules` with a local-roster picker. The coworker picker avoids the hosted board
-  store: it reads `/api/desktop/agents` and renders the same « Choose a coworker » wording. The
-  component serializes its writes like the original settings queue and replaces its optimistic
-  value with the authoritative merged response.
-- `apps/ui/components/desktop/DesktopSettings.tsx` — the panel list gains `Notifications` and
-  the tab renders the component. (This file is shared; the edit is the panel entry, nothing
-  else.)
+`findDesktopQuestion` / `findDesktopApproval` in contracts capture the source request message's
+`createdAt` as optional `requestedAt`. The desktop question/approval resolvers and attention
+projection carry it unchanged. Actions and board activity order/age use
+`requestedAt ?? updatedAt`; `updatedAt` retains its existing chat-activity meaning.
+Request identity, pending read receipts and multiple requests per chat are unchanged.
 
-## Events, delivery and clicks
+## Durable delivery
 
-- `apps/ui/lib/desktop/server/notifications.ts` — `readDesktopNotificationEvents` composes the
-  completions, attention and recorded-terminal projections with the stored prefs, newest first:
-  scope « nothing » announces nothing, a muted coworker never announces, « everything » announces
-  every coworker, « needed » keeps finished and stopped runs quiet (a followed task included)
-  while a run that broke keeps the original urgent `error` kind and still reaches, and the
-  remaining scopes follow the original rules (`taskNotifies` for scheduled runs, the coworker's
-  `follow` or « everything » for slugless unattended runs, runs the user started under « mine »,
-  questions/approvals always reaching the local user). The install cutoff and the seen ledger
-  subtract whatever already announced.
-- `apps/ui/lib/desktop/server/engine-callback.ts` + `recordDesktopRunTerminal` — the engine's
-  terminal webhook now persists cancelled/error run terminals into
-  `desktop_notification_terminals` (engine identities kept, re-mapped onto local ids at read,
-  like the completions projection). A genuine `done` terminal is never recorded here: it stays on
-  the completion store the finished-run cards read, so nothing announces twice. Every
-  schedule/trigger terminal also runs the single-member edition of the hosted owner-follow: the
-  first automated run on a coworker nobody has ruled on writes `follow: true` through the same
-  prefs merge, so « My runs and what I follow » admits its scheduled runs like the original.
-- `apps/ui/app/api/desktop/notifications/terminals/[id]/route.ts` — `GET` the live local
-  owner/session binding of a recorded terminal; the click revalidation for stopped/failed runs.
-- `apps/ui/app/api/desktop/notifications/events/route.ts` — `GET` the events (newest first) with
-  the channel flags; `apps/ui/app/api/desktop/notifications/seen/route.ts` — `POST` the
-  acknowledged keys, recorded only after the delivery announced them;
-  `apps/ui/app/api/desktop/notifications/terminals/[id]/route.ts` — `GET` a terminal's live
-  owner/session binding for click revalidation.
-- `apps/ui/lib/desktop/notification-bridge.ts` — the narrow bridge wrapper: it reads
-  `window.desktopApp.notifications` (`notify` + `onNotificationClick`) and never touches the
-  blanket renderer-permission policy. The target carries `groupId` (completion), `terminalId`
-  (stopped/failed run) or `requestId` (pending question/approval) as its revalidation identity.
-- `apps/ui/components/desktop/useDesktopNotificationDelivery.ts` /
-  `DesktopNotificationDelivery.tsx` — the delivery controller (renders nothing): it polls the
-  events every three seconds visible or not, announces `toast` events through the bridge and
-  plays the original sound only for what needs the user, acknowledges after announcing, skips
-  the visible conversation's own events until it can announce them, and routes clicks through a
-  live revalidation: a done-group click re-reads the completions and opens the group's newest
-  conversation, a stopped/failed-run click re-reads the terminal binding, and a
-  question/approval click re-reads the attention projection and opens the still-pending request.
-  Nothing is ever answered, marked read or navigated blind.
-- `apps/ui/components/desktop/DesktopNotificationDelivery.test.tsx`,
-  `apps/ui/components/desktop/DesktopNotificationSettings.test.tsx` and
-  `apps/ui/app/api/desktop/notifications/route.test.ts` — authored regressions (not executed in
-  this lane): scope/coworker filtering, channel suppression, the install cutoff, acknowledge
-  dedup across restart, object-URL-free click revalidation, the original push copy
-  (who → where/what → detail, silent for `done`), and the pending-request timestamp fix.
+`lib/desktop/server/notifications.ts` owns these local app-database tables:
 
-Upstream reviewed at `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`:
+- `desktop_notification_prefs`: normalized original preference shape.
+- `desktop_notifications_state`: one initial cutoff, initialized before the engine starts.
+- `desktop_notifications_seen`: confirmed delivered identities, without age-only pruning.
+- `desktop_notification_attempts`: durable admission token recorded before native display.
+- `desktop_notification_terminals`: explicit failed terminals pinned to local **and** engine
+  coworker/chat identities. Terminal IDs include their local owner and chat. Existing unpinned
+  legacy records fail closed. Failure detail expires after 30 days; consumed identities do not.
 
-- `apps/ui/components/notifications/settings/NotificationChannels.tsx`, `ScopeRadioList.tsx`,
-  `SettingsSection.tsx`, `CoworkerRules.tsx`, `scope-meta.ts`, `CoworkerNotificationSettings.tsx`
-  (reused verbatim where the Mac carries the channel; the email rows are omitted)
-- `apps/ui/components/dialogs/NotificationsDialog.tsx` (composition and picker wording)
-- `apps/ui/lib/notifications/prefs.ts` and `packages/contracts/src/notifications.ts`
-  (scope/channel/coworker rules, patch schema and merge)
-- `apps/ui/lib/notifications/push-copy.ts` (the OS notification copy: who, then where and what)
-- `apps/ui/hooks/useInboxAnnouncer.ts` + `lib/notifications/announcement.ts` (delivery pacing
-  reference; the Mac announces through the OS surface instead)
-- `apps/ui/components/notifications/WorkspaceInbox.tsx` (row folding, Done grouping and the
-  never-answered navigation semantics)
+The event projection combines completions, exact pending requests and failed terminals under the
+original scope/follow rules, subtracting pre-install history, seen keys and admitted keys. Genuine
+successes remain on the completion store. Automated task owner-follow preserves explicit mute,
+follow and task-level choices.
 
-## Integration steps for root
+The authenticated routes use `desktopRoute`:
 
-1. **Native bridge (shell, additive).** In `apps/desktop/src/main/preload.cjs`, extend the
-   exposed `desktopApp` bridge with:
+- `GET/PUT /api/desktop/notifications`: authoritative preferences / merged patch.
+- `GET /api/desktop/notifications/events`: eligible event snapshot and channel flags.
+- `POST /api/desktop/notifications/admit`, `{keys}`: at most 50 eligible identities; returns
+  `{events:[{...event,attemptId}],channels}` after atomic durable admission.
+- `POST /api/desktop/notifications/delivery`, `{key,attemptId,status}`: settles the exact token.
+- `GET /api/desktop/notifications/terminals/[id]`: live, exact failure owner/chat binding.
+- The existing `/seen` endpoint remains a compatibility acknowledgment adapter; new delivery
+  uses admission and exact token receipts.
 
-   ```js
-   notifications: {
-       notify: payload => {
-           if (!payload || typeof payload.key !== 'string' || typeof payload.title !== 'string') return
-           ipcRenderer.send('desktop:notify', {
-               key: payload.key, kind: payload.kind, agentId: payload.agentId,
-               sessionId: payload.sessionId ?? null, groupId: payload.groupId ?? null,
-               terminalId: payload.terminalId ?? null, requestId: payload.requestId ?? null,
-               title: payload.title, subtitle: payload.subtitle ?? undefined, body: payload.body ?? undefined, silent: payload.silent === true,
-           })
-       },
-       onNotificationClick: listener => {
-           if (typeof listener !== 'function') throw new TypeError('Expected a notification click listener')
-           const handler = (_event, target) => listener(target)
-           ipcRenderer.on('desktop:notification-click', handler)
-           return () => ipcRenderer.removeListener('desktop:notification-click', handler)
-       },
-   },
-   ```
+Mutation bodies are byte bounded (40,000 bytes) and time bounded. `shown` moves an owned attempt
+to the seen ledger. Definite `unavailable` / `failed` removes only that attempt for retry. `unknown`
+retains admission. A lost receipt, process exit or ambiguous IPC result also retains admission.
+This is deliberate at-most-once admission across restart; it cannot guarantee exactly-once OS
+display. An interrupted attempt can remain unshown. No unavailable/no-op response is recorded as
+successful delivery. Sound counts as delivered only after playback starts; Done never rings.
 
-   In `apps/desktop/src/main/index.mjs`, beside the existing IPC handlers:
+The mounted delivery polls every three seconds, admits only events with an available requested
+channel, and suppresses the open conversation only while the document is visible. A hidden Mac
+window can still announce. Request lifetimes and native response waits are bounded. Native
+notifications always use `silent:true`; the original renderer sound is the sole sound channel.
 
-   ```js
-   ipcMain.on('desktop:notify', (_event, payload) => {
-       if (!payload || typeof payload.key !== 'string' || typeof payload.title !== 'string') return
-       const notification = new Notification(payload.title, {
-           subtitle: payload.subtitle, body: payload.body ?? '', silent: payload.silent === true,
-       })
-       notification.on('click', () => {
-           notification.close()
-           for (const window of BrowserWindow.getAllWindows()) {
-               window.webContents.send('desktop:notification-click', {
-                   key: payload.key, kind: payload.kind, agentId: payload.agentId,
-                   sessionId: payload.sessionId ?? null, groupId: payload.groupId ?? null,
-                   terminalId: payload.terminalId ?? null, requestId: payload.requestId ?? null,
-               })
-           }
-       })
-       notification.show()
-   })
-   ```
+## Click safety
 
-   The blanket permission policy (`setPermissionRequestHandler`/`setPermissionCheckHandler`)
-   stays exactly as it is: the OS notification is raised by the main process, never by the
-   renderer, and no permission is requested from the UI.
+Clicks never approve, answer or mark read. Pending clicks re-read exact request kind, identity,
+owner and chat. Failure clicks verify the pinned binding still equals the clicked owner/chat.
+Completion clicks require the original chat still belongs to the same folded group and open that
+chat, even if a newer run has changed the group's newest chat. Deleted/rebound/stale targets land
+nowhere. A superseded click, unmount, timeout or Quit cannot navigate after a late response.
 
-2. **Delivery mount (DesktopApp, root-owned).** Mount once inside the app root:
+## Root integration contract
 
-   ```tsx
-   <DesktopNotificationDelivery
-       onOpenConversation={target => { if (currentAgents.current.some(agent => agent.id === target.agentId)) selectCoworker(target.agentId, target.sessionId) }}
-       visibleSessionId={visibleSession?.agentId === selectedAgentId && panelOpen ? visibleSession.sessionId : null} />
-   ```
+Initialize `initializeDesktopNotifications(db)` from database startup before engine runs. For an
+automated chat, adopt its engine session into the local chat store **before** calling
+`recordDesktopRunTerminal`; missing local ownership fails closed. Do not wrap this helper in an
+outer roster lock: it owns that serialization itself.
 
-   The component renders nothing; it only polls, announces and routes clicks.
+Mount `DesktopNotificationDelivery` once under `DesktopApp`, passing the current visible local
+session and the root's guarded `onOpenConversation` callback. Settings' Notifications panel mounts
+`DesktopNotificationSettings`.
 
-3. **Storage (database/bootstrap, root-owned).** No central edit is required: the slice's
-   tables are created lazily by `initializeDesktopNotifications` on the same pooled client.
-   If the bootstrap should carry the prefs, read them with
-   `readDesktopNotificationPrefs(await openDesktopDatabase(runtime.dataRoot))` and add the
-   result to the parallel reads.
+The narrow native bridge contract is:
 
-4. **Settings entry (already wired).** `DesktopSettings`' `Notifications` panel mounts
-   `DesktopNotificationSettings`; no further integration needed.
+```ts
+notifications: {
+  notify(payload): Promise<{status: 'shown' | 'unavailable' | 'failed' | 'unknown'}>
+  onNotificationClick(listener): () => void
+}
+```
 
-## Known limits
+The payload is `{key,kind,agentId,sessionId,groupId?,terminalId?,requestId?,title,subtitle?,body?,silent}`.
+The main process must verify the trusted owned window/frame/origin, validate bounded fields, and
+construct Electron `new Notification({title, subtitle, body, silent:true})`. `shown` requires the
+native show event; unsupported means `unavailable`; definite nondelivery means `failed`; timeouts
+and IPC ambiguity mean `unknown`. Root's native bridge deduplicates by key as an additional guard,
+routes clicks only to the trusted current app window, shows/focuses it, and refuses Quit-time
+delivery/clicks. Blanket renderer permission denial remains unchanged.
 
-- Checks and Mac acceptance were not run by this lane: tests, type checks, lint, builds,
-  packaging and the native notification behavior belong to the integration owner. The authored
-  regressions live in the three test files.
-- Hosted email/cloud push never delivers; the original email rows and the account-emails tab
-  are omitted, and the stored prefs keep the contracts' shape with `email` unused.
-- The in-app toast above the inbox is not ported this round: a `toast` preference announces
-  through the OS surface, which is the only local surface wired so far. The « Sound » row keeps
-  its original copy; stopped/failed runs announce with the « Done » copy like finished runs — a
-  failure keeps the urgent `error` kind, so the sound covers questions, approvals and broken
-  runs, exactly the original urgent set minus `connector`.
-- A scheduled task's « Notify me » switch is not ported: scheduled runs follow the stored
-  `tasks` ledger through the original `taskNotifies` rules, but no surface edits a task's own
-  switch yet. The hosted owner-follow is ported inside `recordDesktopRunTerminal`, so the first
-  schedule/trigger terminal on an unruled coworker writes `follow: true`; `agent.notification`
-  events (questions/approvals) do not run it, matching nothing on the desktop since those always
-  reach the local user anyway.
-- The coworker bell is not ported to the desktop tiles; per-coworker rules are managed from
-  Settings' `Per coworker` section only.
-- A delivery whose native bridge is missing degrades to the sound only; the event is still
-  acknowledged, so it does not replay after restart.
-- The seen ledger keeps acknowledged keys for a month; a key could re-announce if the same
-  event identity reappeared after that month, which the completions cutoff prevents for
-  finished runs and the request identity prevents for pending requests.
+## Authored coverage and limits
+
+`app/api/desktop/notifications/route.test.ts` covers preference merging, scope/follow/cutoff,
+error/canceled classification, owner-pinned terminals, concurrent admission, exact-token retry,
+restart suppression, old seen keys, authentication and actual body limits.
+`DesktopNotificationDelivery.test.tsx` covers lost receipts/remount, unavailable and ambiguous
+bridge results, sound-only delivery, visible/hidden behavior and stale/cross-owner click guards.
+`DesktopNotificationSettings.test.tsx` covers original composition, authoritative saves, failed
+saves and Quit admission. Attention's route regression covers request age independent of session age.
+Root must run these and the shell tests, then verify real notification permission, actual native
+display/sound/click behavior, settings persistence and no replay after a full restart.
+
+This slice does not add hosted email/cloud push, the in-app inbox toast, a coworker-tile bell or
+a task-level “Notify me” editor. It consumes the existing bounded completion/attention projections;
+it is not a historical notification backfill. Seen/admission identities are retained while their
+sources can remain; no unsupported exactly-once delivery guarantee is made.

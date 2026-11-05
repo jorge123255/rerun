@@ -89,8 +89,8 @@ describe('POST /agents/:id/chat', () => {
         const { findDesktopQuestion } = await import('@rerun/contracts')
         const ask = await appendMessage(id, sessionId, { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'question-call', toolName: 'ask_user', input: { questions: [{ question: 'Which color?', options: ['Blue', 'Green'] }] } }] })
         const delivered = await appendMessage(id, sessionId, { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'question-call', toolName: 'ask_user', output: { type: 'json', value: { status: 'delivered' } } }] })
-        const { questions: _questions, ...guard } = findDesktopQuestion([ask, delivered])!
-        return guard
+        const { sourceMessageId, toolCallId, fingerprint } = findDesktopQuestion([ask, delivered])!
+        return { sourceMessageId, toolCallId, fingerprint }
     }
 
     async function pendingApproval(sessionId: string) {
@@ -98,8 +98,8 @@ describe('POST /agents/:id/chat', () => {
         const { findDesktopApproval } = await import('@rerun/contracts')
         const request = await appendMessage(id, sessionId, { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'approval-call', toolName: 'request_approval', input: { approvals: [{ action: 'Use blue', detail: 'Main title' }, { action: 'Use green', detail: 'Subtitle' }] } }] })
         const delivered = await appendMessage(id, sessionId, { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'approval-call', toolName: 'request_approval', output: { type: 'json', value: { status: 'delivered' } } }] })
-        const { approvals: _approvals, ...guard } = findDesktopApproval([request, delivered])!
-        return guard
+        const { sourceMessageId, toolCallId, fingerprint } = findDesktopApproval([request, delivered])!
+        return { sourceMessageId, toolCallId, fingerprint }
     }
 
     it('accepts mixed approval decisions once and binds receipt replay to the approval kind and exact content', async () => {

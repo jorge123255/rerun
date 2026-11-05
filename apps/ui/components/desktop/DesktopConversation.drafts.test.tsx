@@ -80,6 +80,12 @@ beforeEach(() => {
     send = async body => accepted(body)
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://local'), sessionId = url.pathname.split('/')[4]
+        if (url.pathname.endsWith('/upload-attempts')) {
+            expect(url.pathname).toBe(`/api/desktop/agents/${agent.id}/upload-attempts`)
+            expect(init?.method ?? 'GET').toBe('GET')
+            expect(url.searchParams.get('tabUid')).toBe(tabUid)
+            return Response.json({ attempts: [] })
+        }
         if (url.pathname.endsWith('/draft')) {
             expect(url.pathname).toBe(`/api/desktop/agents/${agent.id}/draft`)
             if (init?.method === 'PUT') {

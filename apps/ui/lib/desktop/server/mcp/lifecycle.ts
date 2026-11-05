@@ -30,9 +30,13 @@ export function remoteMcpLifecycle() {
     }
     function disconnect(agent:string,name?:string) {invalidate(state(agent,name ?? ''))}
     function mutate<T>(agent:string,name:string,write:()=>Promise<T>):Promise<T> {
+        if(closed)return Promise.reject(new Error('MCP is stopped'))
         const value=state(agent,name)
         value.pending++; invalidate(value)
-        const result=value.tail.catch(()=>{}).then(write)
+        const result=value.tail.catch(()=>{}).then(()=>{
+            if(closed)throw new Error('MCP is stopped')
+            return write()
+        })
         value.tail=result
         return result.finally(()=>{value.pending--;invalidate(value)})
     }

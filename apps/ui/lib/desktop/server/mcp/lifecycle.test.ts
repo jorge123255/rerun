@@ -36,4 +36,16 @@ describe('MCP mutation/admission lifecycle',()=>{
         life.admit('a','x',a);life.admit('a','y',b)
         life.disconnect('a');expect(a.signal.aborted && b.signal.aborted).toBe(true)
     })
+    it('shutdown refuses delayed and queued writes while preserving an already-started write outcome',async()=>{
+        const life=remoteMcpLifecycle(),gate=deferred(),entered=deferred(),persist=vi.fn(async()=>{})
+        const first=life.mutate('a','x',async()=>{entered.resolve();await gate.promise;return 'saved'})
+        await entered.promise
+        const queued=life.mutate('a','x',persist),refused=expect(queued).rejects.toThrow('stopped')
+        life.shutdown()
+        await expect(life.mutate('a','y',persist)).rejects.toThrow('stopped')
+        gate.resolve()
+        expect(await first).toBe('saved')
+        await refused
+        expect(persist).not.toHaveBeenCalled()
+    })
 })

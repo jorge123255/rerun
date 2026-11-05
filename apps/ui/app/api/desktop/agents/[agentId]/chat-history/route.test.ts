@@ -71,8 +71,10 @@ beforeEach(async () => {
     bobChat = await seed(bob, 'bob-question', 'dashboard', 'question')
     const q = (await readDesktopQuestion(runtime, acceptedQuestion.id)).question!
     const a = (await readDesktopApproval(runtime, acceptedApproval.id)).approval!
-    const { questions: _questions, ...questionGuard } = findDesktopQuestion(histories.get(acceptedQuestion.engineSessionId)!)!
-    const { approvals: _approvals, ...approvalGuard } = findDesktopApproval(histories.get(acceptedApproval.engineSessionId)!)!
+    const pendingQuestion = findDesktopQuestion(histories.get(acceptedQuestion.engineSessionId)!)!
+    const pendingApproval = findDesktopApproval(histories.get(acceptedApproval.engineSessionId)!)!
+    const questionGuard = { sourceMessageId: pendingQuestion.sourceMessageId, toolCallId: pendingQuestion.toolCallId, fingerprint: pendingQuestion.fingerprint }
+    const approvalGuard = { sourceMessageId: pendingApproval.sourceMessageId, toolCallId: pendingApproval.toolCallId, fingerprint: pendingApproval.fingerprint }
     await db.execute({ sql: 'INSERT INTO desktop_question_answers (request_id,agent_id,session_id,question_id,question_guard,payload,answer_text,accepted,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
         args: [crypto.randomUUID(), alice.id, acceptedQuestion.id, q.id, JSON.stringify(questionGuard), '{"action":"cancel"}', 'Dismissed', 1, time] })
     await db.execute({ sql: 'INSERT INTO desktop_approval_answers (request_id,agent_id,session_id,approval_id,approval_guard,payload,answer_text,accepted,created_at) VALUES (?,?,?,?,?,?,?,?,?)',

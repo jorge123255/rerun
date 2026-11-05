@@ -333,9 +333,11 @@ test('coworker drill lists only the supported original Open tabs before its save
     expect(sections[0]!.heading).toBe('Open')
     expect(sections[0]!.rows.map(row => [row.id, row.label, row.detail])).toEqual([
         ['tab-chat', 'Chat', 'Talk with this coworker'],
+        ['tab-mcp', 'MCP', 'Model Context Protocol servers'],
         ['tab-data', 'Database', "This coworker's data"],
         ['tab-memories', 'Knowledge', 'What this coworker remembers'],
         ['tab-files', 'Files', "This coworker's files"],
+        ['tab-scheduled', 'Routines', 'Recurring and scheduled tasks'],
         ['tab-tools', 'Capabilities', 'Tools this coworker can use'],
         ['tab-monitoring', 'Monitoring', 'Usage, cost and activity for this coworker'],
         ['tab-logs', 'Logs', 'Activity and run logs'],
@@ -343,7 +345,7 @@ test('coworker drill lists only the supported original Open tabs before its save
     ])
     expect(sections[0]!.rows.every(row => row.leading.kind === 'icon')).toBe(true)
     expect(sections.slice(1).map(section => section.heading)).toEqual(['Open chats', 'Recent conversations'])
-    for (const absent of ['Routines', 'Triggers', 'Apps', 'MCP', 'Skills', 'To handle', 'Install']) {
+    for (const absent of ['Triggers', 'Apps', 'Skills', 'To handle', 'Install']) {
         expect(sections[0]!.rows.some(row => row.label === absent)).toBe(false)
     }
     await clickRow('Knowledge')

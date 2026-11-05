@@ -17,12 +17,13 @@ let question: DesktopSession, approval: DesktopSession, acceptedQuestion: Deskto
 const time = '2026-11-04T12:00:00.000Z'
 const histories = new Map<string, { owner: string; rows: Message[] }>(), calls: string[] = [], failures = new Set<string>(), stalled = new Set<string>()
 function rows(sessionId: string, kind: 'question' | 'approval'): Message[] {
+    const requestedAt = sessionId === 'approval' ? '2026-11-06T12:00:00.000Z' : sessionId === 'question' ? '2026-11-05T12:00:00.000Z' : time
     const toolName = kind === 'question' ? 'ask_user' : 'request_approval'
     const input = kind === 'question' ? { questions: [{ question: 'Which color should I use?', options: ['Blue', 'Orange'] }] }
         : { approvals: [{ action: 'Publish the draft', detail: 'Details belong inside the chat card.' }] }
     return [
-        { id: sessionId + '-request', sessionId, role: 'assistant', contentJson: JSON.stringify([{ type: 'tool-call', toolName, toolCallId: sessionId + '-call', input }]), toolCallsJson: null, createdAt: time },
-        { id: sessionId + '-result', sessionId, role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolName, toolCallId: sessionId + '-call', output: { type: 'json', value: { status: 'delivered' } } }]), toolCallsJson: null, createdAt: time },
+        { id: sessionId + '-request', sessionId, role: 'assistant', contentJson: JSON.stringify([{ type: 'tool-call', toolName, toolCallId: sessionId + '-call', input }]), toolCallsJson: null, createdAt: requestedAt },
+        { id: sessionId + '-result', sessionId, role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolName, toolCallId: sessionId + '-call', output: { type: 'json', value: { status: 'delivered' } } }]), toolCallsJson: null, createdAt: requestedAt },
     ]
 }
 function request(headers: Record<string, string> = {}) {
@@ -66,8 +67,10 @@ beforeEach(async () => {
     bobChat = await seed(bob, 'bob-question', 'question')
     const q = (await readDesktopQuestion(runtime, acceptedQuestion.id)).question!
     const a = (await readDesktopApproval(runtime, acceptedApproval.id)).approval!
-    const { questions: _questions, ...questionGuard } = findDesktopQuestion(histories.get(acceptedQuestion.engineSessionId)!.rows)!
-    const { approvals: _approvals, ...approvalGuard } = findDesktopApproval(histories.get(acceptedApproval.engineSessionId)!.rows)!
+    const pendingQuestion = findDesktopQuestion(histories.get(acceptedQuestion.engineSessionId)!.rows)!
+    const pendingApproval = findDesktopApproval(histories.get(acceptedApproval.engineSessionId)!.rows)!
+    const questionGuard = { sourceMessageId: pendingQuestion.sourceMessageId, toolCallId: pendingQuestion.toolCallId, fingerprint: pendingQuestion.fingerprint }
+    const approvalGuard = { sourceMessageId: pendingApproval.sourceMessageId, toolCallId: pendingApproval.toolCallId, fingerprint: pendingApproval.fingerprint }
     await db.execute({ sql: 'INSERT INTO desktop_question_answers (request_id,agent_id,session_id,question_id,question_guard,payload,answer_text,accepted,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
         args: [crypto.randomUUID(), alice.id, acceptedQuestion.id, q.id, JSON.stringify(questionGuard), '{"action":"cancel"}', 'Dismissed', 1, time] })
     await db.execute({ sql: 'INSERT INTO desktop_approval_answers (request_id,agent_id,session_id,approval_id,approval_guard,payload,answer_text,accepted,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
@@ -107,6 +110,25 @@ test('restart retains accepted suppression and disabled coworkers retain their p
     const after = await (await get()).json()
     expect(after.items.map((item: { id: string }) => item.id)).toEqual(before.items.map((item: { id: string }) => item.id))
     expect(after.items.find((item: { agentId: string }) => item.agentId === bob.id)).toMatchObject({ agentEnabled: false, sessionId: bobChat.id })
+})
+
+test('request age follows its source message without changing identity or accepted receipts', async () => {
+    const before = await (await get()).json()
+    const db = await openDesktopDatabase(root)
+    // Updating a session or receiving a later tool result must not make its old request new.
+    await db.execute({ sql: 'UPDATE desktop_sessions SET updated_at=? WHERE id=?', args: ['2030-01-01T00:00:00.000Z', bobChat.id] })
+    histories.get(question.engineSessionId)!.rows[1]!.createdAt = '2030-01-02T00:00:00.000Z'
+    const unchanged = await (await get()).json()
+    expect(unchanged.items.map((item: { sessionId: string }) => item.sessionId)).toEqual([approval.id, question.id, bobChat.id])
+    expect(unchanged.items.find((item: { sessionId: string }) => item.sessionId === question.id).requestedAt).toBe('2026-11-05T12:00:00.000Z')
+
+    histories.get(question.engineSessionId)!.rows[0]!.createdAt = '2026-11-07T12:00:00.000Z'
+    histories.get(acceptedQuestion.engineSessionId)!.rows[0]!.createdAt = '2026-11-08T12:00:00.000Z'
+    histories.get(acceptedApproval.engineSessionId)!.rows[0]!.createdAt = '2026-11-08T12:00:00.000Z'
+    const after = await (await get()).json()
+    expect(after.items.map((item: { sessionId: string }) => item.sessionId)).toEqual([question.id, approval.id, bobChat.id])
+    expect(after.items.map((item: { id: string }) => item.id).sort()).toEqual(before.items.map((item: { id: string }) => item.id).sort())
+    expect(after.items[0].requestedAt).toBe('2026-11-07T12:00:00.000Z')
 })
 
 test('foreign or missing engine history is unavailable without leaking another chat, and a subsequent read recovers', async () => {

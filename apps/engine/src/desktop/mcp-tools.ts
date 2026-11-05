@@ -101,7 +101,7 @@ export async function desktopMcpTools(ctx: RunContext): Promise<{ tools: ToolSet
     // Before discovery responds, the authenticated run identity is the release target.
     runSignal.addEventListener('abort', stop, { once: true })
     if (runSignal.aborted) stop()
-    const tools: ToolSet = {}
+    const tools: ToolSet = Object.create(null)
     try {
         const catalog = catalogSchema.parse(await callback({ action: 'catalog', ...identity }, runSignal, 70_000))
         catalogId = catalog.catalogId

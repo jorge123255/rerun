@@ -80,7 +80,8 @@ it('draws a saved private view and freezes only its rows, with no rowid and no v
     expect(drawn.groups?.length).toBe(2)
     expect(drawn.rows.length).toBeGreaterThan(0)
     expect(drawn.rows.length).toBeLessThanOrEqual(20)
-    expect(drawn.columns).toEqual(['name', 'stage', 'amount'])
+    // Original buildTableCard orders semantic fields first, followed by groupBy.
+    expect(drawn.columns).toEqual(['name', 'amount', 'stage'])
     expect(drawn.rows.every(row => Object.keys(row).sort().join(',') === 'amount,name,stage')).toBe(true)
 
     const listed = await card(cardTools(), { scope: 'agent', table: 'deals', view: 'names' })

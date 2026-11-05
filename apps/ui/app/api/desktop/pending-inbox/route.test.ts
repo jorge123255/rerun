@@ -19,12 +19,13 @@ let question: DesktopSession, approval: DesktopSession, bobChat: DesktopSession
 const time = '2026-11-04T12:00:00.000Z'
 const histories = new Map<string, { owner: string; rows: Message[] }>(), calls: string[] = [], failures = new Set<string>(), stalled = new Set<string>()
 function rows(sessionId: string, kind: 'question' | 'approval'): Message[] {
+    const requestedAt = sessionId === 'approval' ? '2026-11-06T12:00:00.000Z' : sessionId === 'question' ? '2026-11-05T12:00:00.000Z' : time
     const toolName = kind === 'question' ? 'ask_user' : 'request_approval'
     const input = kind === 'question' ? { questions: [{ question: 'Which color should I use?', options: ['Blue', 'Orange'] }] }
         : { approvals: [{ action: 'Publish the draft', detail: 'Details belong inside the chat card.' }] }
     return [
-        { id: sessionId + '-request', sessionId, role: 'assistant', contentJson: JSON.stringify([{ type: 'tool-call', toolName, toolCallId: sessionId + '-call', input }]), toolCallsJson: null, createdAt: time },
-        { id: sessionId + '-result', sessionId, role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolName, toolCallId: sessionId + '-call', output: { type: 'json', value: { status: 'delivered' } } }]), toolCallsJson: null, createdAt: time },
+        { id: sessionId + '-request', sessionId, role: 'assistant', contentJson: JSON.stringify([{ type: 'tool-call', toolName, toolCallId: sessionId + '-call', input }]), toolCallsJson: null, createdAt: requestedAt },
+        { id: sessionId + '-result', sessionId, role: 'tool', contentJson: JSON.stringify([{ type: 'tool-result', toolName, toolCallId: sessionId + '-call', output: { type: 'json', value: { status: 'delivered' } } }]), toolCallsJson: null, createdAt: requestedAt },
     ]
 }
 function request(path = '', body?: unknown, headers: Record<string, string> = {}) {

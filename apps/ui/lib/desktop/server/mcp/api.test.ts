@@ -4,6 +4,7 @@ vi.mock('../auth',async importOriginal=>({...await importOriginal<typeof import(
 import {MCP_ADMISSION_TIMEOUT_MS,remoteMcpApi} from './api'
 import type {RemoteMcpStore} from './store'
 import type {remoteMcpRuntime} from './remote'
+import {remoteMcpLifecycle} from './lifecycle'
 afterEach(()=>vi.useRealTimers())
 
 it('a stale disconnect cannot cancel a newly configured server',async()=>{
@@ -26,6 +27,20 @@ it('a config transition during the disconnect revision read prevents stale inval
  await reading;changed=true;resolve({revision:'old'})
  expect((await pending).ok).toBe(false)
  expect(runtime.disconnect).not.toHaveBeenCalled()
+})
+
+it('a management PUT admitted before shutdown cannot persist a body delivered afterward',async()=>{
+ const lifecycle=remoteMcpLifecycle(),persist=vi.fn(async()=>[])
+ let body!:ReadableStreamDefaultController<Uint8Array>,admitted!:()=>void
+ const admission=new Promise<void>(resolve=>{admitted=resolve})
+ const stream=new ReadableStream<Uint8Array>({start(controller){body=controller}})
+ const store={save:(_agent:string,input:{name:string})=>lifecycle.mutate('a',input.name,persist)} as unknown as RemoteMcpStore
+ const request=new Request('https://localhost/mcp',{method:'PUT',body:stream,duplex:'half'} as RequestInit & {duplex:'half'})
+ const response=remoteMcpApi(store,{} as ReturnType<typeof remoteMcpRuntime>,async()=>{admitted();return {enabled:true,granted:true}})(request,'a')
+ await admission;lifecycle.shutdown()
+ body.enqueue(new TextEncoder().encode(JSON.stringify({name:'x',url:'https://example.com/mcp'})));body.close()
+ expect((await response).ok).toBe(false)
+ expect(persist).not.toHaveBeenCalled()
 })
 for(const reason of ['abort','deadline','already-aborted'] as const)for(const late of ['resolve','reject'] as const)for(const method of ['POST','PUT','DELETE'] as const)it(`${method} refuses ${reason} admission and ignores late ${late}`,async()=>{
  vi.useFakeTimers()

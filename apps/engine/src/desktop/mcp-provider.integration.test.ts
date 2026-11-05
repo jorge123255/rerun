@@ -6,7 +6,7 @@ import type { RunContext } from '../runtime/context.js'
 import type { LoadedAgent } from '../agents/types.js'
 
 const captured = vi.hoisted(() => ({ settings: [] as Record<string, any>[], config: undefined as unknown }))
-vi.mock('../config/env.js', () => ({ env: () => ({ RERUN_HUB_BASE_URL: 'http://127.0.0.1:3123', RERUN_API_KEY: 'engine-only', RERUN_DATA_DIR: '/fixture-only' }) }))
+vi.mock('../config/env.js', () => ({ env: () => ({ RERUN_HUB_BASE_URL: 'http://127.0.0.1:3123', RERUN_API_KEY: 'engine-only', RERUN_DATA_DIR: '/fixture-only', RERUN_LOG_LEVEL: 'silent' }) }))
 vi.mock('../agents/lock.js', () => ({ withAgentLock: async (_id: string, action: () => Promise<unknown>) => action() }))
 vi.mock('../agents/loader.js', () => ({ readAgentConfig: async () => captured.config }))
 vi.mock('./agent-lifecycle.js', () => ({ beginDesktopAgentWork: () => () => {} }))
@@ -64,4 +64,18 @@ test('registry rejects an MCP name colliding with an existing built-in and relea
     const { ctx, fetcher } = setup('fs_list')
     await expect(buildTools(ctx)).rejects.toThrow('conflicts with a built-in')
     expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init.body)).action)).toEqual(['catalog', 'release'])
+})
+
+test('the legal tool name formed by server _ and remote tool proto__ survives registry and both Codex bridge filters', async () => {
+    const name = `${'_'}_${'proto__'}`
+    expect(name).toBe('__proto__')
+    const { ctx, agent } = setup(name)
+    const built = await buildTools(ctx)
+    try {
+        expect(Object.hasOwn(built.tools, name)).toBe(true)
+        expect(Object.getPrototypeOf(built.tools)).toBe(Object.prototype)
+        const resolved = resolveModel(agent, undefined, built.tools)
+        expect(captured.settings.at(-1)!.mcpServers.rerun.tools.map((entry: { name: string }) => entry.name)).toContain('__proto__')
+        await resolved.close()
+    } finally { await built.close() }
 })

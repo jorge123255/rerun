@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import type { Message } from '@rerun/contracts'
+import type { Message, RunDetail, Session } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, createDesktopSession, type DesktopAgent, type DesktopSession } from '@/lib/desktop/server/store'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
@@ -23,6 +23,7 @@ let alice: DesktopAgent, bob: DesktopAgent, aliceChat: DesktopSession, bobChat: 
 // Far past the install cutoff: the fixture runs finish well after this slice's first boot.
 const raised = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString()
 const histories = new Map<string, { owner: string; rows: Message[] }>(), completions: { owner: string; rows: Omit<CompletionRow, 'title'>[] }[] = []
+const remoteSessions = new Map<string, Session>(), remoteRuns = new Map<string, RunDetail>()
 const calls: string[] = []
 
 function history(sessionId: string, createdAt: string): Message[] {
@@ -56,10 +57,21 @@ const terminalPayload = (over: Record<string, unknown>) => ({
     event: 'agent.message.completed', kind: 'done', agentId: alice.engineAgentId, sessionId: aliceChat.engineSessionId,
     runId: crypto.randomUUID(), message: 'Message completed', metadata: { status: 'done', source: 'chat' }, timestamp: raised(30_000), ...over,
 })
+function scheduledTerminal(runId: string, slug = 'morning-digest') {
+    const timestamp = raised(70_000)
+    remoteSessions.set(bobChat.engineSessionId, { id: bobChat.engineSessionId, agentId: bob.engineAgentId, title: bobChat.title,
+        status: 'open', source: 'schedule', originAgentId: null, originSessionId: null, createdAt: bobChat.createdAt, updatedAt: timestamp })
+    remoteRuns.set(runId, { id: runId, agentId: bob.engineAgentId, sessionId: bobChat.engineSessionId, status: 'error',
+        stepCount: 1, usageJson: null, provider: 'codex', model: 'fixture', triggerSource: 'schedule', triggerSlug: slug,
+        costMicros: null, inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, totalTokens: null,
+        startedAt: raised(60_000), finishedAt: timestamp, error: 'timeout', output: null })
+    return terminalPayload({ event: 'agent.schedule.completed', kind: 'error', agentId: bob.engineAgentId, sessionId: bobChat.engineSessionId,
+        runId, message: `Schedule "${slug}" failed: timeout`, metadata: { status: 'error', source: 'schedule', scheduleSlug: slug }, timestamp })
+}
 
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-notifications-'))
-    histories.clear(); completions.length = 0; calls.length = 0
+    histories.clear(); remoteSessions.clear(); remoteRuns.clear(); completions.length = 0; calls.length = 0
     server = createServer((req, res) => {
         const url = new URL(req.url ?? 'http://fixture', 'http://fixture'); calls.push(`${req.method} ${url.pathname}`)
         const messages = url.pathname.match(/^\/agents\/([^/]+)\/sessions\/([^/]+)\/messages$/)
@@ -71,6 +83,18 @@ beforeEach(async () => {
         if (req.method === 'GET' && completionsRoute) {
             const rows = completions.filter(entry => entry.owner === completionsRoute[1]).flatMap(entry => entry.rows)
             return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ completions: rows }))
+        }
+        const sessionRoute = url.pathname.match(/^\/agents\/([^/]+)\/sessions\/([^/]+)$/)
+        if (req.method === 'GET' && sessionRoute) {
+            const found = remoteSessions.get(sessionRoute[2]!)
+            const owned = found?.agentId === sessionRoute[1]
+            return res.writeHead(owned ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(owned ? found : { error: 'Not found' }))
+        }
+        const runRoute = url.pathname.match(/^\/agents\/([^/]+)\/runs\/([^/]+)$/)
+        if (req.method === 'GET' && runRoute) {
+            const found = remoteRuns.get(runRoute[2]!)
+            const owned = found?.agentId === runRoute[1]
+            return res.writeHead(owned ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(owned ? found : { error: 'Not found' }))
         }
         return res.writeHead(404).end(JSON.stringify({ error: 'Unexpected fixture request' }))
     })
@@ -187,9 +211,10 @@ test('a scheduled terminal gives the local owner the original follow, which then
     // Bob's first scheduled terminal on an unruled coworker writes follow: true, like the hosted
     // owner-follow; his successful done stays on the completions store and announces under « mine ».
     completions.push({ owner: bob.engineAgentId, rows: [{ id: 'run-bob-done', runId: 'run-bob-done', agentId: bob.engineAgentId, sessionId: bobChat.engineSessionId, source: 'schedule', slug: 'morning-digest', completedAt: raised(80_000), text: null, provider: 'codex', model: 'fixture', costMicros: null, stepCount: 1 }] })
-    const scheduled = { event: 'agent.schedule.completed', kind: 'error', agentId: bob.engineAgentId, sessionId: bobChat.engineSessionId,
-        runId: 'run-bob-failed', message: 'Schedule "morning-digest" failed: timeout', metadata: { status: 'error', source: 'schedule', scheduleSlug: 'morning-digest' }, timestamp: raised(70_000) }
+    const scheduled = scheduledTerminal('run-bob-failed')
     expect(await (await enginePost(scheduled)).json()).toMatchObject({ persisted: true })
+    expect(calls).toContain(`GET /agents/${bob.engineAgentId}/sessions/${bobChat.engineSessionId}`)
+    expect(calls).toContain(`GET /agents/${bob.engineAgentId}/runs/run-bob-failed`)
 
     const prefs = await (await readPrefs(prefsGet())).json() as { coworkers: Record<string, { mode: string; follow?: boolean }> }
     expect(prefs.coworkers[bob.id]).toEqual({ mode: 'default', follow: true })
@@ -237,8 +262,7 @@ test('concurrent preference patches and automatic follow preserve independent ch
         writePrefs(prefsRequest({ toast: false })),
         writePrefs(prefsRequest({ sound: false })),
         writePrefs(prefsRequest({ coworkers: { [alice.id]: { mode: 'muted' } } })),
-        enginePost(terminalPayload({ event: 'agent.schedule.completed', agentId: bob.engineAgentId, sessionId: bobChat.engineSessionId,
-            kind: 'error', metadata: { status: 'error', scheduleSlug: 'morning' } })),
+        enginePost(scheduledTerminal('run-bob-concurrent', 'morning')),
     ])
     expect(await (await readPrefs(prefsGet())).json()).toMatchObject({ toast: false, sound: false,
         coworkers: { [alice.id]: { mode: 'muted' }, [bob.id]: { mode: 'default', follow: true } } })

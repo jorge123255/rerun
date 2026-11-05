@@ -15,12 +15,21 @@ const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime
 let alice: DesktopAgent, bob: DesktopAgent, a1: DesktopSession, a2: DesktopSession, b1: DesktopSession
 let beforeReply: (() => Promise<void>) | undefined
+let beforeAdoptionReply: (() => Promise<void>) | undefined
+const remoteSessions = new Map<string, Record<string, unknown>>(), remoteRuns = new Map<string, Record<string, unknown>>()
 const rows: EngineRunCompletion[] = [], calls: URL[] = [], failed = new Set<string>()
 const at = (n: number) => new Date(Date.UTC(2100, 0, 1, 0, 0, n)).toISOString()
 function completion(agent: DesktopAgent, session: DesktopSession, id: string, n: number): EngineRunCompletion {
     const row: EngineRunCompletion = { id, runId: id, agentId: agent.engineAgentId, sessionId: session.engineSessionId,
         source: 'chat', slug: null, completedAt: at(n), text: `Answer ${id}`, provider: 'codex', model: 'fixture', costMicros: null, stepCount: 1 }
     rows.push(row); return row
+}
+function scheduledCompletion(agent: DesktopAgent, sessionId: string, runId: string, n: number) {
+    const row = completion(agent, { ...a1, engineSessionId: sessionId }, runId, n)
+    row.source = 'schedule'; row.slug = 'daily'
+    remoteSessions.set(`${agent.engineAgentId}\0${sessionId}`, { id: sessionId, agentId: agent.engineAgentId, source: 'schedule', title: 'Daily report', status: 'open', originAgentId: null, originSessionId: null, createdAt: at(0), updatedAt: at(n) })
+    remoteRuns.set(`${agent.engineAgentId}\0${runId}`, { id: runId, agentId: agent.engineAgentId, sessionId, status: 'done', stepCount: 1, usageJson: null, provider: 'codex', model: 'fixture', triggerSource: 'schedule', triggerSlug: 'daily', costMicros: null, inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, totalTokens: null, startedAt: at(0), finishedAt: at(n), error: null })
+    return row
 }
 const identity = (agent: DesktopAgent, row: EngineRunCompletion) => completionIdentityOf({ agentId: agent.id, engineAgentId: agent.engineAgentId, engineSessionId: row.sessionId, terminalId: row.id })
 function request(path = '', body?: unknown) {
@@ -41,9 +50,16 @@ const seen = async () => (await (await openDesktopDatabase(root)).execute('SELEC
 
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-completions-'))
-    rows.length = 0; calls.length = 0; failed.clear(); beforeReply = undefined
+    rows.length = 0; calls.length = 0; failed.clear(); beforeReply = undefined; beforeAdoptionReply = undefined; remoteSessions.clear(); remoteRuns.clear()
     server = createServer((req, res) => {
         const url = new URL(req.url!, 'http://fixture'); calls.push(url)
+        const session = url.pathname.match(/^\/agents\/([^/]+)\/sessions\/([^/]+)$/)
+        const run = url.pathname.match(/^\/agents\/([^/]+)\/runs\/(?!completions$)([^/]+)$/)
+        if (req.method === 'GET' && (session || run)) {
+            const match = (session || run)!, value = (session ? remoteSessions : remoteRuns).get(`${match[1]}\0${match[2]}`)
+            void (async () => { await beforeAdoptionReply?.(); res.writeHead(value ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(value ?? { error: 'Missing fixture' })) })()
+            return
+        }
         const owner = url.pathname.match(/^\/agents\/([^/]+)\/runs\/completions$/)?.[1]
         if (req.method !== 'GET' || !owner) { res.writeHead(404).end(); return }
         void (async () => {
@@ -215,4 +231,47 @@ test('bounds the whole scan to four active engine reads, marks unstarted owners 
         expect(calls.length).toBeLessThanOrEqual(4)
     } finally { release(); beforeReply = undefined; vi.restoreAllMocks() }
     expect((await read()).unavailableAgentIds).toEqual([])
+})
+
+test('adopts a missing scheduled result before grouping it and preserves the same local chat across restart', async () => {
+    scheduledCompletion(alice, 'scheduled-new', 'scheduled-run', 5)
+    const first = await read(), item = first.items[0]
+    expect(item).toMatchObject({ agentId: alice.id, title: 'Daily report', source: 'schedule' })
+    expect(item.sessionId).not.toBe('scheduled-new')
+    const db = await openDesktopDatabase(root)
+    expect((await db.execute({ sql: 'SELECT agent_id,engine_session_id FROM desktop_sessions WHERE id=?', args: [item.sessionId] })).rows[0]).toMatchObject({ agent_id: alice.id, engine_session_id: 'scheduled-new' })
+    await closeDesktopDatabase(root)
+    expect((await read()).items[0].sessionId).toBe(item.sessionId)
+    expect(calls.filter(url => url.pathname.endsWith('/sessions/scheduled-new'))).toHaveLength(1)
+})
+
+test('does not recover or notify scheduled completions older than the existing activation cutoff', async () => {
+    scheduledCompletion(alice, 'scheduled-old', 'scheduled-old-run', 5).completedAt = '2000-01-01T00:00:00Z'
+    expect((await read()).items).toEqual([])
+    expect(calls.every(url => url.pathname.endsWith('/runs/completions'))).toBe(true)
+})
+
+test('refuses a foreign scheduled session and throttles repeated recovery of the same invalid result', async () => {
+    scheduledCompletion(alice, 'scheduled-foreign', 'scheduled-run', 5)
+    remoteSessions.get(`${alice.engineAgentId}\0scheduled-foreign`)!.agentId = bob.engineAgentId
+    const first = await read()
+    expect(first.items).toEqual([]); expect(first.unavailableAgentIds).toContain(alice.id)
+    expect((await read()).unavailableAgentIds).toContain(alice.id)
+    expect(calls.filter(url => url.pathname.endsWith('/sessions/scheduled-foreign'))).toHaveLength(1)
+    expect((await (await openDesktopDatabase(root)).execute("SELECT id FROM desktop_sessions WHERE engine_session_id='scheduled-foreign'")).rows).toHaveLength(0)
+})
+
+test('the completion deadline aborts a stalled scheduled adoption and its late response cannot create a chat', async () => {
+    scheduledCompletion(alice, 'scheduled-late', 'scheduled-run', 5)
+    let release!: () => void
+    const wait = new Promise<void>(resolve => { release = resolve })
+    beforeAdoptionReply = () => wait
+    const timeout = AbortSignal.timeout.bind(AbortSignal)
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => timeout(60))
+    try {
+        const page = await read()
+        expect(page.items).toEqual([]); expect(page.unavailableAgentIds).toContain(alice.id)
+    } finally { release(); beforeAdoptionReply = undefined; vi.restoreAllMocks() }
+    await Promise.resolve(); await Promise.resolve()
+    expect((await (await openDesktopDatabase(root)).execute("SELECT id FROM desktop_sessions WHERE engine_session_id='scheduled-late'")).rows).toHaveLength(0)
 })
