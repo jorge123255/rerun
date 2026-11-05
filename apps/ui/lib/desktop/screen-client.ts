@@ -1,0 +1,43 @@
+export type DesktopScreenState = 'available' | 'unavailable' | 'starting' | 'taken-over' | 'disconnected'
+
+export type DesktopScreenStatusView = {
+    state: DesktopScreenState
+    reason?: string
+    driving: boolean
+    width?: number
+    height?: number
+}
+
+export type DesktopScreenTicketView = {
+    socketUrl: string
+    expiresAt: string
+    width: number
+    height: number
+}
+
+async function call<T>(agentId: string, init: RequestInit): Promise<T> {
+    const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/screen`, { ...init, headers: { 'content-type': 'application/json' } })
+    const body = (await response.json().catch(() => null)) as { error?: string } & T
+    if (!response.ok) throw new Error(body?.error ?? 'The screen could not be reached.')
+    return body
+}
+
+export function fetchDesktopScreenStatus(agentId: string): Promise<DesktopScreenStatusView> {
+    return call(agentId, { method: 'GET' })
+}
+
+export function requestDesktopScreenTicket(agentId: string, mode: 'watch' | 'drive'): Promise<DesktopScreenTicketView> {
+    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'view', mode }) })
+}
+
+export function startDesktopScreenTakeover(agentId: string, url?: string): Promise<{ lease: string; sessionGeneration: string }> {
+    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'takeover', ...(url ? { url } : {}) }) })
+}
+
+export function finishDesktopScreenTakeover(agentId: string, lease?: string): Promise<{ url: string | null }> {
+    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'takeover-finish', ...(lease ? { lease } : {}) }) })
+}
+
+export function stopDesktopScreen(agentId: string): Promise<{ ok: true }> {
+    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'stop' }) })
+}
