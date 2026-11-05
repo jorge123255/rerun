@@ -62,3 +62,44 @@ test('engine staging cannot relabel a stale entry after the compiler emits a dif
         assert(!existsSync(join(dist, 'desktop-build.json')))
     } finally { await rm(root, { recursive: true, force: true }) }
 })
+
+
+test('source stamps reject untracked build inputs while ordinary ignored build output remains allowed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-source-stamp-'))
+    try {
+        const checkout = join(root, 'checkout')
+        await mkdir(checkout)
+        const git = (...args) => execFileSync('git', args, { cwd: checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+        git('init', '--quiet')
+        await writeFile(join(checkout, '.gitignore'), 'node_modules/\ndist/\n')
+        await writeFile(join(checkout, 'source.ts'), 'export const checkedIn = true\n')
+        git('add', '.gitignore', 'source.ts')
+        git('-c', 'user.name=Provenance fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'checked-in source')
+        const commit = git('rev-parse', 'HEAD')
+        const stub = `import {execFile} from 'node:child_process'; import {promisify} from 'node:util'; export const repoRoot=${JSON.stringify(checkout)}; export const buildId=async()=> 'source-stamp-fixture'; export async function output(command,args,options){return (await promisify(execFile)(command,args,options)).stdout.trim()}`
+        const loader = join(root, 'loader.mjs')
+        await writeFile(loader, `export async function load(url,context,next){if(url===${JSON.stringify(new URL('./lib.mjs', import.meta.url).href)})return {format:'module',shortCircuit:true,source:${JSON.stringify(stub)}};return next(url,context)}`)
+        const script = `const {sourceStamp}=await import(${JSON.stringify(new URL('./provenance.mjs', import.meta.url).href)}); console.log(JSON.stringify(await sourceStamp()))`
+        const stamp = () => JSON.parse(execFileSync(process.execPath, ['--loader', loader, '--input-type=module', '-e', script], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }))
+        assert.equal(stamp().sourceCommit, commit)
+        await mkdir(join(checkout, 'dist'))
+        await writeFile(join(checkout, 'dist', 'generated.js'), 'ignored compiled output')
+        await mkdir(join(checkout, 'node_modules'))
+        await writeFile(join(checkout, 'node_modules', 'dependency.js'), 'ignored installed dependency')
+        assert.equal(stamp().sourceCommit, commit)
+        const route = join(checkout, 'apps/ui/app/uncommitted-page')
+        await mkdir(route, { recursive: true })
+        await writeFile(join(route, 'page.tsx'), 'export default function Page(){return "not in the commit"}\n')
+        assert.throws(stamp, error => {
+            assert.match(String(error.stderr), /source changes and untracked files/)
+            return true
+        })
+        await rm(join(checkout, 'apps'), { recursive: true })
+        assert.equal(stamp().sourceCommit, commit)
+        await writeFile(join(checkout, 'source.ts'), 'export const checkedIn = false\n')
+        assert.throws(stamp, error => {
+            assert.match(String(error.stderr), /source changes and untracked files/)
+            return true
+        })
+    } finally { await rm(root, { recursive: true, force: true }) }
+})

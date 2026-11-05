@@ -5,8 +5,8 @@ import { buildId, output, repoRoot } from './lib.mjs'
 export const STAMP_FILE = 'desktop-build.json'
 
 export async function sourceStamp() {
-    const dirty = await output('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: repoRoot })
-    if (dirty) throw new Error('Commit tracked source changes before staging a desktop build')
+    const dirty = await output('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repoRoot })
+    if (dirty) throw new Error('Commit or move source changes and untracked files before staging a desktop build')
     return { protocolVersion: 1, sourceCommit: await output('git', ['rev-parse', 'HEAD'], { cwd: repoRoot }), buildId: await buildId() }
 }
 

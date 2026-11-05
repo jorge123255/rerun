@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tool, dynamicTool, jsonSchema, type ToolSet } from 'ai'
 import { z } from 'zod'
 import type { McpServer } from '@rerun/contracts'
@@ -200,6 +200,91 @@ describe('codexMcpConfig', () => {
         expect(() => codexMcpConfig(askUserTool(HITL_CTX), [])).not.toThrow()
         const bridged = codexMcpConfig(askUserTool(HITL_CTX), []).rerun as { tools: Array<{ name: string }> }
         expect(bridged.tools.map(t => t.name)).toEqual(['ask_user'])
+    })
+})
+
+describe('Codex desktop tool call identity', () => {
+    type Sdk = { _start(): Promise<{ url: string; bearerToken: string }>; _stop(): Promise<void> }
+    let sdk: Sdk
+    let endpoint: { url: string; bearerToken: string }
+    let nextId = 0
+    const execute = vi.fn(async (input: { request: string }, options: { toolCallId: string }) => ({ request: input.request, toolCallId: options.toolCallId }))
+    const argumentsWithForgedIds = { request: 'same task', toolCallId: 'call_from_arguments', callId: 'call_from_argument_alias', _meta: { callId: 'call_from_nested_arguments' } }
+    const rpc = async (params: Record<string, unknown>, id: string | number = ++nextId): Promise<{ id: string | number; result?: any; error?: { message: string } }> => {
+        const response = await fetch(endpoint.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${endpoint.bearerToken}` },
+            body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'owned_action', arguments: argumentsWithForgedIds, ...params } }),
+        })
+        return response.json() as Promise<{ id: string | number; result?: any; error?: { message: string } }>
+    }
+
+    beforeAll(async () => {
+        sdk = codexMcpConfig({
+            owned_action: tool({ inputSchema: z.object({ request: z.string(), toolCallId: z.string().optional(), callId: z.string().optional(), _meta: z.unknown().optional() }), execute }),
+        }).rerun as unknown as Sdk
+        endpoint = await sdk._start()
+    })
+    beforeEach(() => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        execute.mockClear()
+    })
+    afterEach(() => vi.unstubAllEnvs())
+    afterAll(async () => { await sdk._stop() })
+
+    it('retains the exact transport call ID through MCP and schema parsing, ignoring argument and JSON-RPC IDs', async () => {
+        const response = await rpc({ _meta: { callId: 'call_exact31', toolCallId: 'call_wrong_metadata_alias' } }, 'rpc_different_namespace')
+        expect(response.error).toBeUndefined()
+        expect(response.id).toBe('rpc_different_namespace')
+        expect(JSON.parse(response.result.content[0].text)).toEqual({ request: 'same task', toolCallId: 'call_exact31' })
+        expect(execute).toHaveBeenCalledExactlyOnceWith(argumentsWithForgedIds, { toolCallId: 'call_exact31', messages: [] })
+    })
+
+    it('keeps simultaneous calls with identical arguments attached to their own transcript IDs', async () => {
+        const ids = ['call_parallel_a', 'call_parallel_b']
+        const responses = await Promise.all(ids.map(callId => rpc({ _meta: { callId } })))
+        for (const [index, response] of responses.entries()) {
+            expect(response.error).toBeUndefined()
+            expect(JSON.parse(response.result.content[0].text).toolCallId).toBe(ids[index])
+        }
+        expect(execute.mock.calls.map(([, options]) => options.toolCallId).sort()).toEqual(ids)
+    })
+
+    it('accepts a bounded transport ID without rewriting it', async () => {
+        const callId = 'c'.repeat(256)
+        const response = await rpc({ _meta: { callId } })
+        expect(response.error).toBeUndefined()
+        expect(JSON.parse(response.result.content[0].text).toolCallId).toBe(callId)
+    })
+
+    it.each([
+        ['absent metadata', undefined],
+        ['missing call ID', {}],
+        ['a different metadata field', { toolCallId: 'call_wrong_field' }],
+        ['null', { callId: null }],
+        ['numeric', { callId: 42 }],
+        ['an object', { callId: { value: 'call_nested' } }],
+        ['empty', { callId: '' }],
+        ['whitespace', { callId: '   ' }],
+        ['padded', { callId: ' call_padded ' }],
+        ['a control character', { callId: 'call\u0000hidden' }],
+        ['overlong', { callId: 'c'.repeat(257) }],
+    ])('refuses %s transport identity before executing any desktop action', async (_label, metadata) => {
+        const response = await rpc({ _meta: metadata }, 'call_rpc_is_not_authority')
+        expect(response.error?.message).toContain('tool call identity is unavailable')
+        expect(response.result).toBeUndefined()
+        expect(execute).not.toHaveBeenCalled()
+    })
+
+    it('preserves the generated-ID fallback outside desktop when metadata is missing', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '0')
+        const response = await rpc({}, 'call_rpc_is_not_authority')
+        expect(response.error).toBeUndefined()
+        const result = JSON.parse(response.result.content[0].text)
+        expect(result.toolCallId).toEqual(expect.any(String))
+        expect(result.toolCallId.length).toBeGreaterThan(0)
+        expect([argumentsWithForgedIds.toolCallId, argumentsWithForgedIds.callId, argumentsWithForgedIds._meta.callId, response.id]).not.toContain(result.toolCallId)
+        expect(execute).toHaveBeenCalledExactlyOnceWith(argumentsWithForgedIds, { toolCallId: result.toolCallId, messages: [] })
     })
 })
 

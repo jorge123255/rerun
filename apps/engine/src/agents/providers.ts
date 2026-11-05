@@ -210,17 +210,19 @@ function codexNativeMcpEntry(server: McpServer): CodexMcpServerConfig | null {
     return null
 }
 
-// Codex's `tool()` takes `parameters` where the AI SDK takes `inputSchema`, and hands `execute` the
-// parsed input alone, with no abort signal and no id of the model's call. A tool that has to stop
-// with its run reads `RunContext.abortSignal` instead, and nothing can join on `toolCallId`.
+// The patched SDK forwards Codex's transport call ID separately from model-authored input.
+// A tool that has to stop with its run still reads `RunContext.abortSignal`.
 function codexBridgedTools(tools: ToolSet, screenshots?: ScreenshotLookup): LocalTool[] {
     return Object.entries(bridgeableTools(tools)).map(([name, t]) =>
         codexTool({
             name,
             description: t.description ?? name,
             parameters: t.inputSchema as ZodType,
-            execute: async input => {
-                const result = await t.execute!(input, { toolCallId: newId(), messages: [] })
+            execute: async (input, context?: { toolCallId?: string }) => {
+                const transportToolCallId = context?.toolCallId
+                const validCallId = typeof transportToolCallId === 'string' && transportToolCallId.length > 0 && transportToolCallId.length <= 256 && !/[\s\u0000-\u001f\u007f]/u.test(transportToolCallId)
+                if (desktopApp() && !validCallId) throw new Error('The Codex tool call identity is unavailable. Try the request again.')
+                const result = await t.execute!(input, { toolCallId: validCallId ? transportToolCallId : newId(), messages: [] })
                 if (!desktopApp() || !['computer', 'computer_open_app'].includes(name)) return result
                 const metadata = result as { status?: string; screenshotId?: string; screen?: number[] } | null
                 if (metadata?.status !== 'done') return result
