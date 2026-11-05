@@ -12,8 +12,8 @@ const inputs = {
     fs_edit: z.object({ path, oldString: z.string().min(1).max(262_144), newString: z.string().max(262_144), replaceAll: z.boolean().optional() }).strict(),
 }
 const descriptions = {
-    fs_write: 'Create a UTF-8 .txt or .md file in an existing private Files directory. Existing files are never replaced.',
-    fs_edit: 'Make a surgical edit to a private Files document by replacing an exact string. By default oldString must match exactly once.',
+    fs_write: 'Create a UTF-8 .txt or .md file through the Rerun app in this coworker\'s existing private Files directory. This app-managed action is separate from native shell filesystem access. Existing files are never replaced.',
+    fs_edit: 'Edit a private Files document through the Rerun app by replacing an exact string. This app-managed action is separate from native shell filesystem access. By default oldString must match exactly once.',
 }
 const resultSchema = z.object({ status: z.enum(['saved', 'unchanged', 'unknown', 'refused']), path: z.string().optional(), message: z.string() })
 
