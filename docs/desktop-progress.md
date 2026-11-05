@@ -2,7 +2,7 @@
 
 ## Current round 28 — November 5, 2026
 
-Installed product `328ed48`: **1 of 9 new tasks accepted**, root’s attachment-only send/queue/regeneration/restart slice. A–H have separate fresh worktrees and the original-source prompts in `desktop-next-round.md`; they remain unaccepted. **25 capability groups remain.** Original 23 chats/88 messages are unchanged. See `desktop-round28-attachment-only-acceptance.md`. The preceding delivery remains 8/9 accepted, with actual MCP OAuth and macOS banner acceptance still outstanding.
+Installed product `06ebdf6`: **9 of 9 round 28 tasks accepted**. All A–H handoffs are integrated with root fixes. Native media, Company Brain, exact native-file reviews and local MCP tools passed, with final clean Quit/reopen and exact saved-state comparisons. **24 capability groups remain**, down from 25 after D8 Company Brain. Original 23 chats/88 messages are unchanged. Root ran all tests/builds/Mac checks; see `desktop-round28-acceptance.md`. Real MCP OAuth sign-in and macOS banner/click acceptance remain open.
 
 ## Previous acceptance — November 5, 2026
 

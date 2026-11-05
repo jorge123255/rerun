@@ -21,10 +21,11 @@ Original design/reference: Rerun `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. Roo
 - Local MCP subprocess tools use bounded Zod schemas so real configured adapters reach Codex; copied adapters still fail the authenticity filter. A distinct grant, exact current run/config admission, durable call identity and process cleanup remain required.
 - Native text writeback captures only after the writer stops, binds original file/directory identities, and publishes only exact reviewed bytes. Cancelled-run captures are non-actionable and Apply rechecks cancellation. Unknown acknowledgements never trigger another publication automatically.
 - Shutdown confirms both local MCP groups and native writers stopped; a failed drain cancels Quit and a successful retry clears the earlier failure.
+- Native QA found the bundled Next server exits 143 after graceful SIGTERM cleanup. The shell now recognizes only that requested UI exit after an authenticated tool drain, while retaining failed engine exits after a stop timeout so retry cannot forget them.
 - Animated previews retain frame/canvas/byte limits without widening composer/logo inputs. Audio container inspection preserves the byte buffer and validates complete Ogg sequences. WebM element-size and block integer rules are distinct; valid lacing no longer fails.
 
 B and C finished after the first combined source pass. Root reconciled their final commits rather than replacing already corrected readers. B's final production source was already represented. C's preview UI tests were retained; its alternate reader would weaken the combined bounded validation. See `desktop-round28-media-integration.md`.
 
 ## Acceptance boundary
 
-Final packaging and native acceptance are recorded separately in the round 28 acceptance report. This integration note alone does not mark a capability complete. Local programs run with Mac-user access, not an OS sandbox. No custom subprocess environment, remote OAuth sign-in, legacy SSE, hosted semantic embeddings, or general binary writeback is claimed.
+Final packaging and native acceptance passed in installed product `06ebdf6`; see [round 28 acceptance](desktop-round28-acceptance.md). All eight handoffs are accepted alongside root's earlier attachment-only slice. D8 is complete; 24 checklist groups remain. Local programs run with Mac-user access, not an OS sandbox. No custom subprocess environment, remote OAuth sign-in, legacy SSE, hosted semantic embeddings, or general binary writeback is claimed.

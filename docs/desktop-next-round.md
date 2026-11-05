@@ -1,6 +1,6 @@
-# Rerun next assignments — round 28
+# Rerun completed assignments — round 28
 
-Base: `15dce4a9dcefeb95b0042d01d8b2afc9bbe5c3f6`. Original Rerun: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. **25 capability groups remain; assignments are not acceptance.** Root’s attachment-only send/queue/regeneration/restart slice is now installed and accepted in `328ed48` (1/9 round 28 tasks). Root owns integration and every test/build/Mac restart check.
+All round 28 assignments below are complete and accepted in installed product `06ebdf6` (9/9 including root’s attachment-only slice). **24 capability groups remain**, down from 25 after Company Brain. Root reviewed/fixed the handoffs and ran all tests, builds and Mac/restart checks. See [combined acceptance](desktop-round28-acceptance.md). Original Rerun reference: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`; assignment base was `15dce4a9dcefeb95b0042d01d8b2afc9bbe5c3f6`. Prompts below are historical; do not restart these completed tasks.
 
 | Agent | Assignment | Prompt |
 | --- | --- | --- |
