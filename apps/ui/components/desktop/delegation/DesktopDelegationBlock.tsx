@@ -20,9 +20,11 @@ export type DesktopDelegationBlockProps = {
     errorText?: string
     onStopTask?: (taskId: string) => Promise<void>
     dense?: boolean
+    /** Header clock only for the selected live view. History omits it. */
+    showLiveClock?: boolean
 }
 
-export function DesktopDelegationBlock({ snapshot, agentId, output, errorText, onStopTask, dense = false }: DesktopDelegationBlockProps) {
+export function DesktopDelegationBlock({ snapshot, agentId, output, errorText, onStopTask, dense = false, showLiveClock = true }: DesktopDelegationBlockProps) {
     const toolDisplay = useToolDisplay(agentId)
     const { iconProps } = toolDisplay(DELEGATE_TOOL)
     const tasks = snapshot.tasks.map(delegationTaskToSubRun)
@@ -53,15 +55,11 @@ export function DesktopDelegationBlock({ snapshot, agentId, output, errorText, o
         </>
     )
 
-    if (dense) {
-        return (
-            <StepRow iconProps={iconProps} label={label} detail={summary} status={status}>
-                {details}
-            </StepRow>
-        )
-    }
-
-    return (
+    const body = dense ? (
+        <StepRow iconProps={iconProps} label={label} detail={summary} status={status}>
+            {details}
+        </StepRow>
+    ) : (
         <ToolCallRow
             label={label}
             summary={summary}
@@ -70,9 +68,22 @@ export function DesktopDelegationBlock({ snapshot, agentId, output, errorText, o
             status={status}
             open={open}
             onOpenChange={setOpen}
-            elapsed={<ElapsedTime active={live} className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground" />}
+            elapsed={showLiveClock ? <ElapsedTime active={live} className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground" /> : undefined}
         >
             {details}
         </ToolCallRow>
+    )
+
+    return (
+        <div
+            className="min-w-0"
+            data-delegation-id={snapshot.delegationId}
+            data-parent-agent-id={snapshot.parentAgentId}
+            data-parent-session-id={snapshot.parentSessionId}
+            data-parent-run-id={snapshot.parentRunId}
+            data-tool-call-id={snapshot.toolCallId}
+        >
+            {body}
+        </div>
     )
 }

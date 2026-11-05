@@ -13,11 +13,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { formatElapsed } from '@/hooks/useElapsed'
 import type { ToolDisplay } from '@/hooks/useToolDisplay'
 import { stripBridgePrefix } from '@/lib/chat/bridge-name'
-import { isSubRunFailing, isSubRunLive, isSubRunStalled, subRunOutcome, type SubRunCall, type SubRunTask } from '@/lib/chat/sub-run-progress'
+import { isSubRunFailing, isSubRunLive, isSubRunStalled, type SubRunCall, type SubRunTask } from '@/lib/chat/sub-run-progress'
 import { CheckIcon, ChevronRightIcon, ClockIcon, SquareIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DesktopDelegationTask } from '../../../../../packages/contracts/src/desktop-delegation'
-import { delegationTaskToSubRun } from './task-view'
+import { delegationDetail, delegationOutcome, delegationTaskToSubRun } from './task-view'
 
 type ToolDisplayOf = (toolName: string) => ToolDisplay
 type Tone = 'brand' | 'green' | 'red' | 'muted'
@@ -79,7 +79,8 @@ function Branch({ tone, last, children, className }: { tone: Tone; last: boolean
     )
 }
 
-function TaskStatus({ task }: { task: SubRunTask }) {
+function TaskStatus({ task, reconcile }: { task: SubRunTask; reconcile?: boolean }) {
+    if (reconcile) return <IconBadge tone="neutral" icon={ClockIcon} glow={false} />
     if (task.status === 'running') return <IconBadge tone={isSubRunFailing(task) ? 'red' : 'brand'} animated glow={false} />
     if (task.status === 'error') return <IconBadge tone="red" icon={XIcon} glow={false} />
     if (task.status === 'stopped') return <IconBadge tone="neutral" icon={SquareIcon} glow={false} />
@@ -89,14 +90,16 @@ function TaskStatus({ task }: { task: SubRunTask }) {
 
 function TaskBranch({ task, last, toolDisplay, onStop }: { task: DesktopDelegationTask; last: boolean; toolDisplay: ToolDisplayOf; onStop?: (taskId: string) => Promise<void> }) {
     const view = delegationTaskToSubRun(task)
+    const outcome = delegationOutcome(task)
+    const detail = delegationDetail(task)
     const [open, setOpen] = useState(false)
     const [stopping, setStopping] = useState(false)
     const [error, setError] = useState('')
     const alive = useRef(true)
-    const tone = toneOf(view)
+    const tone = outcome?.kind === 'reconcile' ? 'muted' : toneOf(view)
     const running = view.status === 'running'
     const settled = !isSubRunLive(view)
-    const expandable = settled && (!!view.calls?.length || !!view.preview)
+    const expandable = settled && (!!view.calls?.length || !!detail)
     const seconds = settled ? settledSeconds(view) : undefined
     const idleMinutes = view.idleMs === undefined ? undefined : Math.floor(view.idleMs / 60_000)
     // A Stop that already marked the task stopped can still have unconfirmed cleanup. That attempt stays retryable.
@@ -113,6 +116,7 @@ function TaskBranch({ task, last, toolDisplay, onStop }: { task: DesktopDelegati
     }, [running, task.cleanup])
 
     return (
+        <div data-task-id={task.taskId} className="min-w-0">
         <Branch tone={tone} last={last}>
             <Collapsible open={open && expandable} onOpenChange={setOpen}>
                 <div className="flex items-center gap-1">
@@ -120,7 +124,7 @@ function TaskBranch({ task, last, toolDisplay, onStop }: { task: DesktopDelegati
                         disabled={!expandable}
                         className="group flex h-7 min-w-0 flex-1 items-center gap-2.5 rounded-md pr-1 text-left text-sm transition-colors enabled:hover:bg-muted/50"
                     >
-                        <TaskStatus task={view} />
+                        <TaskStatus task={view} reconcile={outcome?.kind === 'reconcile'} />
                         <span className={cn('min-w-0 flex-1 truncate font-medium', view.status === 'queued' && 'text-muted-foreground')}>{view.title}</span>
                         {isSubRunFailing(view) && (
                             <Badge tone="red" size="xs" glow={false} className="hidden @md:inline-flex">
@@ -162,7 +166,7 @@ function TaskBranch({ task, last, toolDisplay, onStop }: { task: DesktopDelegati
                 </div>
 
                 {running && <LiveSteps task={view} tone={tone} toolDisplay={toolDisplay} />}
-                {settled && !open && <Outcome task={view} />}
+                {settled && !open && <Outcome task={task} />}
                 {error && <p role="alert" className="pb-1 pl-0.5 text-xs break-words text-red-500">{error}</p>}
 
                 {expandable && (
@@ -175,11 +179,11 @@ function TaskBranch({ task, last, toolDisplay, onStop }: { task: DesktopDelegati
                                     ))}
                                 </div>
                             )}
-                            <Outcome task={view} />
-                            {view.preview && (
+                            <Outcome task={task} />
+                            {detail && (
                                 <div className="ml-6 rounded-md bg-muted/40">
                                     <ScrollFade className="max-h-40" fadeSize={32}>
-                                        <p className="px-2.5 py-2 text-xs whitespace-pre-wrap break-words text-foreground/80">{view.preview}</p>
+                                        <p className="px-2.5 py-2 text-xs whitespace-pre-wrap break-words text-foreground/80">{detail}</p>
                                     </ScrollFade>
                                 </div>
                             )}
@@ -188,29 +192,34 @@ function TaskBranch({ task, last, toolDisplay, onStop }: { task: DesktopDelegati
                 )}
             </Collapsible>
         </Branch>
+        </div>
     )
 }
 
-function Outcome({ task }: { task: SubRunTask }) {
-    if (task.status === 'done') {
-        const result = subRunOutcome(task.preview)
-        if (!result) return null
+function Outcome({ task }: { task: DesktopDelegationTask }) {
+    const outcome = delegationOutcome(task)
+    if (!outcome) return null
+    if (outcome.kind === 'reconcile') {
         return (
-            <p className="flex h-6 items-center gap-2.5 pl-0.5 text-xs text-emerald-600 dark:text-emerald-400">
+            <p data-outcome="reconcile" className="flex h-6 min-w-0 items-center gap-2.5 pl-0.5 text-xs text-muted-foreground">
+                <span className="truncate">{outcome.text}</span>
+            </p>
+        )
+    }
+    if (outcome.kind === 'success' || outcome.kind === 'empty-result') {
+        return (
+            <p data-outcome={outcome.kind} className="flex h-6 min-w-0 items-center gap-2.5 pl-0.5 text-xs text-emerald-600 dark:text-emerald-400">
                 <CheckIcon className="size-3.5 shrink-0" />
-                <span className="truncate">{result}</span>
+                <span className="truncate">{outcome.text}</span>
             </p>
         )
     }
-    if (task.status === 'error' || task.status === 'stopped') {
-        return (
-            <p className={cn('flex h-6 items-center gap-2.5 pl-0.5 text-xs', task.status === 'error' ? 'text-red-500 dark:text-red-400' : 'text-muted-foreground')}>
-                {task.status === 'error' ? <XIcon className="size-3.5 shrink-0" /> : <SquareIcon className="size-3 shrink-0" />}
-                <span className="truncate">{task.status === 'stopped' ? 'Stopped, partial work kept' : task.error || 'Failed'}</span>
-            </p>
-        )
-    }
-    return null
+    return (
+        <p data-outcome={outcome.kind} className={cn('flex h-6 min-w-0 items-center gap-2.5 pl-0.5 text-xs', outcome.kind === 'error' ? 'text-red-500 dark:text-red-400' : 'text-muted-foreground')}>
+            {outcome.kind === 'error' ? <XIcon className="size-3.5 shrink-0" /> : <SquareIcon className="size-3 shrink-0" />}
+            <span className="truncate">{outcome.text}</span>
+        </p>
+    )
 }
 
 function liveCalls(task: SubRunTask): SubRunCall[] {

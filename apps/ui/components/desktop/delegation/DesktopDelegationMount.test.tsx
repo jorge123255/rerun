@@ -2,7 +2,7 @@
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import type { DesktopDelegationClient } from '@/lib/desktop/delegation-client'
+import { DELEGATION_LIST_UNREADABLE, DELEGATION_STOP_UNFINISHED, DesktopDelegationReadError, type DesktopDelegationClient } from '@/lib/desktop/delegation-client'
 import { DesktopDelegationMount } from './DesktopDelegationMount'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -65,7 +65,7 @@ test('renders a saved delegation without a live clock and stops polling', async 
 
 test('polls while a task is still running', async () => {
     const list = vi.fn(async () => [snapshot({ tasks: [task({ status: 'running', preview: '', cleanup: 'pending', calls: [{ tool: 'web_search', summary: 'notes' }] })] })])
-    await render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-a" client={client(list)} />)
+    await render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-a" view="live" client={client(list)} />)
     expect(document.body.textContent).toContain('Delegating · 1 task')
     const calls = list.mock.calls.length
     expect(calls).toBeGreaterThan(0)
@@ -112,5 +112,166 @@ test('keeps the tool fallback when the read fails and does not invent tasks', as
     expect(document.body.textContent).toContain('Delegated tasks could not be loaded.')
     expect(document.body.textContent).toContain('Tool step')
     expect(document.body.textContent).not.toContain('Delegating')
+    expect(document.querySelector('[data-state="unavailable"]')).not.toBeNull()
     expect(document.querySelector('button[aria-label="Stop this task"]')).toBeNull()
+})
+
+test('separates loading, empty, and malformed reads', async () => {
+    let release: (rows: ReturnType<typeof snapshot>[]) => void = () => {}
+    const pending = vi.fn(() => new Promise<ReturnType<typeof snapshot>[]>(resolve => { release = resolve }))
+    const root = await render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-a" client={client(pending)} fallback={<p>Tool step</p>} />)
+    expect(document.querySelector('[data-state="loading"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Tool step')
+    expect(document.body.textContent).not.toContain('tasks done')
+    await act(async () => { release([]) })
+    expect(document.querySelector('[data-state="empty"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('tasks done')
+    const stop = vi.fn()
+    await act(async () => {
+        root.render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-a" client={client(vi.fn(async () => { throw new DesktopDelegationReadError('malformed', DELEGATION_LIST_UNREADABLE) }), stop)} fallback={<p>Tool step</p>} />)
+    })
+    expect(document.querySelector('[data-state="malformed"]')).not.toBeNull()
+    expect(document.body.textContent).toContain(DELEGATION_LIST_UNREADABLE)
+    expect(document.body.textContent).not.toContain('tasks done')
+    expect(stop).not.toHaveBeenCalled()
+})
+
+test('pairs the block to the parent tool call and ignores the other row', async () => {
+    const otherId = '66666666-6666-4666-8666-666666666666'
+    const list = vi.fn(async () => [
+        snapshot({ tasks: [task({ title: 'This call' })] }),
+        snapshot({ delegationId: otherId, toolCallId: 'tool-b', parentRunId: 'run-b', tasks: [task({ title: 'Other call' })] }),
+    ])
+    await render(<DesktopDelegationMount sessionId="session-a" agentId="agent-a" toolCallId="tool-a" client={client(list)} />)
+    expect(document.body.textContent).toContain('This call')
+    expect(document.body.textContent).not.toContain('Other call')
+    expect(document.querySelector('[data-tool-call-id="tool-a"]')).not.toBeNull()
+    expect(document.querySelector('[data-parent-run-id="run-a"]')).not.toBeNull()
+    expect(document.querySelector('[data-parent-agent-id="agent-a"]')).not.toBeNull()
+    expect(document.querySelector('[data-tool-call-id="tool-b"]')).toBeNull()
+})
+
+test('history does not poll or start a clock, and a parent outcome does not post Stop', async () => {
+    const running = snapshot({ tasks: [task({ status: 'running', preview: '', cleanup: 'pending' })] })
+    const stopped = snapshot({ tasks: [task({ status: 'stopped', cleanup: 'complete', preview: 'partial kept' })] })
+    const list = vi.fn(async () => [running])
+    const stop = vi.fn()
+    await render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-a" view="history" parentSnapshots={[stopped]} client={client(list, stop)} />)
+    expect(document.body.textContent).toContain('Stopped, partial work kept')
+    expect(document.querySelector('.font-mono')).toBeNull()
+    expect(stop).not.toHaveBeenCalled()
+    const calls = list.mock.calls.length
+    await act(async () => { vi.advanceTimersByTime(6_000) })
+    expect(list.mock.calls.length).toBe(calls)
+    expect(stop).not.toHaveBeenCalled()
+})
+
+test('a transcript keeps the saved result when the live list is empty', async () => {
+    const list = vi.fn(async () => [])
+    const stop = vi.fn()
+    await render(
+        <DesktopDelegationMount
+            sessionId="session-a"
+            toolCallId="tool-a"
+            view="history"
+            projection={{ delegations: [snapshot()] }}
+            client={client(list, stop)}
+            fallback={<p>Tool step</p>}
+        />,
+    )
+    expect(document.body.textContent).toContain('Finished the notes.')
+    expect(document.body.textContent).not.toContain('Tool step')
+    expect(stop).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-view="history"]')).not.toBeNull()
+})
+
+test('a malformed transcript is not an empty success', async () => {
+    const stop = vi.fn()
+    await render(
+        <DesktopDelegationMount
+            sessionId="session-a"
+            toolCallId="tool-a"
+            view="history"
+            projection={{ delegations: [{ bad: true }] }}
+            client={client(vi.fn(async () => []), stop)}
+            fallback={<p>Tool step</p>}
+        />,
+    )
+    expect(document.querySelector('[data-state="malformed"]')).not.toBeNull()
+    expect(document.body.textContent).toContain(DELEGATION_LIST_UNREADABLE)
+    expect(document.body.textContent).not.toContain('tasks done')
+    expect(stop).not.toHaveBeenCalled()
+})
+
+test('a late Stop cannot mark a different tool call', async () => {
+    const running = snapshot({ tasks: [task({ status: 'running', preview: '', cleanup: 'pending' })] })
+    const stopped = snapshot({ revision: '55555555-5555-4555-8555-555555555555', tasks: [task({ status: 'stopped', cleanup: 'complete' })] })
+    let release: (value: typeof stopped) => void = () => {}
+    const list = vi.fn(async () => [running])
+    const stop = vi.fn(() => new Promise<typeof stopped>(resolve => { release = resolve }))
+    const api = client(list, stop)
+    const root = await render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-a" client={api} fallback={<p>Other tool</p>} />)
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Stop this task"]')
+    await act(async () => { button!.click() })
+    await act(async () => {
+        root.render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-b" client={api} fallback={<p>Other tool</p>} />)
+    })
+    await act(async () => { release(stopped) })
+    expect(document.body.textContent).not.toContain('Stopped, partial work kept')
+    expect(document.body.textContent).toContain('Other tool')
+})
+
+test('a Stop for another owner refreshes and does not mark the task', async () => {
+    const running = snapshot({ tasks: [task({ status: 'running', preview: '', cleanup: 'pending' })] })
+    const foreign = snapshot({ parentAgentId: 'agent-b', tasks: [task({ status: 'stopped', cleanup: 'complete' })] })
+    const list = vi.fn(async () => [running])
+    const stop = vi.fn(async () => foreign)
+    await render(<DesktopDelegationMount sessionId="session-a" agentId="agent-a" toolCallId="tool-a" client={client(list, stop)} />)
+    const button = () => document.querySelector<HTMLButtonElement>('button[aria-label="Stop this task"]')
+    const reads = list.mock.calls.length
+    await act(async () => { button()!.click() })
+    expect(document.body.textContent).not.toContain('Stopped, partial work kept')
+    expect(button()?.hasAttribute('disabled')).toBe(false)
+    expect(list.mock.calls.length).toBeGreaterThan(reads)
+})
+
+test('an unfinished Stop stays on the same task and can be retried', async () => {
+    const running = snapshot({ tasks: [task({ status: 'running', preview: '', cleanup: 'pending' })] })
+    const list = vi.fn(async () => [running])
+    const stop = vi.fn(async () => { throw new DesktopDelegationReadError('unfinished', DELEGATION_STOP_UNFINISHED) })
+    await render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-a" client={client(list, stop)} />)
+    const button = () => document.querySelector<HTMLButtonElement>('button[aria-label="Stop this task"]')
+    await act(async () => { button()!.click() })
+    expect(button()?.hasAttribute('disabled')).toBe(false)
+    expect(document.body.textContent).toContain(DELEGATION_STOP_UNFINISHED)
+    expect(document.body.textContent).not.toContain('Stopped, partial work kept')
+    await act(async () => { button()!.click() })
+    expect(stop).toHaveBeenCalledTimes(2)
+    expect(stop.mock.calls.map(call => call[1])).toEqual([
+        { delegationId, taskId, expectedRevision: revision },
+        { delegationId, taskId, expectedRevision: revision },
+    ])
+})
+
+test('unmount aborts the read and does not post Stop', async () => {
+    let signal: AbortSignal | undefined
+    const list = vi.fn((_sessionId: string, next?: AbortSignal) => {
+        signal = next
+        return new Promise<ReturnType<typeof snapshot>[]>(() => {})
+    })
+    const stop = vi.fn()
+    const root = await render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-a" client={client(list, stop)} />)
+    expect(signal?.aborted).toBe(false)
+    await act(async () => { root.unmount() })
+    expect(signal?.aborted).toBe(true)
+    expect(stop).not.toHaveBeenCalled()
+})
+
+test('opening the settled row does not post Stop', async () => {
+    const stop = vi.fn()
+    await render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-a" view="history" client={client(vi.fn(async () => [snapshot()]), stop)} />)
+    const trigger = document.querySelector<HTMLButtonElement>('[data-task-id] button')
+    await act(async () => { trigger!.click() })
+    await act(async () => { trigger!.click() })
+    expect(stop).not.toHaveBeenCalled()
 })

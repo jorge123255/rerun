@@ -1,8 +1,11 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import {
     DELEGATION_LIST_UNAVAILABLE,
+    DELEGATION_LIST_UNREADABLE,
     DELEGATION_STOP_UNAVAILABLE,
+    DELEGATION_STOP_UNFINISHED,
     createDesktopDelegationClient,
+    projectDelegations,
     readDelegationList,
     readDelegationSnapshot,
     visibleDelegations,
@@ -49,8 +52,8 @@ test('reads a durable snapshot without inventing timing or live events', () => {
 })
 
 test('rejects an unreadable list instead of returning a partial one', () => {
-    expect(() => readDelegationList({ delegations: [snapshot(), snapshot({ tasks: [task({ status: 'later' })] })] })).toThrow(DELEGATION_LIST_UNAVAILABLE)
-    expect(() => readDelegationList({ delegations: 'none' })).toThrow(DELEGATION_LIST_UNAVAILABLE)
+    expect(() => readDelegationList({ delegations: [snapshot(), snapshot({ tasks: [task({ status: 'later' })] })] })).toThrow(DELEGATION_LIST_UNREADABLE)
+    expect(() => readDelegationList({ delegations: 'none' })).toThrow(DELEGATION_LIST_UNREADABLE)
 })
 
 test('keeps server order and drops other sessions and tool calls', () => {
@@ -105,6 +108,42 @@ test('dispose aborts a list that is still reading', async () => {
     const pending = client.list('session-a')
     client.dispose()
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+})
+
+test('a shape failure is malformed and an HTTP failure stays unavailable', async () => {
+    vi.stubGlobal('fetch', async () => Response.json({ delegations: [snapshot({ tasks: [task({ status: 'later' })] })] }))
+    const malformed = createDesktopDelegationClient(new Map())
+    await expect(malformed.list('session-a')).rejects.toMatchObject({ name: 'DesktopDelegationReadError', kind: 'malformed', message: DELEGATION_LIST_UNREADABLE })
+    vi.stubGlobal('fetch', async () => new Response('no', { status: 503 }))
+    await expect(createDesktopDelegationClient(new Map()).list('session-a')).rejects.toMatchObject({ kind: 'unavailable', message: DELEGATION_LIST_UNAVAILABLE })
+})
+
+test('projects a transcript in order and does not keep another parent', () => {
+    const second = '66666666-6666-4666-8666-666666666666'
+    const rows = projectDelegations({
+        delegations: [
+            snapshot({ toolCallId: 'tool-b', tasks: [task({ title: 'Hidden' })] }),
+            snapshot({ delegationId: second, tasks: [task({ title: 'Kept' })] }),
+        ],
+    }, { sessionId: 'session-a', toolCallId: 'tool-a' })
+    expect(rows.map(item => item.tasks[0]!.title)).toEqual(['Kept'])
+    expect(() => projectDelegations({ delegations: 'none' }, { sessionId: 'session-a' })).toThrow(DELEGATION_LIST_UNREADABLE)
+})
+
+test('a Stop acknowledgement for another session is not returned', async () => {
+    vi.stubGlobal('fetch', async () => Response.json({ delegation: snapshot({ parentSessionId: 'session-b', tasks: [task({ status: 'stopped' })] }) }))
+    const client = createDesktopDelegationClient(new Map())
+    await expect(client.stop('session-a', { delegationId, taskId, expectedRevision: revision })).rejects.toMatchObject({ kind: 'malformed', message: DELEGATION_STOP_UNAVAILABLE })
+})
+
+test('a fetch abort the caller did not request stays an unfinished Stop', async () => {
+    vi.stubGlobal('fetch', async () => {
+        const error = new Error('timeout')
+        error.name = 'AbortError'
+        throw error
+    })
+    const client = createDesktopDelegationClient(new Map())
+    await expect(client.stop('session-a', { delegationId, taskId, expectedRevision: revision })).rejects.toMatchObject({ kind: 'unfinished', message: DELEGATION_STOP_UNFINISHED })
 })
 
 test('lists only the delegation route for that session', async () => {

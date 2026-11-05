@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { delegationTaskToSubRun } from './task-view'
+import { DELEGATION_EMPTY_RESULT, DELEGATION_OUTCOME_UNREAD, delegationDetail, delegationOutcome, delegationTaskToSubRun } from './task-view'
 
 const task = {
     taskId: '22222222-2222-4222-8222-222222222222',
@@ -37,4 +37,14 @@ test('keeps timestamps and elapsed calls the server actually saved', () => {
     expect(view).toMatchObject({ startedAt: 1_000, idleMs: 180_000 })
     expect(view.calls?.[0]).toMatchObject({ elapsedMs: 25, failed: true })
     expect(view).not.toHaveProperty('finishedAt')
+})
+
+test('distinguishes an empty recorded result from a missing outcome', () => {
+    expect(delegationOutcome({ ...task, preview: '', result: '' })).toEqual({ kind: 'empty-result', text: DELEGATION_EMPTY_RESULT })
+    expect(delegationOutcome({ ...task, preview: '', result: undefined })).toEqual({ kind: 'reconcile', text: DELEGATION_OUTCOME_UNREAD })
+    expect(delegationOutcome({ ...task, status: 'queued', preview: '', result: undefined, startedAt: undefined })).toBeNull()
+    expect(delegationOutcome({ ...task, status: 'error', error: 'Interrupted by restart; task was not replayed', preview: '' })?.text).toBe('Interrupted by restart; task was not replayed')
+    expect(delegationOutcome({ ...task, status: 'stopped', error: 'stopped along with the calling run or by the user', preview: 'partial' })?.text).toBe('Stopped, partial work kept')
+    expect(delegationDetail({ ...task, preview: '', result: 'Kept after the workspace was removed.' })).toBe('Kept after the workspace was removed.')
+    expect(delegationDetail({ ...task, preview: 'Visible tail', result: 'Full result' })).toBe('Visible tail')
 })

@@ -122,6 +122,60 @@ test('keeps Stop available when cleanup is still unconfirmed', async () => {
     expect(stopButtons()).toHaveLength(1)
 })
 
+test('keeps request order and stable ids when tasks are mixed', async () => {
+    const ids = [
+        '33333333-3333-4333-8333-333333333333',
+        '22222222-2222-4222-8222-222222222222',
+        '44444444-4444-4444-8444-444444444444',
+    ]
+    await render([
+        task({ taskId: ids[0], title: 'Done first', status: 'done', preview: 'Done first.', cleanup: 'complete' }),
+        task({ taskId: ids[1], title: 'Still going', status: 'running', calls: [] }),
+        task({ taskId: ids[2], title: 'Broke', status: 'error', error: 'Sub-coworker failed', cleanup: 'complete' }),
+    ], async () => {})
+    expect([...document.querySelectorAll('[data-task-id]')].map(node => node.getAttribute('data-task-id'))).toEqual(ids)
+    const text = document.body.textContent ?? ''
+    expect(text.indexOf('Done first')).toBeLessThan(text.indexOf('Still going'))
+    expect(text.indexOf('Still going')).toBeLessThan(text.indexOf('Broke'))
+    expect(text).toContain('Sub-coworker failed')
+    expect(stopButtons()).toHaveLength(1)
+})
+
+test('shows a recorded empty result and a missing outcome without a blank success', async () => {
+    await render([
+        task({ status: 'done', preview: '', result: '', cleanup: 'complete' }),
+        task({ taskId: '33333333-3333-4333-8333-333333333333', title: 'Missing', status: 'done', preview: '', cleanup: 'complete' }),
+        task({ taskId: '44444444-4444-4444-8444-444444444444', title: 'Waiting', status: 'queued', calls: [] }),
+    ])
+    expect(document.body.textContent).toContain('(the sub-coworker returned no text)')
+    expect(document.querySelector('[data-outcome="reconcile"]')?.textContent).toContain('Delegated tasks could not be read.')
+    expect(document.querySelector('[data-task-id="44444444-4444-4444-8444-444444444444"] .font-mono')).toBeNull()
+})
+
+test('opening and closing a settled detail does not stop the task', async () => {
+    const onStop = vi.fn(async () => {})
+    await render([
+        task({ status: 'done', preview: 'Full notes stayed.', calls: [{ tool: 'web_search', summary: 'notes' }], cleanup: 'complete' }),
+    ], onStop)
+    const trigger = document.querySelector<HTMLButtonElement>('[data-task-id] button')
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => { trigger!.click() })
+    expect(trigger?.getAttribute('aria-expanded')).toBe('true')
+    expect(document.querySelector('.whitespace-pre-wrap')?.textContent).toContain('Full notes stayed.')
+    await act(async () => { trigger!.click() })
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false')
+    expect(onStop).not.toHaveBeenCalled()
+    expect(stopButtons()).toHaveLength(0)
+})
+
+test('keeps a long title in a truncating row', async () => {
+    const title = `Notes ${'x'.repeat(180)}`
+    await render([task({ title, status: 'queued', calls: [] })])
+    const label = document.querySelector('[data-task-id] .truncate')
+    expect(label?.textContent).toBe(title)
+    expect(label?.className).toContain('min-w-0')
+})
+
 test('hides Stop for queued, done, error, and stopped tasks once cleanup is complete', async () => {
     await render([
         task({ status: 'queued', calls: [] }),

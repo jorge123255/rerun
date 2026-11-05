@@ -4,9 +4,22 @@ import type { DesktopDelegationSnapshot, DesktopDelegationTask } from '../../../
 import type { SubRunCall, SubRunStatus } from '@rerun/contracts'
 
 export const DELEGATION_LIST_UNAVAILABLE = 'Delegated tasks could not be loaded.'
+export const DELEGATION_LIST_UNREADABLE = 'Delegated tasks could not be read.'
 export const DELEGATION_STOP_UNAVAILABLE = 'Delegation unavailable or changed. Refresh and retry Stop.'
 export const DELEGATION_STOP_UNFINISHED = 'Stop is still unfinished. Retry Stop.'
 export const DELEGATION_UNREADABLE = 'Delegation response could not be read. Refresh and retry Stop.'
+
+export type DesktopDelegationReadKind = 'unavailable' | 'malformed' | 'unfinished'
+
+/** Transport and shape failures stay distinct. AbortError is not one of these. */
+export class DesktopDelegationReadError extends Error {
+    readonly kind: DesktopDelegationReadKind
+    constructor(kind: DesktopDelegationReadKind, message: string) {
+        super(message)
+        this.name = 'DesktopDelegationReadError'
+        this.kind = kind
+    }
+}
 
 const LIST_TIMEOUT_MS = 20_000
 const STOP_TIMEOUT_MS = 120_000
@@ -149,10 +162,15 @@ export function readDelegationSnapshot(value: unknown, message = DELEGATION_UNRE
     return snapshot
 }
 
-export function readDelegationList(value: unknown, message = DELEGATION_LIST_UNAVAILABLE): DesktopDelegationSnapshot[] {
+export function readDelegationList(value: unknown, message = DELEGATION_LIST_UNREADABLE): DesktopDelegationSnapshot[] {
     const body = record(value, message)
     if (!Array.isArray(body.delegations)) fail(message)
     return body.delegations.map(item => readDelegationSnapshot(item, message))
+}
+
+/** Transcript or parent payload in the GET shape. Order is preserved. A shape failure throws. */
+export function projectDelegations(value: unknown, filter: DesktopDelegationFilter): DesktopDelegationSnapshot[] {
+    return visibleDelegations(readDelegationList(value, DELEGATION_LIST_UNREADABLE), filter)
 }
 
 function sessionIdOf(sessionId: string, message: string): string {
@@ -185,6 +203,12 @@ function abortError(): Error {
 
 function isAbort(error: unknown): boolean {
     return !!error && typeof error === 'object' && 'name' in error && (error as { name: string }).name === 'AbortError'
+}
+
+function wrapRead(error: unknown, kind: DesktopDelegationReadKind, fallback: string): DesktopDelegationReadError {
+    if (error instanceof DesktopDelegationReadError) return error
+    const message = error instanceof Error && error.message ? error.message : fallback
+    return new DesktopDelegationReadError(kind, message)
 }
 
 export function createDesktopDelegationClient(requestIds = stopRequestIds): DesktopDelegationClient {
@@ -230,29 +254,60 @@ export function createDesktopDelegationClient(requestIds = stopRequestIds): Desk
 
     return {
         async list(sessionId, signal) {
-            const body = await request(sessionId, LIST_TIMEOUT_MS, DELEGATION_LIST_UNAVAILABLE, DELEGATION_LIST_UNAVAILABLE, signal, { method: 'GET' })
-            return readDelegationList(body)
+            let body: unknown
+            try {
+                body = await request(sessionId, LIST_TIMEOUT_MS, DELEGATION_LIST_UNAVAILABLE, DELEGATION_LIST_UNAVAILABLE, signal, { method: 'GET' })
+            } catch (error) {
+                if (isAbort(error)) throw error
+                throw wrapRead(error, 'unavailable', DELEGATION_LIST_UNAVAILABLE)
+            }
+            try {
+                return readDelegationList(body, DELEGATION_LIST_UNREADABLE)
+            } catch (error) {
+                throw wrapRead(error, 'malformed', DELEGATION_LIST_UNREADABLE)
+            }
         },
         async stop(sessionId, input, signal) {
-            const delegationId = text(input.delegationId, ID_MAX, DELEGATION_STOP_UNAVAILABLE)
-            const taskId = text(input.taskId, ID_MAX, DELEGATION_STOP_UNAVAILABLE)
-            const expectedRevision = text(input.expectedRevision, ID_MAX, DELEGATION_STOP_UNAVAILABLE)
-            if (!UUID.test(delegationId) || !UUID.test(taskId) || !UUID.test(expectedRevision)) fail(DELEGATION_STOP_UNAVAILABLE)
-            const key = JSON.stringify([delegationId, taskId, expectedRevision])
-            let requestId = requestIds.get(key)
-            if (!requestId) {
-                requestId = crypto.randomUUID()
-                requestIds.set(key, requestId)
+            let session = ''
+            let delegationId = ''
+            let taskId = ''
+            let expectedRevision = ''
+            let requestId = ''
+            try {
+                session = sessionIdOf(sessionId, DELEGATION_STOP_UNAVAILABLE)
+                delegationId = text(input.delegationId, ID_MAX, DELEGATION_STOP_UNAVAILABLE)
+                taskId = text(input.taskId, ID_MAX, DELEGATION_STOP_UNAVAILABLE)
+                expectedRevision = text(input.expectedRevision, ID_MAX, DELEGATION_STOP_UNAVAILABLE)
+                if (!UUID.test(delegationId) || !UUID.test(taskId) || !UUID.test(expectedRevision)) fail(DELEGATION_STOP_UNAVAILABLE)
+                const key = JSON.stringify([delegationId, taskId, expectedRevision])
+                requestId = requestIds.get(key) ?? ''
+                if (!requestId) {
+                    requestId = crypto.randomUUID()
+                    requestIds.set(key, requestId)
+                }
+            } catch (error) {
+                throw wrapRead(error, 'unavailable', DELEGATION_STOP_UNAVAILABLE)
             }
-            const body = await request(sessionId, STOP_TIMEOUT_MS, DELEGATION_STOP_UNAVAILABLE, DELEGATION_STOP_UNFINISHED, signal, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ operation: 'stop-task', requestId, delegationId, taskId, expectedRevision }),
-            })
-            const payload = record(body, DELEGATION_STOP_UNAVAILABLE)
-            const snapshot = readDelegationSnapshot(payload.delegation, DELEGATION_STOP_UNAVAILABLE)
-            if (snapshot.delegationId !== delegationId || !snapshot.tasks.some(task => task.taskId === taskId)) fail(DELEGATION_STOP_UNAVAILABLE)
-            return snapshot
+            let body: unknown
+            try {
+                body = await request(session, STOP_TIMEOUT_MS, DELEGATION_STOP_UNAVAILABLE, DELEGATION_STOP_UNFINISHED, signal, {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ operation: 'stop-task', requestId, delegationId, taskId, expectedRevision }),
+                })
+            } catch (error) {
+                if (isAbort(error)) throw error
+                const message = error instanceof Error ? error.message : ''
+                throw wrapRead(error, message === DELEGATION_STOP_UNFINISHED ? 'unfinished' : 'unavailable', DELEGATION_STOP_UNAVAILABLE)
+            }
+            try {
+                const payload = record(body, DELEGATION_STOP_UNAVAILABLE)
+                const snapshot = readDelegationSnapshot(payload.delegation, DELEGATION_STOP_UNAVAILABLE)
+                if (snapshot.parentSessionId !== session || snapshot.delegationId !== delegationId || !snapshot.tasks.some(task => task.taskId === taskId)) fail(DELEGATION_STOP_UNAVAILABLE)
+                return snapshot
+            } catch (error) {
+                throw wrapRead(error, 'malformed', DELEGATION_STOP_UNAVAILABLE)
+            }
         },
         dispose() {
             closed = true
