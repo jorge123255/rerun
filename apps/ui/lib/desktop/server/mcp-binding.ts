@@ -106,12 +106,12 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         const owner = await abortable(localOwner(localId), stop)
         if (!/^[A-Za-z0-9_-]+$/.test(owner.engineId)) throw new Error('Invalid coworker identity')
         const detail = authority.parse(await engineJson(`/agents/${encodeURIComponent(owner.engineId)}`, stop))
-        const root = await realpath(runtime.dataRoot)
-        const workspaceRoot = join(root, 'workspaces', '1', 'engine', 'agents', owner.engineId, 'workspace')
+        const root = await realpath(/* turbopackIgnore: true */ runtime.dataRoot)
+        const workspaceRoot = join(/* turbopackIgnore: true */ root, 'workspaces', '1', 'engine', 'agents', owner.engineId, 'workspace')
         // Every ancestor must be canonical, so a swapped agent directory cannot alias a sibling.
-        for (const path of [join(root, 'workspaces'), join(root, 'workspaces', '1'), join(root, 'workspaces', '1', 'engine'), join(root, 'workspaces', '1', 'engine', 'agents'), join(root, 'workspaces', '1', 'engine', 'agents', owner.engineId), workspaceRoot]) {
-            const stat = await lstat(path)
-            if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || await realpath(path) !== path) throw new Error('Coworker workspace unavailable')
+        for (const path of [join(/* turbopackIgnore: true */ root, 'workspaces'), join(/* turbopackIgnore: true */ root, 'workspaces', '1'), join(/* turbopackIgnore: true */ root, 'workspaces', '1', 'engine'), join(/* turbopackIgnore: true */ root, 'workspaces', '1', 'engine', 'agents'), join(/* turbopackIgnore: true */ root, 'workspaces', '1', 'engine', 'agents', owner.engineId), workspaceRoot]) {
+            const stat = await lstat(/* turbopackIgnore: true */ path)
+            if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || await realpath(/* turbopackIgnore: true */ path) !== path) throw new Error('Coworker workspace unavailable')
         }
         const final = await abortable(localOwner(localId), stop)
         check()
