@@ -187,7 +187,6 @@ test('a redirected folder cannot write into another coworker’s workspace', asy
 
 test('a folder swapped for a sibling symlink after validation cannot redirect an import', async () => {
     const docs = join(workspace('engine-alice'), 'docs')
-    const real = await realpath(docs)
     let swapped = false
     race.beforeOpen = async path => {
         if (swapped || !(String(path).includes('/.rerun-import-') || (process.platform !== 'darwin' && String(path).endsWith('/docs')))) return

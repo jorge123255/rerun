@@ -22,6 +22,7 @@ function Harness({ agentId }: { agentId: string | null }) {
     return (
         <DesktopSkillMentions agentId={agentId} onTextChange={setText}>
             {api => {
+                // eslint-disable-next-line react-hooks/immutability -- expose this render-prop snapshot only to the test harness
                 captured = api
                 return (
                     <form ref={formRef}>

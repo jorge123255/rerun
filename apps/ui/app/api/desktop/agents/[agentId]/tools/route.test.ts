@@ -84,7 +84,7 @@ test('GET reflects the master switch and keeps the nested permissions behind it'
 })
 
 test('turning Improve itself off hides the permissions behind it and refuses to enable them', async () => {
-    let { status, body } = await patchTools(coworker, { group: 'rerun', id: 'self', enabled: false })
+    const { status, body } = await patchTools(coworker, { group: 'rerun', id: 'self', enabled: false })
     expect(status).toBe(200)
     expect(rerunRows(body).find(row => row.id === 'self')!.enabled).toBe(false)
     expect(rerunRows(body).find(row => row.id === 'selfInstruction')).toMatchObject({
