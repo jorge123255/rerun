@@ -22,7 +22,7 @@ it('offers the installed chat table-card capability for both desktop database sc
     for (const source of [desktopDataSource({ kind: 'agent', agentId: 'owner' }), desktopDataSource({ kind: 'shared' })]) {
         expect(source.supportsTableCards).toBe(true)
         const html = markup(source)
-        expect(html).toContain('Everyone who opens this table sees it.')
+        expect(html).toContain('Everyone who opens this table sees it, and the coworker can draw it in chat.')
         expect(html).toContain('the coworker can draw it in chat')
     }
 })

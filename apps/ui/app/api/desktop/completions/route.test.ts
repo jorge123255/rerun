@@ -236,10 +236,11 @@ test('bounds the whole scan to four active engine reads, marks unstarted owners 
 test('adopts a missing scheduled result before grouping it and preserves the same local chat across restart', async () => {
     scheduledCompletion(alice, 'scheduled-new', 'scheduled-run', 5)
     const first = await read(), item = first.items[0]
-    expect(item).toMatchObject({ agentId: alice.id, title: 'Daily report', source: 'schedule' })
+    // Original inbox groups routines under their stable slug; the adopted chat keeps its title.
+    expect(item).toMatchObject({ agentId: alice.id, title: 'daily', source: 'schedule' })
     expect(item.sessionId).not.toBe('scheduled-new')
     const db = await openDesktopDatabase(root)
-    expect((await db.execute({ sql: 'SELECT agent_id,engine_session_id FROM desktop_sessions WHERE id=?', args: [item.sessionId] })).rows[0]).toMatchObject({ agent_id: alice.id, engine_session_id: 'scheduled-new' })
+    expect((await db.execute({ sql: 'SELECT agent_id,engine_session_id,title FROM desktop_sessions WHERE id=?', args: [item.sessionId] })).rows[0]).toMatchObject({ agent_id: alice.id, engine_session_id: 'scheduled-new', title: 'Daily report' })
     await closeDesktopDatabase(root)
     expect((await read()).items[0].sessionId).toBe(item.sessionId)
     expect(calls.filter(url => url.pathname.endsWith('/sessions/scheduled-new'))).toHaveLength(1)

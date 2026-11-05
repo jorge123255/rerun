@@ -22,7 +22,7 @@ import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 import { DesktopCoworkerData } from './DesktopCoworkerData'
 import { DesktopCoworkerRoutines } from './DesktopCoworkerRoutines'
-import { ScheduledRunBlock } from '@/components/chat/ScheduledRunBlock'
+import { DesktopScheduledRunBlock } from './DesktopScheduledRunBlock'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
 import { DesktopCoworkerMcpDialog } from './DesktopCoworkerMcpDialog'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
@@ -842,7 +842,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         const scheduledRun = scheduledRunOf(message)
                         // Reuse Rerun's routine divider and prompt dialog. No hosted file-link
                         // navigation: the desktop Files panel owns this coworker's documents.
-                        if (scheduledRun) return <ScheduledRunBlock key={message.id} agentId={undefined} run={scheduledRun} />
+                        if (scheduledRun) return <DesktopScheduledRunBlock key={message.id} run={scheduledRun} />
                         return (
                         <div key={message.id} className={cn('flex min-w-0 items-end', message.role === 'user' && 'justify-end gap-2')}>
                             <Message from={message.role} className="min-w-0">
