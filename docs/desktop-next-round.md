@@ -1,21 +1,21 @@
-# Round 29 assignments — E3 and E4 priority
+# Round 29 assignments — current acceptance
 
-Current update: C handoff is reviewed/fixed in `70d7bb2` but waits for A/B before runtime activation. Root’s additional WebM/MOV/M4V chat-card slice is installed and restart-accepted in `9f47325`; see [acceptance](desktop-round29-c-video-acceptance.md). Other lane worktrees are preserved.
+Installed product **b0f9899**, verified November 5, 2026. **23 capability groups remain**, down from 24 after D5 Files previews passed native and full-restart acceptance. D/F and the supported E connection slice are integrated; G/H close the remaining Files format scope. Root fixed the handoffs and ran the relevant source checks, packaging and Mac tests. Apps uses the original catalog and panel, with real Microsoft Learn Codex replies before and after restart; E4 stays partial for the unsupported methods and skill bundles. C is source-integrated but inactive, B requires root reconciliation, and A is still working. See [Apps and Files acceptance](desktop-round29-apps-formats-acceptance.md).
 
-Eight new lanes are prepared; root owns audio result cards and every integration/check/Mac restart. **24 groups remain**: assignments are not acceptance. Original Rerun pin: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. Read [the shared interface agreement](desktop-round29-interfaces.md). Exact base and copyable prompts are recorded in the user-facing round 29 assignment index.
+The protected original 23 chats / 88 messages remain unchanged. The app is left on the Team board with Codex connected; Apps is off and the test Microsoft Learn installation is disconnected on the disposable QA copy. Root owns every execution check. Prior audio/video and round 28 acceptances remain valid.
 
-| Agent | Scope | Worktree suffix |
+| Agent | Current result | Worktree suffix |
 | --- | --- | --- |
-| A | E3 — Isolated Linux browser desktop | `round29-isolated-runtime` |
-| B | E3 — Coworker browser/computer tools and takeover | `round29-browser-tools` |
-| C | E3 — Original desktop viewer and human takeover | `round29-desktop-viewer` |
-| D | E4 — Bundled service catalog and capabilities | `round29-service-catalog` |
-| E | E4 — Secure local service connections and tools | `round29-service-runtime` |
-| F | E4 — Original Apps/Services panel and setup | `round29-service-ui` |
-| G | D5 — AVIF, ICO and BMP Files previews | `round29-raster-formats` |
-| H | D5 — Safe SVG Files previews | `round29-svg-preview` |
+| A | Still working; isolated runtime not accepted | `round29-isolated-runtime` |
+| B | Snapshot reviewed; root owns corrections and integration with A/C; inactive | `round29-browser-tools` |
+| C | Reviewed, fixed and source-integrated; viewer inactive pending A/B | `round29-desktop-viewer` |
+| D | Original catalog integrated and accepted for supported local methods | `round29-service-catalog` |
+| E | Supported anonymous/Bearer connection slice integrated; real anonymous QA passed; usage-skill bundles remain blocked | `round29-service-runtime` |
+| F | Original Apps panel integrated and native/restart accepted | `round29-service-ui` |
+| G | Bounded AVIF/ICO/BMP previews integrated and native/restart accepted | `round29-raster-formats` |
+| H | Static SVG subset integrated with root fixes and native/restart accepted | `round29-svg-preview` |
 
-Root: C8 — M4A/Ogg/FLAC chat result cards using accepted Files readers and the original FileCard/lightbox design. **Installed and accepted in 23af258 after live Codex, playback and full restart; 1/9 round tasks accepted.** See [acceptance](desktop-round29-audio-acceptance.md). E3 requires an isolated Linux runtime; E4 imports the catalog with truthful method availability. No unfinished group is marked complete. All older worktrees remain untouched.
+Root’s audio and additional video chat-card slices are accepted. A/B/C are not runtime-accepted. Root retains all repairs, integration and execution checks; no correction prompts need to be sent back. Common lane base `447fb9f03cd1113d50d199a1ec4c433198dc0ef9`; original reference `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. Existing lane worktrees are preserved.
 
 ---
 

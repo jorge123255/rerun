@@ -1,5 +1,12 @@
 # Round 29 E4 — local original Apps/Services UI
 
+## Root integration and acceptance amendment — November 5
+
+Installed `b0f9899`; [root acceptance](desktop-round29-apps-formats-acceptance.md) supersedes the lane's pending status and integration instructions below. The supported anonymous/exact-Bearer HTTPS slice is wired through the existing process-wide `mcp-binding.ts` authority, migration 5, separate default-off Apps grant, actual catalog and coworker Apps panel. The old standalone service binding is not used. Registry admission and shutdown/revocation share the existing owner/run authority. Every manifest containing usage skills is refused before activation; the submitted skill ownership/publication path is not accepted. OAuth/managed/paid/unsupported transports and additional accounts also remain unavailable. Native Microsoft Learn tool use, permission-off guidance, disconnect and full restart passed; Bearer behavior has fixture checks only. The original lane notes below are historical, not instructions to activate the excluded paths.
+
+## Original lane handoff (historical)
+
+
 Base `447fb9f03cd1113d50d199a1ec4c433198dc0ef9`, branch `desktop/round29-service-ui`. This lane ports the panel/client source only. Root execution/native acceptance is pending; the capability is not marked accepted.
 
 ## Original sources read

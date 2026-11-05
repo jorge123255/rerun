@@ -1,18 +1,24 @@
 # Rerun Mac delivery checklist
 
-## Latest round 29 delivery — C review and root video cards
+## Current round 29 — Apps and Files accepted
+
+Installed product **b0f9899**, verified November 5, 2026. **23 capability groups remain**, down from 24 after D5 Files previews passed native and full-restart acceptance. D/F and the supported E connection slice are integrated; G/H close the remaining Files format scope. Root fixed the handoffs and ran the relevant source checks, packaging and Mac tests. Apps uses the original catalog and panel, with real Microsoft Learn Codex replies before and after restart; E4 stays partial for the unsupported methods and skill bundles. C is source-integrated but inactive, B requires root reconciliation, and A is still working. See [Apps and Files acceptance](desktop-round29-apps-formats-acceptance.md).
+
+The protected original 23 chats / 88 messages remain unchanged. The app is left on the Team board with Codex connected; Apps is off and the test Microsoft Learn installation is disconnected on the disposable QA copy. Root owns every execution check. Prior audio/video and round 28 acceptances remain valid.
+
+## Previous round 29 delivery — C review and root video cards
 
 Installed `9f47325`. Root’s WebM/MOV/M4V result-card slice passed actual Codex, album/player and full-restart acceptance. All three saved clips replayed to 0:02; original 23 chats/88 messages remain unchanged. Root ran 102 distinct UI/reader/route and 34 engine checks, types, lint, build and Mac QA. See `desktop-round29-c-video-acceptance.md`.
 
 C handoff `b5fc632` was integrated and fixed in `70d7bb2`; source checks pass. The viewer remains unmounted until A/B provide the actual runtime, authority/tool bridge and durable takeover. No E3 native/runtime acceptance is claimed. Two root slices (audio, video) are accepted this round; 24 groups remain.
 
-## Current round 29 — November 5, 2026
+## Earlier round 29 — November 5, 2026
 
 Installed product `23af258`: **root C8 audio slice accepted**, with actual Codex M4A/Ogg/FLAC cards, native playback and full-restart persistence. Original 23 chats/88 messages unchanged. Root ran 88 distinct targeted UI/reader checks, 19 engine checks, types, lint, build/package/install and all native checks. See `desktop-round29-audio-acceptance.md`.
 
 **1/9 round assignments accepted; A–H prepared.** A–C: E3 isolated browser runtime, tools/takeover, viewer. D–F: E4 original catalog, encrypted connections, Apps panel. G/H: D5 AVIF/ICO/BMP and safe SVG previews. Common base `447fb9f03cd1113d50d199a1ec4c433198dc0ef9`; root owns integration and every execution check. **24 capability groups remain.** The count only changes when a whole group is accepted.
 
-## Current round 28 — November 5, 2026
+## Historical round 28 — November 5, 2026
 
 Installed product `06ebdf6`: **9 of 9 round 28 tasks accepted**. All A–H handoffs are integrated with root fixes. Native media, Company Brain, exact native-file reviews and local MCP tools passed, with final clean Quit/reopen and exact saved-state comparisons. **24 capability groups remain**, down from 25 after D8 Company Brain. Original 23 chats/88 messages are unchanged. Root ran all tests/builds/Mac checks; see `desktop-round28-acceptance.md`. Real MCP OAuth sign-in and macOS banner/click acceptance remain open.
 
@@ -93,9 +99,8 @@ Evidence: `desktop-pending-inbox-acceptance.md` and `desktop-workspace-logo-acce
 
 | Area | Accepted work | Remaining work |
 | --- | --- | --- |
-| B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local/website logo upload; Skills/Routines/MCP navigation; Box search/member drill, Move to another Box and New Box | Apps, Triggers, Setup and remaining contextual actions. Board Boxes are complete under B2 |
+| B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local/website logo upload; Skills/Routines/MCP navigation; Box search/member drill, Move to another Box and New Box | Control Center Apps command (the coworker Apps panel is installed), Triggers, Setup and remaining contextual actions. Board Boxes are complete under B2 |
 | C7: Actions and notifications | Pending and Done inbox; exact navigation; persistent individual/bulk read; live closed counts; source-message request age; notification preferences and native shown receipts; original in-app toasts, coworker bell and task Notify me | Actual OS banner/click acceptance |
-| D5: Files | Text editing/conflicts; rename/Delete; static raster, WAV/MP3/MP4 and PDF previews; previous/next navigation; PDF text selection/copy/Find | Additional media formats and animation |
-| C8: Conversation activity and results | File steps; suggested replies; live compaction; text/static-image/audio/MP4/PDF and private/shared table result cards; scheduled run presentation and Skills proposals | Child runs; additional formats and request presentations |
+| C8: Conversation activity and results | File steps, compaction, text/static-image/PDF/table cards, WAV/MP3/M4A/Ogg/FLAC audio, MP4/WebM/MOV/M4V video, scheduled runs and Skills proposals | Child runs, broader image chat cards and remaining request presentations; new Files formats did not widen card admission |
 
-These rows explain partial completion; they are not four new tasks added to the scope. The full parity catalog retains the original source references and connected-workspace decisions. C5 and C6 currently describe overlapping credential/service/sign-in/takeover work; they must not be counted as two independent tasks in the delivery ledger.
+These rows explain partial completion; they are not new tasks added to the scope. The full parity catalog retains the original source references and connected-workspace decisions. C5 and C6 currently describe overlapping credential/service/sign-in/takeover work; they must not be counted as two independent tasks in the delivery ledger.
