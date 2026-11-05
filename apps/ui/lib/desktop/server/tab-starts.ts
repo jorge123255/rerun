@@ -5,6 +5,7 @@ import type { Client, Row } from '@libsql/client'
 import { listRuns } from '@/lib/engine/client'
 import type { EngineConnection } from '@/lib/engine/types'
 import type { DesktopModelPick } from '../chat-model'
+import { desktopChatTitle } from '../chat-content'
 import { DesktopHttpError } from './auth'
 import { createDesktopSession, type DesktopAgent } from './store'
 
@@ -48,7 +49,7 @@ export async function reserveTabStart(db: Client, agent: DesktopAgent, uid: stri
         sql: `INSERT INTO desktop_tab_starts (agent_id, uid, input_hash, engine_session_id, run_id, title, model_choice, launch_nonce)
               SELECT :agent,:uid,:hash,:engine,:run,:title,:model,:launch ${tabSource} AND json_extract(tab.value,'$.id') IS NULL
               ON CONFLICT(agent_id, uid) DO NOTHING`,
-        args: { agent: agent.id, uid, hash, engine: tabUuid([agent.id,uid]), run: tabUuid([agent.id,uid,hash]), title: input.text.trim().slice(0, 80), model: JSON.stringify(input.modelChoice ?? null), launch },
+        args: { agent: agent.id, uid, hash, engine: tabUuid([agent.id,uid]), run: tabUuid([agent.id,uid,hash]), title: desktopChatTitle(input), model: JSON.stringify(input.modelChoice ?? null), launch },
     }, {
         sql: 'SELECT * FROM desktop_tab_starts WHERE agent_id = ? AND uid = ?', args: [agent.id, uid],
     }], 'write')

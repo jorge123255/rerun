@@ -12,7 +12,7 @@ import { createAgent, createConnection, listRuns, patchAgent, setBoxDefault } fr
 import { disposableRunEngine } from '@/test/desktop-run-engine.mjs'
 import { POST as chat } from './route'
 
-test.runIf(process.env.RERUN_TAB_ACCEPTANCE === '1')('a tab recovers an accepted first turn after a lost response and restart without rereading its attachment', async () => {
+test.runIf(process.env.RERUN_TAB_ACCEPTANCE === '1').each(['Which color is marked?', ''])('a tab recovers an accepted first turn after restart without rereading its attachment (text=%j)', async text => {
     const env = { ...process.env }
     const root = await mkdtemp(join(tmpdir(), 'rerun-tab-first-'))
     const engine = await disposableRunEngine(root)
@@ -44,7 +44,7 @@ test.runIf(process.env.RERUN_TAB_ACCEPTANCE === '1')('a tab recovers an accepted
         await mkdir(workspace, { recursive: true })
         const file = join(workspace,'Map.md')
         await writeFile(file,'Sepia 4598')
-        const body = { agentId, tabUid: blank.uid, text: 'Which color is marked?', attachmentPath: 'Map.md' }
+        const body = { agentId, tabUid: blank.uid, text, attachmentPath: 'Map.md' }
         expect((await send({ ...body, agentId: sibling.id })).status).toBe(404)
         expect((await send({ ...body, tabUid: 'closed' })).status).toBe(404)
         // Fail local registration after the real engine has accepted its first run. Both requests
@@ -54,7 +54,8 @@ test.runIf(process.env.RERUN_TAB_ACCEPTANCE === '1')('a tab recovers an accepted
         expect(attempts.map(response => response.status)).toEqual([500,500])
         await engine.waitForProviderRequest(1)
         engine.finishReply()
-        const first = (await db.execute({ sql: 'SELECT engine_session_id FROM desktop_tab_starts WHERE agent_id=?', args: [agentId] })).rows[0]
+        const first = (await db.execute({ sql: 'SELECT engine_session_id,title FROM desktop_tab_starts WHERE agent_id=?', args: [agentId] })).rows[0]
+        expect(first.title).toBe(text || 'Map.md')
         await expect.poll(async () => (await listRuns(conn, agent.id, { sessionId: String(first.engine_session_id) }))[0]?.status).toBe('done')
         await db.execute('DROP TRIGGER reject_local_tab')
         await rm(file)

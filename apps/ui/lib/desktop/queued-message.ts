@@ -1,16 +1,18 @@
 import { z } from 'zod'
+import { desktopChatHasContent } from './chat-content'
 import { appendAttachmentsRef, buildAttachmentsRef, desktopAttachmentPathsOf, desktopAttachmentSelectionsOf, type DesktopAttachmentSelection, desktopAttachmentItemsSchema, hasOneDesktopAttachmentField, desktopAttachmentPathsSchema, type DesktopAttachmentFields } from '@rerun/contracts'
 
 export const desktopQueueScopeSchema = z.object({ sessionId: z.string().min(1).max(128).optional(), tabUid: z.string().min(1).max(128).optional() }).strict().refine(scope => !!(scope.sessionId || scope.tabUid))
 export type DesktopQueueScope = z.infer<typeof desktopQueueScopeSchema>
 export const desktopQueuedMessageSchema = z.object({
-    id: z.string().uuid(), text: z.string().trim().min(1).max(20_000),
+    id: z.string().uuid(), text: z.string().trim().max(20_000),
     attachmentPath: z.string().min(1).max(4096).optional(),
     attachmentPaths: desktopAttachmentPathsSchema.optional(),
     attachmentItems: desktopAttachmentItemsSchema.optional(),
     createdAt: z.number().int().nonnegative(), behindRunId: z.string().min(1).nullable(),
     state: z.enum(['waiting', 'sending', 'review']),
 }).strict().refine(hasOneDesktopAttachmentField, 'Use one attachment field.')
+    .refine(desktopChatHasContent, 'Write a message or attach a file.')
 export type DesktopQueuedMessage = z.infer<typeof desktopQueuedMessageSchema>
 export const desktopQueueWriteSchema = z.discriminatedUnion('action', [
     z.object({ action: z.literal('enqueue'), scope: desktopQueueScopeSchema, expectedId: z.string().uuid().nullable(), item: desktopQueuedMessageSchema }).strict(),

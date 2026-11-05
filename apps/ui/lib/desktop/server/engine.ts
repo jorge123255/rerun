@@ -1,4 +1,5 @@
 import 'server-only'
+import { desktopChatTitle } from '../chat-content'
 import { startQueuedChat } from './queued-chat'
 import { DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, desktopRerunGrantsOf, type DesktopQuestionGuard, type DesktopApprovalGuard, type DesktopAttachmentItem, type DesktopResolvedAttachment } from '@rerun/contracts'
 import { EngineRequestError, chat, createAgent, getAgent, getSessionMessages, patchAgent } from '@/lib/engine/client'
@@ -203,7 +204,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (regenerate && engineSessionId === existing!.engineSessionId) throw new DesktopHttpError(502, 'The engine did not return an alternate conversation.')
     const session = regenerate
         ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId, model: savedChoice(existing) })
-        : existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: input.text.trim(), model: firstChoice })
+        : existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: desktopChatTitle(input), model: firstChoice })
     const headers = new Headers({
         'content-type': engineResponse.headers.get('content-type') ?? 'text/event-stream',
         'x-vercel-ai-ui-message-stream': engineResponse.headers.get('x-vercel-ai-ui-message-stream') ?? 'v1',

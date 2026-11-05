@@ -63,7 +63,7 @@ test('a scoped picker supports retry, folders, ordered multi-selection, removal,
     await click('notes.md')
     await click('Done')
     expect(button('Remove attachment notes.md')).toBeDefined()
-    expect(button('Send')!.disabled).toBe(true)
+    expect(button('Send')!.disabled).toBe(false)
     await click('Attach from Files')
     await click('docs')
     await click('new.txt')
@@ -76,6 +76,8 @@ test('a scoped picker supports retry, folders, ordered multi-selection, removal,
     await click('Remove attachment notes.md')
     expect(button('Remove attachment notes.md')).toBeUndefined()
     expect(button('Remove attachment new.txt')).toBeDefined()
+    await click('Remove attachment new.txt')
+    expect(button('Send')!.disabled).toBe(true)
 })
 
 test('sending a workspace file keeps the draft for retry and renders only its saved filename', async () => {

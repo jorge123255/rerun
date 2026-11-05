@@ -562,7 +562,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     async function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if (!active || !draft.loaded || draft.error || isDesktopQuitting() || preparingSubmit.current || (requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || !text || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current || pendingAttachment.current) return
+        if (!active || !draft.loaded || draft.error || isDesktopQuitting() || preparingSubmit.current || (requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || (!text && !attachmentPaths.length && !uploadsBusy()) || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current || pendingAttachment.current) return
         const intent = submissionScope.current
         const currentIntent = () => submissionMounted.current && submissionScope.current === intent && submissionCurrent.current.active && !isDesktopQuitting()
         preparingSubmit.current = true
@@ -585,6 +585,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             if (!snapshot.loaded || snapshot.error || !await current.draft.flush() || !currentIntent() || uploadsBusy() || uploadsHaveBlocked()) return
             if ((tabUid ? desktopDraftRecord(agent.id, tabUid).state.version !== version : submissionCurrent.current.input !== input)) return
             const paths = [...(composer.current.attachments ?? [])]
+            if (!text && !paths.length) return
             const live = submissionCurrent.current
             if (live.inactive || live.stopping || !live.ready || live.pendingRequest || (live.requestBlocked && !live.generating)
                 || !live.queue.loaded || live.queue.pending || live.queue.error || regenerating.current || pendingAttachment.current) return
@@ -1069,7 +1070,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                 <UploadIcon aria-hidden className="size-4" /><span className="sr-only">Upload files from this Mac</span>
                             </Button>
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
-                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={!draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || !input.trim() || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
+                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={!draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || (!input.trim() && !attachmentPaths.length) || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
                             </Button>
                         </div>

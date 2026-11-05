@@ -6,7 +6,7 @@ import { closeDesktopDatabase, openDesktopDatabase } from './database'
 import { createDesktopAgent, createDesktopSession } from './store'
 import { readDesktopQueue, writeDesktopQueue } from './queued-message'
 import { writeDesktopTabs } from './session-tabs'
-import type { DesktopQueuedMessage } from '../queued-message'
+import { desktopQueuedMessageSchema, type DesktopQueuedMessage } from '../queued-message'
 
 let root: string
 beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'rerun-queue-')) })
@@ -72,4 +72,18 @@ test('pending coworker deletion blocks queue writes and does not touch another c
     const otherItem = item('Other coworker')
     await writeDesktopQueue(db, other.id, { action: 'enqueue', scope: { sessionId: otherSession.id }, expectedId: null, item: otherItem })
     expect((await readDesktopQueue(db, other.id, { sessionId: otherSession.id })).queued).toEqual(otherItem)
+})
+
+
+test('an image-only queued message remains valid after a cold reopen; empty or malformed selections fail', async () => {
+    const { db, agent, a } = await setup()
+    const image = { sha256: '1'.repeat(64), name: 'image.png', path: 'image.png', mediaType: 'image/png' as const, width: 1, height: 1, byteLength: 12 }
+    const queued = desktopQueuedMessageSchema.parse({ ...item(''), attachmentPath: undefined, attachmentItems: [{ type: 'image', image }] })
+    await writeDesktopQueue(db, agent.id, { action: 'enqueue', scope: { sessionId: a.id }, expectedId: null, item: queued })
+    await closeDesktopDatabase(root)
+    const reopened = await openDesktopDatabase(root)
+    expect((await readDesktopQueue(reopened, agent.id, { sessionId: a.id })).queued).toEqual(queued)
+    expect(desktopQueuedMessageSchema.safeParse({ ...queued, attachmentItems: undefined }).success).toBe(false)
+    expect(desktopQueuedMessageSchema.safeParse({ ...queued, attachmentItems: [] }).success).toBe(false)
+    expect(desktopQueuedMessageSchema.safeParse({ ...queued, attachmentItems: [{ type: 'image', image: { ...image, sha256: 'invalid' } }] }).success).toBe(false)
 })

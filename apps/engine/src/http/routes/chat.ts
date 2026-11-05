@@ -30,12 +30,16 @@ const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string()
     .refine(hasOneDesktopAttachmentField, 'Use one attachment field.')
     .refine(turn => !turn.question || !turn.approval, 'An answer can target only one pending request.')
 const desktopChatRequest = chatRequestSchema.extend({
+    message: z.string().max(20_000),
     workspaceAttachment: desktopWorkspaceAttachmentSchema.optional(),
     workspaceAttachments: desktopWorkspaceAttachmentsSchema.optional(),
     desktopAttachments: desktopResolvedAttachmentsSchema.optional(),
     desktopFirstTurn: desktopFirstTurn.optional(),
     desktopQueuedTurn: desktopQueuedTurn.optional(),
 }).refine(body => [body.workspaceAttachment, body.workspaceAttachments, body.desktopAttachments].filter(value => value !== undefined).length <= 1, 'Use one attachment field.')
+.refine(body => !!body.message.trim() || !!body.workspaceAttachment || !!body.workspaceAttachments?.length || !!body.desktopAttachments?.length
+    // An exact read-only receipt probe deliberately carries identities without re-reading bytes.
+    || !!(body.desktopQueuedTurn?.replayOnly && desktopAttachmentSelectionsOf(body.desktopQueuedTurn).length), 'Write a message or attach a file.')
 .refine(body => (!body.desktopFirstTurn || (!body.sessionId && !body.install && !body.foreman && !body.desktopQueuedTurn && (!body.source || body.source === 'dashboard')))
     && (!body.desktopQueuedTurn || (!!body.sessionId && !body.install && !body.foreman && (!body.source || body.source === 'dashboard'))))
 

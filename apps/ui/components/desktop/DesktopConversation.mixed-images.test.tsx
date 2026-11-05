@@ -93,7 +93,7 @@ afterEach(async () => {
     forgetCoworkerDrafts(agent.id); cancelDraftShutdown(); container.remove(); vi.unstubAllGlobals()
 })
 
-test('StrictMode imports a mixed selection once in original order and Enter waits for all attachments', async () => {
+test.each(['Use all three', ''])('StrictMode imports mixed attachments once and Enter waits for all uploads (text=%j)', async text => {
     let release!: () => void
     importFile = (name, image) => name === 'one.txt'
         ? new Promise(resolve => { release = () => resolve(success(name, image)) })
@@ -101,7 +101,7 @@ test('StrictMode imports a mixed selection once in original order and Enter wait
     await render(); await drain()
     await pick([txt('one.txt'), png(), txt('two.md')]); await flush()
     expect(imports).toEqual(['one.txt'])
-    await type('Use all three'); await submit()
+    await type(text); await submit()
     expect(chat.sendMessage).not.toHaveBeenCalled()
     await act(async () => { release() }); await drain()
     expect(imports).toEqual(['one.txt', 'picture.png', 'two.md'])
@@ -199,4 +199,22 @@ test('a selection above the combined limit imports nothing and leaves a clear no
     expect(imports).toEqual([])
     expect(container.textContent).toContain('Choose up to 10 text files and 4 images')
     expect(chat.sendMessage).not.toHaveBeenCalled()
+})
+
+
+test('an attachment-only saved draft can send after reopening, while an empty composer cannot', async () => {
+    await render('saved', 'files-only'); await drain()
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true)
+    await submit(); await drain()
+    expect(chat.sendMessage).not.toHaveBeenCalled()
+    await pick([png(), txt('notes.txt')]); await drain()
+    await act(async () => { root.unmount() }); forgetCoworkerDrafts(agent.id); root = createRoot(container)
+    await render('saved', 'files-only'); await drain()
+    expect(composer().value).toBe('')
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false)
+    await submit(); await drain()
+    expect(chat.sendMessage).toHaveBeenCalledOnce()
+    expect(chat.sendMessage.mock.calls[0]?.[0]).toEqual({ text: '', metadata: { attachmentItems: [
+        { type: 'image', image: imageOf() }, { type: 'text', path: 'notes.txt' },
+    ] } })
 })
