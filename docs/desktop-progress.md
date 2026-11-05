@@ -1,5 +1,11 @@
 # Rerun Mac delivery checklist
 
+## Current round 29 — November 5, 2026
+
+Installed product `23af258`: **root C8 audio slice accepted**, with actual Codex M4A/Ogg/FLAC cards, native playback and full-restart persistence. Original 23 chats/88 messages unchanged. Root ran 88 distinct targeted UI/reader checks, 19 engine checks, types, lint, build/package/install and all native checks. See `desktop-round29-audio-acceptance.md`.
+
+**1/9 round assignments accepted; A–H prepared.** A–C: E3 isolated browser runtime, tools/takeover, viewer. D–F: E4 original catalog, encrypted connections, Apps panel. G/H: D5 AVIF/ICO/BMP and safe SVG previews. Common base `447fb9f03cd1113d50d199a1ec4c433198dc0ef9`; root owns integration and every execution check. **24 capability groups remain.** The count only changes when a whole group is accepted.
+
 ## Current round 28 — November 5, 2026
 
 Installed product `06ebdf6`: **9 of 9 round 28 tasks accepted**. All A–H handoffs are integrated with root fixes. Native media, Company Brain, exact native-file reviews and local MCP tools passed, with final clean Quit/reopen and exact saved-state comparisons. **24 capability groups remain**, down from 25 after D8 Company Brain. Original 23 chats/88 messages are unchanged. Root ran all tests/builds/Mac checks; see `desktop-round28-acceptance.md`. Real MCP OAuth sign-in and macOS banner/click acceptance remain open.

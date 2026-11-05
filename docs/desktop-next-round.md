@@ -13,7 +13,7 @@ Eight new lanes are prepared; root owns audio result cards and every integration
 | G | D5 — AVIF, ICO and BMP Files previews | `round29-raster-formats` |
 | H | D5 — Safe SVG Files previews | `round29-svg-preview` |
 
-Root: C8 — M4A/Ogg/FLAC chat result cards using accepted Files readers and the original FileCard/lightbox design. E3 requires an isolated Linux runtime; E4 imports the catalog with truthful method availability. No unfinished group is marked complete. All older worktrees remain untouched.
+Root: C8 — M4A/Ogg/FLAC chat result cards using accepted Files readers and the original FileCard/lightbox design. **Installed and accepted in 23af258 after live Codex, playback and full restart; 1/9 round tasks accepted.** See [acceptance](desktop-round29-audio-acceptance.md). E3 requires an isolated Linux runtime; E4 imports the catalog with truthful method availability. No unfinished group is marked complete. All older worktrees remain untouched.
 
 ---
 
