@@ -1,8 +1,12 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopCoworkerSkills } from './DesktopCoworkerSkills'
+
+// Keep the real dialog, editors and controls. Happy-dom cannot finish the exit animation
+// that AnimatePresence mode="wait" requires before mounting the next editor step.
+vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ stepKey, children }: { stepKey: string; children: ReactNode }) => <div key={stepKey}>{children}</div> }))
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -83,7 +87,11 @@ function skillsFetcher(options: { skills?: unknown[]; proposals?: Record<string,
     return { fetcher, created, decided }
 }
 
-afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = '' })
+const mountedRoots = new Set<ReturnType<typeof createRoot>>()
+afterEach(async () => {
+    await act(async () => { for (const root of mountedRoots) root.unmount() })
+    mountedRoots.clear(); vi.unstubAllGlobals(); document.body.innerHTML = ''
+})
 
 async function mountPanel(options: Parameters<typeof skillsFetcher>[0] = {}) {
     const { fetcher, created, decided } = skillsFetcher(options)
@@ -91,6 +99,7 @@ async function mountPanel(options: Parameters<typeof skillsFetcher>[0] = {}) {
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
+    mountedRoots.add(root)
     await act(async () => { root.render(<DesktopCoworkerSkills agent={coworker('alice')} />) })
     await click('Skills')
     await flush()
@@ -98,7 +107,7 @@ async function mountPanel(options: Parameters<typeof skillsFetcher>[0] = {}) {
 }
 
 test('lists the shelf, badges connector-owned skills, and opens them read-only', async () => {
-    const { fetcher, root } = await mountPanel({
+    const { fetcher } = await mountPanel({
         skills: [skill('local', { name: 'Local skill' }), skill('app-skill', { name: 'App skill', fromConnector: true })],
     })
     expect(fetcher).toHaveBeenCalledWith('/api/desktop/agents/alice/skills', expect.anything())
@@ -111,11 +120,10 @@ test('lists the shelf, badges connector-owned skills, and opens them read-only',
     await flush()
     expect(document.body.textContent).toContain('This skill is provided by an app and is managed automatically.')
     expect([...document.querySelectorAll('button')].some(b => b.getAttribute('aria-label') === 'Delete skill' || b.textContent?.trim() === 'Save changes')).toBe(false)
-    act(() => root.unmount())
 })
 
 test('create flow posts the skill, returns to the shelf and the new row appears', async () => {
-    const { created, root } = await mountPanel({ skills: [] })
+    const { created } = await mountPanel({ skills: [] })
     await click('New')
     await flush()
 
@@ -139,22 +147,20 @@ test('create flow posts the skill, returns to the shelf and the new row appears'
     // Back on the shelf, which reloads and now shows the created skill.
     expect(document.body.textContent).not.toContain('No skills yet')
     expect(document.body.textContent).toContain('Web Research')
-    act(() => root.unmount())
 })
 
 test('proposal review pins a pending row and accept posts the decision', async () => {
-    const { fetcher, decided, root } = await mountPanel({ proposals: [proposal('p1')] })
+    const { fetcher, decided } = await mountPanel({ proposals: [proposal('p1')] })
     expect(document.body.textContent).toContain('Proposed changes')
     expect(document.body.textContent).toContain('Remember this?')
     await click('Remember')
     await flush()
     expect(decided).toEqual([{ id: 'p1', decision: 'accept' }])
     expect(fetcher).toHaveBeenCalledWith('/api/desktop/agents/alice/skills/proposals/p1', expect.objectContaining({ method: 'POST' }))
-    act(() => root.unmount())
 })
 
 test('an accepted proposal stays pinned while it is written, without decision buttons', async () => {
-    const { root } = await mountPanel({ proposals: [proposal('p1')] })
+    await mountPanel({ proposals: [proposal('p1')] })
     await click('Remember')
     await flush()
     // The row moved to accepted, stays pinned (never released mid-write), and reports the writing
@@ -162,5 +168,4 @@ test('an accepted proposal stays pinned while it is written, without decision bu
     expect(document.body.textContent).toContain('Proposed changes')
     expect(document.body.textContent).toContain('Remembering')
     expect([...document.querySelectorAll('button')].some(b => b.textContent?.trim() === 'Remember' || b.textContent?.trim() === 'No')).toBe(false)
-    act(() => root.unmount())
 })

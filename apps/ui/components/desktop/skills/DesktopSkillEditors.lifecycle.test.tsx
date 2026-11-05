@@ -30,11 +30,15 @@ test('bundled-file saves carry the read identity and a late old-file success can
     expect(api.write).toHaveBeenCalledExactlyOnceWith('alice', 'review', 'references/a.md', 'Saved references/a.md', { baseIdentity: 'version-references/a.md', completeRead: true })
     expect(findButton('Back')).toBeUndefined()
     await render('references/b.md')
-    expect(findButton('Save changes')?.disabled).toBe(false)
-    await act(async () => { findButton('Save changes')!.click() })
+    const currentSave = findButton('Save changes')!
+    expect(currentSave.disabled).toBe(false)
+    await act(async () => { currentSave.click() })
     await act(async () => { first.resolve({ success: true }) })
     expect(onBack).not.toHaveBeenCalled()
-    expect(findButton('Save changes')?.disabled).toBe(true)
+    // The original Button replaces its text with a loader during a save. Inspect the
+    // captured current control so this checks the pending operation, not its temporary label.
+    expect(currentSave.isConnected).toBe(true)
+    expect(currentSave.disabled).toBe(true)
     await act(async () => { current.resolve({ success: true }) })
     expect(onBack).toHaveBeenCalledOnce()
 })
