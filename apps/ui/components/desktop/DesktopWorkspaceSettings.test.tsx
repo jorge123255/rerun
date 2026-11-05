@@ -50,8 +50,16 @@ function fixture(catalogId: string | null = null, initialUploadId?: string | nul
     let saved: FixtureState = { name: 'Disposable', catalogId, ...(initialUploadId !== undefined ? { uploadId: initialUploadId } : {}) }
     let get: (() => Promise<Response> | Response) | undefined
     let put: ((input: PutInput) => Promise<Response> | Response) | undefined
+    let link: ((value: string) => Promise<Response> | Response) | undefined
+    const previews: { link: string; signal: AbortSignal }[] = []
     const calls: { method: string; body?: unknown; file?: File }[] = []
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === '/api/desktop/workspace/logo-preview') {
+            expect(init?.method).toBe('POST')
+            const value = JSON.parse(String(init?.body)).link as string
+            previews.push({ link: value, signal: init!.signal! })
+            return link ? link(value) : Response.json({ error: 'No fixture preview' }, { status: 404 })
+        }
         expect(url).toBe('/api/desktop/workspace/icon')
         const method = init?.method ?? 'GET'
         if (method === 'GET') {
@@ -83,7 +91,7 @@ function fixture(catalogId: string | null = null, initialUploadId?: string | nul
         return Response.json(saved)
     })
     vi.stubGlobal('fetch', fetcher)
-    return { calls, fetcher, setGet: (read: typeof get) => { get = read }, setPut: (write: typeof put) => { put = write }, get saved() { return saved } }
+    return { calls, fetcher, previews, setLink: (read: typeof link) => { link = read }, setGet: (read: typeof get) => { get = read }, setPut: (write: typeof put) => { put = write }, get saved() { return saved } }
 }
 
 async function mount() {
@@ -258,6 +266,134 @@ const chooseLogo = async (file: File) => act(async () => {
     const input = dialog()!.querySelector<HTMLInputElement>('input[type="file"]')!
     Object.defineProperty(input, 'files', { value: [file], configurable: true })
     input.dispatchEvent(new Event('change', { bubbles: true }))
+})
+
+const linkField = () => dialog()!.querySelector<HTMLInputElement>('input[placeholder="acme.com"]')!
+const typeLink = async (value: string) => act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(linkField(), value)
+    linkField().dispatchEvent(new Event('input', { bubbles: true }))
+})
+const linkResponse = (bytes: Uint8Array<ArrayBuffer>) => ({ ok: true, blob: async () => new Blob([bytes], { type: 'image/png' }) }) as Response
+const fileBytes = (file: File) => new Promise<Uint8Array>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsArrayBuffer(file)
+})
+
+test('a reviewed website logo replaces an earlier upload and Save sends exactly its bytes with the name', async () => {
+    const f = fixture(), h = await mount()
+    const review = deferred(), bytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3, 4])
+    f.setLink(() => review.promise)
+    vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:manual').mockReturnValueOnce('blob:reviewed')
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+    await chooseLogo(new File(['manual'], 'manual.png', { type: 'image/png' }))
+    await typeLink('acme')
+    expect(preview().getAttribute('src')).toBe('blob:manual')
+    expect(revoke).not.toHaveBeenCalled()
+    await typeLink('https://acme.com/logo.png')
+    expect(button('Save').disabled).toBe(true)
+    expect(revoke).toHaveBeenCalledWith('blob:manual')
+    // Programmatic submission is guarded too, including before React can disable the button.
+    await act(async () => { dialog()!.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
+    expect(f.calls.filter(call => call.method === 'PUT')).toEqual([])
+    await act(async () => { review.resolve(linkResponse(bytes)) })
+    expect(preview().getAttribute('src')).toBe('blob:reviewed')
+    expect(button('Save').disabled).toBe(false)
+    await rename(' Website studio ')
+    await click(button('Save'))
+    const saved = f.calls.find(call => call.method === 'PUT')!
+    expect(saved.body).toEqual({ name: 'Website studio' })
+    expect(saved.file?.name).toBe('logo.png')
+    expect(await fileBytes(saved.file!)).toEqual(bytes)
+    expect(h.saved).toHaveBeenCalledWith({ name: 'Website studio', iconCatalogId: null, iconUploadId: uploadId })
+    expect(revoke).toHaveBeenCalledWith('blob:reviewed')
+})
+
+test('editing a ready link and immediately submitting in the same event turn cannot save its obsolete bytes', async () => {
+    const f = fixture(); await mount()
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:previous-review')
+    f.setLink(() => linkResponse(new Uint8Array([1, 2, 3])))
+    await typeLink('first.example')
+    const next = deferred(); f.setLink(() => next.promise)
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(linkField(), 'next.example')
+        linkField().dispatchEvent(new Event('input', { bubbles: true }))
+        dialog()!.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(button('Save').disabled).toBe(true)
+    expect(f.calls.filter(call => call.method === 'PUT')).toEqual([])
+    await click(button('Cancel'))
+})
+
+test.each(['illustration', 'upload'] as const)('a newer %s clears the address and cannot be replaced by a late website preview', async choice => {
+    const f = fixture(); await mount()
+    const review = deferred()
+    f.setLink(() => review.promise)
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:new-upload')
+    await typeLink('acme.com')
+    const file = new File(['newer choice'], 'new.png', { type: 'image/png' })
+    if (choice === 'illustration') await click(choices()[2])
+    else await chooseLogo(file)
+    expect(f.previews[0].signal.aborted).toBe(true)
+    expect(linkField().value).toBe('')
+    await act(async () => { review.resolve(linkResponse(new Uint8Array([1, 2, 3]))) })
+    expect(preview().getAttribute('src')).toBe(choice === 'illustration' ? DESKTOP_WORKSPACE_ICONS[2].url : 'blob:new-upload')
+    await click(button('Save'))
+    const saved = f.calls.find(call => call.method === 'PUT')!
+    if (choice === 'illustration') { expect(saved.body).toEqual({ name: 'Disposable', catalogId: DESKTOP_WORKSPACE_ICONS[2].id }); expect(saved.file).toBeUndefined() }
+    else expect(saved.file).toBe(file)
+})
+
+test('a failed replacement link cannot save the previous reviewed logo and preserves the saved icon', async () => {
+    const f = fixture(DESKTOP_WORKSPACE_ICONS[3].id); await mount()
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:old-review')
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+    f.setLink(() => linkResponse(new Uint8Array([1, 2, 3])))
+    await typeLink('first.example')
+    expect(preview().getAttribute('src')).toBe('blob:old-review')
+    const second = deferred(); f.setLink(() => second.promise)
+    await typeLink('second.example')
+    expect(button('Save').disabled).toBe(true)
+    expect(revoke).toHaveBeenCalledWith('blob:old-review')
+    await act(async () => { second.resolve(Response.json({ error: 'No logo found at this address' }, { status: 404 })) })
+    expect(preview().getAttribute('src')).toBe(DESKTOP_WORKSPACE_ICONS[3].url)
+    expect(dialog()?.textContent).toContain('No logo found at this address')
+    await rename('Name only'); await click(button('Save'))
+    expect(f.calls.find(call => call.method === 'PUT')).toEqual({ method: 'PUT', body: { name: 'Name only' } })
+    expect(f.saved).toEqual({ name: 'Name only', catalogId: DESKTOP_WORKSPACE_ICONS[3].id, uploadId: undefined })
+})
+
+test('Cancel aborts the link without writing and a late response cannot alter the reopened form', async () => {
+    const f = fixture(DESKTOP_WORKSPACE_ICONS[4].id), h = await mount()
+    const review = deferred(); f.setLink(() => review.promise)
+    const urls = vi.spyOn(URL, 'createObjectURL')
+    await typeLink('acme.com'); await rename('Discard this')
+    await click(button('Cancel'))
+    expect(f.previews[0].signal.aborted).toBe(true)
+    expect(f.calls.filter(call => call.method === 'PUT')).toEqual([])
+    await h.setOpen(true)
+    await rename('New name'); await click(choices()[6])
+    await act(async () => { review.resolve(linkResponse(new Uint8Array([1, 2, 3]))) })
+    expect(urls).not.toHaveBeenCalled()
+    expect(linkField().value).toBe('')
+    expect(nameField().value).toBe('New name')
+    expect(preview().getAttribute('src')).toBe(DESKTOP_WORKSPACE_ICONS[6].url)
+    expect(h.saved).not.toHaveBeenCalled()
+})
+
+test('Stay after quit cancels a pending preview without leaving Save permanently blocked', async () => {
+    const f = fixture(); await mount()
+    const review = deferred(); f.setLink(() => review.promise)
+    await typeLink('acme.com')
+    await act(async () => { await flushDesktopDrafts() })
+    expect(f.previews[0].signal.aborted).toBe(true)
+    await act(async () => { cancelDraftShutdown() })
+    expect(button('Save').disabled).toBe(false)
+    expect(dialog()?.textContent).toContain('Preview cancelled')
+    await act(async () => { review.resolve(linkResponse(new Uint8Array([1, 2, 3]))) })
+    expect(preview().getAttribute('src')).toBeNull()
+    expect(f.calls.filter(call => call.method === 'PUT')).toEqual([])
 })
 
 // happy-dom's object URLs are not stable across environments; the draft's own preview must be

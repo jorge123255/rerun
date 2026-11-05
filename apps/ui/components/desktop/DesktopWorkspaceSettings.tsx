@@ -13,6 +13,7 @@ import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { cn } from '@/lib/utils'
 import { ScrollFade } from '@rerun/ui/primitives'
+import { DesktopWorkspaceWebsiteLogo } from './DesktopWorkspaceWebsiteLogo'
 
 const VISIBLE_ILLUSTRATIONS = 10
 
@@ -35,8 +36,8 @@ type Props = {
 
 // The original workspace settings dialog, carrying its built-in illustration picker and its
 // choose/drop logo upload: the same preview, naming behavior, grid, selection treatment and
-// Save/Cancel footer. Website-logo links, workspace switching and account or member features
-// stay out of the Mac slice.
+// Save/Cancel footer. Website previews use reviewed local bytes and the same atomic icon write.
+// Workspace switching and account or member features stay out of the Mac slice.
 export function DesktopWorkspaceSettings({ open, onOpenChange, workspaceName, onSaved }: Props) {
     const [saving, setSaving] = useState(false)
     const quitting = useSyncExternalStore(subscribeDraftShutdown, isDesktopQuitting, () => false)
@@ -67,12 +68,18 @@ export function DesktopWorkspaceSettings({ open, onOpenChange, workspaceName, on
 
 // The original form's logo draft: the workspace's current icon, a catalog illustration or the
 // chosen upload with its local object URL.
-type LogoDraft = { kind: 'current' } | { kind: 'catalog'; catalogId: string } | { kind: 'upload'; file: File; previewUrl: string }
+type LogoDraft = { kind: 'current' } | { kind: 'catalog'; catalogId: string }
+    | { kind: 'upload' | 'link'; file: File; previewUrl: string } | { kind: 'link-pending' }
 
 function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quitting }: { workspaceName: string; onSaved: Props['onSaved']; onCancel: () => void; onSaving: (saving: boolean) => void; quitting: boolean }) {
     const [name, setName] = useState(workspaceName)
     // Null keeps the workspace's current icon, like the original form's `current` draft.
     const [draft, setDraft] = useState<LogoDraft>({ kind: 'current' })
+    const currentDraft = useRef(draft)
+    const selectDraft = (next: LogoDraft) => { currentDraft.current = next; setDraft(next) }
+    const [linkGeneration, setLinkGeneration] = useState(0)
+    const linkGenerationRef = useRef(0)
+    const resetLink = () => { linkGenerationRef.current += 1; setLinkGeneration(linkGenerationRef.current) }
     const [savedIcon, setSavedIcon] = useState<DesktopWorkspaceSavedIcon>({ iconCatalogId: null, iconUploadId: null })
     const [readAttempt, setReadAttempt] = useState(0)
     const [readError, setReadError] = useState(false)
@@ -116,7 +123,7 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
 
     // The original's logoDraftSrc: the draft's own preview, else the workspace's current icon.
     const currentUrl = desktopWorkspaceIconSelectionUrl(savedIcon)
-    const previewSrc = draft.kind === 'upload' ? draft.previewUrl
+    const previewSrc = draft.kind === 'upload' || draft.kind === 'link' ? draft.previewUrl
         : draft.kind === 'catalog' ? desktopWorkspaceIconUrl(draft.catalogId)
         : currentUrl ?? ''
     const selectedUrl = draft.kind === 'catalog' ? desktopWorkspaceIconUrl(draft.catalogId) ?? undefined
@@ -131,7 +138,8 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
             // its URL immediately so replaced drafts are released even without an intervening render.
             releaseUploadPreview()
             uploadPreview.current = previewUrl
-            setDraft({ kind: 'upload', file, previewUrl })
+            resetLink()
+            selectDraft({ kind: 'upload', file, previewUrl })
             setError('')
         } catch {
             setError('Could not preview this image. Try another file.')
@@ -141,12 +149,15 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
     const pickIllustration = (catalogId: string) => {
         if (!mounted.current || savingRef.current || isDesktopQuitting() || !desktopWorkspaceIconUrl(catalogId)) return
         releaseUploadPreview()
-        setDraft({ kind: 'catalog', catalogId })
+        resetLink()
+        selectDraft({ kind: 'catalog', catalogId })
         setError('')
     }
 
     const save = async () => {
         if (!mounted.current || savingRef.current || isDesktopQuitting() || !name.trim()) return
+        const selected = currentDraft.current
+        if (selected.kind === 'link-pending') return
         if (name.trim().length > WORKSPACE_NAME_MAX) { setError(`Use ${WORKSPACE_NAME_MAX} characters or fewer for the workspace name.`); return }
         savingRef.current = true
         onSaving(true)
@@ -159,9 +170,9 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
         try {
             // One original workspace-settings save: the name rides with the selected icon, whether
             // that is an illustration or the chosen upload's raster.
-            const response = draft.kind === 'upload'
-                ? await saveLogoUpload(name.trim(), draft.file)
-                : await saveCatalogSelection(name.trim(), draft)
+            const response = selected.kind === 'upload' || selected.kind === 'link'
+                ? await saveLogoUpload(name.trim(), selected.file)
+                : await saveCatalogSelection(name.trim(), selected)
             if (!response.ok) throw new Error(await responseError(response, 'Could not save workspace settings. Try again.'))
             const result = desktopIconSaved.safeParse(await response.json())
             if (!result.success) throw new Error('Could not read the saved workspace settings. Reopen settings to check the saved name and logo.')
@@ -207,6 +218,20 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
                                 maxLength={WORKSPACE_NAME_MAX} value={name} disabled={saving || quitting} onChange={event => setName(event.target.value)} />
                         </div>
                     </div>
+                    <DesktopWorkspaceWebsiteLogo key={linkGeneration} disabled={saving || quitting} onSelection={(selection, pending) => {
+                        // Invalidate synchronously on every manual pick; a completion queued before
+                        // React unmounts the old field must not replace the newer selection.
+                        if (!mounted.current || savingRef.current || linkGeneration !== linkGenerationRef.current) return
+                        if (!pending && !selection) {
+                            // As in the original, incomplete typing only clears an actual link
+                            // draft; it does not discard an existing manual choice.
+                            if (currentDraft.current.kind === 'link' || currentDraft.current.kind === 'link-pending') selectDraft({ kind: 'current' })
+                            return
+                        }
+                        releaseUploadPreview()
+                        selectDraft(pending ? { kind: 'link-pending' } : selection ? { kind: 'link', ...selection } : { kind: 'current' })
+                        setError('')
+                    }} />
                     <Field label="Or pick an illustration">
                         <IllustrationGrid selectedUrl={selectedUrl} onPick={pickIllustration} disabled={saving || quitting} />
                     </Field>
@@ -221,7 +246,7 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
                 <Button type="button" variant="outline" disabled={saving || quitting} onClick={() => { if (mounted.current && !savingRef.current && !isDesktopQuitting()) onCancel() }}>
                     Cancel
                 </Button>
-                <Button type="submit" disabled={saving || quitting || !name.trim()}>
+                <Button type="submit" disabled={saving || quitting || draft.kind === 'link-pending' || !name.trim()}>
                     {saving && <Loader2Icon className="animate-spin" />}
                     {saving ? 'Saving' : 'Save'}
                 </Button>

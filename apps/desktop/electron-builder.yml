@@ -1,6 +1,6 @@
 # Internal/development packaging for the Rerun desktop preview.
-# Deliberately unsigned: public distribution needs Developer ID signing,
-# hardened runtime, and notarization, which are a separate release step.
+# Locally ad-hoc signed so macOS can identify this preview for native notifications.
+# Public distribution still needs Developer ID, hardened runtime and notarization.
 appId: build.rerun.desktop.preview
 productName: Rerun Desktop Preview
 copyright: Rerun contributors
@@ -21,6 +21,7 @@ mac:
     artifactName: "${productName}-${version}-mac-${arch}.${ext}"
     target:
         - dir
-    identity: null
+    identity: "-"
+    hardenedRuntime: false
     extendInfo:
         NSLocalNetworkUsageDescription: "Rerun runs its AI coworkers on your Mac; they reach services on localhost and your local network that you connect."

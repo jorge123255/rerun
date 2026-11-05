@@ -31,6 +31,14 @@ async function enterBody(read: ReturnType<typeof vi.fn>) {
 beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks() })
 afterEach(() => { vi.useRealTimers() })
 
+test.each([0, 99, 100])('distinguishes a new routine from a truncated run history of %i entries', async count => {
+    engine.listSchedules.mockResolvedValueOnce([{ slug: 'task', ...valid.input }])
+    engine.listRuns.mockResolvedValueOnce(Array.from({ length: count }, () => ({ triggerSource: 'chat', triggerSlug: null })))
+    const response = await handle(new Request('http://localhost/api/desktop/coworkers/local-owner/schedules'))
+    expect(response.status).toBe(200)
+    expect((await response.json())[0]).toMatchObject({ lastResult: null, lastResultUnknown: count >= 100 })
+})
+
 test.each(['abort', 'deadline'] as const)('a stalled schedule body settles after %s even if cancellation never settles', async reason => {
     const stop = new AbortController(), late = deferred<ReadableStreamReadResult<Uint8Array>>()
     const read = vi.fn(() => late.promise), cancel = vi.fn(() => new Promise<void>(() => {}))

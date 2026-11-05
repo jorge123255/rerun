@@ -75,7 +75,7 @@ export function desktopSchedulesApi(db:Client,authorize:ScheduleAccess) {
                 result=await Promise.all(schedules.map(async schedule=>{
                     const last=runs.find(run=>run.triggerSource==='schedule' && run.triggerSlug===schedule.slug)
                     const chat=last ? await adoptDesktopScheduledSession(db,engine,{agentId,engineAgentId:owner.engineAgentId,engineSessionId:last.sessionId,runId:last.id}) : null
-                    return {...schedule,nextRunAt:nextRunAt(schedule,new Date()),lastResult:last ? {status:last.status,runId:last.id,chat} : null,lastResultUnknown:!last}
+                    return {...schedule,nextRunAt:nextRunAt(schedule,new Date()),lastResult:last ? {status:last.status,runId:last.id,chat} : null,lastResultUnknown:!last && runs.length >= 100}
                 }))
             } else {
                 const body=await readScheduleBody(request) as {slug?:unknown;input?:unknown;action?:unknown;requestId?:unknown}
