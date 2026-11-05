@@ -40,7 +40,8 @@ export async function privateFileLocation(root: string, path: string): Promise<P
     for (const part of ['', ...path.split('/').slice(0, -1)]) {
         if (part) current = join(current, part)
         const info = await lstat(current, { bigint: true })
-        if (!info.isDirectory() || info.uid !== uid() || await realpath(current) !== current) throw refused()
+        // These are user workspace paths, never assets to trace into the standalone app.
+        if (!info.isDirectory() || info.uid !== uid() || await realpath(/* turbopackIgnore: true */ current) !== current) throw refused()
         directories.push({path: current, dev: info.dev, ino: info.ino, uid: info.uid})
         const names = await readdir(current)
         if (names.length > 10_000 || names.some(name => /^\.rerun-(publish|rename|delete)-/.test(name))) {
@@ -56,7 +57,7 @@ export async function assertPrivateDirectories(location: PrivateFileLocation): P
     for (const directory of location.directories) {
         const current = await lstat(directory.path, { bigint: true })
         if (!current.isDirectory() || current.uid !== directory.uid || !same(current, directory) ||
-            await realpath(directory.path) !== directory.path) throw refused()
+            await realpath(/* turbopackIgnore: true */ directory.path) !== directory.path) throw refused()
     }
 }
 

@@ -573,7 +573,7 @@ async function assertPrivateToolLocation(workspace:string,path:string,mustExist:
     const located=await containedPath(workspace,path)
     if(!located.root || path.split('/').some(part=>!part || part.startsWith('.')))throw new DesktopHttpError(400,'Choose an existing visible private Files location.')
     const expected=join(located.root,path)
-    const parent=await realpath(dirname(expected)).catch(()=>null)
+    const parent=await realpath(/* turbopackIgnore: true */ dirname(expected)).catch(()=>null)
     if(parent!==dirname(expected) || located.target && located.target!==expected || mustExist && !located.target)throw new DesktopHttpError(400,'Private file tools cannot follow symlinks or create folders.')
 }
 
