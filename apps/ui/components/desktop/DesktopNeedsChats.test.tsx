@@ -75,3 +75,14 @@ test('bulk confirmation marks only its captured coworker rows and leaves a later
     expect(document.body.textContent).toContain('Request later')
     expect(document.body.textContent).not.toContain('Request a')
 })
+
+test('opening a confirmation cancels an earlier row check instead of letting it navigate late', async () => {
+    const api = fixture(); const { select } = await mount()
+    let finish!: (reply: Response) => void
+    api.fetcher.mockImplementationOnce(async () => new Promise<Response>(resolve => { finish = resolve }))
+    await click('Request a')
+    await click('Mark all as read')
+    await act(async () => { finish(Response.json({ items: [item('a')], unavailableAgentIds: [], checkedAt: now })) })
+    expect(select).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Mark everything as read?')
+})

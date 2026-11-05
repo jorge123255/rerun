@@ -14,7 +14,7 @@ function fingerprint(turn: DesktopFirstTurn) {
 
 // Context enrichment changes the accepted row, but never its visible text, file snapshot or
 // author. This also permits conservative read-only reconciliation of old first-turn rows.
-function matchesUser(row: { role: unknown; content_json: unknown; author_id: unknown; author_name: unknown }, turn: DesktopFirstTurn) {
+function matchesUser(row: import('@libsql/client').Row, turn: DesktopFirstTurn) {
     if (row.role !== 'user' || row.author_id !== (turn.author?.id ?? null) || row.author_name !== (turn.author?.name ?? null)) return false
     let content: unknown
     try { content = JSON.parse(String(row.content_json)) } catch { return false }

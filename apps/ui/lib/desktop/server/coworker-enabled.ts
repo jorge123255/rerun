@@ -4,6 +4,7 @@ import { EngineRequestError, getAgent, patchAgent } from '@/lib/engine/client'
 import type { EngineConnection } from '@/lib/engine/types'
 import { DesktopHttpError } from './auth'
 import { assertCoworkerNotDeleting } from './coworker-delete'
+import { assertDesktopCreationSettled } from './creation-guard'
 import { withRosterWrite } from './roster-writes'
 import { findDesktopAgent, listDesktopAgents, type DesktopAgent } from './store'
 
@@ -34,6 +35,7 @@ export function reconcileDesktopEnabled(db: Client, engine: EngineConnection) {
 export function setDesktopCoworkerEnabled(db: Client, engine: EngineConnection, id: string, enabled: boolean) {
     return withRosterWrite(async () => {
         await assertCoworkerNotDeleting(db, id)
+        await assertDesktopCreationSettled(db, id)
         const agent = await findDesktopAgent(db, id)
         if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
         try {

@@ -6,6 +6,7 @@ import { DesktopHttpError } from './auth'
 import { desktopSessionsQuery, sessionOf } from './store'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { withRosterWrite } from './roster-writes'
+import { assertDesktopCreationSettled } from './creation-guard'
 
 type StoredLayout = Pick<DesktopTabWrite, 'tabs' | 'activeIndex'>
 export function layoutOf(row: Row, sessions: Row[]): DesktopTabLayout {
@@ -50,6 +51,7 @@ export async function readDesktopChats(db: Client, agentId: string) {
 export function writeDesktopTabs(db: Client, agentId: string, input: DesktopTabWrite) {
     return withRosterWrite(async () => {
         await assertCoworkerNotDeleting(db, agentId)
+        await assertDesktopCreationSettled(db, agentId)
         const layout = JSON.stringify({ tabs: input.tabs, activeIndex: input.activeIndex } satisfies StoredLayout)
         const transaction = await db.transaction('write')
         try {

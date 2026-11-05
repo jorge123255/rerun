@@ -7,6 +7,7 @@ import type { EngineConnection } from '@/lib/engine/types'
 import { withRosterWrite } from './roster-writes'
 import { DesktopHttpError } from './auth'
 import { assertCoworkerNotDeleting } from './coworker-delete'
+import { assertDesktopCreationSettled } from './creation-guard'
 import { findDesktopAgent, type DesktopAgent } from './store'
 
 const indexSchema = z.object({ agents: z.array(z.object({ id: z.string(), name: z.string() })) })
@@ -50,6 +51,7 @@ export function reconcileDesktopRenames(db: Client, engine: EngineConnection, la
 export function renameDesktopCoworker(db: Client, engine: EngineConnection, launchNonce: string, id: string, name: string) {
     return withRosterWrite(async () => {
         await assertCoworkerNotDeleting(db, id)
+        await assertDesktopCreationSettled(db, id)
         const agent = await findDesktopAgent(db, id)
         if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
         const checks = await db.execute('SELECT * FROM desktop_rename_checks')

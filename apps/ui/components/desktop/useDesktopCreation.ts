@@ -17,8 +17,25 @@ const refusal=z.object({error:z.string(),code:z.enum(['position_occupied','creat
 type Created=z.infer<typeof success>
 export type DesktopCreationPlacement={intent:DesktopCreationIntent;spaceId?:string;position?:GridPosition;submitted:boolean;saving:boolean;error?:string}
 
+/** A transport/body adapter may ignore AbortSignal. Settle our admission at the deadline anyway,
+ * and observe late rejection without allowing a stale reply to continue the creation flow. */
+function abortable<T>(work:Promise<T>,signal:AbortSignal,discard?:(value:T)=>void):Promise<T> {
+ return new Promise((resolve,reject)=>{
+  let settled=false
+  const abort=()=>{if(settled)return;settled=true;signal.removeEventListener('abort',abort);reject(new Error('Creation request cancelled or timed out'))}
+  signal.addEventListener('abort',abort,{once:true})
+  work.then(value=>{
+   if(settled){discard?.(value);return}
+   if(signal.aborted){abort();discard?.(value);return}
+   settled=true;signal.removeEventListener('abort',abort);resolve(value)
+  },error=>{if(settled)return;settled=true;signal.removeEventListener('abort',abort);reject(error)})
+  if(signal.aborted)abort()
+ })
+}
+const discardResponse=(response:Response)=>{void response.body?.cancel().catch(()=>{})}
+
 /** The unsent tile is disposable. Once submitted, only the authoritative receipt may settle it. */
-export function useDesktopCreation(onCreated:(agent:DesktopAgentView,sessionId:string)=>Promise<void>) {
+export function useDesktopCreation(onCreated:(agent:DesktopAgentView,sessionId:string,signal:AbortSignal)=>Promise<void>) {
  const [placement,setPlacement]=useState<DesktopCreationPlacement|null>(null)
  const current=useRef<DesktopCreationPlacement|null>(null),result=useRef<Created|null>(null),presented=useRef(false)
  const [checking,setChecking]=useState(true),[checkError,setCheckError]=useState('')
@@ -33,9 +50,9 @@ export function useDesktopCreation(onCreated:(agent:DesktopAgentView,sessionId:s
   ready.current=false;setChecking(true);setCheckError('')
   const timer=setTimeout(()=>controller.abort(),15_000)
   try{
-   const response=await fetch('/api/desktop/new-agent',{cache:'no-store',signal:controller.signal})
-   if(!response.ok)throw new Error('Could not check your previous creation. Try again before creating another coworker.')
-   const body=pendingReply.parse(await response.json())
+   const response=await abortable(fetch('/api/desktop/new-agent',{cache:'no-store',signal:controller.signal}),controller.signal,discardResponse)
+   if(!response.ok){discardResponse(response);throw new Error('Could not check your previous creation. Try again before creating another coworker.')}
+   const body=pendingReply.parse(await abortable(response.json(),controller.signal))
    if(!alive.current || controller.signal.aborted || generation.current!==epoch)return
    if(body.pending)publish({...body.pending,submitted:true,saving:false,error:'Your previous creation needs confirmation. Retry checks the same coworker and first chat.'})
    ready.current=true
@@ -72,8 +89,8 @@ export function useDesktopCreation(onCreated:(agent:DesktopAgentView,sessionId:s
   const timer=setTimeout(()=>controller.abort(),45_000),release=holdDraftAdmission()
   try{
    if(!result.current){
-    const response=await fetch('/api/desktop/new-agent',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({intent:fixed.intent,position:fixed.position,spaceId:fixed.spaceId}),signal:controller.signal})
-    const body=await response.json()
+    const response=await abortable(fetch('/api/desktop/new-agent',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({intent:fixed.intent,position:fixed.position,spaceId:fixed.spaceId}),signal:controller.signal}),controller.signal,discardResponse)
+    const body=await abortable(response.json(),controller.signal)
     if(!response.ok){
      const rejected=refusal.safeParse(body)
      if(rejected.success){
@@ -86,10 +103,10 @@ export function useDesktopCreation(onCreated:(agent:DesktopAgentView,sessionId:s
     controller.signal.throwIfAborted()
     if(!alive.current)return
    }
-   if(!presented.current){await created.current(result.current!.agent,result.current!.sessionId);presented.current=true}
+   if(!presented.current){await abortable(created.current(result.current!.agent,result.current!.sessionId,controller.signal),controller.signal);presented.current=true}
    controller.signal.throwIfAborted()
-   const response=await fetch('/api/desktop/new-agent',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:fixed.intent.requestId}),signal:controller.signal})
-   const acknowledged=z.object({acknowledged:z.literal(true)}).strict().safeParse(await response.json())
+   const response=await abortable(fetch('/api/desktop/new-agent',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({requestId:fixed.intent.requestId}),signal:controller.signal}),controller.signal,discardResponse)
+   const acknowledged=z.object({acknowledged:z.literal(true)}).strict().safeParse(await abortable(response.json(),controller.signal))
    if(!response.ok || !acknowledged.success)throw new Error('Your coworker is created, but its confirmation could not be saved. Retry checks the same creation.')
    controller.signal.throwIfAborted()
    if(alive.current){publish(null);result.current=null;settle.current?.({kind:'created'});settle.current=null}

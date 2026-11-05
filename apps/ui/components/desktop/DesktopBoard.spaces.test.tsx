@@ -9,6 +9,7 @@ import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-wri
 import type { DesktopBoardState, DesktopSpaceCommand } from '@/lib/desktop/spaces'
 import { freeRectOnSide } from '@/lib/board/space-layout'
 import { DesktopBoard } from './DesktopBoard'
+import { useBoardCoverStore } from '@/stores/board-cover.store'
 import { desktopSpaceLabel, desktopSpaceRectAllowed, firstDesktopSpacePosition } from './desktop-space-layout'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -228,6 +229,41 @@ test('modal, disabled-board and Quit states reject retained gestures without dis
     await act(async () => { beforeDisabled(owner, { col: 13, row: 2 }, b); await flushDesktopDrafts() })
     expect(rendered.grid!.onTileMove).toBeUndefined()
     expect(h.onBoardCommand).not.toHaveBeenCalled()
+})
+
+test('a retained new-coworker placement gesture cannot submit a replacement intent or a newer board', async () => {
+    const first = { intent: { requestId: '44444444-4444-4444-8444-444444444444', name: 'First job', kickoff: 'Do the first job.', suggestionId: null, scheduled: false }, spaceId: a, submitted: false, saving: false }
+    const place = vi.fn(async () => {})
+    const h = await mount({ newCoworker: first, onPlaceCoworker: place })
+    const oldIntent = rendered.grid!.onConfirmPlacement!
+    const second = { ...first, intent: { ...first.intent, requestId: '55555555-5555-4555-8555-555555555555' }, spaceId: b }
+    await h.render({ newCoworker: second })
+    await act(async () => { await oldIntent({ col: 4, row: 4 }) })
+    expect(place).not.toHaveBeenCalled()
+    const oldBoard = rendered.grid!.onConfirmPlacement!
+    await h.render({ board: { ...initial(), revision: 2 } })
+    await act(async () => { await oldBoard({ col: 14, row: 2 }) })
+    expect(place).not.toHaveBeenCalled()
+    expect(rendered.grid!.placementContainerId).toBe(b)
+    await act(async () => { await rendered.grid!.onConfirmPlacement!({ col: 14, row: 2 }) })
+    expect(place).toHaveBeenCalledExactlyOnceWith({ col: 14, row: 2 }, b)
+})
+
+test('modal and disabled-board transitions invalidate retained creation placement gestures even after reopening', async () => {
+    const pending = { intent: { requestId: '44444444-4444-4444-8444-444444444444', name: 'First job', kickoff: 'Do the first job.', suggestionId: null, scheduled: false }, spaceId: b, submitted: false, saving: false }
+    const place = vi.fn(async () => {}), h = await mount({ newCoworker: pending, onPlaceCoworker: place })
+    const beforeCover = rendered.grid!.onConfirmPlacement!
+    let release!: () => void
+    await act(async () => { release = useBoardCoverStore.getState().cover() })
+    try { await act(async () => { await beforeCover({ col: 14, row: 2 }) }) }
+    finally { await act(async () => { release() }) }
+    await act(async () => { await beforeCover({ col: 14, row: 2 }) })
+    const beforeDisable = rendered.grid!.onConfirmPlacement!
+    await h.render({ boardDisabled: true }); await h.render({ boardDisabled: false })
+    await act(async () => { await beforeDisable({ col: 14, row: 2 }) })
+    expect(place).not.toHaveBeenCalled()
+    await act(async () => { await rendered.grid!.onConfirmPlacement!({ col: 14, row: 2 }) })
+    expect(place).toHaveBeenCalledExactlyOnceWith({ col: 14, row: 2 }, b)
 })
 
 test('Duplicate can choose another Box and retries the identical destination after an uncertain response', async () => {

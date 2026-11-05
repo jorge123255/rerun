@@ -113,7 +113,7 @@ test('shared run authority checks the requested grant, exact run, final permissi
     vi.stubGlobal('fetch',vi.fn(async(input:string)=>{
         if(input.endsWith('/sessions/session'))return Response.json({id:'session',agentId:'engine-owner'})
         if(input.endsWith('/runs/run'))return Response.json({id:'run',agentId:'engine-owner',sessionId:'session',status:'running'})
-        return Response.json({id:'engine-owner',config:{enabled:true,tools:{desktopToolGrants:{mcp:false,privateFileWrite:granted}}}})
+        return Response.json({id:'engine-owner',config:{enabled:true,tools:{filesystem:true,desktopToolGrants:{mcp:false,privateFileWrite:granted}}}})
     }))
     const service=await getDesktopRemoteMcpService(runtime),identity={engineAgentId:'engine-owner',sessionId:'session',runId:'run'}
     expect(await service.authorizeRun(identity,new AbortController().signal,'privateFileWrite')).toBe('local-owner')

@@ -1,4 +1,5 @@
 import 'server-only'
+import { assertDesktopCreationAcknowledged, assertDesktopCreationSettled } from './creation-guard'
 import type { Client, Row } from '@libsql/client'
 import { z } from 'zod'
 import { EngineRequestError, request } from '@/lib/engine/client'
@@ -60,6 +61,8 @@ async function apply(db: Client, engine: EngineConnection, receipt: Row) {
 
 export function deleteDesktopCoworker(db: Client, engine: EngineConnection, id: string, confirmationName: string) {
     return withRosterWrite(async () => {
+        await assertDesktopCreationSettled(db, id)
+        await assertDesktopCreationAcknowledged(db, id)
         const previous = await db.execute({ sql: 'SELECT * FROM desktop_deletions WHERE agent_id = ?', args: [id] })
         const receipt = previous.rows[0]
         if (receipt) {

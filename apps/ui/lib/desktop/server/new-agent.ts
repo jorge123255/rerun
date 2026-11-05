@@ -2,15 +2,14 @@ import 'server-only'
 import type { Client, Row } from '@libsql/client'
 import { z } from 'zod'
 import { sanitizeIdentifier } from '@/lib/utils'
-import { request as engineRequest } from '@/lib/engine/client'
+import { getSessionMessages, request as engineRequest } from '@/lib/engine/client'
 import { desktopSpacePositionSchema } from '../spaces'
-import type { DesktopCreationIntent } from '../new-agent'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import { startDesktopChat } from './engine'
 import { desktopModel, engineOf } from './settings'
 import { withRosterWrite } from './roster-writes'
-import { findDesktopAgent } from './store'
+import { findDesktopAgent, findDesktopSession } from './store'
 import { desktopBoardRevisionWrite, desktopDuplicateDestination, desktopPlacementInsert } from './spaces'
 
 const intentSchema = z.object({ requestId: z.uuid(), name: z.string().trim().min(1).max(60), kickoff: z.string().trim().min(1).max(2000), suggestionId: z.null(), scheduled: z.literal(false) }).strict()
@@ -93,10 +92,20 @@ export function createDescribedDesktopCoworker(runtime: Parameters<typeof engine
         const agent = await withRosterWrite(async () => publish(db, runtime, await reserve(db, runtime, input)))
         const row = (await readReceipt(db, input.intent.requestId))!
         if (row.phase === 'started' && typeof row.session_id === 'string') return { agent, sessionId: row.session_id }
-        const kickoff = await startDesktopChat(runtime, { agentId: agent.id, text: input.intent.kickoff, tabUid: input.intent.requestId })
+        const kickoff = await startDesktopChat(runtime, { agentId: agent.id, text: input.intent.kickoff, tabUid: input.intent.requestId }, input.intent.requestId)
         // The stream only observes an already admitted engine run. Drain without retaining output;
         // the engine persists its reply and the newly opened chat reads that same run.
         if (kickoff.response.body) void kickoff.response.body.pipeTo(new WritableStream({ write() {} })).catch(() => {})
+        // Older engines could save a run before saving its input. A run ID alone cannot prove
+        // delivery of this exact description, including on recovery after an interrupted launch.
+        const session = await findDesktopSession(db, kickoff.sessionId)
+        if (!session || session.agentId !== agent.id) throw unknown()
+        const messages = await getSessionMessages(engineOf(runtime), agent.engineAgentId, session.engineSessionId, { requireSuccess: true })
+        const first = messages.find(message => message.role === 'user')
+        let content: unknown
+        try { content = JSON.parse(first?.contentJson ?? '') } catch { throw unknown() }
+        const savedText = typeof content === 'string' ? content : Array.isArray(content) && content[0]?.type === 'text' ? content[0].text : null
+        if (savedText !== input.intent.kickoff) throw unknown()
         await db.batch([
             { sql: "UPDATE desktop_creations SET phase='started',session_id=? WHERE request_id=?", args: [kickoff.sessionId, input.intent.requestId] },
             { sql: `UPDATE desktop_agent_tabs SET revision=revision+1,layout=? WHERE agent_id=? AND revision=0`, args: [JSON.stringify({ activeIndex: 0, tabs: [{ uid: input.intent.requestId, id: kickoff.sessionId, title: input.intent.kickoff.slice(0, 80) }] }), agent.id] },

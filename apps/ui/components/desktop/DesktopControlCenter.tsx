@@ -337,7 +337,7 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
                 const current = latest.current
                 if (!available() || !current.onOpenCoworkerPanel || !current.coworkers.some(owner => owner.id === coworkerId)) return
                 if (tab.id === 'actions') {
-                    if (!current.onRefreshActivity || selectingAttention.current) return
+                    if (!current.onRefreshActivity || selectingAttention.current?.scope === selectionScope) return
                     const attempt = { scope: selectionScope }
                     selectingAttention.current = attempt
                     void (async () => {

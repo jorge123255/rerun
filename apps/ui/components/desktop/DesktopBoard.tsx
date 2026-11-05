@@ -95,8 +95,8 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     const mounted = useRef(true)
     const quitting = useSyncExternalStore(subscribeDraftShutdown, isDesktopQuitting, () => false)
     const covered = useBoardCoverStore(state => state.covers > 0)
-    const latestBoard = useRef({ board, onBoardCommand, boardDisabled, boardSaving, placement, spaceDialog, covered })
-    latestBoard.current = { board, onBoardCommand, boardDisabled, boardSaving, placement, spaceDialog, covered }
+    const latestBoard = useRef({ board, onBoardCommand, boardDisabled, boardSaving, placement, spaceDialog, covered, newCoworker, onPlaceCoworker, onCancelCoworker })
+    latestBoard.current = { board, onBoardCommand, boardDisabled, boardSaving, placement, spaceDialog, covered, newCoworker, onPlaceCoworker, onCancelCoworker }
     const interaction = !!spaceDialog || !!resizing || menuInteracting || commandBusy
     const interactionCallback = useRef(onBoardInteractionChange)
     interactionCallback.current = onBoardInteractionChange
@@ -127,7 +127,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     const baseBlocked = boardDisabled || boardSaving || commandBusy || quitting
     const gridBlocked = baseBlocked || !!spaceDialog || covered
     const boardRevision = board?.revision
-    const gestureScope = JSON.stringify([boardRevision, boardDisabled, boardSaving, !!spaceDialog, covered, !!placement])
+    const gestureScope = JSON.stringify([boardRevision, boardDisabled, boardSaving, !!spaceDialog, covered, placement?.requestId, newCoworker?.spaceId, newCoworker?.position])
     const gestureIdentity = useRef({ scope: gestureScope, generation: 0 })
     if (gestureIdentity.current.scope !== gestureScope) gestureIdentity.current = { scope: gestureScope, generation: gestureIdentity.current.generation + 1 }
     const gestureGeneration = gestureIdentity.current.generation
@@ -192,7 +192,11 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
 
     function cancelCopy() {
         if (!placement || submitting.current) return
-        if (newCoworker) { if (!newCoworker.submitted) onCancelCoworker?.(); return }
+        if (newCoworker) {
+            const live = latestBoard.current
+            if (mounted.current && live.newCoworker?.intent.requestId === newCoworker.intent.requestId && !live.newCoworker.submitted && !live.newCoworker.saving) live.onCancelCoworker?.()
+            return
+        }
         Array.from(section.current?.querySelectorAll<HTMLElement>('[data-tile-id]') ?? [])
             .find(tile => tile.dataset.tileId === placement.sourceId)?.focus({ preventScroll: true })
         setPlacement(null)
@@ -200,14 +204,17 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
 
     async function placeCopy(position: GridPosition) {
         if (newCoworker) {
-            if (!onPlaceCoworker || submitting.current || newCoworker.saving || boardDisabled || boardSaving || isDesktopQuitting()) return
+            const live = latestBoard.current
+            if (!mounted.current || !live.onPlaceCoworker || submitting.current || live.newCoworker?.intent.requestId !== newCoworker.intent.requestId
+                || gestureIdentity.current.generation !== gestureGeneration || live.board?.revision !== boardRevision || live.newCoworker.saving
+                || live.boardDisabled || live.boardSaving || live.spaceDialog || live.covered || commandFlight.current || isDesktopQuitting()) return
             const anchor = newCoworker.position ?? position
             const destination = board ? desktopSpaceAt(board, anchor) : undefined
             if (!newCoworker.position && (!destination || newCoworker.spaceId && destination.id !== newCoworker.spaceId)) return
             const spaceId = newCoworker.spaceId ?? destination?.id
             if (!spaceId) return
             submitting.current = true
-            try { await onPlaceCoworker(anchor, spaceId) } finally { submitting.current = false }
+            try { await live.onPlaceCoworker(anchor, spaceId) } finally { submitting.current = false }
             return
         }
         if (!onDuplicate || !placement || submitting.current || boardDisabled || isDesktopQuitting()) return

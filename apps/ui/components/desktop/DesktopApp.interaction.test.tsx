@@ -384,8 +384,8 @@ test('a board tile opens the saved conversation and New chat starts a separate s
         expect(document.activeElement).toBe(tile)
         expect(container.querySelector('[data-side-panel]')?.closest('[inert]')).not.toBeNull()
         await act(async () => { button('Add coworker').click() })
-        expect(document.querySelector('[role="dialog"] #coworker-name')).not.toBeNull()
-        await act(async () => { button('Cancel').click() })
+        expect(document.querySelector('[role="dialog"] textarea')).not.toBeNull()
+        await act(async () => { document.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
         expect(container.querySelector('[aria-label="Open chat with Researcher"]')).toBe(tile)
     } finally { await act(async () => { root.unmount() }) }
 })

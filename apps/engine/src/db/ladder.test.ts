@@ -109,6 +109,10 @@ describe('sqlite ladders', () => {
               6,
               "desktop-queued-turns",
             ],
+            [
+              7,
+              "desktop-first-turn-input",
+            ],
           ]
         `)
         expect(SHARED_DB_MIGRATIONS.map(s => [s.version, s.id])).toMatchInlineSnapshot(`

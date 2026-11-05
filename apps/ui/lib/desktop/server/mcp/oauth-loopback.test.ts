@@ -1,8 +1,9 @@
 import {createClient} from '@libsql/client'
 import {afterEach,expect,it,vi} from 'vitest'
 vi.mock('server-only',()=>({}))
-const http=vi.hoisted(()=>({callback:null as null|((req:any,res:any)=>void),closed:vi.fn()}))
-vi.mock('node:http',()=>({createServer:(callback:(req:any,res:any)=>void)=>{http.callback=callback;return {once:()=>{},listen:(_port:number,_host:string,ready:()=>void)=>ready(),address:()=>({port:49152}),close:http.closed,closeIdleConnections:()=>{}}}}))
+type HttpHandler=(req:import('node:http').IncomingMessage,res:import('node:http').ServerResponse)=>void
+const http=vi.hoisted(()=>({callback:null as null|HttpHandler,closed:vi.fn()}))
+vi.mock('node:http',()=>({createServer:(callback:HttpHandler)=>{http.callback=callback;return {once:()=>{},listen:(_port:number,_host:string,ready:()=>void)=>ready(),address:()=>({port:49152}),close:http.closed,closeIdleConnections:()=>{}}}}))
 vi.mock('./oauth-network',async original=>({...await original<typeof import('./oauth-network')>(),publicOAuthAddress:vi.fn(async()=>({address:'93.184.216.34',family:4}))}))
 import {remoteMcpStore,remoteMcpSchema,remoteMcpOAuthSchema} from './store'
 import {loopbackMcpOAuth} from './oauth-loopback'
@@ -34,7 +35,7 @@ async function setup(){
 }
 function callback(state:string,iss=issuer){
  const res={writeHead:vi.fn(),end:vi.fn()}
- http.callback!({method:'GET',headers:{host:'127.0.0.1:49152'},url:'/callback?'+new URLSearchParams({state,code:'example-code',iss}),socket:{remoteAddress:'127.0.0.1',setTimeout:()=>{},destroy:()=>{}}},res)
+ http.callback!({method:'GET',headers:{host:'127.0.0.1:49152'},url:'/callback?'+new URLSearchParams({state,code:'example-code',iss}),socket:{remoteAddress:'127.0.0.1',setTimeout:()=>{},destroy:()=>{}}} as unknown as import('node:http').IncomingMessage,res as unknown as import('node:http').ServerResponse)
  return res
 }
 async function flush(){for(let i=0;i<80;i++)await Promise.resolve()}
@@ -143,7 +144,7 @@ it('restores the exact refresh receipt when cancellation arrives after SQLite re
  const stop=new AbortController(),execute=db.execute.bind(db)
  vi.spyOn(db,'execute').mockImplementation(async input=>{
   const result=await execute(input)
-  if(typeof input!=='string' && input.sql.startsWith('INSERT INTO desktop_remote_mcp_oauth'))stop.abort()
+  if(typeof input!=='string' && (input as import('@libsql/client').InStatement & {sql:string}).sql.startsWith('INSERT INTO desktop_remote_mcp_oauth'))stop.abort()
   return result
  })
  await expect(store.writeOAuth('a','x',revision,{...previous,refreshPending:undefined,accessToken:'cancelled-new-token'},stop.signal)).rejects.toThrow()

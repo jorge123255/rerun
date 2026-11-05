@@ -66,7 +66,7 @@ afterEach(async () => {
 const center = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]')]
     .find(dialog => dialog.querySelector('input[cmdk-input]'))
 const activeChat = () => document.querySelector<HTMLElement>('[data-desktop-tab-active="true"]')!
-const composer = () => activeChat()?.querySelector<HTMLTextAreaElement>('#desktop-message')!
+const composer = () => activeChat().querySelector<HTMLTextAreaElement>('#desktop-message')!
 const settle = (ms = 0) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)) })
 async function until<T>(read: () => T | null | undefined): Promise<T> {
     for (let attempt = 0; attempt < 75; attempt++) {
@@ -339,7 +339,7 @@ test('coworker drill opens the exact unsent draft and moves recent chats into op
     expect(app.container.querySelector('[aria-label="Team board"]')).toBe(board)
 })
 
-test('Control center commands reach real model settings, the board, and coworker creation', async () => {
+test('Control center commands reach real model settings, the board, and the original coworker description dialog', async () => {
     const app = await mount()
     const board = app.container.querySelector('[aria-label="Team board"]')
     await openCoworker()
@@ -355,12 +355,12 @@ test('Control center commands reach real model settings, the board, and coworker
     await shortcut('k'); await query('/ add'); await pick('command-add_coworker')
     const dialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(item => item.textContent?.includes('Add a coworker'))!
     expect(dialog).toBeDefined()
-    await enterText(dialog.querySelector<HTMLInputElement>('#coworker-name')!, 'Casey')
-    await enterText(dialog.querySelector<HTMLTextAreaElement>('#coworker-description')!, 'Keep track of notes')
-    await click('Create coworker', dialog)
-    expect(app.created).toEqual([{ name: 'Casey', description: 'Keep track of notes' }])
-    expect(app.container.querySelector('[aria-label="Open chat with Casey"]')).not.toBeNull()
-    await until(() => composer())
+    expect(dialog.querySelector('textarea')).not.toBeNull()
+    expect(dialog.textContent).toContain('first message after you place it on the board')
+    expect(app.created).toEqual([])
+    await act(async () => { dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    await until(() => !document.querySelector('[role="dialog"]'))
+    expect(app.created).toEqual([])
     expect(app.container.querySelector('[aria-label="Team board"]')).toBe(board)
 })
 

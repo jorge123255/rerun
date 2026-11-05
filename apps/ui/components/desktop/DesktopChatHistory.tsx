@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { CalendarClock, LoaderIcon, MessageCircle, MessageCircleQuestionIcon, WebhookIcon } from '@/lib/icons'
 import {
-    countChatsNeedingYou,
     DESKTOP_CHAT_FILTERS,
     desktopChatHistorySchema,
     filterDesktopChats,
@@ -21,6 +20,7 @@ import {
 import { fullDateTime, messageTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { DesktopNeedsChats } from './DesktopNeedsChats'
+import { useDesktopPendingInbox } from './useDesktopPendingInbox'
 
 function ChatHistoryRow({ conversation, active, busy, onOpen }: {
     conversation: DesktopChatHistoryConversation
@@ -126,6 +126,7 @@ function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descri
     const [attempt, setAttempt] = useState(0)
     const [query, setQuery] = useState('')
     const [filter, setFilter] = useState<DesktopChatFilter>(initialFilter)
+    const inbox = useDesktopPendingInbox(true, [agentId])
 
     useEffect(() => {
         const controller = new AbortController()
@@ -167,15 +168,15 @@ function ChatHistoryPanel({ agentId, selectedId, busy, onSelect, titleId, descri
                 {DESKTOP_CHAT_FILTERS.map(({ value, label }) => (
                     <Chip key={value} selected={filter === value} onClick={() => setFilter(value)}>
                         {label}
-                        {value === 'needs' && filter !== 'needs' && history?.questions === 'ok' && (
+                        {value === 'needs' && inbox.status === 'ready' && !inbox.unavailableAgentIds.includes(agentId) && (
                             <span className="ml-1 tabular-nums text-muted-foreground/70">
-                                {countChatsNeedingYou(history.conversations)}
+                                {inbox.items.length}
                             </span>
                         )}
                     </Chip>
                 ))}
             </div>
-            {filter === 'needs' ? <DesktopNeedsChats agentId={agentId} query={query} onSelect={onSelect} busy={busy} /> : error ? (
+            {filter === 'needs' ? <DesktopNeedsChats agentId={agentId} query={query} onSelect={onSelect} busy={busy} inbox={inbox} /> : error ? (
                 <div role="alert" className="flex flex-col items-center gap-2 px-3 py-6 text-center text-xs">
                     <p className="text-destructive">{error}</p>
                     <Button type="button" size="sm" variant="outline" onClick={retry}>Retry conversations</Button>

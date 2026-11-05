@@ -39,7 +39,7 @@ export async function boundedText(response: Response, signal: AbortSignal, limit
         return Buffer.concat(chunks).toString('utf8')
     } finally { signal.removeEventListener('abort',stop); await abortable(reader.cancel(),AbortSignal.timeout(1000)).catch(() => {}) }
 }
-export function decodeReply(text: string, mime: string, id: number): Record<string, any> {
+export function decodeReply(text: string, mime: string, id: number): Record<string, unknown> {
     const messages = mime === 'application/json' ? [JSON.parse(text)] : text.split(/\r?\n\r?\n/).filter(Boolean).flatMap(frame => {
         const data = frame.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
         return data ? [JSON.parse(data)] : []
@@ -88,14 +88,14 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
                 const raw = await boundedText(response,signal,LIMIT,mime === 'text/event-stream' ? requestId : undefined)
                 // A malicious server can echo Authorization in any field, including tool schemas.
                 const decoded = decodeReply(raw,mime,requestId)
-                function redact(value: any): any {
+                function redact(value: unknown): unknown {
                     if (typeof value === 'string') return bearer ? value.split(bearer).join('[REDACTED]') : value
                     if (Array.isArray(value)) return value.map(redact)
                     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k,v])=>[bearer ? k.split(bearer).join('[REDACTED]') : k,redact(v)]))
                     return value
                 }
                 await guard()
-                return redact(decoded) as Record<string,any>
+                return redact(decoded) as Record<string,unknown>
             }
             const init = await rpc('initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'rerun-desktop',version:'1.0.0'}})
             if (init.protocolVersion !== '2025-03-26') throw new Error('Unsupported MCP protocol version')
@@ -109,9 +109,10 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
                     tools.push({name:t.name,description:typeof t.description==='string' ? t.description.slice(0,8000) : undefined,inputSchema:t.inputSchema})
                 }
                 if (tools.length > 256 || Buffer.byteLength(JSON.stringify(tools)) > LIMIT) throw new Error('MCP tool list exceeds limit')
-                cursor = result.nextCursor
-                if (!cursor) break
-                if (typeof cursor !== 'string' || cursor.length > 4096 || page === 7) throw new Error('MCP pagination exceeds limit')
+                const next = result.nextCursor
+                if (!next) break
+                if (typeof next !== 'string' || next.length > 4096 || page === 7) throw new Error('MCP pagination exceeds limit')
+                cursor = next
             }
             if (!call) return {tools}
             if (!tools.some(t=>t.name===call.name)) throw new Error('MCP tool unavailable')

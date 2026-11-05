@@ -8,7 +8,7 @@ import type { DesktopAgentView } from './DesktopApp'
 import { useRef } from 'react'
 import { desktopWorkspaceIconSelectionUrl } from '@/lib/desktop/icon-catalog'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts, onSharedData }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts, onSharedData, navigationDisabled = false, settingsDisabled = false }: {
     workspaceName: string
     iconCatalogId?: string | null
     iconUploadId?: string | null
@@ -24,6 +24,8 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     onControlCenter?: () => void
     onShortcuts?: () => void
     onSharedData?: () => void
+    navigationDisabled?: boolean
+    settingsDisabled?: boolean
 }) {
     const openingControlCenter = useRef(false)
     return <nav aria-label="Workspace" className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -37,18 +39,18 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
             }}>
                 <DropdownMenuLabel>{profileName} · Rerun Local</DropdownMenuLabel>
                 <DropdownMenuItem onSelect={onBoard}><LayoutGrid /> Team board</DropdownMenuItem>
-                {onSharedData && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onSharedData() }}><Database /> Shared database</DropdownMenuItem>}
-                {onControlCenter && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> Control center</DropdownMenuItem>}
-                <DropdownMenuItem onSelect={onSettings}><Settings /> Settings</DropdownMenuItem>
-                {onWorkspaceSettings && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onWorkspaceSettings() }}><Settings /> Workspace settings</DropdownMenuItem>}
-                {onShortcuts && <DropdownMenuItem onSelect={() => { openingControlCenter.current = true; onShortcuts() }}><Keyboard /> Keyboard shortcuts</DropdownMenuItem>}
+                {onSharedData && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedData() }}><Database /> Shared database</DropdownMenuItem>}
+                {onControlCenter && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> Control center</DropdownMenuItem>}
+                <DropdownMenuItem disabled={settingsDisabled} onSelect={onSettings}><Settings /> Settings</DropdownMenuItem>
+                {onWorkspaceSettings && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onWorkspaceSettings() }}><Settings /> Workspace settings</DropdownMenuItem>}
+                {onShortcuts && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onShortcuts() }}><Keyboard /> Keyboard shortcuts</DropdownMenuItem>}
                 {agents.length > 0 && <><DropdownMenuSeparator /><DropdownMenuLabel>Coworkers</DropdownMenuLabel></>}
-                {agents.map(agent => <DropdownMenuItem key={agent.id} aria-current={selected === agent.id ? 'true' : undefined} onSelect={() => onCoworker(agent.id)}>
+                {agents.map(agent => <DropdownMenuItem key={agent.id} disabled={navigationDisabled} aria-current={selected === agent.id ? 'true' : undefined} onSelect={() => onCoworker(agent.id)}>
                     <span className="truncate">{agent.name}</span>
                 </DropdownMenuItem>)}
             </DropdownMenuContent>
         </DropdownMenu>
-        <Button type="button" variant="outline" size="sm" onClick={onSettings} aria-keyshortcuts="Meta+," title="Open model settings"
+        <Button type="button" variant="outline" size="sm" disabled={settingsDisabled} onClick={onSettings} aria-keyshortcuts="Meta+," title="Open model settings"
             className="h-8 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl">
             {providerLabel ? <span role="status" className="flex min-w-0 items-center gap-1.5">
                 <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-emerald-500" />{providerLabel} is connected

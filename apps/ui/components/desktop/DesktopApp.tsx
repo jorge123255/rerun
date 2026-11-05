@@ -69,6 +69,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [sharedDataOpen, setSharedDataOpen] = useState(false)
     const [placingCopy, setPlacingCopy] = useState(false)
     const [quitting, setQuitting] = useState(false)
+    const creationAdmission = useRef({ blocked: false, settingsAllowed: true })
     useEffect(() => {
         const bridge = (window as Window & { desktopApp?: {
             onBeforeQuit?: (listener: () => Promise<boolean>) => () => void
@@ -128,7 +129,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [settings, setSettings] = useState(false)
     useEffect(() => {
         const openSettings = (event: KeyboardEvent) => {
-            if (event.metaKey && event.key === ',' && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !workspaceSettings && !boardInteraction && !boardState.saving && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
+            if (event.metaKey && event.key === ',' && creationAdmission.current.settingsAllowed && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !workspaceSettings && !boardInteraction && !boardState.saving && !themeSavingRef.current && !isDesktopQuitting()) { event.preventDefault(); setSettings(true) }
         }
         window.addEventListener('keydown', openSettings)
         return () => window.removeEventListener('keydown', openSettings)
@@ -157,13 +158,20 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const panelRequestHandled = useCallback((request: DesktopCoworkerPanelRequest) => {
         setRequestedPanel(current => current === request ? null : current)
     }, [])
-    const creation = useDesktopCreation(async (agent, sessionId) => {
+    const creation = useDesktopCreation(async (agent, sessionId, signal) => {
+        signal.throwIfAborted()
         mergeBoardAgents([agent])
         const refreshed = await boardState.refresh()
-        selectCoworker(agent.id, sessionId)
+        signal.throwIfAborted()
+        // This response confirms the first chat. General workspace navigation must not
+        // open a merely reserved coworker while its creation receipt is unresolved.
+        presentCoworker(agent.id, sessionId)
         if (!refreshed && initialData.board) throw new Error('Could not refresh the created coworker’s board placement.')
     })
     const busy = creation.placement?.saving === true
+    const creationNavigationBlocked = !!creation.placement || creation.checking || !!creation.checkError
+    const creationSettingsAllowed = !creationNavigationBlocked || (!busy && (!!creation.checkError || !!creation.placement?.error))
+    creationAdmission.current = { blocked: creationNavigationBlocked, settingsAllowed: creationSettingsAllowed }
     const resumedCreation = useRef<string | null>(null)
     useEffect(() => {
         const pending = creation.placement
@@ -179,7 +187,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const controlCenterDisabled = settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardInteraction || boardState.saving
+    const controlCenterDisabled = settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardInteraction || boardState.saving || creationNavigationBlocked
 
     useEffect(() => {
         if (panelOpen && !settings && !requestedPanel) panelContent.current?.focus({ preventScroll: true })
@@ -209,7 +217,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
 
     async function saveThemeFromControlCenter(next: 'light' | 'dark') {
-        if (themeSavingRef.current || isDesktopQuitting()) return
+        if (creationAdmission.current.blocked || themeSavingRef.current || isDesktopQuitting()) return
         themeSavingRef.current = true
         setThemeSaving(true)
         if (themeErrorToast.current !== undefined) toast.dismiss(themeErrorToast.current)
@@ -232,6 +240,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
     function prepareCoworker(intent: DesktopCreationIntent) {
         // Like Rerun's startScratchAgent, dismiss the form and write nothing until tile drop.
+        creationAdmission.current = { blocked: true, settingsAllowed: false }
         const outcome = creation.begin(intent, creatingSpaceId)
         setCreating(false)
         setPanelOpen(false)
@@ -304,7 +313,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
 
     function showBoard(create = false, spaceId?: string) {
-        if (create && (creation.checking || creation.checkError || creation.placement || isDesktopQuitting())) return
+        if (create && (creationAdmission.current.blocked || isDesktopQuitting())) return
         setRequestedPanel(null)
         setSettings(false)
         setCreating(create)
@@ -321,6 +330,12 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
 
     function selectCoworker(agentId: string, sessionId: string | null = null, openChat?: DesktopOpenChat) {
+        if (creationAdmission.current.blocked) return
+        presentCoworker(agentId, sessionId, openChat)
+    }
+
+    // Called by general selection only after admission, or by the exact confirmed creation result.
+    function presentCoworker(agentId: string, sessionId: string | null = null, openChat?: DesktopOpenChat) {
         if (isDesktopQuitting() || deletedAgents.current.has(agentId)) return
         setRequestedPanel(null)
         setSettings(false)
@@ -332,14 +347,14 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
 
     function focusFromControlCenter(agentId: string) {
-        if (currentAgents.current.some(agent => agent.id === agentId) && !isDesktopQuitting())
+        if (!creationAdmission.current.blocked && currentAgents.current.some(agent => agent.id === agentId) && !isDesktopQuitting())
             setBoardFocus(current => ({ tileId: agentId, nonce: (current?.nonce ?? 0) + 1,
                 // Match the original IsoBoard: the first opening has no measured panel yet.
                 insetRight: window.matchMedia('(min-width: 768px)').matches ? loadSidePanelWidth(window.innerWidth) + SIDE_PANEL_GAP : 0 }))
     }
 
     function openCoworkerPanel(agentId: string, panel: DesktopCoworkerPanel) {
-        if (controlCenterDisabled || isDesktopQuitting() || deletedAgents.current.has(agentId)
+        if (creationAdmission.current.blocked || controlCenterDisabled || isDesktopQuitting() || deletedAgents.current.has(agentId)
             || !currentAgents.current.some(agent => agent.id === agentId)) return
         selectCoworker(agentId)
         setRequestedPanel({ agentId, panel, nonce: ++panelRequestNonce.current })
@@ -349,10 +364,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         if (currentAgents.current.some(agent => agent.id === hit.agentId)) selectCoworker(hit.agentId, hit.id)
     }
 
-    const openSettings = () => { if (!themeSavingRef.current && !isDesktopQuitting()) setSettings(true) }
-    const openShortcuts = () => { if (!controlCenterDisabled && !isDesktopQuitting()) setShortcutsOpen(true) }
+    const openSettings = () => { if (creationAdmission.current.settingsAllowed && !themeSavingRef.current && !isDesktopQuitting()) setSettings(true) }
+    const openShortcuts = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setShortcutsOpen(true) }
     const openNotifications = (agentId?: string) => {
-        if (controlCenterDisabled || isDesktopQuitting() || (agentId && !currentAgents.current.some(owner => owner.id === agentId))) return
+        if (creationAdmission.current.blocked || controlCenterDisabled || isDesktopQuitting() || (agentId && !currentAgents.current.some(owner => owner.id === agentId))) return
         notificationReturnFocus.current = panelOpen
             ? panelContent.current?.querySelector<HTMLElement>('[data-desktop-tab-active="true"] textarea[id^="desktop-message"]') ?? panelContent.current
             : boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]') ?? null
@@ -360,13 +375,14 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
     const modelLabel = defaultProvider ? providers.default?.model : undefined
     const workspaceMenu = <DesktopWorkspaceMenu workspaceName={workspaceName} {...savedIcon} profileName={initialData.profile.displayName}
+        navigationDisabled={creationNavigationBlocked} settingsDisabled={!creationSettingsAllowed}
         agents={agents} selected={panelOpen ? selectedAgentId : null} providerLabel={sidebarProvider && PROVIDER_LABELS[sidebarProvider.provider]}
         modelLabel={modelLabel} onBoard={() => showBoard()} onCoworker={selectCoworker} onSettings={openSettings}
-        onWorkspaceSettings={() => { if (!isDesktopQuitting()) setWorkspaceSettings(true) }}
+        onWorkspaceSettings={() => { if (!creationAdmission.current.blocked && !isDesktopQuitting()) setWorkspaceSettings(true) }}
         onShortcuts={openShortcuts}
-        onSharedData={() => { if (!controlCenterDisabled && !isDesktopQuitting()) setSharedDataOpen(true) }}
+        onSharedData={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setSharedDataOpen(true) }}
         onControlCenter={() => {
-            if (controlCenterDisabled) return
+            if (creationAdmission.current.blocked || controlCenterDisabled) return
             boardFrame.current?.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')?.focus({ preventScroll: true })
             setControlCenterOpen(true)
         }} />
@@ -442,17 +458,17 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <DesktopControlCenter activity={boardActivity} onRefreshActivity={boardActivity.refresh} coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null} initialRecent={initialData.recentCoworkers}
                 open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
                 board={boardState.board}
-                onAddBox={initialData.board && !boardState.error ? () => { if (!controlCenterDisabled && !isDesktopQuitting()) setNewBoxSignal(signal => signal + 1) } : undefined}
+                onAddBox={initialData.board && !boardState.error ? () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setNewBoxSignal(signal => signal + 1) } : undefined}
                 onMoveCoworker={initialData.board && !boardState.error ? (agentId, spaceId) => {
-                    if (!controlCenterDisabled && !isDesktopQuitting() && currentAgents.current.some(agent => agent.id === agentId))
+                    if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting() && currentAgents.current.some(agent => agent.id === agentId))
                         void boardState.command({ kind: 'move-agent', agentId, spaceId }).catch(() => {})
                 } : undefined}
                 onOpenCoworker={id => { if (currentAgents.current.some(agent => agent.id === id)) { focusFromControlCenter(id); selectCoworker(id) } }}
                 onOpenChat={chat => { if (currentAgents.current.some(agent => agent.id === chat.agentId)) { focusFromControlCenter(chat.agentId); selectCoworker(chat.agentId, null, chat) } }}
                 onOpenCoworkerPanel={(agentId, panel) => { focusFromControlCenter(agentId); openCoworkerPanel(agentId, panel) }}
                 onOpenConversation={hit => { focusFromControlCenter(hit.agentId); openSavedConversation(hit) }} onAddCoworker={() => showBoard(true)}
-                onWorkspaceSettings={() => { if (!isDesktopQuitting()) setWorkspaceSettings(true) }}
-                onRecenterBoard={() => { if (!isDesktopQuitting()) setRecenterSignal(signal => signal + 1) }}
+                onWorkspaceSettings={() => { if (!creationAdmission.current.blocked && !isDesktopQuitting()) setWorkspaceSettings(true) }}
+                onRecenterBoard={() => { if (!creationAdmission.current.blocked && !isDesktopQuitting()) setRecenterSignal(signal => signal + 1) }}
                 darkTheme={resolvedTheme === 'dark'}
                 onToggleTheme={resolvedTheme === 'dark' || resolvedTheme === 'light' ? () => { void saveThemeFromControlCenter(resolvedTheme === 'dark' ? 'light' : 'dark') } : undefined}
                 onShortcuts={openShortcuts} onNotifications={openNotifications}

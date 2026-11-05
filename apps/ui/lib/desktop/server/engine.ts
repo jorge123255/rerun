@@ -11,6 +11,7 @@ import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } f
 import { DesktopHttpError } from './auth'
 import { disabledCoworkerMessage } from './coworker-enabled'
 import { assertCoworkerNotDeleting } from './coworker-delete'
+import { assertDesktopCreationSettled, desktopCreationPendingMessage } from './creation-guard'
 import { readCoworkerFile } from './coworker-files'
 import { openDesktopDatabase } from './database'
 import { discardTabStart, existingTabStart, recoverTabSession, reserveTabStart } from './tab-starts'
@@ -100,9 +101,14 @@ async function readDesktopAttachments(runtime: DesktopRuntime, agentId: string, 
     return files
 }
 
-export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput): Promise<{ response: Response; sessionId: string }> {
+export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput, internalCreationRequestId?: string): Promise<{ response: Response; sessionId: string }> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     await assertCoworkerNotDeleting(db, input.agentId)
+    const kickoff = await assertDesktopCreationSettled(db, input.agentId, internalCreationRequestId)
+    if (kickoff && ('regenerateMessageId' in input || input.sessionId || input.tabUid !== kickoff.requestId || input.text !== kickoff.text ||
+        input.requestId || input.reconcileOnly || input.modelChoice || input.question || input.approval || desktopAttachmentPathsOf(input).length)) {
+        throw new DesktopHttpError(409, desktopCreationPendingMessage)
+    }
     const agent = await findDesktopAgent(db, input.agentId)
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     if (!agent.enabled) throw new DesktopHttpError(403, disabledCoworkerMessage)

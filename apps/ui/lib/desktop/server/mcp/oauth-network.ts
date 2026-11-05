@@ -32,7 +32,7 @@ export const oauthJson:OAuthJson=async(value,stop,body)=>{
  return new Promise((resolve,reject)=>{
   // Node supports autoSelectFamily; the installed HTTPS RequestOptions declaration predates it.
   // Keeping the options in a structural value preserves the runtime flag and pinned lookup.
-  const connectionOptions={method:body?'POST':'GET',signal,family:address.family,autoSelectFamily:false,lookup:((_host:unknown,_options:unknown,done:(error:null,address:string,family:number)=>void)=>done(null,address.address,address.family)) as any,headers:{Accept:'application/json',...(bytes?{'Content-Type':body instanceof URLSearchParams?'application/x-www-form-urlencoded':'application/json','Content-Length':String(bytes.length)}:{})}}
+  const connectionOptions={method:body?'POST':'GET',signal,family:address.family,autoSelectFamily:false,lookup:((_host:unknown,_options:unknown,done:(error:null,address:string,family:number)=>void)=>done(null,address.address,address.family)) as import('node:http').RequestOptions['lookup'],headers:{Accept:'application/json',...(bytes?{'Content-Type':body instanceof URLSearchParams?'application/x-www-form-urlencoded':'application/json','Content-Length':String(bytes.length)}:{})}}
   const req=request(url,connectionOptions,res=>{
    if(!res.statusCode || res.statusCode<200 || res.statusCode>=300 || !res.headers['content-type']?.toLowerCase().startsWith('application/json')){res.destroy();reject(new Error('OAuth endpoint refused request'));return}
    let count=0;const chunks:Buffer[]=[]
