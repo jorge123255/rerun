@@ -15,11 +15,11 @@ import type { DesktopAgentView } from './DesktopApp'
  * adapter. The browser is handed a bound source, so it never learns which database it drew and
  * cannot be pointed at another one.
  */
-function CoworkerDataPanel({ agent }: { agent: DesktopAgentView }) {
+function CoworkerDataPanel({ agent, initial }: { agent: DesktopAgentView; initial?: DataFocus | null }) {
     const [expanded, setExpanded] = useState<DataFocus | null>(null)
     const source = useMemo(() => desktopDataSource({ kind: 'agent', agentId: agent.id }), [agent.id])
     return <>
-        <DataBrowser source={source} onExpand={setExpanded} />
+        <DataBrowser source={source} initial={initial ?? null} onExpand={setExpanded} />
         {/* The dialog is too narrow for a board or a gallery: the same table and view open here
             at full size, as a second browser that reads the same private database. */}
         <Dialog open={expanded !== null} onOpenChange={open => !open && setExpanded(null)}>
@@ -34,7 +34,7 @@ function CoworkerDataPanel({ agent }: { agent: DesktopAgentView }) {
     </>
 }
 
-export function DesktopCoworkerData({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
+export function DesktopCoworkerData({ agent, dialogControl, initial }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl; initial?: DataFocus | null }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
         <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Database</Button></DialogTrigger>
@@ -43,7 +43,7 @@ export function DesktopCoworkerData({ agent, dialogControl }: { agent: DesktopAg
                 <DialogTitle>Database</DialogTitle>
                 <DialogDescription>{agent.name}’s private database. Browse, filter, edit a row, or save a view. Only {agent.name} reads and writes it.</DialogDescription>
             </DialogHeader>
-            <CoworkerDataPanel key={agent.id} agent={agent} />
+            <CoworkerDataPanel key={agent.id} agent={agent} initial={initial} />
         </DialogContent>}
     </Dialog>
 }

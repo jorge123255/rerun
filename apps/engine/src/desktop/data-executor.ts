@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { CARD_MAX_CELL_CHARS, CARD_MAX_COLUMNS, CARD_MAX_GROUPS, CARD_MAX_MEDIA_CHARS, CARD_MAX_ROWS, tableCardSchema, type TableCard } from '@rerun/contracts'
 
 export const DATA_DEADLINE_MS = 10_000
 export const DATA_INPUT_BYTES = 1_000_000
@@ -24,11 +25,23 @@ export const dataOperationSchema = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('query'), sql: statement.shape.sql, params, limit: z.number().int().min(1).max(200), hidden }).strict(),
     z.object({ kind: z.literal('execute'), statements: z.array(statement).min(1).max(100), hidden, creator: z.string().max(200).optional() }).strict(),
     z.object({ kind: z.literal('schema'), hidden }).strict(),
+    // A card names a saved view, never SQL: the worker resolves it and freezes the rows it draws.
+    z.object({
+        kind: z.literal('card'),
+        table: z.string().min(1).max(200),
+        view: z.string().min(1).max(200),
+        limit: z.number().int().min(1).max(CARD_MAX_ROWS).optional(),
+        hidden,
+        /** Where an absolute image cell is made relative: this coworker's Files, or the shared space. */
+        workspace: z.string().min(1).max(4096),
+    }).strict(),
 ])
 export type DataOperation = z.infer<typeof dataOperationSchema>
+export type DataCardOperation = Extract<DataOperation, { kind: 'card' }>
 export type DataQueryResult = { rows: Record<string, unknown>[]; truncated: boolean }
 export type DataWriteResult = { statements: number; rowsAffected: number; lastInsertRowid: string | null }
-export type DataResult = DataQueryResult | DataWriteResult | string
+export type DataCardResult = TableCard
+export type DataResult = DataQueryResult | DataWriteResult | DataCardResult | string
 type Identity = { dev: string; ino: string }
 export type DataFilePin = { file: string; parent: Identity; identity: Identity }
 const identity = (stat: { dev: bigint; ino: bigint }): Identity => ({ dev: String(stat.dev), ino: String(stat.ino) })
@@ -194,15 +207,45 @@ export async function executeDesktopData(root: string, file: string, raw: DataOp
             }
             if (msg.type === 'error' && typeof msg.error === 'string') { stop(msg.error.slice(0, 1000)); return }
             if (msg.type === 'result') {
-                const queryResult = z.object({ rows: z.array(z.record(z.string(), z.unknown())).max(200), truncated: z.boolean() }).strict()
-                const writeResult = z.object({ statements: z.number().int().min(1).max(100), rowsAffected: z.number().int().nonnegative(), lastInsertRowid: z.string().nullable() }).strict()
-                const parsed = (operation.kind === 'query' ? queryResult : operation.kind === 'execute' ? writeResult : z.string().max(8_100)).safeParse(msg.result)
-                if (!parsed.success || (operation.kind === 'execute' && !permitted)) { stop('Invalid database worker result.'); return }
-                outcome = parsed.data
+                const result = readWorkerResult(operation, msg.result)
+                if (result === undefined || (operation.kind === 'execute' && !permitted)) { stop('Invalid database worker result.'); return }
+                outcome = result
                 return
             }
             stop('Invalid database worker message.')
         })
         child.send({ type: 'start', pin, operation, databaseKind: options.databaseKind ?? 'private' }, error => { if (error) stop('Could not start database operation.') })
     })
+}
+
+const queryResultSchema = z.object({ rows: z.array(z.record(z.string(), z.unknown())).max(200), truncated: z.boolean() }).strict()
+const writeResultSchema = z.object({ statements: z.number().int().min(1).max(100), rowsAffected: z.number().int().nonnegative(), lastInsertRowid: z.string().nullable() }).strict()
+
+/** The renderer's own bounds: a card is replayed into later model context, so the parent refuses
+ * one that is larger than the layouts can draw rather than passing it through. */
+function boundedCard(card: TableCard): boolean {
+    if (!Number.isInteger(card.total) || card.total < 0) return false
+    if (card.rows.length > CARD_MAX_ROWS || card.columns.length > CARD_MAX_COLUMNS) return false
+    if ((card.groups?.length ?? 0) > CARD_MAX_GROUPS) return false
+    const formats = card.formats ?? {}
+    const media = new Set([card.fields?.image, ...Object.entries(formats).filter(([, format]) => format === 'image' || format === 'url').map(([column]) => column)].filter((column): column is string => !!column))
+    return card.rows.every(row => Object.entries(row).every(([column, value]) =>
+        card.columns.includes(column) && (typeof value !== 'string' || value.length <= (media.has(column) ? CARD_MAX_MEDIA_CHARS : CARD_MAX_CELL_CHARS))))
+}
+
+function readWorkerResult(operation: DataOperation, value: unknown): DataResult | undefined {
+    if (operation.kind === 'query') {
+        const parsed = queryResultSchema.safeParse(value)
+        return parsed.success ? parsed.data : undefined
+    }
+    if (operation.kind === 'execute') {
+        const parsed = writeResultSchema.safeParse(value)
+        return parsed.success ? parsed.data : undefined
+    }
+    if (operation.kind === 'card') {
+        const parsed = tableCardSchema.safeParse(value)
+        return parsed.success && boundedCard(parsed.data) ? parsed.data : undefined
+    }
+    const parsed = z.string().max(8_100).safeParse(value)
+    return parsed.success ? parsed.data : undefined
 }

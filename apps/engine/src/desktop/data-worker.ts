@@ -1,7 +1,10 @@
 import { createClient } from '@libsql/client'
 import { pathToFileURL } from 'node:url'
-import { DATA_INPUT_BYTES, DATA_OUTPUT_BYTES, dataOperationSchema, verifyDesktopDataFile, type DataFilePin, type DataResult } from './data-executor.js'
+import type { TableCard } from '@rerun/contracts'
+import { DATA_INPUT_BYTES, DATA_OUTPUT_BYTES, dataOperationSchema, verifyDesktopDataFile, type DataCardOperation, type DataFilePin, type DataResult } from './data-executor.js'
 import { desktopExecute, desktopQuery, desktopSchema } from './data-store.js'
+import { buildTableCard } from '../tools/builtin/table-card.js'
+import { findView, listViews } from '../db/tableViews.js'
 import { SHARED_DB_MIGRATIONS } from '../db/sharedDb.js'
 import { migrateSqlite } from '../db/ladder.js'
 
@@ -55,6 +58,7 @@ async function run(pin: DataFilePin, raw: unknown, shared: boolean) {
             }
             result = queried
         } else if (operation.kind === 'schema') result = await desktopSchema(db, operation.hidden)
+        else if (operation.kind === 'card') result = await desktopCard(db, operation, shared)
         else result = await desktopExecute(db, operation.statements, operation.hidden, async () => {
             await verifyDesktopDataFile(pin)
             await new Promise<void>((resolve, reject) => {
@@ -74,4 +78,20 @@ async function run(pin: DataFilePin, raw: unknown, shared: boolean) {
         await send({ type: 'error', error: (error instanceof Error ? error.message : 'Database operation failed.').slice(0, 1000) }).catch(() => {})
         process.exit(1)
     }
+}
+
+/** Draws a saved view exactly as the app draws it. The view is addressed by name, the same way
+ * the web card tool addresses it; a missing one names the real views or points at the editor
+ * rather than opening a different view. */
+async function desktopCard(db: ReturnType<typeof createClient>, operation: DataCardOperation, shared: boolean): Promise<TableCard> {
+    const { table, view, limit, hidden, workspace } = operation
+    const found = await findView(db, table, view, hidden)
+    if (!found) {
+        const names = (await listViews(db, table, hidden)).map(saved => saved.name)
+        throw new Error(names.length
+            ? `No view named "${view}" on ${table}. Its views: ${names.join(', ')}`
+            : `${table} has no saved view yet. Save one in the database view editor, then pass its name in view.`)
+    }
+    const { id: _id, table: _table, name, position: _position, ...config } = found
+    return buildTableCard(db, { ...config, scope: shared ? 'shared' : 'agent', table, view: name, ...(limit ? { limit } : {}) }, { hidden, workspace })
 }
