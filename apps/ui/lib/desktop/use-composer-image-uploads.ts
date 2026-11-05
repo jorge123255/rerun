@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { awaitDesktopUpload } from './composer-upload'
 import {
+    desktopImageCanPreviewLocally,
+    desktopImageKindForName,
     desktopImageSnapshotSchema,
     importDesktopImage,
     preflightDesktopImages,
@@ -181,10 +183,11 @@ export function useDesktopComposerImageUploads(options: Options) {
         if (notices.length) { admissionFailures.current++; latest.current.onNotice(notices.slice(0, 3).join(' ')) }
         const batch = preflight.accepted.map(file => {
             const id = crypto.randomUUID()
+            const kind = desktopImageKindForName(file.name)!
             return {
                 item: {
                     id, name: file.name, size: file.size, status: 'queued' as const, error: null,
-                    previewUrl: typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : null,
+                    previewUrl: desktopImageCanPreviewLocally(kind) && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : null,
                 },
                 file, reserved: false,
             } as Job

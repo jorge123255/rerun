@@ -4,8 +4,11 @@ import {
     DESKTOP_IMAGE_ATTACHMENT_MAX_FILES,
     DESKTOP_IMAGE_ATTACHMENT_TOTAL_MAX_BYTES,
     DESKTOP_IMAGE_UPLOAD_ACCEPT,
+    desktopImageCanPreviewLocally,
     desktopImageFilesFromDataTransfer,
     desktopImageKindForName,
+    desktopImageKindIsConverted,
+    desktopImageMediaType,
     desktopImageProviderParts,
     desktopImageRequestAttachments,
     desktopImageSnapshotSchema,
@@ -33,14 +36,19 @@ const snapshot = (over: Partial<DesktopImageSnapshot> = {}): DesktopImageSnapsho
 
 afterEach(() => vi.unstubAllGlobals())
 
-test('image kinds come from the extension only and GIF stays unsupported', () => {
+test('image kinds come from the extension and still formats convert while text is not an image', () => {
     expect(desktopImageKindForName('a.png')).toBe('png')
     expect(desktopImageKindForName('a.JPG')).toBe('jpeg')
     expect(desktopImageKindForName('a.jpeg')).toBe('jpeg')
     expect(desktopImageKindForName('a.webp')).toBe('webp')
-    expect(desktopImageKindForName('a.gif')).toBeNull()
+    expect(desktopImageKindForName('a.gif')).toBe('gif')
+    expect(desktopImageKindForName('a.AVIF')).toBe('avif')
+    expect(desktopImageKindForName('a.ico')).toBe('ico')
+    expect(desktopImageKindForName('a.bmp')).toBe('bmp')
+    expect(desktopImageKindForName('a.svg')).toBe('svg')
     expect(desktopImageKindForName('a.txt')).toBeNull()
     expect(desktopImageKindForName('a.png.exe')).toBeNull()
+    expect(desktopImageKindForName('a.svg.txt')).toBeNull()
 })
 
 test('preflight accepts real magic bytes in order and refuses wrong magic, bad names, and oversize', async () => {
@@ -48,15 +56,20 @@ test('preflight accepts real magic bytes in order and refuses wrong magic, bad n
     const jpeg = file('two.jpg', JPEG_HEAD)
     const webp = file('three.webp', WEBP_HEAD)
     const fake = file('fake.png', JPEG_HEAD)
-    const gif = file('anim.gif', new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]))
+    const gif = file('still.gif', new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]))
+    const svg = file('icon.svg', new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'))
+    const bmp = file('picture.bmp', new Uint8Array([0x42, 0x4d, 0, 0, 0, 0]))
+    const ico = file('icon.ico', new Uint8Array([0, 0, 1, 0, 1, 0]))
+    const avif = file('photo.avif', new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66]))
     const doc = file('notes.txt', new Uint8Array([0x41, 0x42]))
     const huge = file('big.png', PNG_HEAD, DESKTOP_IMAGE_ATTACHMENT_MAX_BYTES + 1)
     const hidden = file('.secret.png')
-    const result = await preflightDesktopImages({ files: [png, fake, jpeg, gif, doc, huge, hidden, webp], attached: [], pending: [] })
+    const result = await preflightDesktopImages({ files: [png, fake, jpeg, gif, svg, bmp, ico, avif, doc, huge, hidden, webp], attached: [], pending: [] })
     expect(result.blockers).toEqual([])
-    expect(result.accepted).toEqual([png, jpeg, webp])
-    expect(result.rejected.map(item => item.file.name)).toEqual(['fake.png', 'anim.gif', 'notes.txt', 'big.png', '.secret.png'])
+    expect(result.accepted).toEqual([png, jpeg, gif, svg])
+    expect(result.rejected.map(item => item.file.name)).toEqual(['fake.png', 'picture.bmp', 'icon.ico', 'photo.avif', 'notes.txt', 'big.png', '.secret.png', 'three.webp'])
     expect(result.rejected[0]!.reason).toContain('PNG')
+    expect(result.rejected.at(-1)!.reason).toContain('4 images')
 })
 
 test('preflight enforces the four-image cap and the 16 MiB aggregate across attached and pending', async () => {
@@ -106,7 +119,27 @@ test('request attachments and provider parts carry bytes-ready image data, never
     expect(JSON.stringify(requests)).not.toContain('workspaces')
 })
 
-test('the accept list covers exactly the three supported types', () => {
-    expect(DESKTOP_IMAGE_UPLOAD_ACCEPT).toBe('.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp')
+test('the accept list covers the direct and converted still formats', () => {
+    for (const extension of ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.ico', '.bmp', '.svg']) {
+        expect(DESKTOP_IMAGE_UPLOAD_ACCEPT).toContain(extension)
+    }
     expect(DESKTOP_IMAGE_ATTACHMENT_MAX_FILES).toBe(4)
+})
+
+test('converted formats map to a PNG snapshot and SVG is never decoded by the client', async () => {
+    expect(desktopImageMediaType('svg')).toBe('image/png')
+    expect(desktopImageMediaType('gif')).toBe('image/png')
+    expect(desktopImageMediaType('avif')).toBe('image/png')
+    expect(desktopImageMediaType('png')).toBe('image/png')
+    expect(desktopImageKindIsConverted('webp')).toBe(false)
+    expect(desktopImageKindIsConverted('bmp')).toBe(true)
+    expect(desktopImageCanPreviewLocally('webp')).toBe(true)
+    expect(desktopImageCanPreviewLocally('ico')).toBe(false)
+
+    const bitmap = vi.fn()
+    vi.stubGlobal('createImageBitmap', bitmap)
+    const svg = file('icon.svg', new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'))
+    const result = await preflightDesktopImages({ files: [svg], attached: [], pending: [] })
+    expect(result.accepted).toEqual([svg])
+    expect(bitmap).not.toHaveBeenCalled()
 })

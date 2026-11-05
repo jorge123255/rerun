@@ -8,6 +8,8 @@ import type { DesktopRuntime } from './runtime'
 import { createDesktopAgent } from './store'
 import { DesktopHttpError } from './auth'
 import { composerTestPng } from './composer-image.test-fixtures'
+import { bmp24, ico, iconDib } from './preview-raster-formats/fixtures'
+import { SAFE_RED_CIRCLE } from './preview-svg/fixtures'
 import { importCoworkerRasterFile, importCoworkerFile } from './coworker-files'
 const faults = vi.hoisted(() => ({ afterLink: null as ((target: string) => Promise<void>) | null }))
 vi.mock('node:fs/promises', async importOriginal => {
@@ -28,6 +30,9 @@ import {
 // A real 1x1 PNG: structural checks and the sharp decode pass both run against it.
 const PNG = composerTestPng()
 const PNG_2 = composerTestPng(0)
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47]
+const STATIC_GIF = new Uint8Array(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'))
+const isPng = (bytes: Uint8Array) => PNG_SIGNATURE.every((byte, index) => bytes[index] === byte)
 
 let root: string
 let runtime: DesktopRuntime
@@ -88,9 +93,9 @@ test('the visible import is create-only while identical bytes reuse one snapshot
     expect(second.path).toBe('b.png')
 })
 
-test('unsupported names, non-image bytes, wrong magic, and GIF stay refused', async () => {
+test('unsupported names, non-image bytes, and wrong magic are refused', async () => {
     for (const [name, bytes] of [
-        ['doc.txt', PNG], ['anim.gif', PNG], ['fake.png', new Uint8Array([1, 2, 3])],
+        ['doc.txt', PNG], ['still.gif', PNG], ['fake.png', new Uint8Array([1, 2, 3])],
         ['.hidden.png', PNG], ['bad\x07.png', PNG],
     ] as const) {
         const error = await errorOf(importDesktopComposerImage(runtime, agentId, '', name, bytes as Uint8Array))
@@ -98,6 +103,31 @@ test('unsupported names, non-image bytes, wrong magic, and GIF stay refused', as
     }
     const wrongMagic = await errorOf(importDesktopComposerImage(runtime, agentId, '', 'photo.png', PNG_2.slice(0, 4)))
     expect(wrongMagic.status).toBe(415)
+})
+
+test('static GIF, BMP, ICO and the safe SVG subset publish canonical PNG snapshots with display names', async () => {
+    const cases = [
+        ['still.gif', STATIC_GIF],
+        ['picture.bmp', new Uint8Array(bmp24(2, 2))],
+        ['icon.ico', new Uint8Array(ico([{ bytes: iconDib(1, 1), width: 1, height: 1 }]))],
+        ['logo.svg', new TextEncoder().encode(SAFE_RED_CIRCLE)],
+    ] as const
+    for (const [name, source] of cases) {
+        const result = await importDesktopComposerImage(runtime, agentId, '', name, source)
+        expect(result.name, name).toBe(name)
+        expect(result.image.name).toBe(name)
+        expect(result.image.mediaType).toBe('image/png')
+        expect(result.path).not.toBe(name)
+        expect(result.path.endsWith('.png')).toBe(true)
+        expect(result.image.path).toBe(result.path)
+        const visible = new Uint8Array(await readFile(join(agentDir(), 'workspace', result.path)))
+        expect(isPng(visible), name).toBe(true)
+        expect(result.image.sha256).toBe(sha256(visible))
+        expect(result.image.byteLength).toBe(visible.byteLength)
+        const snapshot = await readDesktopImageSnapshot(runtime, agentId, result.image)
+        expect(isPng(snapshot.bytes), name).toBe(true)
+        expect(new Uint8Array(await readFile(join(agentDir(), 'chat-images', `${result.image.sha256}.png`)))).toEqual(visible)
+    }
 })
 
 test('folders stay inside the workspace and missing folders are refused', async () => {

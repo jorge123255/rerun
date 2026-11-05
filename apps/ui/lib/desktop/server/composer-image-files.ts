@@ -3,17 +3,17 @@ import { constants, type BigIntStats } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
 import { link, lstat, mkdir, open, opendir, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import sharp from 'sharp'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { findDesktopAgent } from './store'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { importCoworkerRasterFile } from './coworker-files'
-import { DESKTOP_IMAGE_MAX_BYTES, DESKTOP_IMAGE_MAX_PIXELS, DesktopImageBytesError, desktopRasterKind, inspectDesktopImageBytes } from './image-bytes'
+import { DESKTOP_IMAGE_MAX_BYTES } from './image-bytes'
+import { inspectComposerImageSource, inspectStoredComposerImage } from './composer-image-formats'
 import {
     DESKTOP_IMAGE_ATTACHMENT_MAX_FILES, DESKTOP_IMAGE_ATTACHMENT_TOTAL_MAX_BYTES,
-    desktopImageKindForName, desktopImageMediaType, desktopImageSnapshotSchema,
+    desktopImageSnapshotSchema,
     type DesktopImageMediaType, type DesktopImageSnapshot,
 } from '../composer-image'
 
@@ -123,36 +123,6 @@ async function withStore<T>(runtime: DesktopRuntime, agentId: string, create: bo
     } finally { await handle.close() }
 }
 
-function imageNameProblem(name: string): string | null {
-    if (!name || new TextEncoder().encode(name).length > 255 || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.') || /\p{Cc}/u.test(name)) return 'That file name can’t be imported.'
-    if (!desktopImageKindForName(name)) return 'Only .png, .jpg, and .webp images can be attached.'
-    return null
-}
-
-async function inspectComposerImage(name: string, bytes: Uint8Array) {
-    const problem = imageNameProblem(name)
-    if (problem) throw new DesktopHttpError(415, problem)
-    const kind = desktopImageKindForName(name)!
-    let inspected: ReturnType<typeof inspectDesktopImageBytes>
-    try { inspected = inspectDesktopImageBytes(desktopRasterKind(name)!, bytes) }
-    catch (error) {
-        if (error instanceof DesktopImageBytesError && error.reason === 'animation') throw new DesktopHttpError(415, 'Animated images can’t be attached. Choose a static image.')
-        if (error instanceof DesktopImageBytesError && error.reason === 'dimensions') throw new DesktopHttpError(413, 'This image is too large to attach.')
-        throw new DesktopHttpError(415, 'This file is not a supported image.')
-    }
-    try {
-        const options = { animated: false, limitInputPixels: DESKTOP_IMAGE_MAX_PIXELS, failOn: 'warning' as const }
-        const meta = await sharp(bytes, options).timeout({ seconds: 5 }).metadata()
-        if ((meta.pages ?? 1) > 1) throw new DesktopHttpError(415, 'Animated images can’t be attached. Choose a static image.')
-        if (meta.width !== inspected.width || meta.height !== inspected.height || meta.format !== kind) throw new DesktopHttpError(415, 'This image has inconsistent dimensions or format.')
-        await sharp(bytes, options).timeout({ seconds: 5 }).stats()
-    } catch (error) {
-        if (error instanceof DesktopHttpError) throw error
-        throw new DesktopHttpError(415, 'This image is damaged and can’t be attached.')
-    }
-    return { kind, ...inspected }
-}
-
 export function desktopImageSnapshotId(bytes: Uint8Array): string { return createHash('sha256').update(bytes).digest('hex') }
 
 function snapshotExtension(mediaType: DesktopImageMediaType): string {
@@ -197,8 +167,8 @@ async function readSnapshot(store: Store, image: SnapshotIdentity): Promise<{ by
         if (got !== bytes.length || !still?.isFile() || still.uid !== store.owner || after.uid !== store.owner || after.nlink !== BigInt(1) || still.nlink !== BigInt(1) || !sameVersion(opened, after) || !sameVersion(opened, still)) throw changed()
         await store.assertCurrent()
         if (desktopImageSnapshotId(bytes) !== image.sha256) throw changed()
-        const inspected = await inspectComposerImage(name, bytes)
-        if (inspected.contentType !== image.mediaType || image.width !== undefined && image.width !== inspected.width || image.height !== undefined && image.height !== inspected.height || image.byteLength !== undefined && image.byteLength !== bytes.length) throw changed()
+        const inspected = await inspectStoredComposerImage(image.mediaType, bytes)
+        if (image.width !== undefined && image.width !== inspected.width || image.height !== undefined && image.height !== inspected.height || image.byteLength !== undefined && image.byteLength !== bytes.length) throw changed()
         await store.assertCurrent()
         return { bytes: new Uint8Array(bytes), byteLength: bytes.length }
     } finally { await handle.close() }
@@ -257,19 +227,22 @@ async function storeSnapshot(store: Store, image: DesktopImageSnapshot, bytes: U
 export async function importDesktopComposerImage(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array, options: { signal?: AbortSignal } = {}): Promise<{ path: string; name: string; image: DesktopImageSnapshot }> {
     checkSignal(options.signal)
     if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_IMAGE_MAX_BYTES) throw new DesktopHttpError(413, 'Images can be up to 8 MB.')
-    const inspected = await inspectComposerImage(name, bytes)
+    const source = await inspectComposerImageSource(name, bytes, options.signal)
     checkSignal(options.signal)
-    const path = [...folder.split('/').filter(part => part && part !== '.'), name].join('/')
-    const parsed = desktopImageSnapshotSchema.safeParse({ sha256: desktopImageSnapshotId(bytes), name, path, mediaType: desktopImageMediaType(inspected.kind), width: inspected.width, height: inspected.height, byteLength: bytes.byteLength })
+    const path = [...folder.split('/').filter(part => part && part !== '.'), source.canonicalName].join('/')
+    const parsed = desktopImageSnapshotSchema.safeParse({
+        sha256: desktopImageSnapshotId(source.bytes), name, path, mediaType: source.mediaType,
+        width: source.width, height: source.height, byteLength: source.bytes.byteLength,
+    })
     if (!parsed.success) throw new DesktopHttpError(400, 'Choose a valid image attachment and folder.')
     const image = parsed.data
-    const imported = await importCoworkerRasterFile(runtime, agentId, folder, name, bytes, async () => {
+    const imported = await importCoworkerRasterFile(runtime, agentId, folder, source.canonicalName, source.bytes, async () => {
         checkSignal(options.signal)
-        await withStore(runtime, agentId, true, store => storeSnapshot(store, image, bytes))
+        await withStore(runtime, agentId, true, store => storeSnapshot(store, image, source.bytes))
         checkSignal(options.signal)
     })
     // No fallible work or cancellation checks after visible publication.
-    return { ...imported, image }
+    return { path: imported.path, name, image }
 }
 
 export async function readDesktopImageSnapshot(runtime: DesktopRuntime, agentId: string, image: SnapshotIdentity): Promise<{ bytes: Uint8Array; byteLength: number }> {

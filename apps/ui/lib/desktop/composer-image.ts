@@ -7,16 +7,21 @@ export type DesktopImageUploadStatus = 'queued' | 'importing' | 'error' | 'unres
 export const DESKTOP_IMAGE_ATTACHMENT_MAX_FILES = 4
 export const DESKTOP_IMAGE_ATTACHMENT_MAX_BYTES = DESKTOP_IMAGE_MAX_BYTES
 export const DESKTOP_IMAGE_ATTACHMENT_TOTAL_MAX_BYTES = 16 * 1024 * 1024
-export const DESKTOP_IMAGE_UPLOAD_ACCEPT = '.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp'
+export const DESKTOP_IMAGE_UPLOAD_ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,.avif,.ico,.bmp,.svg,'
+    + 'image/png,image/jpeg,image/webp,image/gif,image/avif,image/x-icon,image/vnd.microsoft.icon,image/bmp,image/svg+xml'
 
-export type DesktopImageKind = 'png' | 'jpeg' | 'webp'
+export type DesktopImageKind = 'png' | 'jpeg' | 'webp' | 'gif' | 'avif' | 'ico' | 'bmp' | 'svg'
 export type DesktopImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp'
 
-const MEDIA_TYPE: Record<DesktopImageKind, DesktopImageMediaType> = {
+const DIRECT_MEDIA_TYPE: Partial<Record<DesktopImageKind, DesktopImageMediaType>> = {
     png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp',
 }
 const KIND_EXT: Record<DesktopImageKind, RegExp> = {
-    png: /\.png$/i, jpeg: /\.jpe?g$/i, webp: /\.webp$/i,
+    png: /\.png$/i, jpeg: /\.jpe?g$/i, webp: /\.webp$/i, gif: /\.gif$/i,
+    avif: /\.avif$/i, ico: /\.ico$/i, bmp: /\.bmp$/i, svg: /\.svg$/i,
+}
+const KIND_LABEL: Record<DesktopImageKind, string> = {
+    png: 'PNG', jpeg: 'JPEG', webp: 'WebP', gif: 'GIF', avif: 'AVIF', ico: 'ICO', bmp: 'BMP', svg: 'SVG',
 }
 
 /** The durable, content-addressed identity of one imported image. `sha256` names the private
@@ -47,34 +52,62 @@ const IMPORT_URL = (agentId: string) => `/api/desktop/agents/${encodeURIComponen
 const AMBIGUOUS_MESSAGE = 'The import result could not be confirmed. Check Files before attaching this image again.'
 
 export function desktopImageKindForName(name: string): DesktopImageKind | null {
-    if (KIND_EXT.png.test(name)) return 'png'
-    if (KIND_EXT.jpeg.test(name)) return 'jpeg'
-    if (KIND_EXT.webp.test(name)) return 'webp'
+    for (const kind of Object.keys(KIND_EXT) as DesktopImageKind[]) if (KIND_EXT[kind].test(name)) return kind
     return null
 }
 
+/** Direct PNG/JPEG/WebP bytes are already a model-supported snapshot; every other accepted
+ * still format is converted to a canonical PNG before any draft, queue, or provider sees it. */
+export function desktopImageKindIsConverted(kind: DesktopImageKind): boolean {
+    return DIRECT_MEDIA_TYPE[kind] === undefined
+}
+
+export function desktopImageCanPreviewLocally(kind: DesktopImageKind): boolean {
+    return !desktopImageKindIsConverted(kind)
+}
+
 export function desktopImageMediaType(kind: DesktopImageKind): DesktopImageMediaType {
-    return MEDIA_TYPE[kind]
+    return DIRECT_MEDIA_TYPE[kind] ?? 'image/png'
+}
+
+export function desktopImageNameProblem(name: string): string | null {
+    if (!name || new TextEncoder().encode(name).length > 255 || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.') || /\p{Cc}/u.test(name)) {
+        return 'That file name can’t be imported.'
+    }
+    if (!desktopImageKindForName(name)) return 'Only .png, .jpg, .jpeg, .webp, .gif, .avif, .ico, .bmp, and .svg images can be attached.'
+    return null
+}
+
+function ascii(bytes: Uint8Array, offset: number, length: number): string {
+    let text = ''
+    for (let index = 0; index < length; index++) text += String.fromCharCode(bytes[offset + index] ?? 0)
+    return text
+}
+
+function hasSvgMagic(bytes: Uint8Array): boolean {
+    let offset = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0
+    while (offset < bytes.length && [0x09, 0x0a, 0x0d, 0x20].includes(bytes[offset]!)) offset++
+    if (bytes[offset] !== 0x3c) return false
+    const head = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 4096))).toLowerCase()
+    return /<svg[\s>]/.test(head)
 }
 
 function hasMagic(bytes: Uint8Array, kind: DesktopImageKind): boolean {
     if (kind === 'png') return bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
         && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a
     if (kind === 'jpeg') return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
-    return bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
-        && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+    if (kind === 'webp') return bytes.length >= 12 && ascii(bytes, 0, 4) === 'RIFF' && ascii(bytes, 8, 4) === 'WEBP'
+    if (kind === 'gif') return bytes.length >= 6 && (ascii(bytes, 0, 6) === 'GIF87a' || ascii(bytes, 0, 6) === 'GIF89a')
+    if (kind === 'avif') return bytes.length >= 12 && ascii(bytes, 4, 4) === 'ftyp'
+    if (kind === 'ico') return bytes.length >= 4 && bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 1 && bytes[3] === 0
+    if (kind === 'bmp') return bytes.length >= 2 && ascii(bytes, 0, 2) === 'BM'
+    return hasSvgMagic(bytes)
 }
 
-function imageNameProblem(name: string): string | null {
-    if (!name || new TextEncoder().encode(name).length > 255 || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.') || /\p{Cc}/u.test(name)) {
-        return 'That file name can’t be imported.'
-    }
-    if (!desktopImageKindForName(name)) return 'Only .png, .jpg, and .webp images can be attached.'
-    return null
-}
-
-async function decodeDimensions(file: File): Promise<{ width: number; height: number } | null> {
-    if (typeof createImageBitmap !== 'function') return null
+async function decodeDimensions(file: File, kind: DesktopImageKind): Promise<{ width: number; height: number } | null> {
+    // Raw SVG must never reach createImageBitmap, and the server is authoritative for every
+    // converted format's decoded size. Only the direct raster formats get a client-side probe.
+    if (!desktopImageCanPreviewLocally(kind) || typeof createImageBitmap !== 'function') return null
     try {
         const bitmap = await createImageBitmap(file)
         const size = { width: bitmap.width, height: bitmap.height }
@@ -88,8 +121,8 @@ async function decodeDimensions(file: File): Promise<{ width: number; height: nu
 /**
  * Validates a picked batch against the image budget before any import runs: per-file 8 MiB,
  * 8192 px edges, 16 MP pixels, four files and a 16 MiB aggregate. Attached snapshots and
- * in-flight uploads reserve their slots first. The server re-validates every byte; this pass
- * only refuses what can never succeed and gives each file a readable reason.
+ * in-flight uploads reserve their slots first. The server re-validates every byte and every
+ * converted PNG; this pass only refuses what can never succeed and gives each file a reason.
  */
 export async function preflightDesktopImages(input: {
     files: readonly File[]
@@ -110,7 +143,7 @@ export async function preflightDesktopImages(input: {
     const accepted: File[] = []
     const rejected: DesktopImageRejection[] = []
     for (const file of input.files) {
-        const nameProblem = imageNameProblem(file.name)
+        const nameProblem = desktopImageNameProblem(file.name)
         if (nameProblem) {
             rejected.push({ file, reason: nameProblem })
             continue
@@ -128,12 +161,12 @@ export async function preflightDesktopImages(input: {
             rejected.push({ file, reason: `Images must be ${DESKTOP_IMAGE_ATTACHMENT_TOTAL_MAX_BYTES / 1024 / 1024} MiB or smaller in total.` })
             continue
         }
-        const head = new Uint8Array(await file.slice(0, 16).arrayBuffer())
+        const head = new Uint8Array(await file.slice(0, kind === 'svg' ? 4096 : 16).arrayBuffer())
         if (!hasMagic(head, kind)) {
-            rejected.push({ file, reason: `“${file.name}” is not a valid ${kind === 'jpeg' ? 'JPEG' : kind.toUpperCase()} image.` })
+            rejected.push({ file, reason: `“${file.name}” is not a valid ${KIND_LABEL[kind]} image.` })
             continue
         }
-        const dimensions = await decodeDimensions(file)
+        const dimensions = await decodeDimensions(file, kind)
         if (dimensions && (dimensions.width > DESKTOP_IMAGE_MAX_EDGE || dimensions.height > DESKTOP_IMAGE_MAX_EDGE
             || BigInt(dimensions.width) * BigInt(dimensions.height) > BigInt(DESKTOP_IMAGE_MAX_PIXELS))) {
             rejected.push({ file, reason: 'This image is too large to attach.' })
@@ -149,6 +182,8 @@ export async function preflightDesktopImages(input: {
 /** Files carried by a picker change, drop, or paste. Clipboard drops surface as DataTransferItem
  * lists, so both shapes are read; non-image items are left for the text upload path. */
 export function desktopImageFilesFromDataTransfer(data: DataTransfer | null): File[] {
+    // SVG deliberately never gets a client preview URL or a createImageBitmap call; the chip
+    // shows a placeholder until the server returns the validated immutable PNG snapshot.
     if (!data) return []
     const files: File[] = []
     const seen = new Set<File>()
@@ -211,7 +246,8 @@ export function desktopImageRequestAttachments(images: readonly {
 
 /** AI SDK `file` parts for the engine's user message, in attachment order. Codex's app-server
  * provider writes each part's bytes to its own temp file and sends a `localImage` item, so no
- * host path, workspace path, or URL ever reaches the model. */
+ * host path, workspace path, or URL ever reaches the model. Converted inputs arrive here as
+ * PNG bytes with the original display name kept only as metadata. */
 export function desktopImageProviderParts(images: readonly {
     name: string
     mediaType: DesktopImageMediaType

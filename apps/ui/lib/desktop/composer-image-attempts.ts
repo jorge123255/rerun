@@ -7,8 +7,7 @@ export const desktopImageUploadAttemptSchema = z.object({
     id: z.string().uuid(),
     name: z.string().min(1).max(255).refine(name => new TextEncoder().encode(name).length <= 255 && !/[\\/\p{Cc}]/u.test(name) && !name.startsWith('.') && !!desktopImageKindForName(name)),
     size: z.number().int().min(0).max(DESKTOP_IMAGE_ATTACHMENT_MAX_BYTES),
-})
-export const desktopImageUploadReserveSchema = desktopImageUploadScopeSchema.extend(desktopImageUploadAttemptSchema.shape).strict()
+})export const desktopImageUploadReserveSchema = desktopImageUploadScopeSchema.extend(desktopImageUploadAttemptSchema.shape).strict()
 export const desktopImageUploadDismissSchema = desktopImageUploadScopeSchema.extend({ id: z.string().uuid() }).strict()
 export const desktopImageUploadAttemptsSchema = z.object({ attempts: z.array(desktopImageUploadAttemptSchema).max(10) })
 export type DesktopImageUploadAttempt = z.infer<typeof desktopImageUploadAttemptSchema>

@@ -4,7 +4,7 @@ import { DESKTOP_IMAGE_MAX_BYTES } from './server/image-bytes'
 
 export const desktopUploadScopeSchema = z.object({ tabUid: z.string().min(1).max(128) }).strict()
 export const desktopUploadAttemptSchema = z.object({
-    id: z.string().uuid(), name: z.string().min(1).max(255).refine(name => new TextEncoder().encode(name).length <= 255 && !/[\\/\p{Cc}]/u.test(name) && !name.startsWith('.') && /\.(txt|md|png|jpe?g|webp)$/i.test(name)),
+    id: z.string().uuid(), name: z.string().min(1).max(255).refine(name => new TextEncoder().encode(name).length <= 255 && !/[\\/\p{Cc}]/u.test(name) && !name.startsWith('.') && /\.(txt|md|png|jpe?g|webp|gif|avif|ico|bmp|svg)$/i.test(name)),
     size: z.number().int().min(0).max(DESKTOP_IMAGE_MAX_BYTES),
 }).refine(item => !/\.(txt|md)$/i.test(item.name) || item.size <= DESKTOP_ATTACHMENT_MAX_BYTES)
 export const desktopUploadReserveSchema = desktopUploadScopeSchema.extend(desktopUploadAttemptSchema.shape).strict().refine(item => !/\.(txt|md)$/i.test(item.name) || item.size <= DESKTOP_ATTACHMENT_MAX_BYTES)
