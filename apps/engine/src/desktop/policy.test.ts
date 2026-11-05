@@ -48,6 +48,20 @@ test('desktop Routines allow only the bounded coworker schedule routes', () => {
     }
 })
 
+test('desktop Skills permits proposal reads and exact review decisions, but never hosted skill writes', () => {
+    const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+    for (const [path, allowed] of [
+        ['/agents/owner/skill-proposals', ['GET']],
+        ['/agents/owner/skill-proposals/proposal-id/accept', ['POST']],
+        ['/agents/owner/skill-proposals/proposal-id/dismiss', ['POST']],
+    ] as const) for (const method of methods) expect(desktopRouteAllowed(method, path), `${method} ${path}`).toBe((allowed as readonly string[]).includes(method))
+    for (const path of [
+        '/agents/foreman/skill-proposals', '/agents/a%2Fb/skill-proposals', '/skill-proposals',
+        '/agents/owner/skill-proposals/proposal-id', '/agents/owner/skill-proposals/proposal-id/accept/more',
+        '/agents/owner/skill-proposals/../accept', '/agents/owner/skills', '/agents/owner/skills/qa-review',
+    ]) for (const method of methods) expect(desktopRouteAllowed(method, path)).toBe(false)
+})
+
 test('run details permit only the existing authenticated step and tool reads', () => {
     for (const path of ['/agents/a/runs/r', '/agents/a/runs/r/steps', '/agents/a/runs/r/tools']) {
         expect(desktopRouteAllowed('GET', path)).toBe(true)

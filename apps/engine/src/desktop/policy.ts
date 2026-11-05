@@ -17,6 +17,11 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (path === '/desktop/codex-login') return (method === 'GET' || method === 'POST') && desktopCodexAvailable()
     if (/^\/agents\/(?:import|foreman|default)(?:\/|$)/.test(path)) return false
     const id = '[A-Za-z0-9_-]+'
+    // Human review uses the authenticated proposal API. Skill file management still goes
+    // through the confined desktop publisher; do not open the hosted /skills endpoints.
+    const proposals = `/agents/${id}/skill-proposals`
+    if (new RegExp(`^${proposals}$`).test(path)) return method === 'GET'
+    if (new RegExp(`^${proposals}/${id}/(?:accept|dismiss)$`).test(path)) return method === 'POST'
     const schedules = `/agents/${id}/schedules`
     if (new RegExp(`^${schedules}$`).test(path)) return method === 'GET' || method === 'POST'
     if (new RegExp(`^${schedules}/${id}$`).test(path)) return method === 'GET' || method === 'PATCH' || method === 'DELETE'

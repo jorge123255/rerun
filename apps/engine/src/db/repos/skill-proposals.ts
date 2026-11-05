@@ -104,22 +104,34 @@ export async function appendSkillProposalInstruction(
     id: string,
     input: SkillProposalModel & { instruction: string; summary: string; fingerprint: string }
 ): Promise<SkillProposalRow | undefined> {
-    const current = await getSkillProposal(agentId, id)
-    if (!current || current.status !== 'proposed') return undefined
-    const instructions = [...(JSON.parse(current.instructionsJson) as string[]), input.instruction]
-    const fingerprints = [...(JSON.parse(current.fingerprintsJson) as string[]), input.fingerprint]
-    // The latest rule's run wins: it is the model the user is on by the time they decide.
-    const patch = {
-        instructionsJson: JSON.stringify(instructions),
-        fingerprintsJson: JSON.stringify(fingerprints),
-        summary: input.summary,
-        connectionId: input.connectionId,
-        provider: input.provider,
-        model: input.model,
-    }
     const { db } = await getSystemDb(agentId)
-    await db.update(skillProposals).set(patch).where(eq(skillProposals.id, id))
-    return { ...current, ...patch }
+    // A decision can win after the read, and another append can read the same version. Match
+    // both the pending status and its contents atomically; only a successful write is merged.
+    // Retry a competing append without overwriting its rule, but never retry indefinitely.
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+        const current = await getSkillProposal(agentId, id)
+        if (!current || current.status !== 'proposed') return undefined
+        const fingerprints = JSON.parse(current.fingerprintsJson) as string[]
+        if (fingerprints.includes(input.fingerprint)) return current
+        const instructions = [...(JSON.parse(current.instructionsJson) as string[]), input.instruction]
+        // The latest committed rule's run wins: it is the model the user is on when deciding.
+        const patch = {
+            instructionsJson: JSON.stringify(instructions),
+            fingerprintsJson: JSON.stringify([...fingerprints, input.fingerprint]),
+            summary: input.summary,
+            connectionId: input.connectionId,
+            provider: input.provider,
+            model: input.model,
+        }
+        const updated = await db.update(skillProposals).set(patch).where(and(
+            eq(skillProposals.id, id),
+            eq(skillProposals.status, 'proposed'),
+            eq(skillProposals.instructionsJson, current.instructionsJson),
+            eq(skillProposals.fingerprintsJson, current.fingerprintsJson),
+        )).returning()
+        if (updated[0]) return updated[0]
+    }
+    return undefined
 }
 
 // Compare and set: false means the row had already moved on, which is what stops a double click

@@ -314,9 +314,10 @@ export function desktopSkillTools(ctx: RunContext): ToolSet {
                         await requireDesktopToolGrant(ctx, 'skills')
                         ctx.abortSignal?.throwIfAborted()
                         if (!desktopSkillProposeAllowed(await readAgentConfig(id).catch(() => null))) throw new Error(TURNED_OFF)
-                        await appendSkillProposalInstruction(id, open.id, { ...billedBy, instruction: input.instruction, summary: input.summary, fingerprint })
-                        ctx.skillProposals?.push({ proposalId: open.id, mode: open.mode, title: open.title })
-                        return proposalResult('merged', open.id, MERGED)
+                        const merged = await appendSkillProposalInstruction(id, open.id, { ...billedBy, instruction: input.instruction, summary: input.summary, fingerprint })
+                        if (!merged) return NOT_SAVED
+                        ctx.skillProposals?.push({ proposalId: merged.id, mode: merged.mode, title: merged.title })
+                        return proposalResult('merged', merged.id, MERGED)
                     }
                     await requireDesktopToolGrant(ctx, 'skills')
                     ctx.abortSignal?.throwIfAborted()
