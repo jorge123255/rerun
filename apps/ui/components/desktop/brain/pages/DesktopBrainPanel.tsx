@@ -5,20 +5,21 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { PanelSteps } from '@/components/ui/panel-steps'
 import { Button } from '@/components/ui/button'
 import { Skeleton, SkeletonList } from '@/components/ui/skeleton'
-import { flushDesktopBrainDrafts, type BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
+import { flushDesktopBrainDrafts, forgetBrainDraft, brainDraftHash, type BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
 import { BrainIcon, PanelLeftIcon, RefreshCwIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { BrainPageSummary } from '@rerun/contracts'
 import { useIsMobile } from '@rerun/ui/primitives/use-is-mobile'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
+import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from './mutation-intents'
 import { DesktopBrainHistory } from './DesktopBrainHistory'
 import { DesktopBrainNewPage } from './DesktopBrainNewPage'
 import { DesktopBrainPage } from './DesktopBrainPage'
 import { DesktopBrainSidebar } from './DesktopBrainSidebar'
 import type { DesktopBrainActions, DesktopBrainOverview, DesktopBrainSelection } from './types'
 
-type PageState = { slug: string; detail: BrainPageDetail | null; missing: boolean; version: number }
+type PageState = { slug: string; detail: BrainPageDetail | null; missing: boolean; error?: string; version: number }
 
 function PageSkeleton() {
     return (
@@ -54,7 +55,7 @@ const toSummary = ({ slug, title, type, hash, updatedAt, updatedBy }: BrainPageD
  * acknowledged by the store or shown as not saved. Root mounts this, decides where it opens and
  * owns cross-panel navigation; nothing here talks to an engine, a server action or an account.
  */
-export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug, onOpenConsumed }: {
+export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug, onOpenConsumed, refreshKey, openProposalsKey }: {
     actions: DesktopBrainActions
     onClose: () => void
     /** D's review panel, when root mounts it. Without a slot there is no Proposals row. */
@@ -62,6 +63,8 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     /** A page another panel asked to open, consumed once. */
     openSlug?: string | null
     onOpenConsumed?: () => void
+    refreshKey?: number
+    openProposalsKey?: number
 }) {
     const isMobile = useIsMobile()
     const [overview, setOverview] = useState<DesktopBrainOverview | null>(null)
@@ -77,9 +80,11 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     const available = overview?.available ?? false
     const offline = overview && !overview.available ? overview.reason : null
 
+    const overviewSeq = useRef(0)
     const reloadOverview = useCallback(async (): Promise<DesktopBrainOverview> => {
-        const next = await actions.overview().catch(() => ({ available: false, reason: 'unreachable' }) as const)
-        setOverview(next)
+        const seq = ++overviewSeq.current
+        const next: DesktopBrainOverview = await actions.load().then(value => ({ available: true as const, ...value })).catch(() => ({ available: false, reason: 'unreachable' } as const))
+        if (seq === overviewSeq.current) setOverview(next)
         return next
     }, [actions])
 
@@ -89,9 +94,15 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
         setPageState(current => (current?.slug === slug ? current : { slug, detail: null, missing: false, version: 0 }))
         // A page just left may still be writing: read after it lands, never before.
         await flushDesktopBrainDrafts()
-        const detail = await actions.readPage(slug).catch(() => null)
-        if (seq !== readSeq.current) return
-        setPageState(current => ({ slug, detail, missing: !detail, version: (current?.slug === slug ? current.version : 0) + 1 }))
+        try {
+            const detail = await actions.readPage(slug)
+            if (seq !== readSeq.current) return
+            setPageState(current => ({ slug, detail, missing: !detail, version: (current?.slug === slug ? current.version : 0) + 1 }))
+        } catch (error) {
+            if (seq !== readSeq.current) return
+            setPageState(current => ({ slug, detail: current?.slug === slug ? current.detail : null, missing: false,
+                version: current?.slug === slug ? current.version : 0, error: error instanceof Error ? error.message : 'Could not read this page. Try again.' }))
+        }
     }, [actions])
 
     const select = useCallback((next: DesktopBrainSelection) => {
@@ -99,6 +110,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
             setSidebarOpen(false)
             return
         }
+        selectionRef.current = next
         setSelection(next)
         setSidebarOpen(false)
         if (next.kind === 'page') void loadPage(next.slug)
@@ -121,6 +133,20 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
         select({ kind: 'page', slug: openSlug })
         onOpenConsumed?.()
     }, [openSlug, select, onOpenConsumed])
+
+    useEffect(() => {
+        if (refreshKey === undefined) return
+        void reloadOverview()
+        const selected = selectionRef.current
+        if (selected?.kind === 'page' || selected?.kind === 'history') void loadPage(selected.slug)
+    }, [refreshKey, reloadOverview, loadPage])
+
+    const consumedProposalsKey = useRef<number | undefined>(undefined)
+    useEffect(() => {
+        if (!openProposalsKey || !renderProposals || consumedProposalsKey.current === openProposalsKey) return
+        consumedProposalsKey.current = openProposalsKey
+        select({ kind: 'proposals' })
+    }, [openProposalsKey, select, renderProposals])
 
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
@@ -155,22 +181,26 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     }, [savedPage, reloadOverview])
 
     const deletePage = useCallback(async (slug: string) => {
-        const result = await actions.deletePage(slug).catch(cause => ({ ok: false as const, error: cause instanceof Error && cause.message ? cause.message : 'Could not delete the page' }))
-        if (!result.ok) {
-            // Nothing is pretended: the page stays open and the failure is said out loud.
-            toast.error(result.error || 'Could not delete the page')
-            return
-        }
-        const next = await reloadOverview()
-        const fallback = next.available ? next.pages.find(page => page.slug !== slug)?.slug : undefined
-        if (fallback) select({ kind: 'page', slug: fallback })
-        else {
-            setSelection(null)
-            setPageState(null)
-        }
-    }, [actions, reloadOverview, select])
+        try {
+            if (!await flushDesktopBrainDrafts()) throw new Error('Save or resolve your page edits before deleting.')
+            const expectedHash = brainDraftHash(slug) ?? (pageState?.slug === slug ? pageState.detail?.page.hash : undefined)
+            const existing = brainMutationIntent('delete:' + slug)
+            if (!existing && !expectedHash) throw new Error('Reload this page before deleting it.')
+            const pending = existing ?? await reserveBrainMutation('delete:' + slug, { kind: 'delete', slug, expectedHash: expectedHash! })
+            if (pending.input.kind !== 'delete' || pending.input.slug !== slug) throw new Error('The saved delete request does not match this page.')
+            const result = await actions.deletePage(slug, pending.input.expectedHash, pending.requestId)
+            await settleBrainMutation('delete:' + slug, result)
+            if (!result.ok) throw new Error(result.error)
+            forgetBrainDraft(slug)
+            const next = await reloadOverview()
+            const fallback = next.available ? next.pages.find(page => page.slug !== slug)?.slug : undefined
+            if (fallback) select({ kind: 'page', slug: fallback })
+            else { selectionRef.current = null; setSelection(null); setPageState(null) }
+        } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not delete this page. Try again.') }
+    }, [actions, pageState, reloadOverview, select])
 
     const restoredPage = useCallback((detail: BrainPageDetail) => {
+        forgetBrainDraft(detail.page.slug)
         setPageState(current => ({ slug: detail.page.slug, detail, missing: false, version: (current?.version ?? 0) + 1 }))
         setSelection({ kind: 'page', slug: detail.page.slug })
         void reloadOverview()
@@ -225,12 +255,16 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
         }
         switch (selection.kind) {
             case 'page': {
-                if (pageState?.slug !== selection.slug || (!pageState.detail && !pageState.missing)) return <PageSkeleton />
+                if (pageState?.slug !== selection.slug || (!pageState.detail && !pageState.missing && !pageState.error)) return <PageSkeleton />
+                if (pageState.error) return <><BrainTopBar crumbs={[{ label: 'Pages' }, { label: selection.slug }]} /><EmptyState icon={BrainIcon}
+                    title="Could not read this page" description={pageState.error}
+                    action={<Button size="sm" onClick={() => void loadPage(selection.slug)}>Retry</Button>} /></>
                 if (!pageState.detail) {
                     return (
                         <>
                             <BrainTopBar crumbs={[{ label: 'Pages' }, { label: selection.slug }]} />
-                            <EmptyState icon={BrainIcon} title={`No page "${selection.slug}" yet`} description="A link points here, but nothing has been written on this page." />
+                            <EmptyState icon={BrainIcon} title={`No page "${selection.slug}" yet`} description="A link points here, but nothing has been written on this page."
+                                action={<Button size="sm" variant="outline" onClick={() => { try { if (brainMutationIntent('delete:' + selection.slug)) void deletePage(selection.slug); else void loadPage(selection.slug) } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not read the pending request.') } }}>Retry</Button>} />
                         </>
                     )
                 }

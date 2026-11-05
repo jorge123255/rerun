@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopNativeReviewRead } from '@/test/desktop-background-fixture'
 
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -127,6 +128,7 @@ test('shows retry states instead of empty filters when classification or pending
     let reads = 0
     let inboxReads = 0
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        const nativeReview = desktopNativeReviewRead(url); if (nativeReview) return nativeReview
         if (url === '/api/desktop/pending-inbox') return Response.json(++inboxReads === 1 ? { items: [], unavailableAgentIds: ['alice'], checkedAt: createdAt } : inboxOf([known]))
         reads++
         return Response.json(reads === 1
@@ -185,6 +187,7 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
     const sent: Record<string, string>[] = []
     let finish!: () => void
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(url, init); if (nativeReview) return nativeReview
         const recentResponse = recent.handle(url, init)
         if (recentResponse) return recentResponse
         const draftResponse = drafts.handle(url, init)
@@ -279,6 +282,7 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
 test('history read failure can be retried without turning it into an empty saved history', async () => {
     let reads = 0
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(url, init); if (nativeReview) return nativeReview
         const recentResponse = recent.handle(url, init)
         if (recentResponse) return recentResponse
         const draftResponse = drafts.handle(url, init)

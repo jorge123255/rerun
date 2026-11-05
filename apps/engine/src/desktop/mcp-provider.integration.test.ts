@@ -66,6 +66,23 @@ test('registry rejects an MCP name colliding with an existing built-in and relea
     expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init.body)).action)).toEqual(['catalog', 'release'])
 })
 
+test('separately granted local stdio tools reach Codex without admitting copied adapters', async () => {
+    const { ctx, agent } = setup('local_echo')
+    agent.config.tools.desktopToolGrants = { localMcpStdio: true, workspaceList: true }
+    const built = await buildTools(ctx)
+    try {
+        const resolved = resolveModel(agent, undefined, { ...built.tools, local_copy: { ...built.tools.local_echo } })
+        const names = captured.settings.at(-1)!.mcpServers.rerun.tools.map((entry: { name: string }) => entry.name)
+        expect(names).toContain('local_echo')
+        expect(names).not.toContain('local_copy')
+        await resolved.close()
+        agent.config.tools.desktopToolGrants = { workspaceList: true, localMcpStdio: false }
+        const denied = resolveModel(agent, undefined, built.tools)
+        expect(captured.settings.at(-1)!.mcpServers.rerun.tools.map((entry: { name: string }) => entry.name)).not.toContain('local_echo')
+        await denied.close()
+    } finally { await built.close() }
+})
+
 test('the legal tool name formed by server _ and remote tool proto__ survives registry and both Codex bridge filters', async () => {
     const name = `${'_'}_${'proto__'}`
     expect(name).toBe('__proto__')

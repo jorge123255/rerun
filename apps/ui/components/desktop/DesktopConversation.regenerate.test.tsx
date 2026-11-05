@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopNativeReviewRead } from '@/test/desktop-background-fixture'
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, test, vi } from 'vitest'
@@ -22,6 +23,7 @@ test('regenerates the selected saved reply in a separate chat and retries a lost
     const requests: Record<string, unknown>[] = []
     let completeRequest!: (response: Response) => void
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
@@ -100,6 +102,7 @@ test('regenerates the selected saved reply in a separate chat and retries a lost
 test('stopping a regenerating reply cancels only the alternate run', async () => {
     const stopped: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })

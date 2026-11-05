@@ -17,6 +17,10 @@ import { desktopApp, desktopRouteAllowed } from '../../desktop/policy.js'
 import { bindDesktopSchedules } from '../../desktop/schedule-binding.js'
 import { startScheduler } from '../../runtime/scheduler.js'
 import { stopDesktopSkillProposals } from '../../desktop/skill-proposal-work.js'
+import { recoverNativeWritebackOutbox } from '../../desktop/native-writeback/outbox.js'
+import { sendNativeWriteback } from '../../desktop/native-writeback/client.js'
+import { stopAllDesktopNativeWorkers } from '../../desktop/native-worker.js'
+import { initializeDesktopBrainStore } from '../../desktop/brain-pages-router.js'
 import { stopDesktopMcp } from '../../desktop/mcp-tools.js'
 import { logger } from '../../lib/logger.js'
 
@@ -39,9 +43,12 @@ export async function desktopRunCommand(): Promise<void> {
     if (!secret.safeParse(process.env.RERUN_DESKTOP_SECRET_KEY).success) throw new Error('Desktop credential encryption is unavailable')
     if (await realpath(config.RERUN_DATA_DIR) !== await realpath(resolve(runtime.dataRoot, 'workspaces', '1', 'engine'))) throw new Error('Desktop engine data root mismatch')
     await prepareDataDir()
+    await initializeDesktopBrainStore()
+    const lifetime = new AbortController()
     let schedules: Awaited<ReturnType<typeof bindDesktopSchedules>> | undefined
     let stopScheduler: ReturnType<typeof startScheduler> | undefined
     let stopping = false
+    let shutdownActive = false
     let initialized = false
     const app = new Hono()
     app.use('*', async (c, next) => {
@@ -67,8 +74,10 @@ export async function desktopRunCommand(): Promise<void> {
     app.route('/', createServer())
     let server: Server
     const shutdown = async () => {
-        if (stopping) return
+        if (shutdownActive) return
+        shutdownActive = true
         stopping = true
+        lifetime.abort()
         stopScheduler?.()
         const closed = new Promise<void>(done => server.close(() => done()))
         stopCodexLogin()
@@ -78,11 +87,16 @@ export async function desktopRunCommand(): Promise<void> {
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
         await Promise.allSettled([closing, abortAllRuns(), stopScheduler?.drain()])
-        await abortAllRuns()
-        await closeAllMcp()
+        const shutdownFailures = (await closing).filter(result => result.status === 'rejected').length
+        const remaining = await Promise.allSettled([abortAllRuns(), closeAllMcp(), stopAllDesktopNativeWorkers()])
         server.closeAllConnections()
         await closed
-        process.send?.({ type: 'stopped', launchNonce: runtime.launchNonce })
+        const failed = shutdownFailures + remaining.filter(result => result.status === 'rejected').length
+        if (failed) logger.error({ count: failed }, 'Desktop process cleanup was not confirmed')
+        process.send?.({ type: failed ? 'stop-failed' : 'stopped', launchNonce: runtime.launchNonce })
+        // Keep process custody and admission closed after an uncertain drain.
+        // A later stop request may retry; parent exit must not hide live writers.
+        if (failed) { shutdownActive = false; return }
         process.exit(0)
     }
     server = serve({ fetch: app.fetch, port: config.RERUN_PORT, hostname: '127.0.0.1' }, () => {
@@ -90,6 +104,9 @@ export async function desktopRunCommand(): Promise<void> {
             // The UI starts first. Reconcile after listening so its authenticated callbacks can
             // fetch the exact session and run before persisting a restart failure notification.
             await reconcileInterruptedRuns()
+            if (stopping) return
+            const recovered = await recoverNativeWritebackOutbox(bundle => sendNativeWriteback(bundle, lifetime.signal))
+            if (recovered.retained.length) logger.warn({ count: recovered.retained.length }, 'Native file review captures retained for later recovery')
             if (stopping) return
             schedules = await bindDesktopSchedules(runtime)
             if (stopping) { await schedules.close().catch(() => {}); return }

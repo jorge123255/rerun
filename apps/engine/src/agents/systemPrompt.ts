@@ -5,6 +5,7 @@ import { buildScheduleIndex } from '../schedules/index.js'
 import { buildTriggerIndex } from '../triggers/index.js'
 import { recallDesktopMemory } from '../desktop/memory-store.js'
 import { desktopToolInstruction, hasDesktopToolGrant } from '../desktop/tool-grants.js'
+import { DESKTOP_BRAIN_INSTRUCTION } from '../desktop/brain-instruction.js'
 import { DESKTOP_CARD_TABLE_INSTRUCTION } from '../desktop/card-table.js'
 import { desktopApp } from '../desktop/policy.js'
 import { buildMemoryIndex } from '../memory/index.js'
@@ -244,7 +245,9 @@ async function buildForemanPrompt(agent: LoadedAgent, provider: Provider, order:
     const cfg = agent.config.tools
     const [sharedDbSchema, brain] = await Promise.all([
         cfg.sharedDb ? readSharedDbSchema(SHARED_SCHEMA_BUDGET).catch(() => '') : Promise.resolve(''),
-        cfg.brain ? buildForemanBrainSection().catch(() => '') : Promise.resolve(''),
+        desktopApp()
+            ? Promise.resolve(agent.config.enabled && hasDesktopToolGrant(agent.config, 'brain') ? DESKTOP_BRAIN_INSTRUCTION : '')
+            : cfg.brain ? buildForemanBrainSection().catch(() => '') : Promise.resolve(''),
     ])
     const stable = [
         section('identity', agent.brief?.instructions.trim() || agent.soul.trim()),
@@ -283,7 +286,9 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         dbOn && !desktop ? readAgentDbSchema(agent.id).catch(() => '') : Promise.resolve(''),
         sharedDbOn && !desktop ? readSharedDbSchema(SHARED_SCHEMA_BUDGET).catch(() => '') : Promise.resolve(''),
         buildMcpIndex(agent).catch(() => ''),
-        cfg.brain ? buildBrainSection().catch(() => '') : Promise.resolve(''),
+        desktop
+            ? Promise.resolve(agent.config.enabled && hasDesktopToolGrant(agent.config, 'brain') ? DESKTOP_BRAIN_INSTRUCTION : '')
+            : cfg.brain ? buildBrainSection().catch(() => '') : Promise.resolve(''),
     ])
 
     const computer = offersComputer(agent.config)

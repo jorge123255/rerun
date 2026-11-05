@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopNativeReviewRead } from '@/test/desktop-background-fixture'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -62,6 +63,7 @@ function stubFetch(overrides: {
     const imports: string[] = []
     const fixture = overrides.draft ?? null
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         overrides.observe?.(input, init)
         const url = new URL(String(input), 'http://local')
         const draftResponse = fixture?.handle(input, init)
@@ -228,6 +230,7 @@ test('a draft that cannot take a confirmed import keeps the file visibly unresol
     })
     const base = vi.mocked(fetch).getMockImplementation()!
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         if (init?.method === 'PUT' && new URL(String(input), 'http://local').pathname.endsWith('/draft')) {
             return Response.json({ error: 'Draft store unavailable' }, { status: 500 })
         }
@@ -328,6 +331,7 @@ test('a failed durable warning write prevents the file POST entirely', async () 
     const { imports } = stubFetch({ draft: fixture })
     const base = vi.mocked(fetch).getMockImplementation()!
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         if (init?.method === 'POST' && String(input).includes('/upload-attempts')) return Response.json({ error: 'Storage unavailable' }, { status: 500 })
         return base(input, init)
     }))
@@ -379,6 +383,7 @@ test('an upload joins the exact queued message only after validation, import and
     const writes: Array<{ action: string; item?: Record<string, unknown> }> = []
     let queued: Record<string, unknown> | null = null
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const pathname = new URL(String(input), 'http://local').pathname
         if (pathname.endsWith('/stop')) return Response.json({ running: true, runId: 'active-run' })
         if (pathname.endsWith('/queue')) {

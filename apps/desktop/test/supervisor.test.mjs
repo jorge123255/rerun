@@ -6,11 +6,32 @@ import { mkdtemp, rm, access, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { once } from 'node:events'
+import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { RuntimeSupervisor } from '../src/main/supervisor.mjs'
 
 const fixture = fileURLToPath(new URL('./service-fixture.mjs', import.meta.url))
 const identity = () => ({ installId: randomUUID(), engineApiKey: randomBytes(32).toString('hex'), encryptionKey: randomBytes(32).toString('hex') })
+
+test('a failed local-process drain keeps authority alive and reports an error until retry succeeds', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-drain-'))
+    let acknowledged = false
+    const supervisor = new RuntimeSupervisor({ root, identity: identity(), bundle: {}, fetcher: async () => Response.json({ stopped: acknowledged }) })
+    supervisor.runtime = { app: { origin: 'http://127.0.0.1:3000' }, engine: { apiKey: 'fixture' } }
+    const child = new EventEmitter()
+    Object.assign(child, { exitCode: null, signalCode: null, connected: true, send() { this.exitCode = 0; this.emit('exit', 0, null) } })
+    supervisor.children.add(child)
+    try {
+        await assert.rejects(supervisor.stop(), /cleanup was not confirmed/)
+        assert.equal(supervisor.status.state, 'error')
+        assert.equal(supervisor.children.size, 1)
+        assert.equal(child.exitCode, null)
+        acknowledged = true
+        await supervisor.stop()
+        assert.equal(supervisor.status.state, 'stopped')
+        assert.equal(supervisor.children.size, 0)
+    } finally { await rm(root, { recursive: true, force: true }) }
+})
 
 test('real supervised processes require authenticated nonce readiness and Quit removes owned children', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-supervisor-'))
@@ -76,7 +97,10 @@ test('a service crash stops its sibling instead of leaving a running hidden work
         await siblingExit
         assert.equal(supervisor.status.state, 'error')
         assert.equal(sibling.exitCode, 0)
-    } finally { await supervisor.stop(); await rm(root, { recursive: true, force: true }) }
+        // The dead UI cannot attest to detached local-program cleanup. Keep the
+        // explicit error rather than treating parent service exit as proof.
+        await assert.rejects(supervisor.stop())
+    } finally { await supervisor.stop().catch(() => {}); await rm(root, { recursive: true, force: true }) }
 })
 
 test('UI death while the engine is starting rejects startup and cleans every attempted engine', async () => {

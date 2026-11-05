@@ -149,7 +149,7 @@ describe('v2 to v3: mcp-packages', () => {
         await rm(mcpPackagesDir(), { recursive: true, force: true })
         await writeDataVersion(2)
         await migrateDataDir()
-        expect(readDataVersion()).toBe(3)
+        expect(readDataVersion()).toBe(DATA_DIR_VERSION)
         expect(existsSync(mcpPackagesDir())).toBe(true)
     })
 
@@ -184,6 +184,10 @@ describe('data-dir ladder', () => {
             [
               3,
               "mcp-packages",
+            ],
+            [
+              4,
+              "desktop-brain-and-native-review",
             ],
           ]
         `)

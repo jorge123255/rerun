@@ -1,5 +1,13 @@
 import 'server-only'
 import { z } from 'zod'
+import { lstat, realpath } from 'node:fs/promises'
+import { join } from 'node:path'
+import { stdioStore } from './mcp-stdio/store'
+import { stdioRuntime, type StdioAuthority } from './mcp-stdio/runtime'
+import { stdioApi } from './mcp-stdio/api'
+import { stdioEngineBridge } from './mcp-stdio/bridge'
+import { nativeWritebackService } from './native-writeback/service'
+import { nativeWritebackApi } from './native-writeback/api'
 import { authenticateDesktopEngineRequest, authenticateDesktopRequest, DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
@@ -11,7 +19,7 @@ import { loopbackMcpOAuth } from './mcp/oauth-loopback'
 import { loopbackOAuthApi } from './mcp/oauth-api'
 import { desktopMcpBridge, desktopMcpBridgeRequest, type McpRunIdentity } from './mcp/bridge'
 
-const authority = z.object({ id: z.string(), config: z.object({ enabled: z.boolean(), tools: z.object({ filesystem: z.boolean().optional(), desktopToolGrants: z.record(z.string(), z.boolean()).optional() }) }) })
+const authority = z.object({ id: z.string(), config: z.object({ enabled: z.boolean(), tools: z.object({ filesystem: z.boolean().optional(), desktopToolGrants: z.record(z.string(), z.boolean()).optional(), desktopCodexGrants: z.record(z.string(), z.boolean()).optional() }) }) })
 const session = z.object({ id: z.string(), agentId: z.string() })
 const run = z.object({ id: z.string(), agentId: z.string(), sessionId: z.string(), status: z.string() })
 const SERVICE_KEY = Symbol.for('rerun.desktop.remote-mcp.services.v1')
@@ -53,7 +61,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (!response.ok) { await abortable(response.body?.cancel() ?? Promise.resolve(), signal).catch(() => {}); throw new Error('Coworker authority is unavailable') }
         return JSON.parse(await boundedText(response, signal))
     }
-    async function access(localId: string, grant: 'mcp' | 'privateFileWrite' = 'mcp') {
+    async function access(localId: string, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' = 'mcp') {
         const generation = entry.generations.get(localId) ?? 0
         const current = () => { if (entry.closed || entry.pendingOwners.get(localId) || (entry.generations.get(localId) ?? 0) !== generation) throw new Error('Coworker permission is changing') }
         current()
@@ -68,7 +76,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     }
     const oauth = loopbackMcpOAuth(store, access)
     const remote = remoteMcpRuntime(store, access, fetch, oauth.credential)
-    const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' = 'mcp') => {
+    const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' = 'mcp') => {
         const signal = AbortSignal.any([stop, entry.shutdown.signal, AbortSignal.timeout(5_000)])
         const owner = await abortable(localOwner(undefined, identity.engineAgentId), signal)
         const generation = entry.generations.get(owner.id) ?? 0
@@ -88,8 +96,72 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         signal.throwIfAborted()
         return owner.id
     }
+    async function currentOwner(localId: string, stop: AbortSignal) {
+        const generation = entry.generations.get(localId) ?? 0
+        const check = () => {
+            stop.throwIfAborted()
+            if (entry.closed || entry.pendingOwners.get(localId) || (entry.generations.get(localId) ?? 0) !== generation) throw new Error('Coworker permission is changing')
+        }
+        check()
+        const owner = await abortable(localOwner(localId), stop)
+        if (!/^[A-Za-z0-9_-]+$/.test(owner.engineId)) throw new Error('Invalid coworker identity')
+        const detail = authority.parse(await engineJson(`/agents/${encodeURIComponent(owner.engineId)}`, stop))
+        const root = await realpath(runtime.dataRoot)
+        const workspaceRoot = join(root, 'workspaces', '1', 'engine', 'agents', owner.engineId, 'workspace')
+        // Every ancestor must be canonical, so a swapped agent directory cannot alias a sibling.
+        for (const path of [join(root, 'workspaces'), join(root, 'workspaces', '1'), join(root, 'workspaces', '1', 'engine'), join(root, 'workspaces', '1', 'engine', 'agents'), join(root, 'workspaces', '1', 'engine', 'agents', owner.engineId), workspaceRoot]) {
+            const stat = await lstat(path)
+            if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || await realpath(path) !== path) throw new Error('Coworker workspace unavailable')
+        }
+        const final = await abortable(localOwner(localId), stop)
+        check()
+        if (detail.id !== owner.engineId || final.engineId !== owner.engineId) throw new Error('Coworker identity changed')
+        return { owner, config: detail.config, workspaceRoot, check }
+    }
+    async function historicalOwner(identity: McpRunIdentity, stop: AbortSignal) {
+        const owner = await abortable(localOwner(undefined, identity.engineAgentId), stop)
+        const current = await currentOwner(owner.id, stop)
+        const prefix = `/agents/${encodeURIComponent(identity.engineAgentId)}`
+        const [savedSession, savedRun] = await Promise.all([
+            engineJson(`${prefix}/sessions/${encodeURIComponent(identity.sessionId)}`, stop).then(value => session.parse(value)),
+            engineJson(`${prefix}/runs/${encodeURIComponent(identity.runId)}`, stop).then(value => run.parse(value)),
+        ])
+        current.check()
+        if (current.owner.engineId !== identity.engineAgentId || savedSession.id !== identity.sessionId || savedSession.agentId !== identity.engineAgentId || savedRun.id !== identity.runId || savedRun.agentId !== identity.engineAgentId || savedRun.sessionId !== identity.sessionId) throw new Error('Run belongs to another coworker')
+        return { ...current, run: savedRun }
+    }
+    const localStore = stdioStore(db)
+    const localAuthority: StdioAuthority = async (owner, action, identity, signal) => {
+        const stop = AbortSignal.any([signal, entry.shutdown.signal])
+        const current = identity ? await historicalOwner(identity, stop) : await currentOwner(owner, stop)
+        if (current.owner.id !== owner) throw new Error('Local MCP owner changed')
+        if (action === 'use') {
+            if (!current.config.enabled || current.config.tools.desktopToolGrants?.localMcpStdio !== true) throw new Error('Local MCP permission is off')
+            if (identity && (!('run' in current) || run.parse(current.run).status !== 'running')) throw new Error('Run is no longer active')
+        }
+        current.check()
+        return { cwd: current.workspaceRoot }
+    }
+    const localRuntime = stdioRuntime(localStore, localAuthority)
+    const localBridge = stdioEngineBridge(localRuntime, async (identity, signal, action) => {
+        if (action !== 'release') return authorizeRun(identity, signal, 'localMcpStdio')
+        return (await historicalOwner(identity, signal)).owner.id
+    })
+    const writeback = nativeWritebackService(db, async (identity, action, signal) => {
+        const stop = AbortSignal.any([signal, entry.shutdown.signal])
+        const current = await historicalOwner(identity, stop)
+        if (action === 'capture' || action === 'apply') {
+            const tools = current.config.tools
+            if (!current.config.enabled || tools.desktopToolGrants?.nativeWriteback !== true || tools.desktopCodexGrants?.workspaceRead !== true || tools.desktopCodexGrants?.workspaceWrite !== true) throw new Error('Native file review permission is off')
+            if (current.run.status === 'cancelled') throw new Error('Cancelled changes are discarded')
+        }
+        current.check()
+        return { owner: current.owner.id, runtime, workspaceRoot: current.workspaceRoot, cancelled: current.run.status === 'cancelled' }
+    })
     const bridge = desktopMcpBridge(store, remote, authorizeRun)
-    return { store, runtime: remote, bridge, access, authorizeRun, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access) }
+    return { store, runtime: remote, bridge, access, authorizeRun, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
+        localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback) }
+
 }
 
 /** Next may bundle each route independently. This process-wide promise is the single authority. */
@@ -115,7 +187,7 @@ export async function withDesktopMcpOwnerTransition<T>(runtime: DesktopRuntime, 
         // deleting a coworker; the global reservation still excludes concurrent admission.
         const service = entry.service ? await entry.service.catch(() => undefined) : undefined
         if (!service) return await write()
-        return await service.store.lifecycle.transitionOwner(localAgentId, async () => { service.bridge.invalidateOwner(localAgentId); return write() })
+        return await service.store.lifecycle.transitionOwner(localAgentId, () => service.localRuntime.transitionOwner(localAgentId, async () => { service.bridge.invalidateOwner(localAgentId); await service.localBridge.releaseOwner(localAgentId); return write() }))
     } finally {
         const count = (entry.pendingOwners.get(localAgentId) ?? 1) - 1
         if (count) entry.pendingOwners.set(localAgentId, count); else entry.pendingOwners.delete(localAgentId)
@@ -130,6 +202,7 @@ export async function shutdownDesktopRemoteMcp(runtime: DesktopRuntime) {
         const service = await entry.service.catch(() => undefined)
         service?.oauth.shutdown()
         service?.bridge.shutdown()
+        await service?.localBridge.shutdown()
     }
 }
 
@@ -162,5 +235,24 @@ export async function handleDesktopMcpBridge(request: Request): Promise<Response
         return Response.json(result, { headers: { 'Cache-Control': 'no-store' } })
     } catch (error) {
         return Response.json({ error: 'MCP request failed. Check this coworker’s permission and connection.' }, { status: error instanceof DesktopHttpError ? error.status : 400, headers: { 'Cache-Control': 'no-store' } })
+    }
+}
+
+export async function handleDesktopLocalMcp(request: Request, agentId?: string): Promise<Response> {
+    try {
+        const runtime = agentId ? await authenticateDesktopRequest(request) : await authenticateDesktopEngineRequest(request)
+        const service = await getDesktopRemoteMcpService(runtime)
+        return agentId ? service.localApi(request, agentId) : service.localBridge.api(request)
+    } catch (error) {
+        return Response.json({ error: 'Local MCP is unavailable.' }, { status: error instanceof DesktopHttpError ? error.status : 503 })
+    }
+}
+export async function handleDesktopNativeWriteback(request: Request, agentId?: string): Promise<Response> {
+    try {
+        const runtime = agentId ? await authenticateDesktopRequest(request) : await authenticateDesktopEngineRequest(request)
+        const service = await getDesktopRemoteMcpService(runtime)
+        return agentId ? service.writebackApi.review(request, agentId) : service.writebackApi.capture(request)
+    } catch (error) {
+        return Response.json({ error: 'File review is unavailable. No save acknowledgement.' }, { status: error instanceof DesktopHttpError ? error.status : 503 })
     }
 }

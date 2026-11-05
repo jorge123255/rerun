@@ -12,6 +12,7 @@ import { DESKTOP_AUDIO_MAX_BYTES, DesktopAudioBytesError, desktopAudioKind, insp
 import { DESKTOP_VIDEO_MAX_BYTES, DesktopVideoBytesError, desktopVideoKind, inspectDesktopVideoBytes, type DesktopVideoContentType } from './video-bytes'
 import { DESKTOP_IMAGE_MAX_BYTES, DesktopImageBytesError, desktopRasterKind, inspectDesktopImageBytes, type DesktopImageContentType } from './image-bytes'
 import { bindCoworkerPdfFolder, readCoworkerPdf, type CoworkerPdfPreview } from './pdf-read'
+import { bindCoworkerPreviewImageFolder } from './preview-image'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import { findDesktopAgent } from './store'
@@ -304,7 +305,7 @@ const MAX_AUDIO_DEPTH = 64
 // Darwin's O_NOFOLLOW_ANY already covers every component and must not be combined with O_NOFOLLOW.
 const AUDIO_FILE_OPEN = constants.O_RDONLY | constants.O_NONBLOCK | (process.platform === 'darwin' ? 0x20000000 : constants.O_NOFOLLOW)
 
-/** Read one existing WAV or MP3 for the Files preview. Text, image, import, and attachment stay
+/** Read one existing WAV, MP3, M4A, Ogg or FLAC for the Files preview. Text, image, import, and attachment stay
  * on their own paths. The response is the file's own bytes, never a filesystem URL. */
 export async function readCoworkerAudio(runtime: DesktopRuntime, agentId: string, path: string, identity?: string): Promise<CoworkerAudioPreview> {
     return withCoworkerFiles(runtime, agentId, () => readAudio(runtime, agentId, path, identity))
@@ -319,7 +320,7 @@ async function readAudio(runtime: DesktopRuntime, agentId: string, path: string,
     const name = parts[parts.length - 1]!
     if (parts.some(part => !simpleName(part) || reservedName(part))) throw new DesktopHttpError(400, 'That name can’t be previewed.')
     const kind = desktopAudioKind(name)
-    if (!kind) throw new DesktopHttpError(415, 'Only WAV and MP3 files can be previewed.')
+    if (!kind) throw new DesktopHttpError(415, 'Only WAV, MP3, M4A, Ogg and FLAC files can be previewed.')
     const workspace = await coworkerWorkspace(runtime, agentId)
     const root = await containedPath(workspace, '')
     if (!root.root) throw new DesktopHttpError(404, `“${name}” was not found.`)
@@ -402,7 +403,7 @@ const MAX_VIDEO_DEPTH = 64
 // Darwin's O_NOFOLLOW_ANY already covers every component and must not be combined with O_NOFOLLOW.
 const VIDEO_FILE_OPEN = constants.O_RDONLY | constants.O_NONBLOCK | (process.platform === 'darwin' ? 0x20000000 : constants.O_NOFOLLOW)
 
-/** Read one existing MP4 for the Files preview. Text, image, audio, import, and attachment stay
+/** Read one existing MP4, WebM, MOV or M4V for the Files preview. Text, image, audio, import, and attachment stay
  * on their own paths. The response is the file's own bytes, never a filesystem URL. */
 export async function readCoworkerVideo(runtime: DesktopRuntime, agentId: string, path: string, identity?: string): Promise<CoworkerVideoPreview> {
     return withCoworkerFiles(runtime, agentId, () => readVideo(runtime, agentId, path, identity))
@@ -417,7 +418,7 @@ async function readVideo(runtime: DesktopRuntime, agentId: string, path: string,
     const name = parts[parts.length - 1]!
     if (parts.some(part => !simpleName(part) || reservedName(part))) throw new DesktopHttpError(400, 'That name can’t be previewed.')
     const kind = desktopVideoKind(name)
-    if (!kind) throw new DesktopHttpError(415, 'Only MP4 files can be previewed.')
+    if (!kind) throw new DesktopHttpError(415, 'Only MP4, WebM, MOV and M4V files can be previewed.')
     const workspace = await coworkerWorkspace(runtime, agentId)
     const root = await containedPath(workspace, '')
     if (!root.root) throw new DesktopHttpError(404, `“${name}” was not found.`)
@@ -810,6 +811,11 @@ const claimed = (directory: string, name: string) => activeNames.has(claimKey(di
 // PDF reads use this module's recovery and active claims, under the same roster queue.
 // Binding the closures here avoids a second journal implementation or claim registry.
 bindCoworkerPdfFolder({
+    recoverInterruptedEdits: (directory, workspaceRoot) => recoverInterruptedCoworkerEdits(directory, workspaceRoot),
+    claimed,
+})
+
+bindCoworkerPreviewImageFolder({
     recoverInterruptedEdits: (directory, workspaceRoot) => recoverInterruptedCoworkerEdits(directory, workspaceRoot),
     claimed,
 })

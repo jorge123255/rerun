@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // The slide driver needs browser animation frames; retain the actual panel/editor below.
 vi.mock('@/components/ui/panel-steps',()=>({PanelSteps:({children}:{children:ReactNode})=><>{children}</>}))
 import { DesktopCoworkerMcp, DesktopMcpServerEditor } from './DesktopCoworkerMcp'
+function mockFetch(implementation:(url:string,init:RequestInit)=>unknown){vi.stubGlobal('fetch',vi.fn((url:string,init:RequestInit)=>url.endsWith('/mcp-stdio')?Promise.resolve(Response.json([])):implementation(url,init)))}
 
 afterEach(()=>{for(const {root,host} of roots.splice(0)){act(()=>root.unmount());host.remove()}vi.unstubAllGlobals()})
 describe('MCP editor lifecycle',()=>{
@@ -46,14 +47,14 @@ describe('MCP editor lifecycle',()=>{
     })
     it('does not apply an old coworker save completion to a new coworker editor',async()=>{
         let finish!:(response:Response)=>void
-        vi.stubGlobal('fetch',vi.fn((_url:string,init:RequestInit)=>init.method==='PUT' ? new Promise<Response>(r=>{finish=r}) : Promise.resolve(Response.json([]))))
+        mockFetch(vi.fn((_url:string,init:RequestInit)=>init.method==='PUT' ? new Promise<Response>(r=>{finish=r}) : Promise.resolve(Response.json([]))))
         const panel=render(<DesktopCoworkerMcp agentId="a"/>)
-        fireEvent.click(await screen.findByRole('button',{name:'New'}))
+        fireEvent.click(await screen.findByRole('button',{name:'New HTTPS server'}))
         fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'old'}})
         fireEvent.change(screen.getByLabelText(/^URL/),{target:{value:'https://example.com/mcp'}})
         fireEvent.click(screen.getByRole('button',{name:'Save'}))
         panel.rerender(<DesktopCoworkerMcp agentId="b"/>)
-        fireEvent.click(await screen.findByRole('button',{name:'New'}))
+        fireEvent.click(await screen.findByRole('button',{name:'New HTTPS server'}))
         fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'new draft'}})
         await act(async()=>finish(Response.json([{name:'old',url:'https://example.com/mcp',revision:'1',hasBearer:false}])))
         expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe('new draft')
@@ -63,7 +64,7 @@ describe('MCP editor lifecycle',()=>{
 it('ignores an old probe after editing the same server',async()=>{
  let finish!:(response:Response)=>void
  const old={name:'x',url:'https://example.com/mcp',revision:'1',hasBearer:false}
- vi.stubGlobal('fetch',vi.fn((_url:string,init:RequestInit)=>{
+ mockFetch(vi.fn((_url:string,init:RequestInit)=>{
   if(_url.endsWith('/oauth'))return Promise.resolve(Response.json({state:'idle'}))
   if(init.method==='GET')return Promise.resolve(Response.json([old]))
   if(init.method==='POST')return new Promise<Response>(r=>{finish=r})
@@ -82,9 +83,9 @@ for(const outcome of ['empty','failure'] as const)it(`keeps a saved list authori
  let resolve!:(response:Response)=>void,reject!:(error:Error)=>void
  const initial=new Promise<Response>((yes,no)=>{resolve=yes;reject=no})
  const saved={name:'saved',url:'https://example.com/mcp',revision:'1',hasBearer:false}
- vi.stubGlobal('fetch',vi.fn((_url:string,init:RequestInit)=>_url.endsWith('/oauth')?Promise.resolve(Response.json({state:'idle'})):init.method==='GET'?initial:Promise.resolve(Response.json([saved]))))
+ mockFetch(vi.fn((_url:string,init:RequestInit)=>_url.endsWith('/oauth')?Promise.resolve(Response.json({state:'idle'})):init.method==='GET'?initial:Promise.resolve(Response.json([saved]))))
  render(<DesktopCoworkerMcp agentId="a"/>)
- fireEvent.click(screen.getByRole('button',{name:'New'}))
+ fireEvent.click(screen.getByRole('button',{name:'New HTTPS server'}))
  fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'saved'}})
  fireEvent.change(screen.getByLabelText(/^URL/),{target:{value:saved.url}})
  fireEvent.click(screen.getByRole('button',{name:'Save'}));await act(async()=>{})
@@ -97,9 +98,9 @@ for(const outcome of ['empty','failure'] as const)it(`keeps a saved list authori
 for(const exit of ['cancel','failed-save'] as const)it(`retains the useful initial list after ${exit}`,async()=>{
  let finish!:(response:Response)=>void
  const initial=new Promise<Response>(resolve=>{finish=resolve})
- vi.stubGlobal('fetch',vi.fn((_url:string,init:RequestInit)=>init.method==='GET'?initial:Promise.resolve(Response.json({error:'save failed'},{status:400}))))
+ mockFetch(vi.fn((_url:string,init:RequestInit)=>init.method==='GET'?initial:Promise.resolve(Response.json({error:'save failed'},{status:400}))))
  render(<DesktopCoworkerMcp agentId="a"/>)
- fireEvent.click(screen.getByRole('button',{name:'New'}))
+ fireEvent.click(screen.getByRole('button',{name:'New HTTPS server'}))
  if(exit==='failed-save'){
   fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'draft'}})
   fireEvent.change(screen.getByLabelText(/^URL/),{target:{value:'https://example.com/mcp'}})
@@ -108,4 +109,27 @@ for(const exit of ['cancel','failed-save'] as const)it(`retains the useful initi
  fireEvent.click(screen.getByRole('button',{name:'Back'}))
  await act(async()=>finish(Response.json([{name:'existing',url:'https://example.com/mcp',revision:'1',hasBearer:false}])))
  expect(screen.getByRole('button',{name:'existing'})).toBeTruthy()
+})
+
+it('uses original argument lines and ignores an old local list after Save',async()=>{
+ let finish!:(response:Response)=>void
+ const initial=new Promise<Response>(resolve=>{finish=resolve})
+ const saved={name:'local',executable:'/example/installed-server',args:['first','literal argument'],revision:'one',transport:'stdio'}
+ const requests:Record<string,unknown>[]=[]
+ vi.stubGlobal('fetch',vi.fn((url:string,init:RequestInit)=>{
+  if(!url.endsWith('/mcp-stdio'))return Promise.resolve(Response.json([]))
+  if(init.method==='GET')return initial
+  requests.push(JSON.parse(String(init.body)))
+  return Promise.resolve(Response.json([saved]))
+ }))
+ render(<DesktopCoworkerMcp agentId="a"/>);await act(async()=>{})
+ fireEvent.click(screen.getByRole('button',{name:'New local program'}))
+ fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'local'}})
+ fireEvent.change(screen.getByLabelText(/^Executable/),{target:{value:saved.executable}})
+ const textarea=screen.getByLabelText(/^Arguments/) as unknown as HTMLTextAreaElement
+ act(()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(textarea,'first\nliteral argument');textarea.dispatchEvent(new Event('input',{bubbles:true}));textarea.dispatchEvent(new Event('change',{bubbles:true}))})
+ fireEvent.click(screen.getByRole('button',{name:'Save'}));await act(async()=>{})
+ expect(requests[0]).toMatchObject({args:['first','literal argument']})
+ await act(async()=>finish(Response.json([])))
+ expect(screen.getByRole('button',{name:'local'})).toBeTruthy()
 })

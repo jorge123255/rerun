@@ -82,6 +82,9 @@ export function PATCH(request: Request, { params }: Context) {
         if (!patch.success) throw new DesktopHttpError(400, 'Choose a valid tool permission.')
         const agentId = (await params).agentId
         const write = () => toolsFor(runtime, agentId, patch.data)
-        return patch.data.group === 'rerun' && (patch.data.id === 'mcp' || patch.data.id === 'privateFileWrite') ? withDesktopMcpOwnerTransition(runtime, agentId, write) : write()
+        const transitionsLocalAuthority = patch.data.group === 'rerun'
+            ? ['mcp', 'privateFileWrite', 'localMcpStdio', 'nativeWriteback'].includes(patch.data.id)
+            : ['workspaceRead', 'workspaceWrite'].includes(patch.data.id)
+        return transitionsLocalAuthority ? withDesktopMcpOwnerTransition(runtime, agentId, write) : write()
     })
 }

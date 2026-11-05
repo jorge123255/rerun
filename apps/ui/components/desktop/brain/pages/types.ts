@@ -1,5 +1,6 @@
-import type { BrainDraftActions, BrainDraftWriteResult, BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
-import type { BrainPageSummary, BrainRevision } from '@rerun/contracts'
+import type { BrainDraftWriteResult, BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
+import type { DesktopBrainPagesActions, BrainDeleteResult, DesktopBrainOverview as PagesOverview } from '@/lib/desktop/brain-pages'
+import type { BrainRevision } from '@rerun/contracts'
 
 /**
  * What the desktop Brain panel needs from the store behind it, shaped like the original brain
@@ -9,21 +10,15 @@ import type { BrainPageSummary, BrainRevision } from '@rerun/contracts'
  * server action, never reads the engine directly, and never invents a page when a call fails.
  */
 export type DesktopBrainOverview =
-    | { available: true; pages: BrainPageSummary[]; openProposals: number }
+    | ({ available: true } & PagesOverview)
     /** `outdated` means the box answers but predates the Brain; the panel says so instead of guessing. */
     | { available: false; reason: 'no_machine' | 'outdated' | 'unreachable' }
 
-export type DesktopBrainDeleteResult = { ok: true } | { ok: false; error: string }
+export type DesktopBrainDeleteResult = BrainDeleteResult
 
 export type DesktopBrainRevision = { revision: BrainRevision; content: string }
 
-export type DesktopBrainActions = BrainDraftActions & {
-    overview: () => Promise<DesktopBrainOverview>
-    deletePage: (slug: string) => Promise<DesktopBrainDeleteResult>
-    readRevision: (slug: string, revisionId: string) => Promise<DesktopBrainRevision | null>
-    /** `expectedHash` refuses the restore when the page moved since it was read. */
-    restoreRevision: (slug: string, revisionId: string, expectedHash?: string) => Promise<BrainDraftWriteResult>
-}
+export type DesktopBrainActions = DesktopBrainPagesActions
 
 export type DesktopBrainSelection =
     | { kind: 'page'; slug: string }

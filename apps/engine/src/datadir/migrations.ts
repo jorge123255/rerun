@@ -3,7 +3,10 @@ import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { migrate } from '../db/migrate.js'
 import { latestVersion } from '../db/ladder.js'
 import { foldAgentKeysIntoConnections } from '../connections/migrate.js'
-import { boxPlanPath, mcpPackagesDir } from '../config/paths.js'
+import { initializeDesktopBrainStore } from '../desktop/brain-pages-router.js'
+import { desktopApp } from '../desktop/policy.js'
+import { join } from 'node:path'
+import { boxPlanPath, mcpPackagesDir, dataDir } from '../config/paths.js'
 
 // One change to the layout of the data-dir: a file or folder moved, renamed, rewritten, or a schema
 // change of `rerun.db`. A shipped step is never edited nor removed, because an archived data-dir may
@@ -43,6 +46,15 @@ export const DATA_DIR_MIGRATIONS: DataDirMigration[] = [
         id: 'mcp-packages',
         up: async () => {
             await mkdir(mcpPackagesDir(), { recursive: true })
+        },
+    },
+    {
+        version: 4,
+        id: 'desktop-brain-and-native-review',
+        up: async () => {
+            if (!desktopApp()) return
+            await initializeDesktopBrainStore()
+            await mkdir(join(dataDir(), 'desktop-native-writeback-outbox'), { recursive: true, mode: 0o700 })
         },
     },
 ]

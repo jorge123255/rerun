@@ -67,7 +67,7 @@ Animation-specific outcomes, curly apostrophes included:
 
 A static GIF is one frame. A GIF with more than one image separator is served whole. One ANMF is still an animated WebP container: `animated` is true and the body is the original file, not a bare VP8 payload. GIF comments and WebP ICC, EXIF, and XMP chunks are skipped inside the file. A comment or metadata value that looks like `http://` is not fetched. There is no remote URL, no external-resource resolution, no OCR, and no upload of the image or its frames to a model.
 
-VP8X on this path must be the first chunk, with the animation bit `0x02` set, reserved bits `0xC1` clear, and bytes 1–3 zero. ICC `0x20`, alpha `0x10`, EXIF `0x08`, and XMP `0x04` may be set. Those chunks, when present, must come before the frames. `ANIM` is six bytes and comes before `ANMF`. Each `ANMF` has one `VP8 ` or `VP8L` whose dimensions equal that frame rectangle, and at most one `ALPH` before it.
+VP8X on this path must be the first chunk, with the animation bit `0x02` set, reserved bits `0xC1` clear, and bytes 1–3 zero. ICC `0x20`, alpha `0x10`, EXIF `0x08`, and XMP `0x04` may be set. ICC comes before the frames; EXIF and XMP may also follow the last frame. `ANIM` is six bytes and comes before `ANMF`. Each `ANMF` has one `VP8 ` or `VP8L` whose dimensions equal that frame rectangle, and at most one `ALPH` before it.
 
 ## Limits
 

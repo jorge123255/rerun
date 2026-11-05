@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopNativeReviewRead } from '@/test/desktop-background-fixture'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { UIMessage } from 'ai'
@@ -34,6 +35,7 @@ beforeEach(() => {
     running = false; statusUnavailable = false
     stopResponse = () => Response.json({ canceled: 1, alreadyFinished: false })
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(url, init); if (nativeReview) return nativeReview
         if (url.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.endsWith('/questions')) return Response.json({ question: null })
         requests.push(`${init?.method ?? 'GET'} ${url}`)
@@ -188,6 +190,7 @@ test('a reopened run is not readable until its final history and both pending-re
         const approvalRead = new Promise<Response>(resolve => { resolveApproval = resolve })
         const pendingReads: string[] = []
         vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
             const draftResponse = drafts.handle(input, init)
             if (draftResponse) return draftResponse
             const url = String(input)

@@ -10,7 +10,7 @@ export function DesktopCoworkerMcpDialog({ agent, dialogControl, hideTrigger = f
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
         {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">MCP servers</Button></DialogTrigger>}
         {open && <DialogContent className="flex h-[80dvh] flex-col sm:max-w-3xl">
-            <DialogHeader><DialogTitle>MCP servers</DialogTitle><DialogDescription>Connections for {agent.name}. Remote tools require this coworker’s MCP permission.</DialogDescription></DialogHeader>
+            <DialogHeader><DialogTitle>MCP servers</DialogTitle><DialogDescription>Connections for {agent.name}. HTTPS servers and local programs require separate permissions in Tools.</DialogDescription></DialogHeader>
             <DesktopCoworkerMcp key={agent.id} agentId={agent.id} />
         </DialogContent>}
     </Dialog>

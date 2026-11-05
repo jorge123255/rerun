@@ -31,19 +31,24 @@ export class RuntimeSupervisor extends EventEmitter {
         this.emit('status', this.status)
     }
 
-    spawnOwned(args, env) {
+    spawnOwned(args, env, launchNonce) {
         const startup = this.startupAbort
         const child = this.launch(this.bundle.nodePath, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], detached: false })
         this.children.add(child)
         child.stdout?.resume()
         child.stderr?.resume()
+        child.on('message', value => {
+            if (!launchNonce || value?.launchNonce !== launchNonce) return
+            if (value.type === 'stop-failed') child.shutdownFailed = true
+            if (value.type === 'stopped') child.shutdownFailed = false
+        })
         child.on('error', () => { child.launchFailed = true; if (!this.cleaning && !this.stopping) startup?.abort() })
         child.once('exit', () => {
             this.children.delete(child)
             if (!this.cleaning && !this.stopping && this.status.state === 'starting') startup?.abort()
             if (!this.stopping && this.status.state === 'ready') {
                 this.publish('error', 'A local service stopped. Retry to restart the app services.')
-                void this.stop({ preserveError: true })
+                void this.stop({ preserveError: true }).catch(() => {})
             }
         })
         return child
@@ -82,7 +87,7 @@ export class RuntimeSupervisor extends EventEmitter {
                     RERUN_DATA_DIR: engineRoot, RERUN_HUB_BASE_URL: runtime.app.origin, RERUN_DESKTOP: 'off',
                     RERUN_DESKTOP_CODEX_RUNNER: this.bundle.codexPath,
                     RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath,
-                })
+                }, runtime.launchNonce)
                 const ready = await this.waitForEngine(engine, runtime)
                 if (!ready) throw new Error('The engine did not acknowledge its launch')
                 await this.waitForHealth(engine, `${runtime.engine.origin}/health`, { Authorization: `Bearer ${runtime.engine.apiKey}` }, runtime)
@@ -133,8 +138,9 @@ export class RuntimeSupervisor extends EventEmitter {
         })
     }
 
-    async stopChildren() {
+    async stopChildren(force = true) {
         this.cleaning = true
+        let confirmed = true
         const owned = [...this.children].reverse()
         for (const child of owned) {
             if (child.exitCode !== null || child.signalCode !== null) continue
@@ -145,21 +151,49 @@ export class RuntimeSupervisor extends EventEmitter {
             await Promise.race([exited, new Promise(done => { timer = setTimeout(done, this.stopTimeout) })])
             clearTimeout(timer)
             if (child.exitCode === null && child.signalCode === null) {
+                confirmed = false
+                // An ordinary Quit can retry a still-owned service. Force killing
+                // its parent would discard custody of detached native workers.
+                if (!force) break
                 child.kill('SIGKILL')
                 await exited
             }
+            if (child.shutdownFailed || child.exitCode !== 0 || child.signalCode !== null) confirmed = false
             this.children.delete(child)
+            if (!confirmed && !force) break
         }
         this.cleaning = false
+        return confirmed
+    }
+
+    async confirmToolsStopped(runtime) {
+        // The UI owns detached local MCP groups. Obtain its explicit drain result
+        // while both services are alive; killing a parent alone proves nothing.
+        const response = await this.fetcher(`${runtime.app.origin}/api/desktop/internal/mcp`, {
+            method: 'POST', headers: { Authorization: `Bearer ${runtime.engine.apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'shutdown' }), signal: AbortSignal.timeout(8000), redirect: 'error',
+        })
+        const result = response.ok ? await response.json() : null
+        if (result?.stopped !== true) throw new Error('Local program cleanup was not confirmed')
     }
 
     async stop({ preserveError = false } = {}) {
         this.stopping = true
         this.startupAbort?.abort()
         if (!preserveError) this.publish('stopping', 'Closing local services…')
-        await this.stopChildren()
-        await rm(resolve(this.root, 'runtime.json'), { force: true })
-        this.runtime = null
-        if (!preserveError) this.publish('stopped')
+        try {
+            if (this.runtime) await this.confirmToolsStopped(this.runtime)
+            if (!await this.stopChildren(preserveError)) throw new Error('Local service cleanup was not confirmed')
+            await rm(resolve(this.root, 'runtime.json'), { force: true })
+            this.runtime = null
+            if (!preserveError) this.publish('stopped')
+        } catch (error) {
+            // On service death still terminate the surviving owned service. During
+            // ordinary Quit retain the UI authority so a later retry can drain it.
+            if (preserveError) await this.stopChildren()
+            this.stopping = false
+            this.publish('error', 'A local program or service could not confirm it stopped. Quit was cancelled. Try again before reopening the workspace.')
+            throw error
+        }
     }
 }

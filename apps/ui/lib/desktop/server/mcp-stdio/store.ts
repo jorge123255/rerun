@@ -5,10 +5,7 @@ import {z} from 'zod'
 import {remoteMcpLifecycle} from '../mcp/lifecycle'
 export const stdioInput=z.object({name:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),executable:z.string().min(1).max(4096).refine(p=>p.startsWith('/')&&!/[\x00-\x1f\x7f]/.test(p)),args:z.array(z.string().max(4096).refine(s=>!s.includes('\0'))).max(64),revision:z.string().uuid().optional()}).strict()
 export type StdioConnection=z.infer<typeof stdioInput>&{revision:string;transport:'stdio'}
-export const stdioSchema=`CREATE TABLE IF NOT EXISTS desktop_mcp_stdio (
- owner TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,name TEXT NOT NULL,executable TEXT NOT NULL,args TEXT NOT NULL,revision TEXT NOT NULL,PRIMARY KEY(owner,name));
- CREATE TABLE IF NOT EXISTS desktop_mcp_stdio_calls (
- owner TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,run_id TEXT NOT NULL,call_id TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(owner,run_id,call_id));`
+export {stdioSchema} from './schema'
 export function stdioStore(db:Client){
  const lifecycle=remoteMcpLifecycle()
  let stop:((owner:string,name:string)=>Promise<void>)|undefined

@@ -30,6 +30,7 @@ import { useCoworkerSkillProposals } from '@/lib/desktop/use-coworker-skill-prop
 import { desktopSkillProposalIds } from '@/lib/desktop/skill-proposal-source'
 import { DesktopScheduledRunBlock } from './DesktopScheduledRunBlock'
 import { DesktopCoworkerTools } from './DesktopCoworkerTools'
+import { DesktopNativeWritebackReview } from './DesktopNativeWritebackReview'
 import { DesktopCoworkerMcpDialog } from './DesktopCoworkerMcpDialog'
 import { DesktopCoworkerMonitoring } from './DesktopCoworkerMonitoring'
 import type { DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
@@ -934,6 +935,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             <div className="mt-1 text-sm text-muted-foreground">Messages stream from the local engine and remain available after restart.</div>
                         </div>
                     )}
+                    {sessionId && active && <DesktopNativeWritebackReview agentId={agent.id} sessionId={sessionId} refreshKey={`${status}/${transcript.length}`}/>}
                     {transcript.map((message, messageIndex) => {
                         const scheduledRun = scheduledRunOf(message)
                         // Reuse Rerun's routine divider and prompt dialog. No hosted file-link

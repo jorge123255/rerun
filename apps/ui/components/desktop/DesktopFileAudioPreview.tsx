@@ -6,8 +6,8 @@ import type { SiblingFiles } from '@/components/files/useSiblingFiles'
 import { useCallback, useEffect, useRef, useState, type Ref } from 'react'
 import { FileSiblingControls } from './DesktopFileSiblingNav'
 
-const AUDIO_NAME = /^.+\.(?:wav|mp3)$/i
-const AUDIO_TYPES = new Set(['audio/wav', 'audio/mpeg'])
+const AUDIO_TYPES = new Set(['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/flac'])
+const AUDIO_NAME = /^.+\.(?:wav|mp3|m4a|ogg|flac)$/i
 /** Matches DESKTOP_AUDIO_MAX_BYTES in the desktop audio reader. */
 const AUDIO_MAX_BYTES = 16 * 1024 * 1024
 

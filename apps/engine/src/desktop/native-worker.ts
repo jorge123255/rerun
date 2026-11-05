@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { lstat, mkdir, mkdtemp, opendir, readdir, realpath, rm } from 'node:fs/promises'
@@ -11,11 +11,20 @@ import { dataDir } from '../config/paths.js'
 import { readAgentConfig } from '../agents/loader.js'
 import type { RunContext } from '../runtime/context.js'
 import {captureNativeBaseline,captureNativeChanges,type NativeBaseline,type NativeWritebackBundle} from './native-writeback/capture.js'
+import {stopNativeProcess} from './native-writeback/stop.js'
 import { snapshotWorkspaceText } from './workspace-read.js'
 
 const MAX_FRAME = 512 * 1024
 const MAX_TRANSFER = 4 * 1024 * 1024
 const MAX_LIFE = 120_000
+const liveWorkers=new Set<()=>Promise<void>>()
+
+/** Retain failed drains independently of run settlement so Quit cannot confuse a
+ * saved cancelled run with proof that its native writers have exited. */
+export async function stopAllDesktopNativeWorkers():Promise<void>{
+    const stopped=await Promise.allSettled([...liveWorkers].map(close=>close()))
+    if(stopped.some(result=>result.status==='rejected'))throw new Error('Native worker cleanup was not confirmed')
+}
 
 export type DesktopNativeWorker = { cwd: string; url: string; close: () => Promise<void>; finish: () => Promise<void> }
 export type NativeWritebackHooks={authorizeCapture:(ctx:RunContext)=>Promise<void>;persist:(bundle:NativeWritebackBundle)=>Promise<void>}
@@ -71,16 +80,6 @@ async function admit(method: string, params: Record<string, unknown>, root: stri
     if (method !== 'process/start' || !await scratchTarget(root, params.cwd, 'directory')) return false
     const argv = params.argv
     return Array.isArray(argv) && argv.every(arg => typeof arg === 'string') && argv.length > 1 && ['/bin/bash', '/bin/zsh', '/bin/sh'].includes(argv[0])
-}
-
-function stopProcess(child: ChildProcessWithoutNullStreams) {
-    const pid = child.pid
-    if (!pid || child.exitCode !== null || child.signalCode !== null) return
-    try { process.kill(pid, 'SIGSTOP') } catch { return }
-    // Native PTYs can own a separate process group. Commands cannot fork in the worker's
-    // Seatbelt, so killing direct children also covers a shell that ignores termination.
-    spawnSync('/usr/bin/pkill', ['-KILL', '-P', String(pid)], { stdio: 'ignore', timeout: 1500 })
-    try { process.kill(-pid, 'SIGKILL') } catch { child.kill('SIGKILL') }
 }
 
 async function runDirectory(): Promise<string> {
@@ -139,13 +138,21 @@ export async function createDesktopNativeWorker(ctx: RunContext, writeback?:Nati
     const websocket = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME, perMessageDeflate: false })
     const workers = new Map<WebSocket, ChildProcessWithoutNullStreams>()
     const children=new Set<ChildProcessWithoutNullStreams>()
+    const stops=new Map<ChildProcessWithoutNullStreams,Promise<void>>()
+    function stopProcess(child:ChildProcessWithoutNullStreams){
+        let stopped=stops.get(child)
+        if(!stopped){stopped=stopNativeProcess(child);stops.set(child,stopped);void stopped.catch(()=>{if(stops.get(child)===stopped)stops.delete(child)})}
+        return stopped
+    }
     let baseline:NativeBaseline|undefined
     let capture=false
+    let writersStopped=false,cleanupFailed=false
     let closed = false, cleanup: Promise<void> | undefined
     let expires: NodeJS.Timeout | undefined, revoke: NodeJS.Timeout | undefined
     let transfer = 0
     function close(): Promise<void> {
-        if (cleanup) return cleanup
+        if (cleanup && !(cleanupFailed&&!writersStopped)) return cleanup
+        if(cleanupFailed){cleanup=undefined;cleanupFailed=false;capture=false}
         closed = true
         clearTimeout(expires)
         clearInterval(revoke)
@@ -155,11 +162,9 @@ export async function createDesktopNativeWorker(ctx: RunContext, writeback?:Nati
         server.closeAllConnections()
         server.close()
         cleanup = (async()=>{
-            await Promise.all([...children].map(child=>new Promise<void>((resolve,reject)=>{
-                if(child.exitCode!==null || child.signalCode!==null){resolve();return}
-                const timer=setTimeout(()=>{child.off('exit',done);reject(new Error('Native worker has not stopped; scratch retained'))},3000)
-                const done=()=>{clearTimeout(timer);resolve()};child.once('exit',done)
-            })))
+            await Promise.all([...children].map(stopProcess))
+            writersStopped=true
+            liveWorkers.delete(close)
             if(capture && baseline && writeback){
                 await writeback.authorizeCapture(ctx)
                 const bundle=await captureNativeChanges(ctx,cwd,baseline)
@@ -167,9 +172,11 @@ export async function createDesktopNativeWorker(ctx: RunContext, writeback?:Nati
             }
             await rm(dir,{recursive:true,force:true,maxRetries:4,retryDelay:50})
         })()
+        void cleanup.catch(()=>{cleanupFailed=true})
         return cleanup
     }
     const abort = () => { void close().catch(() => {}) }
+    liveWorkers.add(close)
     try {
         await mkdir(cwd, { mode: 0o700 })
         await mkdir(state, { mode: 0o700 })
@@ -185,7 +192,7 @@ export async function createDesktopNativeWorker(ctx: RunContext, writeback?:Nati
                 '-f', policy, binary, 'exec-server', '--listen', 'stdio://'], {
                 cwd, detached: true, env: { HOME: state, CODEX_HOME: state, TMPDIR: state, PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' }, stdio: ['pipe', 'pipe', 'pipe'],
             })
-            children.add(child);child.once('exit',()=>children.delete(child))
+            children.add(child)
             workers.set(ws, child)
             child.stderr.resume()
             child.on('error', abort)

@@ -8,13 +8,16 @@ export type StdioRun={engineAgentId:string;sessionId:string;runId:string}
 export type StdioAuthority=(owner:string,action:'manage'|'use',run:StdioRun|undefined,signal:AbortSignal)=>Promise<{cwd:string}>
 type Tool={name:string;description?:string;inputSchema:Record<string,unknown>}
 type Process=ReturnType<typeof spawnStdio>
-type Entry={owner:string;name:string;revision:string;controller:AbortController;check:()=>void;release:()=>void;opening:Promise<{process:Process;tools:Tool[];fingerprint:string;cwd:string}>;process?:Process;tail:Promise<unknown>;cwd?:string;idle?:ReturnType<typeof setTimeout>}
+type Entry={owner:string;name:string;revision:string;users:Set<string>;controller:AbortController;check:()=>void;release:()=>void;opening:Promise<{process:Process;tools:Tool[];fingerprint:string;cwd:string}>;process?:Process;tail:Promise<unknown>;cwd?:string;idle?:ReturnType<typeof setTimeout>}
 export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProcess?:StdioSpawn){
  const entries=new Map<string,Entry>(),retired=new Set<Entry>();let closed=false
  const key=(owner:string,name:string)=>JSON.stringify([owner,name])
+ const runKey=(run:StdioRun)=>JSON.stringify([run.engineAgentId,run.sessionId,run.runId])
  async function stopEntries(owner?:string,name?:string){
   const selected=[...new Set([...entries.values(),...retired])].filter(e=>(!owner||e.owner===owner)&&(!name||e.name===name))
-  for(const entry of selected){entry.controller.abort();clearTimeout(entry.idle);if(entries.get(key(entry.owner,entry.name))===entry)entries.delete(key(entry.owner,entry.name))}
+  // Keep ownership until drain succeeds. A failed drain must block a replacement and
+  // remain visible to a later shutdown instead of disappearing with the live slot.
+  for(const entry of selected){retired.add(entry);entry.controller.abort();clearTimeout(entry.idle);if(entries.get(key(entry.owner,entry.name))===entry)entries.delete(key(entry.owner,entry.name))}
   await Promise.all(selected.map(async entry=>{await entry.opening.catch(()=>{});await entry.process?.drain();entry.release();retired.delete(entry)}))
  }
  store.bindStop((owner,name)=>stopEntries(owner,name))
@@ -27,7 +30,7 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
   else if(existing){if(existing.revision!==revision)throw new Error('Local connection changed; disconnect before reconnecting');return existing}
   if(entries.size>=32)throw new Error('Local MCP connection limit reached')
   const controller=new AbortController(),ticket=store.lifecycle.admit(owner,name,controller)
-  const entry:Entry={owner,name,revision,controller,check:ticket.assertCurrent,release:ticket.release,opening:undefined as unknown as Entry['opening'],tail:Promise.resolve()}
+  const entry:Entry={owner,name,revision,users:new Set(),controller,check:ticket.assertCurrent,release:ticket.release,opening:undefined as unknown as Entry['opening'],tail:Promise.resolve()}
   entries.set(slot,entry)
   entry.opening=Promise.resolve().then(async()=>{
    const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(20_000)])
@@ -65,6 +68,7 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
  async function operation<T>(entry:Entry,run:StdioRun|undefined,stop:AbortSignal,work:(session:Awaited<Entry['opening']>,signal:AbortSignal)=>Promise<T>){
   const signal=AbortSignal.any([entry.controller.signal,stop,AbortSignal.timeout(120_000)])
   const cancel=()=>entry.controller.abort();signal.addEventListener('abort',cancel,{once:true})
+  if(signal.aborted)cancel()
   const task=entry.tail.catch(()=>{}).then(async()=>{
    signal.throwIfAborted();const session=await abortable(entry.opening,signal)
    if(session.process.closed())throw new Error('Local MCP disconnected; reconnect required')
@@ -80,9 +84,12 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
  return {
   async probe(owner:string,name:string,revision:string,signal:AbortSignal){const entry=connect(owner,name,revision,undefined);return operation(entry,undefined,signal,async session=>({tools:session.tools}))},
   async tools(owner:string,run:StdioRun,signal:AbortSignal,admissionSignal:AbortSignal=signal){
+   if(closed)throw new Error('Local MCP stopped')
    const connections=await abortable(store.list(owner),admissionSignal),definitions=[]
    for(const connection of connections){
+    admissionSignal.throwIfAborted();signal.throwIfAborted()
     const entry=connect(owner,connection.name,connection.revision,run)
+    entry.users.add(runKey(run))
     const listed=await operation(entry,run,admissionSignal,async session=>session.tools)
     for(const tool of listed)definitions.push({name:`${connection.name}_${tool.name}`,description:tool.description??tool.name,inputSchema:tool.inputSchema,execute:(args:Record<string,unknown>,toolCallId:string,stop:AbortSignal)=>operation(entry,run,AbortSignal.any([signal,stop]),async(session,active)=>{
      if(!toolCallId || toolCallId.length>200 || Buffer.byteLength(JSON.stringify(args))>65536)throw new Error('Local tool call exceeds limit')
@@ -98,6 +105,11 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
    return definitions
   },
   async disconnect(owner:string,name?:string){store.lifecycle.disconnect(owner,name);await stopEntries(owner,name)},
+  async releaseRun(owner:string,run:StdioRun){
+   const names=new Set<string>()
+   for(const entry of [...entries.values(),...retired])if(entry.owner===owner && entry.users.delete(runKey(run)) && !entry.users.size)names.add(entry.name)
+   await Promise.all([...names].map(name=>stopEntries(owner,name)))
+  },
   transitionOwner:<T>(owner:string,write:()=>Promise<T>)=>store.lifecycle.transitionOwner(owner,async()=>{await stopEntries(owner);return write()}),
   async shutdown(){closed=true;store.lifecycle.shutdown();await stopEntries()},
  }

@@ -8,19 +8,20 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { brainAuthorLabel, isCardType } from '@/lib/brain/labels'
 import { BRAIN_PAGE_ICONS } from '@/lib/brain/page-icons'
-import type { BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
+import { flushDesktopBrainDrafts, brainDraftHash, type BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
 import { ArrowLeftIcon } from '@/lib/icons'
 import { fullDateTime, shortRelativeTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import type { BrainPage, BrainRevision } from '@rerun/contracts'
 import { useEffect, useState } from 'react'
+import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from './mutation-intents'
 import type { DesktopBrainActions } from './types'
 
 type DesktopBrainHistoryProps = {
     page: BrainPage
     revisions: BrainRevision[]
     titles: Map<string, string>
-    actions: Pick<DesktopBrainActions, 'readRevision' | 'restoreRevision'>
+    actions: Pick<DesktopBrainActions, 'readRevision' | 'revertPage'>
     onBack: () => void
     onOpenPage: (slug: string) => void
     onRestored: (detail: BrainPageDetail) => void
@@ -45,10 +46,11 @@ function PreviewSkeleton() {
  * on a version that was not written.
  */
 export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, onOpenPage, onRestored }: DesktopBrainHistoryProps) {
-    const [selectedId, setSelectedId] = useState<string | null>(revisions[0]?.id ?? null)
+    const [selectedId, setSelectedId] = useState<string | null>(() => { try { const pending = brainMutationIntent('revert:' + page.slug); return pending?.input.kind === 'revert' ? pending.input.revisionId : revisions[0]?.id ?? null } catch { return revisions[0]?.id ?? null } })
     const [preview, setPreview] = useState<{ id: string; content: string } | null>(null)
     const [previewError, setPreviewError] = useState<string | null>(null)
     const [restoring, setRestoring] = useState(false)
+    const [pendingRestore, setPendingRestore] = useState(() => { try { return !!brainMutationIntent('revert:' + page.slug) } catch { return true } })
     const [restoreError, setRestoreError] = useState<string | null>(null)
 
     const selected = revisions.find(revision => revision.id === selectedId) ?? null
@@ -87,7 +89,13 @@ export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, 
         setRestoring(true)
         setRestoreError(null)
         try {
-            const result = await actions.restoreRevision(page.slug, selected.id, page.hash)
+            if (!await flushDesktopBrainDrafts()) throw new Error('Save or resolve your page edits before restoring a version.')
+            const pending = await reserveBrainMutation('revert:' + page.slug, { kind: 'revert', slug: page.slug, revisionId: selected.id, expectedHash: brainDraftHash(page.slug) ?? page.hash })
+            if (pending.input.kind !== 'revert' || pending.input.slug !== page.slug) throw new Error('The saved restore request does not match this page.')
+            setPendingRestore(true)
+            const result = await actions.revertPage(page.slug, pending.input.revisionId, pending.input.expectedHash, pending.requestId)
+            await settleBrainMutation('revert:' + page.slug, result)
+            setPendingRestore(!result.ok && !!result.uncertain)
             if (!result.ok) { setRestoreError(result.error); return }
             onRestored(result.detail)
         } catch (cause) {
@@ -112,7 +120,7 @@ export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, 
                             <span className="min-w-0 flex-1 truncate text-muted-foreground">
                                 {isCurrent ? 'Current version' : `Version from ${fullDateTime(selected.createdAt)}`}
                             </span>
-                            {!isCurrent && (
+                            {(!isCurrent || pendingRestore) && (
                                 <ConfirmDialog
                                     title="Restore this version?"
                                     description="The page goes back to what it said then. The current version stays in the history."
@@ -121,7 +129,7 @@ export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, 
                                     pending={restoring}
                                     onConfirm={() => void restore()}
                                 >
-                                    <Button size="xs">Restore this version</Button>
+                                    <Button size="xs">{pendingRestore ? 'Retry restore' : 'Restore this version'}</Button>
                                 </ConfirmDialog>
                             )}
                         </div>
@@ -149,6 +157,7 @@ export function DesktopBrainHistory({ page, revisions, titles, actions, onBack, 
                             <button
                                 key={revision.id}
                                 type="button"
+                                disabled={restoring || pendingRestore}
                                 onClick={() => setSelectedId(revision.id)}
                                 className={cn('block w-full rounded-md px-2 py-1.5 text-left transition-colors', revision.id === selectedId ? 'bg-accent' : 'hover:bg-accent/60')}
                             >

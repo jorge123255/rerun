@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopNativeReviewRead } from '@/test/desktop-background-fixture'
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, test, vi } from 'vitest'
@@ -18,6 +19,7 @@ test('switching, failed loads, retry, and New chat keep drafts and never show an
     let resolveSlow!: (value: Response) => void
     let sends = 0
     vi.stubGlobal('fetch', vi.fn((url: string) => {
+        const nativeReview = desktopNativeReviewRead(url); if (nativeReview) return nativeReview
         if (url.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.endsWith('/questions')) return Response.json({ question: null })
         if (url.includes('/queue?')) return Response.json({ queued: null })

@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopNativeReviewRead } from '@/test/desktop-background-fixture'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -40,6 +41,7 @@ const writeDraft = (text: string) => act(async () => {
 test('a scoped picker supports retry, folders, ordered multi-selection, removal, and unsupported files', async () => {
     let fail = true
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const nativeReview = desktopNativeReviewRead(input); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
@@ -85,6 +87,7 @@ test('sending a workspace file keeps the draft for retry and renders only its sa
     const posts: unknown[] = []
     let accepted = false
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
@@ -121,6 +124,7 @@ test('sending a workspace file keeps the draft for retry and renders only its sa
 test('stale folder failures do not replace a more recent listing or reopen a dismissed picker', async () => {
     let finish!: (response: Response) => void
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const nativeReview = desktopNativeReviewRead(input); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
@@ -152,6 +156,7 @@ test('a follow-up attachment can be removed while streaming without changing the
     let accept!: (response: Response) => void
     let finish!: () => void
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
@@ -200,6 +205,7 @@ test('three ordered files travel as one immutable set, persist per tab, and rend
     const draftFixture = createDesktopDraftFixture()
     draftFixture.seedTabs('alice', [{ uid: 'tab', id: 'saved' }])
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
         const fixture = draftFixture.handle(input, init)
         if (fixture) {
@@ -259,6 +265,7 @@ test('the picker stops at ten files and at the shared 128 KiB total', async () =
     const ten = Array.from({ length: 11 }, (_, index) => entry(`${index}.md`))
     const heavy = Array.from({ length: 5 }, (_, index) => entry(`big-${index}.md`, 'file', 32768))
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const nativeReview = desktopNativeReviewRead(input); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
@@ -280,6 +287,7 @@ test('the picker stops at ten files and at the shared 128 KiB total', async () =
 
 test('a failing multi-file send keeps every chip and the typed text', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const nativeReview = desktopNativeReviewRead(input); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
@@ -304,6 +312,7 @@ test('a rejected attachment draft keeps its text and permits removing the reject
     fixture.seedTabs('alice', [{ uid: 'repair-tab', id: 'saved' }])
     const writes: Record<string, unknown>[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local')
         if (url.pathname.endsWith('/draft') && init?.method === 'PUT') {
             const body = JSON.parse(String(init.body))

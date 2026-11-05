@@ -26,6 +26,7 @@ import { desktopFileCardOf } from '@/lib/desktop/file-card'
 import { useCopy } from '@/lib/use-copy'
 import { splitIntoBubbles } from '@/lib/chat/message-bubbles'
 import { cn } from '@/lib/utils'
+import { DesktopBrainProposalBlock } from './brain/proposals/DesktopBrainProposalBlock'
 import { DesktopSkillProposalBlock } from './skills/DesktopSkillProposalBlock'
 import type { EngineSkillProposal } from '@/lib/engine/types'
 
@@ -149,6 +150,14 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
         } else if (isToolUIPart(part)) {
             const toolName = stripBridgePrefix(getToolName(part))
             if (part.toolCallId === pendingRequestToolCallId || toolName === QUICK_REPLIES_TOOL) continue
+            if (toolName === 'brain_propose' && part.state === 'output-available') {
+                let value: unknown = part.output
+                if (typeof value === 'string') { try { value = JSON.parse(value) } catch { value = null } }
+                if (value && typeof value === 'object' && 'proposalId' in value && 'title' in value && typeof value.title === 'string' && 'status' in value && ['proposed','updated'].includes(String(value.status))) {
+                    blocks.push(<DesktopBrainProposalBlock key={part.toolCallId} title={value.title} mode="edit" onReview={()=>window.dispatchEvent(new Event('rerun-desktop-open-brain'))}/>)
+                    continue
+                }
+            }
             if (toolName === 'skill_propose' && part.state === 'output-available') {
                 const id = skillProposalIdOf(part.output)
                 const proposal = id ? skillProposals?.rows.get(id) : undefined

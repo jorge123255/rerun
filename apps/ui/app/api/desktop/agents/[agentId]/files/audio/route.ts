@@ -4,7 +4,7 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 export const dynamic = 'force-dynamic'
 type Context = { params: Promise<{ agentId: string }> }
 
-/** Bytes of one existing WAV or MP3 in this coworker's workspace.
+/** Bytes of one existing WAV, MP3, M4A, Ogg, or FLAC file in this coworker's workspace.
  * The whole file is returned. There is no byte range: Files and chat-card previews keep a blob URL
  * so a JSON error can be shown before playback, and seeking stays inside that blob. */
 export function GET(request: Request, { params }: Context) {

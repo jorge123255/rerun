@@ -14,11 +14,8 @@ const file=z.object({path:z.string().max(1024),before:before.nullable(),after:z.
 export const nativeBundle=z.object({id:z.string().uuid(),engineAgentId:id,sessionId:id,runId:id,files:z.array(file).min(1).max(64)}).strict()
 export type NativeBundle=z.infer<typeof nativeBundle>
 export type NativeReview={id:string;digest:string;path:string;before:string|null;after:string;state:string}
-export type WritebackAuthority=(identity:{engineAgentId:string;sessionId:string;runId:string},action:'capture'|'read'|'apply'|'reject',signal:AbortSignal)=>Promise<{owner:string;runtime:DesktopRuntime;workspaceRoot:string}>
-export const nativeWritebackSchema=`CREATE TABLE IF NOT EXISTS desktop_native_writeback (
- id TEXT PRIMARY KEY,owner TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,engine_id TEXT NOT NULL,session_id TEXT NOT NULL,run_id TEXT NOT NULL,digest TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS desktop_native_writeback_files (
- proposal_id TEXT NOT NULL REFERENCES desktop_native_writeback(id) ON DELETE CASCADE,path TEXT NOT NULL,digest TEXT NOT NULL,payload TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',PRIMARY KEY(proposal_id,path));`
+export type WritebackAuthority=(identity:{engineAgentId:string;sessionId:string;runId:string},action:'capture'|'read'|'apply'|'reject',signal:AbortSignal)=>Promise<{owner:string;runtime:DesktopRuntime;workspaceRoot:string;cancelled?:boolean}>
+export {nativeWritebackSchema} from './schema'
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex')
 export function nativeWritebackService(db:Client,authorize:WritebackAuthority){
  async function capture(input:NativeBundle,signal:AbortSignal){
@@ -46,34 +43,42 @@ export function nativeWritebackService(db:Client,authorize:WritebackAuthority){
   }catch(error){await transaction.rollback();throw error}finally{transaction.close()}
   return {proposalId:bundle.id}
  }
- async function owned(owner:string,proposalId:string,action:'read'|'apply'|'reject',signal:AbortSignal){
+ async function engineSession(owner:string,sessionId:string,signal:AbortSignal){
+  id.parse(sessionId)
+  const rows=(await abortable(db.execute({sql:'SELECT engine_session_id FROM desktop_sessions WHERE id=? AND agent_id=?',args:[sessionId,owner]}),signal)).rows
+  if(rows.length!==1)throw new Error('Conversation unavailable')
+  return String(rows[0].engine_session_id)
+ }
+ async function owned(owner:string,sessionId:string,proposalId:string,action:'read'|'apply'|'reject',signal:AbortSignal){
+  const expectedSession=await engineSession(owner,sessionId,signal)
   const proposal=(await abortable(db.execute({sql:'SELECT * FROM desktop_native_writeback WHERE id=? AND owner=?',args:[proposalId,owner]}),signal)).rows[0]
-  if(!proposal)throw new Error('Proposal unavailable')
+  if(!proposal || proposal.session_id!==expectedSession)throw new Error('Proposal unavailable in this conversation')
   const identity={engineAgentId:String(proposal.engine_id),sessionId:String(proposal.session_id),runId:String(proposal.run_id)}
   const current=await abortable(authorize(identity,action,signal),signal)
   if(current.owner!==owner)throw new Error('Proposal owner changed')
   return {identity,current}
  }
- async function list(owner:string,signal:AbortSignal,cursor?:string){
+ async function list(owner:string,sessionId:string,signal:AbortSignal,cursor?:string){
+  const expectedSession=await engineSession(owner,sessionId,signal)
   if(cursor && (!/^[1-9]\d{0,14}$/.test(cursor) || !Number.isSafeInteger(Number(cursor))))throw new Error('Invalid review cursor')
-  const rows=(await abortable(db.execute({sql:`SELECT f.rowid AS cursor,f.* FROM desktop_native_writeback_files f JOIN desktop_native_writeback p ON p.id=f.proposal_id WHERE p.owner=? ${cursor?'AND f.rowid<?':''} ORDER BY f.rowid DESC LIMIT 65`,args:[owner,...(cursor?[Number(cursor)]:[])]}),signal)).rows
+  const rows=(await abortable(db.execute({sql:`SELECT f.rowid AS cursor,f.* FROM desktop_native_writeback_files f JOIN desktop_native_writeback p ON p.id=f.proposal_id WHERE p.owner=? AND p.session_id=? ${cursor?'AND f.rowid<?':''} ORDER BY f.rowid DESC LIMIT 65`,args:[owner,expectedSession,...(cursor?[Number(cursor)]:[])]}),signal)).rows
   const result:NativeReview[]=[];let bytes=0,last:string|undefined
   for(const row of rows){
    if(result.length>=64)break
-   await owned(owner,String(row.proposal_id),'read',signal)
+   const authority=await owned(owner,sessionId,String(row.proposal_id),'read',signal)
    const item=file.parse(JSON.parse(String(row.payload))),size=Buffer.byteLength(item.after)+Buffer.byteLength(item.before?.text??'')
    if(bytes+size>3*1024*1024)break
    bytes+=size;last=String(row.cursor)
-   result.push({id:String(row.proposal_id),digest:String(row.digest),path:item.path,before:item.before?.text??null,after:item.after,state:String(row.state)})
+   result.push({id:String(row.proposal_id),digest:String(row.digest),path:item.path,before:item.before?.text??null,after:item.after,state:row.state==='pending' && authority.current.cancelled?'cancelled':String(row.state)})
   }
   signal.throwIfAborted();return {files:result,nextCursor:result.length<rows.length?last:undefined}
  }
- async function decide(owner:string,proposalId:string,path:string,digest:string,decision:'apply'|'reject',signal:AbortSignal){
-  const auth=await owned(owner,proposalId,decision,signal)
+ async function decide(owner:string,sessionId:string,proposalId:string,path:string,digest:string,decision:'apply'|'reject',signal:AbortSignal){
+  const auth=await owned(owner,sessionId,proposalId,decision,signal)
   const row=(await abortable(db.execute({sql:'SELECT * FROM desktop_native_writeback_files WHERE proposal_id=? AND path=? AND digest=?',args:[proposalId,path,digest]}),signal)).rows[0]
   if(!row)throw new Error('Reviewed bytes do not match proposal')
   if(row.state!=='pending')return {state:String(row.state)}
-  const guard=async()=>{const current=await owned(owner,proposalId,decision,signal);signal.throwIfAborted();if(current.current.runtime.dataRoot!==auth.current.runtime.dataRoot || current.current.runtime.launchNonce!==auth.current.runtime.launchNonce || current.current.workspaceRoot!==auth.current.workspaceRoot)throw new Error('Publication authority changed')}
+  const guard=async()=>{const current=await owned(owner,sessionId,proposalId,decision,signal);signal.throwIfAborted();if(current.current.runtime.dataRoot!==auth.current.runtime.dataRoot || current.current.runtime.launchNonce!==auth.current.runtime.launchNonce || current.current.workspaceRoot!==auth.current.workspaceRoot)throw new Error('Publication authority changed')}
   await guard()
   const claimed=await db.execute({sql:'UPDATE desktop_native_writeback_files SET state=? WHERE proposal_id=? AND path=? AND digest=? AND state=\'pending\'',args:[decision==='reject'?'rejected':'claimed',proposalId,path,digest]})
   if(claimed.rowsAffected!==1)return {state:'unavailable'}

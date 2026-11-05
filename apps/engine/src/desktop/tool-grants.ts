@@ -4,6 +4,7 @@ import type { RunContext } from '../runtime/context.js'
 
 export function hasDesktopToolGrant(config: AgentConfig, id: DesktopRerunGrantId): boolean {
     if (!desktopRerunGrantsOf(config.tools)[id]) return false
+    if (id === 'brain') return config.tools.brain !== false
     if (id === 'skills') return config.tools.skills !== false
     if (id === 'sharedFilesRead') return config.tools.shared !== false
     if (id === 'privateFileWrite') return config.tools.filesystem

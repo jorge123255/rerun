@@ -6,8 +6,8 @@ import type { SiblingFiles } from '@/components/files/useSiblingFiles'
 import { useCallback, useEffect, useRef, useState, type Ref } from 'react'
 import { FileSiblingControls } from './DesktopFileSiblingNav'
 
-const VIDEO_NAME = /^.+\.mp4$/i
-const VIDEO_TYPES = new Set(['video/mp4'])
+const VIDEO_NAME = /^.+\.(?:mp4|webm|mov|m4v)$/i
+const VIDEO_TYPES = new Set(['video/mp4', 'video/webm', 'video/quicktime'])
 /** Matches DESKTOP_VIDEO_MAX_BYTES in the desktop video reader. */
 const VIDEO_MAX_BYTES = 16 * 1024 * 1024
 

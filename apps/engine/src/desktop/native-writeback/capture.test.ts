@@ -1,4 +1,4 @@
-import {mkdtemp,mkdir,writeFile,readFile,symlink,rm} from 'node:fs/promises'
+import {mkdtemp,mkdir,writeFile,readFile,symlink,rm,realpath} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {afterEach,expect,it,vi} from 'vitest'
@@ -9,7 +9,7 @@ import type {RunContext} from '../../runtime/context.js'
 const folders:string[]=[]
 afterEach(async()=>{for(const folder of folders.splice(0))await rm(folder,{recursive:true,force:true})})
 it('captures exact before identity, new bounded text only in copied folders, and no deletions/links/outside config',async()=>{
- const folder=await mkdtemp(join(tmpdir(),'native-writeback-'));folders.push(folder)
+ const folder=await realpath(await mkdtemp(join(tmpdir(),'native-writeback-')));folders.push(folder)
  const source=join(folder,'source'),scratch=join(folder,'scratch');config.root=source
  for(const path of [source,scratch]){await mkdir(join(path,'notes'),{recursive:true});await writeFile(join(path,'notes','a.md'),'before');await writeFile(join(path,'removed.txt'),'keep original')}
  await writeFile(join(folder,'credentials.txt'),'outside secret')

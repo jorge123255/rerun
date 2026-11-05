@@ -36,6 +36,9 @@ import type { PartialResult, RunContext, RunTrigger, SkillProposalNotice } from 
 import { desktopSourceRows } from './desktop-source-rows.js'
 import { createDesktopNativeWorker, type DesktopNativeWorker } from '../desktop/native-worker.js'
 import { partialResultsNote } from './partial-results.js'
+import { persistNativeWriteback } from '../desktop/native-writeback/client.js'
+import { requireDesktopToolGrant } from '../desktop/tool-grants.js'
+import { readAgentConfig } from '../agents/loader.js'
 import { beginDesktopCodexRun, endDesktopCodexRun } from '../desktop/native-grants.js'
 import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-control.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
@@ -286,6 +289,21 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     // a no-op instead of a duplicate row write and a duplicate hub event.
     const performSettlement = async (settlement: Settlement): Promise<RunOutcome> => {
         await appendP.catch(() => {})
+        if (settlement.kind === 'done' && nativeWorker) {
+            // Stop the native writer before reading its immutable changes. Persist the review
+            // before finishing the run so a failed capture is never reported as saved.
+            try {
+                controller.signal.throwIfAborted()
+                await closeModel()
+                closeModel = async () => {}
+                await nativeWorker.finish()
+                nativeWorker = undefined
+            } catch (error) {
+                // A failed proposal acknowledgement does not erase the model's already
+                // completed reply and tool history from the saved conversation.
+                settlement = controller.signal.aborted ? { kind: 'cancelled' } : { kind: 'error', error, messages: settlement.messages }
+            }
+        }
 
         let outcome: RunOutcome
         let pending: PendingHitl | null = null
@@ -505,7 +523,15 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         spawnToken = claudeTokenOf(connection)
         controller.signal.throwIfAborted()
         if (provider === 'codex' && desktopApp() && (agent.config.tools.desktopCodexGrants?.shell || agent.config.tools.desktopCodexGrants?.workspaceWrite)) {
-            nativeWorker = await createDesktopNativeWorker(ctx)
+            nativeWorker = await createDesktopNativeWorker(ctx, agent.config.tools.desktopToolGrants?.nativeWriteback ? {
+                authorizeCapture: async current => {
+                    await requireDesktopToolGrant(current, 'nativeWriteback')
+                    const config = await readAgentConfig(current.agent.id)
+                    current.abortSignal?.throwIfAborted()
+                    if (!config.tools.desktopCodexGrants?.workspaceRead || !config.tools.desktopCodexGrants?.workspaceWrite) throw new Error('Native file review requires workspace copies and temporary edits.')
+                },
+                persist: bundle => persistNativeWriteback(bundle, controller.signal),
+            } : undefined)
         }
         const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker)
         closeModel = resolvedModel.close

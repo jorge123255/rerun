@@ -137,8 +137,12 @@ test('serves one owned MP4 and refuses other bytes, paths, and coworkers', async
     }
     expect((await (await video('docs/quick.mp4')).json()).error).toBe('This video format can’t be previewed.')
     expect((await (await video('docs/sound.mp4')).json()).error).toBe('This video format can’t be previewed.')
-    expect((await (await video('docs/clip.webm')).json()).error).toBe('Only MP4 files can be previewed.')
-    expect((await (await video('docs/clip.mov')).json()).error).toBe('Only MP4 files can be previewed.')
+    // An MP4 renamed WebM fails its byte signature; MOV supports the ISO movie family.
+    expect((await (await video('docs/clip.webm')).json()).error).toBe('This file is not a supported video file.')
+    const mov = await video('docs/clip.mov')
+    expect(mov.status).toBe(200)
+    expect(mov.headers.get('content-type')).toBe('video/quicktime')
+    expect(Buffer.from(await mov.arrayBuffer())).toEqual(clip)
 
     expect((await video('../engine-bob/workspace/docs/clip.mp4')).status).toBe(400)
     expect((await video('docs/../../engine-bob/workspace/docs/clip.mp4')).status).toBe(400)

@@ -66,6 +66,9 @@ export async function completeDesktopQuit({ flush, confirmDiscard, stop, quit, c
         try { discard = await confirmDiscard() === true } catch {}
         if (!discard) { cancelled(); return false }
     }
-    try { await stop() } finally { quit() }
+    // An unconfirmed process drain is not a successful Quit. Restore the existing
+    // renderer cancellation protocol so the user can see and retry the error.
+    try { await stop() } catch { cancelled(); return false }
+    quit()
     return true
 }

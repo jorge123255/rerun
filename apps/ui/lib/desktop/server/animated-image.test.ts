@@ -145,3 +145,11 @@ test('frame count, aggregate pixels, canvas fit, and APNG stay bounded', () => {
     const frame = vp8Frame(1, 1)
     expect(reason('webp', webpFile(vp8x(1, 1, 0x03), webpChunk('ANIM', Buffer.alloc(6)), anmf(frame, 1, 1)))).toBe('corrupt')
 })
+
+test('animated WebP permits EXIF and XMP metadata after the final frame', () => {
+    const bytes = webpFile(vp8x(1, 1, 0x0e), webpChunk('ANIM', Buffer.alloc(6)),
+        anmf(vp8Frame(1, 1), 1, 1), webpChunk('EXIF', Buffer.from('metadata')),
+        webpChunk('XMP ', Buffer.from('http://example.test/not-fetched')))
+    expect(inspectDesktopPreviewImageBytes('webp', bytes)).toMatchObject({ animated: true, frames: 1 })
+    expect(() => inspectDesktopImageBytes('webp', bytes)).toThrowError(expect.objectContaining({ reason: 'animation' }))
+})

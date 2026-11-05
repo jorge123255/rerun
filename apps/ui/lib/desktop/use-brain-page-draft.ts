@@ -1,241 +1,184 @@
 'use client'
 
+import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from '@/components/desktop/brain/pages/mutation-intents'
+import { readBrainUiState, writeBrainUiState, flushBrainUiState } from './brain-ui-state'
 import { holdDraftAdmission, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
-import type { BrainPage, BrainPageType, BrainRevision } from '@rerun/contracts'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import type { BrainPageDetail, BrainWriteResult, DesktopBrainPagesActions } from '@/lib/desktop/brain-pages'
+import { brainPageTypeSchema, type BrainPage } from '@rerun/contracts'
+import { useCallback, useEffect, useSyncExternalStore } from 'react'
+import { z } from 'zod'
 
-/** One page as the editor reads and writes it: the contract shapes the engine already speaks. */
-export type BrainPageDetail = { page: BrainPage; revisions: BrainRevision[] }
-
-export type BrainDraft = { title: string; type: BrainPageType; content: string }
-
+export type { BrainPageDetail }
+export type BrainDraftWriteResult = BrainWriteResult
+export type BrainDraftActions = Pick<DesktopBrainPagesActions, 'savePage' | 'readPage'>
+export type BrainDraft = { title: string; type: BrainPage['type']; content: string }
 export type BrainDraftWrite = BrainDraft & { sources: string[]; baseHash: string | null }
-
-export type BrainDraftWriteResult = { ok: true; detail: BrainPageDetail } | { ok: false; conflict: boolean; error: string }
-
-/**
- * The only two actions autosave needs. The panel's full actions interface extends this, so a page
- * editor can be dropped on any implementation that answers like the original brain actions.
- */
-export type BrainDraftActions = {
-    savePage: (slug: string, write: BrainDraftWrite) => Promise<BrainDraftWriteResult>
-    readPage: (slug: string) => Promise<BrainPageDetail | null>
-}
-
 export type BrainDraftStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error' | 'conflict'
-
-const DEBOUNCE_MS = 1000
-
-type Cached = { draft: BrainDraft; baseHash: string | null; dirty: boolean; error: string | null }
-
-// The draft outlives the component: switching page, opening the history, or closing and reopening
-// the panel brings back exactly what was typed, not what was last saved. Keyed by slug because a
-// slug is stable for the life of a page.
-const drafts = new Map<string, Cached>()
-
-// Every mounted editor's flush, so closing the dialog or quitting the app can wait for real writes
-// instead of dropping a keystroke.
-const flushes = new Map<string, () => Promise<void>>()
+const storedSchema = z.object({ draft: z.object({ title: z.string().max(120), type: brainPageTypeSchema, content: z.string().max(60_000) }),
+    baseHash: z.string(), sources: z.array(z.string()), dirty: z.boolean(), conflicted: z.boolean(), error: z.string().nullable() })
+type Entry = z.infer<typeof storedSchema> & {
+    slug: string; status: BrainDraftStatus; conflictWith: BrainPage | null; revision: number; version: number;
+    listeners: Set<() => void>; work?: Promise<void>; timer?: ReturnType<typeof setTimeout>;
+    actions?: BrainDraftActions; onSaved?: (detail: BrainPageDetail) => void;
+}
+const drafts = new Map<string, Entry>()
+const formFlushes = new Set<() => Promise<boolean>>()
+export function registerBrainFormFlush(flush: () => Promise<boolean>) { formFlushes.add(flush); return () => { formFlushes.delete(flush) } }
 let shutdownHooked = false
+const valueOf = (page: BrainPage): BrainDraft => ({ title: page.title, type: page.type, content: page.content })
 
-function hookShutdown() {
-    if (shutdownHooked) return
-    shutdownHooked = true
-    subscribeDraftShutdown(() => { void flushDesktopBrainDrafts() })
+function publish(entry: Entry) {
+    entry.version++
+    for (const listener of entry.listeners) listener()
 }
-
-/** What the editor should open on for this slug, saved or not. */
-export function brainDraftFor(page: BrainPage): BrainDraft {
-    return drafts.get(page.slug)?.draft ?? { title: page.title, type: page.type, content: page.content }
+function remember(entry: Entry, confirmedDirty?: boolean): Promise<void> {
+    const dirty = confirmedDirty ?? entry.dirty
+    // A confirmed save snapshot is retained until its mutation intent is cleared. Otherwise
+    // clean server-backed pages need no active draft record; their CAS tombstone is sufficient.
+    const value = confirmedDirty !== undefined || dirty || entry.conflicted || entry.error
+        ? { draft: entry.draft, baseHash: entry.baseHash, sources: entry.sources, dirty, conflicted: entry.conflicted, error: entry.error }
+        : null
+    return writeBrainUiState('draft:' + entry.slug, value)
 }
-
-/** True while a page holds an edit that has not reached the engine. */
-export function brainDraftDirty(slug: string): boolean {
-    return drafts.get(slug)?.dirty ?? false
-}
-
-/** Every unsaved brain draft, flushed. Returns false when one still cannot be written. */
-export async function flushDesktopBrainDrafts(): Promise<boolean> {
-    const pending = [...flushes.values()]
-    if (!pending.length) return ![...drafts.values()].some(entry => entry.dirty)
-    await Promise.allSettled(pending.map(flush => flush()))
-    return ![...drafts.values()].some(entry => entry.dirty)
-}
-
-/** Drops a page's unsaved draft, after it was deleted or when the person picked the other version. */
-export function forgetBrainDraft(slug: string) {
-    drafts.delete(slug)
-}
-
-/**
- * The original autosave, on injected actions instead of server actions. A page saves itself a
- * second after the last keystroke, against the version it was opened at; a change that landed in
- * between refuses the write and the person picks a side, with nothing lost either way.
- *
- * A failure is never reported as a save: the draft stays dirty, the error stays on screen, and the
- * next flush retries the same text.
- */
-export function useBrainPageDraft({ page, actions, onSaved }: {
-    page: BrainPage
-    actions: BrainDraftActions
-    onSaved: (detail: BrainPageDetail) => void
-}) {
-    const cached = drafts.get(page.slug)
-    const [status, setStatus] = useState<BrainDraftStatus>(cached?.error ? 'error' : cached?.dirty ? 'pending' : 'idle')
-    const [error, setError] = useState<string | null>(cached?.error ?? null)
-    const [conflictWith, setConflictWith] = useState<BrainPage | null>(null)
-    const [revision, setRevision] = useState(0)
-
-    const draft = useRef<BrainDraft>(cached?.draft ?? { title: page.title, type: page.type, content: page.content })
-    const baseHash = useRef<string | null>(cached?.baseHash ?? page.hash)
-    const sources = useRef(page.sources)
-    const dirty = useRef(cached?.dirty ?? false)
-    const conflicted = useRef(false)
-    const failed = useRef(Boolean(cached?.error))
-    const inFlight = useRef<Promise<void> | null>(null)
-    const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-    const admission = useRef<(() => void) | null>(null)
-    const onSavedRef = useRef(onSaved)
-    const actionsRef = useRef(actions)
-    const slug = page.slug
-
-    useEffect(() => { onSavedRef.current = onSaved })
-    useEffect(() => { actionsRef.current = actions })
-
-    const errorRef = useRef<string | null>(cached?.error ?? null)
-
-    const remember = useCallback(() => {
-        drafts.set(slug, { draft: draft.current, baseHash: baseHash.current, dirty: dirty.current, error: failed.current ? errorRef.current : null })
-    }, [slug])
-
-    const write = useCallback(async () => {
-        if (!dirty.current || conflicted.current) return
-        if (!draft.current.title.trim()) return
-        dirty.current = false
-        failed.current = false
-        errorRef.current = null
-        setStatus('saving')
-        admission.current ??= holdDraftAdmission()
-        const snapshot = draft.current
-        let result: BrainDraftWriteResult
+function entryFor(page: BrainPage): Entry {
+    let entry = drafts.get(page.slug)
+    if (!entry) {
+        const initial = { draft: valueOf(page), baseHash: page.hash, sources: page.sources, dirty: false, conflicted: false, error: null as string | null }
         try {
-            result = await actionsRef.current.savePage(slug, { ...snapshot, sources: sources.current, baseHash: baseHash.current })
-        } catch (cause) {
-            result = { ok: false, conflict: false, error: cause instanceof Error && cause.message ? cause.message : 'Could not save this page. Try again.' }
+            const saved = typeof window === 'undefined' ? null : readBrainUiState('draft:' + page.slug)
+            if (saved) {
+                const parsed = storedSchema.parse(saved)
+                if (parsed.dirty) Object.assign(initial, parsed)
+            }
+            const pending = brainMutationIntent('save:' + page.slug)
+            if (pending?.input.kind === 'save') {
+                if (!initial.dirty) initial.draft = { title: pending.input.input.title, type: pending.input.input.type, content: pending.input.input.content }
+                initial.dirty = true
+            }
+        } catch { initial.error = 'Could not restore the saved Brain draft. Retry before editing this page.' }
+        entry = { ...initial, slug: page.slug, status: initial.error ? 'error' : initial.conflicted ? 'conflict' : initial.dirty ? 'pending' : 'idle',
+            conflictWith: null, revision: 0, version: 0, listeners: new Set() }
+        drafts.set(page.slug, entry)
+    } else if (!entry.dirty && !entry.work && entry.baseHash !== page.hash) {
+        entry.draft = valueOf(page); entry.baseHash = page.hash; entry.sources = page.sources; entry.revision++; entry.version++
+        entry.error = null; entry.status = 'idle'
+    }
+    return entry
+}
+export function brainDraftFor(page: BrainPage): BrainDraft { return entryFor(page).draft }
+export function brainDraftHash(slug: string): string | undefined { return drafts.get(slug)?.baseHash }
+export function brainDraftDirty(slug: string): boolean { return drafts.get(slug)?.dirty ?? false }
+export function forgetBrainDraft(slug: string) {
+    const entry = drafts.get(slug)
+    if (entry?.work) throw new Error('Wait for this page to finish saving.')
+    if (entry?.timer) clearTimeout(entry.timer)
+    drafts.delete(slug)
+    void writeBrainUiState('draft:' + slug, null).catch(() => {})
+}
+export async function flushDesktopBrainDrafts(): Promise<boolean> {
+    await Promise.allSettled([...drafts.values()].map(entry => flushEntry(entry)))
+    const forms = await Promise.allSettled([...formFlushes].map(flush => flush()))
+    const persisted = await flushBrainUiState()
+    return persisted && forms.every(result => result.status === 'fulfilled' && result.value) && ![...drafts.values()].some(entry => entry.dirty || entry.work)
+}
+function showError(entry: Entry, error: unknown) {
+    entry.error = error instanceof Error ? error.message : 'Could not save this page. Try again.'
+    entry.status = entry.conflicted ? 'conflict' : 'error'
+    void remember(entry).catch(() => { /* The adapter retains the exact failed persistence attempt. */ })
+    publish(entry)
+}
+async function flushEntry(entry: Entry): Promise<void> {
+    if (entry.timer) { clearTimeout(entry.timer); entry.timer = undefined }
+    if (entry.work) return entry.work
+    if (!entry.dirty || entry.conflicted || !entry.actions) return
+    const work = (async () => {
+        // Drain edits made during a successful save. Failures always stop and retain their input.
+        while (entry.dirty && !entry.conflicted && entry.actions) {
+            if (!entry.draft.title.trim()) { showError(entry, new Error('A page needs a title to be saved.')); return }
+            const release = holdDraftAdmission()
+            try {
+                await remember(entry)
+                const pending = await reserveBrainMutation('save:' + entry.slug, { kind: 'save', slug: entry.slug,
+                    input: { ...entry.draft, sources: [...entry.sources], baseHash: entry.baseHash } })
+                if (pending.input.kind !== 'save' || pending.input.slug !== entry.slug) throw new Error('The saved page request does not match this page.')
+                entry.error = null; entry.status = 'saving'; publish(entry)
+                let result: BrainWriteResult
+                try { result = await entry.actions.savePage(entry.slug, pending.input.input, pending.requestId) }
+                catch (error) { result = { ok: false, conflict: false, uncertain: true, error: error instanceof Error ? error.message : 'Could not save this page.' } }
+                if (result.ok) {
+                    entry.baseHash = result.detail.page.hash
+                    entry.sources = result.detail.page.sources
+                    const sent = pending.input.input
+                    const newerDraft = () => entry.draft.title.trim() !== sent.title.trim() || entry.draft.type !== sent.type || entry.draft.content !== sent.content
+                    entry.error = null
+                    // Keep entry.dirty true, and the exact engine receipt identity, until the
+                    // returned hash has reached app.db. A failed persistence write stays retryable.
+                    await remember(entry, newerDraft())
+                    await settleBrainMutation('save:' + entry.slug, result)
+                    entry.dirty = newerDraft(); entry.status = entry.dirty ? 'pending' : 'saved'
+                    await remember(entry); publish(entry); entry.onSaved?.(result.detail)
+                } else {
+                    await settleBrainMutation('save:' + entry.slug, result)
+                    entry.error = result.error
+                    if (result.conflict) {
+                        entry.conflicted = true; entry.status = 'conflict'
+                        try { entry.conflictWith = (await entry.actions.readPage(entry.slug))?.page ?? null }
+                        catch { /* Keep the confirmed conflict; a failed read is never a missing page. */ }
+                        await remember(entry); publish(entry)
+                    } else showError(entry, new Error(result.error))
+                    return
+                }
+            } catch (error) { showError(entry, error); return }
+            finally { release() }
         }
-        if (result.ok) {
-            baseHash.current = result.detail.page.hash
-            sources.current = result.detail.page.sources
-            errorRef.current = null
-            setError(null)
-            setStatus(dirty.current ? 'pending' : 'saved')
-            onSavedRef.current(result.detail)
-            remember()
-            if (!dirty.current) { admission.current?.(); admission.current = null }
-            return
-        }
-        dirty.current = true
-        if (result.conflict) {
-            conflicted.current = true
-            setStatus('conflict')
-            const latest = await actionsRef.current.readPage(slug).catch(() => null)
-            setConflictWith(latest?.page ?? null)
-            remember()
-            admission.current?.()
-            admission.current = null
-            return
-        }
-        failed.current = true
-        errorRef.current = result.error
-        setError(result.error)
-        setStatus('error')
-        remember()
-        admission.current?.()
-        admission.current = null
-    }, [slug, remember])
+    })()
+    entry.work = work
+    await work.finally(() => { if (entry.work === work) entry.work = undefined })
+}
+function schedule(entry: Entry) {
+    if (entry.timer) clearTimeout(entry.timer)
+    entry.timer = setTimeout(() => { void flushEntry(entry) }, 1000)
+}
 
-    const schedule = useCallback(() => {
-        if (timer.current) clearTimeout(timer.current)
-        timer.current = setTimeout(() => { void flushRef.current() }, DEBOUNCE_MS)
-    }, [])
-
-    const flushRef = useRef<() => Promise<void>>(async () => {})
-    const flush = useCallback(async () => {
-        if (timer.current) { clearTimeout(timer.current); timer.current = null }
-        while (inFlight.current) await inFlight.current
-        if (!dirty.current || conflicted.current) return
-        const run = write().finally(() => { inFlight.current = null })
-        inFlight.current = run
-        await run
-        if (dirty.current && !conflicted.current && !failed.current && draft.current.title.trim()) schedule()
-    }, [write, schedule])
-
-    useEffect(() => { flushRef.current = flush })
-
+export function useBrainPageDraft({ page, actions, onSaved }: {
+    page: BrainPage; actions: BrainDraftActions; onSaved: (detail: BrainPageDetail) => void;
+}) {
+    const entry = entryFor(page)
+    entry.actions = actions; entry.onSaved = onSaved
+    useSyncExternalStore(useCallback((listener: () => void) => { entry.listeners.add(listener); return () => { entry.listeners.delete(listener) } }, [entry]),
+        useCallback(() => entry.version, [entry]), () => 0)
+    useEffect(() => {
+        if (!shutdownHooked) { shutdownHooked = true; subscribeDraftShutdown(() => { void flushDesktopBrainDrafts() }) }
+        if (entry.dirty && !entry.conflicted && !entry.error) schedule(entry)
+        return () => { if (entry.timer) clearTimeout(entry.timer); if (entry.dirty && !entry.error) void flushEntry(entry) }
+    }, [entry])
     const edit = useCallback((patch: Partial<BrainDraft>) => {
-        draft.current = { ...draft.current, ...patch }
-        dirty.current = true
-        remember()
-        if (!conflicted.current) {
-            setStatus('pending')
-            schedule()
-        }
-    }, [schedule, remember])
-
-    // Their version replaces the draft and the editor remounts on it.
+        entry.draft = { ...entry.draft, ...patch }; entry.dirty = true
+        void remember(entry).catch(error => showError(entry, error))
+        if (!entry.conflicted && !entry.error) { entry.status = 'pending'; schedule(entry) }
+        publish(entry)
+    }, [entry])
     const loadTheirs = useCallback(async (): Promise<BrainPage | null> => {
-        const latest = await actionsRef.current.readPage(slug).catch(() => null)
-        if (!latest) return null
-        draft.current = { title: latest.page.title, type: latest.page.type, content: latest.page.content }
-        baseHash.current = latest.page.hash
-        sources.current = latest.page.sources
-        dirty.current = false
-        conflicted.current = false
-        failed.current = false
-        errorRef.current = null
-        setConflictWith(null)
-        setError(null)
-        setStatus('idle')
-        setRevision(current => current + 1)
-        onSavedRef.current(latest)
-        remember()
-        return latest.page
-    }, [slug, remember])
-
-    // This draft wins, written on top of the version that refused it.
+        if (entry.work) await entry.work
+        try {
+            if (brainMutationIntent('save:' + entry.slug)) throw new Error('Retry the pending save before choosing another version.')
+            const latest = await actions.readPage(entry.slug)
+            if (!latest) throw new Error('This page was deleted. Your draft is still saved here.')
+            entry.draft = valueOf(latest.page); entry.baseHash = latest.page.hash; entry.sources = latest.page.sources
+            entry.dirty = false; entry.conflicted = false; entry.conflictWith = null; entry.error = null; entry.status = 'idle'; entry.revision++
+            await remember(entry); publish(entry); entry.onSaved?.(latest)
+            return latest.page
+        } catch (error) { showError(entry, error); return null }
+    }, [entry, actions])
     const keepMine = useCallback(async () => {
-        const latest = await actionsRef.current.readPage(slug).catch(() => null)
-        baseHash.current = latest?.page.hash ?? null
-        if (latest) sources.current = latest.page.sources
-        conflicted.current = false
-        setConflictWith(null)
-        dirty.current = true
-        remember()
-        await flush()
-    }, [slug, flush, remember])
-
-    // A draft left dirty by an earlier mount (a close during a failed save) is retried on return.
-    useEffect(() => {
-        if (dirty.current && !conflicted.current && !failed.current) schedule()
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
-
-    useEffect(() => {
-        hookShutdown()
-        flushes.set(slug, flush)
-        return () => {
-            if (flushes.get(slug) === flush) flushes.delete(slug)
-        }
-    }, [slug, flush])
-
-    // Leaving the page, closing the dialog or switching page never drops a keystroke: the write
-    // starts now and the cache keeps the text until it lands.
-    useEffect(() => () => {
-        if (timer.current) { clearTimeout(timer.current); timer.current = null }
-        if (!inFlight.current && !(dirty.current && !conflicted.current)) return
-        if (inFlight.current) void inFlight.current.then(() => (dirty.current && !conflicted.current ? write() : undefined))
-        else void write()
-    }, [write])
-
-    return { status, error, conflictWith, draft: draft.current, revision, edit, flush, loadTheirs, keepMine }
+        if (entry.work) await entry.work
+        try {
+            const latest = await actions.readPage(entry.slug)
+            if (!latest) throw new Error('This page was deleted. Your draft is still saved here.')
+            entry.baseHash = latest.page.hash; entry.sources = latest.page.sources; entry.conflicted = false; entry.conflictWith = null; entry.error = null
+            await remember(entry); await flushEntry(entry)
+        } catch (error) { showError(entry, error) }
+    }, [entry, actions])
+    return { status: entry.status, error: entry.error, conflictWith: entry.conflictWith, draft: entry.draft, revision: entry.revision,
+        edit, flush: () => flushEntry(entry), loadTheirs, keepMine }
 }

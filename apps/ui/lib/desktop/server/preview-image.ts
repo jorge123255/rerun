@@ -17,8 +17,9 @@ export type CoworkerPreviewImageFolder = {
     claimed(directory: string, name: string): boolean
 }
 
-const PREVIEW_IMAGE_FOLDER = Symbol.for('rerun.desktop.previewImageFolder')
-type BoundaryHost = typeof globalThis & { [PREVIEW_IMAGE_FOLDER]?: CoworkerPreviewImageFolder }
+type BoundaryHost = typeof globalThis & Record<symbol, CoworkerPreviewImageFolder | undefined>
+// Called during module binding: don't depend on a const initialized after a cyclic import.
+function boundaryKey() { return Symbol.for('rerun.desktop.previewImageFolder') }
 
 function boundaryHost(): BoundaryHost {
     return globalThis as BoundaryHost
@@ -28,14 +29,14 @@ function boundaryHost(): BoundaryHost {
  * An unbound reader keeps the static image reader, so PNG preview still works before that bind. */
 export function bindCoworkerPreviewImageFolder(boundary: CoworkerPreviewImageFolder): () => void {
     const host = boundaryHost()
-    const previous = host[PREVIEW_IMAGE_FOLDER]
-    host[PREVIEW_IMAGE_FOLDER] = boundary
+    const previous = host[boundaryKey()]
+    host[boundaryKey()] = boundary
     let restored = false
     return () => {
         if (restored) return
         restored = true
-        if (previous) host[PREVIEW_IMAGE_FOLDER] = previous
-        else delete host[PREVIEW_IMAGE_FOLDER]
+        if (previous) host[boundaryKey()] = previous
+        else delete host[boundaryKey()]
     }
 }
 
@@ -82,7 +83,7 @@ function assertPreviewOpen(signal?: AbortSignal): void {
  * Until root binds the folder closures, this falls back to the static reader. */
 export async function readCoworkerPreviewImage(runtime: DesktopRuntime, agentId: string, path: string, identity?: string, signal?: AbortSignal): Promise<CoworkerPreviewImage> {
     assertPreviewOpen(signal)
-    const boundary = boundaryHost()[PREVIEW_IMAGE_FOLDER]
+    const boundary = boundaryHost()[boundaryKey()]
     if (!boundary) {
         const image = await readCoworkerImage(runtime, agentId, path, identity)
         return { ...image, frames: 1, animated: false }

@@ -1,7 +1,7 @@
 import 'server-only'
 import { z, ZodError } from 'zod'
-import { brainConfirmSectionsSchema, brainPageResponseSchema, brainPagesListSchema, brainRevisionContentSchema, brainRevisionSchema, brainSlugSchema } from '@rerun/contracts'
-import { DESKTOP_BRAIN_BODY_MAX_BYTES, DESKTOP_BRAIN_RESPONSE_MAX_BYTES, desktopBrainPageInputSchema, desktopBrainRestoreSchema, desktopBrainRevisionIdSchema } from '../brain-pages'
+import { brainPageResponseSchema, brainPagesListSchema, brainRevisionContentSchema, brainRevisionSchema, brainSlugSchema } from '@rerun/contracts'
+import { DESKTOP_BRAIN_BODY_MAX_BYTES, DESKTOP_BRAIN_RESPONSE_MAX_BYTES, desktopBrainSaveSchema, desktopBrainConfirmSchema, desktopBrainRestoreSchema, desktopBrainRevisionIdSchema } from '../brain-pages'
 import { DesktopHttpError } from './auth'
 import type { DesktopRuntime } from './runtime'
 
@@ -38,8 +38,8 @@ export async function desktopBrainPagesRequest(runtime: DesktopRuntime, request:
             suffix = `/${encodeURIComponent(slug)}`
             if (segments.length === 1) {
                 if (method === 'GET') responseSchema = brainPageResponseSchema
-                else if (method === 'PUT') { inputSchema = desktopBrainPageInputSchema; responseSchema = brainPageResponseSchema }
-                else if (method === 'DELETE') responseSchema = z.object({ ok: z.literal(true) })
+                else if (method === 'PUT') { inputSchema = desktopBrainSaveSchema; responseSchema = brainPageResponseSchema }
+                else if (method === 'DELETE') { inputSchema = desktopBrainRestoreSchema; responseSchema = z.object({ ok: z.literal(true) }) }
                 else throw new DesktopHttpError(405, 'Method not allowed.')
             } else if (segments.length === 2 && segments[1] === 'revisions' && method === 'GET') {
                 suffix += '/revisions'; responseSchema = z.object({ revisions: z.array(brainRevisionSchema) })
@@ -48,7 +48,7 @@ export async function desktopBrainPagesRequest(runtime: DesktopRuntime, request:
             } else if (segments.length === 3 && segments[1] === 'revert' && method === 'POST') {
                 suffix += `/revert/${encodeURIComponent(desktopBrainRevisionIdSchema.parse(segments[2]))}`; inputSchema = desktopBrainRestoreSchema; responseSchema = brainPageResponseSchema
             } else if (segments.length === 2 && segments[1] === 'confirm' && method === 'POST') {
-                suffix += '/confirm'; inputSchema = brainConfirmSectionsSchema.strict(); responseSchema = brainPageResponseSchema
+                suffix += '/confirm'; inputSchema = desktopBrainConfirmSchema; responseSchema = brainPageResponseSchema
             } else throw new DesktopHttpError(404, 'Brain operation not found.')
         } else throw new DesktopHttpError(405, 'Method not allowed.')
         let body: string | undefined

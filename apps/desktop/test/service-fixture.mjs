@@ -5,6 +5,11 @@ const runtime = JSON.parse(await readFile(process.env.RERUN_DESKTOP_RUNTIME_FILE
 const engine = process.env.FIXTURE_KIND === 'engine'
 const origin = engine ? runtime.engine.origin : runtime.app.origin
 const server = createServer((request, response) => {
+    if (!engine && request.url === '/api/desktop/internal/mcp' && request.method === 'POST') {
+        const allowed = request.headers.authorization === `Bearer ${runtime.engine.apiKey}`
+        response.writeHead(allowed ? 200 : 401, { 'Content-Type': 'application/json' }).end(JSON.stringify(allowed ? { stopped: true } : { error: 'Unauthorized' }))
+        return
+    }
     const auth = engine ? request.headers.authorization === `Bearer ${runtime.engine.apiKey}` : request.headers.cookie === `rerun-desktop-session=${runtime.app.sessionToken}`
     response.setHeader('Content-Type', 'application/json')
     response.statusCode = auth ? 200 : 401

@@ -5,7 +5,7 @@ import type {NativeWritebackBundle} from './capture.js'
 export async function persistNativeWriteback(bundle:NativeWritebackBundle,stop:AbortSignal):Promise<void>{
  const retained=await retainNativeWriteback(bundle)
  await sendNativeWriteback(bundle,stop)
- await acknowledgeNativeWriteback(retained)
+ await acknowledgeNativeWriteback(retained,bundle)
 }
 export async function sendNativeWriteback(bundle:NativeWritebackBundle,stop:AbortSignal):Promise<void>{
  const config=env(),base=new URL(config.RERUN_HUB_BASE_URL??'')

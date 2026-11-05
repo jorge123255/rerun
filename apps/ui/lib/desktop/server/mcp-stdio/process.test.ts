@@ -12,7 +12,7 @@ function fake(){
  return {child,spawn}
 }
 it('starts the literal executable/argument array with shell false and only allowlisted env',async()=>{
- vi.spyOn(process,'kill').mockImplementation(()=>true)
+ vi.spyOn(process,'kill').mockImplementation((_pid,signal)=>{if(signal===0)throw Object.assign(new Error('gone'),{code:'ESRCH'});return true})
  const {child,spawn}=fake(),stop=new AbortController()
  const runner=spawnStdio({name:'fixture',revision:'r',transport:'stdio',executable:'/example/installed-fixture',args:['literal argument','$(not a shell)']},'/example/private',stop.signal,spawn)
  expect(spawn).toHaveBeenCalledWith('/example/installed-fixture',['literal argument','$(not a shell)'],expect.objectContaining({shell:false,detached:true,env:{...stdioEnvironment}}))
@@ -22,9 +22,20 @@ it('starts the literal executable/argument array with shell false and only allow
  child.emit('exit');await runner.drain()
 })
 it('refuses oversized output and never exposes stderr',async()=>{
- vi.spyOn(process,'kill').mockImplementation(()=>true)
+ vi.spyOn(process,'kill').mockImplementation((_pid,signal)=>{if(signal===0)throw Object.assign(new Error('gone'),{code:'ESRCH'});return true})
  const {child,spawn}=fake(),stop=new AbortController(),runner=spawnStdio({name:'fixture',revision:'r',transport:'stdio',executable:'/example/installed-fixture',args:[]},'/example/private',stop.signal,spawn)
  child.stderr.write(Buffer.alloc(65537,65));expect(runner.closed()).toBe(true)
  await expect(runner.rpc('tools/call',{},stop.signal)).rejects.toThrow('disconnected')
  child.emit('exit');await runner.drain()
+})
+it('does not accept direct child exit while its owned process group remains alive',async()=>{
+ vi.useFakeTimers()
+ try{
+  vi.spyOn(process,'kill').mockImplementation(()=>true)
+  const {child,spawn}=fake(),runner=spawnStdio({name:'fixture',revision:'r',transport:'stdio',executable:'/example/fixture',args:[]},'/example/private',new AbortController().signal,spawn)
+  child.emit('exit')
+  const draining=expect(runner.drain()).rejects.toThrow('group exit was not confirmed')
+  await vi.advanceTimersByTimeAsync(2500)
+  await draining
+ }finally{vi.useRealTimers()}
 })

@@ -130,6 +130,18 @@ test('successful flush precedes stopping, and stopping completes before final qu
     assert.deepEqual(events, ['flush', 'stop', 'quit'])
 })
 
+test('unconfirmed service cleanup cancels Quit and unfreezes the existing renderer', async () => {
+    const events = []
+    assert.equal(await completeDesktopQuit({
+        flush: async () => true,
+        confirmDiscard: () => assert.fail('Saved drafts need no discard question'),
+        stop: async () => { events.push('stop'); throw new Error('process group exit unconfirmed') },
+        quit: () => events.push('quit'),
+        cancelled: () => events.push('resume-editing'),
+    }), false)
+    assert.deepEqual(events, ['stop', 'resume-editing'])
+})
+
 test('a save timeout keeps editing frozen through the warning and resumes only after Stay', async () => {
     const { gate, expire } = harness()
     gate.register('document-a')

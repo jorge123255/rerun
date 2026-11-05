@@ -35,7 +35,7 @@ import { desktopWorkspaceReadTools } from '../desktop/workspace-read.js'
 import { desktopQuestionTools } from '../desktop/question-tool.js'
 import { desktopApprovalTools } from '../desktop/approval-tool.js'
 import { desktopTableCardTools } from '../desktop/card-table.js'
-import { hasDesktopToolGrant } from '../desktop/tool-grants.js'
+import { hasDesktopToolGrant, requireDesktopToolGrant } from '../desktop/tool-grants.js'
 import { desktopCardFileTools } from '../desktop/card-file.js'
 import { desktopSelfInstructionTools } from '../desktop/self-instruction.js'
 import { desktopWebFetchTools } from '../desktop/web-fetch-tool.js'
@@ -45,16 +45,24 @@ import { desktopSkillTools } from '../desktop/skill-tools.js'
 import { desktopPrivateFileTools } from '../desktop/private-file-tools.js'
 import { desktopSharedFileTools } from '../desktop/shared-file-tools.js'
 import { desktopMcpTools } from '../desktop/mcp-tools.js'
+import { desktopStdioTools } from '../desktop/mcp-stdio/client.js'
+import { desktopBrainTools } from '../desktop/brain-tools.js'
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
     if (desktopApp()) {
-        const tools: ToolSet = { ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx) }
+        const tools: ToolSet = { ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx) }
         const remote = await desktopMcpTools(ctx)
         if (Object.keys(remote.tools).some(name => Object.hasOwn(tools, name))) {
             await remote.close()
             throw new Error('An MCP tool conflicts with a built-in tool. Rename the MCP server.')
         }
-        return { tools: { ...tools, ...remote.tools }, close: remote.close }
+        let local: Awaited<ReturnType<typeof desktopStdioTools>> | undefined
+        try {
+            if (hasDesktopToolGrant(ctx.agent.config, 'localMcpStdio')) local = await desktopStdioTools(ctx, () => requireDesktopToolGrant(ctx, 'localMcpStdio'))
+            const merged = { ...tools, ...remote.tools }
+            if (Object.keys(local?.tools ?? {}).some(name => Object.hasOwn(merged, name))) throw new Error('A local MCP tool conflicts with another tool. Rename the MCP server.')
+            return { tools: { ...merged, ...local?.tools }, close: async () => { try { await local?.close() } finally { await remote.close() } } }
+        } catch (error) { try { await local?.close() } finally { await remote.close() }; throw error }
     }
     const cfg = ctx.agent.config.tools
     const tools: ToolSet = {}

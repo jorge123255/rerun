@@ -1,14 +1,14 @@
 'use client'
 
 import { BrainEditor, type BrainEditorHandle } from '@/components/brain/editor/BrainEditor'
-import { PageColumn, PageProperty, PageTitle, PageTypeIcon, PageTypeSelect } from '@/components/brain/BrainPageParts'
+import { PageColumn, PageProperty, PageTitle, PageTypeIcon, PageTypeSelect, UnconfirmedSections } from '@/components/brain/BrainPageParts'
 import { BrainTopBar } from '@/components/brain/BrainTopBar'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { brainAuthorLabel, brainSourceLabels, isCardType } from '@/lib/brain/labels'
 import { BRAIN_PAGE_ICONS } from '@/lib/brain/page-icons'
-import { brainDraftFor, useBrainPageDraft, type BrainDraftActions, type BrainDraftStatus, type BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
+import { brainDraftFor, brainDraftHash, flushDesktopBrainDrafts, useBrainPageDraft, type BrainDraftStatus, type BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
 import { ChevronRightIcon, CopyIcon, EllipsisIcon, HistoryIcon, Trash2Icon } from '@/lib/icons'
 import { shortRelativeTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
@@ -16,12 +16,14 @@ import type { BrainPageSummary, BrainPageType, BrainPage as BrainPageData } from
 import { Badge } from '@rerun/ui/primitives'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
+import type { DesktopBrainActions } from './types'
+import { brainMutationIntent, reserveBrainMutation, settleBrainMutation } from './mutation-intents'
 
 type DesktopBrainPageProps = {
     detail: BrainPageDetail
     pages: BrainPageSummary[]
     titles: Map<string, string>
-    actions: BrainDraftActions
+    actions: DesktopBrainActions
     onOpenPage: (slug: string) => void
     onSaved: (detail: BrainPageDetail) => void
     onHistory: () => void
@@ -63,8 +65,6 @@ function Backlinks({ links, onOpenPage }: { links: BrainPageData['backlinks']; o
  * and saved as they change. Nothing about the layout is new; what changes is that the writes go to
  * whatever store root injected, and a refused or failed write is shown as such.
  *
- * The hosted "confirm these imported sections" action has no counterpart in the desktop contract,
- * so the unconfirmed headings are shown with no Confirm button rather than a button that cannot work.
  */
 export function DesktopBrainPage({ detail, pages, titles, actions, onOpenPage, onSaved, onHistory, onDeleted }: DesktopBrainPageProps) {
     const page = detail.page
@@ -77,6 +77,24 @@ export function DesktopBrainPage({ detail, pages, titles, actions, onOpenPage, o
     const [confirmingDelete, setConfirmingDelete] = useState(false)
     const [deleting, setDeleting] = useState(false)
     const editorHandle = useRef<BrainEditorHandle>(null)
+    const [confirming, setConfirming] = useState(false)
+    const [confirmError, setConfirmError] = useState<string | null>(null)
+    let pendingDelete = false
+    try { pendingDelete = !!brainMutationIntent('delete:' + page.slug) } catch { pendingDelete = true }
+    const confirmSections = async () => {
+        setConfirming(true); setConfirmError(null)
+        try {
+            if (!await flushDesktopBrainDrafts()) throw new Error('Save or resolve your page edits before confirming sections.')
+            const pending = await reserveBrainMutation('confirm:' + page.slug, { kind: 'confirm', slug: page.slug,
+                headings: [...page.unconfirmed], expectedHash: brainDraftHash(page.slug) ?? page.hash })
+            if (pending.input.kind !== 'confirm' || pending.input.slug !== page.slug) throw new Error('The saved confirmation does not match this page.')
+            const result = await actions.confirmSections(page.slug, pending.input.headings, pending.input.expectedHash, pending.requestId)
+            await settleBrainMutation('confirm:' + page.slug, result)
+            if (!result.ok) throw new Error(result.error)
+            onSaved(result.detail)
+        } catch (error) { setConfirmError(error instanceof Error ? error.message : 'Could not confirm these sections. Try again.') }
+        finally { setConfirming(false) }
+    }
 
     const loadTheirs = async () => {
         const latest = await autosave.loadTheirs()
@@ -144,7 +162,7 @@ export function DesktopBrainPage({ detail, pages, titles, actions, onOpenPage, o
                 </div>
             )}
 
-            {autosave.status === 'error' && autosave.error && (
+            {(autosave.status === 'error' || autosave.status === 'conflict') && autosave.error && (
                 <div role="alert" className="flex flex-wrap items-center gap-2 border-y border-destructive/30 bg-destructive/10 px-4 py-2 text-sm">
                     <span className="min-w-0 flex-1">{autosave.error}</span>
                     <Button size="xs" variant="outline" onClick={() => void autosave.flush()}>
@@ -153,11 +171,14 @@ export function DesktopBrainPage({ detail, pages, titles, actions, onOpenPage, o
                 </div>
             )}
 
+            {pendingDelete && <div role="alert" className="px-4 py-2 text-sm">The delete request has not been confirmed. Retry it before editing.
+                <Button size="xs" disabled={deleting} onClick={() => void remove()}>Retry delete</Button></div>}
             <div className="min-h-0 flex-1 overflow-y-auto">
                 <PageColumn>
                     <PageTypeIcon type={type} />
                     <PageTitle
                         value={title}
+                        readOnly={deleting || pendingDelete}
                         onChange={next => {
                             setTitle(next)
                             autosave.edit({ title: next })
@@ -170,6 +191,7 @@ export function DesktopBrainPage({ detail, pages, titles, actions, onOpenPage, o
                         <PageProperty label="Type">
                             <PageTypeSelect
                                 value={type}
+                                disabled={deleting || pendingDelete}
                                 onChange={next => {
                                     setType(next)
                                     autosave.edit({ type: next })
@@ -185,15 +207,9 @@ export function DesktopBrainPage({ detail, pages, titles, actions, onOpenPage, o
                                 ))}
                             </PageProperty>
                         )}
-                        {page.unconfirmed.length > 0 && (
-                            <PageProperty label="Unconfirmed">
-                                {page.unconfirmed.map(heading => (
-                                    <Badge key={heading} size="xs" tone="yellow" glow={false} fill="outline" className="max-w-full min-w-0">
-                                        <span className="truncate">{heading}</span>
-                                    </Badge>
-                                ))}
-                            </PageProperty>
-                        )}
+                        {page.unconfirmed.length > 0 && <UnconfirmedSections headings={page.unconfirmed} confirming={confirming}
+                            onConfirm={() => void confirmSections()} />}
+                        {confirmError && <p role="alert" className="text-xs text-destructive">{confirmError}<Button size="xs" variant="outline" disabled={confirming} onClick={() => void confirmSections()}>Try again</Button></p>}
                         {page.updatedAt && (
                             <PageProperty label="Last edited">
                                 <span className="text-foreground/80">
@@ -205,6 +221,7 @@ export function DesktopBrainPage({ detail, pages, titles, actions, onOpenPage, o
 
                     <BrainEditor
                         key={editorKey}
+                        editable={!deleting && !pendingDelete}
                         className="mt-6"
                         content={content}
                         pages={pages}

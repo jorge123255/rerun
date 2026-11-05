@@ -18,7 +18,7 @@ beforeEach(async () => {
 afterEach(async () => { process.env = { ...env }; vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }) })
 const get = (override: Record<string, string> = {}, path?: string[]) => GET(new Request(origin + '/api/desktop/brain/pages', { headers: { ...headers, ...override } }), context(path))
 const put = (body: unknown, override: Record<string, string> = {}) => PUT(new Request(origin + '/api/desktop/brain/pages/company', { method: 'PUT', headers: { ...headers, ...override }, body: JSON.stringify(body) }), context(['company']))
-const input = { title: 'Company', type: 'company', content: 'Private company facts', sources: [], baseHash: null }
+const input = { title: 'Company', type: 'company', content: 'Private company facts', sources: [], baseHash: null, requestId: 'receipt-page-one' }
 
 it('authenticates before storage access and protects write origins', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Must not fetch'))

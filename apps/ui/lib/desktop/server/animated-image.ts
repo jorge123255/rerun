@@ -102,7 +102,7 @@ function readGif(bytes: Uint8Array): DesktopPreviewImageInfo {
     let offset = 13 + table
     if (offset > bytes.length) corrupt()
     let frames = 0
-    let aggregate = 0n
+    let aggregate = BigInt(0)
     while (offset < bytes.length) {
         const block = bytes[offset++]!
         if (block === 0x3b) {
@@ -188,7 +188,7 @@ function readAnimatedWebp(bytes: Uint8Array): DesktopPreviewImageInfo {
     let canvas: { width: number; height: number } | null = null
     let sawAnim = false
     let frames = 0
-    let aggregate = 0n
+    let aggregate = BigInt(0)
     let first = true
     while (offset < bytes.length) {
         if (offset + 8 > bytes.length) corrupt()
@@ -207,8 +207,9 @@ function readAnimatedWebp(bytes: Uint8Array): DesktopPreviewImageInfo {
         } else if (!canvas) {
             corrupt()
         } else if (id === 'ICCP' || id === 'EXIF' || id === 'XMP ') {
-            // Metadata stays in the file. It is not parsed for a URL and not fetched.
-            if (frames > 0 || payload.length < 1) corrupt()
+            // ICC precedes image data; EXIF/XMP may follow the last frame. Metadata is
+            // bounded by its chunk and never interpreted as a URL or external resource.
+            if ((id === 'ICCP' && frames > 0) || payload.length < 1) corrupt()
         } else if (id === 'ANIM') {
             if (sawAnim || frames > 0 || payload.length !== 6) corrupt()
             sawAnim = true

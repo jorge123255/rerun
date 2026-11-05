@@ -94,5 +94,5 @@ test('a refused animation stays visible as the server error and a closed preview
     expect(signals[0]?.aborted).toBe(true)
     act(() => root!.unmount())
     root = null
-    expect(hung?.aborted).toBe(true)
+    expect((hung as AbortSignal | null)?.aborted).toBe(true)
 })

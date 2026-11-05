@@ -26,6 +26,8 @@ import { toolRoutes } from './routes/tools.js'
 import { updateRoutes } from './routes/update.js'
 import { doctorRoutes } from './routes/doctor.js'
 import { createFilesRouter } from './routes/files.js'
+import { createDesktopBrainPagesRouter } from '../desktop/brain-pages-router.js'
+import { createDesktopBrainProposalsRouter } from '../desktop/brain-proposals-router.js'
 import { brainRoutes } from './routes/brain.js'
 import { agentDesktopRoutes, desktopRoutes } from './routes/desktop.js'
 import { HttpError, notFound } from '../lib/errors.js'
@@ -110,6 +112,10 @@ export function createServer(): Hono {
         return client
     }) : createDataRouter(() => getSharedDb(), SHARED_HIDDEN_TABLES))
     api.route('/brain', brainRoutes)
+    if (desktopApp()) {
+        api.route('/desktop/brain/pages', createDesktopBrainPagesRouter())
+        api.route('/desktop/brain/proposals', createDesktopBrainProposalsRouter())
+    }
     api.route('/desktop', desktopRoutes)
     api.route('/agents/:id/desktop', agentDesktopRoutes)
     api.route('/agents/:id', chatRoutes)

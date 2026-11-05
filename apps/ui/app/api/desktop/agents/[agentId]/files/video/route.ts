@@ -4,7 +4,7 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 export const dynamic = 'force-dynamic'
 type Context = { params: Promise<{ agentId: string }> }
 
-/** Bytes of one existing MP4 in this coworker's workspace.
+/** Bytes of one existing MP4, WebM, MOV or M4V in this coworker's workspace.
  * The whole file is returned. There is no byte range: Files previews and chat result cards keep
  * a blob URL so a JSON error can be shown before playback, and seeking stays inside that blob. */
 export function GET(request: Request, { params }: Context) {

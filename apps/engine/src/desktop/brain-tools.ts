@@ -1,25 +1,12 @@
-import { realpath } from 'node:fs/promises'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { brainProposalInputSchema } from '@rerun/contracts'
 import { readAgentConfig } from '../agents/loader.js'
-import { dataDir } from '../config/paths.js'
 import type { RunContext } from '../runtime/context.js'
 import { assertDesktopAgentNotDeleted, beginDesktopAgentWork } from './agent-lifecycle.js'
-import {
-    desktopBrainPageHash,
-    desktopBrainProposalFingerprint,
-    DesktopBrainProposalError,
-    findDesktopBrainProposalByFingerprint,
-    insertDesktopBrainProposal,
-    listDesktopBrainPages,
-    openDesktopBrainProposalFor,
-    readDesktopBrainPage,
-    replaceDesktopBrainProposal,
-    resolveDesktopBrainEngineDirectory,
-    searchDesktopBrain,
-    type DesktopBrainPageFile,
-} from './brain-proposals.js'
+import { desktopBrainPageHash, type DesktopBrainPageFile } from './brain-proposals.js'
+import { getDesktopBrainStore } from './brain-pages-router.js'
+import { HttpError } from '../lib/errors.js'
 
 // Desktop brain_read, brain_search, and brain_propose. brain_write is not registered.
 // Arguments cannot name a root, a host path, an engine id, or a private memory.
@@ -67,13 +54,6 @@ async function requireBrain(ctx: RunContext, signal?: AbortSignal) {
     if (!desktopBrainToolsAllowed(current)) throw new Error(TURNED_OFF)
 }
 
-async function engineDir(signal?: AbortSignal): Promise<string> {
-    try { return await resolveDesktopBrainEngineDirectory(await realpath(dataDir()), signal) }
-    catch (error) {
-        if (error instanceof DesktopBrainProposalError || isAbort(error)) throw error
-        throw new DesktopBrainProposalError(404, 'The company brain is not ready.')
-    }
-}
 
 function isUnconfirmed(heading: string, unconfirmed: Set<string>) {
     return heading.split(' / ').some(part => unconfirmed.has(part))
@@ -92,7 +72,7 @@ export function desktopBrainTools(ctx: RunContext): ToolSet {
             if (isAbort(error)) throw error
             signal?.throwIfAborted()
             ctx.abortSignal?.throwIfAborted()
-            if (error instanceof DesktopBrainProposalError) throw new Error(error.message)
+            if (error instanceof HttpError) throw new Error(error.message)
             throw error
         } finally { release() }
     }
@@ -105,10 +85,10 @@ export function desktopBrainTools(ctx: RunContext): ToolSet {
                 limit: z.number().int().positive().max(10).default(5),
             }),
             execute: ({ query, limit }, options) => run(options.abortSignal, async () => {
-                const engine = await engineDir(options.abortSignal)
-                const { hits, related } = await searchDesktopBrain(engine, query, limit ?? 5, options.abortSignal)
+                const store = await getDesktopBrainStore()
+                const { hits, related } = await store.search(query, limit ?? 5)
                 if (hits.length === 0) return 'Nothing in the company brain matches. It may simply not be written down yet.'
-                const files = await Promise.all(hits.map(hit => readDesktopBrainPage(engine, hit.slug, options.abortSignal)))
+                const files = await Promise.all(hits.map(async hit => (await store.readPage(hit.slug)).page))
                 const blocks = hits.map((hit, index) => {
                     const unconfirmed = new Set(files[index]?.unconfirmed ?? [])
                     const passages = hit.passages.map(passage => `  > ${passage.heading}${isUnconfirmed(passage.heading, unconfirmed) ? ' (unconfirmed)' : ''}: ${excerpt(passage.content)}`)
@@ -122,15 +102,13 @@ export function desktopBrainTools(ctx: RunContext): ToolSet {
             description: 'Read one page of the company brain in full, with its hash (needed to propose a change to it), its sources and the pages that link to it. This does not write.',
             inputSchema: z.object({ slug: z.string().min(1) }),
             execute: ({ slug }, options) => run(options.abortSignal, async () => {
-                const engine = await engineDir(options.abortSignal)
-                const page = await readDesktopBrainPage(engine, slug, options.abortSignal)
+                const store = await getDesktopBrainStore()
+                const page = await store.readPage(slug).then(detail => detail.page).catch(error => { if (error instanceof HttpError && error.status === 404) return null; throw error })
                 if (!page) {
-                    const slugs = (await listDesktopBrainPages(engine, options.abortSignal)).map(item => item.slug)
+                    const slugs = (await store.listPages()).map(item => item.slug)
                     return `No page "${slug}" in the company brain.${slugs.length ? ` Existing pages: ${slugs.join(', ')}.` : ' The brain is still empty.'}`
                 }
-                const backlinks = (await listDesktopBrainPages(engine, options.abortSignal))
-                    .filter(item => item.slug !== page.slug && item.content.includes(`[[${page.slug}`))
-                    .map(item => `[[${item.slug}]]`)
+                const backlinks = page.backlinks.map(item => `[[${item.slug}]]`)
                 return formatPage(page, backlinks)
             }),
         }),
@@ -138,38 +116,12 @@ export function desktopBrainTools(ctx: RunContext): ToolSet {
             description: 'Propose a new page or a change to a page of the company brain. It writes nothing: a person reviews the change and accepts or dismisses it. There is no brain_write on this Mac, including for a fact the user just said. Do not say the page was saved. Give the complete page as content, in markdown, keeping everything still true; it replaces the whole page only after a person accepts it and the page store applies that decision. The person decides from headline (the news in a few words, like a newspaper title: "Pricing is now public") and highlights (one to four facts that move, each with a short unique label, before: what the page says today or null when the fact is new, after: what it will say). To change an existing page, brain_read it first and pass its hash as baseHash; null for a new page. Slugs are lowercase kebab-case; link other pages with [[slug]]. reason says what changed and why, sources where the fact comes from (a URL, a document, "told by the user in chat").',
             inputSchema: brainProposalInputSchema,
             execute: (input, options) => run(options.abortSignal, async () => {
-                const engine = await engineDir(options.abortSignal)
-                const current = await readDesktopBrainPage(engine, input.slug, options.abortSignal)
-                if (current) {
-                    if (!input.baseHash) return `The page "${input.slug}" already exists. brain_read it, then propose again with its hash as baseHash and the complete new content.`
-                    if (input.baseHash !== current.hash) return `The page "${input.slug}" changed since you read it. brain_read it again and apply your change to the current version.`
-                    if (desktopBrainPageHash(input) === current.hash) return 'This is identical to the current page. Nothing sent.'
-                }
-                const fingerprint = desktopBrainProposalFingerprint({ slug: input.slug, content: input.content })
-                if (await findDesktopBrainProposalByFingerprint(engine, fingerprint, options.abortSignal)) return ALREADY
-                const proposal = {
-                    agentId: ctx.agent.id,
-                    agentName: ctx.agent.config.name,
-                    sessionId: ctx.sessionId,
-                    slug: input.slug,
-                    mode: current ? 'edit' as const : 'create' as const,
-                    title: input.title.trim(),
-                    headline: input.headline.trim(),
-                    highlights: input.highlights,
-                    type: input.type,
-                    content: input.content.trim(),
-                    reason: input.reason.trim(),
-                    sources: input.sources,
-                    baseHash: current ? input.baseHash : null,
-                    fingerprint,
-                }
-                const open = await openDesktopBrainProposalFor(engine, ctx.agent.id, input.slug, options.abortSignal)
-                if (open) {
-                    await replaceDesktopBrainProposal(engine, open.id, proposal, access(options.abortSignal))
-                    return proposalResult('updated', open.id, input.slug, proposal.title, UPDATED)
-                }
-                const row = await insertDesktopBrainProposal(engine, proposal, access(options.abortSignal))
-                return proposalResult('proposed', row.id, input.slug, row.title, PROPOSED)
+                const store = await getDesktopBrainStore()
+                const current = await store.readPage(input.slug).then(detail => detail.page).catch(error => { if (error instanceof HttpError && error.status === 404) return null; throw error })
+                if (current && desktopBrainPageHash(input) === current.hash) return 'This is identical to the current page. Nothing sent.'
+                const result = await store.propose({ ...input, agentId: ctx.agent.id, agentName: ctx.agent.config.name, sessionId: ctx.sessionId }, access(options.abortSignal))
+                if (result.status === 'duplicate') return ALREADY
+                return proposalResult(result.status, result.proposal.id, result.proposal.slug, result.proposal.title, result.status === 'updated' ? UPDATED : PROPOSED)
             }),
         }),
     }

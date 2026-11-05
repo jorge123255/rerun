@@ -1,19 +1,23 @@
+import { mkdir } from 'node:fs/promises'
 import { Hono } from 'hono'
 import { z, ZodError } from 'zod'
 import { brainConfirmSectionsSchema } from '@rerun/contracts'
 import { brainDbDir, brainDbPath, brainDir, dataDir } from '../config/paths.js'
 import { getBrainDb } from '../db/brainDb.js'
 import { HttpError } from '../lib/errors.js'
+import { desktopBrainHashSchema, desktopBrainRequestIdSchema } from './brain-proposals.js'
 import { desktopApp } from './policy.js'
-import { pinDesktopDataFile, verifyDesktopDataFile } from './data-executor.js'
+import { pinDesktopDataFile, prepareDesktopDataFile, verifyDesktopDataFile } from './data-executor.js'
 import { assertDesktopBrainDirectory, createDesktopBrainPagesStore, desktopBrainWriteSchema } from './brain-pages.js'
 
 export const DESKTOP_BRAIN_BODY_MAX_BYTES = 300_000
 export type DesktopBrainPagesStore = ReturnType<typeof createDesktopBrainPagesStore>
-const restoreSchema = z.object({ expectedHash: z.string().regex(/^[a-f0-9]{32}$/) }).strict()
+const restoreSchema = z.object({ expectedHash: desktopBrainHashSchema, requestId: desktopBrainRequestIdSchema }).strict()
+const writeSchema = desktopBrainWriteSchema.extend({ requestId: desktopBrainRequestIdSchema }).strict()
+const confirmSchema = brainConfirmSectionsSchema.extend({ expectedHash: desktopBrainHashSchema, requestId: desktopBrainRequestIdSchema }).strict()
 let store: DesktopBrainPagesStore | undefined
 let storeDirectory: string | undefined
-async function localStore(): Promise<DesktopBrainPagesStore> {
+export async function getDesktopBrainStore(): Promise<DesktopBrainPagesStore> {
     await assertDesktopBrainDirectory(brainDir())
     await assertDesktopBrainDirectory(brainDbDir())
     if (!store || storeDirectory !== brainDir()) {
@@ -30,7 +34,7 @@ async function localStore(): Promise<DesktopBrainPagesStore> {
     return store
 }
 
-async function body(request: Request): Promise<unknown> {
+export async function desktopBrainRequestBody(request: Request): Promise<unknown> {
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) throw new HttpError(415, 'Use application/json.')
     if (Number(request.headers.get('content-length')) > DESKTOP_BRAIN_BODY_MAX_BYTES) throw new HttpError(413, 'Brain request is too large.')
     const reader = request.body?.getReader()
@@ -56,7 +60,7 @@ async function body(request: Request): Promise<unknown> {
 }
 
 // Mount only behind the engine's bearer authentication and desktop route allowlist.
-export function createDesktopBrainPagesRouter(getStore: () => Promise<DesktopBrainPagesStore> = localStore): Hono {
+export function createDesktopBrainPagesRouter(getStore: () => Promise<DesktopBrainPagesStore> = getDesktopBrainStore): Hono {
     const app = new Hono()
     app.use('*', async (c, next) => {
         if (!desktopApp()) return c.json({ error: 'Not found' }, 404)
@@ -70,22 +74,39 @@ export function createDesktopBrainPagesRouter(getStore: () => Promise<DesktopBra
     app.get('/', async c => c.json({ pages: await (await getStore()).listPages() }))
     app.get('/:slug', async c => c.json(await (await getStore()).readPage(c.req.param('slug'))))
     app.put('/:slug', async c => {
-        const input = desktopBrainWriteSchema.parse(await body(c.req.raw))
+        const input = writeSchema.parse(await desktopBrainRequestBody(c.req.raw))
         c.req.raw.signal.throwIfAborted()
-        return c.json(await (await getStore()).savePage(c.req.param('slug'), input))
+        const { requestId, ...fields } = input
+        return c.json(await (await getStore()).savePage(c.req.param('slug'), fields, requestId))
     })
-    app.delete('/:slug', async c => c.json(await (await getStore()).deletePage(c.req.param('slug'))))
+    app.delete('/:slug', async c => {
+        const input = restoreSchema.parse(await desktopBrainRequestBody(c.req.raw))
+        c.req.raw.signal.throwIfAborted()
+        return c.json(await (await getStore()).deletePage(c.req.param('slug'), input.expectedHash, input.requestId))
+    })
     app.get('/:slug/revisions', async c => c.json({ revisions: await (await getStore()).listRevisions(c.req.param('slug')) }))
     app.get('/:slug/revisions/:rid', async c => c.json(await (await getStore()).readRevision(c.req.param('slug'), c.req.param('rid'))))
     app.post('/:slug/revert/:rid', async c => {
-        const input = restoreSchema.parse(await body(c.req.raw))
+        const input = restoreSchema.parse(await desktopBrainRequestBody(c.req.raw))
         c.req.raw.signal.throwIfAborted()
-        return c.json(await (await getStore()).restorePage(c.req.param('slug'), c.req.param('rid'), input.expectedHash))
+        return c.json(await (await getStore()).restorePage(c.req.param('slug'), c.req.param('rid'), input.expectedHash, input.requestId))
     })
     app.post('/:slug/confirm', async c => {
-        const input = brainConfirmSectionsSchema.strict().parse(await body(c.req.raw))
+        const input = confirmSchema.parse(await desktopBrainRequestBody(c.req.raw))
         c.req.raw.signal.throwIfAborted()
-        return c.json(await (await getStore()).confirmSections(c.req.param('slug'), input.headings))
+        return c.json(await (await getStore()).confirmSections(c.req.param('slug'), input.headings, input.expectedHash, input.requestId))
     })
     return app
+}
+
+/** Called by desktop bootstrap, after original Brain DB migration and directory creation. */
+export async function initializeDesktopBrainStore(): Promise<void> {
+    const pin = await prepareDesktopDataFile(dataDir(), brainDbPath())
+    await getBrainDb()
+    await verifyDesktopDataFile(pin)
+    await mkdir(brainDir(), { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'EEXIST') throw error })
+    await assertDesktopBrainDirectory(brainDir())
+    const current = await getDesktopBrainStore()
+    await current.initialize()
+    await current.rebuildLocalIndex()
 }
