@@ -1,8 +1,9 @@
 import { mkdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { Hono } from 'hono'
 import { z, ZodError } from 'zod'
 import { brainConfirmSectionsSchema } from '@rerun/contracts'
-import { brainDbDir, brainDbPath, brainDir, dataDir } from '../config/paths.js'
+import { brainDbPath, dataDir } from '../config/paths.js'
 import { getBrainDb } from '../db/brainDb.js'
 import { HttpError } from '../lib/errors.js'
 import { desktopBrainHashSchema, desktopBrainRequestIdSchema } from './brain-proposals.js'
@@ -18,11 +19,14 @@ const confirmSchema = brainConfirmSectionsSchema.extend({ expectedHash: desktopB
 let store: DesktopBrainPagesStore | undefined
 let storeDirectory: string | undefined
 export async function getDesktopBrainStore(): Promise<DesktopBrainPagesStore> {
-    await assertDesktopBrainDirectory(brainDir())
-    await assertDesktopBrainDirectory(brainDbDir())
-    if (!store || storeDirectory !== brainDir()) {
-        const directory = brainDir()
-        const pin = await pinDesktopDataFile(dataDir(), brainDbPath())
+    const pin = await pinDesktopDataFile(dataDir(), brainDbPath())
+    // The preflight pins the real root while rejecting links inside it. macOS
+    // may spell an ancestor as /var instead of /private/var; that is not a link
+    // in the owned workspace. Derive both directories from the verified pin.
+    const directory = join(dirname(dirname(pin.file)), 'brain')
+    await assertDesktopBrainDirectory(directory)
+    await assertDesktopBrainDirectory(dirname(pin.file))
+    if (!store || storeDirectory !== directory) {
         store = createDesktopBrainPagesStore(directory, async () => {
             await verifyDesktopDataFile(pin)
             const database = await getBrainDb()
@@ -104,8 +108,9 @@ export async function initializeDesktopBrainStore(): Promise<void> {
     const pin = await prepareDesktopDataFile(dataDir(), brainDbPath())
     await getBrainDb()
     await verifyDesktopDataFile(pin)
-    await mkdir(brainDir(), { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'EEXIST') throw error })
-    await assertDesktopBrainDirectory(brainDir())
+    const directory = join(dirname(dirname(pin.file)), 'brain')
+    await mkdir(directory, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'EEXIST') throw error })
+    await assertDesktopBrainDirectory(directory)
     const current = await getDesktopBrainStore()
     await current.initialize()
     await current.rebuildLocalIndex()
