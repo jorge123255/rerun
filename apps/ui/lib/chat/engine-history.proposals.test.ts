@@ -55,6 +55,10 @@ describe('desktop proposal source markers across history and restart', () => {
             type: 'tool-rerun__skill_propose', toolCallId: 'live-different-call', state: 'output-available', input: {}, output: JSON.stringify(result),
         }] }]
         expect(desktopSkillProposalIds(live)).toEqual(new Set([proposalId]))
+        const dynamic: UIMessage[] = [{ id: 'live-dynamic', role: 'assistant', parts: [{
+            type: 'dynamic-tool', toolName: 'mcp__rerun__skill_propose', toolCallId: 'dynamic-call', state: 'output-available', input: {}, output: JSON.stringify(result),
+        }] }]
+        expect(desktopSkillProposalIds(dynamic)).toEqual(desktopSkillProposalIds(live))
         expect(desktopSkillProposalIds(reopened(rows({ type: 'json', value: result }, 'rerun__skill_propose')))).toEqual(desktopSkillProposalIds(live))
         expect(desktopSkillProposalIds(reopened(rows(result, 'skill_propose')))).toEqual(new Set([proposalId]))
     })

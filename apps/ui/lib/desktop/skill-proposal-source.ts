@@ -1,4 +1,3 @@
-import { getToolName, isToolUIPart, type UIMessage } from 'ai'
 import { parseHubOutput, stripBridgePrefix, unwrapToolOutputEnvelope } from '@rerun/contracts'
 
 const MAX_PROPOSAL_RESULT_CHARS = 16_384
@@ -25,11 +24,19 @@ export function desktopSkillProposalIdOf(output: unknown): string | null {
     return !failed(result) && result?.status === 'shown' && typeof id === 'string' && PROPOSAL_ID.test(id) ? id : null
 }
 
+type ProposalSourceMessage = {
+    role: string
+    parts: readonly { type: string; toolName?: unknown; state?: unknown; output?: unknown }[]
+}
+
 /** Only the tool output that raised a proposal is its source; joined calls create no card. */
-export function desktopSkillProposalIds(messages: readonly UIMessage[]): Set<string> {
+export function desktopSkillProposalIds(messages: readonly ProposalSourceMessage[]): Set<string> {
     const ids = new Set<string>()
     for (const message of messages) if (message.role === 'assistant') for (const part of message.parts) {
-        if (!isToolUIPart(part) || stripBridgePrefix(getToolName(part)) !== 'skill_propose' || part.state !== 'output-available') continue
+        // Read only the common live/saved fields; saved history need not implement the SDK's
+        // complete streaming-state union. Static and dynamic names follow its same convention.
+        const toolName = part.type === 'dynamic-tool' ? part.toolName : part.type.startsWith('tool-') ? part.type.slice(5) : null
+        if (typeof toolName !== 'string' || stripBridgePrefix(toolName) !== 'skill_propose' || part.state !== 'output-available') continue
         const id = desktopSkillProposalIdOf(part.output)
         if (id) ids.add(id)
     }
