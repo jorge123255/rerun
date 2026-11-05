@@ -2,6 +2,7 @@ import { lstat, mkdtemp, rm } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { z } from 'zod'
 import {
+    DESKTOP_PORTABLE_TEMPLATE_LIMITS,
     DESKTOP_TEMPLATE_LIMITS,
     desktopTemplateAgentKeySchema,
     desktopTemplateDetailSchema,
@@ -20,10 +21,12 @@ import { readOwnJson, replaceOwnJson, templateHome, writeOwnJson } from './store
 
 const fileSchema = z.strictObject({
     path: desktopTemplateRelativePathSchema,
-    bytes: z.number().int().nonnegative().max(DESKTOP_TEMPLATE_LIMITS.maxFileBytes),
-    kind: z.enum(['instruction', 'config', 'text', 'skill']),
+    bytes: z.number().int().nonnegative().max(DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFileBytes),
+    kind: z.enum(['instruction', 'config', 'text', 'skill', 'binary']),
     sourceRevision: desktopTemplateRevisionSchema,
     flagged: z.array(z.string().min(1).max(80)).max(20),
+    binary: z.boolean().optional(),
+    textScanned: z.boolean().optional(),
 })
 const coworkerSchema = z.strictObject({
     agentKey: desktopTemplateAgentKeySchema,
@@ -97,13 +100,19 @@ export async function readManifest(dataRoot: string, templateId: string, revisio
             if (!ALLOWED.test(file.path) || paths.has(file.path)) throw new TemplateRequestError(409, 'Template manifest has an unsupported path')
             paths.add(file.path)
             total += file.bytes
-            const stored = await readConfined(join(directory, coworker.agentKey), file.path, DESKTOP_TEMPLATE_LIMITS.maxFileBytes)
+            const reader = file.binary || file.kind === 'binary'
+                ? (await import('./files.js')).readConfinedBytes
+                : readConfined
+            const stored = await reader(join(directory, coworker.agentKey), file.path, DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFileBytes)
             if (!stored.ok || stored.bytes.length !== file.bytes || stored.contentRevision !== file.sourceRevision) {
                 throw new TemplateRequestError(409, 'Template bytes do not match the manifest')
             }
         }
     }
-    if (parsed.data.coworkers.reduce((sum, coworker) => sum + coworker.files.length, 0) > DESKTOP_TEMPLATE_LIMITS.maxFiles || total > DESKTOP_TEMPLATE_LIMITS.maxTotalBytes) {
+    const fileCount = parsed.data.coworkers.reduce((sum, coworker) => sum + coworker.files.length, 0)
+    const maxFiles = Math.max(DESKTOP_TEMPLATE_LIMITS.maxFiles, DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFiles)
+    const maxTotal = Math.max(DESKTOP_TEMPLATE_LIMITS.maxTotalBytes, DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxTotalBytes)
+    if (fileCount > maxFiles || total > maxTotal) {
         throw new TemplateRequestError(413, 'Template exceeds the capture limit')
     }
     return parsed.data
@@ -123,12 +132,16 @@ export function publicDetail(manifest: TemplateManifest): DesktopTemplateDetail 
             name: coworker.name,
             description: coworker.description,
             setup: coworker.setup,
-            files: coworker.files,
+            files: coworker.files.map(file => ({
+                ...file,
+                binary: file.binary ?? file.kind === 'binary',
+                textScanned: file.textScanned ?? file.kind !== 'binary',
+            })),
             exclusions: coworker.exclusions,
             redactions: coworker.redactions,
             strippedConfigKeys: coworker.strippedConfigKeys,
-            envKeys: [],
-            mcpAuth: [],
+            envKeys: coworker.envKeys ?? [],
+            mcpAuth: coworker.mcpAuth ?? [],
         })),
     })
 }
@@ -202,7 +215,10 @@ export async function installManifest(input: {
         const archiveDir = join(templateHome(input.dataRoot, input.templateId), 'revisions', input.revision, coworker.agentKey)
         let partial = false
         for (const file of receipt.phase === 'bound' ? coworker.files : []) {
-            const stored = await readConfined(archiveDir, file.path, DESKTOP_TEMPLATE_LIMITS.maxFileBytes)
+            const reader = file.binary || file.kind === 'binary'
+                ? (await import('./files.js')).readConfinedBytes
+                : readConfined
+            const stored = await reader(archiveDir, file.path, DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFileBytes)
             if (!stored.ok || stored.contentRevision !== file.sourceRevision) {
                 partial = true
                 uncertain = 'Template bytes changed before import finished'

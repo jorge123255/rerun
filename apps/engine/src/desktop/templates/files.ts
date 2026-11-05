@@ -189,3 +189,97 @@ export async function walkConfined(root: string, directory: string, maxEntries: 
     await visit(directory)
     return { entries, truncated }
 }
+
+
+export type ConfinedBytesRead =
+    | { ok: true; bytes: Buffer; inodeRevision: string; contentRevision: string; binary: boolean; textScanned: boolean; text: string | null }
+    | { ok: false; reason: DesktopTemplateExclusionReason }
+
+function asciiFold(value: string): string {
+    return value.normalize('NFKC').toLowerCase()
+}
+
+export function collidingRelativePaths(paths: string[]): string | null {
+    const seen = new Map<string, string>()
+    for (const path of paths) {
+        if (!isDesktopTemplateRelativePath(path)) return path
+        const folded = path.split('/').map(asciiFold).join('/')
+        const prior = seen.get(folded)
+        if (prior && prior !== path) return path
+        seen.set(folded, path)
+    }
+    return null
+}
+
+export function isBinaryPath(path: string): boolean {
+    return BINARY_EXTENSIONS.has(extensionOf(path))
+}
+
+// Byte-faithful confined read. Binary files are allowed; they are never presented as text-scanned.
+export async function readConfinedBytes(root: string, path: string, maxBytes: number): Promise<ConfinedBytesRead> {
+    if (!isDesktopTemplateRelativePath(path)) return { ok: false, reason: 'unsupported' }
+    if (scanPathForSecrets(path).length > 0) return { ok: false, reason: 'credentials' }
+    const full = confinedFile(root, path)
+    let handle
+    try { handle = await openWithoutLinks(full) }
+    catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT') return { ok: false, reason: 'unsupported' }
+        return { ok: false, reason: 'link' }
+    }
+    try {
+        const before = await handle.stat({ bigint: true })
+        if (!before.isFile()) return { ok: false, reason: 'unsupported' }
+        if (before.nlink !== 1n) return { ok: false, reason: 'alias' }
+        if (typeof process.getuid === 'function' && before.uid !== BigInt(process.getuid())) return { ok: false, reason: 'unsupported' }
+        if (before.size > BigInt(maxBytes)) return { ok: false, reason: 'over-limit' }
+        const size = Number(before.size)
+        const buffer = Buffer.alloc(size)
+        let offset = 0
+        while (offset < size) {
+            const read = await handle.read(buffer, offset, size - offset, offset)
+            if (!read.bytesRead) break
+            offset += read.bytesRead
+        }
+        if (offset !== size) return { ok: false, reason: 'collision' }
+        const after = await handle.stat({ bigint: true })
+        if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.nlink !== 1n || after.mtimeNs !== before.mtimeNs) {
+            return { ok: false, reason: 'collision' }
+        }
+        const rootReal = await realpath(root)
+        const fileReal = await realpath(full)
+        if (fileReal !== resolve(rootReal, path)) return { ok: false, reason: 'alias' }
+        const looksBinary = isBinaryPath(path) || buffer.includes(0)
+        let text: string | null = null
+        let textScanned = false
+        if (!looksBinary) {
+            try {
+                text = new TextDecoder('utf-8', { fatal: true }).decode(buffer)
+                textScanned = true
+            } catch {
+                return {
+                    ok: true,
+                    bytes: buffer,
+                    inodeRevision: sha256(`${before.dev}:${before.ino}:${before.size}:${before.mtimeNs}`),
+                    contentRevision: sha256(buffer),
+                    binary: true,
+                    textScanned: false,
+                    text: null,
+                }
+            }
+        }
+        return {
+            ok: true,
+            bytes: buffer,
+            inodeRevision: sha256(`${before.dev}:${before.ino}:${before.size}:${before.mtimeNs}`),
+            contentRevision: sha256(buffer),
+            binary: looksBinary,
+            textScanned,
+            text,
+        }
+    } finally { await handle.close() }
+}
+
+export async function writeExclusiveBytes(directory: string, relativeName: string, bytes: Buffer): Promise<'created' | 'same'> {
+    return writeExclusiveFile(directory, relativeName, bytes)
+}

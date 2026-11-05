@@ -6,7 +6,7 @@ import { TemplateBoardPreview } from '@rerun/ui/iso-grid'
 import { TemplateLibrarySearch } from '@/components/templates/TemplateLibrarySearch'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Grid2x2Icon, HammerIcon, PlusIcon } from '@/lib/icons'
+import { Grid2x2Icon, HammerIcon, PlusIcon, UploadIcon } from '@/lib/icons'
 import { TEMPLATE_CATEGORY_ICONS } from '@/lib/templates/category-icons'
 import { cn } from '@/lib/utils'
 import { useMemo, useState } from 'react'
@@ -14,7 +14,7 @@ import type { DesktopTemplateSummary } from './types'
 
 type LibraryView = { kind: 'all' } | { kind: 'category'; category: TemplateCategory }
 
-export function DesktopTemplateLibraryBrowser({ templates, loading, error, selected, onSelect, onScratch, onNewTemplate, onRetry }: {
+export function DesktopTemplateLibraryBrowser({ templates, loading, error, selected, onSelect, onScratch, onNewTemplate, onRetry, onImportPackage }: {
     templates: DesktopTemplateSummary[]
     loading: boolean
     error: string | null
@@ -23,6 +23,7 @@ export function DesktopTemplateLibraryBrowser({ templates, loading, error, selec
     onScratch: () => void
     onNewTemplate: () => void
     onRetry: () => void
+    onImportPackage?: () => void
 }) {
     const [view, setView] = useState<LibraryView>({ kind: 'all' })
     const [query, setQuery] = useState('')
@@ -58,6 +59,7 @@ export function DesktopTemplateLibraryBrowser({ templates, loading, error, selec
             </nav>
             <div className="flex flex-col gap-2 border-t p-3">
                 <Button type="button" variant="outline" onClick={onNewTemplate}><PlusIcon />New template</Button>
+                {onImportPackage && <Button type="button" variant="outline" onClick={onImportPackage}><UploadIcon />Import package</Button>}
                 <Button type="button" onClick={onScratch}><PlusIcon />Create New Coworker</Button>
             </div>
         </aside>
@@ -67,6 +69,7 @@ export function DesktopTemplateLibraryBrowser({ templates, loading, error, selec
                 <div className="flex flex-wrap items-center gap-2 pr-8">
                     <TemplateLibrarySearch value={query} onChange={setQuery} className="min-w-0 flex-1" />
                     <Button type="button" variant="outline" size="sm" onClick={onNewTemplate}><PlusIcon />New template</Button>
+                    {onImportPackage && <Button type="button" variant="outline" size="sm" onClick={onImportPackage}><UploadIcon />Import</Button>}
                     <Button type="button" size="sm" onClick={onScratch}><PlusIcon />New coworker</Button>
                 </div>
                 <HScrollFade className="-mx-1 gap-1.5 px-1" fadeClassName="from-popover">

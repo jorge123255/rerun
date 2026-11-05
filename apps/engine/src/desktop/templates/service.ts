@@ -3,6 +3,8 @@ import { withSkillReadLease } from '../skill-publication.js'
 import { assertUserSkillOperation } from '../service-skills/authority.js'
 import { z } from 'zod'
 import {
+    DESKTOP_PORTABLE_TEMPLATE_LIMITS,
+    DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING,
     DESKTOP_TEMPLATE_LIMITS,
     DESKTOP_TEMPLATE_PROSE_WARNING,
     desktopTemplateCoworkerPlanSchema,
@@ -16,8 +18,9 @@ import {
     type DesktopTemplatePlan,
 } from '@rerun/contracts'
 import { TemplateRequestError } from './errors.js'
+import { writeExclusiveFile, ensurePrivateDir } from './files.js'
 import { canonicalJson, draftRevision, newTemplateId, sha256 } from './hash.js'
-import { inspectCoworker, type InspectedCoworker, type InspectedFile } from './inspect.js'
+import { inspectCoworker, type InspectedCoworker, type InspectedFile, type SkillOwnershipResolver } from './inspect.js'
 import { installManifest, publicDetail, readManifest, sealManifest, type TemplateManifest } from './install.js'
 import { draftSchema, listTemplateIds, readOwnJson, replaceOwnJson, requestHome, templateHome, writeOwnJson, type TemplateDraft } from './store.js'
 
@@ -25,6 +28,11 @@ export type TemplateRoots = { dataRoot: string; agentsRoot: string }
 export type TemplateIndex = {
     get: (id: string) => Promise<{ name: string } | null>
     insert: (id: string, name: string) => Promise<void>
+}
+export type TemplateEngineOptions = {
+    skillOwnership?: SkillOwnershipResolver | null
+    includeBinary?: boolean
+    requireTrustedOwnership?: boolean
 }
 
 const bindingSchema = z.strictObject({
@@ -57,6 +65,7 @@ const captureReceiptSchema = z.strictObject({
 })
 
 function included(file: InspectedFile, kind: 'instruction' | 'config') {
+    if (file.text == null) throw new TemplateRequestError(409, `${file.path} cannot be captured as text`)
     return { path: file.path, bytes: file.bytes, kind, sourceRevision: file.contentRevision, flagged: file.flagged, text: file.text }
 }
 
@@ -73,12 +82,24 @@ function publish(inspected: InspectedCoworker): DesktopTemplateCoworkerPlan {
             ...(inspected.config ? [included(inspected.config, 'config')] : []),
         ],
         selectableFiles: inspected.selectableFiles.map(file => ({
-            path: file.path, bytes: file.bytes, kind: 'text' as const, sourceRevision: file.contentRevision, flagged: file.flagged,
+            path: file.path,
+            bytes: file.bytes,
+            kind: file.binary ? 'binary' as const : 'text' as const,
+            sourceRevision: file.contentRevision,
+            flagged: file.flagged,
+            binary: file.binary,
+            textScanned: file.textScanned,
         })),
         selectableSkills: inspected.selectableSkills.map(skill => ({
             slug: skill.slug, name: skill.name, description: skill.description, sourceRevision: skill.sourceRevision,
             files: skill.files.map(file => ({
-                path: file.path, bytes: file.bytes, kind: 'skill' as const, sourceRevision: file.contentRevision, flagged: file.flagged,
+                path: file.path,
+                bytes: file.bytes,
+                kind: 'skill' as const,
+                sourceRevision: file.contentRevision,
+                flagged: file.flagged,
+                binary: file.binary,
+                textScanned: file.textScanned,
             })),
         })),
         exclusions: inspected.exclusions,
@@ -123,7 +144,24 @@ async function ensureDraft(roots: TemplateRoots, record: TemplateDraft): Promise
     if (canonicalJson(stored) !== canonicalJson(record)) throw new TemplateRequestError(409, 'Template draft does not match its request')
 }
 
-export function createDesktopTemplateEngine(roots: TemplateRoots, index?: TemplateIndex) {
+export function createDesktopTemplateEngine(roots: TemplateRoots, index?: TemplateIndex, options: TemplateEngineOptions = {}) {
+    const includeBinary = options.includeBinary === true
+    const inspectOptions = {
+        skillOwnership: options.skillOwnership ?? null,
+        includeBinary,
+        maxFileBytes: includeBinary ? DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFileBytes : DESKTOP_TEMPLATE_LIMITS.maxFileBytes,
+        maxWalkEntries: includeBinary ? DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxWalkEntries : DESKTOP_TEMPLATE_LIMITS.maxWalkEntries,
+        requireTrustedOwnership: options.requireTrustedOwnership === true || includeBinary,
+    }
+    const captureLimits = includeBinary ? {
+        maxFiles: DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFiles,
+        maxTotalBytes: DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxTotalBytes,
+        maxFileBytes: DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFileBytes,
+    } : {
+        maxFiles: DESKTOP_TEMPLATE_LIMITS.maxFiles,
+        maxTotalBytes: DESKTOP_TEMPLATE_LIMITS.maxTotalBytes,
+        maxFileBytes: DESKTOP_TEMPLATE_LIMITS.maxFileBytes,
+    }
     const indexes = index ?? {
         get: async (id: string) => {
             const repo = await import('../../db/repos/agents.js')
@@ -172,19 +210,28 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             if (draft.templateId !== input.templateId) throw new TemplateRequestError(409, 'Template revision does not match this draft')
             if (new Set(input.coworkers.map(coworker => coworker.agentId)).size !== input.coworkers.length) throw new TemplateRequestError(400, 'Choose each coworker once')
             const inspected = []
-            for (const coworker of input.coworkers) inspected.push(await inspectCoworker(roots.agentsRoot, coworker.agentId, coworker.engineAgentId))
+            for (const coworker of input.coworkers) inspected.push(await inspectCoworker(roots.agentsRoot, coworker.agentId, coworker.engineAgentId, inspectOptions))
             const coworkers = inspected.map(publish)
             const bindings = inspected.map(bindingsOf)
             // Private file identities are part of the plan revision, so a touch with the same bytes still issues a new plan.
-            const planRevision = sha256(canonicalJson({ kind: 'desktop-template-plan', templateId: input.templateId, revision: input.revision, coworkers, bindings }))
+            const planRevision = sha256(canonicalJson({ kind: 'desktop-template-plan', templateId: input.templateId, revision: input.revision, coworkers, bindings, includeBinary }))
             const stored: PlanFile = { version: 1, planRevision, templateId: input.templateId, revision: input.revision, coworkers, bindings }
             const plan = desktopTemplatePlanSchema.parse({
                 templateId: input.templateId,
                 revision: input.revision,
                 planRevision,
-                proseWarning: DESKTOP_TEMPLATE_PROSE_WARNING,
+                proseWarning: includeBinary ? DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING : DESKTOP_TEMPLATE_PROSE_WARNING,
                 limits: DESKTOP_TEMPLATE_LIMITS,
                 coworkers,
+                ...(includeBinary ? {
+                    portableCapture: {
+                        binaryAssets: true,
+                        userSkillTrees: true,
+                        maxFileBytes: captureLimits.maxFileBytes,
+                        maxTotalBytes: captureLimits.maxTotalBytes,
+                        ownershipRequired: true as const,
+                    },
+                } : {}),
             })
             await writeOwnJson(templateHome(roots.dataRoot, input.templateId), `plans/${planRevision}.json`, stored)
             return plan
@@ -217,7 +264,7 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             }
             const byId = new Map(selections.map(selection => [selection.agentId, selection]))
             const fresh = []
-            for (const binding of stored.data.bindings) fresh.push(await inspectCoworker(roots.agentsRoot, binding.agentId, binding.engineAgentId))
+            for (const binding of stored.data.bindings) fresh.push(await inspectCoworker(roots.agentsRoot, binding.agentId, binding.engineAgentId, inspectOptions))
             const rebuilt = fresh.map(publish)
             if (canonicalJson(rebuilt) !== canonicalJson(stored.data.coworkers)) throw new TemplateRequestError(409, 'A planned coworker changed. Review the plan again.')
             for (const binding of stored.data.bindings) {
@@ -228,7 +275,7 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             const chosen = fresh.map((inspected, index) => choose(inspected, byId.get(inspected.localAgentId)!, `c${String(index).padStart(2, '0')}`))
             const totalFiles = chosen.reduce((sum, coworker) => sum + coworker.files.length, 0)
             const totalBytes = chosen.reduce((sum, coworker) => sum + coworker.files.reduce((inner, file) => inner + file.bytes, 0), 0)
-            if (totalFiles > DESKTOP_TEMPLATE_LIMITS.maxFiles || totalBytes > DESKTOP_TEMPLATE_LIMITS.maxTotalBytes) {
+            if (totalFiles > captureLimits.maxFiles || totalBytes > captureLimits.maxTotalBytes) {
                 throw new TemplateRequestError(413, 'The selection exceeds the capture limit')
             }
             if (prior.success && (prior.data.templateId !== input.templateId || prior.data.planRevision !== input.planRevision)) {
@@ -253,7 +300,7 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
                 capturedAt,
                 planRevision: input.planRevision,
                 requestId: input.requestId,
-                proseWarning: DESKTOP_TEMPLATE_PROSE_WARNING,
+                proseWarning: includeBinary ? DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING : DESKTOP_TEMPLATE_PROSE_WARNING,
                 limits: DESKTOP_TEMPLATE_LIMITS,
                 engineCommit: null,
                 coworkers: chosen.map(({ bytes: _bytes, ...coworker }) => coworker),
@@ -263,10 +310,21 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             const already = await readOwnJson(directory, 'manifest.json')
             if (!already) {
                 for (const coworker of chosen) {
-                    for (const file of coworker.bytes) await writeOwnJsonBytes(directory, `${coworker.agentKey}/${file.path}`, file.bytes)
+                    for (const file of coworker.bytes) {
+                        await ensurePrivateDir(directory)
+                        await writeExclusiveFile(directory, `${coworker.agentKey}/${file.path}`, file.bytes)
+                    }
                 }
                 await assertSelectedSkills()
                 await writeOwnJson(directory, 'manifest.json', manifest)
+                if (includeBinary) {
+                    await writeOwnJson(directory, 'portable-fidelity.json', {
+                        binaryAssets: true,
+                        userSkillTrees: true,
+                        sourceKind: 'portable-capture',
+                        notes: ['Captured with binary assets and user skill trees under portable bounds.'],
+                    })
+                }
             }
             const confirmed = await readManifest(roots.dataRoot, input.templateId, manifest.revision)
             if (canonicalJson(confirmed) !== canonicalJson(manifest)) throw new TemplateRequestError(409, 'Stored template bytes do not match this capture')
@@ -311,7 +369,41 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
                 if (!current.success) throw new TemplateRequestError(404, 'Template not found')
                 selected = current.data.revision
             }
-            return publicDetail(await readManifest(roots.dataRoot, templateId, selected))
+            const manifest = await readManifest(roots.dataRoot, templateId, selected)
+            const detail = publicDetail(manifest)
+            const directory = join(templateHome(roots.dataRoot, templateId), 'revisions', selected)
+            const fidelity = z.strictObject({
+                binaryAssets: z.boolean(),
+                userSkillTrees: z.boolean(),
+                sourceKind: z.enum(['local-v1', 'portable-capture', 'portable-import', 'local-v1-export']),
+                notes: z.array(z.string()).max(20),
+            }).safeParse(await readOwnJson(directory, 'portable-fidelity.json'))
+            const provenance = z.strictObject({
+                importedAt: z.string(),
+                sourcePackageKey: z.string(),
+                sourceContentDigest: z.string(),
+                sourceTitle: z.string(),
+                uploadId: z.string().optional(),
+            }).safeParse(await readOwnJson(directory, 'portable-provenance.json'))
+            return {
+                ...detail,
+                ...(fidelity.success ? { portable: fidelity.data } : {
+                    portable: {
+                        binaryAssets: manifest.coworkers.some(coworker => coworker.files.some(file => file.kind === 'binary' || file.binary === true)),
+                        userSkillTrees: manifest.coworkers.some(coworker => coworker.files.some(file => file.kind === 'skill')),
+                        sourceKind: 'local-v1' as const,
+                        notes: ['Existing text-only local captures are not advertised as full portable fidelity.'],
+                    },
+                }),
+                ...(provenance.success ? {
+                    provenance: {
+                        importedAt: provenance.data.importedAt,
+                        sourcePackageKey: provenance.data.sourcePackageKey,
+                        sourceContentDigest: provenance.data.sourceContentDigest,
+                        sourceTitle: provenance.data.sourceTitle,
+                    },
+                } : {}),
+            }
         },
 
         install(input: { importReceiptId: string; templateId: string; revision: string; coworkers: { engineAgentId: string; agentKey: string }[] }) {
@@ -335,7 +427,7 @@ function choose(inspected: InspectedCoworker, selection: z.infer<typeof desktopT
     for (const path of selection.files) {
         const file = files.get(path)
         if (!file) throw new TemplateRequestError(400, 'A selected file is not in the capture plan')
-        picked.push({ ...file, kind: 'text' })
+        picked.push({ ...file, kind: file.binary ? 'binary' : 'text' })
     }
     for (const slug of selection.skills) {
         const skill = skills.get(slug)
@@ -349,13 +441,17 @@ function choose(inspected: InspectedCoworker, selection: z.infer<typeof desktopT
         if (at >= 0) picked.splice(at, 1)
         if (prompt) {
             const text = `${prompt}\n`
-            const revision = sha256(text)
-            picked.push({ path: 'INSTALL.md', text, bytes: Buffer.byteLength(text), inodeRevision: revision, contentRevision: revision, flagged: [], kind: 'instruction' })
+            const raw = Buffer.from(text, 'utf8')
+            const revision = sha256(raw)
+            picked.push({
+                path: 'INSTALL.md', text, raw, bytes: raw.length, inodeRevision: revision, contentRevision: revision,
+                flagged: [], binary: false, textScanned: true, kind: 'instruction',
+            })
         }
     }
     const seen = new Set<string>()
     for (const file of picked) {
-        if (seen.has(file.path) || sha256(Buffer.from(file.text, 'utf8')) !== file.contentRevision) throw new TemplateRequestError(409, 'A planned file changed. Review the plan again.')
+        if (seen.has(file.path) || sha256(file.raw) !== file.contentRevision) throw new TemplateRequestError(409, 'A planned file changed. Review the plan again.')
         seen.add(file.path)
     }
     return {
@@ -366,20 +462,19 @@ function choose(inspected: InspectedCoworker, selection: z.infer<typeof desktopT
         setup: selection.setup ? { ...selection.setup, prompt: selection.setup.prompt.trim(), answered: true } : inspected.setup,
         files: picked.map(file => ({
             path: file.path,
-            bytes: Buffer.byteLength(file.text),
+            bytes: file.raw.length,
             kind: file.kind,
             sourceRevision: file.contentRevision,
             flagged: file.flagged,
+            binary: file.binary,
+            textScanned: file.textScanned,
         })),
         exclusions: inspected.exclusions,
         redactions: inspected.redactions,
         strippedConfigKeys: inspected.strippedConfigKeys,
-        bytes: picked.map(file => ({ path: file.path, bytes: Buffer.from(file.text, 'utf8') })),
+        requirements: inspected.requirements,
+        envKeys: inspected.envKeys,
+        mcpAuth: inspected.mcpAuth,
+        bytes: picked.map(file => ({ path: file.path, bytes: file.raw })),
     }
-}
-
-async function writeOwnJsonBytes(directory: string, relativeName: string, bytes: Buffer): Promise<void> {
-    const { ensurePrivateDir, writeExclusiveFile } = await import('./files.js')
-    await ensurePrivateDir(directory)
-    await writeExclusiveFile(directory, relativeName, bytes)
 }

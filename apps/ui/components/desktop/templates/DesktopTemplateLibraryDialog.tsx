@@ -9,12 +9,13 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import { ChevronLeftIcon, PanelRightCloseIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import type { DesktopPortableTemplateActions } from '@/lib/desktop/portable-template-actions'
 import type { DesktopTemplatesClient } from '@/lib/desktop/templates-client'
 import { DesktopTemplateDetailPanel } from './DesktopTemplateDetailPanel'
 import { DesktopTemplateLibraryBrowser } from './DesktopTemplateLibraryBrowser'
 import type { DesktopTemplateDetail, DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt, DesktopTemplateSummary } from './types'
 
-export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = null, resumeInstall = null, onOpenChange, onCreateFromScratch, onNewTemplate, onInstalled, onInstallAttempt }: {
+export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = null, resumeInstall = null, onOpenChange, onCreateFromScratch, onNewTemplate, onInstalled, onInstallAttempt, portableActions = null, onPickImport }: {
     open: boolean
     client: DesktopTemplatesClient
     initialTemplate?: DesktopTemplateIdentity | null
@@ -24,6 +25,8 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
     onNewTemplate: () => void
     onInstalled: (receipt: DesktopTemplateInstallReceipt) => void
     onInstallAttempt?: (intent: DesktopTemplateInstallIntent | null) => void
+    portableActions?: DesktopPortableTemplateActions | null
+    onPickImport?: () => Promise<{ uploadId: string } | null>
 }) {
     const reduceMotion = useReducedMotion() ?? false
     const isMobile = useIsMobile()
@@ -156,6 +159,11 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
                         onScratch={onCreateFromScratch}
                         onNewTemplate={onNewTemplate}
                         onRetry={() => void refresh(true)}
+                        onImportPackage={onPickImport ? () => { void onPickImport().then(async picked => {
+                            if (!picked || !portableActions) return
+                            const result = await portableActions.importPackage({ uploadId: picked.uploadId })
+                            if (result.ok && result.result.status === 'imported') await refresh(true)
+                        }) } : undefined}
                     />
                 </div>
                 <div ref={detailRef} tabIndex={-1} inert={isMobile ? view === 'list' : !selection} className="flex w-full min-h-0 min-w-0 shrink-0 flex-col outline-none sm:w-auto sm:overflow-hidden">
@@ -172,6 +180,9 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
                                 client={client}
                                 template={shown}
                                 resume={resume}
+                                portableActions={portableActions}
+                                onPickImport={onPickImport}
+                                onLibraryChanged={() => { void refresh(true); setSelection(null); setView('list') }}
                                 onInterrupted={intent => {
                                     setInterrupted(intent)
                                     onInstallAttempt?.(intent)

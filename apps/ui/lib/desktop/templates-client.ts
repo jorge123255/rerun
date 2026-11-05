@@ -51,6 +51,8 @@ export function createDesktopTemplatesClient() {
             agents: detail.coworkers.map(coworker => templateAgentSchema.parse({ key: coworker.agentKey, name: coworker.name, description: coworker.description, setupRequired: coworker.setup.required,
                 skills: [...new Set(coworker.files.filter(file => file.kind === 'skill').map(file => file.path.split('/')[1]))].map(name => ({ name })) })),
             exclusions: detail.coworkers.flatMap(coworker => coworker.exclusions), unsupportedEntries: [],
+            ...(detail.portable ? { portable: detail.portable } : {}),
+            ...(detail.provenance ? { provenance: detail.provenance } : {}),
         }
     }
     return {
@@ -66,7 +68,13 @@ export function createDesktopTemplatesClient() {
             return { planId: result.planRevision, revision: result.planRevision, plans: result.coworkers.map(coworker => ({
                 agentRowId: coworker.agentId, name: coworker.name, displayName: coworker.name, description: coworker.description, sourceRevision: coworker.sourceRevision,
                 included: coworker.included, blocked: coworker.blocked,
-                files: [...coworker.selectableFiles, ...coworker.selectableSkills.flatMap(skill => skill.files)].map(file => ({ ...file, defaultExcluded: false, note: '' })),
+                files: [...coworker.selectableFiles, ...coworker.selectableSkills.flatMap(skill => skill.files)].map(file => ({
+                    path: file.path,
+                    bytes: file.bytes,
+                    flagged: file.flagged,
+                    defaultExcluded: false,
+                    note: ('binary' in file && file.binary) || file.kind === 'binary' ? 'binary · not text-scanned' : '',
+                })),
                 skills: coworker.selectableSkills, setup: coworker.setup, exclusions: coworker.exclusions, unsupportedEntries: [],
             })) }
         },

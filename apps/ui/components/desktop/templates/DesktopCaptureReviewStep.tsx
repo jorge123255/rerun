@@ -17,6 +17,7 @@ export function DesktopCaptureReviewStep({ flow }: { flow: import('./useDesktopC
     return <div className="flex flex-col gap-4">
         <p className="text-xs text-muted-foreground">{flow.approvedCount} of {flow.plans.length} coworker{flow.plans.length === 1 ? '' : 's'} reviewed</p>
         <p className="text-xs text-amber-500">Saved logins, chats and memories are excluded. Private information in selected files and instructions is not automatically removed; review it before capturing.</p>
+        <p className="text-xs text-muted-foreground">Binary files are copied byte-for-byte and are not text-scanned for secrets. Connector and system skills stay out unless trusted ownership marks them as user-authored.</p>
         {flow.plans.map(plan => <DesktopCaptureAgentReview
             key={plan.agentRowId}
             plan={plan}

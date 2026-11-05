@@ -47,7 +47,7 @@ export const desktopTemplateSkillSlugSchema = z.string().regex(/^[A-Za-z0-9][A-Z
 export const desktopTemplateExclusionReasonSchema = z.enum([
     'credentials', 'history', 'memory', 'database', 'connector-skill', 'service-registry',
     'native-grant', 'tool-permissions', 'routine', 'webhook', 'link', 'alias', 'unsupported',
-    'over-limit', 'binary', 'collision',
+    'over-limit', 'binary', 'collision', 'system-skill', 'unknown-ownership',
 ])
 export type DesktopTemplateExclusionReason = z.infer<typeof desktopTemplateExclusionReasonSchema>
 
@@ -78,9 +78,11 @@ export type DesktopTemplateIncludedFile = z.infer<typeof desktopTemplateIncluded
 export const desktopTemplateSelectableFileSchema = z.strictObject({
     path: desktopTemplateRelativePathSchema,
     bytes: z.number().int().nonnegative(),
-    kind: z.literal('text'),
+    kind: z.enum(['text', 'binary']),
     sourceRevision: sourceRevisionSchema,
     flagged: flaggedSchema,
+    binary: z.boolean().default(false),
+    textScanned: z.boolean().default(true),
 })
 
 export const desktopTemplateSkillFileSchema = z.strictObject({
@@ -89,6 +91,8 @@ export const desktopTemplateSkillFileSchema = z.strictObject({
     kind: z.literal('skill'),
     sourceRevision: sourceRevisionSchema,
     flagged: flaggedSchema,
+    binary: z.boolean().default(false),
+    textScanned: z.boolean().default(true),
 })
 
 export const desktopTemplateSelectableSkillSchema = z.strictObject({
@@ -125,9 +129,16 @@ export const desktopTemplatePlanSchema = z.strictObject({
     templateId: desktopTemplateIdSchema,
     revision: desktopTemplateRevisionSchema,
     planRevision: desktopTemplateRevisionSchema,
-    proseWarning: z.literal(DESKTOP_TEMPLATE_PROSE_WARNING),
+    proseWarning: z.union([z.literal(DESKTOP_TEMPLATE_PROSE_WARNING), z.string().min(1).max(400)]),
     limits: desktopTemplateLimitsSchema,
     coworkers: z.array(desktopTemplateCoworkerPlanSchema).min(1).max(DESKTOP_TEMPLATE_LIMITS.maxCoworkers),
+    portableCapture: z.strictObject({
+        binaryAssets: z.boolean(),
+        userSkillTrees: z.boolean(),
+        maxFileBytes: z.number().int().positive(),
+        maxTotalBytes: z.number().int().positive(),
+        ownershipRequired: z.literal(true),
+    }).optional(),
 })
 export type DesktopTemplatePlan = z.infer<typeof desktopTemplatePlanSchema>
 
@@ -185,9 +196,11 @@ export type DesktopTemplateList = z.infer<typeof desktopTemplateListSchema>
 export const desktopTemplateDetailFileSchema = z.strictObject({
     path: desktopTemplateRelativePathSchema,
     bytes: z.number().int().nonnegative(),
-    kind: z.enum(['instruction', 'config', 'text', 'skill']),
+    kind: z.enum(['instruction', 'config', 'text', 'skill', 'binary']),
     sourceRevision: sourceRevisionSchema,
     flagged: flaggedSchema,
+    binary: z.boolean().optional(),
+    textScanned: z.boolean().optional(),
 })
 export const desktopTemplateDetailCoworkerSchema = z.strictObject({
     agentKey: desktopTemplateAgentKeySchema,
@@ -198,19 +211,36 @@ export const desktopTemplateDetailCoworkerSchema = z.strictObject({
     exclusions: z.array(desktopTemplateExclusionSchema).max(500),
     redactions: z.array(desktopTemplateRedactionSchema).max(50),
     strippedConfigKeys: z.array(z.string().min(1).max(200)).max(100),
-    // Original manifest names, always empty: env values and MCP auth never travel.
-    envKeys: z.array(z.string()).max(0),
-    mcpAuth: z.array(z.string()).max(0),
+    // Name-only requirements may appear on portable imports. Live values never travel.
+    envKeys: z.array(z.string().min(1).max(200)).max(100),
+    mcpAuth: z.array(z.strictObject({
+        server: z.string().min(1).max(200),
+        kind: z.enum(['oauth', 'managed', 'device', 'unknown']),
+    })).max(50),
 })
+export const desktopTemplatePortableFidelitySchema = z.strictObject({
+    binaryAssets: z.boolean(),
+    userSkillTrees: z.boolean(),
+    sourceKind: z.enum(['local-v1', 'portable-capture', 'portable-import', 'local-v1-export']),
+    notes: z.array(z.string().min(1).max(400)).max(20),
+})
+export type DesktopTemplatePortableFidelity = z.infer<typeof desktopTemplatePortableFidelitySchema>
 export const desktopTemplateDetailSchema = z.strictObject({
     templateId: desktopTemplateIdSchema,
     title: z.string(),
     revision: desktopTemplateRevisionSchema,
     capturedAt: z.string(),
-    proseWarning: z.literal(DESKTOP_TEMPLATE_PROSE_WARNING),
+    proseWarning: z.union([z.literal(DESKTOP_TEMPLATE_PROSE_WARNING), z.string().min(1).max(400)]),
     limits: desktopTemplateLimitsSchema,
     engineCommit: z.null(),
     coworkers: z.array(desktopTemplateDetailCoworkerSchema).min(1).max(DESKTOP_TEMPLATE_LIMITS.maxCoworkers),
+    portable: desktopTemplatePortableFidelitySchema.optional(),
+    provenance: z.strictObject({
+        importedAt: z.string().min(20).max(40),
+        sourcePackageKey: z.string().regex(/^[a-f0-9]{32}$/),
+        sourceContentDigest: desktopTemplateRevisionSchema,
+        sourceTitle: z.string().min(1).max(DESKTOP_TEMPLATE_LIMITS.maxTitleLength),
+    }).optional(),
 })
 export type DesktopTemplateDetail = z.infer<typeof desktopTemplateDetailSchema>
 

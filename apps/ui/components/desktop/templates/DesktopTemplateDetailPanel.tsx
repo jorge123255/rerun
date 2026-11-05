@@ -11,14 +11,19 @@ import { cn } from '@/lib/utils'
 import type { DesktopTemplatesClient } from '@/lib/desktop/templates-client'
 import { DesktopTemplateDetailAgentCard } from './DesktopTemplateDetailAgentCard'
 import type { DesktopTemplateDetail, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt } from './types'
+import type { DesktopPortableTemplateActions } from '@/lib/desktop/portable-template-actions'
+import { DesktopTemplatePortableActions } from './DesktopTemplatePortableActions'
 import { useDesktopTemplateInstall } from './useDesktopTemplateInstall'
 
-export function DesktopTemplateDetailPanel({ client, template, resume = null, onInstalled, onInterrupted }: {
+export function DesktopTemplateDetailPanel({ client, template, resume = null, onInstalled, onInterrupted, portableActions = null, onLibraryChanged, onPickImport }: {
     client: DesktopTemplatesClient
     template: DesktopTemplateDetail
     resume?: DesktopTemplateInstallIntent | null
     onInstalled: (receipt: DesktopTemplateInstallReceipt) => void
     onInterrupted?: (intent: DesktopTemplateInstallIntent | null) => void
+    portableActions?: DesktopPortableTemplateActions | null
+    onLibraryChanged?: () => void
+    onPickImport?: () => Promise<{ uploadId: string } | null>
 }) {
     const install = useDesktopTemplateInstall({ client, template, resume, onInstalled, onInterrupted })
     const canInstall = template.capturedAt !== null && template.agents.length > 0
@@ -52,6 +57,7 @@ export function DesktopTemplateDetailPanel({ client, template, resume = null, on
             </div>
         </ScrollFade>
         <div className="border-t bg-muted/50 px-5 py-4 max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
+            {portableActions && <div className="mb-3"><DesktopTemplatePortableActions template={template} actions={portableActions} onLibraryChanged={onLibraryChanged ?? (() => undefined)} onPickImport={onPickImport} /></div>}
             {install.receipt && <p role="status" className="mb-2 text-center text-xs text-muted-foreground">Previously used · {install.receipt.coworkers.length} coworker{install.receipt.coworkers.length === 1 ? '' : 's'} still in this workspace</p>}
             {install.error && <p role="alert" className="mb-2 text-center text-xs text-destructive">{install.error}</p>}
             <Button type="button" className="w-full" loading={install.busy} disabled={!canInstall || install.busy} title={!canInstall ? 'Capture at least one coworker before installing.' : undefined} onClick={install.readFailed ? install.refresh : install.receipt ? install.again : install.run}>

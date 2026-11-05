@@ -70,6 +70,18 @@ export type DesktopTemplateDetail = DesktopTemplateSummary & {
     capturedAt: string | null
     exclusions: DesktopCaptureIssue[]
     unsupportedEntries: DesktopCaptureIssue[]
+    portable?: {
+        binaryAssets: boolean
+        userSkillTrees: boolean
+        sourceKind: 'local-v1' | 'portable-capture' | 'portable-import' | 'local-v1-export'
+        notes: string[]
+    }
+    provenance?: {
+        importedAt: string
+        sourcePackageKey: string
+        sourceContentDigest: string
+        sourceTitle: string
+    }
 }
 
 export type DesktopInstalledCoworker = {
