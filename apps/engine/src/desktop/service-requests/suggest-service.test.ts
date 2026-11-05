@@ -30,6 +30,7 @@ describe('desktop suggest_service', () => {
         await expect(suggest.execute!({ services: [{ slug: 'notion@abcdef' }] }, options)).rejects.toThrow('exact catalog slugs')
         expect(await suggest.execute!({ services: [{ slug: 'notion', reason: 'pages' }, { slug: 'slack' }] }, options)).toEqual(HITL_ACK)
         expect(suggest.description).toContain('END YOUR TURN')
+        expect(suggest.description).not.toContain('rerun_hub_service_')
     })
 
     it('stops when the turn is aborted or the grant is no longer on', async () => {
@@ -62,6 +63,11 @@ describe('desktop suggest_service', () => {
         const service = { sourceMessageId: pending.sourceMessageId, toolCallId: pending.toolCallId, fingerprint: pending.fingerprint }
         expect(decideDesktopServiceRequestTurn({ rows, queued: { service } })).toEqual({ kind: 'admit' })
         expect(decideDesktopServiceRequestTurn({ rows, queued: { service, question: {} } }).kind).toBe('reject')
+        expect(decideDesktopServiceRequestTurn({ rows, queued: { service, approval: {} } })).toMatchObject({ kind: 'reject', status: 400, code: 'service_guard' })
+        expect(decideDesktopServiceRequestTurn({ rows, queued: { service, takeover: {} } })).toMatchObject({ kind: 'reject', status: 400, code: 'service_guard' })
+        for (const other of [{ question: {} }, { approval: {} }, { takeover: {} }]) {
+            expect(decideDesktopServiceRequestTurn({ rows, queued: other })).toMatchObject({ kind: 'block', code: 'service_pending' })
+        }
         expect(decideDesktopServiceRequestTurn({ rows, queued: { service: { ...service, fingerprint: 'other' } } })).toMatchObject({ status: 409, code: 'service_mismatch' })
         expect(decideDesktopServiceRequestTurn({ rows, queued: {} })).toMatchObject({ kind: 'block', code: 'service_pending', error: desktopServicePendingMessage })
         expect(decideDesktopServiceRequestTurn({ rows: [], queued: {} })).toEqual({ kind: 'not-service' })

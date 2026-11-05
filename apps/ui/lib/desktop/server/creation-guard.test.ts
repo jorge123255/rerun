@@ -44,7 +44,9 @@ beforeEach(async () => {
         headers: {'content-type': 'text/event-stream', 'x-session-id': body.desktopFirstTurn?.sessionId ?? 'regular-session', 'x-run-id': body.desktopFirstTurn?.runId ?? 'regular-run'},
     }))
     mocks.get.mockResolvedValue({id: 'engine-owner', config: {name: 'owner', displayName: 'Owner', enabled: true}, soul: ''})
-    mocks.request.mockResolvedValue({deleted: 'engine-owner'})
+    mocks.request.mockImplementation(async (_engine, path, _options, parse) => parse(path.endsWith('/setup')
+        ? { required: false, prompt: '', completedAt: null, sessionId: null, pending: false, revision: 'fixture-setup' }
+        : { deleted: 'engine-owner' }))
 })
 afterEach(async () => {await closeDesktopDatabase(root); await rm(root, {recursive: true, force: true})})
 
@@ -106,10 +108,10 @@ test('settled chat and tabs are available before acknowledgement, but deletion w
     const sent = await startDesktopChat(runtime, {agentId, text: 'A later message'})
     await sent.response.text()
     await expect(deleteDesktopCoworker(db, engine, agentId, 'Owner')).rejects.toMatchObject({status: 409})
-    expect(mocks.request).not.toHaveBeenCalled()
+    expect(mocks.request.mock.calls.filter(([, , options]) => options?.method !== 'GET')).toEqual([])
     await db.execute({sql: 'UPDATE desktop_creations SET acknowledged=1 WHERE request_id=?', args: [requestId]})
     expect(await deleteDesktopCoworker(db, engine, agentId, 'Owner')).toEqual({deletedAgentId: agentId})
-    expect(mocks.request).toHaveBeenCalledTimes(1)
+    expect(mocks.request.mock.calls.filter(([, , options]) => options?.method === 'DELETE')).toHaveLength(1)
     expect(await findDesktopAgent(db, agentId)).toBeNull()
 })
 

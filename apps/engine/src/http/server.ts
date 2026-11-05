@@ -1,3 +1,5 @@
+import { desktopSetupRoutes } from '../desktop/setup/routes.js'
+import { desktopTemplateRoutes } from '../desktop/templates/router.js'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { ZodError } from 'zod'
@@ -70,6 +72,7 @@ export function createServer(): Hono {
     api.route('/agents', agentRoutes)
     api.route('/desktop/agents', desktopAgentCreationRoutes)
     api.route('/desktop/new-agent', desktopNewAgentReadingRoutes)
+    api.route('/agents/:id/setup', desktopSetupRoutes)
     api.route('/agents/:id/sessions', sessionRoutes)
     api.route('/agents/:id/memories', memoryRoutes)
     api.route(
@@ -116,6 +119,7 @@ export function createServer(): Hono {
         api.route('/desktop/brain/pages', createDesktopBrainPagesRouter())
         api.route('/desktop/brain/proposals', createDesktopBrainProposalsRouter())
     }
+    api.route('/desktop/templates', desktopTemplateRoutes)
     api.route('/desktop', desktopRoutes)
     api.route('/agents/:id/desktop', agentDesktopRoutes)
     api.route('/agents/:id', chatRoutes)

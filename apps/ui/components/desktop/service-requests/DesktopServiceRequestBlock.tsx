@@ -5,7 +5,7 @@ import { desktopServiceRequestMutationSchema, type DesktopServiceChoice, type De
 import { Button } from '@/components/ui/button'
 import { Loader2Icon } from '@/lib/icons'
 import {
-    createDesktopServiceRequestsClient, serviceRequestScopeKey,
+    createDesktopServiceRequestsClient, DesktopServiceRequestRefused, serviceRequestScopeKey,
     type DesktopOpenApps, type DesktopServiceRequestDetail, type DesktopServiceRequestScope, type DesktopServiceRequestsClient,
 } from '@/lib/desktop/service-requests-client'
 import { DesktopServiceRequestReceipt } from './DesktopServiceRequestReceipt'
@@ -111,12 +111,12 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
         if (props.disabled) { setLoading(false); return () => { active.current = false } }
         let owner: DesktopServiceRequestsClient
         try {
-            owner = createDesktopServiceRequestsClient(scope, window.localStorage)
+            owner = createDesktopServiceRequestsClient(scope)
             client.current = owner
             setAttempt(owner.pending())
             void refresh(owner)
         } catch {
-            setError('Local app retry storage is unavailable. Keep this request pending.')
+            setError('Saved app decisions are unavailable. Keep this request pending.')
             setLoading(false)
         }
         return () => {
@@ -179,8 +179,13 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
             const changed = target !== currentIndex || JSON.stringify(choices) !== JSON.stringify(saved.choices)
             const next = changed ? await apply(owner, mutation(saved, 'progress', target, choices)) : saved
             if (finishing && next && current(owner) && canFinish(next, next.choices)) await apply(owner, mutation(next, 'finish', next.currentIndex, next.choices))
-        } catch {
+        } catch (cause) {
             if (current(owner)) {
+                if (cause instanceof DesktopServiceRequestRefused) {
+                    await refresh(owner)
+                    if (current(owner)) setError(cause.message)
+                    return
+                }
                 fresh.current = false
                 setError('App progress or Finish was refused or its acknowledgement is unknown. Retry the exact saved decisions.')
                 try { setAttempt(owner.pending()) } catch { setError('Saved app decisions could not be read. Keep this request pending.') }
@@ -201,8 +206,11 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
             const payload = owner.pending() ?? (detailRef.current ? owner.recoverFinish(detailRef.current) : null)
             if (payload) await apply(owner, payload)
             else await refresh(owner)
-        } catch {
-            if (current(owner)) setError('Acknowledgement is still unavailable. Retry the same saved decisions.')
+        } catch (cause) {
+            if (current(owner) && cause instanceof DesktopServiceRequestRefused) {
+                await refresh(owner)
+                if (current(owner)) setError(cause.message)
+            } else if (current(owner)) setError('Acknowledgement is still unavailable. Retry the same saved decisions.')
         } finally { busy.current = false; if (current(owner)) setWorking(false) }
     }
 
@@ -263,7 +271,7 @@ function ServiceRequestBlock(props: DesktopServiceRequestBlockProps) {
             disabled={locked || configuring} onClick={() => { void decide('connection', undefined, { key: item.key, revision: item.revision }) }}>Use {item.key}</Button>)}</div>}
         {loading && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2Icon className="size-4 animate-spin" />Loading suggested apps…</p>}
         {attempt && <div className="space-y-1"><p className="text-xs text-muted-foreground">Saved {attempt.action === 'finish' ? 'Finish' : 'app progress'} is waiting for acknowledgement. The same choices will be retried.</p>
-            <ul className="space-y-1 text-xs text-muted-foreground">{attempt.choices.map(item => <li key={item.slug} className="wrap-anywhere">{item.slug}: {item.choice === 'skip' ? 'Skipped' : item.choice === 'pending' ? 'Pending' : `Use connection ${item.installation.key}`}</li>)}</ul>
+            <ul className="space-y-1 text-xs text-muted-foreground">{attempt.choices.map(item => <li key={item.slug} className="wrap-anywhere">{item.slug}: {item.choice === 'use-connection' ? `Use connection ${item.installation.key}` : item.choice === 'skip' ? 'Skipped' : 'Pending'}</li>)}</ul>
             <Button size="sm" variant="outline" disabled={!!props.disabled || working || configuring} onClick={() => { void retry() }}>Retry {attempt.action === 'finish' ? 'Finish' : 'progress'}</Button></div>}
         {error && <p role="alert" className="whitespace-pre-wrap wrap-anywhere text-sm text-destructive">{error}</p>}
         {!attempt && !configuring && <Button size="sm" variant="ghost" disabled={!!props.disabled || loading || working} onClick={() => { const owner = client.current; if (owner) void refresh(owner) }}>Refresh connection state</Button>}

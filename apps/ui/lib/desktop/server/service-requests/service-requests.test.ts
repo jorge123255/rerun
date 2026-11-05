@@ -1,4 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
@@ -9,13 +12,23 @@ import { describeDesktopServiceRequestCatalog } from './adapters'
 import { desktopServiceSuggestionSchema, ensureDesktopServiceSuggestionSchema } from './schema'
 import { desktopServiceRequestIdentity, finishDesktopServiceRequest, progressDesktopServiceRequest, readDesktopServiceRequest, type SealedReceipt, type ServiceRequestPorts, type ServiceRequestScope } from './service'
 import { desktopServiceConnectionUsable } from './usable'
+import { acknowledgeDesktopServiceRetry, readDesktopServiceRetry, rejectDesktopServiceRetry, reserveDesktopServiceRetry } from './retry'
 
 const secret = 'sk-test-secret-must-not-be-stored'
 const clients: Client[] = []
-afterEach(() => { for (const db of clients.splice(0)) db.close() })
+const roots: string[] = []
+const urls = new WeakMap<Client, string>()
+afterEach(async () => {
+    for (const db of clients.splice(0)) db.close()
+    await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
 
 async function database(): Promise<Client> {
-    const db = createClient({ url: 'file::memory:' })
+    const root = await mkdtemp(join(tmpdir(), 'rerun-service-requests-'))
+    roots.push(root)
+    const url = `file:${join(root, 'desktop.sqlite')}`
+    const db = createClient({ url })
+    urls.set(db, url)
     clients.push(db)
     await db.execute('PRAGMA foreign_keys = ON')
     await db.executeMultiple(`CREATE TABLE desktop_agents (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1);
@@ -48,6 +61,7 @@ function harness(db: Client, over: Partial<ServiceRequestPorts> = {}) {
         source: async () => source,
         catalog: async slug => catalog(slug),
         installations: async () => [connection()],
+        prepareSeal: async () => ({ installations: () => ports.installations(), check: () => {} }),
         send: async (receipt, mode) => {
             sent.push(mode)
             if (mode === 'replay' && sent.filter(item => item === 'send').length === 0) return { status: 404, code: 'queued_turn_not_found', sessionId: null, runId: null }
@@ -110,7 +124,7 @@ it('saves ordered choices, rejects a stale installation, and finishes one secret
     expect(stored).toContain(installRevision)
     expect(stored).not.toContain(secret)
     const finish = { action: 'finish' as const, requestId: crypto.randomUUID(), serviceRequestId: opened.serviceRequestId, source: opened.source, expectedRevision: saved.revision, currentIndex: saved.currentIndex, choices: saved.choices }
-    await expect(finishDesktopServiceRequest(db, scope, { ...ports, installations: async () => [connection({ usable: false })] }, finish)).rejects.toBeInstanceOf(DesktopHttpError)
+    await expect(finishDesktopServiceRequest(db, scope, { ...ports, prepareSeal: async () => ({ installations: async () => [connection({ usable: false })], check: () => {} }) }, finish)).rejects.toBeInstanceOf(DesktopHttpError)
     expect(sent).toEqual([])
     expect((await db.execute('SELECT * FROM desktop_service_suggestion_receipts')).rows).toHaveLength(0)
     const response = await finishDesktopServiceRequest(db, scope, ports, finish)
@@ -135,7 +149,7 @@ it('blocks pending choices, derives reset and not-found, and refuses a failed ca
     await expect(finishDesktopServiceRequest(db, scope, ports, pending)).rejects.toMatchObject({ status: 409 })
     const skip = { ...pending, requestId: crypto.randomUUID(), choices: [{ slug: 'gone', choice: 'skip' as const }] }
     const progressed = await progressDesktopServiceRequest(db, scope, ports, { ...skip, action: 'progress' })
-    const done = await finishDesktopServiceRequest(db, scope, ports, { ...skip, expectedRevision: progressed.revision })
+    const done = await finishDesktopServiceRequest(db, scope, ports, { ...skip, requestId: crypto.randomUUID(), expectedRevision: progressed.revision })
     expect(done.status).toBe(200)
     expect(String((await db.execute('SELECT summary_text FROM desktop_service_suggestion_receipts')).rows[0]?.summary_text)).toContain('gone: not found in the catalog')
     const resetDb = await database()
@@ -158,7 +172,7 @@ it('refuses a disabled owner and a superseded source without sending', async () 
     const db = await database()
     const { ports, sent } = harness(db)
     const opened = await open(db, ports)
-    await expect(readDesktopServiceRequest(db, { ...scope, enabled: false }, ports)).rejects.toMatchObject({ status: 403 })
+    expect((await readDesktopServiceRequest(db, { ...scope, enabled: false }, ports)).request?.serviceRequestId).toBe(opened.serviceRequestId)
     const body = { action: 'progress' as const, requestId: crypto.randomUUID(), serviceRequestId: opened.serviceRequestId, source: opened.source, expectedRevision: opened.revision, currentIndex: 0, choices: opened.choices }
     await expect(progressDesktopServiceRequest(db, { ...scope, enabled: false }, ports, body)).rejects.toMatchObject({ status: 403 })
     await expect(finishDesktopServiceRequest(db, { ...scope, enabled: false }, ports, { ...body, action: 'finish' })).rejects.toMatchObject({ status: 403 })
@@ -185,4 +199,78 @@ it('reports a usable missing catalog entry as not-found and blocks a changing in
     const saved = await progressDesktopServiceRequest(changingDb, scope, changingPorts, { action: 'progress', requestId: crypto.randomUUID(), serviceRequestId: card.serviceRequestId, source: card.source, expectedRevision: card.revision, currentIndex: 0, choices: [{ slug: 'notion', choice: 'skip' }] })
     await expect(finishDesktopServiceRequest(changingDb, scope, changingPorts, { action: 'finish', requestId: crypto.randomUUID(), serviceRequestId: card.serviceRequestId, source: card.source, expectedRevision: saved.revision, currentIndex: 0, choices: saved.choices })).rejects.toMatchObject({ status: 409 })
     expect((await changingDb.execute('SELECT * FROM desktop_service_suggestion_receipts')).rows).toHaveLength(0)
+})
+
+it('rolls back the sealed result when owner authority changes after the final installation read', async () => {
+    const db = await database()
+    const { ports, sent } = harness(db)
+    const card = await open(db, ports)
+    const saved = await progressDesktopServiceRequest(db, scope, ports, { action: 'progress', requestId: crypto.randomUUID(), serviceRequestId: card.serviceRequestId,
+        source: card.source, expectedRevision: card.revision, currentIndex: 0, choices: card.services.map(service => ({ slug: service.slug, choice: 'skip' })) })
+    let invalidated = false
+    ports.prepareSeal = async () => ({
+        installations: async tx => {
+            // The receipt query executor is the dedicated transaction, not the cached Client.
+            expect(tx).not.toBe(db)
+            invalidated = true
+            return [connection()]
+        },
+        check: () => { if (invalidated) throw new DesktopHttpError(409, 'Owner changed') },
+    })
+    await expect(finishDesktopServiceRequest(db, scope, ports, { action: 'finish', requestId: crypto.randomUUID(), serviceRequestId: card.serviceRequestId,
+        source: card.source, expectedRevision: saved.revision, currentIndex: 0, choices: saved.choices })).rejects.toMatchObject({ status: 409 })
+    expect((await db.execute('SELECT * FROM desktop_service_suggestion_receipts')).rows).toHaveLength(0)
+    expect(sent).toEqual([])
+})
+
+it('keeps an uncertain attempt durable, refuses replacement and permits clearing only confirmed progress', async () => {
+    const db = await database()
+    const { ports } = harness(db)
+    const card = await open(db, ports)
+    const input = { action: 'progress' as const, requestId: crypto.randomUUID(), serviceRequestId: card.serviceRequestId,
+        source: card.source, expectedRevision: card.revision, currentIndex: 0, choices: card.choices }
+    await reserveDesktopServiceRetry(db, scope, input)
+    expect(await readDesktopServiceRetry(db, scope, card.serviceRequestId)).toEqual(input)
+    const reopened = createClient({ url: urls.get(db)! })
+    clients.push(reopened)
+    expect(await readDesktopServiceRetry(reopened, scope, card.serviceRequestId)).toEqual(input)
+    await expect(reserveDesktopServiceRetry(db, scope, { ...input, requestId: crypto.randomUUID() })).rejects.toMatchObject({ status: 409 })
+    await expect(readDesktopServiceRetry(db, { ...scope, agentId: 'other' }, card.serviceRequestId)).rejects.toMatchObject({ status: 404 })
+    await expect(acknowledgeDesktopServiceRetry(db, scope, input)).rejects.toMatchObject({ status: 409 })
+    await progressDesktopServiceRequest(db, scope, ports, input)
+    expect(await rejectDesktopServiceRetry(db, scope, input)).toBe(false)
+    await acknowledgeDesktopServiceRetry(db, scope, input)
+    expect(await readDesktopServiceRetry(db, scope, card.serviceRequestId)).toBeNull()
+})
+
+it('a definite refusal releases its retry but a delayed copy cannot become accepted later', async () => {
+    const db = await database()
+    const { ports } = harness(db)
+    const card = await open(db, ports)
+    const input = { action: 'progress' as const, requestId: crypto.randomUUID(), serviceRequestId: card.serviceRequestId,
+        source: card.source, expectedRevision: card.revision, currentIndex: 0, choices: card.choices }
+    await reserveDesktopServiceRetry(db, scope, input)
+    expect(await rejectDesktopServiceRetry(db, scope, input)).toBe(true)
+    expect(await readDesktopServiceRetry(db, scope, card.serviceRequestId)).toBeNull()
+    await expect(reserveDesktopServiceRetry(db, scope, input)).rejects.toMatchObject({ status: 409 })
+    const replacement = { ...input, requestId: crypto.randomUUID() }
+    expect(await reserveDesktopServiceRetry(db, scope, replacement)).toEqual(replacement)
+})
+
+it('a competing Finish resolves to the canonical receipt and cannot generate a second run', async () => {
+    const db = await database()
+    const { ports, sent } = harness(db)
+    const card = await open(db, ports)
+    const saved = await progressDesktopServiceRequest(db, scope, ports, { action: 'progress', requestId: crypto.randomUUID(), serviceRequestId: card.serviceRequestId,
+        source: card.source, expectedRevision: card.revision, currentIndex: 0, choices: card.services.map(service => ({ slug: service.slug, choice: 'skip' })) })
+    const finish = { action: 'finish' as const, requestId: crypto.randomUUID(), serviceRequestId: card.serviceRequestId,
+        source: card.source, expectedRevision: saved.revision, currentIndex: 0, choices: saved.choices }
+    await finishDesktopServiceRequest(db, scope, ports, finish)
+    const rival = { ...finish, requestId: crypto.randomUUID() }
+    await reserveDesktopServiceRetry(db, scope, rival)
+    const response = await finishDesktopServiceRequest(db, scope, ports, rival)
+    expect(response.headers.get('x-run-id')).toBe(finish.requestId)
+    expect(sent.filter(mode => mode === 'send')).toHaveLength(1)
+    await acknowledgeDesktopServiceRetry(db, scope, rival)
+    expect(await readDesktopServiceRetry(db, scope, card.serviceRequestId)).toBeNull()
 })

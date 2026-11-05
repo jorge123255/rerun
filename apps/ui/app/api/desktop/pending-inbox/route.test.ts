@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import type { Message } from '@rerun/contracts'
+import type { DesktopServiceRequestView, Message } from '@rerun/contracts'
 import { desktopPendingInboxSchema, type DesktopPendingReadTarget } from '@/lib/desktop/pending-inbox'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopApproval } from '@/lib/desktop/server/approvals'
@@ -12,6 +12,9 @@ import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { createDesktopAgent, createDesktopSession, type DesktopAgent, type DesktopSession } from '@/lib/desktop/server/store'
 import { GET } from './route'
 import { POST } from './read/route'
+
+const serviceReader = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/desktop/server/service-requests/view', () => ({ readDesktopServiceRequestView: serviceReader }))
 
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent
@@ -44,13 +47,29 @@ async function read() {
     expect(response.headers.get('cache-control')).toBe('no-store')
     return desktopPendingInboxSchema.parse(await response.json())
 }
-const seen = async () => (await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_pending_inbox_seen_v2')).rows
+const seen = async () => (await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_pending_inbox_seen_v3')).rows
 const questionId = async () => (await questionResolvers.readDesktopQuestion(runtime, question.id)).question!.id
 const approvalId = async () => (await readDesktopApproval(runtime, approval.id)).approval!.id
+
+function appRequest(): NonNullable<DesktopServiceRequestView['request']> {
+    return { serviceRequestId: 'c'.repeat(64), revision: '10000000-0000-4000-8000-000000000001',
+        source: { sourceMessageId: 'apps-message', toolCallId: 'apps-call', fingerprint: '[{"slug":"notion"}]' },
+        currentIndex: 0, choices: [{ slug: 'notion', choice: 'pending' }], retry: { phase: 'open' },
+        services: [{ slug: 'notion', reason: 'Connect project notes', catalog: { status: 'not-found' }, connections: [], connectionsStatus: 'ready' }] }
+}
+
+async function appChat(detail = appRequest()) {
+    const db = await openDesktopDatabase(root)
+    const session = await createDesktopSession(db, { agentId: alice.id, engineSessionId: 'apps-chat', title: 'Connect apps' })
+    histories.set('apps-chat', { owner: alice.engineAgentId, rows: [] })
+    serviceReader.mockImplementation(async (_runtime, id) => ({ request: id === session.id ? detail : null }))
+    return { db, session, detail, target: { id: detail.serviceRequestId, kind: 'service' as const, agentId: alice.id, sessionId: session.id } }
+}
 
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-pending-inbox-api-'))
     histories.clear(); calls.length = 0; failures.clear(); stalled.clear()
+    serviceReader.mockReset(); serviceReader.mockResolvedValue({ request: null })
     server = createServer((req, res) => {
         calls.push(`${req.method} ${req.url}`)
         const reply = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
@@ -121,6 +140,53 @@ test('database startup creates the receipt table and reopening preserves the exa
     expect((await read()).items.map(item => item.sessionId)).toEqual([approval.id, bobChat.id])
     // Reading the inbox never resolves the underlying request.
     expect(await questionId()).toBe(q1)
+})
+
+test('an older inbox receipt migrates to the service-capable table without becoming an answer', async () => {
+    const db = await openDesktopDatabase(root), id = await questionId()
+    await db.execute({ sql: 'INSERT INTO desktop_pending_inbox_seen_v2(item_id,agent_id,session_id,kind,seen_at) VALUES(?,?,?,?,?)', args: [id, alice.id, question.id, 'question', time] })
+    await closeDesktopDatabase(root)
+    expect((await seen()).map(row => String(row.item_id))).toEqual([id])
+    expect((await read()).items.some(item => item.id === id)).toBe(false)
+    expect(await questionId()).toBe(id)
+})
+
+test('suggested app read receipts persist across reopen without resolving the app request', async () => {
+    const { target, detail } = await appChat()
+    expect((await read()).items.find(item => item.id === target.id)).toMatchObject({ kind: 'service', agentId: alice.id, summary: 'Connect project notes' })
+    expect(await (await mark([target])).json()).toEqual({ marked: 1, failedIds: [] })
+    await closeDesktopDatabase(root)
+    expect((await seen()).map(row => String(row.item_id))).toEqual([target.id])
+    expect((await read()).items.some(item => item.id === target.id)).toBe(false)
+    expect(detail.retry.phase).toBe('open')
+    expect((await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_service_suggestion_receipts')).rows).toEqual([])
+})
+
+test('accepted app setup is absent from attention and cannot receive a mark-read receipt', async () => {
+    const detail = appRequest(), requestId = '20000000-0000-4000-8000-000000000001'
+    detail.retry = { phase: 'accepted', requestId }
+    detail.receipt = { requestId, revision: detail.revision, accepted: true, text: 'App setup finished', entries: [{ slug: 'notion', name: 'Notion', outcome: 'skipped' }] }
+    const { target } = await appChat(detail)
+    expect((await read()).items.some(item => item.id === target.id)).toBe(false)
+    expect(await (await mark([target])).json()).toEqual({ marked: 0, failedIds: [target.id] })
+    expect(await seen()).toEqual([])
+})
+
+test('a Finish accepted after the app resolver returns is rechecked before saving mark-read', async () => {
+    const { db, session, detail, target } = await appChat()
+    await db.execute({ sql: `INSERT INTO desktop_service_suggestion_requests
+        (service_request_id,agent_id,session_id,source_message_id,tool_call_id,fingerprint,ordered_input,revision,current_index,choices,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)`, args: [detail.serviceRequestId, alice.id, session.id, detail.source.sourceMessageId, detail.source.toolCallId, detail.source.fingerprint,
+        '[{"slug":"notion"}]', detail.revision, 0, JSON.stringify(detail.choices), time] })
+    await db.execute({ sql: `INSERT INTO desktop_service_suggestion_receipts(service_request_id,request_id,revision,summary_text,entries,accepted,created_at)
+        VALUES(?,?,?,?,?,0,?)`, args: [detail.serviceRequestId, crypto.randomUUID(), detail.revision, 'App setup finished', '[]', time] })
+    serviceReader.mockImplementation(async (_runtime, id) => {
+        if (id !== session.id) return { request: null }
+        await db.execute({ sql: 'UPDATE desktop_service_suggestion_receipts SET accepted=1 WHERE service_request_id=?', args: [detail.serviceRequestId] })
+        return { request: detail }
+    })
+    expect(await (await mark([target])).json()).toEqual({ marked: 0, failedIds: [target.id] })
+    expect(await seen()).toEqual([])
 })
 
 test('a new request in the same chat reappears, and the earlier receipt cannot block it', async () => {

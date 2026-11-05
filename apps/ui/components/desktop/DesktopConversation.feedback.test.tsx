@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, test, vi } from 'vitest'
@@ -61,6 +62,7 @@ test('a held vote stays on its chat while another coworker keeps the same answer
             return Response.json({ ok: true })
         }
         if (url.endsWith('/chat')) throw new Error('Rating must not call the model')
+        const background = desktopBackgroundRead(input, init); if (background) return background
         throw new Error('Unexpected request: ' + method + ' ' + url)
     }))
     const container = document.createElement('div')

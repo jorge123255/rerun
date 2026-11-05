@@ -1,8 +1,24 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { AGENT_TABS, type Tab } from '@/components/agent/agent-tabs'
 import { desktopChatSearchSchema, type DesktopConversationHit } from './chat-search'
+import { isDesktopCoworkerPanel, type DesktopCoworkerPanel } from './coworker-panel'
 import { isDesktopQuitting } from './draft-writes'
+
+type DesktopControlCoworkerTab = Tab & { id: DesktopCoworkerPanel | 'setup' }
+
+// Reuse the original rail order and copy. Setup is a coworker authoring surface, not a
+// workspace command, and only appears once the caller supplies its actual desktop handler.
+export function buildDesktopControlCoworkerTabs({ panels, setup, actions }: {
+    panels: boolean
+    setup: boolean
+    actions: boolean
+}): DesktopControlCoworkerTab[] {
+    return AGENT_TABS.filter((tab): tab is DesktopControlCoworkerTab => tab.id === 'setup'
+        ? setup
+        : panels && isDesktopCoworkerPanel(tab.id) && (tab.id !== 'actions' || actions))
+}
 
 export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'shared_files', 'company_brain', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'notifications', 'shortcuts'] as const
 

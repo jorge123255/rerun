@@ -1,4 +1,4 @@
-import { lstat, mkdir } from 'node:fs/promises'
+import { lstat, mkdtemp, rm } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { z } from 'zod'
 import {
@@ -15,6 +15,7 @@ import {
 import { TemplateRequestError } from './errors.js'
 import { readConfined, writeExclusiveFile } from './files.js'
 import { canonicalJson, sha256 } from './hash.js'
+import { renameSkillEntry } from '../skill-publication-native.js'
 import { readOwnJson, replaceOwnJson, templateHome, writeOwnJson } from './store.js'
 
 const fileSchema = z.strictObject({
@@ -186,8 +187,11 @@ export async function installManifest(input: {
             engineAgentId, agentKey: coworker.agentKey, phase: 'bound',
         }
         if (!kind) {
-            await mkdir(folder, { mode: 0o700 })
-            await writeOwnJson(folder, '.desktop-template-import.json', bound)
+            const staged = await mkdtemp(join(input.agentsRoot, '.template-import-'))
+            try {
+                await writeOwnJson(staged, '.desktop-template-import.json', bound)
+                await renameSkillEntry(input.agentsRoot, await lstat(input.agentsRoot, { bigint: true }), staged.split('/').at(-1)!, await lstat(staged, { bigint: true }), engineAgentId)
+            } finally { await rm(staged, { recursive: true, force: true }) }
         }
         const receipt = await readReceipt(folder)
         if (!receipt || receipt.importReceiptId !== bound.importReceiptId || receipt.engineAgentId !== engineAgentId || receipt.templateId !== bound.templateId || receipt.revision !== bound.revision || receipt.agentKey !== coworker.agentKey) {
@@ -197,7 +201,7 @@ export async function installManifest(input: {
         }
         const archiveDir = join(templateHome(input.dataRoot, input.templateId), 'revisions', input.revision, coworker.agentKey)
         let partial = false
-        for (const file of coworker.files) {
+        for (const file of receipt.phase === 'bound' ? coworker.files : []) {
             const stored = await readConfined(archiveDir, file.path, DESKTOP_TEMPLATE_LIMITS.maxFileBytes)
             if (!stored.ok || stored.contentRevision !== file.sourceRevision) {
                 partial = true
@@ -218,7 +222,7 @@ export async function installManifest(input: {
             phases.push({ engineAgentId, agentKey: coworker.agentKey, name: coworker.name, description: coworker.description, phase: 'partial' })
             continue
         }
-        await replaceOwnJson(folder, '.desktop-template-import.json', { ...receipt, phase: 'files' })
+        if (receipt.phase === 'bound') await replaceOwnJson(folder, '.desktop-template-import.json', { ...receipt, phase: 'files' })
         try {
             const indexed = await input.readIndex(engineAgentId)
             if (!indexed) await input.insertIndex(engineAgentId, coworker.name)

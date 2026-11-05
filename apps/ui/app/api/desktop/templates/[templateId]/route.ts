@@ -17,7 +17,7 @@ async function serverFor(runtime: DesktopRuntime) {
     return openDesktopTemplateServer(await openDesktopDatabase(runtime.dataRoot), {
         post: (path, body, signal) => request(engine, path, { method: 'POST', body: JSON.stringify(body), signal, cache: 'no-store' }, data => data),
         get: (path, signal) => request(engine, path, { method: 'GET', signal, cache: 'no-store' }, data => data),
-    }, desktopTemplateAuthority())
+    }, desktopTemplateAuthority(runtime))
 }
 
 export function GET(request: Request, context: Context) {

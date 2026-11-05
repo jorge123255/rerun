@@ -283,6 +283,49 @@ describe('resolveModel on the claude subscription', () => {
 })
 
 describe('resolveModel on the codex subscription', () => {
+    it('bridges app suggestions only with their own grant and rejects a forged setup-completion tool', () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.stubEnv('RERUN_DESKTOP_CODEX_RUNNER', '/private/fixture/codex')
+        try {
+            const agent = agentOn('codex', 'fixture', { RERUN_CHATGPT_CONNECTED: '1' })
+            agent.resolved.connection.id = 'mac-chatgpt'
+            const suggestion = tool({ description: 'Suggest apps', inputSchema: z.object({}), execute: async () => ({ status: 'delivered' }) })
+            const tools = { suggest_service: suggestion, install_complete: suggestion, request_secret: suggestion }
+            agent.config.tools.desktopToolGrants = { suggestService: true, services: false }
+            resolveModel(agent, undefined, tools)
+            expect(codexAppServerCalls.at(-1)!.defaultSettings.mcpServers.rerun.tools.map((entry: { name: string }) => entry.name)).toEqual(['suggest_service'])
+            agent.config.tools.desktopToolGrants = { suggestService: false, services: true }
+            resolveModel(agent, undefined, tools)
+            expect(Object.keys(codexAppServerCalls.at(-1)!.defaultSettings.mcpServers)).toEqual([])
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('bridges only an actual setup completion instance belonging to the active owner and run', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.stubEnv('RERUN_DESKTOP_CODEX_RUNNER', '/private/fixture/codex')
+        const { desktopSetupTools } = await import('../desktop/setup/service.js')
+        const { claimSession, releaseSession } = await import('../runtime/run-control.js')
+        const runId = crypto.randomUUID(), sessionId = crypto.randomUUID()
+        try {
+            const agent = agentOn('codex', 'fixture', { RERUN_CHATGPT_CONNECTED: '1' })
+            agent.resolved.connection.id = 'mac-chatgpt'
+            agent.config.setup = { required: true, sessionId, completedAt: null }
+            agent.install = 'Check the required apps.'
+            const signal = new AbortController()
+            claimSession(sessionId, runId)
+            const tools = desktopSetupTools({ agent, sessionId, runId, abortSignal: signal.signal } as import('../runtime/context.js').RunContext)
+            resolveModel(agent, undefined, tools)
+            expect(codexAppServerCalls.at(-1)!.defaultSettings.mcpServers.rerun.tools.map((entry: { name: string }) => entry.name)).toEqual(['install_complete'])
+            resolveModel({ ...agent, id: 'another-owner' }, undefined, tools)
+            expect(Object.keys(codexAppServerCalls.at(-1)!.defaultSettings.mcpServers)).toEqual([])
+            resolveModel(agent, undefined, { install_complete: { ...tools.install_complete! } })
+            expect(Object.keys(codexAppServerCalls.at(-1)!.defaultSettings.mcpServers)).toEqual([])
+            signal.abort()
+            resolveModel(agent, undefined, tools)
+            expect(Object.keys(codexAppServerCalls.at(-1)!.defaultSettings.mcpServers)).toEqual([])
+        } finally { releaseSession(runId); vi.unstubAllEnvs() }
+    })
+
     it('streams through the app-server, with the run prompt as its base instructions', async () => {
         const tools = { fs_read: tool({ description: 'read', inputSchema: z.object({ path: z.string() }), execute: async () => 'ok' }) }
         const resolved = resolveModel(agentOn('codex', 'gpt-5.5', { CODEX_OAUTH_TOKEN: 't' }), { model: 'gpt-5.5-mini' }, tools, [], 'You are Rerun.')

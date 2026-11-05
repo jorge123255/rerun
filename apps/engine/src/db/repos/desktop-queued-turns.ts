@@ -1,4 +1,4 @@
-import type { DesktopTakeoverGuard } from '@rerun/contracts'
+import type { DesktopServiceRequestGuard, DesktopTakeoverGuard } from '@rerun/contracts'
 import { createHash } from 'node:crypto'
 import { desktopAttachmentFingerprintOf, desktopAttachmentSelectionsOf, workspaceAttachmentParts, desktopResolvedAttachmentParts, type DesktopResolvedAttachment, type DesktopAttachmentItem, type DesktopApprovalGuard, type DesktopQuestionGuard, type DesktopWorkspaceAttachment, type MessageAuthor } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
@@ -6,7 +6,7 @@ import type { MessageRow } from '../schema.js'
 import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
 
-export type QueuedTurn = { runId: string; sessionId: string; message: string; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard }
+export type QueuedTurn = { runId: string; sessionId: string; message: string; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard; service?: DesktopServiceRequestGuard }
 
 function fingerprint(turn: QueuedTurn) {
     const parts: unknown[] = [turn.sessionId, turn.message, desktopAttachmentFingerprintOf(desktopAttachmentSelectionsOf(turn))]
@@ -15,6 +15,7 @@ function fingerprint(turn: QueuedTurn) {
     if (turn.question) parts.push([turn.question.sourceMessageId, turn.question.toolCallId, turn.question.fingerprint])
     if (turn.takeover) parts.push(['takeover', turn.takeover.sourceMessageId, turn.takeover.toolCallId, turn.takeover.fingerprint])
     if (turn.approval) parts.push(['approval', turn.approval.sourceMessageId, turn.approval.toolCallId, turn.approval.fingerprint])
+    if (turn.service) parts.push(['service', turn.service.sourceMessageId, turn.service.toolCallId, turn.service.fingerprint])
     return createHash('sha256').update(JSON.stringify(parts)).digest('hex')
 }
 

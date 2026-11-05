@@ -104,3 +104,101 @@ it('does not apply an old owner read after the owner changes', async () => {
     await act(async () => { finish(view({ revision: 'old-revision' })) })
     expect(host.textContent).toBe('new-revision')
 })
+
+it('clears a parent read error when another hook publishes a successful recovery', async () => {
+    local.read.mockRejectedValueOnce(new Error('Temporary setup read failure'))
+    const parent = render()
+    await act(async () => {})
+    expect(parent.current().error).toBe('Temporary setup read failure')
+    local.read.mockResolvedValueOnce(view({ revision: 'complete', completedAt: 'now', pending: false }))
+    const gate = render()
+    await act(async () => {})
+    expect(parent.current().error).toBe('')
+    expect(parent.current().loading).toBe(false)
+    expect(parent.current().view?.revision).toBe('complete')
+    expect(gate.current().view?.revision).toBe('complete')
+})
+
+it('a delayed initial read in another hook cannot undo an acknowledged Skip', async () => {
+    local.read.mockResolvedValueOnce(view())
+    const gate = render()
+    await act(async () => {})
+    let finishRead!: (value: DesktopSetupView) => void
+    local.read.mockImplementationOnce(() => new Promise<DesktopSetupView>(resolve => { finishRead = resolve }))
+    const parent = render()
+    local.skip.mockResolvedValue({ view: view({ revision: 'skipped', skipped: true, pending: false }) })
+    await act(async () => { await gate.current().skip() })
+    expect(parent.current().view?.skipped).toBe(true)
+    await act(async () => { finishRead(view()) })
+    expect(parent.current().view?.revision).toBe('skipped')
+    expect(gate.current().view?.revision).toBe('skipped')
+    expect(parent.current().error).toBe('')
+})
+
+it('an older read failure cannot hide the composer after another hook saves successfully', async () => {
+    local.read.mockResolvedValueOnce(view())
+    const editor = render()
+    await act(async () => {})
+    let failRead!: (error: Error) => void
+    local.read.mockImplementationOnce(() => new Promise<DesktopSetupView>((_resolve, reject) => { failRead = reject }))
+    const parent = render()
+    local.save.mockResolvedValue({ view: view({ revision: 'saved', completedAt: 'now', pending: false }) })
+    await act(async () => { await editor.current().save({ required: true, prompt: 'Local prompt' }) })
+    await act(async () => { failRead(new Error('Late old read failure')) })
+    expect(parent.current().view?.revision).toBe('saved')
+    expect(parent.current().error).toBe('')
+    expect(parent.current().loading).toBe(false)
+})
+
+it('orders refreshes across hook instances even without a local mutation', async () => {
+    local.read.mockResolvedValue(view())
+    const parent = render()
+    const gate = render()
+    await act(async () => {})
+    let older!: (value: DesktopSetupView) => void
+    let newer!: (value: DesktopSetupView) => void
+    local.read.mockImplementationOnce(() => new Promise<DesktopSetupView>(resolve => { older = resolve }))
+        .mockImplementationOnce(() => new Promise<DesktopSetupView>(resolve => { newer = resolve }))
+    let first!: Promise<void>, second!: Promise<void>
+    act(() => {
+        first = parent.current().refresh()
+        second = gate.current().refresh()
+    })
+    await act(async () => { newer(view({ revision: 'newer' })); await second })
+    await act(async () => { older(view({ revision: 'older' })); await first })
+    expect(parent.current().view?.revision).toBe('newer')
+    expect(gate.current().view?.revision).toBe('newer')
+})
+
+it('shares pending mutation state and refuses a second hook mutation until acknowledgement', async () => {
+    local.read.mockResolvedValue(view())
+    const first = render()
+    const second = render()
+    await act(async () => {})
+    let finish!: (value: { view: DesktopSetupView; sessionId: string }) => void
+    local.start.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    let started!: ReturnType<ReturnType<typeof useDesktopSetup>['start']>
+    act(() => { started = first.current().start() })
+    expect(second.current().mutating).toBe('start')
+    await act(async () => { expect(await second.current().skip()).toBeNull() })
+    expect(local.skip).not.toHaveBeenCalled()
+    await act(async () => { finish({ view: view({ revision: 'claimed', sessionId: 'claimed-chat' }), sessionId: 'claimed-chat' }); await started })
+    expect(first.current().mutating).toBeNull()
+    expect(second.current().mutating).toBeNull()
+    expect(second.current().view?.sessionId).toBe('claimed-chat')
+})
+
+it('does not clear an unknown save error on an unchanged read, but clears it on a newer acknowledgement', async () => {
+    local.read.mockResolvedValue(view())
+    local.save.mockRejectedValueOnce(new Error('Save acknowledgement unknown'))
+    const editor = render()
+    const parent = render()
+    await act(async () => {})
+    await act(async () => { await editor.current().save({ required: true, prompt: 'Edited instructions' }) })
+    await act(async () => { await parent.current().refresh() })
+    expect(editor.current().error).toBe('Save acknowledgement unknown')
+    local.read.mockResolvedValueOnce(view({ revision: 'saved', prompt: 'Edited instructions', completedAt: 'now', pending: false }))
+    await act(async () => { await parent.current().refresh() })
+    expect(editor.current().error).toBe('')
+    expect(editor.current().view?.prompt).toBe('Edited instructions')
+})

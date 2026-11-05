@@ -1,14 +1,14 @@
 'use client'
 
 import { WorkspacePill } from '@rerun/ui/chrome'
-import { Brain, Database, Folder, Keyboard, LayoutGrid, Search, Settings } from 'lucide-react'
+import { Brain, Database, Folder, Package, Keyboard, LayoutGrid, Search, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
 import { useRef } from 'react'
 import { desktopWorkspaceIconSelectionUrl } from '@/lib/desktop/icon-catalog'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts, onSharedData, onSharedFiles, onBrain, navigationDisabled = false, settingsDisabled = false }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts, onSharedData, onSharedFiles, onBrain, onTemplates, navigationDisabled = false, settingsDisabled = false }: {
     workspaceName: string
     iconCatalogId?: string | null
     iconUploadId?: string | null
@@ -26,6 +26,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     onSharedData?: () => void
     onSharedFiles?: () => void
     onBrain?: () => void
+    onTemplates?: () => void
     navigationDisabled?: boolean
     settingsDisabled?: boolean
 }) {
@@ -43,6 +44,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 <DropdownMenuItem onSelect={onBoard}><LayoutGrid /> Team board</DropdownMenuItem>
                 {onSharedData && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedData() }}><Database /> Shared database</DropdownMenuItem>}
                 {onSharedFiles && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedFiles() }}><Folder /> Shared files</DropdownMenuItem>}
+                {onTemplates && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onTemplates() }}><Package /> Templates</DropdownMenuItem>}
                 {onBrain && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onBrain() }}><Brain /> Company Brain</DropdownMenuItem>}
                 {onControlCenter && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> Control center</DropdownMenuItem>}
                 <DropdownMenuItem disabled={settingsDisabled} onSelect={onSettings}><Settings /> Settings</DropdownMenuItem>

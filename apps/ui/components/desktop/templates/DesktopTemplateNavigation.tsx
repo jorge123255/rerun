@@ -1,31 +1,42 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { createDesktopTemplatesClient } from '@/lib/desktop/templates-client'
+import { useEffect, useRef, useState } from 'react'
+import { createDesktopTemplatesClient, type DesktopTemplatesClient } from '@/lib/desktop/templates-client'
 import { DesktopCreateTemplateDialog } from './DesktopCreateTemplateDialog'
 import { DesktopTemplateLibraryDialog } from './DesktopTemplateLibraryDialog'
 import type { DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt } from './types'
 
-export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, onInstallAttempt, resumeInstall = null }: {
+export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, onInstallAttempt, resumeInstall = null, open, onOpenChange, onActiveChange }: {
+    open: boolean
+    onOpenChange: (open: boolean) => void
+    onActiveChange?: (active: boolean) => void
     onCreateFromScratch: () => void
     onInstalled: (receipt: DesktopTemplateInstallReceipt) => void
     onInstallAttempt?: (intent: DesktopTemplateInstallIntent | null) => void
     resumeInstall?: DesktopTemplateInstallIntent | null
 }) {
-    const client = useMemo(() => createDesktopTemplatesClient(), [])
-    const [libraryOpen, setLibraryOpen] = useState(false)
+    const [client, setClient] = useState<DesktopTemplatesClient | null>(null)
+    const libraryOpen = open
+    const setLibraryOpen = onOpenChange
     const [createOpen, setCreateOpen] = useState(false)
     const [initialTemplate, setInitialTemplate] = useState<DesktopTemplateIdentity | null>(null)
     const [returnToLibrary, setReturnToLibrary] = useState(false)
+    const activeCallback = useRef(onActiveChange)
+    activeCallback.current = onActiveChange
 
-    useEffect(() => () => client.dispose(), [client])
+    // StrictMode remounts effects. A useMemo client would be disposed by the first cleanup and
+    // then reused permanently; each effect lifetime instead owns its own live client.
+    useEffect(() => {
+        const next = createDesktopTemplatesClient()
+        setClient(next)
+        return () => next.dispose()
+    }, [])
+    useEffect(() => { onActiveChange?.(open || createOpen) }, [open, createOpen, onActiveChange])
+    useEffect(() => () => activeCallback.current?.(false), [])
+
+    if (!client) return null
 
     return <>
-        <Button type="button" variant="outline" onClick={() => {
-            setInitialTemplate(null)
-            setLibraryOpen(true)
-        }}>Templates</Button>
         <DesktopTemplateLibraryDialog
             open={libraryOpen}
             client={client}
@@ -41,7 +52,10 @@ export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, on
                 setLibraryOpen(false)
                 setCreateOpen(true)
             }}
-            onInstalled={onInstalled}
+            onInstalled={receipt => {
+                setLibraryOpen(false)
+                onInstalled(receipt)
+            }}
             onInstallAttempt={onInstallAttempt}
         />
         <DesktopCreateTemplateDialog

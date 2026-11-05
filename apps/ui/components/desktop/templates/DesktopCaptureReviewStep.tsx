@@ -61,6 +61,12 @@ function DesktopCaptureAgentReview({ plan, excluded, approved, setup, soloAgent,
             <span className="text-[11px] text-muted-foreground">Source revision <code>{plan.sourceRevision}</code></span>
         </div>
 
+        {plan.blocked && <p role="alert" className="text-xs text-destructive">{plan.blocked}</p>}
+        {plan.included?.map(file => <details key={file.path} className="rounded border border-border/60 p-2">
+            <summary className="cursor-pointer text-xs">{file.path} · included</summary>
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all text-xs">{file.text}</pre>
+        </details>)}
+
         {plan.skills.length > 0 && <CaptureReviewGroup icon={Package} title="User-owned skills">
             <CaptureReviewRow label="Skills"><CaptureReviewChips items={plan.skills.map(skill => skill.name)} max={6} /></CaptureReviewRow>
         </CaptureReviewGroup>}
@@ -102,7 +108,7 @@ function DesktopCaptureAgentReview({ plan, excluded, approved, setup, soloAgent,
                 label="I reviewed what this coworker carries"
                 helperText={!isSetupAnswered(setup) ? 'Answer the install question and write any required instructions first.' : flagged.length > 0 ? `${flagged.length} flagged file(s) will travel in the template.` : 'I also reviewed any private prose in the selected content.'}
             >
-                <Checkbox size="sm" disabled={disabled || !isSetupAnswered(setup)} checked={approved} onCheckedChange={value => onApprove(value === true)} />
+                <Checkbox size="sm" disabled={disabled || !!plan.blocked || !isSetupAnswered(setup)} checked={approved} onCheckedChange={value => onApprove(value === true)} />
             </Field>
         </div>
     </section>

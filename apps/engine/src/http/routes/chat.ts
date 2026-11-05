@@ -1,9 +1,10 @@
-import { desktopTakeoverGuardSchema, findDesktopTakeover } from '@rerun/contracts'
+import { desktopServiceRequestGuardSchema, desktopTakeoverGuardSchema, findDesktopTakeover } from '@rerun/contracts'
 import { createHash } from 'node:crypto'
 import { chatRequestSchema, desktopApprovalGuardSchema, desktopQuestionGuardSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, desktopAttachmentItemsSchema, hasOneDesktopAttachmentField, desktopResolvedAttachmentsSchema, desktopResolvedAttachmentSelections, desktopStoredAttachmentSelections, type DesktopResolvedAttachment, desktopAttachmentPathsSchema, desktopWorkspaceAttachmentSchema, desktopWorkspaceAttachmentsSchema, findDesktopApproval, findDesktopQuestion, type SessionSource } from '@rerun/contracts'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { desktopApp } from '../../desktop/policy.js'
+import { decideDesktopServiceRequestTurn } from '../../desktop/service-requests/admission.js'
 import { resolveRunModel } from '../../agents/availability.js'
 import { getAgent } from '../../agents/registry.js'
 import { claimInstallSession } from '../../agents/setup.js'
@@ -28,9 +29,9 @@ const takeoverPendingMessage = 'Open and finish or skip the coworker’s browser
 const questionPendingMessage = 'Answer or dismiss the coworker’s questions before sending another message.'
 const approvalPendingMessage = 'Approve or decline the coworker’s proposed actions before sending another message.'
 const desktopFirstTurn = z.object({ sessionId: z.uuid(), runId: z.uuid() }).strict()
-const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional(), takeover: desktopTakeoverGuardSchema.optional() }).strict()
+const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional(), takeover: desktopTakeoverGuardSchema.optional(), service: desktopServiceRequestGuardSchema.optional() }).strict()
     .refine(hasOneDesktopAttachmentField, 'Use one attachment field.')
-    .refine(turn => [turn.question, turn.approval, turn.takeover].filter(Boolean).length <= 1, 'An answer can target only one pending request.')
+    .refine(turn => [turn.question, turn.approval, turn.takeover, turn.service].filter(Boolean).length <= 1, 'An answer can target only one pending request.')
 const desktopChatRequest = chatRequestSchema.extend({
     message: z.string().max(20_000),
     workspaceAttachment: desktopWorkspaceAttachmentSchema.optional(),
@@ -132,7 +133,7 @@ chatRoutes.post('/chat', async c => {
             const session = await getSession(agentId, body.sessionId)
             if (session?.agentId === agentId && await getDesktopQueuedTurn(agentId, {
                 runId: queued.runId, sessionId: session.id, message: body.message,
-                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover,
+                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service,
             })) return identified(resumeStreamResponse(queued.runId), session.id, queued.runId)
         }
         throw agentDisabled()
@@ -172,15 +173,19 @@ chatRoutes.post('/chat', async c => {
         const queued = body.desktopQueuedTurn!
         const session = await getSession(agentId, body.sessionId!)
         if (!session || session.agentId !== agentId) throw new HttpError(404, 'Session not found for this agent')
-        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover }
+        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service }
         if (await getDesktopQueuedTurn(agentId, turn)) return identified(resumeStreamResponse(turn.runId), session.id, turn.runId)
         if (await getRun(agentId, turn.runId)) throw new HttpError(409, 'This queued message ID is already in use.')
         // The bridge can reconcile a lost acknowledgement before re-reading a moved file or
         // resolving a changed model. A probe never creates a run or a user message.
         if (queued.replayOnly) return c.json({ code: 'queued_turn_not_found' }, 404)
         if (JSON.stringify(desktopAttachmentSelectionsOf(queued)) !== JSON.stringify(attachmentSelections)) throw new HttpError(400, 'The queued attachments do not match this message.')
+        // Config changes share this lock. Recheck after replay reconciliation so a disable
+        // while waiting cannot start a new reply, but an already accepted receipt still resumes.
+        const currentAgent = await getAgent(agentId)
+        if (!currentAgent.config.enabled) throw agentDisabled()
         const override = { connectionId: body.connectionId, provider: body.provider, model: body.model }
-        const { provider, model } = await resolveRunModel(agent, override)
+        const { provider, model } = await resolveRunModel(currentAgent, override)
         const holder = claimSession(session.id, turn.runId, body.author?.id)
         if (holder) return c.json({ error: 'a run is already in flight on this session', code: 'run_in_flight', runId: holder, sessionId: session.id }, 409)
         try {
@@ -191,6 +196,11 @@ chatRoutes.post('/chat', async c => {
             const pending = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
             const takeover = findDesktopTakeover(messages)
+            const service = decideDesktopServiceRequestTurn({ rows: messages, queued })
+            if (service.kind === 'reject' || service.kind === 'block') {
+                releaseSession(turn.runId)
+                return c.json({ error: service.error, code: service.code }, service.status)
+            }
             if (queued.question) {
                 const expected = queued.question
                 if (!pending || pending.sourceMessageId !== expected.sourceMessageId || pending.toolCallId !== expected.toolCallId || pending.fingerprint !== expected.fingerprint) {
@@ -204,14 +214,14 @@ chatRoutes.post('/chat', async c => {
             } else if (queued.takeover) {
                 const expected = queued.takeover
                 if (!takeover || takeover.sourceMessageId !== expected.sourceMessageId || takeover.toolCallId !== expected.toolCallId || takeover.fingerprint !== expected.fingerprint) throw new HttpError(409, 'This browser request is no longer waiting. Reload the conversation.')
-            } else if (pending || approval || takeover) {
+            } else if (service.kind !== 'admit' && (pending || approval || takeover)) {
                 // The panel may have read an idle snapshot just before this question was saved.
                 // Its queued draft must remain unsent until the explicit answer is accepted.
                 releaseSession(turn.runId)
                 return c.json({ error: pending ? questionPendingMessage : approval ? approvalPendingMessage : takeoverPendingMessage, code: pending ? 'question_pending' : approval ? 'approval_pending' : 'takeover_pending' }, 409)
             }
             const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, attachments, body.author, body.desktopAttachments)
-            return streamChat(agent, session.id, turn.runId, body.message, override, { provider, model }, {
+            return streamChat(currentAgent, session.id, turn.runId, body.message, override, { provider, model }, {
                 source: 'chat', author: body.author, ...attachmentTrigger, queuedUser,
             })
         } catch (error) {
@@ -243,6 +253,11 @@ chatRoutes.post('/chat', async c => {
             const question = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
             const takeover = findDesktopTakeover(messages)
+            const service = decideDesktopServiceRequestTurn({ rows: messages })
+            if (service.kind === 'block') {
+                releaseSession(runId)
+                return c.json({ error: service.error, code: service.code }, service.status)
+            }
             if (question || approval || takeover) {
                 releaseSession(runId)
                 return c.json({ error: question ? questionPendingMessage : approval ? approvalPendingMessage : takeoverPendingMessage, code: question ? 'question_pending' : approval ? 'approval_pending' : 'takeover_pending' }, 409)

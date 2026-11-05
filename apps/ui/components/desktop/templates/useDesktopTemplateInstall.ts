@@ -37,6 +37,7 @@ export function useDesktopTemplateInstall({ client, template, resume = null, onI
             try {
                 result = await request
             } catch (cause) {
+                resumed.current = client.pendingInstall(template) ?? resumed.current
                 setError(cause instanceof Error ? cause.message : 'Installation acknowledgement is unknown. Retry the same attempt.')
                 if (cause instanceof DesktopTemplateRequestError && cause.definite) resumed.current = null
                 onInterrupted?.(resumed.current)

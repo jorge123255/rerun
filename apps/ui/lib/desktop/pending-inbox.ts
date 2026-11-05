@@ -26,7 +26,7 @@ export const DESKTOP_PENDING_INBOX_READ_URL = '/api/desktop/pending-inbox/read'
 // (like `desktopCompletionReadSchema`); this type keeps the client and the server in sync.
 export type DesktopPendingReadTarget = {
     id: string
-    kind: 'question' | 'approval' | 'takeover'
+    kind: 'question' | 'approval' | 'takeover' | 'service'
     agentId: string
     sessionId: string
 }

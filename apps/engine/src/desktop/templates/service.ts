@@ -51,6 +51,7 @@ const captureReceiptSchema = z.strictObject({
     planRevision: desktopTemplateRevisionSchema,
     capturedAt: z.string().min(20).max(40),
     revision: desktopTemplateRevisionSchema.optional(),
+    fingerprint: desktopTemplateRevisionSchema,
 })
 
 function included(file: InspectedFile, kind: 'instruction' | 'config') {
@@ -187,7 +188,16 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             return plan
         },
 
-        async capture(input: { requestId: string; templateId: string; revision: string; planRevision: string; selections: { agentId: string; files: string[]; skills: string[] }[] }): Promise<{ templateId: string; revision: string }> {
+        async capture(input: { requestId: string; templateId: string; revision: string; planRevision: string; selections: z.infer<typeof desktopTemplateSelectionSchema>[] }): Promise<{ templateId: string; revision: string }> {
+            const fingerprint = sha256(canonicalJson(input))
+            const home = requestHome(roots.dataRoot)
+            const priorRaw = await readOwnJson(home, `capture-${input.requestId}.json`)
+            const prior = captureReceiptSchema.safeParse(priorRaw)
+            if (priorRaw && (!prior.success || prior.data.fingerprint !== fingerprint)) throw new TemplateRequestError(409, 'This capture request already belongs to another selection')
+            if(prior.success && prior.data.revision) {
+                await readManifest(roots.dataRoot, input.templateId, prior.data.revision)
+                return {templateId:input.templateId,revision:prior.data.revision}
+            }
             const draft = await loadDraft(roots, input.templateId, input.revision)
             const stored = planFileSchema.safeParse(await readOwnJson(templateHome(roots.dataRoot, input.templateId), `plans/${input.planRevision}.json`))
             if (!stored.success || stored.data.planRevision !== input.planRevision || stored.data.revision !== input.revision) {
@@ -215,18 +225,16 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             if (totalFiles > DESKTOP_TEMPLATE_LIMITS.maxFiles || totalBytes > DESKTOP_TEMPLATE_LIMITS.maxTotalBytes) {
                 throw new TemplateRequestError(413, 'The selection exceeds the capture limit')
             }
-            const home = requestHome(roots.dataRoot)
-            const prior = captureReceiptSchema.safeParse(await readOwnJson(home, `capture-${input.requestId}.json`))
             if (prior.success && (prior.data.templateId !== input.templateId || prior.data.planRevision !== input.planRevision)) {
                 throw new TemplateRequestError(409, 'This capture request already belongs to another plan')
             }
             const capturedAt = prior.success ? prior.data.capturedAt : new Date().toISOString()
             if (!prior.success) {
                 await writeOwnJson(home, `capture-${input.requestId}.json`, {
-                    version: 1, requestId: input.requestId, templateId: input.templateId, planRevision: input.planRevision, capturedAt,
+                    version: 1, fingerprint, requestId: input.requestId, templateId: input.templateId, planRevision: input.planRevision, capturedAt,
                 })
             }
-            const body = {
+            const body: Omit<TemplateManifest, 'revision'> = {
                 version: 1 as const,
                 kind: 'desktop-local-template' as const,
                 templateId: input.templateId,
@@ -252,7 +260,7 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             if (canonicalJson(confirmed) !== canonicalJson(manifest)) throw new TemplateRequestError(409, 'Stored template bytes do not match this capture')
             await replaceOwnJson(templateHome(roots.dataRoot, input.templateId), 'current.json', { revision: manifest.revision })
             await replaceOwnJson(home, `capture-${input.requestId}.json`, {
-                version: 1, requestId: input.requestId, templateId: input.templateId, planRevision: input.planRevision, capturedAt, revision: manifest.revision,
+                version: 1, fingerprint, requestId: input.requestId, templateId: input.templateId, planRevision: input.planRevision, capturedAt, revision: manifest.revision,
             })
             return { templateId: input.templateId, revision: manifest.revision }
         },
@@ -298,7 +306,7 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
     }
 }
 
-function choose(inspected: InspectedCoworker, selection: { files: string[]; skills: string[] }, agentKey: string) {
+function choose(inspected: InspectedCoworker, selection: z.infer<typeof desktopTemplateSelectionSchema>, agentKey: string) {
     if (inspected.blocked) throw new TemplateRequestError(409, inspected.blocked)
     if (new Set(selection.files).size !== selection.files.length || new Set(selection.skills).size !== selection.skills.length) {
         throw new TemplateRequestError(400, 'A capture selection repeats a path')
@@ -320,6 +328,17 @@ function choose(inspected: InspectedCoworker, selection: { files: string[]; skil
         if (!skill) throw new TemplateRequestError(400, 'A selected skill is not in the capture plan')
         for (const file of skill.files) picked.push({ ...file, kind: 'skill' })
     }
+    if (selection.setup) {
+        const prompt = selection.setup.prompt.trim()
+        if (selection.setup.required && !prompt) throw new TemplateRequestError(400, 'Required setup needs instructions')
+        const at = picked.findIndex(file => file.path === 'INSTALL.md')
+        if (at >= 0) picked.splice(at, 1)
+        if (prompt) {
+            const text = `${prompt}\n`
+            const revision = sha256(text)
+            picked.push({ path: 'INSTALL.md', text, bytes: Buffer.byteLength(text), inodeRevision: revision, contentRevision: revision, flagged: [], kind: 'instruction' })
+        }
+    }
     const seen = new Set<string>()
     for (const file of picked) {
         if (seen.has(file.path) || sha256(Buffer.from(file.text, 'utf8')) !== file.contentRevision) throw new TemplateRequestError(409, 'A planned file changed. Review the plan again.')
@@ -330,7 +349,7 @@ function choose(inspected: InspectedCoworker, selection: { files: string[]; skil
         sourceEngineId: inspected.engineAgentId,
         name: inspected.name,
         description: inspected.description,
-        setup: inspected.setup,
+        setup: selection.setup ? { ...selection.setup, prompt: selection.setup.prompt.trim(), answered: true } : inspected.setup,
         files: picked.map(file => ({
             path: file.path,
             bytes: Buffer.byteLength(file.text),

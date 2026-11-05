@@ -47,6 +47,7 @@ test('never accepts another source or a late read from a disposed owner', async 
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(done => { resolve = done })))
     const read = client.read()
     const refusal = expect(read).rejects.toThrow()
+    await Promise.resolve()
     client.dispose()
     resolve(Response.json({ request: serviceRequestFixture() }))
     await refusal
@@ -94,4 +95,62 @@ test('bounds streamed response bytes and refuses unavailable retry storage befor
     await expect(blocked.mutate(progress())).rejects.toThrow('Storage unavailable')
     expect(fetcher).not.toHaveBeenCalled()
     blocked.dispose()
+})
+
+test('accepts the server canonical Finish only when it identifies this exact submitted attempt', async () => {
+    const client = createDesktopServiceRequestsClient(scope, retryFixtureStorage())
+    const canonical = '40000000-0000-4000-8000-000000000001'
+    const response = finishFixtureResponse(canonical)
+    response.headers.set('x-service-request-attempt-id', mutationRequestId)
+    vi.stubGlobal('fetch', vi.fn(async () => response))
+    const result = await client.mutate({ ...progress(), action: 'finish' })
+    expect(result.action).toBe('finish')
+    if (result.action !== 'finish') throw new Error('Expected finish')
+    expect(result.requestId).toBe(canonical)
+    expect(client.pending()).toBeNull()
+    await result.response.body?.cancel()
+    client.dispose()
+})
+
+test('only an exact server-confirmed precommit refusal releases the pending decisions', async () => {
+    const client = createDesktopServiceRequestsClient(scope, retryFixtureStorage())
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 409 })))
+    await expect(client.mutate(progress())).rejects.toThrow()
+    expect(client.pending()).toEqual(progress())
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 409, headers: {
+        'x-service-request-outcome': 'refused', 'x-service-request-attempt-id': mutationRequestId,
+        'x-service-request-id': scope.serviceRequestId,
+    } })))
+    await expect(client.mutate(progress())).rejects.toThrow('before saving')
+    expect(client.pending()).toBeNull()
+    client.dispose()
+})
+
+test('default retry storage restores the exact attempt across a changed desktop origin without replaying it', async () => {
+    let saved: DesktopServiceRequestMutation | null = null
+    let origin = 'http://127.0.0.1:41001'
+    const posts: DesktopServiceRequestMutation[] = []
+    const origins: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+        const target = new URL(url, origin)
+        origins.push(target.origin)
+        if (target.pathname.endsWith('/retry')) {
+            if (init.method === 'PUT') saved = JSON.parse(String(init.body))
+            if (init.method === 'DELETE') saved = null
+            return Response.json({ attempt: saved })
+        }
+        if (init.method === 'GET') return Response.json({ request: serviceRequestFixture() })
+        posts.push(JSON.parse(String(init.body)))
+        throw new Error('Response lost')
+    }))
+    const first = createDesktopServiceRequestsClient(scope)
+    await expect(first.mutate(progress())).rejects.toThrow('Response lost')
+    first.dispose()
+    origin = 'http://127.0.0.1:51002'
+    const restarted = createDesktopServiceRequestsClient(scope)
+    await restarted.read()
+    expect(restarted.pending()).toEqual(progress())
+    expect(posts).toEqual([progress()])
+    expect(new Set(origins).size).toBe(2)
+    restarted.dispose()
 })

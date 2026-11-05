@@ -79,3 +79,7 @@ export * from './notifications.js'
 export * from './desktop-codex.js'
 
 export * from './desktop-takeover.js'
+
+export * from './desktop-templates.js'
+export * from './desktop-setup.js'
+export * from './desktop-service-requests.js'

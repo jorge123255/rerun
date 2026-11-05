@@ -47,13 +47,16 @@ import { desktopSharedFileTools } from '../desktop/shared-file-tools.js'
 import { desktopMcpTools } from '../desktop/mcp-tools.js'
 import { desktopStdioTools } from '../desktop/mcp-stdio/client.js'
 import { desktopServiceTools } from '../desktop/service-tools.js'
+import { desktopSuggestServiceTools } from '../desktop/service-requests/suggest-service.js'
+import { desktopSetupRunAllowed, desktopSetupTools } from '../desktop/setup/service.js'
 import { isolatedScreenTools } from '../desktop/isolated-screen/tools.js'
 import { desktopBrainTools } from '../desktop/brain-tools.js'
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
     if (desktopApp()) {
         const screen = isolatedScreenTools(ctx)
-        const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx) }
+        const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopSuggestServiceTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx) }
+        if (ctx.agent.config.setup?.required && ctx.agent.install && desktopSetupRunAllowed(ctx.agent, ctx.sessionId)) Object.assign(tools, desktopSetupTools(ctx))
         const remote = await desktopMcpTools(ctx)
         if (Object.keys(remote.tools).some(name => Object.hasOwn(tools, name))) {
             await remote.close()

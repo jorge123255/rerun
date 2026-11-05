@@ -6,6 +6,7 @@ import type { ConnectionSummary } from '@rerun/contracts'
 import { buildDesktopModelView, type DesktopModelPick } from '@/lib/desktop/chat-model'
 import { DesktopConversation } from './DesktopConversation'
 import { DesktopModelSelector } from './DesktopModelSelector'
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -143,6 +144,11 @@ test('changing the model keeps the typed draft of an already open chat', async (
         }
         if (String(url).endsWith('/messages')) return Response.json({ messages: [{ id: 'saved', role: 'assistant', parts: [{ type: 'text', text: 'Saved answer' }] }] })
         if (String(url).endsWith('/stop')) return Response.json({ running: false })
+        if ((init?.method ?? 'GET') === 'GET') {
+            if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url)) return Response.json({ queued: null })
+            if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url)) return Response.json({ votes: [] })
+        }
+        const background = desktopBackgroundRead(url, init); if (background) return background
         throw new Error(`Unexpected request ${url}`)
     }))
     container = document.createElement('div')

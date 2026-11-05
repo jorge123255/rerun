@@ -7,6 +7,7 @@ import { DesktopApp, type DesktopAgentView } from './DesktopApp'
 import type { GridPosition } from '@rerun/ui/iso-grid'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -61,6 +62,12 @@ async function mount(options: {
         if (url.endsWith('/stop')) return Response.json({ running: false })
         if (url.includes('/feedback?')) return Response.json({ votes: [] })
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        if ((init?.method ?? 'GET') === 'GET') {
+            if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url)) return Response.json({ queued: null })
+            if (url === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: '2026-11-05T00:00:00Z' })
+            if (url === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: '2026-11-05T00:00:00Z', checkedAt: '2026-11-05T00:00:00Z', nextCursor: null })
+        }
+        const background = desktopBackgroundRead(url, init); if (background) return background
         throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
     })
     vi.stubGlobal('fetch', requests)

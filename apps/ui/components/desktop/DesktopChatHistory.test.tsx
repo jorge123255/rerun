@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { desktopNativeReviewRead } from '@/test/desktop-background-fixture'
+import { desktopBackgroundRead, desktopNativeReviewRead } from '@/test/desktop-background-fixture'
 
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -187,7 +187,6 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
     const sent: Record<string, string>[] = []
     let finish!: () => void
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
-        const nativeReview = desktopNativeReviewRead(url, init); if (nativeReview) return nativeReview
         const recentResponse = recent.handle(url, init)
         if (recentResponse) return recentResponse
         const draftResponse = drafts.handle(url, init)
@@ -222,6 +221,14 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
             } }), { headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id } })
         }
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        if ((init?.method ?? 'GET') === 'GET') {
+            if (/^\/api\/desktop\/sessions\/[^/]+\/stop$/.test(url)) return Response.json({ running: false })
+            if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url)) return Response.json({ votes: [] })
+            if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
+            if (url === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: '2026-11-05T00:00:00Z' })
+            if (url === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: '2026-11-05T00:00:00Z', checkedAt: '2026-11-05T00:00:00Z', nextCursor: null })
+        }
+        const background = desktopBackgroundRead(url, init); if (background) return background
         throw new Error(`Unexpected test request: ${url}`)
     }))
     const container = document.createElement('div')
@@ -282,14 +289,13 @@ test('switches distinct transcripts, keeps New chat separate, reopens, and isola
 test('history read failure can be retried without turning it into an empty saved history', async () => {
     let reads = 0
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
-        const nativeReview = desktopNativeReviewRead(url, init); if (nativeReview) return nativeReview
         const recentResponse = recent.handle(url, init)
         if (recentResponse) return recentResponse
         const draftResponse = drafts.handle(url, init)
         if (draftResponse) return draftResponse
         if (url.endsWith('/approvals') && (init?.method ?? 'GET') === 'GET') return Response.json({ approval: null })
         if (url.endsWith('/questions') && (init?.method ?? 'GET') === 'GET') return Response.json({ question: null })
-        if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url)) return Response.json({ queued: null })
+        if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url) && (init?.method ?? 'GET') === 'GET') return Response.json({ queued: null })
         if (url === '/api/desktop/settings') return Response.json({ connections: [], default: null })
         if (url.endsWith('/tabs')) return Response.json({ tabs: { revision: 1 } })
         if (url.endsWith('/saved/messages')) return Response.json({ messages: [] })
@@ -297,6 +303,13 @@ test('history read failure can be retried without turning it into an empty saved
         if (url.endsWith('/sessions')) return ++reads === 1 ? Response.json({ error: 'History unavailable' }, { status: 503 }) : Response.json({ sessions: [session('saved', 'alice', 'Recovered')] })
         if (url.endsWith('/chat-history')) return Response.json(historyOf([session('saved', 'alice', 'Recovered')]))
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        if ((init?.method ?? 'GET') === 'GET') {
+            if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url)) return Response.json({ votes: [] })
+            if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
+            if (url === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: '2026-11-05T00:00:00Z' })
+            if (url === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: '2026-11-05T00:00:00Z', checkedAt: '2026-11-05T00:00:00Z', nextCursor: null })
+        }
+        const background = desktopBackgroundRead(url, init); if (background) return background
         throw new Error(`Unexpected request: ${url}`)
     }))
     const container = document.createElement('div')

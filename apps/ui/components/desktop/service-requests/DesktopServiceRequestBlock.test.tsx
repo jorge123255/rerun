@@ -7,6 +7,18 @@ import type { DesktopOpenApps } from '@/lib/desktop/service-requests-client'
 import { DesktopServiceRequestBlock, type DesktopServiceRequestBlockProps } from './DesktopServiceRequestBlock'
 import { cardRevision, finishFixtureResponse, installationRevision, nextCardRevision, scope, serviceRequestFixture } from './service-request-fixtures'
 
+// These component cases isolate the card interaction. Durable endpoint recovery is
+// exercised separately by service-requests-client and server retry-store cases.
+const retryEntries = vi.hoisted(() => new Map<string, string>())
+vi.mock('@/lib/desktop/service-requests-client', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/lib/desktop/service-requests-client')>()
+    return { ...actual, createDesktopServiceRequestsClient: (owner: Parameters<typeof actual.createDesktopServiceRequestsClient>[0]) => actual.createDesktopServiceRequestsClient(owner, {
+        getItem: (key: string) => retryEntries.get(key) ?? null,
+        setItem: (key: string, value: string) => { retryEntries.set(key, value) },
+        removeItem: (key: string) => { retryEntries.delete(key) },
+    }) }
+})
+
 vi.mock('@rerun/ui', () => ({ BorderBeam: () => null }))
 vi.mock('motion/react', async () => {
     const { createElement } = await import('react')
@@ -16,7 +28,7 @@ vi.mock('motion/react', async () => {
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
-afterEach(async () => { await act(async () => root?.unmount()); document.body.innerHTML = ''; localStorage.clear(); vi.unstubAllGlobals() })
+afterEach(async () => { await act(async () => root?.unmount()); document.body.innerHTML = ''; retryEntries.clear(); vi.unstubAllGlobals() })
 
 function button(label: string) {
     return [...document.querySelectorAll('button')].find(item => item.textContent === label)!
@@ -63,7 +75,7 @@ test('Cancel aborts only its Apps flow, preserves pending choices and never answ
     expect(signal.aborted).toBe(true)
     expect(button('Finish').disabled).toBe(true)
     expect(onAccepted).not.toHaveBeenCalled()
-    expect(localStorage.length).toBe(0)
+    expect(retryEntries.size).toBe(0)
 })
 
 test('Finish first acknowledges exact installation progress and then sends once with the new card revision', async () => {

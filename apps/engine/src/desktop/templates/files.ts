@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, readdir, realpath, rename } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises'
+import { isAbsolute, join, dirname, basename, relative, resolve, sep } from 'node:path'
 import { isDesktopTemplateRelativePath, scanPathForSecrets, type DesktopTemplateExclusionReason } from '@rerun/contracts'
 import { openWithoutLinks } from '../open-without-links.js'
 import { TemplateRequestError } from './errors.js'
 import { sha256 } from './hash.js'
+import { renameSkillEntry } from '../skill-publication-native.js'
 
 const BINARY_EXTENSIONS = new Set([
     'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'ico', 'bmp', 'tiff',
@@ -112,30 +113,54 @@ export async function replaceOwnFile(directory: string, name: string, bytes: Buf
 }
 
 export async function ensurePrivateDir(path: string): Promise<void> {
-    await mkdir(path, { recursive: true, mode: 0o700 })
-    const info = await lstat(path)
-    if (!info.isDirectory() || info.isSymbolicLink()) throw new TemplateRequestError(400, 'Template storage is not a directory')
-    if ((info.mode & 0o022) !== 0) throw new TemplateRequestError(400, 'Template storage is too open')
+    const missing: string[] = []
+    let existing = resolve(path)
+    for (;;) {
+        try { await lstat(existing); break }
+        catch(error) {
+            if((error as NodeJS.ErrnoException).code !== 'ENOENT')throw error
+            missing.unshift(basename(existing)); existing=dirname(existing)
+        }
+    }
+    let pin = await pinDirectory(existing)
+    try {
+        for(const part of missing) {
+            await mkdir(join(pin.pinned,part),{mode:0o700}).catch((error:NodeJS.ErrnoException)=>{if(error.code!=='EEXIST')throw error})
+            existing=join(existing,part)
+            const next=await pinDirectory(existing)
+            await pin.close();pin=next
+        }
+    } finally { await pin.close() }
 }
 
 export async function writeExclusiveFile(directory: string, relativeName: string, bytes: Buffer): Promise<'created' | 'same'> {
     const full = confinedFile(directory, relativeName)
     const parent = join(full, '..')
-    await mkdir(parent, { recursive: true, mode: 0o700 })
+    await ensurePrivateDir(parent)
     const pin = await pinDirectory(parent)
     const name = relativeName.split('/').at(-1)!
     try {
-        let handle
-        try {
-            handle = await open(join(pin.pinned, name), constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-            const existing = await readConfined(directory, relativeName, bytes.length)
-            if (!existing.ok || !existing.bytes.equals(bytes)) throw new TemplateRequestError(409, 'A template file already exists with different bytes')
+        const existing = await lstat(join(pin.pinned, name)).catch((error: NodeJS.ErrnoException) => error.code === 'ENOENT' ? null : Promise.reject(error))
+        if (existing) {
+            const read = await readConfined(directory, relativeName, bytes.length)
+            if (!read.ok || !read.bytes.equals(bytes)) throw new TemplateRequestError(409, 'A template file already exists with different bytes')
             return 'same'
         }
-        try { await handle.writeFile(bytes); await handle.sync(); return 'created' }
-        finally { await handle.close() }
+        const temporary = `.template-${randomBytes(12).toString('hex')}`
+        const handle = await open(join(pin.pinned, temporary), constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
+        try {
+            await handle.writeFile(bytes)
+            await handle.sync()
+            const identity = await handle.stat({ bigint: true })
+            const parentIdentity = await lstat(parent, { bigint: true })
+            try { await renameSkillEntry(parent, parentIdentity, temporary, identity, name) }
+            catch (error) {
+                const read = await readConfined(directory, relativeName, bytes.length)
+                if (!read.ok || !read.bytes.equals(bytes)) throw error
+                return 'same'
+            }
+            return 'created'
+        } finally { await handle.close(); await rm(join(pin.pinned, temporary), { force: true }) }
     } finally { await pin.close() }
 }
 

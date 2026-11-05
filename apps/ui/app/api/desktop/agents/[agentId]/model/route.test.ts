@@ -59,6 +59,10 @@ beforeEach(async () => {
         const body = text ? JSON.parse(text) as Record<string, unknown> : null
         requests.push(`${req.method} ${req.url}`)
         const sendJson = (value: unknown, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(value)) }
+        const setup = req.url?.match(/^\/agents\/([^/]+)\/setup$/)
+        if (req.method === 'GET' && setup && agents.has(setup[1])) return sendJson({
+            required: false, prompt: '', completedAt: null, sessionId: null, pending: false, revision: 'fixture-setup',
+        })
         if (req.method === 'GET' && req.url === '/connections') return sendJson({ connections, default: boxDefault })
         if (req.method === 'PUT' && req.url === '/connections/default') { boxDefault = body; return sendJson(body) }
         const agentMatch = req.url?.match(/^\/agents\/([^/]+)$/)

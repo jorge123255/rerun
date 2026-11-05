@@ -24,10 +24,16 @@ import { DesktopHttpError } from '../auth'
 import { disabledCoworkerMessage } from '../coworker-enabled'
 
 export type ServiceRequestScope = { agentId: string; sessionId: string; enabled: boolean }
+export type ServiceRequestDatabase = Pick<Client, 'execute'>
+export type ServiceRequestSealAuthority = {
+    installations: (db: ServiceRequestDatabase) => Promise<DesktopServiceConnection[] | 'unavailable'>
+    check: () => void
+}
 export type ServiceRequestPorts = {
     source: () => Promise<DesktopServiceRequest | null>
     catalog: (slug: string) => Promise<DesktopServiceRequestCatalog>
     installations: () => Promise<DesktopServiceConnection[] | 'unavailable'>
+    prepareSeal: () => Promise<ServiceRequestSealAuthority>
     send: (receipt: SealedReceipt, mode: 'send' | 'replay') => Promise<FollowUpResponse>
 }
 export type SealedReceipt = {
@@ -117,12 +123,12 @@ function guardOf(card: Card): DesktopServiceRequestGuard {
     return { sourceMessageId: card.sourceMessageId, toolCallId: card.toolCallId, fingerprint: card.fingerprint }
 }
 
-async function cardById(db: Client, serviceRequestId: string): Promise<Card | null> {
+async function cardById(db: ServiceRequestDatabase, serviceRequestId: string): Promise<Card | null> {
     const result = await db.execute({ sql: 'SELECT * FROM desktop_service_suggestion_requests WHERE service_request_id = ?', args: [serviceRequestId] })
     return result.rows[0] ? cardOf(result.rows[0]) : null
 }
 
-async function receiptByService(db: Client, serviceRequestId: string, card: Card): Promise<SealedReceipt | null> {
+async function receiptByService(db: ServiceRequestDatabase, serviceRequestId: string, card: Card): Promise<SealedReceipt | null> {
     const result = await db.execute({ sql: 'SELECT * FROM desktop_service_suggestion_receipts WHERE service_request_id = ?', args: [serviceRequestId] })
     const row = result.rows[0]
     if (!row) return null
@@ -132,7 +138,7 @@ async function receiptByService(db: Client, serviceRequestId: string, card: Card
     }
 }
 
-async function mutationById(db: Client, requestId: string) {
+async function mutationById(db: ServiceRequestDatabase, requestId: string) {
     const result = await db.execute({ sql: 'SELECT * FROM desktop_service_suggestion_mutations WHERE request_id = ?', args: [requestId] })
     const row = result.rows[0]
     if (!row) return null
@@ -158,16 +164,18 @@ function assertAligned(input: DesktopServiceProgress | DesktopServiceFinish, car
     if (input.action === 'finish' && (input.currentIndex !== card.currentIndex || JSON.stringify(input.choices) !== JSON.stringify(card.choices))) refusal(409, 'Save these choices before finishing. Pending apps are not skipped.')
 }
 
-async function transaction<T>(db: Client, run: () => Promise<T>): Promise<T> {
-    await db.execute('BEGIN IMMEDIATE')
+async function transaction<T>(db: Client, run: (tx: ServiceRequestDatabase) => Promise<T>, check: () => void = () => {}): Promise<T> {
+    const tx = await db.transaction('write')
     try {
-        const value = await run()
-        await db.execute('COMMIT')
+        const value = await run(tx)
+        // No asynchronous work between the final authority guard and commit admission.
+        check()
+        await tx.commit()
         return value
     } catch (error) {
-        await db.execute('ROLLBACK').catch(() => undefined)
+        await tx.rollback().catch(() => undefined)
         throw error
-    }
+    } finally { tx.close() }
 }
 
 function catalogFact(catalog: DesktopServiceRequestCatalog): DesktopServiceCatalogFact {
@@ -226,7 +234,6 @@ async function ensureCard(db: Client, scope: ServiceRequestScope, source: Deskto
 }
 
 export async function readDesktopServiceRequest(db: Client, scope: ServiceRequestScope, ports: ServiceRequestPorts): Promise<DesktopServiceRequestView> {
-    assertEnabled(scope)
     const source = await ports.source()
     if (!source) return { request: null }
     return { request: await project(db, await ensureCard(db, scope, source), ports) }
@@ -256,7 +263,8 @@ async function assertSelectedInstallations(input: DesktopServiceProgress, ports:
         if (choice.choice !== 'use-connection') continue
         const parsed = desktopServiceChoiceSchema.safeParse(choice)
         if (!parsed.success || parsed.data.choice !== 'use-connection') refusal(400, 'Choose a saved app connection.')
-        const match = installations.find(item => item.key === parsed.data.installation.key && item.slug === choice.slug && item.revision === parsed.data.installation.revision)
+        const installation = parsed.data.installation
+        const match = installations.find(item => item.key === installation.key && item.slug === choice.slug && item.revision === installation.revision)
         if (!match) refusal(409, 'That app connection changed. Refresh the card and choose the current connection.')
     }
 }
@@ -269,23 +277,29 @@ export async function progressDesktopServiceRequest(db: Client, scope: ServiceRe
         const card = await cardById(db, input.serviceRequestId)
         if (!card) refusal(409, 'This app setup is no longer waiting. Reload the conversation.')
         assertOwned(card, scope)
+        if (JSON.stringify(input.source) !== JSON.stringify(guardOf(card))) refusal(409, 'That saved progress belongs to a different app request.')
         return desktopServiceProgressResultSchema.parse({ serviceRequestId: card.serviceRequestId, revision: known.resultRevision, currentIndex: input.currentIndex, choices: input.choices })
     }
     await requireLiveCard(db, scope, ports, input)
     await assertSelectedInstallations(input, ports)
     const nextRevision = randomUUID()
-    const revision = await withCardLock(`${scope.agentId}\0${scope.sessionId}`, () => transaction(db, async () => {
-        const current = await cardById(db, input.serviceRequestId)
+    const revision = await withCardLock(`${scope.agentId}\0${scope.sessionId}`, () => transaction(db, async tx => {
+        const raced = await mutationById(tx, input.requestId)
+        if (raced) {
+            if (raced.kind !== 'progress' || raced.serviceRequestId !== input.serviceRequestId || raced.expectedRevision !== input.expectedRevision || raced.body !== progressBody(input) || !raced.resultRevision) refusal(409, 'That progress request was already used for different choices.')
+            return raced.resultRevision
+        }
+        const current = await cardById(tx, input.serviceRequestId)
         if (!current || current.revision !== input.expectedRevision) refusal(409, 'This app setup changed. Reload the conversation and retry the saved choices.')
-        if (await receiptByService(db, current.serviceRequestId, current)) refusal(409, 'This app setup is already finished. Retry that finish instead of changing it.')
-        const raced = await mutationById(db, input.requestId)
-        if (raced?.resultRevision) return raced.resultRevision
-        const updated = await db.execute({
+        assertOwned(current, scope)
+        assertAligned(input, current)
+        if (await receiptByService(tx, current.serviceRequestId, current)) refusal(409, 'This app setup is already finished. Retry that finish instead of changing it.')
+        const updated = await tx.execute({
             sql: 'UPDATE desktop_service_suggestion_requests SET revision = ?, current_index = ?, choices = ?, updated_at = ? WHERE service_request_id = ? AND revision = ? AND agent_id = ? AND session_id = ?',
             args: [nextRevision, input.currentIndex, JSON.stringify(input.choices), new Date().toISOString(), current.serviceRequestId, current.revision, scope.agentId, scope.sessionId],
         })
         if (updated.rowsAffected !== 1) refusal(409, 'This app setup changed. Reload the conversation and retry the saved choices.')
-        await db.execute({
+        await tx.execute({
             sql: 'INSERT INTO desktop_service_suggestion_mutations (request_id, service_request_id, kind, expected_revision, body, result_revision, created_at) VALUES (?,?,?,?,?,?,?)',
             args: [input.requestId, current.serviceRequestId, 'progress', input.expectedRevision, progressBody(input), nextRevision, new Date().toISOString()],
         })
@@ -302,10 +316,8 @@ function derivationError(reason: 'pending' | 'unavailable' | 'installation-rejec
     refusal(502, 'App catalog or connection state could not be read. Nothing was marked connected or missing.')
 }
 
-async function deriveFinish(card: Card, ports: ServiceRequestPorts): Promise<DesktopServiceSetupEntry[]> {
+function deriveFinish(card: Card, catalogs: DesktopServiceRequestCatalog[], installations: DesktopServiceConnection[] | 'unavailable'): DesktopServiceSetupEntry[] {
     if (card.choices.some(choice => choice.choice === 'pending')) derivationError('pending')
-    const catalogs = await Promise.all(card.services.map(service => ports.catalog(service.slug).catch((): DesktopServiceRequestCatalog => ({ status: 'unavailable' }))))
-    const installations = await ports.installations().catch(() => 'unavailable' as const)
     if (installations === 'unavailable') derivationError('unavailable')
     const derived = deriveDesktopServiceSetup({ services: card.services, choices: card.choices, catalog: catalogs.map(catalogFact), installations: installations.map(installFact) })
     if (!derived.ok) derivationError(derived.reason)
@@ -360,29 +372,32 @@ export async function finishDesktopServiceRequest(db: Client, scope: ServiceRequ
     const known = await mutationById(db, input.requestId)
     if (known) refusal(409, known.kind === 'finish' && known.serviceRequestId === input.serviceRequestId ? 'That finish request was already used. Reload the conversation.' : 'That finish request was already used for a different app setup.')
     const live = await requireLiveCard(db, scope, ports, input)
-    const entries = await deriveFinish(live, ports)
-    const text = serializeServiceSetupResult(entries)
-    // Catalog, installation, and source reads stay outside the card lock. The second pair
-    // is the last check before the insert; a change after it can still be sealed.
-    const [confirmed, source] = await Promise.all([deriveFinish(live, ports), ports.source()])
-    if (serializeServiceSetupResult(confirmed) !== text) refusal(409, 'This app setup changed. Reload the conversation and retry the saved choices.')
+    const [catalogs, authority, source] = await Promise.all([
+        Promise.all(live.services.map(service => ports.catalog(service.slug).catch((): DesktopServiceRequestCatalog => ({ status: 'unavailable' })))),
+        ports.prepareSeal(), ports.source(),
+    ])
     if (!source || desktopServiceRequestIdentity(scope.agentId, scope.sessionId, source) !== live.serviceRequestId) refusal(409, 'This app setup changed or is no longer waiting. Reload the conversation.')
-    const receipt = await withCardLock(`${scope.agentId}\0${scope.sessionId}`, () => transaction(db, async () => {
-        const current = await cardById(db, live.serviceRequestId)
+    const receipt = await withCardLock(`${scope.agentId}\0${scope.sessionId}`, () => transaction(db, async tx => {
+        authority.check()
+        const current = await cardById(tx, live.serviceRequestId)
         if (!current || current.revision !== live.revision || JSON.stringify(current.choices) !== JSON.stringify(live.choices)) refusal(409, 'This app setup changed. Reload the conversation and retry the saved choices.')
-        const raced = await receiptByService(db, current.serviceRequestId, current)
+        assertOwned(current, scope)
+        assertAligned(input, current)
+        const raced = await receiptByService(tx, current.serviceRequestId, current)
         if (raced) return raced
+        const confirmed = deriveFinish(current, catalogs, await authority.installations(tx))
+        const text = serializeServiceSetupResult(confirmed)
         const sealed: SealedReceipt = { requestId: input.requestId, serviceRequestId: current.serviceRequestId, sessionId: current.sessionId, revision: current.revision, guard: guardOf(current), text, entries: confirmed, accepted: false }
         const createdAt = new Date().toISOString()
-        await db.execute({
+        await tx.execute({
             sql: 'INSERT INTO desktop_service_suggestion_receipts (service_request_id, request_id, revision, summary_text, entries, accepted, created_at) VALUES (?,?,?,?,?,?,?)',
             args: [sealed.serviceRequestId, sealed.requestId, sealed.revision, sealed.text, JSON.stringify(confirmed), 0, createdAt],
         })
-        await db.execute({
+        await tx.execute({
             sql: 'INSERT INTO desktop_service_suggestion_mutations (request_id, service_request_id, kind, expected_revision, body, result_revision, created_at) VALUES (?,?,?,?,?,?,?)',
             args: [input.requestId, current.serviceRequestId, 'finish', current.revision, JSON.stringify({ source: sealed.guard, choices: current.choices }), current.revision, createdAt],
         })
         return sealed
-    }))
+    }, authority.check))
     return reconcile(db, scope, ports, receipt)
 }

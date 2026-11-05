@@ -26,7 +26,8 @@ export function DesktopCreateTemplateDialog({ open, client, onOpenChange, onDone
     const stepper = useStepper(STEPS.length)
     const onRevision = useCallback((revision: string) => setDraft(current => current ? { ...current, revision } : current), [])
     const actions = useMemo(() => createDesktopCaptureActions(client, draft, onRevision), [client, draft, onRevision])
-    const flow = useDesktopCaptureFlow(actions)
+    // Keep the draft across a close, but read sources only when its picker is actually open.
+    const flow = useDesktopCaptureFlow(actions, open && draft !== null)
     const step = STEPS[stepper.index]
 
     function close() {

@@ -8,10 +8,8 @@ import { ArrowRightIcon, WrenchIcon } from '@/lib/icons'
 import { DesktopInstallGate } from './DesktopInstallGate'
 import { useDesktopSetup } from './useDesktopSetup'
 
-export type DesktopOpenSetupChatInput = { agentId: string; sessionId: string } & (
-    | { action: 'start'; prompt: string }
-    | { action: 'continue'; prompt?: never }
-)
+// Submission is owned by the server's durable setup receipt. This callback only opens its chat.
+export type DesktopOpenSetupChatInput = { agentId: string; sessionId: string; action: 'start' | 'continue' }
 export type DesktopOpenSetupChat = (input: DesktopOpenSetupChatInput) => void
 
 export function desktopSetupNeedsSetup(view: DesktopSetupView): boolean {
@@ -54,7 +52,7 @@ export function DesktopSetupGate({ agentId, agentName, apps, disabled = false, c
         const result = await setup.start()
         const sessionId = claimedSession(result)
         if (!result || !sessionId) return false
-        onOpenSetupChat({ agentId, sessionId, action: 'start', prompt: result.view.prompt })
+        onOpenSetupChat({ agentId, sessionId, action: 'start' })
         return true
     }
     const continueSetup = async () => {
@@ -79,8 +77,9 @@ export function DesktopSetupGate({ agentId, agentName, apps, disabled = false, c
     )
 }
 
-export function DesktopSetupSkippedBanner({ agentId, canStart = true, onStartBlocked, onOpenSetupChat }: {
+export function DesktopSetupSkippedBanner({ agentId, canStart = true, disabled = false, onStartBlocked, onOpenSetupChat }: {
     agentId: string
+    disabled?: boolean
     canStart?: boolean
     onStartBlocked?: () => void
     onOpenSetupChat: DesktopOpenSetupChat
@@ -97,9 +96,7 @@ export function DesktopSetupSkippedBanner({ agentId, canStart = true, onStartBlo
         const result = action === 'continue' ? await setup.continueSetup() : await setup.start()
         const sessionId = claimedSession(result)
         if (!result || !sessionId) return
-        onOpenSetupChat(action === 'start'
-            ? { agentId, sessionId, action, prompt: result.view.prompt }
-            : { agentId, sessionId, action })
+        onOpenSetupChat({ agentId, sessionId, action })
     }
 
     return (
@@ -107,7 +104,7 @@ export function DesktopSetupSkippedBanner({ agentId, canStart = true, onStartBlo
             <WrenchIcon className="size-3.5 shrink-0" />
             <span className="min-w-0 flex-1 truncate">This coworker has not been set up yet</span>
             {setup.error && <span role="alert" className="w-full text-destructive">{setup.error}</span>}
-            <Button size="xs" variant="outline" disabled={setup.mutating !== null} onClick={() => void resume()}>
+            <Button size="xs" variant="outline" disabled={disabled || setup.mutating !== null} onClick={() => void resume()}>
                 Set it up
                 <ArrowRightIcon className="size-3" />
             </Button>

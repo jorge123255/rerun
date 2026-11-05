@@ -8,13 +8,14 @@ import { DesktopSetupEditor } from './DesktopSetupEditor'
 import type { DesktopSetupDraft } from './DesktopSetupFields'
 import { useDesktopSetup } from './useDesktopSetup'
 
-export function DesktopAgentPanelSetup(props: { agentId: string; onDirtyChange?: (dirty: boolean) => void; onCancel?: () => void; onSaved?: (view: DesktopSetupView) => void }) {
+export function DesktopAgentPanelSetup(props: { agentId: string; onDirtyChange?: (dirty: boolean) => void; onSavingChange?: (saving: boolean) => void; onCancel?: () => void; onSaved?: (view: DesktopSetupView) => void }) {
     return <AuthorSetup key={props.agentId} {...props} />
 }
 
-function AuthorSetup({ agentId, onDirtyChange, onCancel, onSaved }: {
+function AuthorSetup({ agentId, onDirtyChange, onSavingChange, onCancel, onSaved }: {
     agentId: string
     onDirtyChange?: (dirty: boolean) => void
+    onSavingChange?: (saving: boolean) => void
     onCancel?: () => void
     onSaved?: (view: DesktopSetupView) => void
 }) {
@@ -35,6 +36,10 @@ function AuthorSetup({ agentId, onDirtyChange, onCancel, onSaved }: {
     }, [setup.view, dirty])
 
     useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
+    useEffect(() => {
+        onSavingChange?.(setup.mutating === 'save')
+        return () => onSavingChange?.(false)
+    }, [setup.mutating, onSavingChange])
     useEffect(() => {
         if (!dirty) return
         const guard = (event: BeforeUnloadEvent) => { event.preventDefault() }
@@ -80,7 +85,7 @@ function AuthorSetup({ agentId, onDirtyChange, onCancel, onSaved }: {
     return (
         <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
             <p className="text-xs text-muted-foreground">
-                A copy of this agent arrives on someone else&apos;s account with no credentials and nothing connected. These instructions are what it runs, on its own, the first time they open it.
+                An imported copy of this coworker starts with no credentials or tools enabled. These instructions guide its setup when you first open it.
             </p>
             <DesktopSetupEditor
                 value={draft}

@@ -1,0 +1,94 @@
+// @vitest-environment happy-dom
+import { act, StrictMode, useState, type ReactNode } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+const local = vi.hoisted(() => ({ list: vi.fn(), sources: vi.fn(), detail: vi.fn(), createDraft: vi.fn(), dispose: vi.fn() }))
+const factory = vi.hoisted(() => ({ create: vi.fn() }))
+vi.mock('@/lib/desktop/templates-client', () => ({
+    createDesktopTemplatesClient: () => factory.create(),
+    DesktopTemplateRequestError: class extends Error { constructor(message: string, readonly definite: boolean) { super(message) } },
+}))
+vi.mock('motion/react', async original => {
+    const actual = await original<typeof import('motion/react')>()
+    const { createElement, forwardRef } = await import('react')
+    const plain = (tag: string) => forwardRef<HTMLElement, Record<string, unknown>>(({ children, ...props }, ref) =>
+        createElement(tag, { ...Object.fromEntries(Object.entries(props).filter(([name]) => !actual.isValidMotionProp(name))), ref }, children as ReactNode))
+    const elements = new Map<string, ReturnType<typeof plain>>()
+    const element = (tag: string) => { if (!elements.has(tag)) elements.set(tag, plain(tag)); return elements.get(tag)! }
+    return { ...actual, AnimatePresence: ({ children }: { children: ReactNode }) => <>{children}</>, motion: new Proxy(actual.motion, { get(target, key, receiver) {
+        if (key === 'create') return (tag: unknown) => typeof tag === 'string' ? element(tag) : tag
+        return typeof key === 'string' && key !== 'then' ? element(key) : Reflect.get(target, key, receiver)
+    } }) }
+})
+import { DesktopTemplateNavigation } from './DesktopTemplateNavigation'
+
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+let root: Root | undefined
+beforeEach(() => { factory.create.mockReturnValue(local) })
+afterEach(() => {
+    if (root) act(() => root!.unmount())
+    root = undefined
+    document.body.innerHTML = ''
+    for (const mock of Object.values(local)) mock.mockReset()
+    factory.create.mockReset()
+})
+const button = (label: string) => [...document.querySelectorAll('button')].find(item => item.textContent?.trim() === label)!
+
+it('does no library or capture reads while closed, then loads only the explicitly opened step', async () => {
+    const onActiveChange = vi.fn()
+    local.list.mockResolvedValue([])
+    local.sources.mockResolvedValue([])
+    local.createDraft.mockResolvedValue({ templateId: 'a'.repeat(32), revision: 'b'.repeat(64), title: 'Local template' })
+    function Harness() {
+        const [open, setOpen] = useState(false)
+        return <><button onClick={() => setOpen(true)}>Open library</button><DesktopTemplateNavigation open={open} onOpenChange={setOpen} onActiveChange={onActiveChange} onCreateFromScratch={() => {}} onInstalled={() => {}} /></>
+    }
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<Harness />))
+    expect(local.list).not.toHaveBeenCalled()
+    expect(local.sources).not.toHaveBeenCalled()
+    expect(local.detail).not.toHaveBeenCalled()
+    expect(onActiveChange).toHaveBeenLastCalledWith(false)
+    await act(async () => button('Open library').click())
+    expect(local.list).toHaveBeenCalledOnce()
+    expect(local.sources).not.toHaveBeenCalled()
+    expect(onActiveChange).toHaveBeenLastCalledWith(true)
+    await act(async () => button('New template').click())
+    expect(local.sources).not.toHaveBeenCalled()
+    expect(onActiveChange).toHaveBeenLastCalledWith(true)
+    const input = document.querySelector<HTMLInputElement>('input[placeholder="e.g. Research team"]')!
+    act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Local template')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => button('Continue').click())
+    expect(local.createDraft).toHaveBeenCalledExactlyOnceWith('Local template')
+    expect(local.sources).toHaveBeenCalledOnce()
+})
+
+it('creates a fresh live client after StrictMode effect cleanup', async () => {
+    const instances: { closed: boolean; list: ReturnType<typeof vi.fn> }[] = []
+    factory.create.mockImplementation(() => {
+        const instance = { closed: false, list: vi.fn() }
+        instance.list.mockImplementation(async () => {
+            if (instance.closed) throw new Error('Disposed client was reused')
+            return []
+        })
+        instances.push(instance)
+        return { ...local, list: instance.list, dispose: () => { instance.closed = true } }
+    })
+    function Harness() {
+        const [open, setOpen] = useState(false)
+        return <><button onClick={() => setOpen(true)}>Open library</button><DesktopTemplateNavigation open={open} onOpenChange={setOpen} onCreateFromScratch={() => {}} onInstalled={() => {}} /></>
+    }
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<StrictMode><Harness /></StrictMode>))
+    expect(instances.length).toBeGreaterThanOrEqual(2)
+    expect(instances[0].closed).toBe(true)
+    expect(instances.at(-1)!.closed).toBe(false)
+    await act(async () => button('Open library').click())
+    expect(instances.at(-1)!.list).toHaveBeenCalled()
+    expect(instances.filter(instance => instance.closed).every(instance => instance.list.mock.calls.length === 0)).toBe(true)
+    expect(document.body.textContent).not.toContain('Disposed client was reused')
+})

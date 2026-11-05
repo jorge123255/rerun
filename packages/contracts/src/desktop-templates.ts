@@ -135,6 +135,7 @@ export const desktopTemplateSelectionSchema = z.strictObject({
     agentId: z.uuid(),
     files: z.array(desktopTemplateRelativePathSchema).max(DESKTOP_TEMPLATE_LIMITS.maxFiles),
     skills: z.array(desktopTemplateSkillSlugSchema).max(100),
+    setup: z.strictObject({ required: z.boolean(), prompt: z.string().max(DESKTOP_TEMPLATE_LIMITS.maxFileBytes) }).optional(),
 })
 
 export const desktopTemplateCaptureResultSchema = z.strictObject({
@@ -232,7 +233,7 @@ export const desktopTemplateInstallResultSchema = z.discriminatedUnion('status',
         receiptId: z.uuid(),
         templateId: desktopTemplateIdSchema,
         revision: desktopTemplateRevisionSchema,
-        coworkers: z.array(desktopTemplateCoworkerViewSchema).min(1),
+        coworkers: z.array(desktopTemplateCoworkerViewSchema),
     }),
     z.strictObject({
         status: z.literal('uncertain'),

@@ -1,11 +1,17 @@
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, test } from 'vitest'
+import { afterAll, beforeAll, afterEach, expect, test } from 'vitest'
 import { DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING } from '@rerun/contracts'
+import { prepareSkillHelperFixture } from '../skill-publication.test-support.js'
 import { desktopTemplateRouteAllowed } from './allow.js'
 import { installManifest, sealManifest } from './install.js'
 import { createDesktopTemplateEngine, type TemplateIndex } from './service.js'
+
+let helper: Awaited<ReturnType<typeof prepareSkillHelperFixture>>
+const previousHelper = process.env.RERUN_DESKTOP_RENAME_HELPER
+beforeAll(async () => { helper = await prepareSkillHelperFixture(); process.env.RERUN_DESKTOP_RENAME_HELPER = helper.path })
+afterAll(async () => { if (previousHelper === undefined) delete process.env.RERUN_DESKTOP_RENAME_HELPER; else process.env.RERUN_DESKTOP_RENAME_HELPER = previousHelper; await helper.close() })
 
 const localId = '11111111-1111-4111-8111-111111111111'
 const draftRequest = '22222222-2222-4222-8222-222222222222'
@@ -39,7 +45,7 @@ function memoryIndex(): { index: TemplateIndex; names: Map<string, string> } {
 }
 
 async function scaffold() {
-    const root = await mkdtemp(join(tmpdir(), 'rerun-template-'))
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'rerun-template-')))
     roots.push(root)
     const dataRoot = join(root, 'data')
     const agentsRoot = join(root, 'agents')
@@ -136,6 +142,8 @@ test('capture and install copy a fresh coworker and leave the source and a forei
 
     const retry = '66666666-6666-4666-8666-666666666666'
     const captured = await engine.capture({ requestId: retry, templateId: draft.templateId, revision: draft.revision, planRevision: again.planRevision, selections: selection })
+    await writeFile(notes, 'Changed after capture succeeded.\n')
+    expect(await engine.capture({ requestId: retry, templateId: draft.templateId, revision: draft.revision, planRevision: again.planRevision, selections: selection })).toEqual(captured)
     const importId = `i${'a'.repeat(31)}`
     const installed = await engine.install({ importReceiptId: importReceipt, templateId: captured.templateId, revision: captured.revision, coworkers: [{ engineAgentId: importId, agentKey: 'c00' }] })
     expect(installed.status).toBe('ready')
@@ -166,8 +174,10 @@ test('capture and install copy a fresh coworker and leave the source and a forei
     expect(await readdir(folder)).not.toContain('.desktop-template-import.json')
 
     const before = (await readdir(agentsRoot)).sort()
+    await writeFile(join(destination, 'config.json'), JSON.stringify({ ...config, setup: { required: true, completedAt: '2026-11-05T00:00:00Z', sessionId: 'owned-setup' } }))
     const replay = await engine.install({ importReceiptId: importReceipt, templateId: captured.templateId, revision: captured.revision, coworkers: [{ engineAgentId: importId, agentKey: 'c00' }] })
     expect(replay.status).toBe('ready')
+    expect(JSON.parse(await readFile(join(destination, 'config.json'), 'utf8')).setup.sessionId).toBe('owned-setup')
     expect((await readdir(agentsRoot)).sort()).toEqual(before)
     expect(names.size).toBe(1)
 
@@ -183,7 +193,7 @@ test('capture and install copy a fresh coworker and leave the source and a forei
 })
 
 test('unsupported manifest metadata and a confined-but-disallowed path are refused before a destination exists', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'rerun-template-manifest-'))
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'rerun-template-manifest-')))
     roots.push(root)
     const dataRoot = join(root, 'data')
     const agentsRoot = join(root, 'agents')
@@ -225,4 +235,15 @@ test('desktop template routes stay on the trusted engine surface', () => {
     expect(desktopTemplateRouteAllowed('DELETE', `/desktop/templates/${id}`)).toBe(false)
     expect(desktopTemplateRouteAllowed('GET', '/desktop/templates/draft')).toBe(false)
     expect(desktopTemplateRouteAllowed('POST', '/desktop/agents')).toBe(false)
+})
+
+
+test('a linked destination ancestor cannot create directories outside the owned folder',async()=>{
+    const {folder}=await scaffold()
+    const outside=await realpath(await mkdtemp(join(tmpdir(),'rerun-template-outside-')))
+    roots.push(outside)
+    await symlink(outside,join(folder,'redirect'))
+    const {writeExclusiveFile}=await import('./files.js')
+    await expect(writeExclusiveFile(folder,'redirect/new-folder/note.txt',Buffer.from('private'))).rejects.toThrow()
+    expect(await readdir(outside)).toEqual([])
 })

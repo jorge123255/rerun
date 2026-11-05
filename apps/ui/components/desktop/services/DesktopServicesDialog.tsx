@@ -5,13 +5,13 @@ import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/deskto
 import type { DesktopAgentView } from '../DesktopApp'
 import { DesktopCoworkerServices } from './DesktopCoworkerServices'
 
-export function DesktopServicesDialog({ agent, dialogControl }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl }) {
+export function DesktopServicesDialog({ agent, dialogControl, focusSlug, focusRequestKey, hideTrigger = false }: { agent: DesktopAgentView; dialogControl?: DesktopDialogControl; focusSlug?: string; focusRequestKey?: string; hideTrigger?: boolean }) {
     const [open, setOpen] = useDesktopDialogControl(dialogControl)
     return <Dialog open={open} onOpenChange={setOpen} asSheet={false}>
-        <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Apps</Button></DialogTrigger>
+        {!hideTrigger && <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Apps</Button></DialogTrigger>}
         {open && <DialogContent className="flex h-[80dvh] flex-col sm:max-w-3xl">
             <DialogHeader><DialogTitle>Apps</DialogTitle><DialogDescription>Connections for {agent.name}. Enable Apps in Tools to let this coworker use installed connections.</DialogDescription></DialogHeader>
-            <DesktopCoworkerServices key={agent.id} agentId={agent.id} />
+            <DesktopCoworkerServices key={agent.id} agentId={agent.id} focusSlug={focusSlug} focusRequestKey={focusRequestKey} />
         </DialogContent>}
     </Dialog>
 }

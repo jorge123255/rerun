@@ -40,6 +40,9 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
     const [interrupted, setInterrupted] = useState<DesktopTemplateInstallIntent | null>(resumeInstall)
     const [openCount, setOpenCount] = useState(0)
     const [wasOpen, setWasOpen] = useState(false)
+    const listRequest = useRef(0)
+    const currentlyOpen = useRef(open)
+    currentlyOpen.current = open
 
     if (open !== wasOpen) {
         setWasOpen(open)
@@ -52,14 +55,17 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
     }
 
     const refresh = useCallback(async (showLoading: boolean) => {
+        if (!currentlyOpen.current) return
+        const request = ++listRequest.current
         if (showLoading) setLoading(true)
         setLoadError(null)
         try {
-            setTemplates(await client.list())
+            const result = await client.list()
+            if (currentlyOpen.current && request === listRequest.current) setTemplates(result)
         } catch (error) {
-            setLoadError(error instanceof Error ? error.message : 'The local template library could not be read.')
+            if (currentlyOpen.current && request === listRequest.current) setLoadError(error instanceof Error ? error.message : 'The local template library could not be read.')
         } finally {
-            if (showLoading) setLoading(false)
+            if (showLoading && currentlyOpen.current && request === listRequest.current) setLoading(false)
         }
     }, [client])
 
@@ -69,9 +75,11 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
 
     useEffect(() => {
         if (open) void refresh(true)
+        return () => { listRequest.current++ }
     }, [open, refresh])
 
     useEffect(() => {
+        if (!open) return
         if (!selection) {
             setDetail(null)
             setDetailError(null)
@@ -95,7 +103,7 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
             if (current) setDetailLoading(false)
         })
         return () => { current = false }
-    }, [client, selection, detailAttempt])
+    }, [client, selection, detailAttempt, open])
 
     const listRef = useRef<HTMLDivElement>(null)
     const detailRef = useRef<HTMLDivElement>(null)
@@ -169,8 +177,8 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
                                     onInstallAttempt?.(intent)
                                 }}
                                 onInstalled={receipt => {
+                                    setInterrupted(null)
                                     onInstalled(receipt)
-                                    void refresh(false)
                                 }}
                             /> : detailLoading ? <DesktopTemplateDetailSkeleton /> : <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
                                 <p role="alert" className="text-sm text-destructive">{detailError ?? 'Select a template to read its exact saved revision.'}</p>

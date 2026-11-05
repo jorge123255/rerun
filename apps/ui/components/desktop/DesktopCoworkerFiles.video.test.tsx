@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { FileCodeMirrorProps } from '@/components/files/FileCodeMirror'
+import { composerTestPng } from '@/lib/desktop/server/composer-image.test-fixtures'
 import { DesktopCoworkerFiles } from './DesktopCoworkerFiles'
 
 vi.mock('@/components/files/FileTextEditor', () => ({
@@ -21,6 +22,7 @@ const click = async (name: string) => {
 }
 const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 const mp4 = Uint8Array.from([0, 0, 0, 16, 0x66, 0x74, 0x79, 0x70])
+const png = composerTestPng()
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); document.body.innerHTML = '' })
 
@@ -34,13 +36,13 @@ function installFetch() {
             return Response.json({ error: 'This video is damaged and can’t be previewed.' }, { status: 415 })
         }
         if (url.pathname.endsWith('/files/audio')) return new Response(Uint8Array.from([0xff, 0xfb, 0x90, 0xc0]), { headers: { 'content-type': 'audio/mpeg' } })
-        if (url.pathname.endsWith('/files/image')) return new Response(Uint8Array.from([137, 80, 78, 71]), { headers: { 'content-type': 'image/png' } })
+        if (url.pathname.endsWith('/files/image')) return new Response(new Uint8Array(png).buffer, { headers: { 'content-type': 'image/png' } })
         if (url.pathname.endsWith('/files/read')) return Response.json({ path: url.searchParams.get('path'), content: 'hello notes', size: 11, truncated: false, hash: 'abc' })
         if (url.searchParams.get('path') === 'docs') return Response.json({ path: 'docs', entries: [
             { name: 'notes.md', type: 'file', size: 11, modifiedAt: '2026-11-04T00:00:00.000Z', identity: '4:8' },
             { name: 'clip.mp4', type: 'file', size: mp4.byteLength, modifiedAt: '2026-11-04T00:00:00.000Z', identity: '9:1' },
             { name: 'voice.mp3', type: 'file', size: 4, modifiedAt: '2026-11-04T00:00:00.000Z', identity: '8:1' },
-            { name: 'photo.png', type: 'file', size: 4, modifiedAt: '2026-11-04T00:00:00.000Z', identity: '7:1' },
+            { name: 'photo.png', type: 'file', size: png.byteLength, modifiedAt: '2026-11-04T00:00:00.000Z', identity: '7:1' },
             { name: 'draw.svg', type: 'file', size: 12, modifiedAt: '2026-11-04T00:00:00.000Z', identity: '7:2' },
         ] })
         return Response.json({ path: '', entries: [{ name: 'docs', type: 'dir', size: 0, modifiedAt: '2026-11-04T00:00:00.000Z' }] })
@@ -113,7 +115,9 @@ test('an existing MP4 opens the original video controls from the desktop video r
     await click('draw.svg')
     await flush()
     expect(calls.some(call => call.includes('/files/video') && call.includes('draw.svg'))).toBe(false)
-    expect(calls.some(call => call.includes('/files/read') && call.includes('draw.svg'))).toBe(true)
+    expect(calls.some(call => call.includes('/files/read') && call.includes('draw.svg'))).toBe(false)
+    expect(calls.some(call => call.includes('/files/image') && call.includes('draw.svg'))).toBe(true)
+    expect(document.querySelector('[data-testid="file-image-preview"]')?.getAttribute('alt')).toBe('draw.svg')
     act(() => root.unmount())
 })
 

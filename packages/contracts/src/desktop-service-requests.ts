@@ -228,6 +228,7 @@ export function deriveDesktopServiceSetup(input: {
     for (let index = 0; index < input.services.length; index++) {
         const slug = input.services[index]!.slug
         const fact = input.catalog[index]!
+        if (fact.status === 'unavailable') return { ok: false, reason: 'unavailable' }
         const choice = input.choices[index]!
         const related = input.installations.filter(item => item.slug === slug)
         if (related.some(item => item.changing)) return { ok: false, reason: 'changing' }

@@ -138,7 +138,7 @@ export function createDesktopTemplateServer(input: {
         })
     }
 
-    async function views(coworkers: InstallCoworker[]) {
+    async function views(coworkers: InstallCoworker[], historical = false) {
         const found = []
         for (const coworker of coworkers) {
             const result = await input.db.execute({
@@ -148,7 +148,8 @@ export function createDesktopTemplateServer(input: {
                 args: [coworker.agentId],
             })
             const record = result.rows[0]
-            if (!record || String(record.engine_agent_id) !== coworker.engineAgentId || String(record.name) !== coworker.name) return null
+            if(!record && historical)continue
+            if (!record || String(record.engine_agent_id) !== coworker.engineAgentId || (!historical && String(record.name) !== coworker.name)) return null
             found.push({
                 id: String(record.id),
                 name: String(record.name),
@@ -205,7 +206,7 @@ export function createDesktopTemplateServer(input: {
         const payload = JSON.parse(String(existing.payload)) as InstallPayload
         const base = { requestId: operation.requestId, receiptId: String(existing.receipt_id) }
         if (String(existing.status) === 'installed') {
-            const placed = await views(payload.coworkers)
+            const placed = await views(payload.coworkers, true)
             if (!placed) return { status: 'uncertain', ...base, recoverable: true, created: payload.coworkers.map(coworker => ({ agentId: coworker.agentId, phase: coworker.phase })), reason: 'Installed coworkers could not be read back' }
             return desktopTemplateInstallResultSchema.parse({ status: 'installed', ...base, templateId: operation.templateId, revision: operation.revision, coworkers: placed })
         }
@@ -217,7 +218,7 @@ export function createDesktopTemplateServer(input: {
             return { status: 'recoverable', ...base, recoverable: true, reason: 'Imported setup is not connected. Retry this same request after it is.' }
         }
         if (!folderBound) {
-            await preflightDesktopTemplateInstall(input.db, {
+            try { await preflightDesktopTemplateInstall(input.db, {
                 requestId: operation.requestId,
                 receiptId: base.receiptId,
                 templateId: operation.templateId,
@@ -227,7 +228,10 @@ export function createDesktopTemplateServer(input: {
                     agentId: coworker.agentId, engineAgentId: coworker.engineAgentId, name: coworker.name, description: coworker.description, position: coworker.position,
                 })),
                 signal,
-            })
+            }) } catch(error) {
+                await save(operation.requestId,{status:'refused'})
+                throw error
+            }
         }
         payload.engineStarted = true
         await save(operation.requestId, { status: 'creating', templateId: operation.templateId, revision: operation.revision, payload })
@@ -291,7 +295,7 @@ export function createDesktopTemplateServer(input: {
             })
             if (ack?.acknowledged !== true) throw new Error('placement was not acknowledged')
         } catch {
-            const placed = await views(payload.coworkers)
+            const placed = await views(payload.coworkers, true)
             if (!placed) {
                 await save(operation.requestId, { status: 'uncertain', payload })
                 return { status: 'uncertain', ...base, recoverable: true, created: payload.coworkers.map(coworker => ({ agentId: coworker.agentId, phase: 'indexed' as const })), reason: 'Placement was not acknowledged. Retry this same request.' }
@@ -307,8 +311,7 @@ export function createDesktopTemplateServer(input: {
         return desktopTemplateInstallResultSchema.parse({ status: 'installed', ...base, templateId: operation.templateId, revision: operation.revision, coworkers: placed })
     }
 
-    return {
-        async handle(operation: DesktopTemplateOperation) {
+    async function handle(operation: DesktopTemplateOperation) {
             if (operation.operation === 'sources') {
                 const result = await input.db.execute(`SELECT a.id, a.name, substr(a.description, 1, 160) AS description, p.space_id, s.name AS space_name
                     FROM desktop_agents a
@@ -367,18 +370,30 @@ export function createDesktopTemplateServer(input: {
             if (operation.operation === 'capture') {
                 const fingerprint = fingerprintOf(operation)
                 const existing = await row(operation.requestId)
-                if (existing) sameFingerprint(existing, fingerprint, 'capture')
+                if (existing) {
+                    sameFingerprint(existing, fingerprint, 'capture')
+                    if (existing.status === 'captured') return desktopTemplateCaptureResultSchema.parse({ status: 'captured', requestId: operation.requestId, receiptId: String(existing.receipt_id), templateId: String(existing.template_id), revision: String(existing.revision) })
+                }
                 if (!existing) await insertReceipt(operation, fingerprint, { planRevision: operation.planRevision })
                 const captured = await call(post('/desktop/templates/capture', {
                     requestId: operation.requestId, templateId: operation.templateId, revision: operation.revision, planRevision: operation.planRevision, selections: operation.selections,
-                }), value => z.strictObject({ templateId: z.string(), revision: z.string() }).parse(value))
+                }), value => z.object({ templateId: z.string(), revision: z.string() }).parse(value))
                 await save(operation.requestId, { status: 'captured', templateId: captured.templateId, revision: captured.revision })
                 const saved = await row(operation.requestId)
                 return desktopTemplateCaptureResultSchema.parse({ status: 'captured', requestId: operation.requestId, receiptId: String(saved?.receipt_id), ...captured })
             }
             return install(operation)
-        },
     }
+    return { handle: (operation: DesktopTemplateOperation) => {
+        if (!('requestId' in operation)) return handle(operation)
+        const state = globalThis as typeof globalThis & { desktopTemplateWrites?: Map<string, Promise<unknown>> }
+        const writes = state.desktopTemplateWrites ??= new Map()
+        const key = operation.requestId
+        const result = (writes.get(key) ?? Promise.resolve()).catch(() => {}).then(() => handle(operation))
+        writes.set(key, result)
+        void result.finally(() => { if (writes.get(key) === result) writes.delete(key) }).catch(() => {})
+        return result
+    } }
 }
 
 export async function openDesktopTemplateServer(db: Client, engine: DesktopTemplateEngineClient, authority: {

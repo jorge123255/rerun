@@ -25,6 +25,17 @@ CREATE TABLE IF NOT EXISTS desktop_service_suggestion_mutations (
     result_revision TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS desktop_service_suggestion_retry (
+    service_request_id TEXT PRIMARY KEY REFERENCES desktop_service_suggestion_requests(service_request_id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL UNIQUE,
+    body TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS desktop_service_suggestion_rejections (
+    request_id TEXT PRIMARY KEY,
+    service_request_id TEXT NOT NULL REFERENCES desktop_service_suggestion_requests(service_request_id) ON DELETE CASCADE,
+    body TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS desktop_service_suggestion_receipts (
     service_request_id TEXT PRIMARY KEY REFERENCES desktop_service_suggestion_requests(service_request_id) ON DELETE CASCADE,
     request_id TEXT NOT NULL UNIQUE,
@@ -35,6 +46,19 @@ CREATE TABLE IF NOT EXISTS desktop_service_suggestion_receipts (
     created_at TEXT NOT NULL
 );`
 
-export async function ensureDesktopServiceSuggestionSchema(db: Client): Promise<void> {
-    await db.executeMultiple(desktopServiceSuggestionSchema)
+const initialized = new WeakMap<Client, Promise<void>>()
+export function ensureDesktopServiceSuggestionSchema(db: Client): Promise<void> {
+    let work = initialized.get(db)
+    if (!work) {
+        // A dedicated transaction cannot roll back somebody else's active write.
+        work = (async () => {
+            const tx = await db.transaction('write')
+            try { await tx.executeMultiple(desktopServiceSuggestionSchema); await tx.commit() }
+            catch (error) { await tx.rollback().catch(() => undefined); throw error }
+            finally { tx.close() }
+        })()
+        initialized.set(db, work)
+        void work.catch(() => { if (initialized.get(db) === work) initialized.delete(db) })
+    }
+    return work
 }

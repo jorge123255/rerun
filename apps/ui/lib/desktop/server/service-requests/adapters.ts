@@ -10,7 +10,7 @@ import type { DesktopRuntime } from '../runtime'
 import type { DesktopAgent, DesktopSession } from '../store'
 import { getDesktopServiceManifest, getDesktopServiceMethodAvailability } from '../services/catalog/index'
 import { desktopServiceConnectionUsable } from './usable'
-import type { FollowUpResponse, SealedReceipt } from './service'
+import type { FollowUpResponse, SealedReceipt, ServiceRequestDatabase, ServiceRequestSealAuthority } from './service'
 
 const installStates = ['preparing', 'ready', 'error', 'disconnected', 'removing'] as const
 const healthStates = ['unchecked', 'healthy', 'error', 'disconnected'] as const
@@ -47,10 +47,41 @@ export async function describeDesktopServiceRequestCatalog(slug: string): Promis
 
 export async function readDesktopServiceConnections(runtime: DesktopRuntime, ownerId: string, signal: AbortSignal): Promise<DesktopServiceConnection[] | 'unavailable'> {
     try {
-        const [db, service] = await Promise.all([openDesktopDatabase(runtime.dataRoot), getDesktopRemoteMcpService(runtime)])
-        const authority = await service.services.current(ownerId, 'manage', undefined, signal)
-        const rows = await db.execute({ sql: 'SELECT key, revision, slug, state, engine_id, health, health_launch FROM desktop_service_installs WHERE owner = ? ORDER BY installed_at DESC LIMIT 65', args: [ownerId] })
-        if (rows.rows.length > 64) return 'unavailable'
+        const db = await openDesktopDatabase(runtime.dataRoot)
+        const snapshot = await prepareDesktopServiceSeal(runtime, ownerId, signal)
+        const connections = await snapshot.installations(db)
+        snapshot.check()
+        return connections
+    } catch {
+        return 'unavailable'
+    }
+}
+
+/** Network/config reads happen before the write transaction. Exact installation rows
+ * are then read on that transaction; synchronous lifecycle guards fence local changes. */
+export async function prepareDesktopServiceSeal(runtime: DesktopRuntime, ownerId: string, signal: AbortSignal): Promise<ServiceRequestSealAuthority> {
+    const [db, service] = await Promise.all([openDesktopDatabase(runtime.dataRoot), getDesktopRemoteMcpService(runtime)])
+    const authority = await service.services.current(ownerId, 'manage', undefined, signal)
+    if (!authority.check) throw new DesktopHttpError(502, 'Current app permission could not be confirmed.')
+    const initial = await db.execute({ sql: 'SELECT id FROM desktop_service_installs WHERE owner = ? ORDER BY id LIMIT 65', args: [ownerId] })
+    if (initial.rows.length > 64) throw new DesktopHttpError(502, 'App connections could not be read.')
+    const ids = initial.rows.map(row => String(row.id))
+    const guards = [service.services.lifecycle.watch(ownerId, ''), ...ids.map(id => service.services.lifecycle.watch(ownerId, `svc-${id.replaceAll('-', '')}`))]
+    let freshUntil = Infinity
+    const check = () => {
+        signal.throwIfAborted()
+        try { authority.check!(); for (const guard of guards) guard() } catch {
+            throw new DesktopHttpError(409, 'App permission or a connection changed. Refresh the card before finishing.')
+        }
+        if (Date.now() >= freshUntil) throw new DesktopHttpError(409, 'App connection health expired. Refresh the connection before finishing.')
+    }
+    check()
+    return { check, async installations(query: ServiceRequestDatabase) {
+        check()
+        const owner = (await query.execute({ sql: 'SELECT engine_agent_id, enabled FROM desktop_agents WHERE id = ?', args: [ownerId] })).rows[0]
+        if (!owner || owner.engine_agent_id !== authority.engineAgentId || Boolean(Number(owner.enabled)) !== authority.enabled) throw new DesktopHttpError(409, 'Coworker identity or permission changed. Refresh the conversation.')
+        const rows = await query.execute({ sql: 'SELECT id, key, revision, slug, state, engine_id, health, health_launch FROM desktop_service_installs WHERE owner = ? ORDER BY id LIMIT 65', args: [ownerId] })
+        if (JSON.stringify(rows.rows.map(row => String(row.id))) !== JSON.stringify(ids)) throw new DesktopHttpError(409, 'App connections changed. Refresh the card before finishing.')
         const now = Date.now()
         const connections = rows.rows.map(row => {
             const state = String(row.state)
@@ -60,13 +91,13 @@ export async function readDesktopServiceConnections(runtime: DesktopRuntime, own
                 engineId: String(row.engine_id), state, health, healthLaunch: row.health_launch == null ? null : String(row.health_launch),
                 authority: { engineAgentId: authority.engineAgentId, enabled: authority.enabled, granted: authority.granted, launchNonce: authority.runtime.launchNonce }, now,
             })
+            if (usable) freshUntil = Math.min(freshUntil, Date.parse(health.checkedAt ?? '') + 60_000)
             return desktopServiceConnectionSchema.safeParse({ key: String(row.key), revision: String(row.revision), slug: String(row.slug), state, usable, healthState: health.state })
         })
+        check()
         if (connections.some(item => !item.success)) return 'unavailable'
         return connections.flatMap(item => item.success ? [item.data] : [])
-    } catch {
-        return 'unavailable'
-    }
+    } }
 }
 
 export async function readDesktopServiceSource(runtime: DesktopRuntime, agent: DesktopAgent, session: DesktopSession, signal: AbortSignal): Promise<DesktopServiceRequest | null> {

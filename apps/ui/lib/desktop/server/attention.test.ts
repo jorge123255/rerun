@@ -4,12 +4,13 @@ import type { DesktopRuntime } from './runtime'
 import { DESKTOP_ATTENTION_DEADLINE_MS, readDesktopAttention } from './attention'
 import { readDesktopBoardActivity } from './board-activity'
 
-const mock = vi.hoisted(() => ({ agents: vi.fn(), sessions: vi.fn(), session: vi.fn(), question: vi.fn(), approval: vi.fn(), runs: vi.fn(), owner: vi.fn() }))
+const mock = vi.hoisted(() => ({ agents: vi.fn(), sessions: vi.fn(), session: vi.fn(), question: vi.fn(), approval: vi.fn(), service: vi.fn(), runs: vi.fn(), owner: vi.fn() }))
 vi.mock('./database', () => ({ openDesktopDatabase: async () => ({}) }))
 vi.mock('./store', () => ({ listDesktopAgents: mock.agents, listDesktopSessions: mock.sessions, findDesktopSession: mock.session }))
 vi.mock('./questions', () => ({ readDesktopQuestion: mock.question }))
 vi.mock('./takeover', () => ({ readDesktopTakeover: async () => ({ takeover: null }) }))
 vi.mock('./approvals', () => ({ readDesktopApproval: mock.approval }))
+vi.mock('./service-requests/view', () => ({ readDesktopServiceRequestView: mock.service }))
 vi.mock('./coworker-delete', () => ({ assertCoworkerNotDeleting: mock.owner }))
 vi.mock('./settings', () => ({ engineOf: () => ({}) }))
 vi.mock('@/lib/engine/client', () => ({ listRuns: mock.runs }))
@@ -31,9 +32,20 @@ beforeEach(() => {
     mock.sessions.mockImplementation(async (_db, owner) => sessions.filter(row => row.agentId === owner))
     mock.session.mockImplementation(async (_db, id) => sessions.find(row => row.id === id) ?? null)
     mock.question.mockResolvedValue({ question: null }); mock.approval.mockResolvedValue({ approval: null })
+    mock.service.mockResolvedValue({ request: null })
     mock.runs.mockResolvedValue([]); mock.owner.mockResolvedValue(undefined)
 })
 afterEach(() => vi.restoreAllMocks())
+
+test('suggested apps remain attention until the server confirms their result, including a disabled owner', async () => {
+    agents.push(agent('alice', false))
+    sessions.push(session('apps', 'alice'))
+    mock.service.mockResolvedValue({ request: { serviceRequestId: 'service-request', services: [{ slug: 'notion', reason: 'Connect the project notes' }] } })
+    expect((await readDesktopAttention(runtime)).items).toMatchObject([{ id: 'service-request', kind: 'service', agentId: 'alice', agentEnabled: false, sessionId: 'apps', summary: 'Connect the project notes' }])
+    expect(mock.service.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal)
+    mock.service.mockResolvedValue({ request: { serviceRequestId: 'service-request', services: [{ slug: 'notion' }], receipt: { accepted: true } } })
+    expect((await readDesktopAttention(runtime)).items).toEqual([])
+})
 
 test('projects canonical pending requests across owners, with bounded summaries, disabled owners and stable latest-first ties', async () => {
     agents.push(agent('alice'), agent('bob', false), agent('foreign', true, 2))

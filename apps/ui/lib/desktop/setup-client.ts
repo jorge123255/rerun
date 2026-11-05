@@ -9,6 +9,9 @@ import {
 } from '@rerun/contracts'
 import type { DesktopSetupDraft } from '@/components/desktop/setup/DesktopSetupFields'
 
+class SetupRequestError extends Error { constructor(message:string,readonly status:number){super(message)} }
+type SetupMutation = DesktopSetupPost extends infer T ? T extends DesktopSetupPost ? Omit<T, 'requestId'> : never : never
+
 export function createDesktopSetupClient(owner: string) {
     const url = `/api/desktop/coworkers/${encodeURIComponent(owner)}/setup`
     const mutationRequests = new Map<string, string>()
@@ -33,7 +36,7 @@ export function createDesktopSetupClient(owner: string) {
             if (closed) throw new Error('Setup owner changed')
             if (!response.ok) {
                 const message = data && typeof data === 'object' && 'error' in data && typeof data.error === 'string' ? data.error : null
-                throw new Error(message ?? (body ? 'Setup acknowledgment unavailable. Retry the same action or reopen setup to read server progress.' : 'Could not load coworker setup.'))
+                throw new SetupRequestError(message ?? 'Could not confirm coworker setup.', response.status)
             }
             return data
         } catch (cause) {
@@ -56,7 +59,9 @@ export function createDesktopSetupClient(owner: string) {
     }
 
     async function mutate(input: DesktopSetupPost, key: string, requireSession = false): Promise<DesktopSetupMutationResult> {
-        const parsed = desktopSetupMutationResultSchema.safeParse(await request(input))
+        let raw:unknown
+        try { raw=await request(input) } catch(error) { if(error instanceof SetupRequestError && [400,403,404,409].includes(error.status))mutationRequests.delete(key); throw error }
+        const parsed = desktopSetupMutationResultSchema.safeParse(raw)
         if (!parsed.success) throw new Error('Setup acknowledgment was not valid. Retry the same action or reopen setup to read server progress.')
         checkOwner(parsed.data.view)
         if (requireSession && !(parsed.data.sessionId ?? parsed.data.view.sessionId)) {
@@ -66,11 +71,11 @@ export function createDesktopSetupClient(owner: string) {
         return parsed.data
     }
 
-    function mutationKey(input: Omit<DesktopSetupPost, 'requestId'>): string {
+    function mutationKey(input: SetupMutation): string {
         return JSON.stringify(input)
     }
 
-    function withRequest(input: Omit<DesktopSetupPost, 'requestId'>): { input: DesktopSetupPost; key: string } {
+    function withRequest(input: SetupMutation): { input: DesktopSetupPost; key: string } {
         const key = mutationKey(input)
         let requestId = mutationRequests.get(key)
         if (!requestId) {

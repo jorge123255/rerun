@@ -8,6 +8,7 @@ import { DesktopRunHistory } from './DesktopRunHistory'
 import type { DesktopRunView } from '@/lib/desktop/run-history'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const alice = { id: 'alice', name: 'Alice', description: '', createdAt: '', updatedAt: '' }
@@ -42,6 +43,14 @@ test('opens from a board coworker, updates a running entry, isolates coworkers, 
         if (url.endsWith('/sessions')) return Response.json({ sessions: [{ id: 'saved', agentId: url.includes('/alice/') ? alice.id : bob.id, title: 'Saved chat', createdAt: '', updatedAt: '' }] })
         if (url.endsWith('/messages')) return Response.json({ messages: [{ id: 'answer', role: 'assistant', parts: [{ type: 'text', text: 'The saved answer.' }] }] })
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        if ((init?.method ?? 'GET') === 'GET') {
+            if (/^\/api\/desktop\/agents\/[^/]+\/queue\?/.test(url)) return Response.json({ queued: null })
+            if (/^\/api\/desktop\/sessions\/[^/]+\/stop$/.test(url)) return Response.json({ running: false })
+            if (/^\/api\/desktop\/sessions\/[^/]+\/feedback(?:\?|$)/.test(url)) return Response.json({ votes: [] })
+            if (url === '/api/desktop/pending-inbox') return Response.json({ items: [], unavailableAgentIds: [], checkedAt: '2026-11-05T00:00:00Z' })
+            if (url === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: '2026-11-05T00:00:00Z', checkedAt: '2026-11-05T00:00:00Z', nextCursor: null })
+        }
+        const background = desktopBackgroundRead(url, init); if (background) return background
         throw new Error(`Unexpected test request: ${url}`)
     })
     vi.stubGlobal('fetch', fetcher)

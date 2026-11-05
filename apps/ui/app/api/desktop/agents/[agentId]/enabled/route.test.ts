@@ -34,6 +34,10 @@ beforeEach(async () => {
         requests.push(`${req.method} ${req.url}`)
         const json = (code: number, body: unknown) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body))
         if (!connected) return json(503, {})
+        const setup = req.url?.match(/^\/agents\/([^/]+)\/setup$/)
+        if (req.method === 'GET' && setup && engine.has(setup[1])) return json(200, {
+            required: false, prompt: '', completedAt: null, sessionId: null, pending: false, revision: 'fixture-setup',
+        })
         if (req.url === '/connections' && req.method === 'GET') return json(200, {
             connections: [{ id: 'local', name: 'Local', provider: 'openrouter', models: ['local-model'], extraModels: [],
                 createdAt: '2026-01-01T00:00:00.000Z', connected: true, credentialRejected: false, planLimits: null }],

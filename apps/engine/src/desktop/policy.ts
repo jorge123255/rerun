@@ -1,3 +1,4 @@
+import { desktopTemplateRouteAllowed } from './templates/allow.js'
 import { DESKTOP_CODEX_ID, desktopCodexAvailable } from './codex-runtime.js'
 import { desktopBrainPagesRouteAllowed } from './brain-pages-policy.js'
 import { badRequest } from '../lib/errors.js'
@@ -15,6 +16,9 @@ export function assertDesktopProvider(provider: string, id?: string): void {
 }
 
 export function desktopRouteAllowed(method: string, path: string): boolean {
+    if (method === 'GET' && /^\/agents\/[^/]+\/setup\/?$/.test(path)) return true
+    if (method === 'POST' && /^\/agents\/[^/]+\/setup\/(save|claim|continue|import)$/.test(path)) return true
+    if (desktopTemplateRouteAllowed(method, path)) return true
     if (desktopBrainPagesRouteAllowed(method, path)) return true
     if (/^\/desktop\/brain\/proposals(?:\/count)?$/.test(path)) return method === 'GET'
     if (/^\/desktop\/brain\/proposals\/[A-Za-z0-9_-]+\/(?:accept|dismiss)$/.test(path)) return method === 'POST'

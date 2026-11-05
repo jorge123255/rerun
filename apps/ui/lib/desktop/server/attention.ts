@@ -1,3 +1,4 @@
+import { readDesktopServiceRequestView } from './service-requests/view'
 import 'server-only'
 import { resolve } from 'node:path'
 import type { DesktopAttention, DesktopAttentionItem } from '../attention'
@@ -55,6 +56,11 @@ async function collect(runtime: DesktopRuntime): Promise<DesktopAttention> {
                         signal.throwIfAborted()
                         const { takeover } = await readDesktopTakeover(runtime, session.id, { signal })
                         if (takeover) pending = { id: takeover.id, kind: 'takeover', summary: summary(takeover.reason), requestedAt: takeover.requestedAt }
+                        else {
+                            signal.throwIfAborted()
+                            const {request} = await readDesktopServiceRequestView(runtime, session.id, {signal})
+                            if(request && !request.receipt?.accepted) pending = {id:request.serviceRequestId,kind:'service',summary:summary(request.services[0]?.reason ?? 'Connect apps')}
+                        }
                     }
                 }
             } catch { failed = true }

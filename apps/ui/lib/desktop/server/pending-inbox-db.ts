@@ -20,6 +20,21 @@ CREATE TABLE IF NOT EXISTS desktop_pending_inbox_seen_v2 (
 INSERT OR IGNORE INTO desktop_pending_inbox_seen_v2 SELECT * FROM desktop_pending_inbox_seen;
 `
 
+const initialized = new WeakMap<Client, Promise<void>>()
 export async function initializeDesktopPendingInbox(db: Client): Promise<void> {
-    await db.executeMultiple(DESKTOP_PENDING_INBOX_SCHEMA)
+    let work = initialized.get(db)
+    if (!work) {
+        work = db.executeMultiple(DESKTOP_PENDING_INBOX_SCHEMA + `
+            CREATE TABLE IF NOT EXISTS desktop_pending_inbox_seen_v3 (
+                item_id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+                session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK (kind IN ('question','approval','takeover','service')),
+                seen_at TEXT NOT NULL
+            );
+            INSERT OR IGNORE INTO desktop_pending_inbox_seen_v3 SELECT * FROM desktop_pending_inbox_seen_v2;
+        `)
+        initialized.set(db, work)
+    }
+    await work
 }

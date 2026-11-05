@@ -80,6 +80,7 @@ type Overrides = {
     onOpenConversation?: (hit: DesktopConversationHit) => void
     onOpenCoworker?: (agentId: string) => void
     onOpenCoworkerPanel?: Parameters<typeof DesktopControlCenter>[0]['onOpenCoworkerPanel']
+    onOpenCoworkerSetup?: Parameters<typeof DesktopControlCenter>[0]['onOpenCoworkerSetup']
     onOpenChat?: (target: DesktopOpenChat) => void
     onAddCoworker?: () => void
     onModelSettings?: () => void
@@ -130,6 +131,7 @@ const render = (root: ReturnType<typeof createRoot>, overrides: Overrides = {}) 
         onOpenConversation={overrides.onOpenConversation ?? (() => {})}
         onOpenCoworker={overrides.onOpenCoworker}
         onOpenCoworkerPanel={overrides.onOpenCoworkerPanel}
+        onOpenCoworkerSetup={overrides.onOpenCoworkerSetup}
         onOpenChat={overrides.onOpenChat}
         onAddCoworker={overrides.onAddCoworker ?? (() => {})}
         onModelSettings={overrides.onModelSettings ?? (() => {})}
@@ -389,6 +391,80 @@ test('coworker query prefixes keep Files and Settings scoped instead of exposing
     const searches = fetcher.mock.calls.map(([url]) => url).filter(url => url.startsWith('/api/desktop/conversations/search'))
     expect(searches).toHaveLength(2)
     expect(searches.every(url => new URL(url, 'http://local').searchParams.get('agentId') === 'ada')).toBe(true)
+})
+
+test('Setup reuses the original scoped Open row and opens only the chosen coworker', async () => {
+    const { root } = mount()
+    const onOpenCoworkerPanel = vi.fn(), onOpenCoworkerSetup = vi.fn()
+    await render(root, { onOpenCoworkerPanel, onOpenCoworkerSetup })
+    await press('f', { metaKey: true })
+    expect(rendered.view!.sections.flatMap(section => section.rows).some(row => row.id === 'tab-setup')).toBe(false)
+    await clickRow('Ada')
+    const tabs = rendered.view!.sections[0]!.rows
+    expect(tabs.slice(-3).map(row => row.id)).toEqual(['tab-logs', 'tab-setup', 'tab-settings'])
+    expect(tabs.find(row => row.id === 'tab-setup')).toMatchObject({
+        label: 'Install', detail: 'What this coworker does the first time someone installs it', leading: { kind: 'icon' },
+    })
+    await type('/install')
+    expect(rendered.view!.sections[0]!.rows.map(row => row.id)).toEqual(['tab-setup'])
+    await clickRow('Install')
+    expect(onOpenCoworkerSetup).toHaveBeenCalledExactlyOnceWith('ada')
+    expect(onOpenCoworkerPanel).not.toHaveBeenCalled()
+    expect(dialog()).toBeNull()
+})
+
+test('Setup needs its own real callback and does not depend on unrelated panel handlers', async () => {
+    const { root } = mount()
+    const onOpenCoworkerSetup = vi.fn()
+    await render(root, { onOpenCoworkerSetup })
+    await press('f', { metaKey: true })
+    await clickRow('Bob')
+    expect(rendered.view!.sections[0]!.rows.map(row => row.id)).toEqual(['tab-setup'])
+    await clickRow('Install')
+    expect(onOpenCoworkerSetup).toHaveBeenCalledExactlyOnceWith('bob')
+})
+
+test.each(['callback removed', 'owner removed', 'center disabled', 'quit'] as const)('retained Setup row does not navigate after %s', async condition => {
+    const { root } = mount()
+    const onOpenCoworkerSetup = vi.fn(), onOpenChange = vi.fn()
+    await render(root, { open: true, onOpenChange, onOpenCoworkerSetup })
+    await clickRow('Ada')
+    const select = rendered.view!.sections[0]!.rows.find(row => row.id === 'tab-setup')!.onSelect
+    await render(root, {
+        open: true, onOpenChange,
+        onOpenCoworkerSetup: condition === 'callback removed' ? undefined : onOpenCoworkerSetup,
+        coworkers: condition === 'owner removed' ? [coworker('bob', 'Bob')] : undefined,
+        disabled: condition === 'center disabled',
+    })
+    if (condition === 'quit') {
+        const drafts = await import('@/lib/desktop/draft-writes')
+        vi.spyOn(drafts, 'isDesktopQuitting').mockReturnValue(true)
+    }
+    onOpenChange.mockClear()
+    await act(async () => { select() })
+    expect(onOpenCoworkerSetup).not.toHaveBeenCalled()
+    expect(onOpenChange).not.toHaveBeenCalled()
+})
+
+test('Setup retained callbacks keep the current scope and use the latest callback', async () => {
+    const { root } = mount()
+    const previous = vi.fn(), current = vi.fn()
+    await render(root, { onOpenCoworkerSetup: previous })
+    await press('f', { metaKey: true })
+    await clickRow('Ada')
+    const oldAdaSetup = rendered.view!.sections[0]!.rows.find(row => row.id === 'tab-setup')!.onSelect
+    await act(async () => { field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })) })
+    await clickRow('Bob')
+    const bobSetup = rendered.view!.sections[0]!.rows.find(row => row.id === 'tab-setup')!.onSelect
+    await render(root, { onOpenCoworkerSetup: current })
+    await act(async () => { oldAdaSetup() })
+    expect(previous).not.toHaveBeenCalled()
+    expect(current).not.toHaveBeenCalled()
+    expect(dialog()).not.toBeNull()
+    await act(async () => { bobSetup() })
+    expect(previous).not.toHaveBeenCalled()
+    expect(current).toHaveBeenCalledExactlyOnceWith('bob')
+    expect(dialog()).toBeNull()
 })
 
 test.each(['callback removed', 'owner removed', 'center disabled'] as const)('retained coworker Open rows cannot navigate after %s', async condition => {

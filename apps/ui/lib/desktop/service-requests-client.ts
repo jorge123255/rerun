@@ -9,7 +9,10 @@ import {
     type DesktopServiceRequestMutation,
     type DesktopServiceRequestView,
 } from '@rerun/contracts'
-import { createServiceRequestRetryJournal, type ServiceRequestRetryStorage } from '@/components/desktop/service-requests/retry-journal'
+import { createDurableServiceRequestRetryJournal, createServiceRequestRetryJournal, type ServiceRequestRetryStorage } from '@/components/desktop/service-requests/retry-journal'
+
+import { DesktopServiceRequestRefused } from '@/components/desktop/service-requests/retry-journal'
+export { DesktopServiceRequestRefused }
 
 export type DesktopServiceRequestDetail = NonNullable<DesktopServiceRequestView['request']>
 export type DesktopServiceRequestScope = {
@@ -76,7 +79,7 @@ async function readJson(response: Response, signal: AbortSignal): Promise<unknow
     }
 }
 
-export function createDesktopServiceRequestsClient(scopeInput: DesktopServiceRequestScope, storage: ServiceRequestRetryStorage) {
+export function createDesktopServiceRequestsClient(scopeInput: DesktopServiceRequestScope, storage?: ServiceRequestRetryStorage) {
     const scope: DesktopServiceRequestScope = { ...scopeInput, source: desktopServiceRequestGuardSchema.parse(scopeInput.source) }
     const url = `/api/desktop/sessions/${encodeURIComponent(scope.sessionId)}/service-requests`
     const lifetime = new AbortController()
@@ -92,8 +95,9 @@ export function createDesktopServiceRequestsClient(scopeInput: DesktopServiceReq
         if (parsed.action === 'finish' && parsed.choices.some(choice => choice.choice === 'pending')) throw new Error('Choose a connection or Skip for every app before finishing.')
         return parsed
     }
-    const journal = createServiceRequestRetryJournal(storage,
-        `desktop-service-request-retry:v1:${JSON.stringify([scope.agentId, scope.sessionId, scope.serviceRequestId])}`, parseMutation)
+    const journal = storage
+        ? createServiceRequestRetryJournal(storage, `desktop-service-request-retry:v1:${JSON.stringify([scope.agentId, scope.sessionId, scope.serviceRequestId])}`, parseMutation)
+        : createDurableServiceRequestRetryJournal(`${url}/retry`, scope.serviceRequestId, parseMutation, lifetime.signal, readJson)
 
     function current(signal: AbortSignal) {
         signal.throwIfAborted()
@@ -114,7 +118,16 @@ export function createDesktopServiceRequestsClient(scopeInput: DesktopServiceReq
                 ...(payload && { body: JSON.stringify(payload) }),
             })
             current(combined)
-            if (!response.ok) throw new Error('App setup was refused or its acknowledgement is unknown. Refresh or retry the saved decisions.')
+            if (!response.ok) {
+                if (payload && response.status >= 400 && response.status < 500
+                    && response.headers.get('x-service-request-outcome') === 'refused'
+                    && response.headers.get('x-service-request-attempt-id') === payload.requestId
+                    && response.headers.get('x-service-request-id') === scope.serviceRequestId) {
+                    await journal.acknowledge(payload)
+                    throw new DesktopServiceRequestRefused('Those choices were refused before saving. Refresh the card and choose again.')
+                }
+                throw new Error('App setup was refused or its acknowledgement is unknown. Refresh or retry the saved decisions.')
+            }
             return { response, signal: combined, finish }
         } catch (error) {
             if (finish) { finishControllers.delete(finish); finish.abort() }
@@ -126,6 +139,8 @@ export function createDesktopServiceRequestsClient(scopeInput: DesktopServiceReq
     }
 
     async function read(signal?: AbortSignal): Promise<DesktopServiceRequestDetail | null> {
+        await journal.hydrate()
+        current(signal ?? lifetime.signal)
         const result = await transport(null, signal)
         const view = desktopServiceRequestViewSchema.parse(await readJson(result.response, result.signal))
         current(result.signal)
@@ -139,25 +154,28 @@ export function createDesktopServiceRequestsClient(scopeInput: DesktopServiceReq
         mutating = true
         try {
             current(signal ?? lifetime.signal)
-            journal.save(payload)
+            await journal.save(payload)
             const result = await transport(payload, signal)
             if (payload.action === 'progress') {
                 const saved = desktopServiceProgressResultSchema.parse(await readJson(result.response, result.signal))
                 current(result.signal)
                 if (saved.serviceRequestId !== payload.serviceRequestId || saved.currentIndex !== payload.currentIndex
                     || JSON.stringify(saved.choices) !== JSON.stringify(payload.choices)) throw new Error('App progress acknowledgement did not match. Retry the saved decisions.')
-                journal.acknowledge(payload)
+                await journal.acknowledge(payload)
                 return { action: 'progress' as const, saved }
             }
             const response = result.response
+            const canonicalRunId = response.headers.get('x-run-id')
             try {
                 if (response.status !== 200 || response.headers.get('x-service-request-id') !== scope.serviceRequestId
-                    || response.headers.get('x-session-id') !== scope.sessionId || response.headers.get('x-run-id') !== payload.requestId
+                    || response.headers.get('x-session-id') !== scope.sessionId || !canonicalRunId
+                    || !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(canonicalRunId)
+                    || canonicalRunId !== payload.requestId && response.headers.get('x-service-request-attempt-id') !== payload.requestId
                     || !response.headers.get('content-type')?.startsWith('text/event-stream')) {
                     throw new Error('Finish acknowledgement did not match. Retry the same Finish.')
                 }
                 current(result.signal)
-                journal.acknowledge(payload)
+                await journal.acknowledge(payload)
             } catch (error) {
                 result.finish?.abort()
                 await response.body?.cancel().catch(() => undefined)
@@ -166,7 +184,7 @@ export function createDesktopServiceRequestsClient(scopeInput: DesktopServiceReq
                 if (result.finish) finishControllers.delete(result.finish)
             }
             // An acknowledged stream transfers to root; replacing this card must not stop its follow-up run.
-            return { action: 'finish' as const, response, requestId: payload.requestId, signal: result.signal, cancelStream: () => result.finish?.abort() }
+            return { action: 'finish' as const, response, requestId: canonicalRunId!, signal: result.signal, cancelStream: () => result.finish?.abort() }
         } finally {
             mutating = false
         }

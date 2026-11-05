@@ -36,6 +36,8 @@ export type DesktopAgentCapturePlan = {
     displayName: string
     description: string
     sourceRevision: string
+    included?: { path: string; text: string }[]
+    blocked?: string | null
     files: AgentArchiveEntry[]
     skills: { slug: string; name: string; description: string }[]
     setup: DesktopTemplateSetup

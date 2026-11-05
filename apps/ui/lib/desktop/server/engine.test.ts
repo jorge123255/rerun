@@ -48,6 +48,9 @@ beforeEach(async () => {
         const body = await bodyOf(req)
         seen.push({ method: req.method!, url: req.url!, authorization: req.headers.authorization ?? null, body })
         if (connections(req, res, body)) return
+        if (req.method === 'GET' && req.url === '/agents/engine-agent-1/setup') return json(res, {
+            required: false, prompt: '', completedAt: null, sessionId: null, pending: false, revision: 'fixture-setup',
+        })
         if (req.method === 'POST' && req.url === '/agents') {
             creationStarted?.()
             await creationGate
@@ -164,7 +167,7 @@ describe('desktop engine workflows', () => {
         const db = await openDesktopDatabase(root)
         const agent = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'Researcher' })
         await expect(startDesktopChat(runtime, { agentId: agent.id, text: 'Hello' })).rejects.toMatchObject({ status: 400, message: 'Connect a provider and choose a default model in Settings.' })
-        expect(seen.map(req => req.url)).toEqual(['/connections'])
+        expect(seen.map(req => req.url)).toEqual(['/agents/engine-agent-1/setup', '/connections'])
     })
 
     it('uses a changed workspace default on an existing coworker and conversation', async () => {

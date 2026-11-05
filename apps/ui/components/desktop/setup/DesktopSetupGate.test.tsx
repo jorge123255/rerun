@@ -53,7 +53,7 @@ it('opens the server-claimed chat only after Start acknowledgment', async () => 
     await act(async () => { [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Install Ada'))!.click() })
     expect(local.start).toHaveBeenCalledOnce()
     expect(local.continueSetup).not.toHaveBeenCalled()
-    expect(onOpenSetupChat).toHaveBeenCalledWith({ agentId: 'owner', sessionId: 'claimed', action: 'start', prompt: 'Local prompt' })
+    expect(onOpenSetupChat).toHaveBeenCalledWith({ agentId: 'owner', sessionId: 'claimed', action: 'start' })
 })
 
 it('keeps the claimed chat closed when Start acknowledgment fails', async () => {

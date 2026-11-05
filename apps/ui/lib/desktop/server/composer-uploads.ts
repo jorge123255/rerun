@@ -1,5 +1,6 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
+import { desktopImageKindForName } from '../composer-image'
 import { desktopUploadAttemptSchema, type DesktopUploadAttempt } from '../composer-upload-attempts'
 import { DesktopHttpError } from './auth'
 import { assertCoworkerNotDeleting } from './coworker-delete'
@@ -43,7 +44,7 @@ export function reserveDesktopComposerUpload(db: Client, agentId: string, tabUid
             return { created: false, attempt }
         }
         const current = (await db.execute({ sql: 'SELECT name FROM desktop_composer_uploads WHERE agent_id=? AND tab_uid=?', args: [agentId, tabUid] })).rows
-        const isImage = (name: string) => /\.(png|jpe?g|webp)$/i.test(name)
+        const isImage = (name: string) => desktopImageKindForName(name) !== null
         const image = isImage(attempt.name)
         if (current.length >= 14 || current.filter(row => isImage(String(row.name)) === image).length >= (image ? 4 : 10)) throw new DesktopHttpError(409, 'Check and dismiss unresolved imports before adding more files.')
         signal?.throwIfAborted()

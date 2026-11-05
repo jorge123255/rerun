@@ -245,7 +245,7 @@ function DesktopOwnedFileCard({ agentId, card }: { agentId?: string; card: FileC
                         : await readDesktopCardImage(agentId, file.path, file.identity, controller.signal)
                     const { blob } = display
                     if (!active) return
-                    budget.add(blob.size, 'frames' in display ? display.frames : 0, 'pixels' in display ? display.pixels : 0)
+                    budget.add(blob.size, 'frames' in display && typeof display.frames === 'number' ? display.frames : 0, 'pixels' in display && typeof display.pixels === 'number' ? display.pixels : 0)
                     if (total + blob.size > CARD_MAX_IMAGE_TOTAL_BYTES) {
                         overBudget = true
                         setState(previous => previous.key === mediaKey

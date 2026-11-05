@@ -29,6 +29,9 @@ test('authenticated local history preserves two chats across service restart and
         server = createServer(async (req, res) => {
             const json = (value: unknown, status = 200) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(value))
             if (req.headers.authorization !== `Bearer ${engineKey}`) return json({ error: 'Unauthorized' }, 401)
+            if (req.method === 'GET' && /^\/agents\/(engine-alice|engine-bob)\/setup$/.test(req.url ?? '')) return json({
+                required: false, prompt: '', completedAt: null, sessionId: null, pending: false, revision: 'fixture-setup',
+            })
             if (req.method === 'GET' && req.url === '/connections') {
                 const model = DEFAULT_CONNECTION_MODELS.openai[0]
                 return json({ connections: [{ id: 'synthetic', name: 'Synthetic', provider: 'openai', models: [model], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '2026-01-01' }], default: { connectionId: 'synthetic', model } })

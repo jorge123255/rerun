@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING, desktopTemplateOperationSchema, desktopTemplateSkillFileSchema } from '@rerun/contracts'
+import { prepareTemplateIntent } from './intents'
 import { commitDesktopTemplateInstall } from './commit'
 import { initializeDesktopTemplates } from './schema'
 import { createDesktopTemplateServer, type DesktopTemplateEngineClient } from './server'
@@ -134,7 +135,7 @@ test('install returns coworker views only after setup and the placement commit, 
         },
     })
     const result = await server.handle(install)
-    if (!('status' in result) || result.status !== 'installed') throw new Error('expected installed')
+    if (!('coworkers' in result) || !('status' in result) || result.status !== 'installed') throw new Error('expected installed')
     expect(order).toEqual(['setup', 'commit'])
     expect(posts.map(call => call.path)).toEqual(['/desktop/templates/install'])
     expect(result.coworkers).toHaveLength(1)
@@ -177,7 +178,7 @@ test('an occupied spot is refused before install starts', async () => {
     await expect(server.handle(install)).rejects.toMatchObject({ status: 409 })
     expect(posts).toEqual([])
     const row = (await db.execute('SELECT status, payload FROM desktop_template_requests')).rows[0]
-    expect(String(row?.status)).toBe('accepted')
+    expect(String(row?.status)).toBe('refused')
     expect(JSON.parse(String(row?.payload)).engineStarted).toBe(false)
 })
 
@@ -220,4 +221,26 @@ test('placement commit is idempotent and keeps reserved creations and other tile
         coworkers: [{ ...input.coworkers[0], agentId: '12121212-1212-4121-8121-121212121212', engineAgentId: `i${'c'.repeat(31)}`, position: { col: 4, row: 4 } }],
     })).rejects.toMatchObject({ status: 409 })
     expect((await db.execute('SELECT id FROM desktop_agents')).rows).toHaveLength(1)
+})
+
+
+test('a saved install intent and Use again survive lost acknowledgements and a recreated client', async()=>{
+    const {engine}=engineFor()
+    const body={operation:{operation:'install',templateId,revision}}
+    const first=await prepareTemplateIntent(db,engine,body)
+    expect(first.operation).toBe('install')
+    const reopened=createClient({url:`file:${join(directory,'app.db')}`})
+    try {
+        expect(await prepareTemplateIntent(reopened,engine,body)).toEqual(first)
+        const server=createDesktopTemplateServer({db,engine,initializeImportedSetup:async()=>({revision:'setup'}),commitInstalled:input=>commitDesktopTemplateInstall(db,input)})
+        const installed=await server.handle(first)
+        if(!('coworkers' in installed))throw new Error('Expected coworkers')
+        await db.execute({sql:'UPDATE desktop_agents SET name=? WHERE id=?',args:['Renamed after import',installed.coworkers[0]!.id]})
+        expect(await server.handle(first)).toMatchObject({status:'installed',coworkers:[{name:'Renamed after import'}]})
+        const again={...body,againRequestId:crypto.randomUUID()}
+        const next=await prepareTemplateIntent(db,engine,again)
+        expect(await prepareTemplateIntent(reopened,engine,again)).toEqual(next)
+        expect(next).not.toEqual(first)
+        expect(await prepareTemplateIntent(reopened,engine,body)).toEqual(next)
+    } finally {reopened.close()}
 })

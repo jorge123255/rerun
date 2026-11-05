@@ -19,8 +19,9 @@ import {serviceIconProps} from '@/lib/services/icons'
 import type {ServiceSearchResult} from '@/lib/services/types'
 import {createDesktopServicesClient,type DesktopServicesClient,type DesktopInstalledService,type DesktopServiceDetails} from '@/lib/desktop/services-client'
 import {DesktopServiceConfigForm} from './DesktopServiceConfigForm'
-export function DesktopCoworkerServices({agentId}:{agentId:string}){return <Services key={agentId} agentId={agentId}/>}
-function Services({agentId}:{agentId:string}){
+type ServiceFocus = {agentId:string; focusSlug?:string; focusRequestKey?:string}
+export function DesktopCoworkerServices(props:ServiceFocus){return <Services key={props.agentId} {...props}/>}
+function Services({agentId,focusSlug,focusRequestKey}:ServiceFocus){
  const [client,setClient]=useState<DesktopServicesClient|null>(null),[installed,setInstalled]=useState<DesktopInstalledService[]>([]),[catalog,setCatalog]=useState<ServiceSearchResult[]>([]),[total,setTotal]=useState(0),[query,setQuery]=useState(''),[category,setCategory]=useState(''),[loading,setLoading]=useState(true),[error,setError]=useState(''),[detail,setDetail]=useState<DesktopServiceDetails|null>(null),[opening,setOpening]=useState(false),[busy,setBusy]=useState(false)
  const source=useRef<DesktopServicesClient|null>(null),loadEpoch=useRef(0),navigation=useRef(0),mutation=useRef(false),catalogSize=useRef(0)
  useEffect(()=>{const next=createDesktopServicesClient(agentId);source.current=next;setClient(next);return()=>{source.current=null;loadEpoch.current++;navigation.current++;next.dispose()}},[agentId])
@@ -41,6 +42,8 @@ function Services({agentId}:{agentId:string}){
   try{const next=await client.details(slug);if(source.current===client&&navigation.current===epoch)setDetail(next)}catch{if(source.current===client&&navigation.current===epoch)setError('Could not load this app’s details.')}
   finally{if(source.current===client&&navigation.current===epoch)setOpening(false)}
  }
+ const focused=useRef<string|null>(null)
+ useEffect(()=>{const key=JSON.stringify([agentId,focusSlug,focusRequestKey]);if(!client||!focusSlug||focused.current===key)return;focused.current=key;void open(focusSlug)},[client,agentId,focusSlug,focusRequestKey])
  async function changed(){if(!client||!detail)return;const epoch=navigation.current;const next=await client.details(detail.slug);if(source.current!==client||navigation.current!==epoch)return;setDetail(next);await load()}
  async function action(kind:'probe'|'disconnect'|'remove'){
   if(!client||!detail?.installation||mutation.current)return

@@ -183,7 +183,7 @@ test('reads a card audio file with its identity through the authenticated deskto
 test('reports missing, replaced or invalid audio without returning stale bytes', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: '“tone.wav” was renamed or replaced. It was left unchanged.' }, { status: 409 })))
     await expect(readDesktopCardAudio('agent-1', 'voice/tone.wav', '12:34')).rejects.toThrow(DesktopCardError)
-    await expect(readDesktopCardAudio('agent-1', 'voice/tone.wav', '12:34')).rejects.toThrow('no longer available')
+    await expect(readDesktopCardAudio('agent-1', 'voice/tone.wav', '12:34')).rejects.toThrow('renamed or replaced')
     vi.stubGlobal('fetch', vi.fn(async () => new Response('not audio', { headers: { 'content-type': 'text/plain' } })))
     await expect(readDesktopCardAudio('agent-1', 'voice/tone.wav', '12:34')).rejects.toThrow('can’t be played')
     await expect(readDesktopCardAudio('agent-1', 'voice/tone.wav', undefined)).rejects.toThrow('Send this audio')
@@ -202,7 +202,7 @@ test('reads a card video with its identity through the authenticated desktop vid
 test('reports missing, replaced or invalid video without returning stale bytes', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: '“clip.mp4” was renamed or replaced. It was left unchanged.' }, { status: 409 })))
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', '12:35')).rejects.toThrow(DesktopCardError)
-    await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', '12:35')).rejects.toThrow('no longer available')
+    await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', '12:35')).rejects.toThrow('renamed or replaced')
     vi.stubGlobal('fetch', vi.fn(async () => new Response('not a video', { headers: { 'content-type': 'text/plain' } })))
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', '12:35')).rejects.toThrow('can’t be played')
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', undefined)).rejects.toThrow('Send this video')

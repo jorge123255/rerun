@@ -50,14 +50,14 @@ export function DesktopCaptureStepPanel({ flow, step, direction, onStepChange, o
                 {flow.error && flow.workspaces.length === 0 && <Button type="button" variant="outline" disabled={flow.loadingSources} loading={flow.loadingSources} onClick={() => void flow.reloadSources()}>Retry sources</Button>}
                 <Button type="button" disabled={selectedCount === 0 || flow.busy} loading={flow.busy} onClick={async () => { if (await flow.inspect()) onStepChange('review') }}>
                     Inspect {selectedCount || ''} coworker{selectedCount === 1 ? '' : 's'}
-                </Button>}
+                </Button>
             </>}
             {step === 'review' && <>
                 {!flow.allApproved && <p className="text-xs text-amber-500 sm:mr-auto sm:self-center">Review each agent to enable the capture ({flow.approvedCount}/{flow.plans.length})</p>}
                 <Button type="button" variant="ghost" disabled={flow.locked || flow.busy} onClick={() => onStepChange('select')}>Back</Button>
                 <Button type="button" disabled={!flow.allApproved || flow.busy} loading={flow.busy} onClick={async () => { if (await flow.capture()) onStepChange('done') }}>
                     {flow.locked ? 'Retry capture' : 'Capture'}
-                </Button>}
+                </Button>
             </>}
             {step === 'done' && <Button type="button" onClick={onClose}>{doneLabel}</Button>}
         </DialogFooter>

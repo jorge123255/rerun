@@ -1,22 +1,17 @@
 import 'server-only'
-import type { DesktopTemplateCommit, InitializeImportedSetup } from '@rerun/contracts'
+import { request } from '@/lib/engine/client'
+import { openDesktopDatabase } from '../database'
+import { engineOf } from '../settings'
+import type { DesktopRuntime } from '../runtime'
+import { commitDesktopTemplateInstall } from './commit'
 
-// Root sets these once from desktop startup. Until then install stays recoverable
-// and does not report coworkers as installed.
-let commitInstalled: DesktopTemplateCommit | null = null
-let initializeImportedSetup: InitializeImportedSetup | null = null
-
-export function setDesktopTemplateAuthority(next: {
-    commitInstalled: DesktopTemplateCommit
-    initializeImportedSetup: InitializeImportedSetup
-}): void {
-    commitInstalled = next.commitInstalled
-    initializeImportedSetup = next.initializeImportedSetup
-}
-
-export function desktopTemplateAuthority(): {
-    commitInstalled: DesktopTemplateCommit | null
-    initializeImportedSetup: InitializeImportedSetup | null
-} {
-    return { commitInstalled, initializeImportedSetup }
+export function desktopTemplateAuthority(runtime: DesktopRuntime) {
+    return {
+        commitInstalled: async (input: Parameters<typeof commitDesktopTemplateInstall>[1]) => commitDesktopTemplateInstall(await openDesktopDatabase(runtime.dataRoot), input),
+        initializeImportedSetup: async (input: { agentId: string; engineAgentId: string; importReceiptId: string; prompt: string; required: boolean; signal?: AbortSignal }) => {
+            const { engineAgentId, signal, ...body } = input
+            return request(engineOf(runtime), `/agents/${encodeURIComponent(engineAgentId)}/setup/import`,
+                { method: 'POST', body: JSON.stringify(body), signal }, value => value as { revision: string })
+        },
+    }
 }

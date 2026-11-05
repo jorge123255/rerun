@@ -18,6 +18,19 @@ CREATE TABLE IF NOT EXISTS desktop_template_requests (
 );
 `
 
+const initialized = new WeakMap<object, Promise<void>>()
 export async function initializeDesktopTemplates(db: Pick<Client, 'executeMultiple'>): Promise<void> {
-    await db.executeMultiple(DESKTOP_TEMPLATE_SCHEMA_SQL)
+    let pending = initialized.get(db)
+    if (!pending) {
+        pending = db.executeMultiple(DESKTOP_TEMPLATE_SCHEMA_SQL + `
+            CREATE TABLE IF NOT EXISTS desktop_template_rotations (
+                request_id TEXT PRIMARY KEY, key TEXT NOT NULL, operation TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS desktop_template_intents (
+                key TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, operation TEXT NOT NULL
+            );
+        `)
+        initialized.set(db, pending)
+    }
+    await pending
 }

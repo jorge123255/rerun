@@ -43,6 +43,9 @@ beforeEach(async () => {
         for await (const chunk of req) text += chunk
         const body = text ? JSON.parse(text) : null
         if (connections(req, res, body)) return
+        if (req.method === 'GET' && /^\/agents\/engine-agent-[12]\/setup$/.test(req.url ?? '')) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+            required: false, prompt: '', completedAt: null, sessionId: null, pending: false, revision: 'fixture-setup',
+        }))
         const memoryPath = req.url?.match(/^\/agents\/(engine-agent-[12])\/memories(?:\/([a-zA-Z0-9_-]+))?$/)
         if (memoryPath) {
             const owner = memoryPath[1]!

@@ -127,8 +127,8 @@ async function encodeGifToPng(bytes: Uint8Array, width: number, height: number, 
         return new Uint8Array(output)
     } catch (error) {
         if (signal?.aborted) throw aborted()
-        if (error instanceof DesktopHttpError) throw error
         if (deadline.signal.aborted) throw new DesktopHttpError(415, 'This image took too long to convert. Choose a smaller image.')
+        if (error instanceof DesktopHttpError) throw error
         throw new DesktopHttpError(415, 'This image is damaged and can’t be attached.')
     } finally { clearTimeout(timer) }
 }

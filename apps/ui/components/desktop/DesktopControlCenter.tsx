@@ -6,7 +6,7 @@ import type { ControlRow, ControlSection } from '@/components/control-center/typ
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
 import { BrainIcon, BellIcon, FolderIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, KeyboardIcon, LayoutGridIcon, LockKeyholeIcon, MessageCircle, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
 import { parseQuery, searchItems } from '@/lib/control-center/search'
-import { buildDesktopControlCommands, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
+import { buildDesktopControlCommands, buildDesktopControlCoworkerTabs, useDesktopConversationSearch, useDesktopControlCenterKeys, type DesktopControlCommand, type DesktopControlCommandId } from '@/lib/desktop/control-center'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import { latestBoardAttention, type BoardActivitySnapshot } from '@/lib/desktop/board-activity'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
@@ -14,7 +14,7 @@ import { useDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 import { useDesktopControlCenterChats } from '@/lib/desktop/use-control-center-chats'
 import type { DesktopOpenChat } from '@/lib/desktop/control-center-chats'
-import { DESKTOP_COWORKER_PANEL_TABS, type DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
+import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopAgentView } from './DesktopApp'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import { firstDesktopSpacePosition } from './desktop-space-layout'
@@ -64,6 +64,7 @@ export type DesktopControlCenterProps = {
     onOpenConversation: (hit: DesktopConversationHit) => void
     onOpenCoworker?: (agentId: string) => void
     onOpenCoworkerPanel?: (agentId: string, panel: DesktopCoworkerPanel) => void
+    onOpenCoworkerSetup?: (agentId: string) => void
     onOpenChat?: (target: DesktopOpenChat) => void
     onAddCoworker: () => void
     onModelSettings: () => void
@@ -77,7 +78,7 @@ export type DesktopControlCenterProps = {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -127,8 +128,8 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
     const [attentionNotice, setAttentionNotice] = useState<{ scope: string; text: string } | null>(null)
     const selectingAttention = useRef<{ scope: string } | null>(null)
     const selectingChat = useRef<{ scope: string } | null>(null)
-    const latest = useRef({ open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
-    latest.current = { open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
+    const latest = useRef({ open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme })
+    latest.current = { open, disabled, selectionScope, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, activity, onRefreshActivity, search, chats, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme }
     const available = () => latest.current.open && !latest.current.disabled && !isDesktopQuitting() && latest.current.selectionScope === selectionScope
     const sameBoard = () => !!board && latest.current.board?.revision === board.revision
 
@@ -331,15 +332,23 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
         },
     })
 
-    const coworkerPanelSection = (coworkerId: string): ControlSection[] => onOpenCoworkerPanel ? [{
+    const coworkerPanelSection = (coworkerId: string): ControlSection[] => onOpenCoworkerPanel || onOpenCoworkerSetup ? [{
         id: 'coworker-open', heading: 'Open',
-        rows: searchItems(DESKTOP_COWORKER_PANEL_TABS.filter(tab => tab.id !== 'actions' ||
-            !!onRefreshActivity && activity?.statuses[coworkerId] === 'waiting_human' && !!latestBoardAttention(activity.attention, coworkerId)), text).map(tab => ({
+        rows: searchItems(buildDesktopControlCoworkerTabs({ panels: !!onOpenCoworkerPanel, setup: !!onOpenCoworkerSetup,
+            actions: !!onRefreshActivity && activity?.statuses[coworkerId] === 'waiting_human' && !!latestBoardAttention(activity.attention, coworkerId) }), text).map(tab => ({
             id: `tab-${tab.id}`, label: tab.label, detail: tab.description,
             leading: { kind: 'icon', icon: tab.icon },
             onSelect: () => {
                 const current = latest.current
-                if (!available() || !current.onOpenCoworkerPanel || !current.coworkers.some(owner => owner.id === coworkerId)) return
+                if (!available() || !current.coworkers.some(owner => owner.id === coworkerId)) return
+                if (tab.id === 'setup') {
+                    const action = current.onOpenCoworkerSetup
+                    if (!action) return
+                    close()
+                    action(coworkerId)
+                    return
+                }
+                if (!current.onOpenCoworkerPanel) return
                 if (tab.id === 'actions') {
                     if (!current.onRefreshActivity || selectingAttention.current?.scope === selectionScope) return
                     const attempt = { scope: selectionScope }

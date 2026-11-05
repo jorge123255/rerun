@@ -164,7 +164,9 @@ function askingNote(cfg: LoadedAgent['config']['tools']): string {
     const lines: string[] = []
     if (cfg.askUser) lines.push('When you cannot proceed without input from the user — a scoping question, a missing detail, a choice between a few options — call ask_user with all the questions you need at once. Give a question short answer options when a set of concrete choices helps, or leave its options out entirely to ask an open, free-text question the user answers by typing. Options come at least two at a time and each one is a possible answer: a question whose answer is a value only the user knows (a URL, a name, a number) takes none. Aim for six options or fewer, and only go beyond that when the set is genuinely enumerated, like every channel or every connected account. Options are exclusive by default; when the answers genuinely add up rather than compete, set multiple: true on that question so the user can tick every one that applies. Prefer it over notify_user or ending your turn silently whenever you actually need an answer. The card never carries your explanation: what you found, why you ask, and in full what the question is about go in your message, and a card sent without one leaves the user with a bare card and a question about a summary they never saw.')
     if (cfg.requestApproval) lines.push('Before one or more consequential or irreversible actions, call request_approval and end your turn. Group every approval you genuinely need right now into its approvals array so the user can decide them together, but never add filler, split one action artificially, or include speculative actions that are not ready to run. Perform only actions the user approves. When the user has told you to go ahead without asking for a kind of action (join them all, send them, don\'t ask me), that standing go-ahead approves every action of that kind within what they described: do them without a card, and ask again only for an action outside it or riskier than what they allowed. If the user declines an action, you must NOT perform it and must NOT attempt any workaround to achieve the same result.')
-    if (cfg.suggestService) lines.push('To connect a catalog service that needs credentials or a sign-in, call suggest_service with the service slug(s) when the next step needs it, after you have shown what you prepared, and end your turn — the user gets a setup card to enter their keys or sign in. Never ask the user to paste secrets into the chat, and never call rerun_hub_service_install for a service that still needs credentials.')
+    if (cfg.suggestService) lines.push(desktopApp()
+        ? 'When the next step needs a catalog app, call suggest_service with one to twenty unique exact catalog slugs and short reasons, after showing what you prepared, and end your turn. The user configures the requested apps through their existing Apps panel and explicitly finishes the setup card. Opening, closing or connecting Apps is not their answer. Suggesting an app does not enable its tools: using connected apps needs the separate Apps permission. Never ask for secrets in chat or files, never invent a connected outcome, and never try to enable an app or permission yourself. Continue only from the saved setup result; when an app was skipped, use the available tools to help without it.'
+        : 'To connect a catalog service that needs credentials or a sign-in, call suggest_service with the service slug(s) when the next step needs it, after you have shown what you prepared, and end your turn — the user gets a setup card to enter their keys or sign in. Never ask the user to paste secrets into the chat, and never call rerun_hub_service_install for a service that still needs credentials.')
     if (cfg.requestSecret) lines.push('When a setup needs an API key or token that no catalog app covers (an MCP server you register yourself, a script that needs an authenticated call), call request_secret with the variable names you need and end your turn. The user fills a masked form and the values are written into your coworker variables without ever entering the conversation; you get back only the names of the variables that were filled, and you then reference them as ${KEY} in the MCP server config or command. Never ask the user to type or paste a secret in the chat, and never repeat a secret value even if one reaches you anyway.')
     if (cfg.askUser || cfg.requestApproval || cfg.suggestService || cfg.requestSecret) lines.push('These blocks render in a narrow card, so keep the text inside them short: one short line per question, action or label, and options of a few words. Anything more to explain goes in your message, never inside the card. Each of these cards exists only as a tool call: never write one as a tag in your message, since a tag like <ask_user> shows to the user as raw text and no card appears. Call at most one of these tools in a turn (a single ask_user may carry several questions, a single request_approval may carry several approvals, a single suggest_service may carry several apps, and a single request_secret may carry several credentials), and your turn ends on it, in the order set in turn_order. The user answers in the chat and you continue from their reply.')
     return lines.join(' ')
@@ -213,7 +215,7 @@ function turnClosers(agent: LoadedAgent, takeover: boolean): TurnClosers {
     const offered: Record<HitlToolName, boolean> = {
         ask_user: tools.askUser,
         request_approval: tools.requestApproval,
-        suggest_service: tools.suggestService,
+        suggest_service: desktopApp() ? agent.config.enabled && hasDesktopToolGrant(agent.config, 'suggestService') : tools.suggestService,
         request_secret: tools.requestSecret,
         request_mcp_sign_in: selfImprovement.enabled,
         request_takeover: takeover,
@@ -272,6 +274,7 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
     if (agent.config.kind === 'foreman') return await buildForemanPrompt(agent, provider, order)
     const cfg = agent.config.tools
     const desktop = desktopApp()
+    const askingConfig = desktop ? { ...cfg, suggestService: agent.config.enabled && hasDesktopToolGrant(agent.config, 'suggestService') } : cfg
     const skillsOn = desktop ? hasDesktopToolGrant(agent.config, 'skills') : cfg.skills
     const dbOn = desktop ? hasDesktopToolGrant(agent.config, 'db') : cfg.db
     const sharedDbOn = desktop ? hasDesktopToolGrant(agent.config, 'sharedDb') : cfg.sharedDb
@@ -294,7 +297,7 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
     const computer = offersComputer(agent.config)
     const takeover = offersTakeover(agent.config)
     const conversational = !agent.config.ephemeral
-    const asks = cfg.askUser || cfg.requestApproval || cfg.suggestService || cfg.requestSecret
+    const asks = askingConfig.askUser || askingConfig.requestApproval || askingConfig.suggestService || askingConfig.requestSecret
     const unattended = trigger.source !== 'chat' && (cfg.askUser || cfg.requestApproval)
 
     // Who it is, where it runs, how it works, how it talks to the user, then this session.
@@ -311,7 +314,7 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         section('reporting_failures', FAILURE_NOTE),
         conversational ? section('what_the_user_sees', `${WHAT_THE_USER_SEES_NOTE} ${showBeforeAskingNote(showCards)}`) : '',
         showCards ? section('chat_cards', desktop ? [hasDesktopToolGrant(agent.config, 'cardFile') ? desktopCardsNote : '', hasDesktopToolGrant(agent.config, 'cardTable') ? DESKTOP_CARD_TABLE_INSTRUCTION : ''].filter(Boolean).join('\n') : cardsNote(cfg.sharedDb, cfg.db || cfg.sharedDb)) : '',
-        asks ? section('asking_the_user', askingNote(cfg)) : '',
+        asks ? section('asking_the_user', askingNote(askingConfig)) : '',
         offersQuickReplies(agent.config) ? section('quick_replies', QUICK_REPLIES_NOTE) : '',
         conversational ? turnOrderSection(order, turnClosers(agent, takeover)) : '',
         conversational ? section('language', LANGUAGE_NOTE) : '',

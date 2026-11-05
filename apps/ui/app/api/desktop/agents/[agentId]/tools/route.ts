@@ -83,7 +83,7 @@ export function PATCH(request: Request, { params }: Context) {
         const agentId = (await params).agentId
         const write = () => toolsFor(runtime, agentId, patch.data)
         const transitionsLocalAuthority = patch.data.group === 'rerun'
-            ? ['mcp', 'privateFileWrite', 'localMcpStdio', 'nativeWriteback'].includes(patch.data.id)
+            ? ['mcp', 'privateFileWrite', 'localMcpStdio', 'nativeWriteback', 'services'].includes(patch.data.id)
             : ['workspaceRead', 'workspaceWrite'].includes(patch.data.id)
         return transitionsLocalAuthority ? withDesktopMcpOwnerTransition(runtime, agentId, write) : write()
     })

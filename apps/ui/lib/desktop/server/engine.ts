@@ -1,3 +1,4 @@
+import { assertDesktopSetupChatAllowed } from './setup/service'
 import type { DesktopTakeoverGuard } from '@rerun/contracts'
 import 'server-only'
 import { desktopChatTitle } from '../chat-content'
@@ -117,6 +118,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (!agent.enabled) throw new DesktopHttpError(403, disabledCoworkerMessage)
     const existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
+    await assertDesktopSetupChatAllowed(runtime, input.agentId, input.sessionId)
     const regenerate = 'regenerateMessageId' in input
     const attachmentPaths = regenerate ? [] : desktopAttachmentSelectionsOf(input)
     const attachmentFields = desktopAttachmentFieldsOf(attachmentPaths)

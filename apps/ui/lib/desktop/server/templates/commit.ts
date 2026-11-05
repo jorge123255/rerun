@@ -16,7 +16,7 @@ async function occupied(reader: Reader, spaceId: string, requestId: string): Pro
     const anchors = [...placements.rows, ...duplicates.rows, ...creations.rows].map(row => ({
         agentId: String(row.agent_id), spaceId: String(row.space_id), col: Number(row.col), row: Number(row.row),
     }))
-    const pending = await reader.execute({ sql: `SELECT request_id, payload FROM desktop_template_requests WHERE operation = 'install' AND status != 'installed' AND request_id != ?`, args: [requestId] })
+    const pending = await reader.execute({ sql: `SELECT request_id, payload FROM desktop_template_requests WHERE operation = 'install' AND status NOT IN ('installed','refused') AND request_id != ?`, args: [requestId] })
     for (const row of pending.rows) {
         const payload = JSON.parse(String(row.payload)) as { spaceId?: string; coworkers?: { agentId: string; position: { col: number; row: number } }[] }
         if (payload.spaceId !== spaceId) continue

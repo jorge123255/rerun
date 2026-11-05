@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act, useEffect, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -103,6 +104,7 @@ beforeEach(() => {
             const body = JSON.parse(String(init?.body)); normalPosts.push(body)
             return acknowledgement(body.sessionId, body.requestId ?? 'normal-run', 'x-unused', 'unused')
         }
+        const background = desktopBackgroundRead(input, init); if (background) return background
         throw new Error('Unexpected request: ' + url.pathname)
     }))
     chat.sendMessage.mockImplementation(async (message: { text: string }, options: { body: object }) => {

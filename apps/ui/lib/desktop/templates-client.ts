@@ -1,149 +1,102 @@
 'use client'
 
-import type {
-    DesktopCapturePlanSet,
-    DesktopCaptureSelection,
-    DesktopCaptureWorkspace,
-    DesktopTemplateDetail,
-    DesktopTemplateDraft,
-    DesktopTemplateIdentity,
-    DesktopTemplateInstallIntent,
-    DesktopTemplateInstallReceipt,
-    DesktopTemplateSummary,
-} from '@/components/desktop/templates/types'
+import { desktopTemplateCaptureResultSchema, desktopTemplateCreateDraftResultSchema, desktopTemplateDetailSchema, desktopTemplateInstallResultSchema, desktopTemplateListSchema, desktopTemplateOperationSchema, desktopTemplatePlanSchema, desktopTemplateReceiptSchema, desktopTemplateSourcesResultSchema, templateAgentSchema, type DesktopTemplatePlan } from '@rerun/contracts'
+import type { DesktopCapturePlanSet, DesktopCaptureSelection, DesktopCaptureWorkspace, DesktopTemplateDetail, DesktopTemplateDraft, DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt, DesktopTemplateSummary } from '@/components/desktop/templates/types'
 
-const UNKNOWN_ACKNOWLEDGEMENT = 'Local template acknowledgement is unknown. Retry the same attempt.'
-
+const UNKNOWN = 'Local template acknowledgement is unknown. Retry the same attempt.'
 export class DesktopTemplateRequestError extends Error {
-    constructor(message: string, readonly definite: boolean) {
-        super(message)
-        this.name = 'DesktopTemplateRequestError'
-    }
+    constructor(message: string, readonly definite: boolean) { super(message); this.name = 'DesktopTemplateRequestError' }
 }
-
-type MutationBody = Record<string, unknown> & { action: string; requestId?: string }
 
 export function createDesktopTemplatesClient() {
     const base = '/api/desktop/templates'
     const controllers = new Set<AbortController>()
-    const draftRequests = new Map<string, string>()
-    const planRequests = new Map<string, string>()
-    const captureRequests = new Map<string, string>()
-    const installRequests = new Map<string, string>()
+    const againRequests = new Map<string,string>()
+    const plans = new Map<string, DesktopTemplatePlan>()
+    const installs = new Map<string, DesktopTemplateInstallIntent>()
     let closed = false
-
-    async function request<T>(url: string, body?: MutationBody): Promise<T> {
+    async function request(body: Record<string, unknown>, intent = false): Promise<unknown> {
         if (closed) throw new DesktopTemplateRequestError('Template panel was closed. Reopen it to reconcile the attempt.', false)
         const controller = new AbortController()
         controllers.add(controller)
         try {
             const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(45_000)])
-            const response = await fetch(url, {
-                method: body ? 'POST' : 'GET',
-                cache: 'no-store',
-                signal,
-                headers: body ? { 'Content-Type': 'application/json' } : {},
-                body: body ? JSON.stringify(body) : undefined,
-            })
-            const data = await response.json() as Record<string, unknown>
+            const response = await fetch(`${base}${intent ? '/intent' : ''}`, { method: 'POST', cache: 'no-store', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+            const data = await response.json()
             signal.throwIfAborted()
-            if (closed) throw new DesktopTemplateRequestError('Template panel was closed. Reopen it to reconcile the attempt.', false)
-            if (!response.ok) {
-                const message = typeof data.error === 'string' ? data.error : 'The local template request was refused.'
-                throw new DesktopTemplateRequestError(message, data.definite === true)
-            }
-            return data as T
+            if (closed) throw new Error('Panel closed')
+            if (!response.ok) throw new DesktopTemplateRequestError(typeof data.error === 'string' ? data.error : 'Template request refused', [400, 404, 409, 413].includes(response.status))
+            return data
         } catch (error) {
             if (error instanceof DesktopTemplateRequestError) throw error
-            throw new DesktopTemplateRequestError(UNKNOWN_ACKNOWLEDGEMENT, false)
-        } finally {
-            controllers.delete(controller)
+            throw new DesktopTemplateRequestError(UNKNOWN, false)
+        } finally { controllers.delete(controller) }
+    }
+    async function mutate(body: Record<string, unknown>, againRequestId?: string) {
+        const operation = desktopTemplateOperationSchema.parse(await request({ operation: body, ...(againRequestId ? { againRequestId } : {}) }, true))
+        if (operation.operation === 'install') installs.set(`${operation.templateId}:${operation.revision}`, { templateId: operation.templateId, revision: operation.revision, requestId: operation.requestId })
+        return request(operation)
+    }
+    function detailOf(raw: unknown): DesktopTemplateDetail {
+        const detail = desktopTemplateDetailSchema.parse(raw)
+        return {
+            templateId: detail.templateId, revision: detail.revision, title: detail.title, tagline: '', category: 'other', updatedAt: detail.capturedAt,
+            description: detail.proseWarning, capturedAt: detail.capturedAt,
+            agents: detail.coworkers.map(coworker => templateAgentSchema.parse({ key: coworker.agentKey, name: coworker.name, description: coworker.description, setupRequired: coworker.setup.required,
+                skills: [...new Set(coworker.files.filter(file => file.kind === 'skill').map(file => file.path.split('/')[1]))].map(name => ({ name })) })),
+            exclusions: detail.coworkers.flatMap(coworker => coworker.exclusions), unsupportedEntries: [],
         }
     }
-
-    function identityUrl(identity: DesktopTemplateIdentity) {
-        return `${base}/${encodeURIComponent(identity.templateId)}`
-    }
-
-    async function mutate<T>(requests: Map<string, string>, key: string, url: string, body: Omit<MutationBody, 'requestId'>, requestId?: string): Promise<T> {
-        const id = requestId ?? requests.get(key) ?? crypto.randomUUID()
-        requests.set(key, id)
-        try {
-            const result = await request<T>(url, { ...body, requestId: id })
-            requests.delete(key)
-            return result
-        } catch (error) {
-            if (error instanceof DesktopTemplateRequestError && error.definite) requests.delete(key)
-            throw error
-        }
-    }
-
     return {
-        createDraft(title: string): Promise<DesktopTemplateDraft> {
-            const normalized = title.trim()
-            return mutate(draftRequests, normalized, base, { action: 'create-draft', title: normalized })
+        async createDraft(title: string): Promise<DesktopTemplateDraft> {
+            return desktopTemplateCreateDraftResultSchema.parse(await mutate({ operation: 'create-draft', title: title.trim() }))
         },
-
         async sources(): Promise<DesktopCaptureWorkspace[]> {
-            const result = await request<{ workspaces: DesktopCaptureWorkspace[] }>(`${base}?view=sources`)
-            return result.workspaces
+            return desktopTemplateSourcesResultSchema.parse(await request({ operation: 'sources' })).spaces.map(space => ({ id: space.id ?? 'unplaced', name: space.name ?? 'Outside Boxes', agents: space.agents.map(agent => ({ ...agent, handle: agent.name })) }))
         },
-
-        plan(draft: DesktopTemplateDraft, input: { workspaceId: string; agentIds: string[] }): Promise<DesktopCapturePlanSet> {
-            const agentIds = [...input.agentIds].sort()
-            const key = JSON.stringify([draft.templateId, draft.revision, input.workspaceId, agentIds])
-            return mutate(planRequests, key, identityUrl(draft), {
-                action: 'plan',
-                revision: draft.revision,
-                workspaceId: input.workspaceId,
-                agentIds,
+        async plan(draft: DesktopTemplateDraft, input: { workspaceId: string; agentIds: string[] }): Promise<DesktopCapturePlanSet> {
+            const result = desktopTemplatePlanSchema.parse(await mutate({ operation: 'plan', templateId: draft.templateId, revision: draft.revision, agentIds: [...input.agentIds].sort() }))
+            plans.set(result.planRevision, result)
+            return { planId: result.planRevision, revision: result.planRevision, plans: result.coworkers.map(coworker => ({
+                agentRowId: coworker.agentId, name: coworker.name, displayName: coworker.name, description: coworker.description, sourceRevision: coworker.sourceRevision,
+                included: coworker.included, blocked: coworker.blocked,
+                files: [...coworker.selectableFiles, ...coworker.selectableSkills.flatMap(skill => skill.files)].map(file => ({ ...file, defaultExcluded: false, note: '' })),
+                skills: coworker.selectableSkills, setup: coworker.setup, exclusions: coworker.exclusions, unsupportedEntries: [],
+            })) }
+        },
+        async capture(draft: DesktopTemplateDraft, plan: DesktopCapturePlanSet, selections: DesktopCaptureSelection[]) {
+            const canonical = plans.get(plan.planId)
+            if (!canonical) throw new DesktopTemplateRequestError('Review the current capture plan before capturing.', true)
+            const selected = selections.map(selection => {
+                const coworker = canonical.coworkers.find(item => item.agentId === selection.agentRowId)
+                if (!coworker) throw new DesktopTemplateRequestError('The selected coworker is not in this plan.', true)
+                return { agentId: selection.agentRowId, files: coworker.selectableFiles.filter(file => !selection.exclude.includes(file.path)).map(file => file.path),
+                    skills: coworker.selectableSkills.filter(skill => skill.files.every(file => !selection.exclude.includes(file.path))).map(skill => skill.slug), ...(selection.setup ? { setup: selection.setup } : {}) }
             })
+            const captured = desktopTemplateCaptureResultSchema.parse(await mutate({ operation: 'capture', templateId: draft.templateId, revision: draft.revision, planRevision: canonical.planRevision, selections: selected }))
+            return { revision: captured.revision, captured: selected.length, warnings: [] as string[] }
         },
-
-        capture(draft: DesktopTemplateDraft, plan: DesktopCapturePlanSet, selections: DesktopCaptureSelection[]): Promise<{ revision: string; captured: number; warnings: string[] }> {
-            const key = JSON.stringify([draft.templateId, draft.revision, plan.planId, plan.revision, selections])
-            return mutate(captureRequests, key, identityUrl(draft), {
-                action: 'capture',
-                revision: draft.revision,
-                planId: plan.planId,
-                planRevision: plan.revision,
-                selections,
-            })
-        },
-
         async list(): Promise<DesktopTemplateSummary[]> {
-            const result = await request<{ templates: DesktopTemplateSummary[] }>(`${base}?view=list`)
-            return result.templates
+            const result = desktopTemplateListSchema.parse(await request({ operation: 'list' }))
+            return Promise.all(result.templates.filter(template => template.status === 'captured' && template.revision).map(template => this.detail({ templateId: template.templateId, revision: template.revision! })))
         },
-
-        async detail(template: DesktopTemplateIdentity): Promise<DesktopTemplateDetail> {
-            const query = new URLSearchParams({ view: 'detail', revision: template.revision })
-            const result = await request<{ template: DesktopTemplateDetail }>(`${identityUrl(template)}?${query}`)
-            return result.template
+        async detail(template: DesktopTemplateIdentity): Promise<DesktopTemplateDetail> { return detailOf(await request({ operation: 'detail', ...template })) },
+        async install(template: DesktopTemplateIdentity, options: { again?: boolean; requestId?: string } = {}): Promise<DesktopTemplateInstallReceipt> {
+            const key = `${template.templateId}:${template.revision}`
+            if(options.again && !againRequests.has(key))againRequests.set(key,crypto.randomUUID())
+            let raw:unknown
+            try {raw=await mutate({ operation: 'install', templateId: template.templateId, revision: template.revision }, againRequests.get(key))}
+            catch(error){if(error instanceof DesktopTemplateRequestError && error.definite){againRequests.delete(key);installs.delete(key)}throw error}
+            const result = desktopTemplateInstallResultSchema.parse(raw)
+            if (result.status !== 'installed') throw new DesktopTemplateRequestError(result.reason, false)
+            if (result.templateId !== template.templateId || result.revision !== template.revision) throw new DesktopTemplateRequestError(UNKNOWN, false)
+            againRequests.delete(key)
+            installs.delete(key)
+            return { receiptId: result.receiptId, coworkers: result.coworkers }
         },
-
-        install(template: DesktopTemplateIdentity, options: { again?: boolean; requestId?: string } = {}): Promise<DesktopTemplateInstallReceipt> {
-            const key = JSON.stringify([template.templateId, template.revision])
-            if (options.again) installRequests.delete(key)
-            return mutate(installRequests, key, identityUrl(template), { action: 'install', revision: template.revision }, options.requestId)
-        },
-
-        pendingInstall(template: DesktopTemplateIdentity): DesktopTemplateInstallIntent | null {
-            const requestId = installRequests.get(JSON.stringify([template.templateId, template.revision]))
-            return requestId ? { ...template, requestId } : null
-        },
-
-        receipt(intent: DesktopTemplateInstallIntent): Promise<DesktopTemplateInstallReceipt | null> {
-            const query = new URLSearchParams({ view: 'receipt', revision: intent.revision, requestId: intent.requestId })
-            return request<DesktopTemplateInstallReceipt | null>(`${identityUrl(intent)}?${query}`)
-        },
-
-        dispose() {
-            closed = true
-            for (const controller of controllers) controller.abort()
-            controllers.clear()
-        },
+        pendingInstall(template: DesktopTemplateIdentity): DesktopTemplateInstallIntent | null { return installs.get(`${template.templateId}:${template.revision}`) ?? null },
+        async receipt(intent: DesktopTemplateInstallIntent) { return desktopTemplateReceiptSchema.parse(await request({ operation: 'receipt', requestId: intent.requestId })) },
+        dispose() { closed = true; for (const controller of controllers) controller.abort(); controllers.clear() },
     }
 }
-
 export type DesktopTemplatesClient = ReturnType<typeof createDesktopTemplatesClient>

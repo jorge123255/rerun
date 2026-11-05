@@ -5,6 +5,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { CARD_MAX_IMAGE_BYTES, type FileCard, type FileCardEntry } from '@rerun/contracts'
 import { DesktopFileCard } from './DesktopFileCard'
 import { DesktopFileLightbox } from './DesktopFileLightbox'
+import { composerTestPng } from '@/lib/desktop/server/composer-image.test-fixtures'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -24,7 +25,24 @@ const cardOf = (files: FileCardEntry[]): FileCard => ({ kind: 'file', files })
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')
 const flush = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 const videoResponse = (size = 8) => new Response(new Uint8Array(size), { headers: { 'content-type': 'video/mp4' } })
-const imageResponse = (size = 4) => new Response(new Uint8Array(size), { headers: { 'content-type': 'image/png' } })
+const imageResponse = (bytes = composerTestPng()) => new Response(new Uint8Array(bytes).buffer, { headers: { 'content-type': 'image/png' } })
+
+/** A decodable PNG padded with a valid ancillary chunk, rather than corrupt zero bytes. */
+function pngAtSize(size: number): Uint8Array {
+    const png = composerTestPng()
+    const payloadSize = size - png.byteLength - 12
+    if (payloadSize < 0) throw new Error('The padded PNG size must include its chunk header.')
+    const chunk = Buffer.alloc(payloadSize + 12)
+    chunk.writeUInt32BE(payloadSize)
+    chunk.write('paDd', 4, 'ascii')
+    let crc = 0xffffffff
+    for (const byte of chunk.subarray(4, -4)) {
+        crc ^= byte
+        for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+    }
+    chunk.writeUInt32BE((crc ^ 0xffffffff) >>> 0, chunk.length - 4)
+    return new Uint8Array(Buffer.concat([png.subarray(0, -12), chunk, png.subarray(-12)]))
+}
 
 function mount() {
     const root = createRoot(document.body.appendChild(document.createElement('div')))
@@ -330,7 +348,9 @@ test('the video tile stops and detaches its element when the card is replaced', 
 
 test('combined image and video previews make no fourth fetch once actual bytes reach 24 MB', async () => {
     const urls = objectUrls()
-    const requests = mediaReads(request => request.kind === 'video' ? videoResponse(CARD_MAX_IMAGE_BYTES) : imageResponse(CARD_MAX_IMAGE_BYTES))
+    const fullImage = pngAtSize(CARD_MAX_IMAGE_BYTES)
+    expect(fullImage.byteLength).toBe(CARD_MAX_IMAGE_BYTES)
+    const requests = mediaReads(request => request.kind === 'video' ? videoResponse(CARD_MAX_IMAGE_BYTES) : imageResponse(fullImage))
     const root = mount()
     await act(async () => root.render(<DesktopFileCard agentId="budget-owner" card={cardOf([
         textFile(), image(1), image(2), image(3), video(4),

@@ -160,7 +160,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         const enabled = current.config.enabled, granted = current.config.tools.desktopToolGrants?.services === true
         if (action === 'use' && (!enabled || !granted || identity && (!('run' in current) || run.parse(current.run).status !== 'running'))) throw new Error('Service permission is off or the run stopped')
         current.check()
-        return { engineAgentId: current.owner.engineId, runtime, skillsRoot: join(/* turbopackIgnore: true */ current.workspaceRoot, '..', 'skills'), enabled, granted }
+        return { engineAgentId: current.owner.engineId, runtime, skillsRoot: join(/* turbopackIgnore: true */ current.workspaceRoot, '..', 'skills'), enabled, granted, check: current.check }
     }
     const services = localServiceLifecycle(installedServices, serviceAuthority, async (owner, installationId, names, signal) => {
         signal.throwIfAborted()

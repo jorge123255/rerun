@@ -13,7 +13,7 @@ type CaptureAttempt = {
     selections: DesktopCaptureSelection[]
 }
 
-export function useDesktopCaptureFlow(actions: DesktopCaptureActions) {
+export function useDesktopCaptureFlow(actions: DesktopCaptureActions, active = true) {
     const [workspaces, setWorkspaces] = React.useState<DesktopCaptureWorkspace[]>([])
     const [workspaceId, setWorkspaceIdState] = React.useState('')
     const [selectedIds, setSelectedIds] = React.useState<string[]>([])
@@ -28,13 +28,16 @@ export function useDesktopCaptureFlow(actions: DesktopCaptureActions) {
     const [attempt, setAttempt] = React.useState<CaptureAttempt | null>(null)
     const listSources = React.useRef(actions.listSources)
     const sourceRequest = React.useRef(0)
+    const activeRef = React.useRef(active)
+    activeRef.current = active
 
     const reloadSources = React.useCallback(async () => {
+        if (!activeRef.current) return
         const request = ++sourceRequest.current
         setLoadingSources(true)
         setError(null)
         const result = await listSources.current()
-        if (request !== sourceRequest.current) return
+        if (request !== sourceRequest.current || !activeRef.current) return
         if (!result.ok) setError(result.error)
         else {
             setWorkspaces(result.workspaces)
@@ -44,9 +47,9 @@ export function useDesktopCaptureFlow(actions: DesktopCaptureActions) {
     }, [])
 
     React.useEffect(() => {
-        void reloadSources()
+        if (active) void reloadSources()
         return () => { sourceRequest.current++ }
-    }, [reloadSources])
+    }, [reloadSources, active])
 
     const locked = attempt !== null
     const setWorkspaceId = (next: string) => {

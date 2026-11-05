@@ -13,7 +13,7 @@ import { GET, POST } from './route'
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent, a: DesktopSession, b: DesktopSession
 let rejectBeforeAccept: boolean, foreignHistory: boolean, historyReads: number, modelReads: number
-const histories = new Map<string, Message[]>(), receipts = new Map<string, string>(), dispatches: Record<string, any>[] = []
+const histories = new Map<string, Message[]>(), receipts = new Map<string, string>(), dispatches: Record<string, unknown>[] = []
 const approvals = [
     { action: 'Prepare a draft', detail: 'Keep it in this chat.' },
     { action: 'Send the draft', detail: 'Would contact an external recipient.' },
@@ -46,6 +46,9 @@ beforeEach(async () => {
         let raw = ''; for await (const part of req) raw += part
         const body = raw ? JSON.parse(raw) : null
         const reply = (status: number, value: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(value))
+        if (req.method === 'GET' && /^\/agents\/(engine-alice|engine-bob)\/setup$/.test(req.url ?? '')) return reply(200, {
+            required: false, prompt: '', completedAt: null, sessionId: null, pending: false, revision: 'fixture-setup',
+        })
         if (req.method === 'GET' && req.url === '/connections') {
             modelReads++
             return reply(200, { connections: [{ id: 'provider', name: 'Fixture', provider: 'codex', models: ['workspace-model', 'chat-model'], extraModels: [], connected: true, credentialRejected: false, planLimits: null, createdAt: '' }], default: { connectionId: 'provider', model: 'workspace-model' } })

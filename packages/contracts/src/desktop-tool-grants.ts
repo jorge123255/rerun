@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb', 'schedule', 'mcp', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'browser', 'computer'] as const
+export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb', 'schedule', 'mcp', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -37,7 +37,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('memoryDelete', 'Delete memories', 'Remove a specific note from this coworker’s Memories using its last known text.', 'memory_delete'),
     supported('askUser', 'Ask the user', 'Ask questions in chat and continue after you answer.', 'ask_user'),
     supported('requestApproval', 'Request approval', 'Ask you to approve or decline proposed actions in chat.', 'request_approval'),
-    supported('cardFile', 'Show result files', 'Show this coworker’s existing text, Markdown, static images, WAV/MP3/M4A/Ogg/FLAC audio, MP4/WebM/MOV/M4V video or PDF documents as preview tiles in chat.', 'card_file'),
+    supported('cardFile', 'Show result files', 'Show this coworker’s existing text, Markdown, PNG, JPEG, WebP, SVG, GIF and AVIF images, WAV/MP3/M4A/Ogg/FLAC audio, MP4/WebM/MOV/M4V video or PDF documents as preview tiles in chat.', 'card_file'),
     supported('privateFileWrite', 'Edit workspace files', 'Create new text or Markdown files and make exact, conflict-checked edits in this coworker’s private Files. Existing names are never replaced by create.', 'fs_write', 'fs_edit'),
     supported('sharedFilesRead', 'Read shared files', 'Read and list text and Markdown files in the workspace shared folder. Every coworker with this permission sees the same shared documents.', 'shared_read', 'shared_list'),
     pending('shell', 'Run commands', 'Run Rerun shell commands in a workspace.', 'Requires a confined engine command runner.', 'shell_exec'),
@@ -59,7 +59,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     pending('hub', 'Service catalog', 'Discover and configure Rerun services.', 'Requires an authenticated Rerun hub.'),
     pending('paidData', 'Paid data', 'Search external datasets.', 'Requires a configured provider and billing controls.'),
     supported('cardTable', 'Show table cards', 'Show a frozen snapshot of a saved database view in chat. Requires the matching private or shared database permission.', 'card_table'),
-    pending('suggestService', 'Suggest services', 'Suggest a connection for the user to configure.', 'Requires the service connection flow.'),
+    supported('suggestService', 'Suggest apps', 'Suggest catalog apps in chat and wait for the setup card. This does not enable Apps or store a credential.', 'suggest_service'),
     pending('requestSecret', 'Request a secret', 'Request a credential through a secure field.', 'Requires a secure entry and credential storage flow.'),
     supported('self', 'Improve itself', 'Let this coworker refine its own instructions and how long its answers are over time.', 'soul_update', 'verbosity_set'),
     nested('self', 'selfInstruction', 'Edit own instructions', 'Let this coworker rewrite its own instructions — the identity at the top of its prompt — and have them take effect from the next message.', 'soul_update'),

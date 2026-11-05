@@ -135,7 +135,7 @@ export async function readDesktopCardImage(agentId: string, path: string, identi
     if (!imagePath(path)) throw new DesktopCardError('This file is not a supported image.')
     if (!identity || !CARD_IDENTITY.test(identity)) throw new DesktopCardError('Send this image to preview again.')
     const query = new URLSearchParams({ path, identity, animation: '1' })
-    const deadline = AbortSignal.timeout(5_000)
+    const deadline = AbortSignal.timeout(15_000)
     const boundedSignal = signal ? AbortSignal.any([signal, deadline]) : deadline
     const response = await fetch(`/api/desktop/agents/${encodeURIComponent(agentId)}/files/image?${query}`, { cache: 'no-store', signal: boundedSignal })
     if (!response.ok) throw new DesktopCardError('This image is no longer available.')

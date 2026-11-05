@@ -24,11 +24,13 @@ const KIND_STATUS: Record<DesktopPendingInboxItem['kind'], string> = {
     question: 'awaiting_question',
     approval: 'awaiting_approval',
     takeover: 'waiting_human',
+    service: 'waiting_human',
 }
 const KIND_SENTENCE: Record<DesktopPendingInboxItem['kind'], string> = {
     question: 'asked you a question',
     approval: 'needs your approval',
     takeover: 'needs your browser help',
+    service: 'needs app setup',
 }
 
 export type DesktopActionsInboxProps = {

@@ -1,53 +1,52 @@
 import { desktopServiceRequestMutationSchema } from '@rerun/contracts'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
-import { assertCoworkerNotDeleting } from '@/lib/desktop/server/coworker-delete'
-import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
-import { describeDesktopServiceRequestCatalog, readDesktopServiceConnections, readDesktopServiceSource, sendDesktopServiceFollowUp } from '@/lib/desktop/server/service-requests/adapters'
-import { ensureDesktopServiceSuggestionSchema } from '@/lib/desktop/server/service-requests/schema'
+import { desktopServiceRequestPorts, desktopServiceRequestScope } from '@/lib/desktop/server/service-requests/route-context'
+import { rejectDesktopServiceRetry, reserveDesktopServiceRetry, withDesktopServiceRequestAttempt } from '@/lib/desktop/server/service-requests/retry'
 import { finishDesktopServiceRequest, progressDesktopServiceRequest, readDesktopServiceRequest } from '@/lib/desktop/server/service-requests/service'
-import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
-import { findDesktopAgent, findDesktopSession } from '@/lib/desktop/server/store'
 
 export const dynamic = 'force-dynamic'
 type Params = { params: Promise<{ sessionId: string }> }
 
-async function scopeOf(runtime: DesktopRuntime, sessionId: string) {
-    const db = await openDesktopDatabase(runtime.dataRoot)
-    await ensureDesktopServiceSuggestionSchema(db)
-    const session = await findDesktopSession(db, sessionId)
-    if (!session) throw new DesktopHttpError(404, 'Conversation not found')
-    await assertCoworkerNotDeleting(db, session.agentId)
-    const agent = await findDesktopAgent(db, session.agentId)
-    if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
-    return { db, session, agent, scope: { agentId: agent.id, sessionId: session.id, enabled: agent.enabled } }
-}
-
-function ports(runtime: DesktopRuntime, bound: Awaited<ReturnType<typeof scopeOf>>, signal: AbortSignal) {
-    return {
-        source: () => readDesktopServiceSource(runtime, bound.agent, bound.session, signal),
-        catalog: (slug: string) => describeDesktopServiceRequestCatalog(slug),
-        installations: () => readDesktopServiceConnections(runtime, bound.agent.id, signal),
-        send: (receipt: Parameters<typeof sendDesktopServiceFollowUp>[3], mode: 'send' | 'replay') => sendDesktopServiceFollowUp(runtime, bound.agent, bound.session, receipt, mode),
-    }
-}
-
 export async function GET(request: Request, { params }: Params): Promise<Response> {
     return desktopRoute(request, async runtime => {
         const signal = AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
-        const bound = await scopeOf(runtime, (await params).sessionId)
-        return Response.json(await readDesktopServiceRequest(bound.db, bound.scope, ports(runtime, bound, signal)), { headers: { 'cache-control': 'no-store' } })
+        const bound = await desktopServiceRequestScope(runtime, (await params).sessionId)
+        return Response.json(await readDesktopServiceRequest(bound.db, bound.scope, desktopServiceRequestPorts(runtime, bound, signal)), { headers: { 'cache-control': 'no-store' } })
     })
 }
 
 export async function POST(request: Request, { params }: Params): Promise<Response> {
     return desktopRoute(request, async runtime => {
-        const signal = AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
-        const parsed = desktopServiceRequestMutationSchema.safeParse(await request.json().catch(() => null))
+        const signal = AbortSignal.any([request.signal, AbortSignal.timeout(130_000)])
+        const raw = await request.text()
+        if (new TextEncoder().encode(raw).length > 32_768) throw new DesktopHttpError(413, 'App decisions exceed the saved retry limit.')
+        let value: unknown
+        try { value = JSON.parse(raw) } catch { throw new DesktopHttpError(400, 'Choose valid app decisions.') }
+        const parsed = desktopServiceRequestMutationSchema.safeParse(value)
         if (!parsed.success) throw new DesktopHttpError(400, 'Save each app as pending, skip, or a current connection, then finish only those saved choices.')
-        const bound = await scopeOf(runtime, (await params).sessionId)
-        const boundPorts = ports(runtime, bound, signal)
-        if (parsed.data.action === 'progress') return Response.json(await progressDesktopServiceRequest(bound.db, bound.scope, boundPorts, parsed.data), { headers: { 'cache-control': 'no-store' } })
-        return finishDesktopServiceRequest(bound.db, bound.scope, boundPorts, parsed.data)
+        const input = parsed.data
+        const bound = await desktopServiceRequestScope(runtime, (await params).sessionId)
+        const ports = desktopServiceRequestPorts(runtime, bound, signal)
+        return withDesktopServiceRequestAttempt(bound.scope, async () => {
+            try {
+                signal.throwIfAborted()
+                await reserveDesktopServiceRetry(bound.db, bound.scope, input)
+                const response = input.action === 'progress'
+                    ? Response.json(await progressDesktopServiceRequest(bound.db, bound.scope, ports, input), { headers: { 'cache-control': 'no-store' } })
+                    : await finishDesktopServiceRequest(bound.db, bound.scope, ports, input)
+                response.headers.set('x-service-request-attempt-id', input.requestId)
+                return response
+            } catch (error) {
+                if (error instanceof DesktopHttpError && error.status >= 400 && error.status < 500
+                    && await rejectDesktopServiceRetry(bound.db, bound.scope, input)) {
+                    return Response.json({ error: error.message }, { status: error.status, headers: {
+                        'cache-control': 'no-store', 'x-service-request-outcome': 'refused',
+                        'x-service-request-attempt-id': input.requestId, 'x-service-request-id': input.serviceRequestId,
+                    } })
+                }
+                throw error
+            }
+        })
     })
 }

@@ -11,6 +11,7 @@ import { DRAFT_LANGUAGE, DraftBlock } from '@/components/chat/DraftBlock'
 import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
 import { CompactionStep } from '@/components/chat/CompactionBlock'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
+import { DesktopSetupCompleteCard } from './setup/DesktopSetupEventCards'
 import { DesktopToolStep } from './DesktopToolStep'
 import { DesktopTableResult } from './DesktopTableResult'
 import { desktopTableCardOf } from '@/lib/desktop/table-card'
@@ -150,6 +151,14 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
         } else if (isToolUIPart(part)) {
             const toolName = stripBridgePrefix(getToolName(part))
             if (part.toolCallId === pendingRequestToolCallId || toolName === QUICK_REPLIES_TOOL) continue
+            if(toolName==='install_complete' && part.state==='output-available') {
+                let output:unknown=part.output
+                if(typeof output==='string'){try{output=JSON.parse(output)}catch{}}
+                if(output && typeof output==='object' && 'status' in output && output.status==='complete') {
+                    blocks.push(<DesktopSetupCompleteCard key={part.toolCallId} agentName={agent?.name} summary={'summary' in output && typeof output.summary==='string'?output.summary:''} schedules={[]} triggers={[]} />)
+                    continue
+                }
+            }
             if (toolName === 'brain_propose' && part.state === 'output-available') {
                 let value: unknown = part.output
                 if (typeof value === 'string') { try { value = JSON.parse(value) } catch { value = null } }

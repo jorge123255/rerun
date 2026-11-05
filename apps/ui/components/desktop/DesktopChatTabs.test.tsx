@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -45,6 +46,7 @@ test('a first-mounted blank tab is registered before its draft is read', async (
         if (draftResponse) return draftResponse
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
         if (url.pathname.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        const background = desktopBackgroundRead(input, options); if (background) return background
         throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const container = document.createElement('div')
@@ -106,6 +108,7 @@ test('regeneration stays on its own transport while another tab is active, and k
         if (url.split('?')[0].endsWith('/files')) return Response.json({ entries: [{ type: 'file', name: 'original.txt', size: 4 }] })
         if (url.endsWith('/stop')) return Response.json({ running: false })
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        const background = desktopBackgroundRead(input, options); if (background) return background
         throw Error('Unexpected request: ' + url)
     }))
     const container = document.createElement('div'); document.body.append(container)
@@ -163,6 +166,7 @@ test('keeps an unaccepted first send open, then allows its bound running tab to 
         if (url.endsWith('/messages')) return Response.json({ messages: [] })
         if (url.endsWith('/stop')) { if (options?.method === 'POST') stopRequests++; return Response.json({ running: false }) }
         if (url.includes('/model')) return Response.json({ catalog: [], workspace: null, coworker: null, conversation: null, effective: { source: 'workspace', connectionId: null, provider: null, name: null, model: null, label: 'Select model', available: false } })
+        const background = desktopBackgroundRead(input, options); if (background) return background
         throw Error('Unexpected request: ' + url)
     }))
     const container = document.createElement('div'); document.body.append(container)
@@ -233,6 +237,7 @@ test('a refused fork layout keeps the source tab and draft instead of restoring 
             { id: 'engine-source', role: 'assistant', parts: [{ type: 'text', text: 'The original answer' }] },
         ] })
         if (url.endsWith('/chat')) return new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-session-id': 'alternate' } })
+        const background = desktopBackgroundRead(input, options); if (background) return background
         throw new Error(`Unexpected request: ${url}`)
     }))
     const container = document.createElement('div')

@@ -10,7 +10,7 @@ import {compileLocalService} from './compiler'
 import {createServiceSkill,removeServiceSkill,verifyServiceSkill} from './skill-resources'
 import {getDesktopServiceManifest,getDesktopServiceMethodAvailability} from './catalog/index'
 export type ServiceRun={engineAgentId:string;sessionId:string;runId:string}
-export type ServiceAuthority=(owner:string,action:'manage'|'use',run:ServiceRun|undefined,signal:AbortSignal)=>Promise<{engineAgentId:string;runtime:DesktopRuntime;skillsRoot:string;enabled:boolean;granted:boolean}>
+export type ServiceAuthority=(owner:string,action:'manage'|'use',run:ServiceRun|undefined,signal:AbortSignal)=>Promise<{engineAgentId:string;runtime:DesktopRuntime;skillsRoot:string;enabled:boolean;granted:boolean;check?:()=>void}>
 export type ServiceToolNames=(owner:string,installationId:string,names:string[],signal:AbortSignal)=>Promise<void>
 export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthority,assertToolNames:ServiceToolNames,network:typeof fetch=fetch){
  const lifecycle=remoteMcpLifecycle(),shutdown=new AbortController()

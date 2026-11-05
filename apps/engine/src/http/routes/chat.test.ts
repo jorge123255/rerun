@@ -102,6 +102,98 @@ describe('POST /agents/:id/chat', () => {
         return { sourceMessageId, toolCallId, fingerprint }
     }
 
+    async function pendingServices(sessionId: string) {
+        const { appendMessage } = await import('../../db/repos/messages.js')
+        const { findDesktopServiceRequest } = await import('@rerun/contracts')
+        const request = await appendMessage(id, sessionId, { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'services-call', toolName: 'suggest_service', input: { services: [{ slug: 'notion', reason: 'Keep the report' }, { slug: 'slack', reason: 'Share the result' }] } }] })
+        const delivered = await appendMessage(id, sessionId, { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'services-call', toolName: 'suggest_service', output: { type: 'json', value: { status: 'delivered' } } }] })
+        const { sourceMessageId, toolCallId, fingerprint } = findDesktopServiceRequest([request, delivered])!
+        return { sourceMessageId, toolCallId, fingerprint }
+    }
+
+    it('admits the exact app result once, resumes after its source is settled, and binds replay to its guard kind', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id)
+            const service = await pendingServices(session.id)
+            const { serializeServiceSetupResult } = await import('@rerun/contracts')
+            const message = serializeServiceSetupResult([{ slug: 'notion', name: 'Notion', outcome: 'skipped' }, { slug: 'slack', name: 'Slack', outcome: 'skipped' }])
+            const input = { sessionId: session.id, message, desktopQueuedTurn: { runId: crypto.randomUUID(), service } }
+            for (const response of await Promise.all([chat(id, input), chat(id, input)])) {
+                expect([200, 204]).toContain(response.status)
+                await response.text()
+            }
+            const { listMessages } = await import('../../db/repos/messages.js')
+            expect((await listMessages(id, session.id)).filter(row => row.role === 'user')).toHaveLength(1)
+            expect(state.calls).toHaveLength(1)
+            const replay = await chat(id, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, replayOnly: true } })
+            expect([200, 204]).toContain(replay.status)
+            expect(replay.headers.get('x-run-id')).toBe(input.desktopQueuedTurn.runId)
+            await replay.text()
+            expect(state.calls).toHaveLength(1)
+            for (const altered of [
+                { ...input, message: 'Connected everything' },
+                { ...input, desktopQueuedTurn: { runId: input.desktopQueuedTurn.runId } },
+                { ...input, desktopQueuedTurn: { runId: input.desktopQueuedTurn.runId, approval: service } },
+                { ...input, desktopQueuedTurn: { runId: input.desktopQueuedTurn.runId, service: { ...service, fingerprint: service.fingerprint + ' ' } } },
+            ]) expect((await chat(id, altered)).status).toBe(409)
+            for (const kind of ['question', 'approval', 'takeover']) {
+                expect((await chat(id, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, [kind]: service } })).status).toBe(400)
+            }
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('blocks queued and ordinary messages behind app setup, but receipt probes stay read-only', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const session = await createSession(id)
+            const service = await pendingServices(session.id)
+            const queued = { sessionId: session.id, message: 'A saved draft', desktopQueuedTurn: { runId: crypto.randomUUID() } }
+            for (const input of [queued, { sessionId: session.id, message: 'From an old panel' }, { ...queued, desktopQueuedTurn: { ...queued.desktopQueuedTurn, takeover: service } }]) {
+                const response = await chat(id, input)
+                expect(response.status).toBe(409)
+                expect(await response.json()).toMatchObject({ code: 'service_pending' })
+            }
+            expect(await getRun(id, queued.desktopQueuedTurn.runId)).toBeUndefined()
+            const probe = await chat(id, { ...queued, desktopQueuedTurn: { ...queued.desktopQueuedTurn, service, replayOnly: true } })
+            expect(probe.status).toBe(404)
+            expect(await probe.json()).toMatchObject({ code: 'queued_turn_not_found' })
+            expect(state.calls).toHaveLength(0)
+            expect(sessionClaimCount()).toBe(0)
+            await (await chat(id, { sessionId: session.id, message: 'Skipped the requested apps.', desktopQueuedTurn: { runId: crypto.randomUUID(), service } })).text()
+            const after = await chat(id, queued)
+            expect(after.status).toBe(200)
+            await after.text()
+            expect(state.calls.map(call => call.message)).toEqual(['Skipped the requested apps.', queued.message])
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('rejects foreign and superseded app sources and permits an exact accepted replay after disable', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const enabled = (value: boolean) => app.request(`/agents/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: value }) })
+        try {
+            const session = await createSession(id), other = await createSession(id)
+            const service = await pendingServices(session.id)
+            const input = { sessionId: session.id, message: 'Skipped both apps.', desktopQueuedTurn: { runId: crypto.randomUUID(), service } }
+            expect((await chat(id, { ...input, sessionId: other.id })).status).toBe(409)
+            expect((await chat(id, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, service: { ...service, sourceMessageId: 'different' } } })).status).toBe(409)
+            await pendingQuestion(session.id)
+            expect((await chat(id, input)).status).toBe(409)
+            const fresh = await pendingServices(session.id)
+            const accepted = { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, service: fresh } }
+            await (await chat(id, accepted)).text()
+            expect((await enabled(false)).status).toBe(200)
+            const replay = await chat(id, { ...accepted, desktopQueuedTurn: { ...accepted.desktopQueuedTurn, replayOnly: true } })
+            expect([200, 204]).toContain(replay.status)
+            await replay.text()
+            const missing = crypto.randomUUID()
+            expect((await chat(id, { ...accepted, desktopQueuedTurn: { runId: missing, service: fresh, replayOnly: true } })).status).toBe(403)
+            expect(await getRun(id, missing)).toBeUndefined()
+            expect(state.calls).toHaveLength(1)
+            expect(sessionClaimCount()).toBe(0)
+        } finally { await enabled(true); vi.unstubAllEnvs() }
+    })
+
     it('accepts mixed approval decisions once and binds receipt replay to the approval kind and exact content', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         try {
