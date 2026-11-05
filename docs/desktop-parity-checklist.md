@@ -1,17 +1,17 @@
 # What the Rerun Mac app is missing
 
-**Current integration, November 4:** A–H source is integrated with root corrections. Full UI
-4,366 / engine 3,278 tests pass; production staging and isolated built-runtime Skills checks
-also pass. The installed signed
-app is waiting for user Keychain approval, so remaining native checks and final cleanup are
-pending. **28 capability groups remain unfinished.** This supersedes the old assignment
-status below without changing previous accepted releases. [Review and evidence](desktop-handoff-integration-review.md).
+**Current integration, November 4:** All A–H handoffs and root corrections are installed in
+`742d089`. Root passed the full UI suite (4,366), full engine suite (3,285), final proposal
+checks (75), native runner checks (22), type checks, packaging and extensive Mac checks.
+The new build is waiting for another protected Keychain approval before final restart
+acceptance and cleanup. **28 capability groups remain unfinished**; E6 Skills and E8 Routines
+are the two proposed closures after those final checks. [Review and evidence](desktop-handoff-integration-review.md).
 
-**New assignments:** A PDF chat cards; B composer text uploads; C notifications; D Skills corrections; E schedules correction; F MCP corrections; G table cards; H website logos. Root's original Control Center Open → Logs is installed and accepted in `86c35a3`; all eight lane assignments remain pending. Previous accepted deliveries remain accepted. [Assignments and prompts](desktop-next-round.md).
+**New assignments:** A PDF chat cards; B composer text uploads; C notifications; D Skills corrections; E schedules correction; F MCP corrections; G table cards; H website logos. Root's original Control Center Open → Logs is installed and accepted in `86c35a3`; all eight lane assignments have delivered; final acceptance is tracked above. Previous accepted deliveries remain accepted. [Assignments and prompts](desktop-next-round.md).
 
 **Previous delivery progress:** **5 of 9 concrete tasks accepted** in the previous round: A, B, G, H and root. The previous Boxes/MP4/Files-navigation delivery remains **3 of 3 accepted**. There are **28 unfinished capability groups**, down from 29 after D7 private/shared tables was completed. D5, C3 and E2 remain partial. See `docs/desktop-progress.md` and [current acceptance](desktop-pdf-attachments-data-web-acceptance.md).
 
-Use this list to port user-facing capabilities from [original Rerun](https://github.com/jorge123255/rerun/tree/a6d63a4b542674ddd002e51b39ba0df6e0807bcc). The installed comparison source is `86c35a307831da45c5f844bd81995181755f6bfe` on November 4, 2026. Checked rows have passed root integration and native/restart acceptance; unchecked rows retain missing or partial scope. The Mac has one installed preview at `~/Applications/Rerun Desktop Preview.app`; build updates from a clean build worktree using `pnpm desktop:install`.
+Use this list to port user-facing capabilities from [original Rerun](https://github.com/jorge123255/rerun/tree/a6d63a4b542674ddd002e51b39ba0df6e0807bcc). The installed comparison source is `742d089bcd3b1383f862d4e5cf5301540d71e75d` on November 4, 2026. Checked rows have passed root integration and native/restart acceptance; unchecked rows retain missing or partial scope. The Mac has one installed preview at `~/Applications/Rerun Desktop Preview.app`; build updates from a clean build worktree using `pnpm desktop:install`.
 
 **Previously verified ports**
 

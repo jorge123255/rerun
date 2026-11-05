@@ -4,10 +4,12 @@ This document describes the current root-integrated source contract. The Skills 
 proposal review, tool catalog and grant, runner registration, confined publication, and shutdown
 hooks are wired. It replaces the earlier lane handoff and its unapplied integration snippets.
 
-**Root automated and production-runtime checks pass. Native Mac window acceptance is pending.**
-Root alone executed the checks. The installed signed app is waiting for its existing Keychain
-access; Skills has not yet been installed into that app. See
-[integration review](desktop-handoff-integration-review.md) for the precise blocker and evidence.
+**Root automated and production-runtime checks pass; native Skills checks are in progress.**
+Skills is installed and has been exercised in the Mac app at `464332f`. The earlier Keychain
+startup block is resolved. Build `742d089` is installed and is waiting for another protected Keychain approval;
+final restart acceptance and cleanup are not yet claimed complete. Root alone
+executes these checks. The [integration review](desktop-handoff-integration-review.md) is the
+acceptance ledger for exact builds, results, and remaining gates.
 
 ## Original Rerun provenance and design
 
@@ -179,7 +181,8 @@ Authored regressions cover confined owner/path/version handling; native cross-pr
 and queued cancellation; exclusive publication, rollback/recovery, and retained storage;
 manifest/file identities and bounded bodies; exact local-chat proposal routing; enabled/grant
 and cancellation checks; panel/chat editor generations; and proposal acceptance/shutdown.
-They ran in the full suites below; native window acceptance is still separate.
+They ran in the full suites below; those counts retain their original source identity and do
+not claim a rerun on the final candidate. Native window evidence is recorded separately.
 
 - Full suites at `922164f`: **4,366 UI tests passed / 39 skipped**, **3,278 engine tests passed**.
 - Production import correction `7e8270b`: type checks, standalone UI/engine build, bundled
@@ -187,5 +190,11 @@ They ran in the full suites below; native window acceptance is still separate.
 - The staged runtime's actual UI/engine/native helper passed Skills CRUD, stale-write refusal,
   manifest-alias refusal, archive, sibling isolation and service restart in a fresh temporary
   workspace. No live model or installed-app data was used.
-- Packaged Mac board → Skills/chat proposal flow, permission refusals, full-restart persistence,
-  and preservation of the original workspace after cleanup: **pending**.
+- Native Mac checks at `464332f` passed UI authoring, editing, and importing skills; actual
+  `skill_read` and `skill_read_file` calls returned **42**. Accepting the Codex-generated
+  `qa-answer-check` proposal successfully published the skill.
+- Final candidate `742d089` is installed, awaiting Keychain approval. The final chat proposal row, restored approval,
+  rejection flow, and use of the approved skill returning **63** remain **pending**, along with
+  final restart/state comparison and preservation of the original workspace after cleanup.
+  Root will replace this pending statement only after those checks finish; see the
+  [acceptance ledger](desktop-handoff-integration-review.md).

@@ -2,20 +2,21 @@
 
 ## Current handoff integration — November 4, 2026
 
-All A–H handoffs are integrated with root fixes. Full UI **4,366 tests** and engine **3,278
-tests** pass at `922164f`; production import correction `7e8270b` passed type checks, staging
-and isolated built-runtime Skills CRUD/conflict/archive/isolation/restart checks. The canonical
-installed app is `e230a1b`, waiting for the user to approve existing Keychain access. Final
-Skills/routine UI fixes are not installed, and native acceptance/fixture cleanup remain
-pending. The catalog stays **28 unfinished groups**.
-See [current integration review](desktop-handoff-integration-review.md) for exact handoffs,
-findings, evidence and resume point. The ledger below describes earlier accepted releases.
+All A–H handoffs are integrated and installed with root fixes in `742d089`. Full UI
+**4,366 tests** passed at `922164f`; the full engine rerun passed **3,285** at `0a74b58`.
+Final proposal checks **75**, native runner checks **22**, type checks, production packaging
+and runtime verification passed. Live Mac checks exercised uploads, PDF/table cards, Skills,
+Routines, MCP, notifications and website logos. The new final build is waiting for protected
+Keychain approval before the last restart checks and fixture cleanup. The catalog stays
+**28 unfinished groups**, with E6/E8 proposed for closure after those gates pass.
+See [current integration review](desktop-handoff-integration-review.md) for exact evidence.
+The ledger below describes earlier accepted releases and the original assignment round.
 
 Updated November 4, 2026. Installed source: `86c35a307831da45c5f844bd81995181755f6bfe`.
 
 The parity catalog has **28 unfinished capability groups**, down from 29 because **D7 private/shared data tables is complete**. Individual delivery tasks can complete part of a broader group; partial scope remains listed rather than being removed to reduce the count.
 
-## Active assignments — root Logs accepted; eight lanes continue
+## Original assignments — handoffs now integrated; final acceptance above
 
 A: PDF chat cards; B: composer text uploads; C: finish notifications; D: confined Skills/tool corrections; E: schedule retry correction; F: MCP corrections; G: table chat cards; H: website logos. Root takes original Control Center **Open → Logs** and all integration/testing. Four new clean lane worktrees are prepared at `bb45f3a`; existing C/D/E/F worktrees are preserved. Previous accepted deliveries remain accepted. Root's Logs slice is accepted; the eight lane assignments remain pending and the catalog retains 28 unfinished capability groups. See [current prompts](desktop-next-round.md).
 
