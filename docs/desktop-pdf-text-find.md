@@ -123,3 +123,5 @@ UI: `DesktopFilePdfFind`, `DesktopFilePdfTextLayer`. `DesktopFilePdfPreview` pro
 - Text is not retried by the page Retry button. Close and open the file to read it again.
 - The helper was not compiled. `-Werror` may still reject it.
 - Checks and Mac acceptance were not run.
+
+Root's native visual check found that CoreGraphics centered an unscaled page within the high-resolution bitmap, while the text layer used the full page bounds. The renderer now maps crop and rotation in PDF points, then explicitly scales to bitmap pixels. A regression samples outer painted areas on both upright and rotated pages; it fails on the prior renderer and passes with the fix. Native highlight and clipboard acceptance must use the corrected build.

@@ -170,8 +170,12 @@ int main(int argc, char **argv) {
     if (!bitmap) goto cleanup;
     CGContextSetRGBFillColor(bitmap, 1, 1, 1, 1);
     CGContextFillRect(bitmap, CGRectMake(0, 0, width, height));
-    CGAffineTransform transform = CGPDFPageGetDrawingTransform(page, kCGPDFCropBox, CGRectMake(0, 0, width, height), 0, true);
+    // CoreGraphics does not upscale a page to a larger destination rectangle.
+    // Map crop/rotation in PDF points, then explicitly scale those points to
+    // bitmap pixels so the raster agrees with the normalized text layer.
+    CGAffineTransform transform = CGPDFPageGetDrawingTransform(page, kCGPDFCropBox, CGRectMake(0, 0, page_width, page_height), 0, true);
     if (!isfinite(transform.a) || !isfinite(transform.b) || !isfinite(transform.c) || !isfinite(transform.d) || !isfinite(transform.tx) || !isfinite(transform.ty)) goto cleanup;
+    CGContextScaleCTM(bitmap, width / page_width, height / page_height);
     CGContextConcatCTM(bitmap, transform);
     CGContextDrawPDFPage(bitmap, page);
     image = CGBitmapContextCreateImage(bitmap);

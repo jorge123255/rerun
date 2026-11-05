@@ -21,7 +21,7 @@ before(async () => {
 })
 after(async () => { if (root) await rm(root, { recursive: true, force: true }) })
 
-function centerPixel(png) {
+function samplePixel(png, xFraction = .5, yFraction = .5) {
     const width = png.readUInt32BE(16), height = png.readUInt32BE(20)
     assert.equal(png[24], 8, 'eight-bit PNG')
     assert.equal(png[28], 0, 'non-interlaced PNG')
@@ -36,7 +36,7 @@ function centerPixel(png) {
     const stride = width * channels, data = inflateSync(Buffer.concat(chunks))
     assert.equal(data.length, (stride + 1) * height)
     let previous = Buffer.alloc(stride)
-    for (let y = 0; y <= Math.floor(height / 2); y++) {
+    for (let y = 0; y <= Math.floor(height * yFraction); y++) {
         const row = Buffer.from(data.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)))
         const filter = data[y * (stride + 1)]
         assert(filter <= 4)
@@ -48,7 +48,7 @@ function centerPixel(png) {
         }
         previous = row
     }
-    return [...previous.subarray(Math.floor(width / 2) * channels, Math.floor(width / 2) * channels + 3)]
+    return [...previous.subarray(Math.floor(width * xFraction) * channels, Math.floor(width * xFraction) * channels + 3)]
 }
 
 // Standards-compliant revision-2 encryption with an empty user password. Even
@@ -89,7 +89,12 @@ test('native pages render different real pixels with truthful rotated point/pixe
     const a = parsePdfRender(first.stdout), b = parsePdfRender(second.stdout)
     assert.deepEqual(a.header, { page: 1, pageCount: 2, width: 144, height: 192, pageWidth: 72, pageHeight: 96 })
     assert.deepEqual(b.header, { page: 2, pageCount: 2, width: 240, height: 480, pageWidth: 60, pageHeight: 120 })
-    assert.deepEqual(centerPixel(a.png), [255, 0, 0]); assert.deepEqual(centerPixel(b.png), [0, 0, 255])
+    // Sampling only the center misses a smaller page centered within a white
+    // high-resolution bitmap. Full-page paint must reach the same outer areas.
+    for (const [x, y] of [[.5, .5], [.1, .1], [.9, .9]]) {
+        assert.deepEqual(samplePixel(a.png, x, y), [255, 0, 0])
+        assert.deepEqual(samplePixel(b.png, x, y), [0, 0, 255])
+    }
 })
 
 test('large pages clamp to dimension and area budgets instead of refusing ordinary A3 or poster geometry', { skip: !supported }, async () => {
