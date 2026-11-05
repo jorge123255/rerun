@@ -1,7 +1,7 @@
 import 'server-only'
 
 import type { AuthMethod, McpServerTemplate, ServiceManifest } from '@/lib/services/manifest'
-import type { DesktopServiceMethodAvailability } from '../../../../../../../packages/contracts/src/desktop-services.ts'
+import type { DesktopServiceMethodAvailability } from '@rerun/contracts'
 
 // Policy over the normalized manifest (apps/ui/lib/services/manifest.ts).
 // Hosted getMethod falls back to the default method; this classifier never does.

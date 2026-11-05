@@ -9,7 +9,7 @@ import {
     type DesktopServiceDetails,
     type DesktopServiceMethodAvailability,
     type ServiceCategory,
-} from '../../../../../../../packages/contracts/src/desktop-services.ts'
+} from '@rerun/contracts'
 import { classifyDesktopServiceMethod } from './availability'
 
 const ORIGINAL_PIN = 'a6d63a4b542674ddd002e51b39ba0df6e0807bcc'
