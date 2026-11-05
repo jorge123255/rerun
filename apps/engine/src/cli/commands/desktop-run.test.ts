@@ -97,3 +97,12 @@ test('reports an unconfirmed writer drain without releasing process custody and 
     await vi.waitFor(()=>expect(mocks.exit).toHaveBeenCalledWith(0))
     expect(mocks.nativeDrain).toHaveBeenCalledTimes(2)
 })
+
+test('a lost terminal schedule notification does not prevent confirmed process cleanup', async () => {
+    await desktopRunCommand(); listener()
+    await vi.waitFor(() => expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'ready' })))
+    mocks.bindingClose.mockRejectedValueOnce(new Error('UI notification unavailable'))
+    mocks.events.get('message')!({ type: 'stop' })
+    await vi.waitFor(() => expect(mocks.exit).toHaveBeenCalledWith(0))
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'stopped' }))
+})

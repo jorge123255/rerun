@@ -87,7 +87,9 @@ export async function desktopRunCommand(): Promise<void> {
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
         await Promise.allSettled([closing, abortAllRuns(), stopScheduler?.drain()])
-        const shutdownFailures = (await closing).filter(result => result.status === 'rejected').length
+        // Schedule admission closes synchronously; its final UI notification is
+        // best effort and owns no child process. Only tool drains require ACK.
+        const shutdownFailures = (await closing).slice(1).filter(result => result.status === 'rejected').length
         const remaining = await Promise.allSettled([abortAllRuns(), closeAllMcp(), stopAllDesktopNativeWorkers()])
         server.closeAllConnections()
         await closed
