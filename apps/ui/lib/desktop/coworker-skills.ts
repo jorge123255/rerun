@@ -24,8 +24,8 @@ async function readPayload<T>(response: Response, fallback: string): Promise<Pay
 }
 
 /** The full shelf plus which rows belong to a connector (read-only). Mirrors listSkillsAction. */
-export async function listCoworkerSkills(agentId: string): Promise<EngineSkillWithSource[]> {
-    const response = await fetch(skillsBase(agentId), { cache: 'no-store' })
+export async function listCoworkerSkills(agentId: string, options: { signal?: AbortSignal } = {}): Promise<EngineSkillWithSource[]> {
+    const response = await fetch(skillsBase(agentId), { cache: 'no-store', signal: options.signal })
     const payload = await readPayload<{ skills: EngineSkillWithSource[] }>(response, 'Could not load skills. Try again.')
     if (!payload.ok) throw new Error(payload.error)
     if (!Array.isArray(payload.body?.skills)) throw new Error('Could not confirm the skill list. Try again.')
