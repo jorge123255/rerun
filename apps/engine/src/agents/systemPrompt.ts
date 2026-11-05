@@ -269,13 +269,14 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
     if (agent.config.kind === 'foreman') return await buildForemanPrompt(agent, provider, order)
     const cfg = agent.config.tools
     const desktop = desktopApp()
+    const skillsOn = desktop ? hasDesktopToolGrant(agent.config, 'skills') : cfg.skills
     const dbOn = desktop ? hasDesktopToolGrant(agent.config, 'db') : cfg.db
     const sharedDbOn = desktop ? hasDesktopToolGrant(agent.config, 'sharedDb') : cfg.sharedDb
     // The hosted cards switch defaults on. On the Mac only the explicit file-card grant may
     // advertise a card tool, and table cards stay unavailable.
     const showCards = desktop ? (hasDesktopToolGrant(agent.config, 'cardFile') || hasDesktopToolGrant(agent.config, 'cardTable')) : cfg.cards
     const [skillIndex, scheduleIndex, triggerIndex, memoryIndex, dbSchema, sharedDbSchema, mcpIndex, brain] = await Promise.all([
-        cfg.skills ? buildSkillIndex(agent.id).catch(() => '') : Promise.resolve(''),
+        skillsOn && !desktop ? buildSkillIndex(agent.id).catch(() => '') : Promise.resolve(''),
         cfg.schedule ? buildScheduleIndex(agent.id).catch(() => '') : Promise.resolve(''),
         cfg.trigger ? buildTriggerIndex(agent.id).catch(() => '') : Promise.resolve(''),
         cfg.memory && !desktop ? buildMemoryIndex(agent.id).catch(() => '') : Promise.resolve(''),
@@ -297,7 +298,7 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         section('vocabulary', VOCABULARY_NOTE),
         section('environment', desktop ? desktopToolInstruction(agent.config) : environmentNote(agent.id, cfg.sharedDb)),
         CLI_PROVIDERS.has(provider) ? section('bridged_tools', cliBridgeNote(provider, cfg.web)) : '',
-        section('operating_notes', operatingNotes(cfg.skills && agent.config.selfImprovement.enabled)),
+        section('operating_notes', operatingNotes(skillsOn && agent.config.selfImprovement.enabled)),
         hasPendingSetup(agent) ? section('setup', setupNote(cfg.paidData)) : '',
         cfg.hub ? section('service_catalog', serviceCatalogNote(computer, takeover, cfg.paidData)) : '',
         cfg.paidData ? section('paid_data', paidDataNote(trigger.source === 'chat' && conversational)) : '',
@@ -315,9 +316,9 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
     ]
 
     const volatile: string[] = []
-    if (cfg.skills) {
+    if (skillsOn) {
         const capture = agent.config.selfImprovement.enabled ? skillCaptureNote({ hasSkills: Boolean(skillIndex) }) : ''
-        volatile.push(section('skills', [skillIndex, capture].filter(Boolean).join('\n\n')))
+        volatile.push(section('skills', [desktop ? 'Use skill_list to see your saved procedures, then skill_read for the one this task needs.' : skillIndex, capture].filter(Boolean).join('\n\n')))
     }
     if (scheduleIndex) volatile.push(section('scheduled_tasks', scheduleIndex))
     if (triggerIndex) volatile.push(section('webhook_triggers', triggerIndex))

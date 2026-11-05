@@ -10,8 +10,16 @@ import { createFilesRouter } from './files.js'
 import { agentExists } from '../../agents/loader.js'
 import { badRequest, notFound } from '../../lib/errors.js'
 import { slugify } from '../../lib/ids.js'
+import { desktopApp } from '../../desktop/policy.js'
+import { archiveSkillFolder, listPublishedSkills, readPublishedSkill } from '../../desktop/skill-publication.js'
 
 export const skillRoutes = new Hono()
+// Desktop management publishes through the local authenticated boundary. Keeping the hosted
+// write endpoints active would bypass its cross-process lease and conflict receipts.
+skillRoutes.use('*', async (c, next) => {
+    if (desktopApp() && c.req.method !== 'GET') return c.json({ error: 'Manage this coworker’s skills in the Mac app.' }, 403)
+    await next()
+})
 
 export function skillImportSizeError(entries: { path: string; bytes: number }[]): string | null {
     let total = 0
@@ -32,6 +40,7 @@ function requireAgent(c: Context): string {
 export function createSkillFilesRouter(): Hono {
     const router = new Hono()
     router.use('*', async (c, next) => {
+        if (desktopApp()) return c.json({ error: 'Open bundled skill files in the Mac app.' }, 403)
         const path = c.req.query('path')?.replace(/^\.\//, '')
         if (c.req.method === 'DELETE' && path === 'SKILL.md') throw badRequest('Delete the whole skill instead of its SKILL.md')
         await next()
@@ -50,6 +59,10 @@ export function createSkillFilesRouter(): Hono {
 
 skillRoutes.get('/', async c => {
     const agentId = requireAgent(c)
+    if (desktopApp()) {
+        const skills = await listPublishedSkills(skillsDir(agentId))
+        return c.json({ skills: c.req.query('summary') === '1' ? skills.map(({ slug, name, description }) => ({ slug, name, description })) : skills })
+    }
     // The summary leaves out each body and file list: a listing that only shows names reads one
     // frontmatter per skill instead of walking every skill folder.
     if (c.req.query('summary') === '1') return c.json({ skills: await listSkillSummaries(agentId) })
@@ -105,6 +118,10 @@ skillRoutes.post('/import', async c => {
 skillRoutes.get('/:slug', async c => {
     const agentId = requireAgent(c)
     const slug = c.req.param('slug')
+    if (desktopApp()) {
+        const skill = await readPublishedSkill(skillsDir(agentId), slug)
+        return skill ? c.json(skill) : c.json({ error: 'skill not found' }, 404)
+    }
     if (!skillExists(agentId, slug)) return c.json({ error: 'skill not found' }, 404)
     return c.json(await readSkill(agentId, slug))
 })
@@ -112,6 +129,10 @@ skillRoutes.get('/:slug', async c => {
 skillRoutes.get('/:slug/archive', async c => {
     const agentId = requireAgent(c)
     const slug = c.req.param('slug')
+    if (desktopApp()) {
+        const archive = await archiveSkillFolder(skillsDir(agentId), slug)
+        return new Response(new Uint8Array(archive), { headers: { 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="${slug}.tar.gz"` } })
+    }
     if (!skillExists(agentId, slug)) return c.json({ error: 'skill not found' }, 404)
     const pack = create({ gzip: true, cwd: skillsDir(agentId), portable: true }, [slug]) as unknown as AsyncIterable<Uint8Array>
     return new Response(Readable.toWeb(Readable.from(pack)) as ReadableStream, {

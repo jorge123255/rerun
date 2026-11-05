@@ -16,6 +16,7 @@ import { codexLoginAction, codexLoginStatus, stopCodexLogin } from '../../deskto
 import { desktopApp, desktopRouteAllowed } from '../../desktop/policy.js'
 import { bindDesktopSchedules } from '../../desktop/schedule-binding.js'
 import { startScheduler } from '../../runtime/scheduler.js'
+import { stopDesktopSkillProposals } from '../../desktop/skill-proposal-work.js'
 import { stopDesktopMcp } from '../../desktop/mcp-tools.js'
 import { logger } from '../../lib/logger.js'
 
@@ -73,7 +74,7 @@ export async function desktopRunCommand(): Promise<void> {
         stopCodexLogin()
         // Close admissions before waiting for any preparation. Callback delivery is best effort
         // during teardown; failure must never reopen either local service or prevent shutdown.
-        const closing = Promise.allSettled([schedules?.close(), stopDesktopMcp()])
+        const closing = Promise.allSettled([schedules?.close(), stopDesktopMcp(), stopDesktopSkillProposals()])
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
         await Promise.allSettled([closing, abortAllRuns(), stopScheduler?.drain()])

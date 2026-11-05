@@ -7,7 +7,13 @@ import { syncCodexAuth } from '../connections/codex-auth.js'
 import { generateStructured } from '../agents/structured.js'
 import { connectorSkillOwners } from '../services/registry.js'
 import { listSkillSummaries, readSkill, skillExists, writeSkillFolder, type SkillSummary } from './loader.js'
-import { transitionSkillProposal } from '../db/repos/skill-proposals.js'
+import { desktopApp } from '../desktop/policy.js'
+import { beginDesktopSkillProposal } from '../desktop/skill-proposal-work.js'
+import { publishAuthorizedDesktopSkill } from '../desktop/skill-proposal-apply.js'
+import { listPublishedSkills, readPublishedSkill } from '../desktop/skill-publication.js'
+import { skillsDir } from '../config/paths.js'
+import { readAgentConfig } from '../agents/loader.js'
+import { getSkillProposal, transitionSkillProposal } from '../db/repos/skill-proposals.js'
 import { slugify } from '../lib/ids.js'
 import { logger } from '../lib/logger.js'
 import type { LoadedAgent } from '../agents/types.js'
@@ -38,10 +44,12 @@ export function applyProposalPrompt(input: {
     return `The user approved capturing these rules as a new skill named "${input.title}".\n\nRules:\n${rules}${neighbours}\n\nWrite the skill. Keep it short and actionable, written as instructions to the coworker's future self: the steps in order, the exact tool calls, the decisions and their criteria, and how to tell the work is done. No preamble, no mention of this conversation.`
 }
 
-async function draft(agent: LoadedAgent, row: SkillProposalRow, abortSignal: AbortSignal): Promise<{ name: string; description: string; body: string; slug: string }> {
+async function draft(agent: LoadedAgent, row: SkillProposalRow, abortSignal: AbortSignal): Promise<{ name: string; description: string; body: string; slug: string; baseIdentity?: string }> {
     const instructions = JSON.parse(row.instructionsJson) as string[]
-    const editing = row.mode === 'edit' && row.slug ? await readSkill(agent.id, row.slug) : null
-    const others = editing ? [] : await listSkillSummaries(agent.id).catch(() => [])
+    const desktop = desktopApp()
+    const editing = row.mode === 'edit' && row.slug ? desktop ? await readPublishedSkill(skillsDir(agent.id), row.slug, { signal: abortSignal }) : await readSkill(agent.id, row.slug) : null
+    if (row.mode === 'edit' && !editing) throw new Error('That skill no longer exists.')
+    const others = editing ? [] : desktop ? await listPublishedSkills(skillsDir(agent.id), { signal: abortSignal }) : await listSkillSummaries(agent.id).catch(() => [])
 
     const output = await generateStructured({
         model: modelFor(agent),
@@ -53,7 +61,7 @@ async function draft(agent: LoadedAgent, row: SkillProposalRow, abortSignal: Abo
     // An edit keeps the folder it was read from: writeSkill would re-slugify from the name and
     // fork a second skill the moment the two ever drifted apart.
     const slug = editing ? editing.slug : slugify(output.name || row.title)
-    return { ...output, name: editing ? editing.name : output.name, slug }
+    return { ...output, name: editing ? editing.name : output.name, slug, ...(desktop && editing && 'identity' in editing ? { baseIdentity: editing.identity as string | undefined } : {}) }
 }
 
 // The accept click comes with no model of its own, so the job writes on the pair the proposing
@@ -68,19 +76,39 @@ async function agentForProposal(agent: LoadedAgent, row: SkillProposalRow): Prom
 }
 
 export async function applySkillProposal(agent: LoadedAgent, row: SkillProposalRow): Promise<void> {
-    const writer = await agentForProposal(agent, row).catch(() => agent)
-    const { provider, connection } = writer.resolved
     let release = () => {}
+    let work: ReturnType<typeof beginDesktopSkillProposal> | undefined
+    let provider = agent.resolved.provider
+    let connection = agent.resolved.connection
+    const desktop = desktopApp()
     try {
-        if (row.mode === 'edit' && (!row.slug || !skillExists(agent.id, row.slug))) throw new Error('That skill no longer exists.')
-
+        if (desktop) work = beginDesktopSkillProposal(agent.id, row.id)
+        const signal = work ? AbortSignal.any([work.signal, AbortSignal.timeout(APPLY_TIMEOUT_MS)]) : AbortSignal.timeout(APPLY_TIMEOUT_MS)
+        const admitted = async () => {
+            signal.throwIfAborted()
+            if (!desktop) return
+            const current = await getSkillProposal(agent.id, row.id)
+            if (!current || current.status !== 'accepted' || current.sessionId !== row.sessionId || current.mode !== row.mode || current.slug !== row.slug || current.instructionsJson !== row.instructionsJson) throw new Error('This proposal changed. Review it again before applying.')
+            if (!(await readAgentConfig(agent.id).catch(() => null))?.enabled) throw new Error('This coworker is turned off.')
+            signal.throwIfAborted()
+        }
+        await admitted()
+        const writer = await agentForProposal(agent, row).catch(() => agent)
+        provider = writer.resolved.provider
+        connection = writer.resolved.connection
+        if (!desktop && row.mode === 'edit' && (!row.slug || !skillExists(agent.id, row.slug))) throw new Error('That skill no longer exists.')
         release = await ensureCliAuth(provider, connection)
-        const { name, description, body, slug } = await draft(writer, row, AbortSignal.timeout(APPLY_TIMEOUT_MS))
-        const service = (await connectorSkillOwners(agent.id)).get(slug)
-        if (service) throw new Error(connectorSkillReadOnlyError(slug, service))
-
-        await writeSkillFolder(agent.id, { slug, name, description, body, files: [] })
-        await transitionSkillProposal(agent.id, row.id, ['accepted'], 'applied', { appliedSlug: slug, error: null })
+        await admitted()
+        const result = await draft(writer, row, signal)
+        await admitted()
+        if (desktop) {
+            await publishAuthorizedDesktopSkill(agent.id, { ...result, files: [] }, true, { mode: row.mode as 'create' | 'edit', signal, beforeCommit: admitted })
+        } else {
+            const service = (await connectorSkillOwners(agent.id)).get(result.slug)
+            if (service) throw new Error(connectorSkillReadOnlyError(result.slug, service))
+            await writeSkillFolder(agent.id, { ...result, files: [] })
+        }
+        await transitionSkillProposal(agent.id, row.id, ['accepted'], 'applied', { appliedSlug: result.slug, error: null })
     } catch (err) {
         const error = err instanceof Error ? err.message : String(err)
         logger.warn({ err: error, agent: agent.id, proposal: row.id }, 'skill proposal apply failed')
@@ -88,5 +116,6 @@ export async function applySkillProposal(agent: LoadedAgent, row: SkillProposalR
     } finally {
         release()
         if (provider === 'codex') await syncCodexAuth(connection).catch(() => {})
+        work?.release()
     }
 }

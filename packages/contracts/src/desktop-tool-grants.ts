@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb', 'schedule', 'mcp'] as const
+export const desktopRerunGrantIds = ['workspaceRead', 'workspaceList', 'workspaceSearch', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb', 'schedule', 'mcp', 'skills'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -46,7 +46,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('db', 'Private database', 'Read and change structured records in this coworker’s private database.', 'db_query', 'db_execute', 'db_schema'),
     supported('sharedDb', 'Shared database', 'Read and change workspace shared records.', 'shared_db_query', 'shared_db_execute', 'shared_db_schema'),
     pending('brain', 'Company brain', 'Search or propose changes to the team’s knowledge.', 'Requires a team knowledge store and proposal review.'),
-    pending('skills', 'Skills', 'Create and use reusable procedures.', 'Requires a scoped skills store and a proposal review flow.'),
+    supported('skills', 'Skills', 'Create and use reusable procedures. Proposed changes wait for your review.', 'skill_list', 'skill_read', 'skill_read_file', 'skill_write_file', 'skill_delete_file', 'skill_create', 'skill_import', 'skill_edit', 'skill_update', 'skill_delete', 'skill_propose'),
     supported('schedule', 'Schedules', 'Run this coworker’s routines while Rerun is open. Configure and test tasks in Routines.'),
     pending('trigger', 'Triggers', 'Start a routine from an external event.', 'Requires an authenticated webhook service.'),
     pending('delegate', 'Delegate tasks', 'Spawn a worker for a task.', 'Requires isolated child runs and cancellation.'),

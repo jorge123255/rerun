@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/file.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -9,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <poll.h>
+#include <time.h>
 #ifdef __linux__
 #include <sys/syscall.h>
 #include <linux/fs.h>
@@ -67,6 +70,51 @@ static int exclusive_rename(int fd, const char *from, const char *to) {
     return -1;
 #endif
 }
+/* A kernel lease on the validated directory inode, shared by UI and engine publishers.
+ * The marker is diagnostic only: replacing it cannot split callers across lock inodes. */
+static int skill_lock(const char *path, uintmax_t dev, uintmax_t ino) {
+    int flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
+#ifdef __APPLE__
+    flags |= O_NOFOLLOW_ANY;
+#else
+    flags |= O_NOFOLLOW;
+#endif
+    int parent = open(path, flags);
+    if (parent < 0) return failure(errno);
+    if (!owner_matches(parent, path, dev, ino)) { close(parent); return failure(ESTALE); }
+    int lock = openat(parent, ".rerun-skill-lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0600);
+    if (lock < 0) { int error = errno; close(parent); return failure(error); }
+    struct stat opened, listed;
+    if (fstat(lock, &opened) || !S_ISREG(opened.st_mode) || opened.st_uid != getuid() || opened.st_nlink != 1 ||
+        fstatat(parent, ".rerun-skill-lock", &listed, AT_SYMLINK_NOFOLLOW) || !is_identity(&listed, opened.st_dev, opened.st_ino)) {
+        close(lock); close(parent); return failure(ESTALE);
+    }
+    const pid_t owner = getppid();
+    int acquired = 0;
+    for (int attempts = 0; attempts < 80; attempts++) {
+        if (!flock(parent, LOCK_EX | LOCK_NB)) { acquired = 1; break; }
+        if (errno != EWOULDBLOCK && errno != EAGAIN) { int error = errno; close(lock); close(parent); return failure(error); }
+        struct pollfd input = { .fd = STDIN_FILENO, .events = POLLIN | POLLHUP };
+        if (getppid() != owner || poll(&input, 1, 100) != 0) { close(lock); close(parent); return failure(EACCES); }
+    }
+    if (!acquired) { close(lock); close(parent); return failure(EACCES); }
+    if (!owner_matches(parent, path, dev, ino) || fstatat(parent, ".rerun-skill-lock", &listed, AT_SYMLINK_NOFOLLOW) ||
+        !is_identity(&listed, opened.st_dev, opened.st_ino) || listed.st_uid != getuid() || listed.st_nlink != 1) {
+        close(lock); close(parent); return failure(ESTALE);
+    }
+    printf("{\"ok\":true,\"dev\":\"%ju\",\"ino\":\"%ju\"}\n", (uintmax_t)opened.st_dev, (uintmax_t)opened.st_ino);
+    if (fflush(stdout)) { close(lock); close(parent); return 1; }
+    /* No lease expiry while a write is active. EOF or actual parent death releases flock;
+     * the supervising Node process bounds acquisition and keeps this stdin pipe private. */
+    for (;;) {
+        struct pollfd input = { .fd = STDIN_FILENO, .events = POLLIN | POLLHUP };
+        int ready = poll(&input, 1, 100);
+        if (getppid() != owner || ready > 0) break;
+        if (ready < 0 && errno != EINTR) break;
+    }
+    close(lock); close(parent);
+    return 0;
+}
 /* Deterministic race witnesses exist only in the separately compiled test binary. */
 #ifdef RERUN_RENAME_TESTING
 static void test_barrier(const char *phase) {
@@ -80,6 +128,10 @@ static void test_barrier(const char *phase) {
 #endif
 int main(int argc, char **argv) {
     uintmax_t parent_dev, parent_ino, source_dev, source_ino;
+    if (argc == 5 && !strcmp(argv[1], "--skill-lock")) {
+        if (argv[2][0] != '/' || !number(argv[3], &parent_dev) || !number(argv[4], &parent_ino)) return failure(EINVAL);
+        return skill_lock(argv[2], parent_dev, parent_ino);
+    }
     if (argc != 8 || argv[1][0] != '/' || !number(argv[2], &parent_dev) || !number(argv[3], &parent_ino) ||
         !name_ok(argv[4]) || !number(argv[5], &source_dev) || !number(argv[6], &source_ino) || !name_ok(argv[7]) || !strcmp(argv[4], argv[7])) return failure(EINVAL);
     int flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
