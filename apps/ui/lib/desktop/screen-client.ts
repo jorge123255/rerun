@@ -22,22 +22,22 @@ async function call<T>(agentId: string, init: RequestInit): Promise<T> {
     return body
 }
 
-export function fetchDesktopScreenStatus(agentId: string): Promise<DesktopScreenStatusView> {
-    return call(agentId, { method: 'GET' })
+export function fetchDesktopScreenStatus(agentId: string, signal?: AbortSignal): Promise<DesktopScreenStatusView> {
+    return call(agentId, { method: 'GET', signal, cache: 'no-store' })
 }
 
-export function requestDesktopScreenTicket(agentId: string, mode: 'watch' | 'drive'): Promise<DesktopScreenTicketView> {
-    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'view', mode }) })
+export function requestDesktopScreenTicket(agentId: string, mode: 'watch' | 'drive', signal?: AbortSignal, lease?: string): Promise<DesktopScreenTicketView> {
+    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'view', mode, ...(lease && { lease }) }), signal })
 }
 
-export function startDesktopScreenTakeover(agentId: string, url?: string): Promise<{ lease: string; sessionGeneration: string }> {
-    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'takeover', ...(url ? { url } : {}) }) })
+export function startDesktopScreenTakeover(agentId: string, url?: string, signal?: AbortSignal): Promise<{ lease: string }> {
+    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'takeover', ...(url ? { url } : {}) }), signal })
 }
 
-export function finishDesktopScreenTakeover(agentId: string, lease?: string): Promise<{ url: string | null }> {
-    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'takeover-finish', ...(lease ? { lease } : {}) }) })
+export function finishDesktopScreenTakeover(agentId: string, lease: string, signal?: AbortSignal): Promise<{ url: string | null; expired?: boolean }> {
+    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'takeover-finish', lease }), signal })
 }
 
-export function stopDesktopScreen(agentId: string): Promise<{ ok: true }> {
-    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'stop' }) })
+export function stopDesktopScreen(agentId: string, signal?: AbortSignal): Promise<{ ok: true }> {
+    return call(agentId, { method: 'POST', body: JSON.stringify({ action: 'stop' }), signal })
 }

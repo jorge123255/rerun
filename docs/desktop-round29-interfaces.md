@@ -38,3 +38,7 @@ Initial executable catalog methods: one canonical HTTPS Streamable HTTP server, 
 ## G/H preview boundary
 
 New isolated server preview adapter modules expose inspection/conversion accepting bounded input bytes, extension and AbortSignal and returning validated display bytes, MIME, dimensions and animation/frame metadata. Root dispatches them from the current confined Files reader. Preserve 8 MiB input, 8192 edge, 16,777,216 pixels as ceilings; stricter decoder limits allowed. G handles AVIF/ICO/BMP only. H handles SVG only and returns inert raster bytes. No composer/logo/import/card expansion. Neither lane edits shared preview-image.ts, image route, DesktopFileImagePreview.tsx, DesktopCoworkerFiles.tsx or image-bytes.ts. Supply exact fragments and any required direct dependency; root installs/builds/verifies.
+
+## Root C review amendment
+
+C’s original transport required fixes before use. The reviewed adapter now exposes createIsolatedViewer(service, authority), requiring current owner/grant validation and explicit lifecycle disposal. A must provide server-enforced read-only watch transport, never first-byte RFB filtering. Drive tickets carry the exact takeover lease. finishTakeover must be idempotent and return an explicit expired result for a dead generation while preserving genuine cleanup failures. Root adapts A’s actual transport and B’s durable Done/Skip receipt during final integration. See desktop-round29-viewer.md. No E3 activation/acceptance is implied by C’s source integration.

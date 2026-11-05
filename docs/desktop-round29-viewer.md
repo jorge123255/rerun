@@ -1,42 +1,31 @@
-# Round 29 E3 — isolated desktop viewer and takeover (lane C)
+# Round 29 E3 — C viewer source review and root corrections
 
-Original sources at `a6d63a4`: `apps/ui/components/desktop/AgentDesktopView.tsx`, `DesktopViewer.tsx`, `DesktopNotch.tsx`, `DesktopScreenLoader.tsx`, `ScreenMirror.tsx`, `ScreenCard.tsx`, `TakeControlOverlay.tsx`, `apps/ui/components/chat/TakeoverAsk.tsx`, `apps/ui/components/dialogs/DesktopDialog.tsx`, `apps/engine/src/desktop/bridge.ts`, `packages/contracts/src/desktop.ts`.
+Handoff `b5fc632e15311db78c876ea8fe8168391fb2a729` was cherry-picked as `9542900`. Root fixed the issues below in the coding checkout; C’s worktree remains untouched. This is **source integration only**. The engine routes/socket and dialog are deliberately not mounted or advertised until A’s actual runtime and B’s tools/durable takeover receipts are integrated and accepted.
 
-## What this lane adds
+Original design reference `a6d63a4`: AgentDesktopView, DesktopViewer, DesktopNotch, DesktopScreenLoader, ScreenMirror, ScreenCard, TakeControlOverlay, TakeoverAsk, DesktopDialog, engine desktop/bridge.ts, contracts/desktop.ts. The original frame/notch/loader remain reused; no host desktop control or files/terminal launchers are exposed.
 
-- `apps/engine/src/desktop/isolated-viewer.ts` — engine adapter outside A/B directories. `isolatedScreenRoutes(service)` serves `GET /status`, `POST /view`, `POST /takeover`, `POST /takeover/finish`, `POST /stop` under `/agents/:id/screen`; `attachIsolatedViewerBridge(server, service)` upgrades `ISOLATED_VIEWER_WS_PATH` (`/desktop/isolated-viewer-ws`) with single-use expiring tickets bound to owner + launch nonce + session generation + strict mode. Watch mode drops RFB input frames server-side — the original `bridge.ts` forwards input in watch mode and is deliberately not copied.
-- `apps/ui/lib/desktop/server/screen/service.ts` — resolves the local coworker to `{ engineAgentId, launchNonce }` server-side (never client-supplied), enforces enabled/not-deleting, calls the engine routes with the loopback apiKey, and returns a `ws://127.0.0.1` viewer URL. Target details (generation, lease) stay server-side except the opaque lease round-trip.
-- `apps/ui/app/api/desktop/agents/[agentId]/screen/route.ts` — authenticated discriminated-union POST (`view`/`takeover`/`takeover-finish`/`stop`) plus GET status, all through `desktopRoute`.
-- `apps/ui/lib/desktop/screen-client.ts` — typed client fetchers.
-- `apps/ui/components/desktop/isolated-screen/IsolatedScreenDialog.tsx` — preserves the original dialog/frame/notch/loader and Done flow, reusing `DesktopViewer`, `DesktopNotch`, `DesktopScreenLoader`, `DesktopDialog`, `TakeControlOverlay`, `EmptyState`. Adds truthful `unavailable`/`disconnected` states, watch default, take-control overlay, fresh ticket per reconnect, and release of the takeover lease on unmount/mode switch.
-- `apps/engine/src/desktop/isolated-viewer.test.ts` — ticket single-use/expiry/mode/revocation coverage.
+## Root fixes
 
-## Mac adaptations vs the original
+- Removed the engine syntax error.
+- Removed the unsafe first-byte RFB filter. WebSocket frames are not RFB message boundaries. Watch now requires an explicitly server-enforced read-only endpoint supplied by A; a writable endpoint is refused before TCP connection. The actual guest configuration must still be verified during A integration.
+- Replaced global tickets with bounded per-controller single-use tickets, exact owner/launch/generation and takeover lease binding. Required current-authority callback runs before/after issuance, at redemption and before forwarding input, with active authority monitoring. Exact UI origin and loopback peers are required at WebSocket upgrade.
+- Added owned TCP/WS disposal, bounded FIFO/backpressure preserving byte order, per-owner Stop/revocation and full detach/close hooks. Stop never creates a guest and still attempts exact guest shutdown if release fails.
+- Registered acquired leases before cancellation checks; failed release compensates by stopping the exact target. Failed cleanup retains ownership for retry. No-viewer expiry attempts cleanup. Exact finish receipts are replay-safe; an unknown/old lease returns `{url:null,expired:true}` without touching a current lease. Runtime finish must similarly return an expired outcome for a dead generation rather than pretending transient cleanup errors succeeded.
+- Propagated cancellation client → UI server → engine, added late-lease compensation, retained failed release state and reacquired control on reconnect.
+- Fixed manual Done to disconnect and close. Requested Done awaits B’s durable receipt and permits retry without releasing twice. Fixed the original overlay’s missing group styling and permitted a disconnected runtime to start/reconnect. Watch cannot paste or claim nothing was lost on disconnect.
 
-- Tickets are engine-held random tokens (single-use, 60 s) instead of the original HMAC `mintDesktopTicket`, because owner + launch nonce + generation binding needs server state; the original signature-only ticket cannot express single-use or generation.
-- Watch enforcement moved into the pipe (`watch` drops key/pointer frames), fixing the original bridge's watch-mode input leak.
-- Takeover lease is returned to the renderer only as an opaque string required to finish; Done/Skip durable receipt identity stays with lane B — `onHandBack(callId, url)` is the seam.
-- No files/terminal launchers and no host desktop control: `DesktopNotch` gets `launchers={false}`; the only drive path is the takeover lease.
+## Current root integration contract
 
-## Root integration fragments
+`createIsolatedViewer(service, authority)` in `apps/engine/src/desktop/isolated-viewer.ts` returns `{routes, attach, revoke, close}`. Root must mount `routes` under authenticated `/agents/:id/screen`, retaining the Mac route allowlist and engine key. Call `attach(server)` and retain its disposer; `close()` must run before shutdown. Bind revocation, disable/delete, Stop and session end to these hooks and A’s runtime shutdown/reconciliation.
 
-Engine bootstrap (`apps/engine/src/cli/commands/run.ts` next to `attachDesktopBridge`, and wherever the desktop engine server is created):
+The mandatory authority contains trusted `launchNonce`, exact `uiOrigin`, and `authorize(owner, mode, signal)`. It must freshly resolve exact coworker, enabled/deleting state and current browser/computer permissions; it must not use renderer-supplied grants. No default permissive authority exists. Grant promotion and this binding remain root-owned and are not in this partial integration.
 
-```ts
-import { isolatedScreenRoutes, attachIsolatedViewerBridge, type IsolatedScreenService } from '../../desktop/isolated-viewer.js'
-// inside createServer/api mounting:
-api.route('/agents/:id/screen', isolatedScreenRoutes(isolatedScreenService))
-// after server listen:
-attachIsolatedViewerBridge(server as Server, isolatedScreenService)
-```
+A’s `withViewer` adapter must supply a trusted server-only `{host:'127.0.0.1',port,readOnly}` endpoint and enforce target generation. Watch requires `readOnly:true` backed by actual VNC server enforcement, including fragmented/combined keyboard, pointer and clipboard attempts. A can instead supply a proven read-only stream; root will adapt the transport. No frame-boundary filtering is acceptable.
 
-`isolatedScreenService` is lane A's `IsolatedScreenService` from `apps/engine/src/desktop/isolated-screen/index.ts`; the adapter's `IsolatedScreenService` interface mirrors the round-29 agreement (status/ensure/navigate/startTakeover/finishTakeover/stop/withViewer). One seam to confirm against A's landed signature: `withViewer`'s connect callback is typed `(endpoint: { host: string; port: number }) => void` — adjust `pipeToIsolatedVnc` if A hands back a stream or unix socket instead.
+The authenticated UI route remains `/api/desktop/agents/[agentId]/screen`, with view/takeover/takeover-finish/stop operations. Drive view requires the exact opaque takeover lease. Local owner mapping and authoritative engine enabled state are checked; the engine authority hook supplies current grant checks. Missing runtime returns an honest unavailable status. Internal generation/endpoint details stay server-side.
 
-UI mounting (root-owned `DesktopApp`/`DesktopConversation`/chat card): render `IsolatedScreenDialog` with `agentId`, `title`, optional `takeover={{ callId, url, reason }}`, `onOpenChange`, and `onHandBack(callId, url)` forwarding to B's durable request adapter. For the chat-position card, reuse existing `ScreenCard`/`TakeoverAsk` with a viewer node that requests a `watch` ticket via `requestDesktopScreenTicket`.\n
-Revocation wiring (root): coworker disable/delete, permission revocation, Stop, session end and Quit should call `desktopScreenStop(runtime, agentId)` (releases lease, drops tickets via `revokeIsolatedViewerTickets`) and `service.stop(target)`; renderer sockets abort on unmount already.
+Mount `IsolatedScreenDialog` only when the runtime is actually available. B supplies `onHandBack(callId,url): Promise<void>` resolving only after its durable receipt succeeds. Requested takeover Skip and chat request presentation remain B/root integration. The dialog must not decide durable completion itself.
 
-## Remaining limits
+## Root checks
 
-- `withViewer` endpoint shape and A's service are unverified until A lands; route/service compile against the agreed interface only.
-- Takeover Done/Skip durable receipts are B's; this lane supplies `onHandBack` and finish-takeover transport only.
-- No tests/typecheck/lint/build/packaging/native QA run in this lane — root executes all verification.
+Root executed 12 engine transport/authority/lifecycle checks, six client session cancellation/reconnect checks and two dialog Done/receipt checks. These are local fixtures, not proof of a running Linux browser. Additional video/card checks run in the same acceptance batch. Types/lint/build status is recorded in the final acceptance report. Live E3 watch/drive/permissions, browser profile and pending-request restart acceptance remain pending A/B; do not check E3 off.

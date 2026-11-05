@@ -6,9 +6,9 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 const takeoverUrl = z.string().url().refine(url => /^https?:\/\//i.test(url), 'Only a web page can be opened')
 
 const postInput = z.discriminatedUnion('action', [
-    z.strictObject({ action: z.literal('view'), mode: z.enum(['watch', 'drive']) }),
+    z.strictObject({ action: z.literal('view'), mode: z.enum(['watch', 'drive']), lease: z.string().min(1).max(500).optional() }),
     z.strictObject({ action: z.literal('takeover'), url: takeoverUrl.optional() }),
-    z.strictObject({ action: z.literal('takeover-finish'), lease: z.string().min(1).max(500).optional() }),
+    z.strictObject({ action: z.literal('takeover-finish'), lease: z.string().min(1).max(500) }),
     z.strictObject({ action: z.literal('stop') }),
 ])
 
@@ -16,7 +16,7 @@ type Context = { params: Promise<{ agentId: string }> }
 
 export function GET(request: Request, { params }: Context) {
     return desktopRoute(request, async runtime => {
-        const status: DesktopScreenStatus = await desktopScreenStatus(runtime, (await params).agentId)
+        const status: DesktopScreenStatus = await desktopScreenStatus(runtime, (await params).agentId, request.signal)
         return Response.json(status, { headers: { 'cache-control': 'no-store' } })
     })
 }
@@ -29,19 +29,19 @@ export function POST(request: Request, { params }: Context) {
         const input = parsed.data
         switch (input.action) {
             case 'view': {
-                const { socketUrl, ticket } = await desktopScreenTicket(runtime, agentId, input.mode)
+                const { socketUrl, ticket } = await desktopScreenTicket(runtime, agentId, input.mode, request.signal, input.lease)
                 return Response.json({ socketUrl, expiresAt: ticket.expiresAt, width: ticket.width, height: ticket.height }, { headers: { 'cache-control': 'no-store' } })
             }
             case 'takeover': {
-                const takeover = await desktopScreenTakeover(runtime, agentId, input.url)
+                const takeover = await desktopScreenTakeover(runtime, agentId, request.signal, input.url)
                 return Response.json(takeover, { headers: { 'cache-control': 'no-store' } })
             }
             case 'takeover-finish': {
-                const result = await desktopScreenFinishTakeover(runtime, agentId, input.lease)
+                const result = await desktopScreenFinishTakeover(runtime, agentId, input.lease, request.signal)
                 return Response.json(result, { headers: { 'cache-control': 'no-store' } })
             }
             case 'stop': {
-                await desktopScreenStop(runtime, agentId)
+                await desktopScreenStop(runtime, agentId, request.signal)
                 return Response.json({ ok: true }, { headers: { 'cache-control': 'no-store' } })
             }
         }

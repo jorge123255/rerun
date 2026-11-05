@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { request } from '@/lib/engine/client'
+import { getAgent, request } from '@/lib/engine/client'
 import { DesktopHttpError } from '../auth'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
 import { disabledCoworkerMessage } from '../coworker-enabled'
@@ -23,15 +23,14 @@ export type DesktopScreenStatus = z.infer<typeof screenStatusSchema>
 const viewTicketSchema = z.object({
     ticket: z.string().min(1),
     expiresAt: z.string(),
-    sessionGeneration: z.string(),
     width: z.number(),
     height: z.number(),
 })
 export type DesktopScreenTicket = z.infer<typeof viewTicketSchema>
 
-const takeoverSchema = z.object({ lease: z.string(), sessionGeneration: z.string() })
+const takeoverSchema = z.object({ lease: z.string().min(1).max(500) })
 export type DesktopScreenTakeover = z.infer<typeof takeoverSchema>
-const takeoverResultSchema = z.object({ url: z.string().nullable() })
+const takeoverResultSchema = z.object({ url: z.string().nullable(), expired: z.boolean().optional() })
 
 async function screenAgent(runtime: DesktopRuntime, agentId: string, requireEnabled = true): Promise<DesktopAgent> {
     const db = await openDesktopDatabase(runtime.dataRoot)
@@ -39,12 +38,14 @@ async function screenAgent(runtime: DesktopRuntime, agentId: string, requireEnab
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     if (requireEnabled) {
         await assertCoworkerNotDeleting(db, agentId)
-        if (!agent.enabled) throw new DesktopHttpError(409, disabledCoworkerMessage)
+        const current = await getAgent(engineOf(runtime), agent.engineAgentId)
+        if (current.id !== agent.engineAgentId) throw new DesktopHttpError(409, 'Coworker identity changed')
+        if (!current.config.enabled) throw new DesktopHttpError(409, disabledCoworkerMessage)
     }
     return agent
 }
 
-function screenBase(runtime: DesktopRuntime, agent: DesktopAgent): string {
+function screenBase(agent: DesktopAgent): string {
     return `/agents/${encodeURIComponent(agent.engineAgentId)}/screen`
 }
 
@@ -54,50 +55,50 @@ function viewerSocketUrl(runtime: DesktopRuntime, ticket: string): string {
     return `${scheme}://${engine.host}${ISOLATED_VIEWER_WS_PATH}?ticket=${encodeURIComponent(ticket)}`
 }
 
-export async function desktopScreenStatus(runtime: DesktopRuntime, agentId: string): Promise<DesktopScreenStatus> {
+export async function desktopScreenStatus(runtime: DesktopRuntime, agentId: string, signal: AbortSignal): Promise<DesktopScreenStatus> {
     const agent = await screenAgent(runtime, agentId)
     const conn = engineOf(runtime)
     try {
-        return await request(conn, `${screenBase(runtime, agent)}/status?launchNonce=${encodeURIComponent(runtime.launchNonce)}`, { method: 'GET' }, d => screenStatusSchema.parse(d))
+        return await request(conn, `${screenBase(agent)}/status?launchNonce=${encodeURIComponent(runtime.launchNonce)}`, { method: 'GET', signal }, d => screenStatusSchema.parse(d))
     } catch (err) {
         if (err instanceof Error && 'status' in err && (err as { status: number }).status === 404) {
-            throw new DesktopHttpError(503, 'This screen arrives with the next update of the engine. Try again in a little while.')
+            return { state: 'unavailable', driving: false, reason: 'The isolated browser runtime is not installed yet.' }
         }
         throw err
     }
 }
 
-export async function desktopScreenTicket(runtime: DesktopRuntime, agentId: string, mode: 'watch' | 'drive'): Promise<{ socketUrl: string; ticket: DesktopScreenTicket }> {
+export async function desktopScreenTicket(runtime: DesktopRuntime, agentId: string, mode: 'watch' | 'drive', signal: AbortSignal, lease?: string): Promise<{ socketUrl: string; ticket: DesktopScreenTicket }> {
     const agent = await screenAgent(runtime, agentId)
     const conn = engineOf(runtime)
-    const ticket = await request(conn, `${screenBase(runtime, agent)}/view`, {
+    const ticket = await request(conn, `${screenBase(agent)}/view`, {
         method: 'POST',
-        body: JSON.stringify({ mode, launchNonce: runtime.launchNonce }),
-        signal: AbortSignal.timeout(45_000),
+        body: JSON.stringify({ mode, launchNonce: runtime.launchNonce, ...(lease && { lease }) }),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]),
     }, d => viewTicketSchema.parse(d))
     return { socketUrl: viewerSocketUrl(runtime, ticket.ticket), ticket }
 }
 
-export async function desktopScreenTakeover(runtime: DesktopRuntime, agentId: string, url?: string): Promise<DesktopScreenTakeover> {
+export async function desktopScreenTakeover(runtime: DesktopRuntime, agentId: string, signal: AbortSignal, url?: string): Promise<DesktopScreenTakeover> {
     const agent = await screenAgent(runtime, agentId)
-    return request(engineOf(runtime), `${screenBase(runtime, agent)}/takeover`, {
+    return request(engineOf(runtime), `${screenBase(agent)}/takeover`, {
         method: 'POST',
         body: JSON.stringify({ launchNonce: runtime.launchNonce, ...(url ? { url } : {}) }),
-        signal: AbortSignal.timeout(45_000),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]),
     }, d => takeoverSchema.parse(d))
 }
 
-export async function desktopScreenFinishTakeover(runtime: DesktopRuntime, agentId: string, lease?: string): Promise<{ url: string | null }> {
+export async function desktopScreenFinishTakeover(runtime: DesktopRuntime, agentId: string, lease: string, signal: AbortSignal): Promise<{ url: string | null; expired?: boolean }> {
     const agent = await screenAgent(runtime, agentId, false)
-    return request(engineOf(runtime), `${screenBase(runtime, agent)}/takeover/finish`, {
+    return request(engineOf(runtime), `${screenBase(agent)}/takeover/finish`, {
         method: 'POST',
         body: JSON.stringify({ launchNonce: runtime.launchNonce, ...(lease ? { lease } : {}) }),
-        signal: AbortSignal.timeout(45_000),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(45_000)]),
     }, d => takeoverResultSchema.parse(d))
 }
 
-export async function desktopScreenStop(runtime: DesktopRuntime, agentId: string): Promise<void> {
+export async function desktopScreenStop(runtime: DesktopRuntime, agentId: string, signal: AbortSignal): Promise<void> {
     const agent = await screenAgent(runtime, agentId, false)
-    await request(engineOf(runtime), `${screenBase(runtime, agent)}/stop?launchNonce=${encodeURIComponent(runtime.launchNonce)}`, { method: 'POST' }, () => undefined)
+    await request(engineOf(runtime), `${screenBase(agent)}/stop?launchNonce=${encodeURIComponent(runtime.launchNonce)}`, { method: 'POST', signal }, () => undefined)
 }
 
