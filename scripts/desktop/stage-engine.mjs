@@ -24,6 +24,7 @@ try {
     await rm(deploy, { recursive: true, force: true })
 }
 if (!existsSync(join(target, 'dist', 'cli', 'bin.js'))) throw new Error('staged engine is missing dist/cli/bin.js')
+await cp(join(repoRoot, 'apps', 'engine', 'desktop-guest'), join(target, 'desktop-guest'), { recursive: true })
 // Resolve the platform package through the lockfile's installed dependencies, never PATH.
 const engineRequire = createRequire(join(target, 'package.json'))
 const adapter = createRequire(engineRequire.resolve('ai-sdk-provider-codex-cli'))

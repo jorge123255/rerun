@@ -1,5 +1,5 @@
 import { createServer as httpServer } from 'node:http'
-import { createServer as tcpServer, type Socket } from 'node:net'
+import { connect as tcpConnect, createServer as tcpServer, type Socket } from 'node:net'
 import { once } from 'node:events'
 import { Hono } from 'hono'
 import { WebSocket } from 'ws'
@@ -88,18 +88,23 @@ async function network(f: ReturnType<typeof setup>, readOnly: boolean) {
     guest.listen(0, '127.0.0.1'); await once(guest, 'listening')
     cleanups.push(async () => { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => guest.close(() => resolve())) })
     const port = (guest.address() as { port: number }).port
-    f.service.withViewer.mockImplementation(async (_target, _mode, _signal, connect) => { connect({ host: '127.0.0.1', port, readOnly }) })
+    f.service.withViewer.mockImplementation(async (_target, _mode, _signal, connect) => { const stream = tcpConnect(port, '127.0.0.1'); try { await connect(stream) } finally { stream.destroy() } })
     const server = httpServer(); f.controller.attach(server); server.listen(0, '127.0.0.1'); await once(server, 'listening')
     cleanups.push(async () => { await f.controller.close(); await new Promise<void>(resolve => server.close(() => resolve())) })
     const url = `ws://127.0.0.1:${(server.address() as { port: number }).port}${ISOLATED_VIEWER_WS_PATH}`
     return { sockets, url }
 }
-it('watch fails closed when runtime supplies a writable endpoint', async () => {
-    const f = setup(), n = await network(f, false), body = await (await f.post('view', { mode: 'watch' })).json()
+it('keeps the watch stream alive until its viewer closes', async () => {
+    const f = setup(), n = await network(f, true), body = await (await f.post('view', { mode: 'watch' })).json()
     const ws = new WebSocket(`${n.url}?ticket=${body.ticket}`, { origin: f.authority.uiOrigin })
-    const closed = once(ws, 'close'); await closed
-    expect(n.sockets.size).toBe(0)
+    const frame = await once(ws, 'message')
+    expect(frame[0].toString()).toBe('RFB')
+    expect(f.service.withViewer.mock.calls[0]?.[1]).toBe('watch')
+    expect(n.sockets.size).toBe(1)
+    ws.close()
+    await vi.waitFor(() => expect(n.sockets.size).toBe(0))
 })
+
 it('revocation destroys active TCP/WebSocket connections and ticket replay fails', async () => {
     const f = setup(), n = await network(f, true), body = await (await f.post('view', { mode: 'watch' })).json()
     const ws = new WebSocket(`${n.url}?ticket=${body.ticket}`, { origin: f.authority.uiOrigin })

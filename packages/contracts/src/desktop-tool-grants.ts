@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb', 'schedule', 'mcp', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services'] as const
+export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb', 'schedule', 'mcp', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'browser', 'computer'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -51,9 +51,9 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     pending('trigger', 'Triggers', 'Start a routine from an external event.', 'Requires an authenticated webhook service.'),
     pending('delegate', 'Delegate tasks', 'Spawn a worker for a task.', 'Requires isolated child runs and cancellation.'),
     pending('callAgent', 'Call coworkers', 'Ask another coworker to do work.', 'Requires target selection and scoped access to sibling runs.'),
-    pending('browser', 'Use a browser', 'Operate a browser and hand it to a person.', 'Requires an isolated browser and a takeover view.'),
+    supported('browser', 'Use a browser', 'Read pages in this coworker’s isolated browser and ask you to take over. Requires Docker Desktop and Computer control.', 'browser_navigate', 'request_takeover'),
     pending('vision', 'Vision', 'Inspect images and screenshots.', 'Requires an image input path and a model with vision.'),
-    pending('computer', 'Computer control', 'Interact with a desktop.', 'Requires an isolated desktop with screen and input permissions.'),
+    supported('computer', 'Computer control', 'See and drive this coworker’s isolated browser screen. Requires Docker Desktop and Use a browser.', 'computer', 'computer_open_app'),
     pending('notify', 'Send notifications', 'Deliver a coworker notification.', 'Requires a Mac notification destination and user permission.'),
     supported('services', 'Apps', 'Use tools from apps you connect in this coworker’s Apps panel. Installing an app does not enable this permission.'),
     pending('hub', 'Service catalog', 'Discover and configure Rerun services.', 'Requires an authenticated Rerun hub.'),

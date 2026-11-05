@@ -47,11 +47,13 @@ import { desktopSharedFileTools } from '../desktop/shared-file-tools.js'
 import { desktopMcpTools } from '../desktop/mcp-tools.js'
 import { desktopStdioTools } from '../desktop/mcp-stdio/client.js'
 import { desktopServiceTools } from '../desktop/service-tools.js'
+import { isolatedScreenTools } from '../desktop/isolated-screen/tools.js'
 import { desktopBrainTools } from '../desktop/brain-tools.js'
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
     if (desktopApp()) {
-        const tools: ToolSet = { ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx) }
+        const screen = isolatedScreenTools(ctx)
+        const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx) }
         const remote = await desktopMcpTools(ctx)
         if (Object.keys(remote.tools).some(name => Object.hasOwn(tools, name))) {
             await remote.close()
@@ -66,8 +68,8 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
             const existing = { ...merged, ...local?.tools }
             if (hasDesktopToolGrant(ctx.agent.config, 'services')) services = await desktopServiceTools(ctx)
             if (Object.keys(services?.tools ?? {}).some(name => Object.hasOwn(existing, name))) throw new Error('An app tool conflicts with another tool.')
-            return { tools: { ...existing, ...services?.tools }, close: async () => { try { await services?.close() } finally { try { await local?.close() } finally { await remote.close() } } } }
-        } catch (error) { try { await services?.close() } finally { try { await local?.close() } finally { await remote.close() } }; throw error }
+            return { tools: { ...existing, ...services?.tools }, close: async () => { try { await services?.close() } finally { try { await local?.close() } finally { await remote.close(); screen.release() } } } }
+        } catch (error) { try { await services?.close() } finally { try { await local?.close() } finally { await remote.close(); screen.release() } }; throw error }
     }
     const cfg = ctx.agent.config.tools
     const tools: ToolSet = {}

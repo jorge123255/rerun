@@ -1,3 +1,4 @@
+import type { DesktopTakeoverGuard } from '@rerun/contracts'
 import 'server-only'
 import { desktopChatTitle } from '../chat-content'
 import { startQueuedChat } from './queued-chat'
@@ -91,7 +92,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard }
+    | { sessionId?: string; text: string; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -108,7 +109,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     await assertCoworkerNotDeleting(db, input.agentId)
     const kickoff = await assertDesktopCreationSettled(db, input.agentId, internalCreationRequestId)
     if (kickoff && ('regenerateMessageId' in input || input.sessionId || input.tabUid !== kickoff.requestId || input.text !== kickoff.text ||
-        input.requestId || input.reconcileOnly || input.modelChoice || input.question || input.approval || desktopAttachmentSelectionsOf(input).length)) {
+        input.requestId || input.reconcileOnly || input.modelChoice || input.question || input.approval || input.takeover || desktopAttachmentSelectionsOf(input).length)) {
         throw new DesktopHttpError(409, desktopCreationPendingMessage)
     }
     const agent = await findDesktopAgent(db, input.agentId)
@@ -127,7 +128,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id, 'x-run-id': String(previousStart.run_id),
         } }) }
     }
-    const queued = !regenerate && input.requestId ? { runId: input.requestId, ...attachmentFields, ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }) } : undefined
+    const queued = !regenerate && input.requestId ? { runId: input.requestId, ...attachmentFields, ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }), ...(input.takeover && { takeover: input.takeover }) } : undefined
     let replay: Response | undefined
     if (queued && existing && !regenerate) {
         const probe = await chat(engineOf(runtime), agent.engineAgentId, {

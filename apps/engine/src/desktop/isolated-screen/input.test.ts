@@ -50,7 +50,7 @@ describe('computer actions', () => {
         expect(() => planAction({ action: 'type', text: 'x'.repeat(TYPE_MAX + 1) }, screen)).toThrow(/too long/)
         expect(() => planAction({ action: 'key', text: '' }, screen)).toThrow(/Name the key/)
         expect(() => planAction({ action: 'key', text: 'x'.repeat(KEY_MAX + 1) }, screen)).toThrow(/Name the key/)
-        expect(() => keyCombos('bad key')).toThrow(/not a key/)
+        expect(() => keyCombos('bad/key')).toThrow(/not a key/)
         expect(() => planAction({ action: 'wait', duration: 11 }, screen)).toThrow(/not available/)
         expect(() => planAction({ action: 'nope' } as ScreenComputerInput, screen)).toThrow(/not available/)
     })

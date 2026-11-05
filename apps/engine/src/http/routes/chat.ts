@@ -1,3 +1,4 @@
+import { desktopTakeoverGuardSchema, findDesktopTakeover } from '@rerun/contracts'
 import { createHash } from 'node:crypto'
 import { chatRequestSchema, desktopApprovalGuardSchema, desktopQuestionGuardSchema, desktopAttachmentSelectionsOf, desktopAttachmentFieldsOf, desktopAttachmentItemsSchema, hasOneDesktopAttachmentField, desktopResolvedAttachmentsSchema, desktopResolvedAttachmentSelections, desktopStoredAttachmentSelections, type DesktopResolvedAttachment, desktopAttachmentPathsSchema, desktopWorkspaceAttachmentSchema, desktopWorkspaceAttachmentsSchema, findDesktopApproval, findDesktopQuestion, type SessionSource } from '@rerun/contracts'
 import { Hono } from 'hono'
@@ -23,12 +24,13 @@ import { mergeRunStream } from '../../runtime/run-stream-merge.js'
 import { resumeStreamResponse, toResumableStreamResponse } from '../../runtime/stream.js'
 
 export const chatRoutes = new Hono()
+const takeoverPendingMessage = 'Open and finish or skip the coworker’s browser request before sending another message.'
 const questionPendingMessage = 'Answer or dismiss the coworker’s questions before sending another message.'
 const approvalPendingMessage = 'Approve or decline the coworker’s proposed actions before sending another message.'
 const desktopFirstTurn = z.object({ sessionId: z.uuid(), runId: z.uuid() }).strict()
-const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional() }).strict()
+const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional(), takeover: desktopTakeoverGuardSchema.optional() }).strict()
     .refine(hasOneDesktopAttachmentField, 'Use one attachment field.')
-    .refine(turn => !turn.question || !turn.approval, 'An answer can target only one pending request.')
+    .refine(turn => [turn.question, turn.approval, turn.takeover].filter(Boolean).length <= 1, 'An answer can target only one pending request.')
 const desktopChatRequest = chatRequestSchema.extend({
     message: z.string().max(20_000),
     workspaceAttachment: desktopWorkspaceAttachmentSchema.optional(),
@@ -130,7 +132,7 @@ chatRoutes.post('/chat', async c => {
             const session = await getSession(agentId, body.sessionId)
             if (session?.agentId === agentId && await getDesktopQueuedTurn(agentId, {
                 runId: queued.runId, sessionId: session.id, message: body.message,
-                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval,
+                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover,
             })) return identified(resumeStreamResponse(queued.runId), session.id, queued.runId)
         }
         throw agentDisabled()
@@ -170,7 +172,7 @@ chatRoutes.post('/chat', async c => {
         const queued = body.desktopQueuedTurn!
         const session = await getSession(agentId, body.sessionId!)
         if (!session || session.agentId !== agentId) throw new HttpError(404, 'Session not found for this agent')
-        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval }
+        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover }
         if (await getDesktopQueuedTurn(agentId, turn)) return identified(resumeStreamResponse(turn.runId), session.id, turn.runId)
         if (await getRun(agentId, turn.runId)) throw new HttpError(409, 'This queued message ID is already in use.')
         // The bridge can reconcile a lost acknowledgement before re-reading a moved file or
@@ -188,6 +190,7 @@ chatRoutes.post('/chat', async c => {
             const messages = await listMessages(agentId, session.id)
             const pending = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
+            const takeover = findDesktopTakeover(messages)
             if (queued.question) {
                 const expected = queued.question
                 if (!pending || pending.sourceMessageId !== expected.sourceMessageId || pending.toolCallId !== expected.toolCallId || pending.fingerprint !== expected.fingerprint) {
@@ -198,11 +201,14 @@ chatRoutes.post('/chat', async c => {
                 if (!approval || approval.sourceMessageId !== expected.sourceMessageId || approval.toolCallId !== expected.toolCallId || approval.fingerprint !== expected.fingerprint) {
                     throw new HttpError(409, 'This approval is no longer waiting for a decision. Reload the conversation.')
                 }
-            } else if (pending || approval) {
+            } else if (queued.takeover) {
+                const expected = queued.takeover
+                if (!takeover || takeover.sourceMessageId !== expected.sourceMessageId || takeover.toolCallId !== expected.toolCallId || takeover.fingerprint !== expected.fingerprint) throw new HttpError(409, 'This browser request is no longer waiting. Reload the conversation.')
+            } else if (pending || approval || takeover) {
                 // The panel may have read an idle snapshot just before this question was saved.
                 // Its queued draft must remain unsent until the explicit answer is accepted.
                 releaseSession(turn.runId)
-                return c.json({ error: pending ? questionPendingMessage : approvalPendingMessage, code: pending ? 'question_pending' : 'approval_pending' }, 409)
+                return c.json({ error: pending ? questionPendingMessage : approval ? approvalPendingMessage : takeoverPendingMessage, code: pending ? 'question_pending' : approval ? 'approval_pending' : 'takeover_pending' }, 409)
             }
             const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, attachments, body.author, body.desktopAttachments)
             return streamChat(agent, session.id, turn.runId, body.message, override, { provider, model }, {
@@ -236,9 +242,10 @@ chatRoutes.post('/chat', async c => {
             const messages = await listMessages(agentId, session.id)
             const question = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
-            if (question || approval) {
+            const takeover = findDesktopTakeover(messages)
+            if (question || approval || takeover) {
                 releaseSession(runId)
-                return c.json({ error: question ? questionPendingMessage : approvalPendingMessage, code: question ? 'question_pending' : 'approval_pending' }, 409)
+                return c.json({ error: question ? questionPendingMessage : approval ? approvalPendingMessage : takeoverPendingMessage, code: question ? 'question_pending' : approval ? 'approval_pending' : 'takeover_pending' }, 409)
             }
         } catch (error) {
             releaseSession(runId)

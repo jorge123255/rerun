@@ -16,6 +16,7 @@ export const desktopDeletedPath = (id: string) => resolve(dataDir(), '.deleted-a
 export function desktopDeletionPending(id: string) {
     return existsSync(desktopDeletionPath(id))
 }
+export function desktopDeletionActive(id: string) { return deleting.has(keyOf(id)) || desktopDeletionPending(id) || deleted.has(keyOf(id)) || existsSync(desktopDeletedPath(id)) }
 
 export function assertDesktopAgentNotDeleted(id: string) {
     if (desktopApp() && (deleted.has(keyOf(id)) || existsSync(desktopDeletedPath(id)))) throw notFound('agent')

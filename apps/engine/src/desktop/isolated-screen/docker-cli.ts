@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import { Duplex, type Readable, type Writable } from 'node:stream'
 import {
@@ -18,7 +19,7 @@ import type { ScreenOwner } from './types.js'
 
 export type DockerVersion = { kind: 'ok'; os: string; arch: string } | { kind: 'missing' } | { kind: 'unreachable' }
 export type DockerImage = { kind: 'present'; architecture: string } | { kind: 'missing' } | { kind: 'unreachable' }
-export type InspectedContainer = { status: 'missing' } | { status: 'unreachable' } | { status: 'found'; state: string; labels: Record<string, string> }
+export type InspectedContainer = { status: 'missing' } | { status: 'unreachable' } | { status: 'found'; id?: string; state: string; labels: Record<string, string> }
 export type InspectedVolume = { status: 'missing' } | { status: 'unreachable' } | { status: 'found'; labels: Record<string, string> }
 export type ListedScreen = {
     name: string
@@ -65,12 +66,13 @@ export function parseLabels(payload: string): Record<string, string> {
     return labels
 }
 
-export function parseContainerInspect(stdout: string): { state: string; labels: Record<string, string> } | null {
+export function parseContainerInspect(stdout: string): { id?: string; state: string; labels: Record<string, string> } | null {
     try {
         const text = stdout.trim()
         const tab = text.indexOf('\t')
         if (tab <= 0) return null
-        return { state: text.slice(0, tab), labels: parseLabels(text.slice(tab + 1)) }
+        const rest = text.slice(tab + 1), end = rest.lastIndexOf('\t')
+        return end < 0 ? { state: text.slice(0, tab), labels: parseLabels(rest) } : { state: text.slice(0, tab), labels: parseLabels(rest.slice(0, end)), id: rest.slice(end + 1) }
     } catch {
         return null
     }
@@ -98,9 +100,17 @@ export function isDockerMiss(stderr: string): boolean {
     return /no such (object|container|volume|image)/i.test(stderr)
 }
 
+function dockerExecutable() {
+    if (process.env.RERUN_DESKTOP_APP === '1' && process.platform === 'darwin') {
+        const app = '/Applications/Docker.app/Contents/Resources/bin/docker'
+        if (existsSync(app)) return app
+    }
+    return 'docker'
+}
+
 function collect(args: readonly string[], signal: AbortSignal, input?: Buffer): Promise<Collected> {
     throwIfAborted(signal)
-    const child = spawn('docker', [...args], { shell: false, stdio: ['pipe', 'pipe', 'pipe'] }) as ChildProcessByStdio<Writable, Readable, Readable>
+    const child = spawn(dockerExecutable(), [...args], { shell: false, stdio: ['pipe', 'pipe', 'pipe'] }) as ChildProcessByStdio<Writable, Readable, Readable>
     return new Promise(resolve => {
         const out: Buffer[] = []
         const err: Buffer[] = []
@@ -172,7 +182,7 @@ export function createDockerCli(): DockerClient {
             if (result.error || result.code === null || result.tooLarge) return { status: 'unreachable' }
             if (result.code !== 0) return isDockerMiss(result.stderr.toString('utf8')) ? { status: 'missing' } : { status: 'unreachable' }
             const parsed = parseContainerInspect(result.stdout.toString('utf8'))
-            return parsed ? { status: 'found', state: parsed.state, labels: parsed.labels } : { status: 'unreachable' }
+            return parsed ? { status: 'found', ...parsed } : { status: 'unreachable' }
         },
         async inspectVolume(name, signal) {
             const result = await collect(inspectVolumeArgs(name), signal)
@@ -231,9 +241,9 @@ export function createDockerCli(): DockerClient {
             if (result.code !== 0) throw new IsolatedScreenRefusal('The screen action failed.', 'closed')
             return result.stdout
         },
-        execStream(name, command, signal) {
+        async execStream(name, command, signal) {
             throwIfAborted(signal)
-            const child = spawn('docker', execArgs(name, command), { shell: false, stdio: ['pipe', 'pipe', 'pipe'] }) as ChildProcessByStdio<Writable, Readable, Readable>
+            const child = spawn(dockerExecutable(), execArgs(name, command), { shell: false, stdio: ['pipe', 'pipe', 'pipe'] }) as ChildProcessByStdio<Writable, Readable, Readable>
             child.stderr.resume()
             const stream = Duplex.from({ writable: child.stdin, readable: child.stdout })
             const kill = () => {
@@ -250,6 +260,7 @@ export function createDockerCli(): DockerClient {
                 stream.destroy(new IsolatedScreenRefusal(code === 'ENOENT' ? 'Docker is not installed.' : 'Docker is not running.', 'prerequisite'))
             })
             child.on('close', () => signal.removeEventListener('abort', onAbort))
+            stream.on('error', () => {})
             stream.on('close', kill)
             return Promise.resolve(stream)
         },

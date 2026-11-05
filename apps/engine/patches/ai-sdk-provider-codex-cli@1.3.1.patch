@@ -180,6 +180,24 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..325112795616d9e1674ea58305d464bf
        jsonModeLastTextBlockOnly: this.options.jsonModeLastTextBlockOnly
      });
      this.emitter.emitStreamStart(this.options.warnings);
+@@ -3235,11 +3282,16 @@
+         const result = await tool2.execute(toolArgs);
++        const marker = Symbol.for("rerun.desktop.codexMcpResult");
++        const richResult = process.env.RERUN_DESKTOP_APP === "1" &&
++          result !== null && typeof result === "object" &&
++          Object.prototype.hasOwnProperty.call(result, marker)
++          ? result[marker] : undefined;
+         return {
+           jsonrpc: "2.0",
+           id,
+-          result: {
++          result: richResult ?? {
+             content: [{ type: "text", text: serializeToolResultToText(result) }]
+           }
+         };
+       } catch (error) {
+         return {
+           jsonrpc: "2.0",
 @@ -3614,6 +3661,16 @@
          input.push({ type: "image", url: image.url, imageUrl: image.url });
          continue;
@@ -458,6 +476,24 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..024bed81cdf1e4e6d1b994da3e417fb4
        jsonModeLastTextBlockOnly: this.options.jsonModeLastTextBlockOnly
      });
      this.emitter.emitStreamStart(this.options.warnings);
+@@ -3227,11 +3274,16 @@
+         const result = await tool2.execute(toolArgs);
++        const marker = Symbol.for("rerun.desktop.codexMcpResult");
++        const richResult = process.env.RERUN_DESKTOP_APP === "1" &&
++          result !== null && typeof result === "object" &&
++          Object.prototype.hasOwnProperty.call(result, marker)
++          ? result[marker] : undefined;
+         return {
+           jsonrpc: "2.0",
+           id,
+-          result: {
++          result: richResult ?? {
+             content: [{ type: "text", text: serializeToolResultToText(result) }]
+           }
+         };
+       } catch (error) {
+         return {
+           jsonrpc: "2.0",
 @@ -3606,6 +3653,16 @@
          input.push({ type: "image", url: image.url, imageUrl: image.url });
          continue;

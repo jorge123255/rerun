@@ -349,15 +349,15 @@ describe('isolated screen lifecycle', () => {
         expect(box.docker.createdVolumes).toHaveLength(1)
     })
 
-    it('leaves the container in place when startup is cancelled', async () => {
+    it('removes the exact container when startup is cancelled', async () => {
         const { docker, service } = harness()
         const controller = new AbortController()
         docker.execHook = body => { if (body.op === 'ping') controller.abort() }
         await expect(service.ensure(owner, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
-        expect(docker.removedContainers).toEqual([])
+        expect(docker.removedContainers).toEqual([containerName(owner.engineAgentId)])
         expect(docker.removedVolumes).toEqual([])
         expect(docker.createdVolumes).toEqual([volumeName(owner.engineAgentId)])
-        expect(docker.containers.size).toBe(1)
+        expect(docker.containers.size).toBe(0)
     })
 
     it('removes a guest that exits and keeps the profile', async () => {
@@ -556,12 +556,14 @@ describe('isolated screen control', () => {
             randomBytes: size => Buffer.alloc(size, 4),
             sleep: async ms => {
                 if (ms === 600 && !pending) pending = service.startTakeover(target, signal)
-                if (pending) await pending
+                // The action must unwind before takeover obtains the owner lock.
+                if (pending) throw new DOMException('Aborted', 'AbortError')
             },
             readyAttempts: 2,
         })
         target = (await service.ensure(owner, signal)).target
         await expect(service.act(target, { action: 'left_click', coordinate: [10, 20] }, signal)).rejects.toMatchObject({ message: HUMAN_DRIVING })
+        await pending
         const ops = docker.execs.map(call => call.body.op)
         expect(ops).toContain('input')
         expect(ops).toContain('release')

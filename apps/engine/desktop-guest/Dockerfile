@@ -36,5 +36,5 @@ RUN chmod 755 /usr/local/bin/rerun-entrypoint /usr/local/bin/rerun-rpc /usr/loca
 
 VOLUME /var/lib/rerun/profile
 
-USER root
+USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/rerun-entrypoint"]

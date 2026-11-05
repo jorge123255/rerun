@@ -77,3 +77,5 @@ export * from './onboarding-intake.js'
 export * from './notifications.js'
 
 export * from './desktop-codex.js'
+
+export * from './desktop-takeover.js'

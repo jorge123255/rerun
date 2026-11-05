@@ -62,6 +62,19 @@ import { desktopQuickRepliesOf } from '@/lib/desktop/quick-replies'
 import { useDesktopComposerDraft } from '@/lib/desktop/use-composer-draft'
 import { desktopDraftRecord, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 
+import { desktopTakeoverViewSchema, type DesktopPendingTakeover, type DesktopTakeoverTerminal } from '@/lib/desktop/takeover'
+import { takeoverScreenApi } from '@/lib/desktop/takeover-screen'
+import { IsolatedScreenDialog } from './isolated-screen/IsolatedScreenDialog'
+import { DesktopBrowserCard } from './isolated-screen/DesktopBrowserCard'
+
+const takeoverUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/takeover`
+async function takeoverFor(sessionId: string, signal: AbortSignal) {
+    const response = await fetch(takeoverUrl(sessionId), { signal })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(body.error ?? 'Could not load the browser request.')
+    return desktopTakeoverViewSchema.parse(body).takeover
+}
+
 const approvalUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/approvals`
 async function approvalFor(sessionId: string, signal: AbortSignal) {
     const response = await fetch(approvalUrl(sessionId), { signal })
@@ -279,8 +292,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         })
         batchUpload.current = work
     }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion])
-    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null })
-    const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
+    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null, takeover: null })
+    const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer | DesktopTakeoverTerminal; onAccepted?: () => void; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
     const quickReplyIds = useRef(new Map<string, string>())
     const quickReplyContext = useRef<{ scope: string; messageId?: string; canSend: boolean }>({ scope: draftKey, canSend: false })
@@ -327,6 +340,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     throw new Error('approvalId' in answer.payload ? 'Could not confirm your decisions. Retry the same decisions to check safely.' : 'Could not confirm your answer. Retry the same answer to check safely.')
                 }
                 answer.accepted = true
+                answer.onAccepted?.()
             }
             if (quickReply) {
                 if (response.headers.get('x-session-id') !== quickReply.sessionId || response.headers.get('x-run-id') !== quickReply.requestId) {
@@ -445,14 +459,18 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }, [panelFocus, active, detailPanel, cardOpen])
     const dirty = !draft.loaded || !uploadsLoaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive || uploadItems.length || imageUploads.items.length)
     const readable = active && !cardOpen && !detailPanel && !chatsOpen && ready && !generating && history.loadedGeneration === historyGeneration
-        && !!history.transcript && history.question !== undefined && history.approval !== undefined
+        && !!history.transcript && history.question !== undefined && history.approval !== undefined && history.takeover !== undefined
         && engineRunning.id === sessionId
     useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty, readableSessionId: readable ? sessionId : null }) }, [tabUid, generating, dirty, readable, sessionId, onTabActivity])
     const question = history.id === sessionId ? history.question : undefined
     const approval = history.id === sessionId ? history.approval : undefined
-    const pendingRequest = question || approval
+    const takeover = history.id === sessionId ? history.takeover : undefined
+    const [screenOpen, setScreenOpen] = useState<'manual' | 'request' | null>(null)
+    const screenApi = useMemo(() => sessionId && takeover ? takeoverScreenApi(sessionId, takeover.id) : undefined, [sessionId, takeover?.id])
+    useEffect(() => { setScreenOpen(null) }, [active, sessionId, takeover?.id])
+    const pendingRequest = question || approval || takeover
     // Both request kinds must be known before a later turn or an automatic queue flush.
-    const requestBlocked = !!sessionId && (question !== null || approval !== null)
+    const requestBlocked = !!sessionId && (question !== null || approval !== null || takeover !== null)
     const canRegenerate = draft.loaded && !draft.error && !draft.quitting && !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
@@ -486,12 +504,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     useEffect(() => {
         if (busy) return
         const controller = new AbortController()
-        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal), approvalFor(sessionId, controller.signal)]) : Promise.resolve([[], null, null] as [UIMessage[], null, null])
-        void read.then(([result, pending, approval]) => {
+        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal), approvalFor(sessionId, controller.signal), takeoverFor(sessionId, controller.signal)]) : Promise.resolve([[], null, null, null] as [UIMessage[], null, null, null])
+        void read.then(([result, pending, approval, takeover]) => {
             if (controller.signal.aborted) return
-            if (pending && approval) throw new Error('This conversation changed while loading. Reload it to see the current request.')
+            if ([pending, approval, takeover].filter(Boolean).length > 1) throw new Error('This conversation changed while loading. Reload it to see the current request.')
             setMessages(result)
-            setHistory({ id: sessionId, transcript: result, question: pending, approval, loadedGeneration: historyGeneration })
+            setHistory({ id: sessionId, transcript: result, question: pending, approval, takeover, loadedGeneration: historyGeneration })
         }).catch(cause => {
             if (!controller.signal.aborted) setHistory({ id: sessionId, error: cause instanceof Error ? cause.message : 'Could not load history' })
         })
@@ -516,7 +534,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     wasRunning = true
                     timer = setTimeout(check, RUN_POLL_MS)
                 } else if (wasRunning) {
-                    setHistory(current => current.id === sessionId ? { ...current, question: undefined, approval: undefined } : current)
+                    setHistory(current => current.id === sessionId ? { ...current, question: undefined, approval: undefined, takeover: undefined } : current)
                     setAttempt(n => n + 1) // The reply finished elsewhere: reload the saved transcript.
                 }
             } catch {
@@ -542,7 +560,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             const body = await response.json().catch(() => ({}))
             if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not stop this reply. Try again.')
             setEngineRunning({ id, running: false })
-            setHistory(current => current.id === id ? { ...current, question: undefined, approval: undefined } : current)
+            setHistory(current => current.id === id ? { ...current, question: undefined, approval: undefined, takeover: undefined } : current)
             setAttempt(n => n + 1)
             return true
         } catch (cause) {
@@ -776,6 +794,20 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         }
     }
 
+    async function decideTakeover(payload: DesktopTakeoverTerminal) {
+        if (isDesktopQuitting() || !active || !sessionId || !takeover || takeover.id !== payload.takeoverId || inactive || generating || stopping || !ready || responding.current) throw new Error('This browser request is not ready. Try again.')
+        let confirm!: () => void, fail!: (error: unknown) => void
+        const accepted = new Promise<void>((resolve, reject) => { confirm = resolve; fail = reject })
+        const answer = { sessionId, payload, url: takeoverUrl(sessionId), receiptHeader: 'x-takeover-id', receiptId: takeover.id, accepted: false, onAccepted: confirm, error: undefined as Error | undefined }
+        responding.current = answer
+        setLiveSessionId(null); setLiveRunId(null); clearError?.()
+        // The server derives the verified URL and exact follow-up from its saved lease receipt.
+        void sendMessage({ text: payload.action === 'skip' ? HITL_CANCELLED.takeover : 'Finished the browser takeover.' }, { body: payload }).then(() => {
+            if (!answer.accepted) fail(answer.error ?? new Error('Could not confirm the browser decision. Retry it.'))
+        }).catch(fail).finally(() => { if (responding.current === answer) responding.current = null; setAttempt(n => n + 1) })
+        return accepted
+    }
+
     const lastMessage = transcript.at(-1)
     const quickReplyErrorIsRetryable = !!lastMessage && quickReplyRetry === lastMessage.id
     const quickRepliesVisible = active && !!sessionId && !requestBlocked && !generating && !stopping
@@ -914,6 +946,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     <DesktopServicesDialog agent={agent} dialogControl={dialogControl('services')} />
                     <DesktopCoworkerMemories agent={agent} dialogControl={dialogControl('memories')} />
                     {renderRunHistory?.(dialogControl('logs'))}
+                    <Button type="button" variant="ghost" size="sm" disabled={inactive} onClick={() => setScreenOpen('manual')}>Browser</Button>
                     <DesktopCoworkerMonitoring agent={agent} dialogControl={dialogControl('monitoring')} />
                     <DesktopCoworkerSettings agent={agent} disabled={generating || !!sessionId && engineRunning.id !== sessionId} dialogControl={dialogControl('settings')} />
                 </div>
@@ -972,6 +1005,10 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
                         </div>
                     )})}
+                    {active && takeover && <DesktopBrowserCard key={takeover.id} agentId={agent.id} takeover={takeover} disabled={draft.quitting || inactive || generating || stopping || !ready} onAction={async payload => {
+                        if (payload.action === 'open') { setScreenOpen('request'); return }
+                        if (payload.action === 'done' || payload.action === 'skip') await decideTakeover(payload)
+                    }} />}
                     {generating && <div className="text-sm text-muted-foreground">{agent.name} is working…</div>}
                     {stopError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopError}</div>}
                     {(error || historyError) && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
@@ -984,6 +1021,13 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 </ConversationContent>
             </Conversation>
 
+            <IsolatedScreenDialog open={active && screenOpen !== null} onOpenChange={open => { if (!open) setScreenOpen(null) }} agentId={agent.id} title={`${agent.name}’s browser`}
+                takeover={screenOpen === 'request' && takeover ? { callId: takeover.toolCallId, url: takeover.url, reason: takeover.reason } : null}
+                screenApi={screenOpen === 'request' ? screenApi : undefined}
+                onHandBack={async callId => {
+                    if (!takeover || takeover.toolCallId !== callId) throw new Error('This browser request changed.')
+                    await decideTakeover(takeover.attempt ?? { action: 'done', takeoverId: takeover.id, requestId: crypto.randomUUID() })
+                }} />
             <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} notice="Feedback is stored on this Mac." onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
             <div className="shrink-0 border-t p-2.5">
                 {proposalsActive && <DesktopSkillProposalDock proposals={pinnedSkillProposals} pendingId={skillProposals.pendingId} onDecide={skillProposals.decide} onOpenSkill={openProposalSkill} />}

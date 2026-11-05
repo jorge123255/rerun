@@ -51,9 +51,10 @@ export function containerRunArgs(owner: ScreenOwner, generation: string): string
         '--cap-drop=ALL',
         '--security-opt=no-new-privileges',
         '--read-only',
+        '--user=10001:10001',
         '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m',
-        '--tmpfs', '/run:rw,nosuid,nodev,size=32m',
-        '--tmpfs', '/home/rerun:rw,nosuid,nodev,size=32m',
+        '--tmpfs', '/run:rw,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=700',
+        '--tmpfs', '/home/rerun:rw,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=700',
         '--tmpfs', '/dev/shm:rw,nosuid,nodev,size=256m',
         ...labelArgs(containerLabels(owner, generation)),
         '--mount', `type=volume,source=${volume},destination=/var/lib/rerun/profile`,
@@ -70,7 +71,7 @@ export function volumeCreateArgs(owner: ScreenOwner): string[] {
 }
 
 export function removeContainerArgs(name: string): string[] {
-    assertContainerName(name)
+    if (!/^[a-f0-9]{64}$/.test(name)) assertContainerName(name)
     return ['rm', '-f', '--', name]
 }
 
@@ -87,7 +88,7 @@ export function imageInspectArgs(): string[] {
 
 export function inspectContainerArgs(name: string): string[] {
     assertContainerName(name)
-    return ['inspect', '--format', '{{.State.Status}}\t{{json .Config.Labels}}', '--', name]
+    return ['inspect', '--format', '{{.State.Status}}\t{{json .Config.Labels}}\t{{.Id}}', '--', name]
 }
 
 export function inspectVolumeArgs(name: string): string[] {

@@ -174,6 +174,24 @@ async function initialize(dataRoot: string): Promise<Client> {
             request_id TEXT PRIMARY KEY,
             answer_id TEXT NOT NULL REFERENCES desktop_question_answers(request_id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS desktop_takeover_answers (
+            request_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+            takeover_id TEXT NOT NULL, takeover_guard TEXT NOT NULL, payload TEXT NOT NULL,
+            answer_text TEXT NOT NULL, accepted INTEGER NOT NULL DEFAULT 0 CHECK(accepted IN (0,1)), created_at TEXT NOT NULL,
+            UNIQUE(session_id, takeover_id)
+        );
+        CREATE TABLE IF NOT EXISTS desktop_takeover_requests (
+            request_id TEXT PRIMARY KEY, answer_id TEXT NOT NULL REFERENCES desktop_takeover_answers(request_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS desktop_takeover_screens (
+            takeover_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+            launch_nonce TEXT NOT NULL, lease TEXT NOT NULL, result_url TEXT,
+            released INTEGER NOT NULL DEFAULT 0 CHECK(released IN (0,1)), created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS desktop_approval_answers (
             request_id TEXT PRIMARY KEY,
             agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,

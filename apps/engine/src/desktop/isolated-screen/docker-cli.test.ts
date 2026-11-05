@@ -149,13 +149,13 @@ describe('docker cli', () => {
         state.stdout = Buffer.from('running\t{')
         await expect(client.inspectContainer(name, signal())).resolves.toEqual({ status: 'unreachable' })
         state.stdout = Buffer.from('null\n')
-        await expect(client.inspectVolume(volumeName(), signal())).resolves.toEqual({ status: 'found', labels: {} })
+        await expect(client.inspectVolume(volumeName(owner.engineAgentId), signal())).resolves.toEqual({ status: 'found', labels: {} })
         state.stdout = Buffer.from('{')
-        await expect(client.inspectVolume(volumeName(), signal())).resolves.toEqual({ status: 'unreachable' })
+        await expect(client.inspectVolume(volumeName(owner.engineAgentId), signal())).resolves.toEqual({ status: 'unreachable' })
         state.code = 1
         state.stdout = Buffer.alloc(0)
         state.stderr = Buffer.from('Error: No such volume: x')
-        await expect(client.inspectVolume(volumeName(), signal())).resolves.toEqual({ status: 'missing' })
+        await expect(client.inspectVolume(volumeName(owner.engineAgentId), signal())).resolves.toEqual({ status: 'missing' })
         state.code = 0
         state.stderr = Buffer.alloc(0)
         await client.createVolume(owner, signal())
@@ -170,7 +170,7 @@ describe('docker cli', () => {
         await client.removeContainer(name, signal())
         expect(state.calls.at(-1)?.args).toEqual(['rm', '-f', '--', name])
         state.code = 1
-        await expect(client.removeVolume(volumeName(), signal())).rejects.toThrow(/could not be removed/)
+        await expect(client.removeVolume(volumeName(owner.engineAgentId), signal())).rejects.toThrow(/could not be removed/)
         state.error = Object.assign(new Error('spawn docker ENOENT'), { code: 'ENOENT' })
         await expect(client.removeContainer(name, signal())).rejects.toThrow(/Docker is not installed/)
     })
@@ -205,7 +205,7 @@ describe('docker cli', () => {
         state.lastStdout?.write(Buffer.from('RFB'))
         expect((await received).toString()).toBe('RFB')
         watched.destroy()
-        expect(state.killed).toBe(true)
+        await vi.waitFor(() => expect(state.killed).toBe(true))
         state.killed = false
         state.streamError = Object.assign(new Error('missing'), { code: 'ENOENT' })
         const broken = await client.execStream(name, ['rerun-vnc', 'drive'], signal())

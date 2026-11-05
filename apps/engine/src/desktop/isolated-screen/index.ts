@@ -30,7 +30,7 @@ export type {
 
 let shared: IsolatedScreenService | undefined
 
-function service(): IsolatedScreenService {
+export function service(): IsolatedScreenService {
     shared ??= createIsolatedScreenService({ docker: createDockerCli(), encodeJpeg: encodeScreenJpeg })
     return shared
 }

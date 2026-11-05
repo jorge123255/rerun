@@ -298,11 +298,49 @@ def serve_rpc():
         threading.Thread(target=handle_client, args=(client,), daemon=True).start()
 
 
+requests_lock = threading.Lock()
+requests = {}
+
+
 def handle_client(client):
+    state = None
     try:
+        request, _ = read_socket_frame(client)
+        request_id = request.get('requestId') if isinstance(request, dict) else None
+        if not isinstance(request_id, str) or not re.fullmatch(r'[a-f0-9]{32}', request_id):
+            raise GuestError('The screen request was not valid.', refusal=True)
+        with requests_lock:
+            # Keep cancellation tombstones for late docker exec requests, but bound memory.
+            for key, item in list(requests.items()):
+                if item['done'].is_set() and time.monotonic() - item['at'] > 120:
+                    del requests[key]
+            state = requests.get(request_id)
+            if request.get('op') == 'cancel':
+                if state is None:
+                    state = {'cancelled': True, 'done': threading.Event(), 'at': time.monotonic(), 'client': None}
+                    state['done'].set()
+                    requests[request_id] = state
+                state['cancelled'] = True
+                if state['client'] is not None:
+                    try:
+                        state['client'].shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+            else:
+                if state is not None:
+                    raise GuestError('The screen request has expired.', refusal=True)
+                if len(requests) >= 2048:
+                    raise GuestError('Too many screen requests.', refusal=True)
+                state = {'cancelled': False, 'done': threading.Event(), 'at': time.monotonic(), 'client': client}
+                requests[request_id] = state
+        if request.get('op') == 'cancel':
+            if not state['done'].wait(12):
+                raise GuestError('The screen action could not be cancelled.')
+            client.sendall(encode_frame({'ok': True}))
+            state = None
+            return
         with action_lock:
-            request, _ = read_socket_frame(client)
-            if cancelled(client):
+            if state['cancelled'] or cancelled(client):
                 raise GuestError('The screen action was cancelled.', refusal=False)
             payload, binary = dispatch(request, client)
         client.sendall(encode_frame(payload, binary))
@@ -317,6 +355,9 @@ def handle_client(client):
         except OSError:
             pass
     finally:
+        if state is not None and state.get('client') is client:
+            state['client'] = None
+            state['done'].set()
         client.close()
 
 
@@ -577,12 +618,15 @@ def ws_recv(sock):
 
 
 class Cdp:
-    def __init__(self, sock):
+    def __init__(self, sock, client=None):
         self.sock = sock
+        self.client = client
         self.next_id = 1
         self.events = []
 
     def call(self, method, params, timeout):
+        if self.client is not None and cancelled(self.client):
+            raise GuestError('The screen action was cancelled.')
         call_id = self.next_id
         self.next_id += 1
         self.sock.settimeout(timeout)
@@ -627,7 +671,7 @@ def navigate(url, client):
     target = http_url(url)
     sock = page_socket()
     try:
-        cdp = Cdp(sock)
+        cdp = Cdp(sock, client)
         cdp.call('Page.enable', {}, 5)
         cdp.call('Network.enable', {}, 5)
         cdp.call('Page.navigate', {'url': target}, 10)

@@ -10,34 +10,35 @@ import { DesktopDialog } from '@/components/dialogs/DesktopDialog'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { MonitorIcon } from '@/lib/icons'
-import { createDesktopScreenSession } from '@/lib/desktop/screen-session'
+import { createDesktopScreenSession, defaultScreenApi } from '@/lib/desktop/screen-session'
 
 export type IsolatedTakeover = { callId: string; url?: string; reason: string }
 type Screen = { status: 'loading' } | { status: 'live'; socketUrl: string } | { status: 'error'; error: string; handoff?: boolean } | { status: 'unavailable'; reason: string } | { status: 'disconnected' }
 type Props = {
     open: boolean; onOpenChange: (open: boolean) => void; agentId: string; title: string
     takeover?: IsolatedTakeover | null
+    screenApi?: typeof defaultScreenApi
     // B's durable receipt must succeed before the dialog reports hand-back completion.
     onHandBack?: (callId: string, url: string | null) => Promise<void>
 }
 
-export function IsolatedScreenDialog({ open, onOpenChange, agentId, title, takeover = null, onHandBack }: Props) {
+export function IsolatedScreenDialog({ open, onOpenChange, agentId, title, takeover = null, onHandBack, screenApi }: Props) {
     return (
         <DesktopDialog open={open} onOpenChange={onOpenChange} title={takeover ? takeover.reason : title}
             description={takeover ? 'You are in your coworker’s isolated browser. Press Done when it can carry on.' : 'The isolated screen this coworker works on. What you do here, it finds afterwards.'}>
-            {open && <IsolatedScreenSession key={`${agentId}:${takeover?.callId ?? 'screen'}`} agentId={agentId} takeover={takeover} onHandBack={onHandBack} onClose={() => onOpenChange(false)} />}
+            {open && <IsolatedScreenSession key={`${agentId}:${takeover?.callId ?? 'screen'}`} agentId={agentId} takeover={takeover} onHandBack={onHandBack} screenApi={screenApi} onClose={() => onOpenChange(false)} />}
         </DesktopDialog>
     )
 }
 
-function IsolatedScreenSession({ agentId, takeover, onHandBack, onClose }: { agentId: string; takeover: IsolatedTakeover | null; onHandBack: Props['onHandBack']; onClose: () => void }) {
+function IsolatedScreenSession({ agentId, takeover, onHandBack, onClose, screenApi }: { agentId: string; takeover: IsolatedTakeover | null; onHandBack: Props['onHandBack']; screenApi?: typeof defaultScreenApi; onClose: () => void }) {
     const [screen, setScreen] = useState<Screen>({ status: 'loading' })
     const [mode, setMode] = useState<'watch' | 'drive'>(takeover ? 'drive' : 'watch')
     const [busy, setBusy] = useState(false)
     const viewerRef = useRef<DesktopViewerHandle>(null)
     const sessionRef = useRef<ReturnType<typeof createDesktopScreenSession> | null>(null)
     const alive = useRef(false), busyRef = useRef(false), epoch = useRef(0)
-    const returned = useRef<{ url: string | null } | null>(null)
+    const returned = useRef<{ url: string | null; expired?: boolean } | null>(null)
 
     async function connect(next: 'watch' | 'drive') {
         if (busyRef.current || !sessionRef.current) return
@@ -57,7 +58,7 @@ function IsolatedScreenSession({ agentId, takeover, onHandBack, onClose }: { age
     const invalidate = () => { alive.current = false; ++epoch.current; sessionRef.current = null }
     useEffect(() => {
         alive.current = true; busyRef.current = false
-        const session = createDesktopScreenSession(agentId); sessionRef.current = session
+        const session = createDesktopScreenSession(agentId, screenApi); sessionRef.current = session
         queueMicrotask(() => { if (sessionRef.current === session) void connect(takeover ? 'drive' : 'watch') })
         return () => {
             invalidate()
@@ -75,6 +76,7 @@ function IsolatedScreenSession({ agentId, takeover, onHandBack, onClose }: { age
         try {
             sessionRef.current.cancelConnection()
             returned.current ??= await sessionRef.current.finish()
+            if (takeover && returned.current.expired) { returned.current = null; throw new Error('Browser control expired. Reconnect before pressing Done.') }
             if (takeover) {
                 if (!onHandBack) throw new Error('The hand-back request is unavailable.')
                 await onHandBack(takeover.callId, returned.current.url)

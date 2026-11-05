@@ -211,20 +211,33 @@ function codexNativeMcpEntry(server: McpServer): CodexMcpServerConfig | null {
 // Codex's `tool()` takes `parameters` where the AI SDK takes `inputSchema`, and hands `execute` the
 // parsed input alone, with no abort signal and no id of the model's call. A tool that has to stop
 // with its run reads `RunContext.abortSignal` instead, and nothing can join on `toolCallId`.
-function codexBridgedTools(tools: ToolSet): LocalTool[] {
+function codexBridgedTools(tools: ToolSet, screenshots?: ScreenshotLookup): LocalTool[] {
     return Object.entries(bridgeableTools(tools)).map(([name, t]) =>
         codexTool({
             name,
             description: t.description ?? name,
             parameters: t.inputSchema as ZodType,
-            execute: async input => t.execute!(input, { toolCallId: newId(), messages: [] }),
+            execute: async input => {
+                const result = await t.execute!(input, { toolCallId: newId(), messages: [] })
+                if (!desktopApp() || !['computer', 'computer_open_app'].includes(name)) return result
+                const metadata = result as { status?: string; screenshotId?: string; screen?: number[] } | null
+                if (metadata?.status !== 'done') return result
+                const shot = typeof metadata.screenshotId === 'string' ? screenshots?.(metadata.screenshotId) : undefined
+                if (!shot || shot.mediaType !== 'image/jpeg' || !Buffer.isBuffer(shot.image) || shot.image.length < 1 || shot.image.length > 8 * 1024 * 1024 || !Array.isArray(metadata.screen) || metadata.screen.length !== 2 || !metadata.screen.every(n => Number.isInteger(n) && n > 0 && n <= 8192)) throw new Error('The screenshot could not be delivered. Request a fresh screenshot.')
+                const wrapped = { [Symbol.for('rerun.desktop.codexMcpResult')]: {
+                    content: [{ type: 'text', text: JSON.stringify(metadata) }, { type: 'image', data: shot.image.toString('base64'), mimeType: shot.mediaType }],
+                    structuredContent: metadata,
+                } }
+                Object.defineProperty(wrapped, 'toJSON', { value: () => { throw new Error('Screenshot delivery is unavailable.') } })
+                return wrapped
+            },
         }),
     )
 }
 
-export function codexMcpConfig(tools?: ToolSet, mcpServers: McpServer[] = []): Record<string, CodexMcpServerConfig> {
+export function codexMcpConfig(tools?: ToolSet, mcpServers: McpServer[] = [], screenshots?: ScreenshotLookup): Record<string, CodexMcpServerConfig> {
     const servers: Record<string, CodexMcpServerConfig> = {}
-    const bridged = tools ? codexBridgedTools(tools) : []
+    const bridged = tools ? codexBridgedTools(tools, screenshots) : []
     if (bridged.length) servers[BRIDGE_SERVER_NAME] = createSdkMcpServer({ name: BRIDGE_SERVER_NAME, tools: bridged })
     for (const server of mcpServers) {
         const entry = codexNativeMcpEntry(server)
@@ -399,7 +412,7 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
                     ...(agent.config.tools.web ? { web_search: 'live' } : {}),
                 }),
             },
-            mcpServers: desktop ? codexMcpConfig(localTools) : codexMcpConfig(tools, mcpServers),
+            mcpServers: desktop ? codexMcpConfig(localTools, [], options.screenshots) : codexMcpConfig(tools, mcpServers),
         },
     })
 }
@@ -469,7 +482,7 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     const cardTags = createCardTagGuard(agent.id, provider)
     const guard = createFakeToolCallGuard(agent.id)
     if (provider === 'codex') {
-        const codex = codexAppServerProvider(agent, tools, mcpServers, { system, nativeWorker })
+        const codex = codexAppServerProvider(agent, tools, mcpServers, { system, screenshots, nativeWorker })
         return { model: wrapLanguageModel({ model: codex(model), middleware: [codexMcpCompatibilityMiddleware, replies.middleware, cardTags, guard] }), close: () => codex.close(), quickReplies: replies.read }
     }
     if (provider === 'claude') {

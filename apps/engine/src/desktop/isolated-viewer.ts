@@ -1,7 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { once } from 'node:events'
 import type { IncomingMessage, Server } from 'node:http'
-import { connect, type Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
 import { Hono } from 'hono'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -22,7 +21,7 @@ export type IsolatedScreenStatus = {
 }
 // A supplies a *server-enforced* read-only VNC endpoint for watch. WebSocket frames are not
 // RFB message boundaries; filtering their first byte cannot enforce read-only access.
-export type IsolatedScreenEndpoint = { host: '127.0.0.1'; port: number; readOnly: boolean }
+export type IsolatedScreenEndpoint = Duplex
 export interface IsolatedScreenService {
     status(owner: IsolatedScreenOwner, signal: AbortSignal): Promise<IsolatedScreenStatus>
     ensure(owner: IsolatedScreenOwner, signal: AbortSignal): Promise<{ target: IsolatedScreenTarget; width: number; height: number }>
@@ -30,7 +29,7 @@ export interface IsolatedScreenService {
     startTakeover(target: IsolatedScreenTarget, signal: AbortSignal): Promise<string>
     finishTakeover(target: IsolatedScreenTarget, lease: string, signal: AbortSignal): Promise<{ url: string | null; expired?: boolean }>
     stop(target: IsolatedScreenTarget, signal: AbortSignal): Promise<void>
-    withViewer(target: IsolatedScreenTarget, mode: IsolatedScreenMode, signal: AbortSignal, connect: (endpoint: IsolatedScreenEndpoint) => void): Promise<void> | void
+    withViewer(target: IsolatedScreenTarget, mode: IsolatedScreenMode, signal: AbortSignal, connect: (stream: Duplex) => Promise<void>): Promise<void>
 }
 export type IsolatedViewerAuthority = {
     launchNonce: string
@@ -219,13 +218,15 @@ export function createIsolatedViewer(service: IsolatedScreenService, authority: 
     })
     async function pipe(ws: WebSocket, ticket: Ticket) {
         const abort = new AbortController()
-        let vnc: Socket | undefined, timer: ReturnType<typeof setInterval> | undefined, ended = false, checking = false
+        let vnc: Duplex | undefined, timer: ReturnType<typeof setInterval> | undefined, ended = false, checking = false
+        let finishPipe: (() => void) | undefined
         const queue: Buffer[] = []
         let queuedBytes = 0, pumping = false
         const shutdown = () => {
             if (ended) return
             ended = true; abort.abort(); clearInterval(timer); sockets.delete(shutdown)
             queue.length = 0; queuedBytes = 0; vnc?.destroy(); ws.terminate()
+            finishPipe?.()
             const held = leases.get(keyOf(ticket.owner))
             if (ticket.mode === 'drive' && held && held.lease === ticket.lease) void cleanup(ticket.owner, held).catch(() => {})
         }
@@ -247,10 +248,11 @@ export function createIsolatedViewer(service: IsolatedScreenService, authority: 
                 void valid().catch(shutdown).finally(() => { checking = false })
             }, 1000)
             timer.unref?.()
-            await service.withViewer(ticket.target, ticket.mode, abort.signal, endpoint => {
+            await service.withViewer(ticket.target, ticket.mode, abort.signal, async stream => {
                 abort.signal.throwIfAborted()
-                if (vnc || endpoint.host !== '127.0.0.1' || !Number.isInteger(endpoint.port) || endpoint.port < 1 || endpoint.port > 65535 || (ticket.mode === 'watch' && endpoint.readOnly !== true)) throw new Error('Unsafe screen transport')
-                vnc = connect(endpoint.port, endpoint.host)
+                await valid()
+                if (vnc) throw new Error('Screen already connected')
+                vnc = stream
                 vnc.once('close', shutdown); vnc.once('error', shutdown)
                 vnc.on('data', chunk => {
                     if (ws.readyState !== ws.OPEN || ws.bufferedAmount > 2 * 1024 * 1024) return shutdown()
@@ -276,6 +278,7 @@ export function createIsolatedViewer(service: IsolatedScreenService, authority: 
                     queue.push(bytes); queuedBytes += bytes.length; ws.pause()
                     void pump()
                 })
+                await new Promise<void>(resolve => { finishPipe = resolve; if (ended) resolve() })
             })
         } catch { shutdown() }
     }

@@ -23,6 +23,8 @@ import { stopAllDesktopNativeWorkers } from '../../desktop/native-worker.js'
 import { initializeDesktopBrainStore } from '../../desktop/brain-pages-router.js'
 import { stopDesktopMcp } from '../../desktop/mcp-tools.js'
 import { logger } from '../../lib/logger.js'
+import { bindIsolatedScreen } from '../../desktop/isolated-screen/binding.js'
+import { reconcileIsolatedScreens, shutdownIsolatedScreens } from '../../desktop/isolated-screen/index.js'
 
 const secret = z.string().regex(/^[a-f0-9]{64}$/)
 const origin = z.string().url().refine(value => {
@@ -71,6 +73,8 @@ export async function desktopRunCommand(): Promise<void> {
         return c.json(await codexLoginAction(parsed.data))
     })
     app.get('/health', c => initialized ? c.json(ready) : c.json({ status: 'starting' }, 503))
+    const screen = bindIsolatedScreen(runtime)
+    app.route('/agents/:id/screen', screen.routes)
     app.route('/', createServer())
     let server: Server
     const shutdown = async () => {
@@ -83,7 +87,7 @@ export async function desktopRunCommand(): Promise<void> {
         stopCodexLogin()
         // Close admissions before waiting for any preparation. Callback delivery is best effort
         // during teardown; failure must never reopen either local service or prevent shutdown.
-        const closing = Promise.allSettled([schedules?.close(), stopDesktopMcp(), stopDesktopSkillProposals()])
+        const closing = Promise.allSettled([schedules?.close(), stopDesktopMcp(), stopDesktopSkillProposals(), screen.close().then(() => shutdownIsolatedScreens(AbortSignal.timeout(25_000)))])
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
         await Promise.allSettled([closing, abortAllRuns(), stopScheduler?.drain()])
@@ -106,6 +110,7 @@ export async function desktopRunCommand(): Promise<void> {
             // The UI starts first. Reconcile after listening so its authenticated callbacks can
             // fetch the exact session and run before persisting a restart failure notification.
             await reconcileInterruptedRuns()
+            await reconcileIsolatedScreens(runtime.launchNonce, AbortSignal.timeout(20_000))
             if (stopping) return
             const recovered = await recoverNativeWritebackOutbox(bundle => sendNativeWriteback(bundle, lifetime.signal))
             if (recovered.retained.length) logger.warn({ count: recovered.retained.length }, 'Native file review captures retained for later recovery')
@@ -117,6 +122,7 @@ export async function desktopRunCommand(): Promise<void> {
             process.send?.({ type: 'ready', ...ready })
         })().catch(error => { logger.error({ err: String(error) }, 'desktop schedule startup failed'); void shutdown() })
     }) as Server
+    screen.attach(server)
     process.on('message', message => { if ((message as { type?: string })?.type === 'stop') void shutdown() })
     process.once('disconnect', () => { void shutdown() })
     process.once('SIGTERM', () => { void shutdown() })

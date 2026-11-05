@@ -1,10 +1,10 @@
 import { finishDesktopScreenTakeover, fetchDesktopScreenStatus, requestDesktopScreenTicket, startDesktopScreenTakeover } from './screen-client'
 
-const defaultApi = { finishDesktopScreenTakeover, fetchDesktopScreenStatus, requestDesktopScreenTicket, startDesktopScreenTakeover }
+export const defaultScreenApi = { finishDesktopScreenTakeover, fetchDesktopScreenStatus, requestDesktopScreenTicket, startDesktopScreenTakeover }
 /** One dialog owns one abortable connection and at most one exact takeover lease. */
-export function createDesktopScreenSession(agentId: string, api = defaultApi) {
+export function createDesktopScreenSession(agentId: string, api = defaultScreenApi) {
     let closed = false, attempt: AbortController | undefined, lease: string | undefined
-    let releasing: Promise<{ url: string | null }> | undefined
+    let releasing: Promise<{ url: string | null; expired?: boolean }> | undefined
     const finish = () => {
         if (releasing) return releasing
         if (!lease) return Promise.resolve({ url: null })

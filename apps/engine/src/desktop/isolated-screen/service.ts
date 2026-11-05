@@ -34,6 +34,7 @@ type Live = {
     launchNonce: string
     lease: string | null
     takingOver: boolean
+    stopping?: boolean
     action: AbortController | null
     viewers: Set<Viewer>
     screen: ScreenGeometry
@@ -101,6 +102,9 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
     const readyAttempts = deps.readyAttempts ?? READY_ATTEMPTS
     const lives = new Map<string, Live>()
     const lock = createLock()
+    const closing = new AbortController()
+    const starts = new Set<Promise<EnsuredScreen>>()
+    const completedLeases = new Map<string, ScreenTakeover>()
 
     async function dockerEngine(signal: AbortSignal): Promise<ScreenPrerequisite> {
         const version = await docker.version(signal)
@@ -113,7 +117,7 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
     function current(target: ScreenTarget): Live {
         assertTarget(target)
         const live = lives.get(target.engineAgentId)
-        if (!live || live.generation !== target.sessionGeneration || live.launchNonce !== target.launchNonce) throw new IsolatedScreenRefusal(STALE, 'stale')
+        if (closing.signal.aborted || !live || live.stopping || live.generation !== target.sessionGeneration || live.launchNonce !== target.launchNonce) throw new IsolatedScreenRefusal(STALE, 'stale')
         return live
     }
 
@@ -125,7 +129,23 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
     }
 
     async function guest(name: string, body: Record<string, unknown>, signal: AbortSignal): Promise<{ value: Record<string, unknown>; binary: Buffer }> {
-        const stdout = await docker.exec(name, ['rerun-rpc'], encodeFrame(body), signal)
+        const requestId = cryptoRandomBytes(16).toString('hex')
+        let stdout: Buffer
+        try { stdout = await docker.exec(name, ['rerun-rpc'], encodeFrame({ ...body, requestId }), signal) }
+        catch (error) {
+            if (signal.aborted) {
+                // Killing docker exec only detaches its client. Wait for the guest to confirm
+                // cancellation before allowing a human or another action onto this screen.
+                try {
+                    const reply = decodeFrame(await docker.exec(name, ['rerun-rpc'], encodeFrame({ op: 'cancel', requestId }), AbortSignal.timeout(15_000)))
+                    if ((reply.value as { ok?: boolean }).ok !== true) throw new Error('Cancellation not acknowledged')
+                } catch {
+                    for (const [id, live] of lives) if (containerName(id) === name) { live.stopping = true; drop(live) }
+                    throw new IsolatedScreenRefusal('The screen could not confirm cancellation. Stop it before continuing.', 'closed')
+                }
+            }
+            throw error
+        }
         const decoded = decodeFrame(stdout)
         if (!decoded.value || typeof decoded.value !== 'object' || Array.isArray(decoded.value)) throw new IsolatedScreenRefusal('The screen action failed.', 'closed')
         const record = decoded.value as Record<string, unknown>
@@ -133,21 +153,40 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         return { value: record, binary: decoded.binary }
     }
 
-    async function guestCall(ownerId: string, name: string, body: Record<string, unknown>, signal: AbortSignal): Promise<{ value: Record<string, unknown>; binary: Buffer }> {
-        const live = lives.get(ownerId)
-        if (live?.lease || live?.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused')
+    async function action<T>(target: ScreenTarget, signal: AbortSignal, run: (live: Live, signal: AbortSignal) => Promise<T>): Promise<T> {
+        const live = current(target)
+        if (live.lease || live.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused')
+        return lock(target.engineAgentId, async () => {
+        current(target)
+        if (live.lease || live.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused')
         const action = new AbortController()
-        if (live) live.action = action
-        const linked = AbortSignal.any([signal, action.signal])
+        live.action = action
+        const linked = AbortSignal.any([signal, action.signal, closing.signal])
         try {
-            return await guest(name, body, linked)
+            throwIfAborted(linked)
+            const result = await run(live, linked)
+            current(target)
+            throwIfAborted(linked)
+            return result
         } catch (error) {
+            if (live.stopping) throw error
             if (signal.aborted) throw abortError(signal)
             if (live?.lease || live?.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused')
             throw error
         } finally {
             if (live?.action === action) live.action = null
         }
+        })
+    }
+
+    async function guestCall(target: ScreenTarget, body: Record<string, unknown>, signal: AbortSignal) {
+        const live = current(target)
+        throwIfAborted(signal)
+        if (live.lease || live.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused')
+        const reply = await guest(containerName(target.engineAgentId), body, signal)
+        current(target)
+        throwIfAborted(signal)
+        return reply
     }
 
     async function waitReady(name: string, signal: AbortSignal): Promise<ScreenGeometry> {
@@ -194,9 +233,11 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
     }
 
     async function ensure(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen> {
+        signal = AbortSignal.any([signal, closing.signal])
         throwIfAborted(signal)
         assertOwner(owner)
-        return lock(owner.engineAgentId, async () => {
+        const work = lock(owner.engineAgentId, async () => {
+            throwIfAborted(signal)
             const report = await status(owner, signal)
             if (report.prerequisite === 'name-conflict') throw new IsolatedScreenRefusal(CONFLICT, 'conflict')
             if (report.prerequisite !== 'ready') throw new IsolatedScreenRefusal(prerequisiteText(report.prerequisite), 'prerequisite')
@@ -210,55 +251,49 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
             if (existing.status === 'unreachable') throw new IsolatedScreenRefusal('Docker is not running.', 'prerequisite')
             if (existing.status === 'found' && !sameOwnerContainer(existing.labels, owner)) throw new IsolatedScreenRefusal(CONFLICT, 'conflict')
             const live = lives.get(owner.engineAgentId)
-            if (existing.status === 'found' && existing.state === 'running' && live && live.launchNonce === owner.launchNonce && live.generation === existing.labels[LABEL_GENERATION] && existing.labels[LABEL_NONCE] === owner.launchNonce) {
+            if (existing.status === 'found' && existing.state === 'running' && live && !live.stopping && live.launchNonce === owner.launchNonce && live.generation === existing.labels[LABEL_GENERATION] && existing.labels[LABEL_NONCE] === owner.launchNonce) {
                 return { target: { ...owner, sessionGeneration: live.generation }, width: live.screen.viewWidth, height: live.screen.viewHeight }
             }
-            if (existing.status === 'found') await docker.removeContainer(name, signal)
+            if (existing.status === 'found') await docker.removeContainer(existing.id ?? name, signal)
             drop(live)
             lives.delete(owner.engineAgentId)
             const generation = nextBytes(16).toString('hex')
             try {
                 await docker.run(containerRunArgs(owner, generation), signal)
                 const screen = await waitReady(name, signal)
+                throwIfAborted(signal)
                 lives.set(owner.engineAgentId, { generation, launchNonce: owner.launchNonce, lease: null, takingOver: false, action: null, viewers: new Set(), screen })
                 return { target: { ...owner, sessionGeneration: generation }, width: screen.viewWidth, height: screen.viewHeight }
             } catch (error) {
-                if (isAbortError(error) || signal.aborted) throw isAbortError(error) ? error : abortError(signal)
-                if (!(error instanceof IsolatedScreenRefusal) || error.kind !== 'prerequisite') {
-                    await docker.removeContainer(name, signal).catch(removeError => {
-                        if (isAbortError(removeError) || signal.aborted) throw isAbortError(removeError) ? removeError : abortError(signal)
-                    })
-                }
+                const cleanupSignal = AbortSignal.timeout(10_000)
+                const failed = await docker.inspectContainer(name, cleanupSignal)
+                if (failed.status === 'found' && sameOwnerContainer(failed.labels, owner) && failed.labels[LABEL_GENERATION] === generation && failed.labels[LABEL_NONCE] === owner.launchNonce) await docker.removeContainer(failed.id ?? name, cleanupSignal)
                 lives.delete(owner.engineAgentId)
                 throw error
             }
         })
+        starts.add(work)
+        try { return await work } finally { starts.delete(work) }
     }
 
     async function navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal): Promise<ScreenPage> {
         throwIfAborted(signal)
-        const live = current(target)
-        if (live.lease || live.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused')
         const url = assertHttpUrl(input.url)
-        const reply = await guestCall(target.engineAgentId, containerName(target.engineAgentId), { op: 'navigate', url }, signal)
-        const page = boundPage(reply.value, url)
-        return page
+        return action(target, signal, async (_live, linked) => boundPage((await guestCall(target, { op: 'navigate', url }, linked)).value, url))
     }
 
     async function act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal): Promise<ScreenShot> {
         throwIfAborted(signal)
-        const live = current(target)
-        if (live.lease || live.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused')
+        return action(target, signal, async (live, signal) => {
         const plan = planAction(input, live.screen)
-        const name = containerName(target.engineAgentId)
         for (const call of plan.calls) {
             throwIfAborted(signal)
             if (live.lease || live.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused')
             if (call.kind === 'wait') await sleep(call.ms, signal)
-            else await guestCall(target.engineAgentId, name, call.body, signal)
+            else await guestCall(target, call.body, signal)
         }
         if (plan.settleMs > 0) await sleep(plan.settleMs, signal)
-        const reply = await guestCall(target.engineAgentId, name, { op: 'screenshot' }, signal)
+        const reply = await guestCall(target, { op: 'screenshot' }, signal)
         const width = reply.value.width
         const height = reply.value.height
         if (typeof width !== 'number' || typeof height !== 'number') throw new IsolatedScreenRefusal('The screenshot could not be taken.', 'closed')
@@ -267,6 +302,7 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         if (reply.binary.length === 0) throw new IsolatedScreenRefusal('The screenshot could not be taken.', 'closed')
         const image = await encodeJpeg(reply.binary, screen.viewWidth, screen.viewHeight)
         return { image, mediaType: 'image/jpeg', width: screen.viewWidth, height: screen.viewHeight }
+        })
     }
 
     async function startTakeover(target: ScreenTarget, signal: AbortSignal): Promise<ScreenLease> {
@@ -295,10 +331,15 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
 
     async function finishTakeover(target: ScreenTarget, lease: ScreenLease, signal: AbortSignal): Promise<ScreenTakeover> {
         throwIfAborted(signal)
+        const receipt = JSON.stringify([target, lease?.token])
+        const completed = completedLeases.get(receipt)
+        if (completed) return completed
         const live = current(target)
         if (!live.lease || !lease || typeof lease.token !== 'string' || !sameToken(live.lease, lease.token)) throw new IsolatedScreenRefusal(WRONG_LEASE, 'refused')
         const token = live.lease
         return lock(target.engineAgentId, async () => {
+            const completed = completedLeases.get(receipt)
+            if (completed) return completed
             const currentLive = current(target)
             if (!currentLive.lease || !sameToken(currentLive.lease, token)) throw new IsolatedScreenRefusal(WRONG_LEASE, 'refused')
             await guest(containerName(target.engineAgentId), { op: 'release' }, signal)
@@ -310,7 +351,8 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
                 const located = await guest(containerName(target.engineAgentId), { op: 'location' }, signal)
                 url = publicUrl(located.value.url)
             } catch (error) {
-                if (isAbortError(error) || signal.aborted) throw isAbortError(error) ? error : abortError(signal)
+                // Input has been released. Record that fact even if URL inspection fails;
+                // retry must never attempt to release a newer takeover.
                 url = null
             } finally {
                 if (currentLive.lease && sameToken(currentLive.lease, token)) {
@@ -318,28 +360,31 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
                     currentLive.takingOver = false
                 }
             }
-            return { url }
+            const result = { url }
+            if (completedLeases.size >= 256) completedLeases.delete(completedLeases.keys().next().value!)
+            completedLeases.set(receipt, result)
+            return result
         })
     }
 
     async function stop(target: ScreenTarget, signal: AbortSignal): Promise<void> {
         throwIfAborted(signal)
-        const live = current(target)
+        assertTarget(target)
+        const live = currentOrNull(target)
+        if (live) live.stopping = true
         drop(live)
         await lock(target.engineAgentId, async () => {
-            if (lives.get(target.engineAgentId)?.generation !== target.sessionGeneration) throw new IsolatedScreenRefusal(STALE, 'stale')
             const name = containerName(target.engineAgentId)
             const existing = await docker.inspectContainer(name, signal)
             if (existing.status === 'unreachable') throw new IsolatedScreenRefusal('Docker is not running.', 'prerequisite')
             if (existing.status === 'found' && !sameOwnerContainer(existing.labels, target)) {
-                lives.delete(target.engineAgentId)
                 throw new IsolatedScreenRefusal(CONFLICT, 'conflict')
             }
             if (existing.status === 'found' && (existing.labels[LABEL_GENERATION] !== target.sessionGeneration || existing.labels[LABEL_NONCE] !== target.launchNonce)) {
-                lives.delete(target.engineAgentId)
-                throw new IsolatedScreenRefusal(STALE, 'stale')
+                // The exact old target is already gone. Never stop its replacement.
+                return
             }
-            if (existing.status === 'found') await docker.removeContainer(name, signal)
+            if (existing.status === 'found') await docker.removeContainer(existing.id ?? name, signal)
             if (lives.get(target.engineAgentId)?.generation === target.sessionGeneration) lives.delete(target.engineAgentId)
         })
     }
@@ -347,14 +392,16 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
     async function dispose(owner: ScreenOwner, signal: AbortSignal): Promise<void> {
         throwIfAborted(signal)
         assertOwner(owner)
-        drop(lives.get(owner.engineAgentId))
+        const live = lives.get(owner.engineAgentId)
+        if (live) live.stopping = true
+        drop(live)
         await lock(owner.engineAgentId, async () => {
             const name = containerName(owner.engineAgentId)
             const volume = volumeName(owner.engineAgentId)
             const existing = await docker.inspectContainer(name, signal)
             if (existing.status === 'unreachable') throw new IsolatedScreenRefusal('Docker is not running.', 'prerequisite')
             if (existing.status === 'found' && !sameOwnerContainer(existing.labels, owner)) throw new IsolatedScreenRefusal(CONFLICT, 'conflict')
-            if (existing.status === 'found') await docker.removeContainer(name, signal)
+            if (existing.status === 'found') await docker.removeContainer(existing.id ?? name, signal)
             const profile = await docker.inspectVolume(volume, signal)
             if (profile.status === 'unreachable') throw new IsolatedScreenRefusal('Docker is not running.', 'prerequisite')
             if (profile.status === 'found' && !sameOwnerVolume(profile.labels, owner)) throw new IsolatedScreenRefusal(CONFLICT, 'conflict')
@@ -368,11 +415,12 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         if (mode !== 'watch' && mode !== 'drive') throw new IsolatedScreenRefusal('That screen action is not available.', 'refused')
         const live = current(target)
         if (mode === 'drive' && !live.lease) throw new IsolatedScreenRefusal(NOT_DRIVING, 'refused')
+        const lease = live.lease
         const stream = await docker.execStream(containerName(target.engineAgentId), ['rerun-vnc', mode], signal)
         const viewer: Viewer = { mode, destroy: () => stream.destroy() }
         try {
             const latest = current(target)
-            if (mode === 'drive' && !latest.lease) throw new IsolatedScreenRefusal(NOT_DRIVING, 'refused')
+            if (mode === 'drive' && (!latest.lease || latest.lease !== lease)) throw new IsolatedScreenRefusal(NOT_DRIVING, 'refused')
             latest.viewers.add(viewer)
             if (signal.aborted) throw abortError(signal)
             return await connect(stream)
@@ -384,7 +432,7 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
 
     function currentOrNull(target: ScreenTarget): Live | undefined {
         const live = lives.get(target.engineAgentId)
-        if (!live || live.generation !== target.sessionGeneration) return undefined
+        if (!live || live.generation !== target.sessionGeneration || live.launchNonce !== target.launchNonce) return undefined
         return live
     }
 
@@ -410,28 +458,32 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
                 if (!ownedRow(row)) skipped += 1
                 continue
             }
+            await lock(row.engineAgentId, async () => {
             const inspected = await docker.inspectContainer(row.name, signal)
+            if (inspected.status === 'unreachable') throw new IsolatedScreenRefusal('Docker is not running. Screen cleanup could not be confirmed.', 'prerequisite')
             if (inspected.status !== 'found') {
                 skipped += 1
-                continue
+                return
             }
             const labels = inspected.labels
             const owned = labels[LABEL_ROLE] === ROLE_SCREEN
                 && labels[LABEL_MANAGED] === '1'
                 && labels[LABEL_AGENT] === row.engineAgentId
                 && labels[LABEL_NONCE] === row.launchNonce
+                && labels[LABEL_GENERATION] === row.sessionGeneration
                 && containerName(row.engineAgentId) === row.name
             if (!owned) {
                 skipped += 1
-                continue
+                return
             }
-            await docker.removeContainer(row.name, signal)
+            await docker.removeContainer(inspected.id ?? row.name, signal)
             stopped += 1
             const live = lives.get(row.engineAgentId)
-            if (live && (live.generation === row.sessionGeneration || live.launchNonce !== row.launchNonce)) {
+            if (live && live.generation === row.sessionGeneration && live.launchNonce === row.launchNonce) {
                 drop(live)
                 lives.delete(row.engineAgentId)
             }
+            })
         }
         return { stopped, skipped, prerequisite: 'ready' }
     }
@@ -444,9 +496,14 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
 
     async function shutdown(signal: AbortSignal): Promise<ScreenReconcile> {
         throwIfAborted(signal)
+        closing.abort()
         for (const live of lives.values()) drop(live)
+        await Promise.allSettled([...starts])
+        const owned = lives.size
+        const result = await stopListed(signal, () => true)
+        if (owned && result.prerequisite !== 'ready') throw new IsolatedScreenRefusal('Screen cleanup could not be confirmed.', 'prerequisite')
         lives.clear()
-        return stopListed(signal, () => true)
+        return result
     }
 
     return { status, ensure, navigate, act, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }

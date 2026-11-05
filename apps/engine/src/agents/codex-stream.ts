@@ -53,6 +53,15 @@ function unwrapMcpResult(value: unknown, preserveText: boolean): unknown {
 
 function normalizeToolResult(result: unknown, toolName: string | undefined): unknown {
     const envelope = mcpEnvelope(result)
+    if (['computer', 'computer_open_app'].includes(canonicalBridgeName(toolName) ?? '')) {
+        const payload = record(envelope?.result ?? result)
+        if (payload?.structuredContent) return payload.structuredContent
+        if (Array.isArray(payload?.content)) {
+            const text = payload.content.find(part => record(part)?.type === 'text')
+            const metadata = typeof text?.text === 'string' ? record(parseJson(text.text)) : null
+            return metadata && typeof metadata.screenshotId === 'string' ? metadata : { status: 'failed', reason: 'Screenshot metadata was unavailable.' }
+        }
+    }
     return envelope ? unwrapMcpResult(envelope.result ?? {}, canonicalBridgeName(toolName) === 'fs_read') : result
 }
 
