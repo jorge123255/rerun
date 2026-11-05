@@ -1,0 +1,5 @@
+export { desktopTemplateRouteAllowed } from './allow.js'
+export { TemplateRequestError } from './errors.js'
+export { desktopTemplateRoutes } from './router.js'
+export { createDesktopTemplateEngine } from './service.js'
+export type { TemplateIndex, TemplateRoots } from './service.js'
