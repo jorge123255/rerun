@@ -1,4 +1,4 @@
-import { tool, type ToolSet } from 'ai'
+import { tool, type ToolSet, type ToolExecutionOptions } from 'ai'
 import { z } from 'zod'
 import { env } from '../config/env.js'
 import type { RunContext } from '../runtime/context.js'
@@ -19,10 +19,7 @@ const resultSchema = z.object({ status: z.enum(['saved', 'unchanged', 'unknown',
 
 export function desktopPrivateFileTools(ctx: RunContext): ToolSet {
     if (!hasDesktopToolGrant(ctx.agent.config, 'privateFileWrite')) return {}
-    const tools: ToolSet = {}
-    for (const name of ['fs_write', 'fs_edit'] as const) tools[name] = tool({
-        description: descriptions[name], inputSchema: inputs[name],
-        execute: async (arguments_, options) => {
+    const execute = async (name: 'fs_write' | 'fs_edit', arguments_: Record<string, unknown>, options: ToolExecutionOptions) => {
             if (!ctx.runId || !ctx.abortSignal || !options.toolCallId) throw new Error('Private file editing requires an active, cancellable run.')
             const signal = AbortSignal.any([ctx.abortSignal, ...(options.abortSignal ? [options.abortSignal] : []), AbortSignal.timeout(35_000)])
             const release = beginDesktopAgentWork(ctx.agent.id)
@@ -57,7 +54,9 @@ export function desktopPrivateFileTools(ctx: RunContext): ToolSet {
                     return JSON.stringify(result)
                 } finally { signal.removeEventListener('abort', cancel); void reader.cancel().catch(() => {}) }
             } finally { release() }
-        },
-    })
-    return tools
+    }
+    return {
+        fs_write: tool({ description: descriptions.fs_write, inputSchema: inputs.fs_write, execute: (args, options) => execute('fs_write', args, options) }),
+        fs_edit: tool({ description: descriptions.fs_edit, inputSchema: inputs.fs_edit, execute: (args, options) => execute('fs_edit', args, options) }),
+    }
 }

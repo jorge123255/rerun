@@ -240,6 +240,11 @@ export const SYSTEM_DB_MIGRATIONS: SqliteMigration[] = [
         id: 'desktop-queued-turns',
         up: client => client.execute('CREATE TABLE IF NOT EXISTS desktop_queued_turns (run_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, message_id TEXT NOT NULL UNIQUE)').then(() => undefined),
     },
+    {
+        version: 7,
+        id: 'desktop-first-turn-input',
+        up: client => client.execute('CREATE TABLE IF NOT EXISTS desktop_first_turns (run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, message_id TEXT NOT NULL UNIQUE)').then(() => undefined),
+    },
 ]
 
 export const SYSTEM_DB_VERSION = latestVersion(SYSTEM_DB_MIGRATIONS)

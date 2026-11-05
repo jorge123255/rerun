@@ -451,11 +451,61 @@ describe('POST /agents/:id/chat', () => {
                 await response.text()
             }
             expect(state.calls).toHaveLength(1)
+            expect(state.calls[0].trigger).toHaveProperty('queuedUser')
+            const { listMessages } = await import('../../db/repos/messages.js')
+            expect((await listMessages(id, first.sessionId)).filter(row => row.role === 'user')).toHaveLength(1)
             expect(await getRun(id, first.runId)).toMatchObject({ sessionId: first.sessionId })
+            expect((await chat(id, { ...input, message: 'Different first message' })).status).toBe(409)
             expect((await chat(id, { ...input, desktopFirstTurn: { ...first, runId: crypto.randomUUID() } })).status).toBe(409)
             expect((await chat(id, { ...input, sessionId: first.sessionId })).status).toBe(400)
             expect(state.calls).toHaveLength(1)
         } finally { vi.unstubAllEnvs() }
+    })
+    it('preserves a first message when provider preparation fails and never sends it again on replay', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const first = { sessionId: crypto.randomUUID(), runId: crypto.randomUUID() }
+            const workspaceAttachment = { path: 'brief.md', content: 'Keep this snapshot' }
+            const input = { message: 'Read my brief exactly once', workspaceAttachment, desktopFirstTurn: first }
+            state.runAgentError = new Error('provider preparation failed')
+            const initial = await chat(id, input)
+            expect(initial.status).toBe(200)
+            await initial.text()
+            const { listMessages } = await import('../../db/repos/messages.js')
+            const saved = await listMessages(id, first.sessionId)
+            expect(saved).toHaveLength(1)
+            expect(saved[0].contentJson).toContain('Keep this snapshot')
+            state.runAgentError = null
+            const replay = await chat(id, input)
+            expect([200, 204]).toContain(replay.status)
+            await replay.text()
+            expect(state.calls).toHaveLength(1)
+            expect((await listMessages(id, first.sessionId)).map(row => row.id)).toEqual([saved[0].id])
+            expect((await chat(id, { ...input, workspaceAttachment: { ...workspaceAttachment, content: 'Replacement bytes' } })).status).toBe(409)
+        } finally { vi.unstubAllEnvs() }
+    })
+
+    it('cannot acknowledge a first-turn receipt when saving its user row fails', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const { getSystemDb } = await import('../../db/systemDb.js')
+        const { client } = await getSystemDb(id)
+        const first = { sessionId: crypto.randomUUID(), runId: crypto.randomUUID() }
+        const input = { message: 'Keep my unsent first draft', desktopFirstTurn: first }
+        try {
+            await client.execute("CREATE TRIGGER fail_first_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT,'cannot save'); END")
+            expect((await chat(id, input)).status).toBe(500)
+            expect(await getSession(id, first.sessionId)).toBeUndefined()
+            expect(await getRun(id, first.runId)).toBeUndefined()
+            expect(state.calls).toHaveLength(0)
+            await client.execute('DROP TRIGGER fail_first_message')
+            const retry = await chat(id, input)
+            expect(retry.status).toBe(200)
+            await retry.text()
+            expect(state.calls).toHaveLength(1)
+        } finally {
+            await client.execute('DROP TRIGGER IF EXISTS fail_first_message')
+            vi.unstubAllEnvs()
+        }
     })
     it('forwards validated attachment snapshots only on desktop', async () => {
         const workspaceAttachment = { path: 'folder/brief.md', content: 'First line\nA durable second line.' }

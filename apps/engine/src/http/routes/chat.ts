@@ -8,7 +8,7 @@ import { claimInstallSession } from '../../agents/setup.js'
 import { createSession, getSession } from '../../db/repos/sessions.js'
 import { extractText, listMessages, storedContent } from '../../db/repos/messages.js'
 import { forkReply, getRegeneration } from '../../db/repos/regenerations.js'
-import { startDesktopTabRun } from '../../db/repos/desktop-tab-runs.js'
+import { getDesktopTabRun, startDesktopTabRun } from '../../db/repos/desktop-tab-runs.js'
 import { getDesktopQueuedTurn, reserveDesktopQueuedTurn } from '../../db/repos/desktop-queued-turns.js'
 import { getRun, startRun } from '../../db/repos/runs.js'
 import { withAgentLock } from '../../agents/lock.js'
@@ -97,6 +97,10 @@ chatRoutes.post('/chat', async c => {
         const parsed = desktopApp() ? desktopChatRequest.safeParse(input) : null
         const body = parsed?.success ? parsed.data : null
         const queued = body?.desktopQueuedTurn
+        if (body?.desktopFirstTurn && await getDesktopTabRun(agentId, {
+            ...body.desktopFirstTurn, message: body.message, author: body.author,
+            attachments: body.workspaceAttachments ?? (body.workspaceAttachment ? [body.workspaceAttachment] : []),
+        })) return identified(resumeStreamResponse(body.desktopFirstTurn.runId), body.desktopFirstTurn.sessionId, body.desktopFirstTurn.runId)
         if (body?.sessionId && queued?.replayOnly) {
             const session = await getSession(agentId, body.sessionId)
             if (session?.agentId === agentId && await getDesktopQueuedTurn(agentId, {
@@ -115,15 +119,25 @@ chatRoutes.post('/chat', async c => {
     const attachmentTrigger = attachments.length === 1 ? { workspaceAttachment: attachments[0] } : attachments.length > 1 ? { workspaceAttachments: attachments } : {}
     const runAgentView = agent.config.kind === 'foreman' && body.foreman ? { ...agent, brief: body.foreman } : agent
     const source = body.source ?? 'dashboard'
-    if (body.desktopFirstTurn) {
-        const { sessionId, runId } = body.desktopFirstTurn
+    if (body.desktopFirstTurn) return withAgentLock(agentId, async () => {
+        const { sessionId, runId } = body.desktopFirstTurn!
+        const turn = { sessionId, runId, message: body.message, attachments, author: body.author }
+        if (await getDesktopTabRun(agentId, turn)) return identified(resumeStreamResponse(runId), sessionId, runId)
+        // A disable/config write may have completed while this request awaited the lock.
+        const currentAgent = await getAgent(agentId)
+        if (!currentAgent.config.enabled) throw agentDisabled()
         const override = { connectionId: body.connectionId, provider: body.provider, model: body.model }
-        const { provider, model } = await resolveRunModel(agent, override)
-        const started = await startDesktopTabRun(agentId, sessionId, runId)
-        if (!started) return identified(resumeStreamResponse(runId), sessionId, runId)
-        claimSession(sessionId, runId, body.author?.id)
-        return streamChat(agent, sessionId, runId, body.message, override, { provider, model }, { source: 'chat', author: body.author, ...attachmentTrigger })
-    }
+        const { provider, model } = await resolveRunModel(currentAgent, override)
+        const holder = claimSession(sessionId, runId, body.author?.id)
+        if (holder) throw new HttpError(409, 'This conversation is already starting. Retry the same first message.')
+        try {
+            const queuedUser = await startDesktopTabRun(agentId, turn)
+            if (!queuedUser) { releaseSession(runId); return identified(resumeStreamResponse(runId), sessionId, runId) }
+            // The normal queued-user path enriches this row with context and never appends a
+            // second user message. Failed preparation/Stop therefore still leave the input saved.
+            return streamChat(currentAgent, sessionId, runId, body.message, override, { provider, model }, { source: 'chat', author: body.author, ...attachmentTrigger, queuedUser })
+        } catch (error) { releaseSession(runId); throw error }
+    })
     if (body.desktopQueuedTurn) return withAgentLock(agentId, async () => {
         const queued = body.desktopQueuedTurn!
         const session = await getSession(agentId, body.sessionId!)

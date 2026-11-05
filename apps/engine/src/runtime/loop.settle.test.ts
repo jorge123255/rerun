@@ -102,6 +102,37 @@ describe('a run always reaches a terminal state', () => {
         proposal.push = false
     })
 
+    it('consumes the atomically saved first user row without appending a second copy', async () => {
+        const { startDesktopTabRun, getDesktopTabRun } = await import('../db/repos/desktop-tab-runs.js')
+        const input = { sessionId: crypto.randomUUID(), runId: crypto.randomUUID(), message: 'First message saved before preparation', attachments: [{ path: 'brief.md', content: 'Original first-turn snapshot' }] }
+        const queuedUser = await startDesktopTabRun(id, input)
+        expect(queuedUser).not.toBeNull()
+        stream.parts = textTurn({ unified: 'stop', raw: 'stop' })
+        const run = await runAgent(await getAgent(id), input.sessionId, input.message, undefined, undefined, input.runId,
+            { source: 'chat', workspaceAttachments: input.attachments, queuedUser: queuedUser! })
+        await run.settled
+        const users = (await listMessages(id, input.sessionId)).filter(row => row.role === 'user')
+        expect(users).toHaveLength(1)
+        expect(users[0].id).toBe(queuedUser!.id)
+        expect(users[0].contentJson).toContain('Original first-turn snapshot')
+        expect(await getDesktopTabRun(id, input)).toBe(true)
+    })
+
+    it('Stop preserves the accepted first message and replay cannot append it again', async () => {
+        const { startDesktopTabRun, getDesktopTabRun } = await import('../db/repos/desktop-tab-runs.js')
+        const input = { sessionId: crypto.randomUUID(), runId: crypto.randomUUID(), message: 'A first message stopped after acceptance' }
+        const queuedUser = await startDesktopTabRun(id, input)
+        stream.hang = true
+        stream.parts = [{ type: 'stream-start', warnings: [] }]
+        const run = await runAgent(await getAgent(id), input.sessionId, input.message, undefined, undefined, input.runId,
+            { source: 'chat', queuedUser: queuedUser! })
+        expect(abortRun(run.runId)).toBe(true)
+        expect((await run.settled).kind).toBe('cancelled')
+        expect(await getDesktopTabRun(id, input)).toBe(true)
+        expect(await startDesktopTabRun(id, input)).toBeNull()
+        expect((await listMessages(id, input.sessionId)).filter(row => row.role === 'user').map(row => row.id)).toEqual([queuedUser!.id])
+    })
+
     // A spent Codex subscription arrives as a plain finish, not as an error. Taken at face value it
     // stores an empty turn as a success and the reason the agent said nothing is lost.
     it('fails a turn the provider finished on a usage limit', async () => {
