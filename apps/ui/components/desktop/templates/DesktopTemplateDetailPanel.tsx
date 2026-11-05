@@ -35,7 +35,6 @@ export function DesktopTemplateDetailPanel({ client, template, resume = null, on
                     <MetaRow label="Coworkers" value={String(template.agents.length)} />
                     <MetaRow label="Category" value={TEMPLATE_CATEGORY_LABELS[template.category] ?? TEMPLATE_CATEGORY_LABELS.other} />
                     <MetaRow label="Captured" value={template.capturedAt ?? 'Draft — not captured'} />
-                    <div className="relative flex flex-col gap-1 text-xs"><span className="text-muted-foreground">Saved revision</span><code className="break-all rounded bg-background/60 px-1.5 py-1 font-medium">{template.revision}</code></div>
                 </div>
                 {template.description && <Section title="About"><p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">{template.description}</p></Section>}
                 {template.agents.length > 0 && <Section title="Coworkers" count={template.agents.length}>
@@ -43,7 +42,7 @@ export function DesktopTemplateDetailPanel({ client, template, resume = null, on
                         {template.agents.map(agent => <DesktopTemplateDetailAgentCard key={agent.key} agent={agent} />)}
                     </CardCarousel>
                 </Section>}
-                <SavedIssues title="Exclusions saved with this revision" issues={template.exclusions} />
+                <SavedIssues title="Excluded from capture" issues={template.exclusions} />
                 <SavedIssues title="Unsupported entries" issues={template.unsupportedEntries} />
                 <Alert variant="warning" stripes className="grid-cols-[auto_1fr] gap-x-3 gap-y-0">
                     <Icon icon={ShieldCheck} size="sm" className="row-span-2 self-center" />

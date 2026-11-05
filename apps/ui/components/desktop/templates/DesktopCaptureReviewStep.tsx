@@ -16,7 +16,7 @@ import type { DesktopAgentCapturePlan, DesktopTemplateSetup } from './types'
 export function DesktopCaptureReviewStep({ flow }: { flow: import('./useDesktopCaptureFlow').DesktopCaptureFlow }) {
     return <div className="flex flex-col gap-4">
         <p className="text-xs text-muted-foreground">{flow.approvedCount} of {flow.plans.length} coworker{flow.plans.length === 1 ? '' : 's'} reviewed</p>
-        <p className="text-xs text-amber-500">Credential stores and histories are excluded, but private prose in selected files and instructions is not automatically stripped. Review it before capture.</p>
+        <p className="text-xs text-amber-500">Saved logins, chats and memories are excluded. Private information in selected files and instructions is not automatically removed; review it before capturing.</p>
         {flow.plans.map(plan => <DesktopCaptureAgentReview
             key={plan.agentRowId}
             plan={plan}
@@ -58,7 +58,6 @@ function DesktopCaptureAgentReview({ plan, excluded, approved, setup, soloAgent,
                 {plan.name && <span className="shrink-0">@{plan.name}</span>}
                 {plan.description && <span className="truncate">{plan.description}</span>}
             </span>
-            <span className="text-[11px] text-muted-foreground">Source revision <code>{plan.sourceRevision}</code></span>
         </div>
 
         {plan.blocked && <p role="alert" className="text-xs text-destructive">{plan.blocked}</p>}
@@ -67,7 +66,7 @@ function DesktopCaptureAgentReview({ plan, excluded, approved, setup, soloAgent,
             <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all text-xs">{file.text}</pre>
         </details>)}
 
-        {plan.skills.length > 0 && <CaptureReviewGroup icon={Package} title="User-owned skills">
+        {plan.skills.length > 0 && <CaptureReviewGroup icon={Package} title="Skills">
             <CaptureReviewRow label="Skills"><CaptureReviewChips items={plan.skills.map(skill => skill.name)} max={6} /></CaptureReviewRow>
         </CaptureReviewGroup>}
 
@@ -75,12 +74,12 @@ function DesktopCaptureAgentReview({ plan, excluded, approved, setup, soloAgent,
             {plan.exclusions.map(item => <IssueRow key={`${item.path}:${item.reason}`} path={item.path} reason={item.reason} />)}
         </CaptureReviewGroup>}
 
-        {plan.unsupportedEntries.length > 0 && <CaptureReviewGroup icon={ShieldAlertIcon} title="Unsupported entries" tone="warning">
+        {plan.unsupportedEntries.length > 0 && <CaptureReviewGroup icon={ShieldAlertIcon} title="Not included" tone="warning">
             {plan.unsupportedEntries.map(item => <IssueRow key={`${item.path}:${item.reason}`} path={item.path} reason={item.reason} />)}
         </CaptureReviewGroup>}
 
         {flagged.length > 0 && <CaptureReviewGroup icon={ShieldAlertIcon} title="Flagged files" tone="danger">
-            <p className="text-xs text-destructive">{flagged.length} selected file{flagged.length === 1 ? '' : 's'} may contain sensitive text. They will travel in the template.</p>
+            <p className="text-xs text-destructive">{flagged.length} selected file{flagged.length === 1 ? '' : 's'} may contain private information and will be included in the template.</p>
             <CaptureReviewChips items={flagged.map(file => file.path)} mono max={5} />
         </CaptureReviewGroup>}
 
@@ -106,7 +105,7 @@ function DesktopCaptureAgentReview({ plan, excluded, approved, setup, soloAgent,
             <Field
                 orientation="row"
                 label="I reviewed what this coworker carries"
-                helperText={!isSetupAnswered(setup) ? 'Answer the install question and write any required instructions first.' : flagged.length > 0 ? `${flagged.length} flagged file(s) will travel in the template.` : 'I also reviewed any private prose in the selected content.'}
+                helperText={!isSetupAnswered(setup) ? 'Answer the install question and write any required instructions first.' : flagged.length > 0 ? `${flagged.length} flagged file(s) will be included in the template.` : 'I also reviewed any private information in the selected content.'}
             >
                 <Checkbox size="sm" disabled={disabled || !!plan.blocked || !isSetupAnswered(setup)} checked={approved} onCheckedChange={value => onApprove(value === true)} />
             </Field>

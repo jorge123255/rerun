@@ -80,7 +80,7 @@ export function createDesktopTemplatesClient() {
             const result = desktopTemplateListSchema.parse(await request({ operation: 'list' }))
             return Promise.all(result.templates.filter(template => template.status === 'captured' && template.revision).map(template => this.detail({ templateId: template.templateId, revision: template.revision! })))
         },
-        async detail(template: DesktopTemplateIdentity): Promise<DesktopTemplateDetail> { return detailOf(await request({ operation: 'detail', ...template })) },
+        async detail(template: DesktopTemplateIdentity): Promise<DesktopTemplateDetail> { return detailOf(await request({ operation: 'detail', templateId: template.templateId, revision: template.revision })) },
         async install(template: DesktopTemplateIdentity, options: { again?: boolean; requestId?: string } = {}): Promise<DesktopTemplateInstallReceipt> {
             const key = `${template.templateId}:${template.revision}`
             if(options.again && !againRequests.has(key))againRequests.set(key,crypto.randomUUID())

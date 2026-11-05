@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING } from '@rerun/contracts'
+import { DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING, desktopTemplateOperationSchema } from '@rerun/contracts'
 import { createDesktopTemplatesClient } from './templates-client'
 const template = { templateId: 'a'.repeat(32), revision: 'b'.repeat(64) }
 const requestId = '11111111-1111-4111-8111-111111111111'
@@ -59,4 +59,22 @@ it('never reports an uncertain install as installed and resumes it after client 
 it('rejects a successful body belonging to another template',async()=>{
     fixture(body=>({status:'installed',...template,templateId:'e'.repeat(32),requestId:body.requestId,receiptId,coworkers:[]}),[])
     await expect(createDesktopTemplatesClient().install(template)).rejects.toThrow('unknown')
+})
+
+
+it('opens a captured draft or library row using only its exact template identity', async () => {
+    const calls: Record<string, unknown>[] = []
+    fixture(body => {
+        expect(desktopTemplateOperationSchema.safeParse(body).success).toBe(true)
+        return { ...template, title: 'QA template', capturedAt: '2026-11-05T00:00:00Z', engineCommit: null,
+            proseWarning: DESKTOP_TEMPLATE_PROSE_WARNING, limits: DESKTOP_TEMPLATE_LIMITS,
+            coworkers: [{ agentKey: 'c01', name: 'QA coworker', description: '', setup: { required: true, prompt: 'QA guide', answered: true },
+                files: [], exclusions: [], redactions: [], strippedConfigKeys: [], envKeys: [], mcpAuth: [] }] }
+    }, calls)
+    const client = createDesktopTemplatesClient()
+    const draft = { ...template, title: 'QA template', receiptId, requestId }
+    const row = await client.detail(draft)
+    expect(row.title).toBe('QA template')
+    expect((await client.detail(row)).agents[0].name).toBe('QA coworker')
+    expect(calls).toEqual([0, 1].map(() => ({ operation: 'detail', ...template })))
 })

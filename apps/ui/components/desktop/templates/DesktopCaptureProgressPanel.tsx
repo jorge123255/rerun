@@ -9,10 +9,10 @@ import type { DesktopCaptureStep } from './useDesktopCaptureFlow'
 export type DesktopCaptureProgressStep = 'title' | DesktopCaptureStep
 
 const STAGES: { step: DesktopCaptureProgressStep; icon: LucideIcon; title: string; description: string; points: string[] }[] = [
-    { step: 'title', icon: PencilIcon, title: 'Name your template', description: 'The private draft is saved before capture.', points: ['Local workspace only', 'Exact saved revision'] },
-    { step: 'select', icon: UsersIcon, title: 'Pick your coworkers', description: 'Only existing local coworkers and safe source metadata are offered.', points: ['No browser file paths', 'Source revisions recorded'] },
-    { step: 'review', icon: ShieldCheckIcon, title: 'Security review', description: 'Choose the confined text files and user-owned skills that travel.', points: ['Credentials and histories excluded', 'Review selected prose yourself'] },
-    { step: 'done', icon: Package, title: 'Capture', description: 'The server saves one exact private template revision.', points: ['Exclusions remain visible', 'Warnings, not surprises'] },
+    { step: 'title', icon: PencilIcon, title: 'Name your template', description: 'The draft is saved as soon as you confirm.', points: ['Private to this workspace'] },
+    { step: 'select', icon: UsersIcon, title: 'Pick your coworkers', description: 'Save their instructions, selected text files and skills.', points: ['A snapshot, not a link', 'Later edits stay on your side'] },
+    { step: 'review', icon: ShieldCheckIcon, title: 'Security review', description: 'Check what each coworker carries before capturing.', points: ['Saved logins and chats excluded', 'Memories left behind', 'Review selected text for private information'] },
+    { step: 'done', icon: Package, title: 'Capture', description: 'Your template is saved privately in this workspace.', points: ['Included files listed', 'Warnings, not surprises'] },
 ]
 
 export function DesktopCaptureProgressPanel({ step }: { step: DesktopCaptureProgressStep }) {

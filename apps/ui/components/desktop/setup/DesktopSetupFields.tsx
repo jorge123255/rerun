@@ -33,7 +33,7 @@ export function DesktopSetupFields({ value, defaultPrompt, onChange, disabled }:
 
     return (
         <div className="flex flex-col gap-3">
-            <Field label="Does this coworker need to be configured after install?" helperText="Answer once. Whoever installs this coworker sees the result, so an unanswered coworker cannot be published.">
+            <Field label="Does this coworker need to be configured after install?" helperText="Answer before including this coworker in a private template.">
                 <Segmented
                     options={CHOICES}
                     value={value.required === null ? '' : value.required ? 'yes' : 'no'}

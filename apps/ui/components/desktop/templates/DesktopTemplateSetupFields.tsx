@@ -13,7 +13,7 @@ export function DesktopTemplateSetupFields({ value, disabled = false, onChange }
     onChange: (next: DesktopTemplateSetup) => void
 }) {
     return <div className="flex flex-col gap-3">
-        <Field label="Does this coworker need to be configured after install?" helperText="Answer once. Each imported coworker starts with its own pending setup and empty chat.">
+        <Field label="Does this coworker need to be configured after install?" helperText="Answer before including this coworker in a private template.">
             <Segmented
                 options={CHOICES}
                 value={value.required === null ? '' : value.required ? 'yes' : 'no'}
@@ -21,13 +21,13 @@ export function DesktopTemplateSetupFields({ value, disabled = false, onChange }
                 className={disabled ? 'pointer-events-none opacity-60' : undefined}
             />
         </Field>
-        {value.required === true && <Field label="Install instructions" helperText="Written to the coworker, not to the user. Review private prose yourself; it is not automatically stripped.">
+        {value.required === true && <Field label="Install instructions" helperText="Written to the coworker, not to the user: it reads this and walks them through it in the chat.">
             <MarkdownTextarea
                 dialogTitle="Edit the install instructions"
                 disabled={disabled}
                 value={value.prompt}
                 onChange={prompt => onChange({ ...value, prompt })}
-                placeholder="Explain the local information the imported coworker should request."
+                placeholder="Explain what the coworker should ask during setup."
                 className="min-h-40 font-mono text-xs"
             />
         </Field>}

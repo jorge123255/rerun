@@ -9,9 +9,9 @@ import { DesktopCaptureSelectStep } from './DesktopCaptureSelectStep'
 import type { DesktopCaptureFlow, DesktopCaptureStep } from './useDesktopCaptureFlow'
 
 export const DESKTOP_CAPTURE_STEP_COPY: Record<DesktopCaptureStep, { title: string; description: string }> = {
-    select: { title: 'Capture coworkers', description: 'Pick existing local coworkers and inspect the safe content the server offers.' },
-    review: { title: 'Security review', description: 'Review exact source revisions, selected files and setup before capturing.' },
-    done: { title: 'Captured', description: 'The server saved an exact private template revision in your library.' },
+    select: { title: 'Capture coworkers', description: 'Pick the coworkers to include in this template.' },
+    review: { title: 'Security review', description: 'Check what each coworker carries, then confirm it before capturing.' },
+    done: { title: 'Captured', description: 'Your template is saved in your private library.' },
 }
 
 export function DesktopCaptureStepPanel({ flow, step, direction, onStepChange, onClose, doneLabel }: {
@@ -36,24 +36,24 @@ export function DesktopCaptureStepPanel({ flow, step, direction, onStepChange, o
                     onToggle={flow.toggleAgent}
                     onSelectionChange={flow.setSelection}
                 /> : step === 'review' ? <DesktopCaptureReviewStep flow={flow} /> : <div className="flex flex-col gap-2">
-                    <p className="text-sm">{flow.plans.length} coworker{flow.plans.length === 1 ? '' : 's'} captured. The saved revision is private to this workspace.</p>
+                    <p className="text-sm">{flow.plans.length} coworker{flow.plans.length === 1 ? '' : 's'} captured. This template is private to your workspace.</p>
                     {flow.warnings.map(warning => <p key={warning} className="text-xs text-amber-500">{warning}</p>)}
                 </div>}
             </StepTransition>
             {flow.error && <div role="alert" className="mt-4 text-sm text-destructive">
                 <p>{flow.error}</p>
-                {flow.locked && <p className="mt-1 text-xs">The same reviewed selection and request ID will be retried. Closing and reopening this dialog keeps the attempt visible.</p>}
+                {flow.locked && <p className="mt-1 text-xs">Retry keeps your reviewed selection. You can close this dialog and return to finish.</p>}
             </div>}
         </ScrollFade>
         <DialogFooter className="mt-auto -mx-6 -mb-6 border-t bg-muted/50 px-6 py-4">
             {step === 'select' && <>
-                {flow.error && flow.workspaces.length === 0 && <Button type="button" variant="outline" disabled={flow.loadingSources} loading={flow.loadingSources} onClick={() => void flow.reloadSources()}>Retry sources</Button>}
+                {flow.error && flow.workspaces.length === 0 && <Button type="button" variant="outline" disabled={flow.loadingSources} loading={flow.loadingSources} onClick={() => void flow.reloadSources()}>Try again</Button>}
                 <Button type="button" disabled={selectedCount === 0 || flow.busy} loading={flow.busy} onClick={async () => { if (await flow.inspect()) onStepChange('review') }}>
                     Inspect {selectedCount || ''} coworker{selectedCount === 1 ? '' : 's'}
                 </Button>
             </>}
             {step === 'review' && <>
-                {!flow.allApproved && <p className="text-xs text-amber-500 sm:mr-auto sm:self-center">Review each agent to enable the capture ({flow.approvedCount}/{flow.plans.length})</p>}
+                {!flow.allApproved && <p className="text-xs text-amber-500 sm:mr-auto sm:self-center">Review each coworker to enable the capture ({flow.approvedCount}/{flow.plans.length})</p>}
                 <Button type="button" variant="ghost" disabled={flow.locked || flow.busy} onClick={() => onStepChange('select')}>Back</Button>
                 <Button type="button" disabled={!flow.allApproved || flow.busy} loading={flow.busy} onClick={async () => { if (await flow.capture()) onStepChange('done') }}>
                     {flow.locked ? 'Retry capture' : 'Capture'}

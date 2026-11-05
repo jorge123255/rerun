@@ -24,7 +24,7 @@ export function DesktopCreateTemplateTitleStep({ onCreate, onCancel }: {
                 autoFocus
                 maxLength={TITLE_LIMIT}
                 placeholder="e.g. Research team"
-                helperText={`${title.length}/${TITLE_LIMIT} · Private to this workspace. The draft is saved before capture.`}
+                helperText={`${title.length}/${TITLE_LIMIT} · Private to this workspace.`}
                 value={title}
                 onChange={event => setTitle(event.target.value)}
             />
