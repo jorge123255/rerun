@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, expect, test, vi } from 'vitest'
+import { renderToStaticMarkup } from 'react-dom/server'
+import type { LucideIcon } from '@/lib/icons'
 import type { DesktopNotificationAdmission } from './notifications'
 import { showDesktopNotificationToast } from './notification-toast'
 
@@ -43,4 +45,13 @@ test('open dismisses and hands the pinned target to the shared native/toast navi
     ;(rendered().props.onOpen as () => void)()
     expect(dismiss).toHaveBeenCalledWith('toast-1')
     expect(openTarget).toHaveBeenCalledWith(expect.objectContaining({ key: 'pending:request-a', kind: 'question', agentId: 'agent-a', sessionId: 'chat-a', requestId: 'request-a' }))
+})
+test('browser takeover toast has a renderable icon and keeps its exact target', () => {
+    const openTarget = vi.fn()
+    showDesktopNotificationToast(event({ kind: 'takeover' }), openTarget)
+    const card = rendered(), Icon = card.props.Icon as LucideIcon
+    expect(renderToStaticMarkup(<Icon />)).toContain('<svg')
+    expect(card.props.iconColor).toBe('text-cyan-400')
+    ;(card.props.onOpen as () => void)()
+    expect(openTarget).toHaveBeenCalledWith(expect.objectContaining({ kind: 'takeover', sessionId: 'chat-a', requestId: 'request-a' }))
 })

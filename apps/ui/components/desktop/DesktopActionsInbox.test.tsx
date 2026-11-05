@@ -31,6 +31,19 @@ afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.useRea
 const pillOf = (container: HTMLElement) => container.querySelector<HTMLElement>('button[aria-label^="Actions:"]')!
 const panelOf = (container: HTMLElement) => container.querySelector('[aria-label="Actions inbox"]')
 
+test('browser takeover renders with original waiting metadata and opens its exact chat', async () => {
+    const takeover = { ...question, id: 'browser-request', kind: 'takeover', summary: 'Review the browser marker' }
+    vi.stubGlobal('fetch', routedFetch(() => Response.json({ items: [takeover], unavailableAgentIds: [], checkedAt })))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container), onOpen = vi.fn()
+    await act(async () => root.render(<DesktopActionsInbox open onOpenConversation={onOpen} />))
+    expect(container.textContent).toContain('Review the browser marker')
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 1 pending')
+    await act(async () => container.querySelector<HTMLElement>('[data-actions-inbox-item="browser-request"]')!.click())
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 's1', agentId: 'researcher' }))
+    await act(async () => root.unmount())
+})
+
 test('lists pending question and approval rows, opens a navigation hit, and stops polling on unmount', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')

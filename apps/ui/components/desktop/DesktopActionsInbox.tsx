@@ -23,7 +23,7 @@ import { useDesktopPendingInbox, type DesktopPendingInboxRead } from './useDeskt
 const KIND_STATUS: Record<DesktopPendingInboxItem['kind'], string> = {
     question: 'awaiting_question',
     approval: 'awaiting_approval',
-    takeover: 'awaiting_takeover',
+    takeover: 'waiting_human',
 }
 const KIND_SENTENCE: Record<DesktopPendingInboxItem['kind'], string> = {
     question: 'asked you a question',

@@ -4,7 +4,7 @@ import { isScheduledSource } from '@rerun/contracts'
 import { toast } from 'sonner'
 import { NotificationToast } from '@/components/notifications/NotificationToast'
 import type { NotificationKind } from '@/lib/engine/types'
-import { CalendarClock } from '@/lib/icons'
+import { CalendarClock, MonitorIcon } from '@/lib/icons'
 import { KIND_BEAM, KIND_ICONS, KIND_ICON_COLORS } from '@/lib/notifications/kind-visuals'
 import type { DesktopNotificationTarget } from './notification-bridge'
 import type { DesktopNotificationAdmission } from './notifications'
@@ -23,8 +23,8 @@ export function desktopNotificationToastTarget(event: DesktopNotificationAdmissi
 export function showDesktopNotificationToast(event: DesktopNotificationAdmission, onOpenTarget?: (target: DesktopNotificationTarget) => void): void {
     const id = `desktop-notification:${event.key}`
     const scheduled = isScheduledSource(event.source)
-    const kind = event.kind as NotificationKind
-    const Icon = scheduled ? CalendarClock : KIND_ICONS[kind]
+    const kind: NotificationKind = event.kind === 'takeover' ? 'question' : event.kind
+    const Icon = scheduled ? CalendarClock : event.kind === 'takeover' ? MonitorIcon : KIND_ICONS[kind]
     const iconColor = scheduled ? 'text-violet-400' : KIND_ICON_COLORS[kind]
     const beamTone = scheduled ? 'brand' : KIND_BEAM[kind]
     const target = desktopNotificationToastTarget(event)
