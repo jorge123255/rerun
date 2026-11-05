@@ -1,4 +1,27 @@
-# Round 29 assignments — current acceptance
+# Round 30 assignments — templates, setup, app requests and images
+
+Eight fresh worktrees are prepared under `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/`. Their exact shared base and copyable prompts are recorded in the round 30 assignment index. Every worktree includes [the shared interface agreement](desktop-round30-interfaces.md). Original Rerun pin: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
+
+**23 capability groups remain.** These are assigned source slices, not accepted product features. Root completed Control Center coworker Open → Apps acceptance using the installed `b0f9899` app, with native owner isolation, saved draft/chat and full-restart checks. All 41 navigation cases and UI typecheck pass; test-only changes required no runtime rebuild. [Acceptance](desktop-round30-control-apps-acceptance.md).
+
+| Agent | New task | Worktree / branch suffix |
+| --- | --- | --- |
+| A | W3 / B4 — Private local template capture and installation | `round30-template-backend` |
+| B | W3 / B4 — Original private template capture and library UI | `round30-template-ui` |
+| C | B4 — Setup instructions and durable first-install chat | `round30-setup-lifecycle` |
+| D | B4 — Original Setup editor and first-install gate | `round30-setup-ui` |
+| E | C6 — Durable suggested-app requests and follow-up receipts | `round30-service-requests` |
+| F | C6 — Original app-request cards in chat | `round30-service-request-ui` |
+| G | C8 — Complete bounded image result-card formats | `round30-image-cards` |
+| H | C3 — More still-image formats in the chat composer | `round30-composer-image-formats` |
+
+A/B share the local template contract; C/D share setup authoring and one durable first-install chat; E/F share exact suggested-app request/progress/receipt identity. G owns result cards, H owns immutable model-input snapshots; shared decoders remain read-only. Root handles all central wiring, every repair and all checks/builds/installations/live Codex/Mac/restart tests. Lanes may author regression sources but execute none, and return clean local commits without push/merge.
+
+Root also retains A's clean round29 isolated-runtime handoff `047fba42f937a96df54103bfd3283998fb7aa0ca`, B's reviewed uncommitted snapshot and C's already-fixed inactive viewer. Their integration, transport/lease reconciliation, screenshot delivery and runtime/native acceptance remain root work. New prompts do not return those defects to the agents, and no E3 acceptance is claimed.
+
+---
+
+# Historical round 29 handoff checkpoint
 
 Installed product **b0f9899**, verified November 5, 2026. **23 capability groups remain**, down from 24 after D5 Files previews passed native and full-restart acceptance. D/F and the supported E connection slice are integrated; G/H close the remaining Files format scope. Root fixed the handoffs and ran the relevant source checks, packaging and Mac tests. Apps uses the original catalog and panel, with real Microsoft Learn Codex replies before and after restart; E4 stays partial for the unsupported methods and skill bundles. C is source-integrated but inactive, B requires root reconciliation, and A is still working. See [Apps and Files acceptance](desktop-round29-apps-formats-acceptance.md).
 
