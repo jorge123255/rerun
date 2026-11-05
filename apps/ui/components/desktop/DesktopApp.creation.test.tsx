@@ -126,11 +126,13 @@ it('keeps a reserved roster owner out of workspace navigation until the exact fi
  expect(modelSettings().disabled).toBe(true)
  await click(entry(created.name));expect(fixture.sessionReads).toEqual([])
  await act(async()=>finishRead())
+ // Restoring placement moves focus to its original board action and closes the menu.
+ if(!entry(created.name))await openMenu()
  expect(entry(created.name).getAttribute('aria-disabled')).toBe('true')
  expect(entry('Workspace settings').getAttribute('aria-disabled')).toBe('true')
  expect(entry('Control center').getAttribute('aria-disabled')).toBe('true')
  await click(entry(created.name));expect(fixture.sessionReads).toEqual([])
- await act(async()=>{document.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))})
+ await act(async()=>{document.querySelector('[role="menu"]')?.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))})
  // Recovery can reconnect a provider, but cannot enter the unfinished owner's initial tab.
  expect(modelSettings().disabled).toBe(false)
  await click(modelSettings());expect(document.querySelector('#desktop-api-key')).not.toBeNull()

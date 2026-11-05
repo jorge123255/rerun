@@ -37,7 +37,7 @@ describe('desktop HTTPS MCP boundaries (offline)',()=>{
             return Response.json({jsonrpc:'2.0',id:req.id,result})
         })
         const runtime=remoteMcpRuntime(store,async()=>({enabled:true,granted:true}),network as typeof fetch)
-        expect((await runtime.call('a','x','1','hello',{})).result?.content[0].text).toBe('[REDACTED] facts')
+        expect((await runtime.call('a','x','1','hello',{})).result?.content).toEqual([{ type: 'text', text: '[REDACTED] facts' }])
         expect(requests.every(r=>r.redirect==='manual' && r.credentials==='omit')).toBe(true)
         revision='2'; const before=network.mock.calls.length
         await expect(runtime.call('a','x','1','hello',{})).rejects.toThrow()
