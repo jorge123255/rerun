@@ -34,3 +34,14 @@ it.each(['name','description','body'])('rejects credential templates in skill %s
  expect(()=>compileLocalService(manifest,'default',{}, {id:'default',supported:true})).toThrow('skill template')
  expect(localMethodAvailability(manifest,'default',{id:'default',supported:true}).supported).toBe(false)
 })
+it('rejects duplicate canonical skill names and oversized total bundled data',()=>{
+ const skill={name:'Usage Guide',description:'Static',body:'safe'}
+ for(const skills of [[skill,{...skill,name:'usage-guide'}],Array.from({length:8},(_,i)=>({...skill,name:`usage-${i}`,body:'x'.repeat(65536)}))]){
+  const manifest=serviceManifestSchema.parse({...microsoft,skills})
+  expect(()=>compileLocalService(manifest,'default',{}, {id:'default',supported:true})).toThrow('skill template')
+ }
+})
+it('rejects literal credential and derived placeholder material in bundled output',()=>{
+ const manifest=serviceManifestSchema.parse({...microsoft,skills:[{name:'usage',description:'Static',body:'${basic:input.USER:input.TOKEN}'}]})
+ expect(()=>compileLocalService(manifest,'default',{}, {id:'default',supported:true})).toThrow('skill template')
+})
