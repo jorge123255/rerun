@@ -66,3 +66,9 @@ corrupt-byte rejection, draft ownership/transfer/restart, and durable history im
 Implementation agents did not run tests, type checks, builds, model requests, or the Mac app.
 Root owns all automated checks and Mac acceptance, including sending from the board and checking
 saved chats after restart. This document describes source behavior, not a completed QA verdict.
+
+### Root native follow-up
+
+The signed Mac runner cannot read the SDK's ordinary temporary image directory. The desktop provider patch now forwards the validated, frozen bytes through Codex's `image` input as an inline data URL, for both ESM and CommonJS builds. It adds no filesystem permission and avoids silently dropping an image after a temporary-file write failure. The stream regression fails against the prior adapter and passes with inline bytes. Live visual recognition and replay remain pending native acceptance.
+
+The account worker now allows two minutes for initial macOS Keychain approval and gives a specific timeout hint. Other account requests retain their 30-second deadline; credentials and Keychain access rules remain unchanged.

@@ -41,7 +41,14 @@ export class CodexAuthClient {
         return new Promise((resolve, reject) => {
             const finish = () => { clearTimeout(timer); this.pending.delete(id) }
             const fail = () => { finish(); reject(new Error(`Codex could not complete ${method}.`)) }
-            const timer = setTimeout(fail, 30000)
+            // A new Mac signature can need a separate Keychain approval for the
+            // bundled runner. Keep it alive long enough for the user to approve.
+            const timer = setTimeout(() => {
+                finish()
+                reject(new Error(method === 'initialize'
+                    ? 'Codex did not finish starting. If macOS is asking for Keychain access for Codex, approve that prompt and try again.'
+                    : `Codex timed out while completing ${method}.`))
+            }, method === 'initialize' ? 120_000 : 30_000)
             this.pending.set(id, { receive(value) { finish(); resolve(value) }, fail })
             this.child.stdin.write(JSON.stringify({ id, method, params }) + '\n', error => { if (error) fail() })
         })

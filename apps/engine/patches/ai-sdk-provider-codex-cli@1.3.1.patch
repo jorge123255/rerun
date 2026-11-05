@@ -180,7 +180,24 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..325112795616d9e1674ea58305d464bf
        jsonModeLastTextBlockOnly: this.options.jsonModeLastTextBlockOnly
      });
      this.emitter.emitStreamStart(this.options.warnings);
-@@ -3638,7 +3685,7 @@ var AppServerLanguageModel = class {
+@@ -3614,6 +3661,16 @@
+         input.push({ type: "image", url: image.url, imageUrl: image.url });
+         continue;
+       }
++      // Rerun's Mac runner cannot read the engine's temporary directory. Forward
++      // the already validated attachment bytes inline, without a filesystem grant.
++      if (process.env.RERUN_DESKTOP_APP === "1") {
++        const inline = extractFromString(image.data.data, image.data.mimeType);
++        if (!inline || !inline.mimeType.toLowerCase().startsWith("image/")) {
++          throw new Error("Could not prepare the image attachment.");
++        }
++        input.push({ type: "image", url: inline.data });
++        continue;
++      }
+       try {
+         const tempPath = writeImageToTempFile(image.data);
+         tempImagePaths.push(tempPath);
+@@ -3638,7 +3695,7 @@ var AppServerLanguageModel = class {
          developerInstructions,
          personality: settings.personality,
          ephemeral,
@@ -189,7 +206,7 @@ index 45ed4bd9287395a0a4e35f2f4a1f66da88341516..325112795616d9e1674ea58305d464bf
          persistExtendedHistory: settings.persistExtendedHistory ?? false
        });
        return thread.thread.id;
-@@ -4060,6 +4107,7 @@ var AppServerLanguageModel = class {
+@@ -4060,6 +4117,7 @@ var AppServerLanguageModel = class {
        threadId,
        warnings,
        includeRawChunks,
@@ -441,7 +458,24 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..024bed81cdf1e4e6d1b994da3e417fb4
        jsonModeLastTextBlockOnly: this.options.jsonModeLastTextBlockOnly
      });
      this.emitter.emitStreamStart(this.options.warnings);
-@@ -3630,7 +3677,7 @@ var AppServerLanguageModel = class {
+@@ -3606,6 +3653,16 @@
+         input.push({ type: "image", url: image.url, imageUrl: image.url });
+         continue;
+       }
++      // Rerun's Mac runner cannot read the engine's temporary directory. Forward
++      // the already validated attachment bytes inline, without a filesystem grant.
++      if (process.env.RERUN_DESKTOP_APP === "1") {
++        const inline = extractFromString(image.data.data, image.data.mimeType);
++        if (!inline || !inline.mimeType.toLowerCase().startsWith("image/")) {
++          throw new Error("Could not prepare the image attachment.");
++        }
++        input.push({ type: "image", url: inline.data });
++        continue;
++      }
+       try {
+         const tempPath = writeImageToTempFile(image.data);
+         tempImagePaths.push(tempPath);
+@@ -3630,7 +3687,7 @@ var AppServerLanguageModel = class {
          developerInstructions,
          personality: settings.personality,
          ephemeral,
@@ -450,7 +484,7 @@ index 0e2c370883354cd782ab878f645170a87081c8a2..024bed81cdf1e4e6d1b994da3e417fb4
          persistExtendedHistory: settings.persistExtendedHistory ?? false
        });
        return thread.thread.id;
-@@ -4052,6 +4099,7 @@ var AppServerLanguageModel = class {
+@@ -4052,6 +4109,7 @@ var AppServerLanguageModel = class {
        threadId,
        warnings,
        includeRawChunks,
