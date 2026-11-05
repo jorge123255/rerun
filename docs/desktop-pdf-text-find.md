@@ -12,7 +12,7 @@ Text selection and Find came from that viewer. This lane does not bring the ifra
 
 The lane and integration helper did not run checks, typecheck, lint, helper compilation, packaging, or Mac acceptance. Root owns those checks.
 
-Root integration now wires the helper into packaging, manifest validation and the UI environment. The packaged-runtime verifier invokes it against upright, rotated/cropped and scanned fixture pages. A SHA-256 header binds extraction to the exact bytes rendered by the page route: in-place replacement of a PDF cannot leave cached text over a different page image. A changed raster hash discards the old text layer. Search jumps to its first match; partial highlights and transparent selection spans follow page rotation, and copying across runs preserves source whitespace. Actual glyph placement and native selection still require root's Mac checks; partial-word highlights remain proportional within each word box rather than per-glyph outlines.
+Root integration now wires the helper into packaging, manifest validation and the UI environment. The packaged-runtime verifier invokes it against upright, rotated/cropped and scanned fixture pages. A SHA-256 header binds extraction to the exact bytes rendered by the page route: in-place replacement of a PDF cannot leave cached text over a different page image. A changed raster hash discards the old text layer. Search jumps to its first match; partial highlights and transparent selection spans follow page rotation, and copying across runs preserves source whitespace. Root verified upright and rotated/cropped highlight placement and exact-space copy on the installed corrected build; partial-word highlights remain proportional within each word box rather than per-glyph outlines.
 
 ## Helper protocol
 
@@ -73,7 +73,7 @@ Find is local. It folds `A–Z` only, so indexes stay the same length. Enter is 
 
 Exact glyph boxes are not specified here. A fetched JSON payload or a DOM layer is not native alignment.
 
-## Root wiring (now integrated; root execution pending)
+## Root wiring (integrated and verified by root)
 
 The integration includes these fragments. They are recorded here for the source-to-runtime map.
 
@@ -121,7 +121,6 @@ UI: `DesktopFilePdfFind`, `DesktopFilePdfTextLayer`. `DesktopFilePdfPreview` pro
 - Selection is the positioned runs. Spaces between runs are in `text` but have no box.
 - A page whose displayed size does not match the PNG headers shows `This page’s text does not match the displayed page.` and no layer.
 - Text is not retried by the page Retry button. Close and open the file to read it again.
-- The helper was not compiled. `-Werror` may still reject it.
-- Checks and Mac acceptance were not run.
+- Root compiled and packaged the helper with warnings treated as errors; runtime fixture checks and native acceptance passed on the corrected build.
 
-Root's native visual check found that CoreGraphics centered an unscaled page within the high-resolution bitmap, while the text layer used the full page bounds. The renderer now maps crop and rotation in PDF points, then explicitly scales to bitmap pixels. A regression samples outer painted areas on both upright and rotated pages; it fails on the prior renderer and passes with the fix. Native highlight and clipboard acceptance must use the corrected build.
+Root's native visual check found that CoreGraphics centered an unscaled page within the high-resolution bitmap, while the text layer used the full page bounds. The renderer now maps crop and rotation in PDF points, then explicitly scales to bitmap pixels. A regression samples outer painted areas on both upright and rotated pages; it fails on the prior renderer and passes with the fix. Root then verified native Find alignment, exact `Alpha one` clipboard contents, rotated/cropped next-match navigation, 125% zoom and the scanned third page after restart in `adfb47d`. Six native renderer regressions passed, including the negative check against the previous renderer.

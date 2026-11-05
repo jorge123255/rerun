@@ -1,6 +1,12 @@
 # Rerun Mac delivery checklist
 
-## Current handoff integration — November 4, 2026
+## Current acceptance — November 5, 2026
+
+Installed product source: `adfb47d`. **8 of 9 current delivery tasks accepted; 25 unfinished capability groups remain, down from 26 after D6 Shared files.** Root verified two coworkers reading the same shared note while retaining distinct private files/chats before and after restart. Image-plus-text input, PDF text/Find, /skill suggestions and original in-app notification/bell/task surfaces also passed. Prior E/G/root deliveries remain accepted. A real MCP OAuth sign-in and actual macOS notification banner/click remain unverified; C7 stays open.
+
+Both app and Codex Keychain approvals are complete. Same-signer update and repeated full restart succeeded; actual saved-account model calls work after restart. Original 23 chats/88 messages still match exactly. Clearly named Round26 QA and its copy, private/shared fixtures and paused routines are retained. See `desktop-round27-acceptance.md` for exact evidence, test results and remaining limits. No product code changed during the final native acceptance pass.
+
+## Previous handoff integration — November 4, 2026
 
 All A–H handoffs and root corrections are installed in `742d089`. **E6 Skills and E8 Routines
 are accepted after native and full-restart checks: 26 unfinished capability groups remain,
@@ -71,9 +77,9 @@ Evidence: `desktop-pending-inbox-acceptance.md` and `desktop-workspace-logo-acce
 
 | Area | Accepted work | Remaining work |
 | --- | --- | --- |
-| B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local/website logo upload; Skills/Routines/MCP navigation; Box search/member drill, Move to another Box and New Box | Apps, Triggers, Setup, To handle and remaining contextual actions. Board Boxes are complete under B2 |
-| C7: Actions and notifications | Pending and Done inbox; exact navigation; persistent individual/bulk read; live closed counts; source-message request age; notification preferences and native shown receipts | Actual OS banner/click acceptance; original in-app toasts, tile bell and task Notify me editing |
-| D5: Files | Text editing/conflicts; rename/Delete; static raster, WAV/MP3/MP4 and PDF previews; previous/next navigation | Additional media formats and animation; remaining PDF interactions |
+| B5: Control Center and workspace customization | Local commands; recent/open chats; Needs you; theme and shortcuts; original illustrations; local/website logo upload; Skills/Routines/MCP navigation; Box search/member drill, Move to another Box and New Box | Apps, Triggers, Setup and remaining contextual actions. Board Boxes are complete under B2 |
+| C7: Actions and notifications | Pending and Done inbox; exact navigation; persistent individual/bulk read; live closed counts; source-message request age; notification preferences and native shown receipts; original in-app toasts, coworker bell and task Notify me | Actual OS banner/click acceptance |
+| D5: Files | Text editing/conflicts; rename/Delete; static raster, WAV/MP3/MP4 and PDF previews; previous/next navigation; PDF text selection/copy/Find | Additional media formats and animation |
 | C8: Conversation activity and results | File steps; suggested replies; live compaction; text/static-image/audio/MP4/PDF and private/shared table result cards; scheduled run presentation and Skills proposals | Child runs; additional formats and request presentations |
 
 These rows explain partial completion; they are not four new tasks added to the scope. The full parity catalog retains the original source references and connected-workspace decisions. C5 and C6 currently describe overlapping credential/service/sign-in/takeover work; they must not be counted as two independent tasks in the delivery ledger.

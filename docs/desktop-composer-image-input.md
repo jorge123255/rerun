@@ -65,10 +65,10 @@ corrupt-byte rejection, draft ownership/transfer/restart, and durable history im
 
 Implementation agents did not run tests, type checks, builds, model requests, or the Mac app.
 Root owns all automated checks and Mac acceptance, including sending from the board and checking
-saved chats after restart. This document describes source behavior, not a completed QA verdict.
+saved chats after restart. The original handoff described source behavior only; root’s completed native acceptance is recorded below.
 
 ### Root native follow-up
 
-The signed Mac runner cannot read the SDK's ordinary temporary image directory. The desktop provider patch now forwards the validated, frozen bytes through Codex's `image` input as an inline data URL, for both ESM and CommonJS builds. It adds no filesystem permission and avoids silently dropping an image after a temporary-file write failure. The stream regression fails against the prior adapter and passes with inline bytes. Live visual recognition and replay remain pending native acceptance.
+The signed Mac runner cannot read the SDK's ordinary temporary image directory. The desktop provider patch now forwards the validated, frozen bytes through Codex's `image` input as an inline data URL, for both ESM and CommonJS builds. It adds no filesystem permission and avoids silently dropping an image after a temporary-file write failure. The stream regression fails against the prior adapter and passes with inline bytes. Root verified live image-plus-text recognition from the board in `adfb47d`: red circle, blue square, exact ORBIT 27 and the attached text note. Ordered unsent mixed drafts, sent attachments/reply and the lightbox survived restart; a new follow-up in the saved conversation returned the same details. Native queue-transition observation and broader media formats remain separate limits.
 
 The account worker now allows two minutes for initial macOS Keychain approval and gives a specific timeout hint. Other account requests retain their 30-second deadline; credentials and Keychain access rules remain unchanged.

@@ -67,3 +67,7 @@ navigation callback, so no extra wiring is needed there. Settings, the bell and 
 ## Root execution boundary
 
 Integration fixes and regression cases were authored without executing tests, type checks, lint, builds, packaging, or the Mac app. Root owns all execution and native/restart acceptance. New regressions cover failed initial reads, shared surface freshness, stale GET versus newer PUT, retained later optimistic patches, Strict Mode and old-owner counts, plus shared native/toast click cancellation.
+
+## Root native acceptance — November 5, 2026
+
+On installed `adfb47d`, coworker All activity and the paused task’s Notify me off preference persisted through full restart. A background completion toast displayed actual shared/private file results. Clicking Open conversation on a subsequent error toast opened the exact owner/session without answering its sibling approval. The original in-app surfaces are accepted. Actual macOS notification banner display/click remains unobserved and is not covered by this acceptance.
