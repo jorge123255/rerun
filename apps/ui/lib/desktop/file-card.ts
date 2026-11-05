@@ -12,7 +12,7 @@ const visiblePath = (path: string) => path.length <= 4096 && !/[\\\p{Cc}]/u.test
 const textPath = (path: string) => isDesktopAttachmentPath(path) && !path.includes('\\') && !hiddenSegment(path)
 const CARD_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i
 const CARD_AUDIO = /\.(?:wav|mp3|m4a|ogg|flac)$/i
-const CARD_VIDEO = /\.mp4$/i
+const CARD_VIDEO = /\.(?:mp4|webm|mov|m4v)$/i
 const CARD_PDF = /\.pdf$/i
 /** Matches DESKTOP_PDF_MAX_BYTES. The shared card contract is unchanged, so the cap stays local. */
 export const DESKTOP_CARD_PDF_MAX_BYTES = 16 * 1024 * 1024
@@ -24,7 +24,7 @@ const validName = (name: string) => name.length > 0 && name.length <= 255 && !/[
 const CARD_IDENTITY = /^\d{1,24}:\d{1,24}$/
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const AUDIO_TYPES = new Set(['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/flac'])
-const VIDEO_TYPES = new Set(['video/mp4'])
+const VIDEO_TYPES = new Set(['video/mp4', 'video/webm', 'video/quicktime'])
 
 /** A card's file is an image (not a document) when its path names a supported static raster. */
 export function isDesktopCardImage(path: string): boolean {
@@ -36,7 +36,7 @@ export function isDesktopCardAudio(path: string): boolean {
     return audioPath(path)
 }
 
-/** A card's file is video when its path names a supported MP4. */
+/** A card's file is video when its path names a supported Files video. */
 export function isDesktopCardVideo(path: string): boolean {
     return videoPath(path)
 }
@@ -64,7 +64,7 @@ function candidate(value: unknown, depth = 0): unknown {
  * Validate one recorded card_file result for the Mac conversation. It accepts the live tool output
  * (a JSON string), a stored text/json wrapper, a parsed card, and the legacy single-file card. Every
  * file must still look like a visible reference of this coworker: a .txt/.md document, a PDF, a static
- * PNG/JPEG/WebP/GIF image, a WAV/MP3/M4A/Ogg/FLAC audio file, or an MP4 video. Images and videos share the
+ * PNG/JPEG/WebP/GIF image, a WAV/MP3/M4A/Ogg/FLAC audio file, or an MP4/WebM/MOV/M4V video. Images and videos share the
  * endpoint identity and the 24 MiB combined preview budget; images stay 8 MiB, video 16 MiB, audio
  * 16 MiB, and each PDF 16 MiB. PDFs carry the same identity and do not join that budget. Text keeps
  * its 32 KiB bound. Anything else returns undefined so the reply can fall back to the real tool

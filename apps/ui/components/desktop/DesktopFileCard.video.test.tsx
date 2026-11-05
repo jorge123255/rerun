@@ -174,7 +174,7 @@ test('a playback error removes the player and releases its object URL', async ()
     const tile = document.querySelector<HTMLVideoElement>('[data-file-card] video')!
     await act(async () => { tile.dispatchEvent(new Event('loadeddata')) })
     await click('Open 1.mp4 full screen')
-    const player = dialog()?.querySelector<HTMLVideoElement>('video')!
+    const player = dialog()!.querySelector<HTMLVideoElement>('video')!
     const url = player.getAttribute('src')
     await act(async () => { player.dispatchEvent(new Event('error')) })
     expect(dialog()?.querySelector('video')).toBeNull()
@@ -227,7 +227,7 @@ test('paging and owner changes stop loaded players and ignore late page, owner a
     }
     await render('alpha', 0)
     await resolve(0, videoResponse())
-    const alphaPlayer = dialog()?.querySelector<HTMLVideoElement>('video')!
+    const alphaPlayer = dialog()!.querySelector<HTMLVideoElement>('video')!
     const alphaUrl = alphaPlayer.getAttribute('src')
     expect(alphaUrl).toBe('blob:card-video-1')
 
@@ -241,7 +241,7 @@ test('paging and owner changes stop loaded players and ignore late page, owner a
     expect(requests[1].signal.aborted).toBe(true)
     expect(requests[2].signal.aborted).toBe(false)
     await resolve(2, videoResponse())
-    const bravoPlayer = dialog()?.querySelector<HTMLVideoElement>('video')!
+    const bravoPlayer = dialog()!.querySelector<HTMLVideoElement>('video')!
     const bravoUrl = bravoPlayer.getAttribute('src')
     expect(bravoUrl).toBe('blob:card-video-2')
     await resolve(1, imageResponse())
@@ -260,7 +260,7 @@ test('paging and owner changes stop loaded players and ignore late page, owner a
     expect(dialog()?.querySelector('video')).toBeNull()
     expect(urls.create).toHaveBeenCalledTimes(2)
     await resolve(4, videoResponse())
-    const deltaPlayer = dialog()?.querySelector<HTMLVideoElement>('video')!
+    const deltaPlayer = dialog()!.querySelector<HTMLVideoElement>('video')!
     expect(deltaPlayer.getAttribute('src')).toBe('blob:card-video-3')
 
     await render('echo', 0)
@@ -344,4 +344,39 @@ test('combined image and video previews make no fourth fetch once actual bytes r
     expect(document.querySelector('button[aria-label="Open 4.mp4"]')?.getAttribute('title')).toContain('24 MB')
     await unmount(root)
     expect(new Set(urls.revoke.mock.calls.map(([url]) => url))).toEqual(new Set(urls.create.mock.results.map(result => result.value)))
+})
+
+
+test('WebM MOV and M4V reuse the original album and page through explicit-play controls', async () => {
+    const urls = objectUrls(), pause = vi.spyOn(HTMLMediaElement.prototype, 'pause')
+    const formats = [['webm', 'video/webm'], ['mov', 'video/quicktime'], ['m4v', 'video/mp4']]
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://127.0.0.1'), path = url.searchParams.get('path')!
+        expect(url.pathname).toBe('/api/desktop/agents/owner/files/video')
+        expect(url.searchParams.get('identity')).toMatch(/^2:/)
+        expect(init?.signal).toBeInstanceOf(AbortSignal)
+        calls.push(path)
+        return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': formats.find(([ext]) => path.endsWith(`.${ext}`))![1]! } })
+    }))
+    const files = formats.map(([ext], index) => ({ ...video(index + 1), path: `clips/clip.${ext}`, name: `clip.${ext}` }))
+    const root = mount()
+    await act(async () => root.render(<DesktopFileCard agentId="owner" card={cardOf(files)} />))
+    await flush()
+    expect(document.querySelectorAll('[data-file-card] figure')).toHaveLength(3)
+    expect(calls).toEqual(files.map(f => f.path))
+    expect([...document.querySelectorAll('[data-file-card] video')].some(v => v.hasAttribute('autoplay'))).toBe(false)
+    await click('Play clip.webm')
+    for (let i = 0; i < files.length; i++) {
+        expect(dialog()?.querySelector('h2')?.textContent).toBe(files[i].name)
+        const player = dialog()?.querySelector('video')
+        expect(player?.hasAttribute('controls')).toBe(true)
+        expect(player?.hasAttribute('autoplay')).toBe(false)
+        const url = player!.getAttribute('src')
+        if (i < files.length - 1) await click('Next attachment')
+        else await click('Close')
+        expect(urls.revoke).toHaveBeenCalledWith(url)
+    }
+    expect(pause).toHaveBeenCalled()
+    expect(dialog()).toBeNull()
 })

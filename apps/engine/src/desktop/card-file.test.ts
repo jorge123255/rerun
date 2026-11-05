@@ -152,8 +152,7 @@ it('refuses shared, foreign, hidden, linked, directory, unsupported and oversize
         ['folder.mp4', 'agent', /folder, not a file/],
         ['folder.pdf', 'agent', /folder, not a file/],
         ['reports/image.svg', 'agent', /relative .* path/],
-        ['shots/clip.mov', 'agent', /relative .* path/],
-        ['shots/clip.webm', 'agent', /relative .* path/],
+        ['shots/clip.avi', 'agent', /relative .* path/],
         ['voice/tone.aac', 'agent', /relative .* path/],
         ['big.md', 'agent', /32 KiB/],
         ['shots/big.png', 'agent', /8 MB/],
@@ -232,7 +231,7 @@ it('returns an MP4 card with the authenticated endpoint identity, byte size and 
     expect(card.files[0]?.identity).toMatch(/^\d+:\d+$/)
     expect(await show(tool, join(workspaceDir(alpha), 'shots', 'clip.mp4'))).toContain('shots/clip.mp4')
     expect((await registry(alpha)).card_file!.description).toContain('16 MB per video')
-    expect((await registry(alpha)).card_file!.description).toContain('MP4')
+    expect((await registry(alpha)).card_file!.description).toContain('.mp4/.webm/.mov/.m4v')
 })
 
 it('keeps mixed text and image files in the order the model asked for', async () => {
@@ -359,6 +358,25 @@ it.each(['m4a', 'ogg', 'flac'])('delivers persistent %s audio with identity and 
     const rejected = String(await tool.execute!({ files: [{ path: 'reports/notes.txt' }, { path }] }, options))
     expect(rejected).toContain('16 MB')
     expect(rejected).not.toContain('"kind":"file"')
+    await truncate(join(workspaceDir(alpha), path), 0)
+    expect(await show(tool, path)).toContain('empty')
+    await writeFile(join(workspaceDir(alpha), path), Buffer.alloc(1024, 7))
+    await grant(alpha, false)
+    await expect(show(tool, path)).rejects.toThrow()
+})
+
+
+it.each(['webm', 'mov', 'm4v'])('admits %s video with identity while enforcing the video and combined preview budgets', async ext => {
+    await grant(alpha, true)
+    const tool = await toolFor(alpha), path = `shots/clip.${ext}`
+    await writeFile(join(workspaceDir(alpha), path), Buffer.alloc(1024, 7))
+    expect(fileCardSchema.parse(JSON.parse(await show(tool, path))).files[0]).toEqual({ path, name: `clip.${ext}`, scope: 'agent', size: 1024, identity: expect.stringMatching(/^\d+:\d+$/) })
+    await truncate(join(workspaceDir(alpha), path), CARD_MAX_VIDEO_BYTES)
+    expect(fileCardSchema.parse(JSON.parse(await show(tool, path))).files[0]!.size).toBe(CARD_MAX_VIDEO_BYTES)
+    const overBudget = String(await tool.execute!({ files: [{ path }, { path: 'shots/eight-0.png' }, { path: 'shots/one-byte.png' }] }, options))
+    expect(overBudget).toContain('24 MB')
+    await truncate(join(workspaceDir(alpha), path), CARD_MAX_VIDEO_BYTES + 1)
+    expect(await show(tool, path)).toContain('16 MB')
     await truncate(join(workspaceDir(alpha), path), 0)
     expect(await show(tool, path)).toContain('empty')
     await writeFile(join(workspaceDir(alpha), path), Buffer.alloc(1024, 7))

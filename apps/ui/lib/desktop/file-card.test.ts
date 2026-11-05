@@ -70,8 +70,7 @@ test.each([
     ['a backslash', card([file({ path: 'reports\\summary.md' })])],
     ['an unsupported document', card([file({ path: 'reports/image.svg', name: 'image.svg' })])],
     ['an unsupported image', card([image({ path: 'shots/photo.avif', name: 'photo.avif' })])],
-    ['an unsupported video', card([video({ path: 'shots/clip.mov', name: 'clip.mov' })])],
-    ['a webm video', card([video({ path: 'shots/clip.webm', name: 'clip.webm' })])],
+    ['an unsupported video', card([video({ path: 'shots/clip.avi', name: 'clip.avi' })])],
     ['a shared pdf', card([pdf({ scope: 'shared' })])],
     ['an absolute pdf path', card([pdf({ path: '/tmp/codex-edit/deck.pdf', name: 'deck.pdf' })])],
     ['a hidden pdf', card([pdf({ path: '.secret/deck.pdf', name: 'deck.pdf' })])],
@@ -207,7 +206,7 @@ test('reports missing, replaced or invalid video without returning stale bytes',
     vi.stubGlobal('fetch', vi.fn(async () => new Response('not a video', { headers: { 'content-type': 'text/plain' } })))
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', '12:35')).rejects.toThrow('can’t be played')
     await expect(readDesktopCardVideo('agent-1', 'shots/clip.mp4', undefined)).rejects.toThrow('Send this video')
-    await expect(readDesktopCardVideo('agent-1', 'shots/clip.mov', '12:35')).rejects.toThrow('not a supported video')
+    await expect(readDesktopCardVideo('agent-1', 'shots/clip.avi', '12:35')).rejects.toThrow('not a supported video')
 })
 
 
@@ -223,4 +222,18 @@ test.each([['m4a', 'audio/mp4'], ['ogg', 'audio/ogg'], ['flac', 'audio/flac']])(
     expect(fetch).toHaveBeenCalledWith(`/api/desktop/agents/owner%20a/files/audio?path=voice%2Ftone.${extension}&identity=12%3A34`, { cache: 'no-store' })
     fetch.mockImplementation(async () => Response.json({ error: 'File was replaced' }, { status: 409 }))
     await expect(readDesktopCardAudio('owner a', String(entry.path), '12:34')).rejects.toThrow('File was replaced')
+})
+
+
+test.each([['webm', 'video/webm'], ['mov', 'video/quicktime'], ['m4v', 'video/mp4']])('restores %s cards with identity and reads only owner-bound current bytes', async (ext, contentType) => {
+    const entry = video({ path: `clips/clip.${ext}`, name: `clip.${ext}` })
+    expect(desktopFileCardOf(card([entry]))?.files).toEqual([entry])
+    expect(desktopFileCardOf(card([video({ ...entry, identity: undefined })]))).toBeUndefined()
+    expect(desktopFileCardOf(card([video({ ...entry, size: CARD_MAX_VIDEO_BYTES + 1 })]))).toBeUndefined()
+    const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': contentType } }))
+    vi.stubGlobal('fetch', fetch)
+    expect((await readDesktopCardVideo('owner a', String(entry.path), '12:35')).contentType).toBe(contentType)
+    expect(fetch).toHaveBeenCalledWith(`/api/desktop/agents/owner%20a/files/video?path=clips%2Fclip.${ext}&identity=12%3A35`, { cache: 'no-store' })
+    fetch.mockImplementation(async () => Response.json({ error: 'Video was replaced' }, { status: 409 }))
+    await expect(readDesktopCardVideo('owner a', String(entry.path), '12:35')).rejects.toThrow('Video was replaced')
 })
