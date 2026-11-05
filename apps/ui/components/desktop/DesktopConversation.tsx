@@ -162,7 +162,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     onOpenModelSettings?: () => void
 }) {
     const setup = useDesktopSetup(agent.id)
-    const setupBlocked = !setup.view || !!setup.error || setup.view.pending && setup.view.sessionId !== sessionId
+    const setupBlocked = !setup.view || !!setup.error || setup.view.pending && (!setup.view.sessionId || setup.view.sessionId !== sessionId)
     const [cardOpen, setCardOpen] = useState(false)
     const [serviceStreaming, setServiceStreaming] = useState(false)
     const serviceStream = useRef<AcceptedService | null>(null)
@@ -1057,7 +1057,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                         const paths = selections.filter((item): item is string => typeof item === 'string')
                                         const files = message.parts.filter((part): part is FileUIPart => part.type === 'file' && part.mediaType.startsWith('image/'))
                                         const images = files.length ? files.map((part, index) => ({ path: `${index}/${part.filename ?? 'image.png'}`, url: part.url }))
-                                            : selections.filter((item): item is DesktopImageSnapshot => typeof item !== 'string').map(image => ({ path: image.path, url: `/api/desktop/agents/${encodeURIComponent(agent.id)}/images?snapshot=${encodeURIComponent(JSON.stringify(image))}` }))
+                                            : selections.filter((item): item is DesktopImageSnapshot => typeof item !== 'string').map((image, index) => ({ path: `${index}/${image.name}`, url: `/api/desktop/agents/${encodeURIComponent(agent.id)}/images?snapshot=${encodeURIComponent(JSON.stringify(image))}` }))
                                         return <>{paths.length > 0 && <div className="mb-1"><AttachmentChips paths={paths} /></div>}
                                             {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}

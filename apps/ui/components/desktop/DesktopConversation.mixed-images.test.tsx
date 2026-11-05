@@ -3,11 +3,13 @@ import { desktopNativeReviewRead } from '@/test/desktop-background-fixture'
 import { act, StrictMode, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import type { UIMessage } from 'ai'
 import { desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, type DesktopAttachmentFields, type DesktopImageSnapshot } from '@rerun/contracts'
 import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
+import { composerTestPng } from '@/lib/desktop/server/composer-image.test-fixtures'
 import { DesktopConversation } from './DesktopConversation'
 
-const chat = vi.hoisted(() => ({ messages: [], status: 'ready', error: undefined,
+const chat = vi.hoisted(() => ({ messages: [] as UIMessage[], status: 'ready', error: undefined,
     sendMessage: vi.fn(), stop: vi.fn(), setMessages: vi.fn(), clearError: vi.fn(), regenerate: vi.fn() }))
 vi.mock('@ai-sdk/react', () => ({ useChat: () => chat }))
 vi.mock('./DesktopModelSelector', () => ({ DesktopModelSelector: ({ onReady }: { onReady?: (ready: boolean) => void }) => {
@@ -22,6 +24,7 @@ let imports: string[]
 let importFile: (name: string, image: boolean, signal?: AbortSignal | null) => Promise<Response>
 let stored: DesktopAttachmentFields & { revision: number; text: string }
 let attempts: { id: string; name: string; size: number }[]
+let savedMessages: UIMessage[]
 const pngBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
 const imageOf = (name = 'picture.png'): DesktopImageSnapshot => ({ sha256: '1'.repeat(64), name, path: name, mediaType: 'image/png', width: 1, height: 1, byteLength: pngBytes.length })
 const txt = (name: string) => new File(['text'], name, { type: 'text/plain' })
@@ -49,7 +52,7 @@ const success = (name: string, image: boolean) => Response.json({ path: name, na
 beforeEach(() => {
     cancelDraftShutdown()
     agent = { id: `mixed-${crypto.randomUUID()}`, name: 'Mixed reader', description: '', createdAt: '', updatedAt: '' }
-    imports = []; attempts = []; stored = { revision: 0, text: '' }
+    imports = []; attempts = []; savedMessages = []; stored = { revision: 0, text: '' }
     importFile = async (name, image) => success(name, image)
     chat.messages = []; chat.status = 'ready'; chat.error = undefined
     chat.sendMessage.mockReset().mockResolvedValue(undefined)
@@ -85,7 +88,7 @@ beforeEach(() => {
         if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
-        if (url.pathname.endsWith('/messages')) return Response.json({ messages: [] })
+        if (url.pathname.endsWith('/messages')) return Response.json({ messages: savedMessages })
         if (url.pathname.endsWith('/skills/suggestions')) return Response.json({ skills: [] })
         return Response.json({ running: false })
     }))
@@ -173,6 +176,39 @@ test('mixed saved attachments hydrate as original chips and keep their order aft
     expect(composer().value).toBe('Saved mixed draft, edited')
     await submit(); await drain()
     expect(chat.sendMessage.mock.calls[0]?.[1]?.body.attachmentItems).toEqual([{ type: 'image', image: imageOf() }, { type: 'text', path: 'notes.txt' }])
+})
+
+test('converted images keep original names while streaming and after the saved transcript replaces the optimistic message', async () => {
+    const images = ['green.gif', 'sample.svg', 'sample.ico', 'sample.bmp'].map((name, index) => ({
+        ...imageOf(name), sha256: String(index + 1).repeat(64), path: `uploads/converted-${index}.png`,
+    }))
+    await render('saved', 'image-labels'); await drain()
+    chat.status = 'streaming'
+    chat.messages = [{ id: 'image-question', role: 'user', parts: [{ type: 'text', text: 'Describe these images.' }],
+        metadata: desktopAttachmentFieldsOf(images) }]
+    await render('saved', 'image-labels'); await drain()
+
+    const thumbnails = () => [...container.querySelectorAll<HTMLImageElement>('figure img')]
+    expect(thumbnails().map(image => image.alt)).toEqual(images.map(image => image.name))
+    for (const [index, thumbnail] of thumbnails().entries()) {
+        const url = new URL(thumbnail.getAttribute('src')!, 'http://local')
+        expect(url.pathname).toBe(`/api/desktop/agents/${agent.id}/images`)
+        // Display labels must not rewrite the stored path or any immutable snapshot identity.
+        expect(JSON.parse(url.searchParams.get('snapshot')!)).toEqual(images[index])
+        expect(thumbnail.closest('button')?.getAttribute('aria-label')).toBe(`Open ${images[index]!.name}`)
+    }
+    expect(container.textContent).not.toContain('converted-')
+
+    const imageUrls = images.map((_, index) => `data:image/png;base64,${Buffer.from(composerTestPng(32 + index)).toString('base64')}`)
+    savedMessages = [{ id: 'image-question', role: 'user', parts: [
+        { type: 'text', text: 'Describe these images.' },
+        ...images.map((image, index) => ({ type: 'file' as const, mediaType: image.mediaType, filename: image.name, url: imageUrls[index]! })),
+    ], metadata: desktopAttachmentFieldsOf(images) }]
+    chat.status = 'ready'
+    await render('saved', 'image-labels'); await drain()
+    expect(thumbnails().map(image => image.alt)).toEqual(images.map(image => image.name))
+    expect(thumbnails().map(image => image.getAttribute('src'))).toEqual(imageUrls)
+    expect(chat.sendMessage).not.toHaveBeenCalled()
 })
 
 test('legacy text-only saved drafts retain the legacy single-path request shape', async () => {
