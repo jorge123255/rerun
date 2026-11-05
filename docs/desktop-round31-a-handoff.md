@@ -1,5 +1,7 @@
 # Round 31 A — persistent coworker calls
 
+Historical author handoff. Root repairs and current source status are recorded in [desktop-round31-a-root-review.md](desktop-round31-a-root-review.md); those supersede affected integration/Stop/recovery notes below.
+
 Source handoff only. Checks, typecheck, lint, build, and native acceptance were not run. This is not product acceptance.
 
 Original pin: `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.

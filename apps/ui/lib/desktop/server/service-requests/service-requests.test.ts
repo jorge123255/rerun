@@ -10,7 +10,7 @@ import { desktopServiceRequestFingerprint, serializeServiceSetupResult } from '@
 import { DesktopHttpError } from '../auth'
 import { describeDesktopServiceRequestCatalog } from './adapters'
 import { desktopServiceSuggestionSchema, ensureDesktopServiceSuggestionSchema } from './schema'
-import { desktopServiceRequestIdentity, finishDesktopServiceRequest, progressDesktopServiceRequest, readDesktopServiceRequest, type SealedReceipt, type ServiceRequestPorts, type ServiceRequestScope } from './service'
+import { readPendingDesktopServiceToolCall, desktopServiceRequestIdentity, finishDesktopServiceRequest, progressDesktopServiceRequest, readDesktopServiceRequest, type ServiceRequestPorts, type ServiceRequestScope } from './service'
 import { desktopServiceConnectionUsable } from './usable'
 import { acknowledgeDesktopServiceRetry, readDesktopServiceRetry, rejectDesktopServiceRetry, reserveDesktopServiceRetry } from './retry'
 
@@ -273,4 +273,14 @@ it('a competing Finish resolves to the canonical receipt and cannot generate a s
     expect(sent.filter(mode => mode === 'send')).toHaveLength(1)
     await acknowledgeDesktopServiceRetry(db, scope, rival)
     expect(await readDesktopServiceRetry(db, scope, card.serviceRequestId)).toBeNull()
+})
+
+it('reads a pending tool identity without materializing an app request card or receipt', async () => {
+    const db = await database()
+    const { ports, sent } = harness(db)
+    expect(await readPendingDesktopServiceToolCall(db, scope, ports)).toBe(source.toolCallId)
+    expect((await db.execute('SELECT * FROM desktop_service_suggestion_requests')).rows).toEqual([])
+    expect((await db.execute('SELECT * FROM desktop_service_suggestion_receipts')).rows).toEqual([])
+    expect(sent).toEqual([])
+    expect(await readPendingDesktopServiceToolCall(db, scope, { source: async () => null })).toBeNull()
 })

@@ -10,16 +10,23 @@ import { registerRun } from './stream.js'
 // UI message stream to the run hub, so the dashboard can attach to it later and replay it from
 // the start. The returned promise settles as soon as `runAgent` hands back, so callers keep the
 // error they used to get for a failed run preparation instead of losing it inside the stream.
-export async function startHeadlessRun(agent: LoadedAgent, sessionId: string, message: string, override: ModelOverride | undefined, trigger: RunTrigger, lifecycle?: {beforeLaunch:()=>void|Promise<void>;assertActive?:()=>void}): Promise<AgentRun> {
+export type HeadlessRunLifecycle = {
+    beforeLaunch: () => void | Promise<void>
+    assertActive?: () => void | Promise<void>
+    onRunCreated?: (runId: string) => void | Promise<void>
+}
+
+export async function startHeadlessRun(agent: LoadedAgent, sessionId: string, message: string, override: ModelOverride | undefined, trigger: RunTrigger, lifecycle?: HeadlessRunLifecycle): Promise<AgentRun> {
     await lifecycle?.beforeLaunch()
-    lifecycle?.assertActive?.()
+    await lifecycle?.assertActive?.()
     const run = await startRun(agent.id, sessionId)
     const meta = { provider: override?.provider ?? agent.resolved.provider, model: override?.model ?? agent.resolved.model }
     try {
         // Durable trigger identity precedes any preparation/callback. Even an early model
         // failure or restart must remain an owned scheduled result during local adoption.
         if (desktopApp() && trigger.source === 'schedule') await setRunContext(agent.id, run.id, { ...meta, triggerSource: trigger.source, triggerSlug: trigger.slug })
-        await lifecycle?.beforeLaunch(); lifecycle?.assertActive?.()
+        await lifecycle?.onRunCreated?.(run.id)
+        await lifecycle?.beforeLaunch(); await lifecycle?.assertActive?.()
     } catch(error) { await cancelRun(agent.id,run.id); throw error }
 
     let started!: (value: AgentRun) => void
@@ -31,7 +38,15 @@ export async function startHeadlessRun(agent: LoadedAgent, sessionId: string, me
 
     const registered = registerRun(run.id, async writer => {
         let agentRun: AgentRun
-        try {await lifecycle?.beforeLaunch();lifecycle?.assertActive?.()}catch(error){await cancelRun(agent.id,run.id);failed(error);throw error}
+        try {
+            await lifecycle?.beforeLaunch()
+            await lifecycle?.assertActive?.()
+        } catch (error) {
+            let reason = error
+            try { await cancelRun(agent.id, run.id) } catch (cancelError) { reason = cancelError }
+            failed(reason)
+            throw reason
+        }
         try {
             agentRun = await runAgent(agent, sessionId, message, override, writer, run.id, trigger)
         } catch (err) {

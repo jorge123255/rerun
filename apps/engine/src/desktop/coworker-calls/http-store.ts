@@ -1,7 +1,8 @@
-import type { CoworkerCallAuthorization } from './runtime.js'
+import { z } from 'zod'
+import type { CoworkerCallAuthorization, CoworkerCallTargetAdmission, PreparedCoworkerCallTarget } from './runtime.js'
 import type { CoworkerCallExpect, CoworkerCallPatch, CoworkerCallRow, CoworkerCallStore } from './store.js'
 
-type Runtime = { app: { origin: string }; engine: { apiKey: string } }
+type Runtime = { launchNonce: string; app: { origin: string }; engine: { apiKey: string } }
 const MAX_BYTES = 256_000
 
 function rowOf(value: unknown): CoworkerCallRow | null {
@@ -13,6 +14,7 @@ function rowOf(value: unknown): CoworkerCallRow | null {
 export function createHttpCoworkerCallBridge(runtime: Runtime, epoch: string, fetchImpl: typeof fetch = fetch): {
     store: CoworkerCallStore
     authorize: (input: { engineAgentId: string; engineSessionId: string; engineRunId: string }) => Promise<{ ok: true; caller: CoworkerCallAuthorization } | { ok: false; reason: string }>
+    prepareTarget: (input: CoworkerCallTargetAdmission) => Promise<PreparedCoworkerCallTarget>
     adoptPublicSession: (input: { publicAgentId: string; engineSessionId: string; title: string }) => Promise<{ publicSessionId: string }>
 } {
     async function post(op: string, payload: unknown): Promise<unknown> {
@@ -21,7 +23,7 @@ export function createHttpCoworkerCallBridge(runtime: Runtime, epoch: string, fe
             method: 'POST',
             redirect: 'error',
             headers: { Authorization: `Bearer ${runtime.engine.apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ event: 'desktop.coworker-call', epoch, op, payload }),
+            body: JSON.stringify({ event: 'desktop.coworker-call', launchNonce: runtime.launchNonce, epoch, op, payload }),
             signal: stop,
         })
         if (!response.ok || !response.body) {
@@ -70,6 +72,11 @@ export function createHttpCoworkerCallBridge(runtime: Runtime, epoch: string, fe
             const result = await post('authorize', input) as { ok?: boolean; reason?: string; caller?: CoworkerCallAuthorization }
             if (result?.ok !== true || !result.caller?.publicAgentId) return { ok: false, reason: result?.reason || 'This run can no longer call a coworker.' }
             return { ok: true, caller: result.caller }
+        },
+        prepareTarget: async input => {
+            const prepared = z.strictObject({ publicAgentId: z.string().min(1), engineAgentId: z.string().min(1), connectionId: z.string().min(1), model: z.string().min(1) }).parse(await post('prepare-target', input))
+            if (prepared.publicAgentId !== input.target.publicAgentId || prepared.engineAgentId !== input.target.engineAgentId) throw new Error('Coworker identity changed')
+            return prepared
         },
         adoptPublicSession: async input => {
             const result = await post('adopt-session', input) as { publicSessionId?: string }

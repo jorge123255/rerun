@@ -2,6 +2,7 @@ import {
     DESKTOP_COWORKER_CALL_NAME_MAX_CHARS,
     DESKTOP_COWORKER_CALL_TITLE_CHARS,
 } from '@rerun/contracts'
+import { createHash } from 'node:crypto'
 
 // Original call-agent.ts resolveTargetAgent, but ids here are local public ids.
 // Duplicate names are refused. A single case-insensitive name may match.
@@ -37,6 +38,10 @@ export function desktopCoworkerCallee<T extends { config: { selfImprovement: { e
 
 export function desktopCoworkerCallSourceKey(input: { engineAgentId: string; engineSessionId: string; engineRunId: string; toolCallId: string }): string {
     return JSON.stringify([input.engineAgentId, input.engineSessionId, input.engineRunId, input.toolCallId])
+}
+
+export function desktopCoworkerCallFingerprint(input: { agentRef: string; message: string; context?: string; wait?: boolean }): string {
+    return createHash('sha256').update(JSON.stringify({ agentRef: input.agentRef.trim(), message: input.message, context: input.context ?? '', wait: input.wait === true })).digest('hex')
 }
 
 export function resolveDesktopCoworkerCallTarget(ref: string, targets: readonly DesktopCoworkerCallChoice[]): { target: DesktopCoworkerCallChoice } | { error: string } {

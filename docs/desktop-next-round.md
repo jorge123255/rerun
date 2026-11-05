@@ -19,6 +19,8 @@ Prepared base: `136f318e931a4433ea6d178f3f9e961e1a2d8a86`. The eight isolated la
 
 The larger agent owns the complete local E9 webhook/trigger source slice, including original Triggers UI, run/payload cards and a Control Center adapter, in `round31-triggers-full` at `aa35cc841b9d5c20246b4a095c910775af572d52`. [Full task list](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Big agent round 31 webhook triggers prompt.md>). Public hosting remains an explicit unresolved choice; the agent must not expose a listener or run deliveries. This scope does not overlap A–H.
 
+A has returned clean handoff `5847b73`; root integrated it and fixed call ownership, Stop, restart, setup/model admission and pending-request handling. [Source review and checks](desktop-round31-a-root-review.md). Calls remain inactive until the paired UI/Settings and central wiring pass native/restart acceptance. The installed app stays at accepted `aa35cc8`.
+
 Root owns shared wiring, every repair and all tests, builds, installation, live Codex and native/restart checks. Agents author source only, preserve original design, and return clean commits without pushing. Coworker calls must respect unfinished target setup; app-owned skills must retain trustworthy ownership in capture and editing. Those shared enforcement points remain root-owned.
 
 Root completed original Control Center → Open → Install and round30 integration/repairs. [Native and full-restart acceptance](desktop-round30-templates-setup-acceptance.md) closes B4, reducing 23 open groups to 22. Assigned round31 source is not an accepted product feature. See the [parity checklist](desktop-parity-checklist.md) for accepted scope and remaining capability groups.

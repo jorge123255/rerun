@@ -51,7 +51,7 @@ import { emitRunTerminal } from './run-events.js'
 import { ClaudeSignInRenewedError, classifyFinishReason, classifyProviderError, isFailedFinish, ProviderRefusedError, ProviderStreamCutError, RUN_ERROR_CODES, refusalReason, type RunErrorCode } from './provider-errors.js'
 import { armBudgetLatch, clearBudgetLatch, RERUN_BUDGET_ERROR_CODE } from './budget-latch.js'
 
-export type RunOutcome = { kind: 'done' | 'error' | 'cancelled'; error?: string; errorCode?: RunErrorCode | null }
+export type RunOutcome = { kind: 'done' | 'error' | 'cancelled'; error?: string; errorCode?: RunErrorCode | null; pendingToolCallId?: string }
 
 export type AgentRun = {
     result: StreamTextResult<ToolSet, never>
@@ -331,7 +331,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             usage = settlement.usage
             costMicros = settlement.costMicros
             if (connection) forgetCredentialRejected(connection.id)
-            outcome = { kind: 'done' }
+            outcome = { kind: 'done', ...(pending ? { pendingToolCallId: pending.toolCallId } : {}) }
         } else if (settlement.kind === 'cancelled') {
             forgetCodexThread(agent.id, sessionId)
             if (partialResults.length) await appendMessage(agent.id, sessionId, { role: 'assistant', content: partialResultsNote(partialResults) }).catch(() => {})
@@ -439,7 +439,9 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         ;({ connection, provider, model } = resolved)
         assertDesktopProvider(provider, resolved.connection?.id)
         if (desktopApp() && provider === 'codex') {
-            agent = { ...agent, config: await beginDesktopCodexRun(agent.id, run.id, controller.signal) }
+            const config = await beginDesktopCodexRun(agent.id, run.id, controller.signal)
+            if (!agent.config.selfImprovement.enabled) config.selfImprovement = { ...config.selfImprovement, enabled: false }
+            agent = { ...agent, config }
         }
         const effort = await desktopCodexEffort(resolved)
         const t0 = Date.now()

@@ -7,7 +7,7 @@ import {
     desktopCoworkerCallFanoutError,
     desktopCoworkerCallResultLimitError,
 } from '@rerun/contracts'
-import { desktopCoworkerCallee, desktopCoworkerCallSourceKey, resolveDesktopCoworkerCallTarget } from './prepare.js'
+import { desktopCoworkerCallee, desktopCoworkerCallFingerprint, desktopCoworkerCallSourceKey, resolveDesktopCoworkerCallTarget } from './prepare.js'
 import { createDesktopCoworkerCallRuntime, type DesktopCoworkerCallDeps, type ExecuteCoworkerCall } from './runtime.js'
 import { createMemoryCoworkerCallStore, type CoworkerCallRow } from './store.js'
 import { desktopCallAgentTools } from './tool.js'
@@ -26,12 +26,12 @@ function hanging(): AsyncIterable<unknown> {
 
 function row(overrides: Partial<CoworkerCallRow> = {}): CoworkerCallRow {
     return {
-        callId: crypto.randomUUID(), revision: 1, sourceKey: crypto.randomUUID(), parentAgentId: caller.publicAgentId, parentSessionId: SESSION,
+        callId: crypto.randomUUID(), revision: 1, sourceKey: crypto.randomUUID(), requestFingerprint: desktopCoworkerCallFingerprint(call()), parentAgentId: caller.publicAgentId, parentSessionId: SESSION,
         parentRunId: crypto.randomUUID(), toolCallId: 'seed', targetAgentId: bob.publicAgentId, targetSessionId: null, targetName: bob.name, wait: false,
         status: 'queued', phase: 'reserved', launchEpoch: 'epoch-1', launchClaimed: false, engineParentAgentId: caller.engineAgentId,
         engineParentSessionId: 'engine-parent-session', engineParentRunId: 'engine-parent-run', engineTargetAgentId: bob.engineAgentId,
         engineTargetSessionId: null, engineChildRunId: null, depth: 0, ancestors: [caller.publicAgentId],
-        progress: { steps: 0, toolCalls: 0, failures: 0, preview: '', calls: [] }, resultText: null, error: null, stopRequestId: null,
+        progress: { steps: 0, toolCalls: 0, failures: 0, preview: '', calls: [] }, resultText: null, pendingToolCallId: null, error: null, stopRequestId: null,
         createdAt: '2026-11-05T00:00:00.000Z', updatedAt: '2026-11-05T00:00:00.000Z', ...overrides,
     }
 }
@@ -50,6 +50,8 @@ function harness(overrides: Partial<DesktopCoworkerCallDeps> = {}) {
         newCallId: () => crypto.randomUUID(),
         newPublicRunId: () => crypto.randomUUID(),
         store,
+        prepareTarget: async input => ({ ...input.target, connectionId: 'connection-bob', model: 'model-bob' }),
+        cancelChildRun: async () => undefined,
         authorize: async () => allow
             ? { ok: true, caller: { publicAgentId: caller.publicAgentId, publicSessionId: SESSION, name: caller.name, targets: [bob] } }
             : { ok: false, reason: 'Call coworkers is turned off for this coworker.' },
@@ -61,6 +63,7 @@ function harness(overrides: Partial<DesktopCoworkerCallDeps> = {}) {
         notifyOpened: async () => undefined,
         notifyFailed: async input => { failed.push(input.reason) },
         startChildRun: async input => {
+            await input.onRunCreated('engine-child-run')
             await input.assertActive()
             prompts.push(input.prompt)
             return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve(), result: { fullStream: stream } } }
@@ -85,6 +88,8 @@ describe('desktop coworker call runtime', () => {
         let reservedBeforeSession = false
         const runtime = createDesktopCoworkerCallRuntime({
             epoch: 'epoch-1', now: () => new Date(tick += 1).toISOString(), newCallId: () => crypto.randomUUID(), newPublicRunId: () => crypto.randomUUID(), store,
+            prepareTarget: async input => ({ ...input.target, connectionId: 'connection-bob', model: 'model-bob' }),
+            cancelChildRun: async () => undefined,
             authorize: async () => ({ ok: true, caller: { publicAgentId: caller.publicAgentId, publicSessionId: SESSION, name: caller.name, targets: [bob] } }),
             createEngineSession: async () => {
                 const saved = await store.getBySource(desktopCoworkerCallSourceKey(call()))
@@ -93,7 +98,10 @@ describe('desktop coworker call runtime', () => {
             },
             adoptPublicSession: async () => ({ publicSessionId: '44444444-4444-4444-8444-444444444444' }),
             notifyOpened: async () => undefined, notifyFailed: async () => undefined,
-            startChildRun: async () => ({ engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve(), result: { fullStream: streamOf([{ type: 'text-delta', text: 'done' }]) } } }),
+            startChildRun: async input => {
+                await input.onRunCreated('engine-child-run')
+                return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve(), result: { fullStream: streamOf([{ type: 'text-delta', text: 'done' }]) } } }
+            },
         })
         const result = await runtime.execute(call())
         expect(reservedBeforeSession).toBe(true)
@@ -108,8 +116,9 @@ describe('desktop coworker call runtime', () => {
         const started = new Promise<{ engineRunId: string; follow: { runId: string; settled: Promise<unknown>; result: { fullStream: AsyncIterable<unknown> } } }>(resolve => { release = resolve })
         let starts = 0
         const { runtime } = harness({
-            startChildRun: async () => {
+            startChildRun: async input => {
                 starts += 1
+                await input.onRunCreated('engine-child-run')
                 return started
             },
         })
@@ -131,6 +140,8 @@ describe('desktop coworker call runtime', () => {
         let targets = [bob, other]
         const runtime = createDesktopCoworkerCallRuntime({
             epoch: 'epoch-1', now: () => new Date(tick += 1).toISOString(), newCallId: () => crypto.randomUUID(), newPublicRunId: () => crypto.randomUUID(), store,
+            prepareTarget: async input => ({ ...input.target, connectionId: 'connection-bob', model: 'model-bob' }),
+            cancelChildRun: async () => undefined,
             authorize: async () => ({ ok: true, caller: { publicAgentId: caller.publicAgentId, publicSessionId: SESSION, name: caller.name, targets } }),
             createEngineSession: async () => { sessions += 1; return { engineSessionId: 'engine-child-session' } },
             adoptPublicSession: async () => ({ publicSessionId: SESSION }), notifyOpened: async () => undefined, notifyFailed: async () => undefined,
@@ -156,6 +167,8 @@ describe('desktop coworker call runtime', () => {
         let sessions = 0
         const build = (store: ReturnType<typeof createMemoryCoworkerCallStore>) => createDesktopCoworkerCallRuntime({
             epoch: 'epoch-1', now: () => new Date(tick += 1).toISOString(), newCallId: () => crypto.randomUUID(), newPublicRunId: () => crypto.randomUUID(), store,
+            prepareTarget: async input => ({ ...input.target, connectionId: 'connection-bob', model: 'model-bob' }),
+            cancelChildRun: async () => undefined,
             authorize: async () => ({ ok: true, caller: { publicAgentId: caller.publicAgentId, publicSessionId: SESSION, name: caller.name, targets: [bob] } }),
             createEngineSession: async () => { sessions += 1; return { engineSessionId: 'engine-child-session' } },
             adoptPublicSession: async () => ({ publicSessionId: SESSION }), notifyOpened: async () => undefined, notifyFailed: async () => undefined,
@@ -200,6 +213,8 @@ describe('desktop coworker call runtime', () => {
         let tick = Date.parse('2026-11-05T00:00:02.000Z')
         const runtime = createDesktopCoworkerCallRuntime({
             epoch: 'epoch-2', now: () => new Date(tick += 1).toISOString(), newCallId: () => crypto.randomUUID(), newPublicRunId: () => crypto.randomUUID(), store,
+            prepareTarget: async input => ({ ...input.target, connectionId: 'connection-bob', model: 'model-bob' }),
+            cancelChildRun: async () => undefined,
             authorize: async () => ({ ok: true, caller: { publicAgentId: caller.publicAgentId, publicSessionId: SESSION, name: caller.name, targets: [bob] } }),
             createEngineSession: async () => { sessions += 1; return { engineSessionId: 'engine-child-session' } },
             adoptPublicSession: async () => ({ publicSessionId: SESSION }), notifyOpened: async () => undefined, notifyFailed: async () => undefined,
@@ -215,15 +230,13 @@ describe('desktop coworker call runtime', () => {
         const waited = harness()
         waited.setStream(hanging())
         const parent = new AbortController()
-        parent.abort()
-        const stopped = await waited.runtime.execute(call({ parentSignal: parent.signal, wait: true }))
+        const stopped = await waited.runtime.execute(call({ parentSignal: parent.signal, wait: true, onProgress: snapshot => { if (snapshot.status === 'running') parent.abort() } }))
         expect(stopped.text).toBe('(error calling Bob: (stopped: stopped along with the calling run))')
         expect(stopped.snapshot?.status).toBe('cancelled')
 
         const dispatched = harness()
         const signal = new AbortController()
-        signal.abort()
-        const sent = await dispatched.runtime.execute(call({ parentSignal: signal.signal, wait: false, toolCallId: 'tool-dispatch' }))
+        const sent = await dispatched.runtime.execute(call({ parentSignal: signal.signal, wait: false, toolCallId: 'tool-dispatch', onProgress: snapshot => { if (snapshot.status === 'dispatched') signal.abort() } }))
         expect(sent.text).toBe('Message dispatched to Bob. It is handling it in its own session; you will not receive the answer here.')
         await new Promise(resolve => setTimeout(resolve, 20))
         expect(dispatched.store.rows().find(item => item.toolCallId === 'tool-dispatch')?.status).toBe('completed')
@@ -276,6 +289,8 @@ describe('desktop coworker call runtime', () => {
         let tick = Date.parse('2026-11-05T00:00:00.000Z')
         const runtime = createDesktopCoworkerCallRuntime({
             epoch: 'epoch-1', now: () => new Date(tick += 1).toISOString(), newCallId: () => crypto.randomUUID(), newPublicRunId: () => crypto.randomUUID(), store,
+            prepareTarget: async input => ({ ...input.target, connectionId: 'connection-bob', model: 'model-bob' }),
+            cancelChildRun: async () => undefined,
             authorize: async () => {
                 checks += 1
                 const callable = checks === 1
@@ -286,7 +301,7 @@ describe('desktop coworker call runtime', () => {
             startChildRun: async () => { throw new Error('should not start') },
         })
         const failed = await runtime.execute(call())
-        expect(failed.text).toBe('Coworker "Bob" is not allowed for this coworker.')
+        expect(failed.text).toContain('Coworker "Bob" is not allowed for this coworker.')
         expect(failed.snapshot?.status).toBe('error')
         expect(sessions).toBe(0)
         await runtime.execute(call())
@@ -319,5 +334,171 @@ describe('desktop coworker call runtime', () => {
         expect(copy.config.model).toBe('kept')
         const resolved = resolveDesktopCoworkerCallTarget('Bob', [bob, { ...bob, publicAgentId: '55555555-5555-4555-8555-555555555555', engineAgentId: 'engine-second', callable: false }])
         expect('error' in resolved).toBe(true)
+    })
+})
+
+describe('desktop coworker call launch and recovery boundaries', () => {
+    it('requires target setup/model admission before creating a session', async () => {
+        const blocked = harness({ prepareTarget: async () => { throw new Error('Complete this coworker setup first') } })
+        const result = await blocked.runtime.execute(call())
+        expect(result.text).toContain('setup first')
+        expect(blocked.sessions).toEqual([])
+        expect(blocked.prompts).toEqual([])
+        expect(result.snapshot?.status).toBe('error')
+    })
+
+    it('refuses a changed target engine identity before creating a session', async () => {
+        let checks = 0
+        const changed = harness({ authorize: async () => ({ ok: true, caller: {
+            publicAgentId: caller.publicAgentId, publicSessionId: SESSION, name: caller.name,
+            targets: [{ ...bob, engineAgentId: ++checks === 1 ? bob.engineAgentId : 'replacement-engine' }],
+        } }) })
+        expect((await changed.runtime.execute(call())).text).toContain('not allowed')
+        expect(changed.sessions).toEqual([])
+        expect(changed.prompts).toEqual([])
+    })
+
+    it('refuses a model change at launch and drains the already reserved exact run', async () => {
+        let checks = 0
+        const cancelled: string[] = []
+        const changed = harness({
+            prepareTarget: async input => ({ ...input.target, connectionId: 'connection-bob', model: ++checks === 1 ? 'model-before' : 'model-after' }),
+            cancelChildRun: async input => { cancelled.push(input.engineRunId) },
+        })
+        const result = await changed.runtime.execute(call())
+        expect(result.text).toContain('model changed')
+        expect(changed.prompts).toEqual([])
+        expect(cancelled).toEqual(['engine-child-run'])
+        expect(changed.store.rows()[0]).toMatchObject({ engineChildRunId: 'engine-child-run', status: 'error' })
+    })
+
+    it('makes child lineage durable before child model work can make a nested call', async () => {
+        const store = createMemoryCoworkerCallStore()
+        const child = harness({ store, startChildRun: async input => {
+            await input.onRunCreated('engine-child-run')
+            const lineage = await store.inbound('engine-child-run')
+            expect(lineage).toMatchObject({ parentAgentId: caller.publicAgentId, targetAgentId: bob.publicAgentId, depth: 0 })
+            expect(input.model).toMatchObject({ connectionId: 'connection-bob', model: 'model-bob' })
+            await input.assertActive()
+            return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve(), result: { fullStream: streamOf([]) } } }
+        } })
+        expect((await child.runtime.execute(call())).snapshot?.status).toBe('completed')
+    })
+
+    it('waits for exact child cancellation before reporting a post-launch bookkeeping failure', async () => {
+        const store = createMemoryCoworkerCallStore()
+        let released!: () => void
+        let cancelling!: () => void
+        const reached = new Promise<void>(resolve => { cancelling = resolve })
+        const drained = new Promise<void>(resolve => { released = resolve })
+        const failing = harness({
+            store: { ...store, patch: async (...args) => { if (args[2].phase === 'launched') throw new Error('Launch acknowledgement lost'); return store.patch(...args) } },
+            cancelChildRun: async input => { expect(input.engineRunId).toBe('engine-child-run'); cancelling(); await drained },
+        })
+        let finished = false
+        const result = failing.runtime.execute(call()).then(value => { finished = true; return value })
+        await reached
+        expect(finished).toBe(false)
+        expect(store.rows()[0].status).toBe('queued')
+        released()
+        expect((await result).snapshot?.status).toBe('error')
+    })
+
+    it('records a minted run even when Stop already owns the call, then cancels it without provider work', async () => {
+        const store = createMemoryCoworkerCallStore()
+        const cancelled: string[] = []
+        const stopped = harness({ store, cancelChildRun: async input => { cancelled.push(input.engineRunId) }, startChildRun: async input => {
+            const current = store.rows()[0]
+            await store.patch(current.callId, {}, { stopRequestId: crypto.randomUUID() }, current.updatedAt)
+            await input.onRunCreated('engine-child-run')
+            throw new Error('Provider work must not start')
+        } })
+        expect((await stopped.runtime.execute(call())).snapshot?.status).toBe('cancelled')
+        expect(cancelled).toEqual(['engine-child-run'])
+        expect(store.rows()[0]).toMatchObject({ engineChildRunId: 'engine-child-run', status: 'cancelled' })
+    })
+
+    it('keeps the actual terminal outcome when Stop owns its token during natural completion', async () => {
+        const store = createMemoryCoworkerCallStore()
+        const child = harness({ store })
+        child.setStream((async function* () {
+            yield { type: 'text-delta', text: 'done' }
+            const current = store.rows()[0]
+            await store.patch(current.callId, {}, { stopRequestId: crypto.randomUUID() }, current.updatedAt)
+        })())
+        const result = await child.runtime.execute(call())
+        expect(result.snapshot?.status).toBe('completed')
+        expect(store.rows()[0]).toMatchObject({ status: 'completed', resultText: 'done' })
+    })
+
+    it('persists exact pending-human identity after settlement and keeps it across epoch adoption', async () => {
+        const store = createMemoryCoworkerCallStore()
+        await store.adoptEpoch('epoch-1', '2026-11-05T00:00:00.000Z')
+        const child = harness({ store, startChildRun: async input => {
+            await input.onRunCreated('engine-child-run')
+            return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve({ kind: 'done', pendingToolCallId: 'human-question-1' }), result: { fullStream: streamOf([{ type: 'text-delta', text: 'Choose a colour' }]) } } }
+        } })
+        const result = await child.runtime.execute(call())
+        expect(result.snapshot?.status).toBe('waiting-human')
+        expect(store.rows()[0]).toMatchObject({ status: 'waiting-human', phase: 'terminal', pendingToolCallId: 'human-question-1' })
+        expect(JSON.stringify(result.snapshot)).not.toContain('human-question-1')
+        await store.adoptEpoch('epoch-2', '2026-11-05T00:00:01.000Z')
+        expect(store.rows()[0].status).toBe('waiting-human')
+        const restarted = harness({ store, epoch: 'epoch-2' })
+        expect((await restarted.runtime.execute(call())).snapshot?.status).toBe('waiting-human')
+        expect(restarted.sessions).toEqual([])
+        expect(store.rows()[0].pendingToolCallId).toBe('human-question-1')
+    })
+
+    it.each(['error', 'cancelled'] as const)('keeps the settled %s outcome even when the stream ended with text', async kind => {
+        const child = harness({ startChildRun: async input => {
+            await input.onRunCreated('engine-child-run')
+            return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve({ kind, error: 'Persistence failed' }), result: { fullStream: streamOf([{ type: 'text-delta', text: 'Partial answer' }]) } } }
+        } })
+        const result = await child.runtime.execute(call())
+        expect(result.snapshot?.status).toBe(kind)
+        expect(result.text).toContain(kind === 'error' ? 'Persistence failed' : 'stopped by the user')
+    })
+
+    it('catches progress persistence failures and drains the owned child', async () => {
+        const store = createMemoryCoworkerCallStore()
+        const cancelled: string[] = []
+        const child = harness({
+            store: { ...store, patch: async (...args) => { if (args[2].progress && args[2].phase !== 'terminal') throw new Error('Progress store unavailable'); return store.patch(...args) } },
+            cancelChildRun: async input => { cancelled.push(input.engineRunId) },
+        })
+        expect((await child.runtime.execute(call())).snapshot?.status).toBe('error')
+        expect(cancelled).toEqual(['engine-child-run'])
+    })
+
+    it('does not let a closed caller stream fail the durable child', async () => {
+        const child = harness()
+        expect((await child.runtime.execute(call({ onProgress: () => { throw new Error('Writer closed') } }))).snapshot?.status).toBe('completed')
+    })
+
+    it('refuses changed source payloads during both inflight and durable replay', async () => {
+        let release!: () => void
+        let opened!: () => void
+        const waiting = new Promise<void>(resolve => { release = resolve })
+        const reached = new Promise<void>(resolve => { opened = resolve })
+        const child = harness({ startChildRun: async input => {
+            await input.onRunCreated('engine-child-run'); opened(); await waiting
+            return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve(), result: { fullStream: streamOf([]) } } }
+        } })
+        const first = child.runtime.execute(call())
+        await reached
+        expect((await child.runtime.execute(call({ message: 'Changed' }))).text).toContain('different request')
+        release()
+        await first
+        expect((await child.runtime.execute(call({ wait: false }))).text).toContain('different request')
+        expect(child.sessions).toHaveLength(1)
+    })
+
+    it('refuses a different request on a raced source-key insert without revealing the existing row', async () => {
+        const store = createMemoryCoworkerCallStore()
+        const existing = row({ sourceKey: 'same-source', requestFingerprint: desktopCoworkerCallFingerprint(call()) })
+        await store.insertReserved(existing)
+        await expect(store.insertReserved({ ...existing, requestFingerprint: desktopCoworkerCallFingerprint(call({ context: 'different context' })) })).rejects.toThrow('request changed')
+        expect(store.rows()).toEqual([existing])
     })
 })

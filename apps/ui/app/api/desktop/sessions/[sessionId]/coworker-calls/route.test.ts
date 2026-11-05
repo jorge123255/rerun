@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, createDesktopSession } from '@/lib/desktop/server/store'
-import { getDesktopCoworkerCall, initializeDesktopCoworkerCalls, insertDesktopCoworkerCall, type CoworkerCallRecord } from '@/lib/desktop/server/coworker-calls/db'
+import { adoptDesktopCoworkerCallEpoch, getDesktopCoworkerCall, initializeDesktopCoworkerCalls, insertDesktopCoworkerCall, patchDesktopCoworkerCall, type CoworkerCallRecord } from '@/lib/desktop/server/coworker-calls/db'
 import { GET, POST } from './route'
 
 const originalEnv = { ...process.env }
@@ -25,12 +25,12 @@ const stop = (callId: string, revision: string, requestId = crypto.randomUUID(),
 
 function record(overrides: Partial<CoworkerCallRecord> = {}): CoworkerCallRecord {
     return {
-        callId: crypto.randomUUID(), revision: 1, sourceKey: crypto.randomUUID(), parentAgentId: crypto.randomUUID(), parentSessionId: sessionId,
+        callId: crypto.randomUUID(), revision: 1, sourceKey: crypto.randomUUID(), requestFingerprint: '0'.repeat(64), parentAgentId: crypto.randomUUID(), parentSessionId: sessionId,
         parentRunId: crypto.randomUUID(), toolCallId: 'tool-1', targetAgentId: crypto.randomUUID(), targetSessionId: null, targetName: 'Bob', wait: true,
         status: 'running', phase: 'launched', launchEpoch: 'epoch-1', launchClaimed: true, engineParentAgentId: 'engine-secret-parent',
         engineParentSessionId: 'engine-secret-session', engineParentRunId: 'engine-secret-run', engineTargetAgentId: 'engine-target',
         engineTargetSessionId: 'engine-child-session', engineChildRunId: 'engine-run-1', depth: 0, ancestors: [],
-        progress: { steps: 0, toolCalls: 0, failures: 0, preview: '', calls: [] }, resultText: null, error: null, stopRequestId: null,
+        progress: { steps: 0, toolCalls: 0, failures: 0, preview: '', calls: [] }, pendingToolCallId: null, resultText: null, error: null, stopRequestId: null,
         createdAt: '2026-11-05T00:00:00.000Z', updatedAt: '2026-11-05T00:00:00.000Z', ...overrides,
     }
 }
@@ -63,6 +63,7 @@ afterEach(async () => {
 test('lists public snapshots without engine ids and rejects a body that is not a stop', async () => {
     const db = await openDesktopDatabase(root)
     await initializeDesktopCoworkerCalls(db)
+    await adoptDesktopCoworkerCallEpoch(db, 'epoch-1', '2026-11-05T00:00:00.000Z')
     const saved = record({ createdAt: '2026-11-05T00:00:02.000Z' })
     const older = record({ createdAt: '2026-11-05T00:00:01.000Z', sourceKey: 'older', toolCallId: 'tool-old' })
     await insertDesktopCoworkerCall(db, saved)
@@ -87,6 +88,7 @@ test('lists public snapshots without engine ids and rejects a body that is not a
 test('stops only the named child run and keeps a failed stop retryable', async () => {
     const db = await openDesktopDatabase(root)
     await initializeDesktopCoworkerCalls(db)
+    await adoptDesktopCoworkerCallEpoch(db, 'epoch-1', '2026-11-05T00:00:00.000Z')
     const launched = record()
     const unlaunched = record({ status: 'queued', phase: 'reserved', launchClaimed: false, engineChildRunId: null, engineTargetSessionId: null, sourceKey: 'reserved', toolCallId: 'tool-reserved' })
     const pending = record({ engineChildRunId: null, phase: 'session-open', sourceKey: 'opening', toolCallId: 'tool-opening', engineTargetSessionId: 'engine-child-session' })
@@ -107,16 +109,16 @@ test('stops only the named child run and keeps a failed stop retryable', async (
     expect((await local.json()).call.status).toBe('cancelled')
     expect(calls).toEqual([])
     const discovered = await stop(pending.callId, '1')
-    expect(discovered.status).toBe(200)
-    expect(calls.some(path => path.includes('/runs?session=engine-child-session'))).toBe(true)
-    expect(calls.some(path => path.endsWith('/runs/engine-run-live/cancel'))).toBe(true)
-    expect(calls.some(path => path.includes('engine-run-1'))).toBe(false)
-    expect((await getDesktopCoworkerCall(db, pending.callId))?.engineChildRunId).toBe('engine-run-live')
+    expect(discovered.status).toBe(503)
+    expect(calls).toEqual([])
+    expect((await getDesktopCoworkerCall(db, pending.callId))?.engineChildRunId).toBeNull()
+
 })
 
 test('a stale revision, another session, and an unavailable cancel do not stop a different run', async () => {
     const db = await openDesktopDatabase(root)
     await initializeDesktopCoworkerCalls(db)
+    await adoptDesktopCoworkerCallEpoch(db, 'epoch-1', '2026-11-05T00:00:00.000Z')
     const first = record({ engineChildRunId: 'engine-run-a' })
     const second = record({ engineChildRunId: 'engine-run-b', sourceKey: 'second', toolCallId: 'tool-2', createdAt: '2026-11-05T00:00:03.000Z' })
     await insertDesktopCoworkerCall(db, first)
@@ -143,4 +145,107 @@ test('a stale revision, another session, and an unavailable cancel do not stop a
     const missing = await stop(second.callId, '1')
     expect(missing.status).toBe(200)
     expect((await missing.json()).call.status).toBe('interrupted')
+})
+
+
+test('a saved Stop receipt cannot be replayed from another conversation', async () => {
+    const db = await openDesktopDatabase(root)
+    await initializeDesktopCoworkerCalls(db)
+    await adoptDesktopCoworkerCallEpoch(db, 'epoch-1', '2026-11-05T00:00:00.000Z')
+    const first = record()
+    await insertDesktopCoworkerCall(db, first)
+    const requestId = crypto.randomUUID()
+    expect((await stop(first.callId, '1', requestId)).status).toBe(200)
+    calls.length = 0
+    const wrong = await stop(first.callId, '1', requestId, otherSessionId)
+    expect(wrong.status).toBe(404)
+    expect(await wrong.text()).not.toContain(first.targetAgentId)
+    expect(calls).toEqual([])
+})
+
+test('concurrent retries share the same successful Stop receipt', async () => {
+    const db = await openDesktopDatabase(root)
+    await initializeDesktopCoworkerCalls(db)
+    await adoptDesktopCoworkerCallEpoch(db, 'epoch-1', '2026-11-05T00:00:00.000Z')
+    const first = record()
+    await insertDesktopCoworkerCall(db, first)
+    const requestId = crypto.randomUUID()
+    let arrived!: () => void
+    const entered = new Promise<void>(resolve => { arrived = resolve })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    globalThis.fetch = (async (url: string | URL | Request) => { calls.push(String(url)); arrived(); await gate; return Response.json({ ok: true }) }) as typeof fetch
+    const firstStop = stop(first.callId, '1', requestId)
+    await entered
+    const secondStop = stop(first.callId, '1', requestId)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    release()
+    const [one, two] = await Promise.all([firstStop, secondStop])
+    expect(one.status).toBe(200)
+    expect(two.status).toBe(200)
+    expect(await two.json()).toEqual(await one.json())
+    expect(calls).toHaveLength(1)
+    expect((await stop(first.callId, '1', requestId)).status).toBe(200)
+})
+
+test('a concurrent request-ID conflict is rejected before stopping another child', async () => {
+    const db = await openDesktopDatabase(root)
+    await initializeDesktopCoworkerCalls(db)
+    await adoptDesktopCoworkerCallEpoch(db, 'epoch-1', '2026-11-05T00:00:00.000Z')
+    const first = record()
+    const other = record({ sourceKey: 'another', engineChildRunId: 'other-run' })
+    await insertDesktopCoworkerCall(db, first)
+    await insertDesktopCoworkerCall(db, other)
+    let arrived!: () => void
+    const entered = new Promise<void>(resolve => { arrived = resolve })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    globalThis.fetch = (async (url: string | URL | Request) => { calls.push(String(url)); arrived(); await gate; return Response.json({ ok: true }) }) as typeof fetch
+    const requestId = crypto.randomUUID()
+    const firstStop = stop(first.callId, '1', requestId)
+    await entered
+    const conflict = await stop(other.callId, '1', requestId)
+    expect(conflict.status).toBe(409)
+    expect(calls).toHaveLength(1)
+    release()
+    expect((await firstStop).status).toBe(200)
+    expect((await getDesktopCoworkerCall(db, other.callId))?.status).toBe('running')
+})
+
+test('pending Stop resumes only its exact recorded run after database reopen', async () => {
+    let db = await openDesktopDatabase(root)
+    await initializeDesktopCoworkerCalls(db)
+    await adoptDesktopCoworkerCallEpoch(db, 'epoch-1', '2026-11-05T00:00:00.000Z')
+    const first = record({ phase: 'session-open', engineChildRunId: null })
+    await insertDesktopCoworkerCall(db, first)
+    const requestId = crypto.randomUUID()
+    expect((await stop(first.callId, '1', requestId)).status).toBe(503)
+    expect(calls).toEqual([])
+    await closeDesktopDatabase(root)
+    db = await openDesktopDatabase(root)
+    await patchDesktopCoworkerCall(db, first.callId, { engineChildRunId: null }, { engineChildRunId: 'exact-child' }, new Date().toISOString())
+    const result = await stop(first.callId, '1', requestId)
+    expect(result.status).toBe(200)
+    expect(calls).toEqual(['http://127.0.0.1:1/agents/engine-target/runs/exact-child/cancel'])
+    const other = record({ sourceKey: 'after-restart', engineChildRunId: 'unrelated' })
+    await insertDesktopCoworkerCall(db, other)
+    expect((await stop(other.callId, '1', requestId)).status).toBe(409)
+    expect(calls).toHaveLength(1)
+})
+
+test('natural completion during an unavailable Stop stays terminal and retryable', async () => {
+    const db = await openDesktopDatabase(root)
+    await initializeDesktopCoworkerCalls(db)
+    await adoptDesktopCoworkerCallEpoch(db, 'epoch-1', '2026-11-05T00:00:00.000Z')
+    const first = record()
+    await insertDesktopCoworkerCall(db, first)
+    globalThis.fetch = (async () => {
+        await patchDesktopCoworkerCall(db, first.callId, { engineChildRunId: first.engineChildRunId }, { status: 'completed', phase: 'terminal', resultText: 'Done' }, new Date().toISOString())
+        return new Response(null, { status: 503 })
+    }) as typeof fetch
+    const requestId = crypto.randomUUID()
+    const response = await stop(first.callId, '1', requestId)
+    expect(response.status).toBe(200)
+    expect((await response.json()).call.status).toBe('completed')
+    expect((await stop(first.callId, '1', requestId)).status).toBe(200)
 })

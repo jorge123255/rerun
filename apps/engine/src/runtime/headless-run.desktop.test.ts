@@ -26,3 +26,48 @@ test('a failed durable context write cancels the reserved run without model laun
     expect(mocks.cancel).toHaveBeenCalledWith('owner', 'run')
     expect(mocks.run).not.toHaveBeenCalled()
 })
+
+test('awaits the durable run-created hook before provider work', async () => {
+    let release!: () => void
+    let recorded!: () => void
+    const reached = new Promise<void>(resolve => { recorded = resolve })
+    const pending = new Promise<void>(resolve => { release = resolve })
+    const work = startHeadlessRun(agent, 'session', 'Call Bob', undefined, { source: 'chat' }, {
+        beforeLaunch: async () => undefined,
+        onRunCreated: async id => { expect(id).toBe('run'); recorded(); await pending },
+    })
+    await reached
+    expect(mocks.run).not.toHaveBeenCalled()
+    release()
+    await work
+    expect(mocks.run).toHaveBeenCalledOnce()
+})
+
+test('a lost run-created acknowledgement cancels the exact reserved run without launching', async () => {
+    await expect(startHeadlessRun(agent, 'session', 'Call Bob', undefined, { source: 'chat' }, {
+        beforeLaunch: async () => undefined,
+        onRunCreated: async () => { throw new Error('Lineage acknowledgement lost') },
+    })).rejects.toThrow('Lineage acknowledgement lost')
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith('owner', 'run')
+    expect(mocks.run).not.toHaveBeenCalled()
+})
+
+test('awaits an asynchronous final assertion instead of orphaning its rejection', async () => {
+    let checks = 0
+    await expect(startHeadlessRun(agent, 'session', 'Call Bob', undefined, { source: 'chat' }, {
+        beforeLaunch: async () => undefined,
+        assertActive: async () => { await Promise.resolve(); if (++checks === 2) throw new Error('Permission changed') },
+    })).rejects.toThrow('Permission changed')
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith('owner', 'run')
+    expect(mocks.run).not.toHaveBeenCalled()
+})
+
+test('rejects the pending start when the last admission and cancellation write both fail', async () => {
+    let checks = 0
+    mocks.cancel.mockRejectedValueOnce(new Error('Cancellation write failed'))
+    await expect(startHeadlessRun(agent, 'session', 'Call Bob', undefined, { source: 'chat' }, {
+        beforeLaunch: async () => { if (++checks === 3) throw new Error('Permission changed') },
+    })).rejects.toThrow('Cancellation write failed')
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith('owner', 'run')
+    expect(mocks.run).not.toHaveBeenCalled()
+})

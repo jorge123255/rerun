@@ -233,6 +233,17 @@ async function ensureCard(db: Client, scope: ServiceRequestScope, source: Deskto
     return saved
 }
 
+export async function readPendingDesktopServiceToolCall(db: Client, scope: ServiceRequestScope, ports: Pick<ServiceRequestPorts, 'source'>): Promise<string | null> {
+    const source = await ports.source()
+    if (!source) return null
+    const card = await cardById(db, desktopServiceRequestIdentity(scope.agentId, scope.sessionId, source))
+    if (card) {
+        assertOwned(card, scope)
+        if ((await receiptByService(db, card.serviceRequestId, card))?.accepted) return null
+    }
+    return source.toolCallId
+}
+
 export async function readDesktopServiceRequest(db: Client, scope: ServiceRequestScope, ports: ServiceRequestPorts): Promise<DesktopServiceRequestView> {
     const source = await ports.source()
     if (!source) return { request: null }

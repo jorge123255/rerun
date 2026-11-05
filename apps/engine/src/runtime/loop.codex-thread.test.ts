@@ -5,15 +5,16 @@ import { vi } from 'vitest'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-codex-thread-'))
 
-const { calls, prompts, turn, lifecycle } = vi.hoisted(() => ({
+const { calls, prompts, turn, lifecycle, improvement } = vi.hoisted(() => ({
     calls: [] as Array<Record<string, unknown> | undefined>,
     prompts: [] as unknown[],
     turn: { threadId: 'thread-1', fail: false },
     lifecycle: [] as string[],
+    improvement: [] as boolean[],
 }))
 
 vi.mock('./notify.js', async importOriginal => ({ ...(await importOriginal<typeof import('./notify.js')>()), sendNotification: async () => ({ delivered: true }) }))
-vi.mock('../tools/registry.js', () => ({ buildTools: async () => ({ tools: {}, close: async () => {} }) }))
+vi.mock('../tools/registry.js', () => ({ buildTools: async (ctx: {agent:{config:{selfImprovement:{enabled:boolean}}}}) => { improvement.push(ctx.agent.config.selfImprovement.enabled); return { tools: {}, close: async () => {} } } }))
 vi.mock('../connections/cli-auth.js', () => ({ ensureCliAuth: async () => () => {} }))
 vi.mock('../connections/codex-auth.js', () => ({ syncCodexAuth: async () => {} }))
 vi.mock('../connections/codex-plan-limits.js', () => ({ refreshCodexPlanLimits: async () => {} }))
@@ -98,6 +99,7 @@ describe('a Codex conversation keeps its thread', () => {
         calls.length = 0
         prompts.length = 0
         lifecycle.length = 0
+        improvement.length = 0
         turn.threadId = 'thread-1'
         turn.fail = false
         forgetCodexThreadsOf('mac-chatgpt')
@@ -198,6 +200,22 @@ describe('a Codex conversation keeps its thread', () => {
             const saved=await listMessages(id,session.id)
             expect(saved.some(row=>row.role==='assistant'&&row.contentJson.includes('ok'))).toBe(true)
         }finally{await writeAgentConfig(id,original);vi.unstubAllEnvs()}
+    })
+
+    it('keeps a called coworker run from regaining self-improvement during Codex config refresh', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.stubEnv('RERUN_DESKTOP_CODEX_RUNNER', '/test/codex')
+        const original = (await getAgent(id)).config
+        try {
+            await writeAgentConfig(id, agentConfigSchema.parse({ ...original, selfImprovement: { ...original.selfImprovement, enabled: true } }))
+            const loaded = await getAgent(id)
+            const { desktopCoworkerCallee } = await import('../desktop/coworker-calls/prepare.js')
+            const session = await createSession(id, 'called coworker')
+            const run = await runAgent(desktopCoworkerCallee(loaded), session.id, 'hello')
+            expect(await run.settled).toMatchObject({ kind: 'done' })
+            expect(improvement).toEqual([false])
+            expect((await getAgent(id)).config.selfImprovement.enabled).toBe(true)
+        } finally { await writeAgentConfig(id, original); vi.unstubAllEnvs() }
     })
 
     it('keeps each session on its own thread', async () => {

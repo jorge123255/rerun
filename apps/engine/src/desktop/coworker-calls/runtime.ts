@@ -15,6 +15,7 @@ import {
 import { followSubRun, renderSubRunOutcome, type SubRunOutcome, type SubRunProgress } from '../../tools/builtin/sub-run-watch.js'
 import {
     desktopCoworkerCallPrompt,
+    desktopCoworkerCallFingerprint,
     desktopCoworkerCallSourceKey,
     desktopCoworkerCallTitle,
     redactCoworkerCallText,
@@ -40,6 +41,16 @@ export type ChildFollow = {
     settled?: Promise<unknown>
 }
 
+export type CoworkerCallTargetAdmission = {
+    caller: { engineAgentId: string; engineSessionId: string; engineRunId: string }
+    target: { publicAgentId: string; engineAgentId: string }
+}
+
+export type PreparedCoworkerCallTarget = CoworkerCallTargetAdmission['target'] & {
+    connectionId: string
+    model: string
+}
+
 export type DesktopCoworkerCallDeps = {
     epoch: string
     now: () => string
@@ -47,11 +58,13 @@ export type DesktopCoworkerCallDeps = {
     newPublicRunId: () => string
     store: CoworkerCallStore
     authorize: (input: { engineAgentId: string; engineSessionId: string; engineRunId: string }) => Promise<{ ok: true; caller: CoworkerCallAuthorization } | { ok: false; reason: string }>
+    prepareTarget: (input: CoworkerCallTargetAdmission) => Promise<PreparedCoworkerCallTarget>
     createEngineSession: (input: { engineTargetAgentId: string; title: string; originAgentId: string; originSessionId: string }) => Promise<{ engineSessionId: string }>
     adoptPublicSession: (input: { publicAgentId: string; engineSessionId: string; title: string }) => Promise<{ publicSessionId: string }>
     notifyOpened: (input: { engineTargetAgentId: string; engineSessionId: string; title: string; callerName: string; originAgentId: string }) => Promise<void>
     notifyFailed: (input: { engineTargetAgentId: string; engineSessionId: string; reason: string }) => Promise<void>
-    startChildRun: (input: { engineTargetAgentId: string; engineSessionId: string; prompt: string; assertActive: () => Promise<void> }) => Promise<{ engineRunId: string; follow: ChildFollow }>
+    startChildRun: (input: { engineTargetAgentId: string; engineSessionId: string; prompt: string; model: PreparedCoworkerCallTarget; assertActive: () => Promise<void>; onRunCreated: (runId: string) => Promise<void> }) => Promise<{ engineRunId: string; follow: ChildFollow }>
+    cancelChildRun: (input: { engineTargetAgentId: string; engineRunId: string }) => Promise<void>
 }
 
 export type ExecuteCoworkerCall = {
@@ -124,11 +137,12 @@ function answerFor(name: string, outcome: SubRunOutcome, progress: SubRunProgres
 }
 
 export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps): DesktopCoworkerCallRuntime {
-    const inflight = new Map<string, Promise<{ text: string; snapshot: DesktopCoworkerCallSnapshot | null }>>()
+    const inflight = new Map<string, { fingerprint: string; work: Promise<{ text: string; snapshot: DesktopCoworkerCallSnapshot | null }> }>()
+    const changedRequest = () => ({ text: 'This coworker call already belongs to a different request. Start a new call.', snapshot: null })
 
     const publish = async (row: CoworkerCallRow, onProgress: (snapshot: DesktopCoworkerCallSnapshot) => void) => {
         const snapshot = snapshotOf(row)
-        onProgress(snapshot)
+        try { onProgress(snapshot) } catch { /* The durable row outlives the caller's closed stream. */ }
         return snapshot
     }
 
@@ -145,6 +159,10 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
         const sourceKey = desktopCoworkerCallSourceKey(input)
         const existing = await deps.store.getBySource(sourceKey)
         if (existing) {
+            if (existing.requestFingerprint !== desktopCoworkerCallFingerprint(input)) return changedRequest()
+            if (existing.phase === 'terminal' && existing.status !== 'interrupted') {
+                return { text: existing.resultText ?? `Call to ${existing.targetName} has finished.`, snapshot: await publish(existing, input.onProgress) }
+            }
             if (existing.launchEpoch !== deps.epoch || existing.status === 'interrupted') {
                 const settled = existing.status === 'interrupted' ? existing : await deps.store.patch(existing.callId, { statuses: ACTIVE }, {
                     status: 'interrupted', phase: 'terminal', error: DESKTOP_COWORKER_CALL_INTERRUPTED_REASON,
@@ -183,6 +201,7 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
             callId: deps.newCallId(),
             revision: 1,
             sourceKey,
+            requestFingerprint: desktopCoworkerCallFingerprint(input),
             parentAgentId: auth.caller.publicAgentId,
             parentSessionId: auth.caller.publicSessionId,
             parentRunId: deps.newPublicRunId(),
@@ -205,6 +224,7 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
             ancestors,
             progress: EMPTY_PROGRESS,
             resultText: null,
+            pendingToolCallId: null,
             error: null,
             stopRequestId: null,
             createdAt: now,
@@ -217,6 +237,7 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
                 if (inserted.reason === 'fanout') return { text: desktopCoworkerCallFanoutError(), snapshot: null }
                 row = inserted.row
                 if (!row) return { text: desktopCoworkerCallFanoutError(), snapshot: null }
+                if (row.requestFingerprint !== reserved.requestFingerprint) return changedRequest()
                 return { text: row.resultText ?? `Call to ${row.targetName} is already running.`, snapshot: await publish(row, input.onProgress) }
             }
             row = inserted.row
@@ -228,111 +249,141 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
             return { text: current?.resultText ?? `Call to ${row.targetName} is already running.`, snapshot: current ? await publish(current, input.onProgress) : null }
         }
 
-        const again = await deps.authorize(input)
-        const still = again.ok ? again.caller.targets.find(item => item.publicAgentId === target.publicAgentId) : undefined
-        if (!again.ok || !still?.enabled || !still.callable) {
-            const reason = !again.ok ? again.reason : !still?.enabled ? `Coworker "${target.name}" is switched off and cannot be called.` : `Coworker "${target.name}" is not allowed for this coworker.`
-            const failed = await fail(row.callId, null, reason, input.onProgress)
-            return { text: reason, snapshot: failed ? snapshotOf(failed) : null }
-        }
-
-        const prompt = desktopCoworkerCallPrompt(input.message, input.context)
-        const title = desktopCoworkerCallTitle(input.callerName, input.message)
+        const currentRow = row
+        let model: PreparedCoworkerCallTarget | undefined
         let engineSessionId = ''
         let savedChildId: string | null = null
+        const currentOwned = async () => {
+            const current = await deps.store.get(currentRow.callId)
+            if (!current || current.sourceKey !== currentRow.sourceKey || current.launchEpoch !== deps.epoch ||
+                current.engineTargetAgentId !== currentRow.engineTargetAgentId || current.targetAgentId !== currentRow.targetAgentId) throw new Error('Coworker call identity changed')
+            return current
+        }
+        const assertActive = async () => {
+            input.parentSignal?.throwIfAborted()
+            const before = await currentOwned()
+            if (before.stopRequestId || !ACTIVE.includes(before.status)) throw new Error('stopped by the user')
+            const auth = await deps.authorize(input)
+            const allowed = auth.ok && auth.caller.publicAgentId === currentRow.parentAgentId && auth.caller.publicSessionId === currentRow.parentSessionId &&
+                auth.caller.targets.some(item => item.publicAgentId === target.publicAgentId && item.engineAgentId === target.engineAgentId && item.enabled && item.callable)
+            if (!allowed) throw new Error(!auth.ok ? auth.reason : `Coworker "${target.name}" is not allowed for this coworker.`)
+            const prepared = await deps.prepareTarget({
+                caller: { engineAgentId: input.engineAgentId, engineSessionId: input.engineSessionId, engineRunId: input.engineRunId },
+                target: { publicAgentId: target.publicAgentId, engineAgentId: target.engineAgentId },
+            })
+            if (prepared.publicAgentId !== target.publicAgentId || prepared.engineAgentId !== target.engineAgentId || !prepared.connectionId || !prepared.model) throw new Error('Coworker identity or model could not be confirmed')
+            if (model && (model.connectionId !== prepared.connectionId || model.model !== prepared.model)) throw new Error('The coworker model changed before this call started. Start a new call.')
+            model = prepared
+            const after = await currentOwned()
+            if (after.stopRequestId || !ACTIVE.includes(after.status)) throw new Error('stopped by the user')
+            input.parentSignal?.throwIfAborted()
+        }
+        const failAndStop = async (error: unknown) => {
+            const reason = error instanceof Error ? error.message : String(error)
+            if (savedChildId) {
+                try { await deps.cancelChildRun({ engineTargetAgentId: target.engineAgentId, engineRunId: savedChildId }) }
+                catch {
+                    const latest = await currentOwned().catch(() => null)
+                    return { text: `The call to ${target.name} has not finished stopping. Use Stop in its chat and try again.`, snapshot: latest ? await publish(latest, input.onProgress) : null }
+                }
+            }
+            const latest = await currentOwned().catch(() => null)
+            let failed: CoworkerCallRow | null = null
+            if (latest && ACTIVE.includes(latest.status)) {
+                const cancelled = !!latest.stopRequestId || input.parentSignal?.aborted === true || reason === 'stopped by the user'
+                failed = await deps.store.patch(currentRow.callId, { statuses: ACTIVE, engineChildRunId: latest.engineChildRunId }, {
+                    status: cancelled ? 'cancelled' : 'error', phase: 'terminal', error: reason,
+                    resultText: boundedCallerText(target.name, `(error calling ${target.name}: ${reason})`),
+                    ...(savedChildId ? { engineChildRunId: savedChildId } : {}),
+                }, deps.now()).catch(() => null)
+            }
+            if (engineSessionId && reason !== 'stopped by the user') await deps.notifyFailed({ engineTargetAgentId: target.engineAgentId, engineSessionId, reason }).catch(() => undefined)
+            const final = failed ?? latest
+            return { text: boundedCallerText(target.name, `(error calling ${target.name}: ${reason})`), snapshot: final ? await publish(final, input.onProgress) : null }
+        }
         try {
+            await assertActive()
+            const prompt = desktopCoworkerCallPrompt(input.message, input.context)
+            const title = desktopCoworkerCallTitle(input.callerName, input.message)
             const session = await deps.createEngineSession({
-                engineTargetAgentId: target.engineAgentId,
-                title,
-                originAgentId: input.engineAgentId,
-                originSessionId: input.engineSessionId,
+                engineTargetAgentId: target.engineAgentId, title, originAgentId: input.engineAgentId, originSessionId: input.engineSessionId,
             })
             engineSessionId = session.engineSessionId
-            const refusal = async (fallback: string) => {
-                const current = await deps.store.get(row.callId)
-                if (current?.stopRequestId || current?.status === 'cancelled') return 'stopped by the user'
-                if (current?.status === 'interrupted') return current.error || DESKTOP_COWORKER_CALL_INTERRUPTED_REASON
-                return fallback
-            }
-            const opened = await deps.store.patch(row.callId, { statuses: ['queued'], engineChildRunId: null, stopUnclaimed: true }, {
+            const opened = await deps.store.patch(currentRow.callId, { statuses: ['queued'], engineChildRunId: null, stopUnclaimed: true }, {
                 phase: 'session-open', engineTargetSessionId: session.engineSessionId,
             }, deps.now())
-            if (!opened) throw new Error(await refusal('The coworker call changed before its session was saved.'))
+            if (!opened) throw new Error('The coworker call changed before its session was saved.')
             const adopted = await deps.adoptPublicSession({ publicAgentId: target.publicAgentId, engineSessionId: session.engineSessionId, title })
-            const linked = await deps.store.patch(row.callId, { statuses: ['queued'], stopUnclaimed: true }, { targetSessionId: adopted.publicSessionId }, deps.now())
-            if (!linked) throw new Error(await refusal('The coworker call changed before its chat was saved.'))
+            const linked = await deps.store.patch(currentRow.callId, { statuses: ['queued'], stopUnclaimed: true }, { targetSessionId: adopted.publicSessionId }, deps.now())
+            if (!linked) throw new Error('The coworker call changed before its chat was saved.')
             await publish(linked, input.onProgress)
-            await deps.notifyOpened({
-                engineTargetAgentId: target.engineAgentId,
-                engineSessionId: session.engineSessionId,
-                title,
-                callerName: input.callerName,
-                originAgentId: input.engineAgentId,
-            })
+            await deps.notifyOpened({ engineTargetAgentId: target.engineAgentId, engineSessionId: session.engineSessionId, title, callerName: input.callerName, originAgentId: input.engineAgentId })
             const child = await deps.startChildRun({
-                engineTargetAgentId: target.engineAgentId,
-                engineSessionId: session.engineSessionId,
-                prompt,
-                assertActive: async () => {
-                    const current = await deps.store.get(row.callId)
-                    if (current?.stopRequestId || (current && !ACTIVE.includes(current.status))) throw new Error('stopped by the user')
-                    const allowedCall = await deps.authorize(input)
-                    const allowed = allowedCall.ok && allowedCall.caller.targets.some(item => item.publicAgentId === target.publicAgentId && item.enabled && item.callable)
-                    if (!allowed) throw new Error(!allowedCall.ok ? allowedCall.reason : `Coworker "${target.name}" is not allowed for this coworker.`)
+                engineTargetAgentId: target.engineAgentId, engineSessionId: session.engineSessionId, prompt, model: model!, assertActive,
+                onRunCreated: async runId => {
+                    if (savedChildId && savedChildId !== runId) throw new Error('Coworker run identity changed')
+                    savedChildId = runId
+                    const bound = await deps.store.patch(currentRow.callId, { statuses: ['queued'], engineChildRunId: null }, { engineChildRunId: runId }, deps.now())
+                    if (!bound || bound.stopRequestId) throw new Error('The coworker call was stopped before its run started.')
                 },
             })
-            const launched = await deps.store.patch(row.callId, { statuses: ['queued'], stopUnclaimed: true }, {
-                phase: 'launched', status: input.wait ? 'running' : 'dispatched', engineChildRunId: child.engineRunId,
+            if (child.engineRunId !== savedChildId) {
+                await deps.cancelChildRun({ engineTargetAgentId: target.engineAgentId, engineRunId: child.engineRunId })
+                throw new Error('The coworker run was not saved before it started')
+            }
+            const launched = await deps.store.patch(currentRow.callId, { statuses: ['queued'], engineChildRunId: child.engineRunId, stopUnclaimed: true }, {
+                phase: 'launched', status: currentRow.wait ? 'running' : 'dispatched',
             }, deps.now())
-            if (!launched) throw new Error(await refusal('The coworker call changed before its run was saved.'))
-            savedChildId = child.engineRunId
+            if (!launched) throw new Error('The coworker call changed before its run was saved.')
             await publish(launched, input.onProgress)
             const progress: SubRunProgress = { status: 'running', steps: 0, toolCalls: 0, failures: 0, calls: [] }
-            const flush = async () => {
-                const status = liveStatus(progress, input.wait === true)
-                const next = await deps.store.patch(row!.callId, { statuses: ACTIVE, engineChildRunId: child.engineRunId, stopUnclaimed: true }, {
-                    status, progress: project(progress),
+            const progressAbort = new AbortController()
+            let progressError: unknown
+            let progressWrites = Promise.resolve()
+            const flush = () => {
+                const patch = { status: liveStatus(progress, currentRow.wait), progress: project(progress) }
+                progressWrites = progressWrites.then(async () => {
+                    if (progressError) return
+                    const next = await deps.store.patch(currentRow.callId, { statuses: ACTIVE, engineChildRunId: child.engineRunId, stopUnclaimed: true }, patch, deps.now())
+                    if (next) await publish(next, input.onProgress)
+                }).catch(error => { progressError = error; progressAbort.abort() })
+            }
+            const finish = async (outcome: SubRunOutcome) => {
+                await progressWrites
+                if (progressError) throw progressError
+                const settlement = await child.follow.settled
+                const settledKind = settlement && typeof settlement === 'object' && 'kind' in settlement ? settlement.kind : undefined
+                if (outcome.stopReason === undefined && settledKind === 'cancelled') outcome = { ...outcome, stopReason: 'stopped by the user' }
+                if (outcome.stopReason === undefined && settledKind === 'error') {
+                    const reason = settlement && typeof settlement === 'object' && 'error' in settlement && typeof settlement.error === 'string' ? settlement.error : 'The coworker run failed.'
+                    outcome = { ...outcome, stopReason: reason }
+                }
+                const pendingToolCallId = outcome.stopReason === undefined && settledKind === 'done' && settlement && typeof settlement === 'object' &&
+                    'pendingToolCallId' in settlement && typeof settlement.pendingToolCallId === 'string' ? settlement.pendingToolCallId : null
+                const cancelled = outcome.stopReason === 'stopped by the user' || outcome.stopReason === 'stopped along with the calling run'
+                const text = answerFor(target.name, outcome, progress)
+                const overlong = !cancelled && text === desktopCoworkerCallResultLimitError(target.name)
+                const done = await deps.store.patch(currentRow.callId, { statuses: ACTIVE, engineChildRunId: child.engineRunId }, {
+                    status: cancelled ? 'cancelled' : outcome.stopReason !== undefined || overlong ? 'error' : pendingToolCallId ? 'waiting-human' : 'completed', phase: 'terminal',
+                    progress: project(progress, cancelled ? 'cancelled' : undefined), error: outcome.stopReason ?? (overlong ? text : null),
+                    pendingToolCallId,
+                    ...(currentRow.wait ? { resultText: text } : {}),
                 }, deps.now())
-                if (next) await publish(next, input.onProgress)
+                const final = done ?? await currentOwned()
+                return { text: currentRow.wait ? final.resultText ?? text : text, snapshot: await publish(final, input.onProgress) }
             }
-            if (!input.wait) {
+            if (!currentRow.wait) {
                 const text = `Message dispatched to ${target.name}. It is handling it in its own session; you will not receive the answer here.`
-                const noted = await deps.store.patch(row.callId, { engineChildRunId: child.engineRunId, stopUnclaimed: true }, { resultText: text }, deps.now())
-                if (noted) await publish(noted, input.onProgress)
-                void followSubRun(child.follow, progress, { onChange: () => void flush() }).then(async outcome => {
-                    const cancelled = outcome.stopReason === 'stopped by the user' || outcome.stopReason === 'stopped along with the calling run'
-                    const terminal = outcome.stopReason === undefined ? 'completed' as const : cancelled ? 'cancelled' as const : 'error' as const
-                    const saved = await deps.store.patch(row!.callId, { statuses: ACTIVE, engineChildRunId: child.engineRunId, stopUnclaimed: true }, {
-                        status: terminal, phase: 'terminal', progress: project(progress, cancelled ? 'cancelled' : undefined), error: outcome.stopReason ?? null,
-                    }, deps.now())
-                    if (saved) await publish(saved, input.onProgress)
-                }, async error => {
-                    const reason = error instanceof Error ? error.message : String(error)
-                    await fail(row!.callId, child.engineRunId, reason, input.onProgress)
-                })
-                return { text, snapshot: snapshotOf(noted ?? launched) }
+                const noted = await deps.store.patch(currentRow.callId, { engineChildRunId: child.engineRunId, stopUnclaimed: true }, { resultText: text }, deps.now())
+                if (!noted) throw new Error('The coworker call changed before dispatch was confirmed.')
+                await publish(noted, input.onProgress)
+                void followSubRun(child.follow, progress, { onChange: flush, taskSignal: progressAbort.signal }).then(finish).catch(failAndStop).catch(() => undefined)
+                return { text, snapshot: snapshotOf(noted) }
             }
-            const outcome = await followSubRun(child.follow, progress, { onChange: () => void flush(), parentSignal: input.parentSignal })
-            const stopped = outcome.stopReason !== undefined
-            const cancelled = outcome.stopReason === 'stopped by the user' || outcome.stopReason === 'stopped along with the calling run'
-            const text = answerFor(target.name, outcome, progress)
-            const overlong = !cancelled && text === desktopCoworkerCallResultLimitError(target.name)
-            const done = await deps.store.patch(row.callId, { statuses: ACTIVE, engineChildRunId: child.engineRunId, stopUnclaimed: true }, {
-                status: cancelled ? 'cancelled' : stopped || overlong ? 'error' : 'completed',
-                phase: 'terminal',
-                progress: project(progress, cancelled ? 'cancelled' : undefined),
-                error: outcome.stopReason ?? (overlong ? text : null),
-                resultText: text,
-            }, deps.now())
-            const finalRow = done ?? await deps.store.get(row.callId)
-            return { text: finalRow?.resultText ?? text, snapshot: finalRow ? await publish(finalRow, input.onProgress) : null }
+            const outcome = await followSubRun(child.follow, progress, { onChange: flush, parentSignal: input.parentSignal, taskSignal: progressAbort.signal })
+            return await finish(outcome)
         } catch (error) {
-            const reason = error instanceof Error ? error.message : String(error)
-            if (engineSessionId && reason !== 'stopped by the user') await deps.notifyFailed({ engineTargetAgentId: target.engineAgentId, engineSessionId, reason }).catch(() => undefined)
-            const failed = await fail(row.callId, savedChildId, reason, input.onProgress)
-            const text = boundedCallerText(target.name, `(error calling ${target.name}: ${reason})`)
-            if (failed) await deps.store.patch(failed.callId, { statuses: ['error'] }, { resultText: text }, deps.now())
-            return { text, snapshot: failed ? snapshotOf(failed) : null }
+            return failAndStop(error)
         }
     }
 
@@ -340,9 +391,10 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
         execute: input => {
             const key = desktopCoworkerCallSourceKey(input)
             const pending = inflight.get(key)
-            if (pending) return pending
-            const work = executeOnce(input).finally(() => { if (inflight.get(key) === work) inflight.delete(key) })
-            inflight.set(key, work)
+            const fingerprint = desktopCoworkerCallFingerprint(input)
+            if (pending) return pending.fingerprint === fingerprint ? pending.work : Promise.resolve(changedRequest())
+            const work = executeOnce(input).finally(() => { if (inflight.get(key)?.work === work) inflight.delete(key) })
+            inflight.set(key, { fingerprint, work })
             return work
         },
     }

@@ -1,6 +1,5 @@
 import { PAID_DATA_TOOL, SUB_RUN_TOOL_NAMES } from '@rerun/contracts'
 import { abortRun } from '../../runtime/run-control.js'
-import type { AgentRun } from '../../runtime/loop.js'
 import { BLOCKED_SOURCE_PREFIX, isFailureStatus } from '../host-breaker.js'
 import { canonicalBridgeName } from './hitl.js'
 
@@ -155,7 +154,7 @@ type StreamPart = { type: string; text?: string; toolName?: string; toolCallId?:
  * already said comes back with the stop reason, so the caller keeps the partial work.
  */
 export async function followSubRun(
-    run: Pick<AgentRun, 'result' | 'runId'> & Partial<Pick<AgentRun, 'settled'>>,
+    run: { runId: string; result: { fullStream: AsyncIterable<unknown> }; settled?: Promise<unknown> },
     progress: SubRunProgress,
     { onChange, parentSignal, taskSignal, idleTimeoutMs = SUB_RUN_IDLE_TIMEOUT_MS }: FollowOptions,
 ): Promise<SubRunOutcome> {

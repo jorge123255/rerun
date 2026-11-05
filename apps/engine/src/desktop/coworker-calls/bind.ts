@@ -1,12 +1,14 @@
 import { getAgent } from '../../agents/registry.js'
 import { createSession } from '../../db/repos/sessions.js'
 import { startHeadlessRun } from '../../runtime/headless-run.js'
+import { abortRun, waitForRunCancellation } from '../../runtime/run-control.js'
+import { cancelRun, getRun } from '../../db/repos/runs.js'
 import { sendNotification } from '../../runtime/notify.js'
 import { desktopCoworkerCallee } from './prepare.js'
 import { createHttpCoworkerCallBridge } from './http-store.js'
 import { createDesktopCoworkerCallRuntime, type DesktopCoworkerCallRuntime } from './runtime.js'
 
-type DesktopBind = { app: { origin: string }; engine: { apiKey: string } }
+type DesktopBind = { launchNonce: string; app: { origin: string }; engine: { apiKey: string } }
 
 // Root holds the instance returned here and passes it into desktopCallAgentTools.
 // This slot only remembers that instance. Authority and storage stay on the injected deps.
@@ -28,6 +30,7 @@ export async function bindDesktopCoworkerCalls(runtime: DesktopBind, fetchImpl?:
         newPublicRunId: () => crypto.randomUUID(),
         store: bridge.store,
         authorize: bridge.authorize,
+        prepareTarget: bridge.prepareTarget,
         createEngineSession: async input => {
             const session = await createSession(input.engineTargetAgentId, input.title, { originAgentId: input.originAgentId, originSessionId: input.originSessionId }, 'agent')
             return { engineSessionId: session.id }
@@ -64,11 +67,19 @@ export async function bindDesktopCoworkerCalls(runtime: DesktopBind, fetchImpl?:
             if (!loaded.config.enabled) throw new Error(`Coworker "${loaded.config.name}" is switched off and cannot be called.`)
             // The copy keeps the target's model, tools and grants. Only self-improvement is off for this run.
             const callee = desktopCoworkerCallee(loaded)
-            const run = await startHeadlessRun(callee, input.engineSessionId, input.prompt, undefined, { source: 'chat' }, {
+            const run = await startHeadlessRun(callee, input.engineSessionId, input.prompt, { connectionId: input.model.connectionId, model: input.model.model }, { source: 'chat' }, {
                 beforeLaunch: input.assertActive,
-                assertActive: input.assertActive,
+                onRunCreated: input.onRunCreated,
             })
             return { engineRunId: run.runId, follow: run }
+        },
+        cancelChildRun: async input => {
+            const run = await getRun(input.engineTargetAgentId, input.engineRunId)
+            if (!run || run.agentId !== input.engineTargetAgentId) throw new Error('The owned coworker run could not be confirmed')
+            abortRun(input.engineRunId)
+            if (!await waitForRunCancellation(input.engineRunId)) throw new Error('The coworker call has not finished stopping')
+            const current = await getRun(input.engineTargetAgentId, input.engineRunId)
+            if (current?.status === 'running') await cancelRun(input.engineTargetAgentId, input.engineRunId)
         },
     })
     wired = service

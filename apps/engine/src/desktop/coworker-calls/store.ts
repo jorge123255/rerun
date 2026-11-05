@@ -6,6 +6,7 @@ export type CoworkerCallRow = {
     callId: string
     revision: number
     sourceKey: string
+    requestFingerprint: string
     parentAgentId: string
     parentSessionId: string
     parentRunId: string
@@ -28,6 +29,7 @@ export type CoworkerCallRow = {
     ancestors: string[]
     progress: DesktopCoworkerCallProgress
     resultText: string | null
+    pendingToolCallId: string | null
     error: string | null
     stopRequestId: string | null
     createdAt: string
@@ -35,7 +37,7 @@ export type CoworkerCallRow = {
 }
 
 export type CoworkerCallPatch = Partial<Pick<CoworkerCallRow,
-    'targetSessionId' | 'status' | 'phase' | 'engineTargetSessionId' | 'engineChildRunId' | 'progress' | 'resultText' | 'error' | 'stopRequestId' | 'launchClaimed'>>
+    'targetSessionId' | 'status' | 'phase' | 'engineTargetSessionId' | 'engineChildRunId' | 'progress' | 'resultText' | 'pendingToolCallId' | 'error' | 'stopRequestId' | 'launchClaimed'>>
 
 export type CoworkerCallExpect = {
     revision?: number
@@ -75,7 +77,7 @@ export function createMemoryCoworkerCallStore(): CoworkerCallStore & { rows(): C
         adoptEpoch: (next, now) => run(() => {
             if (epoch && epoch !== next) {
                 for (const row of rows.values()) {
-                    if (!ACTIVE.includes(row.status) || row.launchEpoch === next) continue
+                    if (!ACTIVE.includes(row.status) || row.phase === 'terminal' || row.launchEpoch === next) continue
                     row.status = 'interrupted'
                     row.phase = 'terminal'
                     row.revision += 1
@@ -103,6 +105,7 @@ export function createMemoryCoworkerCallStore(): CoworkerCallStore & { rows(): C
         }),
         insertReserved: row => run(() => {
             const existing = [...rows.values()].find(item => item.sourceKey === row.sourceKey)
+            if (existing && existing.requestFingerprint !== row.requestFingerprint) throw new Error('Coworker call request changed')
             if (existing) return { inserted: false as const, reason: 'exists' as const, row: clone(existing) }
             const sameRun = [...rows.values()].filter(item => item.engineParentRunId === row.engineParentRunId)
             if (sameRun.length >= DESKTOP_COWORKER_CALL_MAX_FANOUT) return { inserted: false as const, reason: 'fanout' as const, row: null }
