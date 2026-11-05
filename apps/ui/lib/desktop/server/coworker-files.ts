@@ -635,14 +635,13 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
     const path = rel ? `${rel}/${name}` : name
     const privateLocation = publication ? await privateFileLocation(workspace, path) : null
     if (!publication) await recoverInterruptedCoworkerEdits(target, resolved.root!)
-    const rasterUid = beforeRasterPublish ? currentUid() : null
-    const rasterParents = beforeRasterPublish
-        ? await assertImageDirectories(resolved.root!, relative(resolved.root!, target).split(sep).filter(Boolean), rasterUid!, name)
-        : []
+    const rasterUid = currentUid()
+    const rasterParents = await assertImageDirectories(resolved.root!, relative(resolved.root!, target).split(sep).filter(Boolean), rasterUid, name)
     const assertRasterParents = async () => {
         for (const parent of rasterParents) {
             const current = await fileStat(parent.path)
-            if (!current?.isDirectory() || current.isSymbolicLink() || current.uid !== rasterUid || !sameFile(current, parent)) throw new DesktopHttpError(409, 'The image folder changed. Import it again.')
+            if (current?.isSymbolicLink()) throw new DesktopHttpError(400, 'That path is outside this coworker’s workspace.')
+            if (!current?.isDirectory() || current.uid !== rasterUid || !sameFile(current, parent)) throw new DesktopHttpError(409, 'The folder changed. Import the file again.')
         }
     }
     const outside = () => new DesktopHttpError(400, 'That path is outside this coworker’s workspace or is not a folder.')
@@ -665,7 +664,7 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
     } catch (error) { throw fsError(error) }
     try {
         const pinned = await pinnedDirectory(dir)
-        if (beforeRasterPublish) {
+        {
             await assertRasterParents()
             if (!sameFile(await dir.stat({ bigint: true }), rasterParents.at(-1) ?? null)) throw outside()
         }
@@ -702,7 +701,7 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
                 }
                 await link(tempPath, join(/* turbopackIgnore: true */ pinned, name))
                 published = true
-                if (beforeRasterPublish) {
+                {
                     // Publication already happened. A subsequent identity failure must remain
                     // ambiguous to the upload controller, even if best-effort rollback succeeds.
                     try { await assertRasterParents() }
@@ -710,7 +709,7 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
                         const destination = join(/* turbopackIgnore: true */ pinned, name)
                         const [created, staged] = await Promise.all([fileStat(destination), fileStat(tempPath)])
                         if (sameFile(created, staged)) await removeName(destination)
-                        throw new DesktopHttpError(500, 'The image import result could not be confirmed. Check Files before retrying.')
+                        throw new DesktopHttpError(500, 'The file import result could not be confirmed. Check Files before retrying.')
                     }
                 }
                 // A parent moved during link must not leave our newly created file in another workspace.
@@ -723,7 +722,7 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
                     }
                 }
             } catch (error) {
-                if (beforeRasterPublish && published) throw new DesktopHttpError(500, 'The image import result could not be confirmed. Check Files before retrying.')
+                if (published) throw new DesktopHttpError(500, 'The file import result could not be confirmed. Check Files before retrying.')
                 throw fsError(error)
             }
         } finally {

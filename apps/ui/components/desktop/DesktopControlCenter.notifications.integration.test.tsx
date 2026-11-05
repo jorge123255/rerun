@@ -312,10 +312,10 @@ test('closing and reopening while a preference save is pending waits for its rec
         const reopened = await openGlobal('push', false)
         await settle()
         expect(reopened).not.toBe(dialog)
-        expect(reopened.textContent).toContain('Loading your notification settings')
+        expect(reopened.querySelector('[role="radio"][aria-checked="true"]')?.textContent).toContain('Everything')
         expect(app.preferenceReads()).toBe(readsBefore)
         await app.finishWrites()
-        await until(() => reopened.textContent?.includes('Per coworker'))
+        await until(() => app.preferenceReads() === readsBefore + 1)
         expect(app.preferenceReads()).toBe(readsBefore + 1)
         const selected = [...reopened.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
             .find(radio => radio.getAttribute('aria-checked') === 'true')

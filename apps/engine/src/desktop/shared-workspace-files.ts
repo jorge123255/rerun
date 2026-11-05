@@ -79,7 +79,7 @@ function mapFs(error: unknown, folder = false): SharedWorkspaceFileError {
 }
 
 function stamp(mtimeNs: bigint): string {
-    return new Date(Number(mtimeNs / 1_000_000n)).toISOString()
+    return new Date(Number(mtimeNs / BigInt(1_000_000))).toISOString()
 }
 
 function validImportName(name: string) {

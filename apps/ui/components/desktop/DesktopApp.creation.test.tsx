@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import {act,type ComponentProps} from 'react'
 import {createRoot,type Root} from 'react-dom/client'
 import {afterEach,expect,it,vi} from 'vitest'
