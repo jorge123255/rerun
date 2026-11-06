@@ -6,7 +6,8 @@ Source only. Not validated. No tests, typecheck, lint, build, or app run were ex
 
 - Base: `8297fe6404caa114dcb0c2cd6006291a8abb2038` on `desktop/finish-cloud-base-20261106-8297fe64`.
 - Branch: `cursor/foreman-agent-files-c094`, created from that exact commit. The previous checkout was not reset, rebased, amended, or force-updated.
-- Tip: the HEAD of `cursor/foreman-agent-files-c094` after this handoff commit. Embedding that SHA in this file would change the commit that produces it, so the pull request body records `git rev-parse HEAD`.
+- Implementation commit: `78d8c7b80c822eb3a3372100633b886d3970a841`.
+- Tip: the HEAD of `cursor/foreman-agent-files-c094` after the commit that records the line above. That commit’s own SHA is not written here, because writing it would change the commit. The pull request body copies `git rev-parse HEAD`.
 
 ## What this is
 
