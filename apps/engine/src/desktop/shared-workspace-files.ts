@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { TEXT_FILE_PAGE_CHARS } from '@rerun/contracts'
@@ -29,7 +29,7 @@ export class SharedWorkspaceFileError extends Error {
 
 export type SharedDirectoryEntry = { name: string; type: 'file' | 'dir'; size: number; modifiedAt: string }
 export type SharedDirectoryListing = { path: string; entries: SharedDirectoryEntry[]; truncated: boolean }
-export type SharedTextPage = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null }
+export type SharedTextPage = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null; editIdentity: { expectedBytes: number; expectedSha256: string } | null }
 export type SharedImportResult = { path: string; name: string }
 export type SharedFileAccess = { signal?: AbortSignal; beforeCommit?: () => Promise<void> | void }
 
@@ -361,7 +361,12 @@ export async function readSharedText(root: string, path: string, offset = 0, acc
             if (named.dev !== after.dev || named.ino !== after.ino || named.ctimeNs !== after.ctimeNs || named.nlink !== BigInt(1)) {
                 throw new SharedWorkspaceFileError(409, 'This file changed while it was being read.')
             }
-            return { path: rel, content, size, truncated, offset, nextOffset: truncated ? end : null }
+            // The edit limit is smaller than even the first read window. Hash only a
+            // complete, unchanged descriptor read, never the displayed character page.
+            const editIdentity = size <= 256 * 1024 && read === size
+                ? { expectedBytes: size, expectedSha256: createHash('sha256').update(bytes).digest('hex') }
+                : null
+            return { path: rel, content, size, truncated, offset, nextOffset: truncated ? end : null, editIdentity }
         } finally {
             await handle?.close()
             if (child.close) await child.pin.handle.close()

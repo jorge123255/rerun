@@ -52,7 +52,7 @@ export async function readConfined(root: string, path: string, maxBytes: number)
     try {
         const before = await handle.stat({ bigint: true })
         if (!before.isFile()) return { ok: false, reason: 'unsupported' }
-        if (before.nlink !== 1n) return { ok: false, reason: 'alias' }
+        if (before.nlink !== BigInt(1)) return { ok: false, reason: 'alias' }
         if (typeof process.getuid === 'function' && before.uid !== BigInt(process.getuid())) return { ok: false, reason: 'unsupported' }
         if (before.size > BigInt(maxBytes)) return { ok: false, reason: 'over-limit' }
         const size = Number(before.size)
@@ -65,11 +65,11 @@ export async function readConfined(root: string, path: string, maxBytes: number)
         }
         if (offset !== size) return { ok: false, reason: 'collision' }
         const after = await handle.stat({ bigint: true })
-        if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.nlink !== 1n || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
+        if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.nlink !== BigInt(1) || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
             return { ok: false, reason: 'collision' }
         }
         const named = await lstat(full, { bigint: true })
-        if (named.dev !== before.dev || named.ino !== before.ino || named.nlink !== 1n) return { ok: false, reason: 'collision' }
+        if (named.dev !== before.dev || named.ino !== before.ino || named.nlink !== BigInt(1)) return { ok: false, reason: 'collision' }
         const rootReal = await realpath(root)
         const fileReal = await realpath(full)
         if (fileReal !== resolve(rootReal, path)) return { ok: false, reason: 'alias' }
@@ -93,7 +93,7 @@ export async function pinDirectory(path: string): Promise<{ pinned: string; clos
         const info = await handle.stat({ bigint: true })
         if (!info.isDirectory()) throw new TemplateRequestError(400, 'Template storage is not a directory')
         if (typeof process.getuid === 'function' && info.uid !== BigInt(process.getuid())) throw new TemplateRequestError(400, 'Template storage is not owned by this user')
-        if ((info.mode & 0o022n) !== 0n) throw new TemplateRequestError(400, 'Template storage is too open')
+        if ((info.mode & BigInt(0o022)) !== BigInt(0)) throw new TemplateRequestError(400, 'Template storage is too open')
         const pinned = process.platform === 'darwin' ? `/.vol/${info.dev}/${info.ino}` : `/proc/self/fd/${handle.fd}`
         return { pinned, close: () => handle.close() }
     } catch (error) {
@@ -233,7 +233,7 @@ export async function readConfinedBytes(root: string, path: string, maxBytes: nu
     try {
         const before = await handle.stat({ bigint: true })
         if (!before.isFile()) return { ok: false, reason: 'unsupported' }
-        if (before.nlink !== 1n) return { ok: false, reason: 'alias' }
+        if (before.nlink !== BigInt(1)) return { ok: false, reason: 'alias' }
         if (typeof process.getuid === 'function' && before.uid !== BigInt(process.getuid())) return { ok: false, reason: 'unsupported' }
         if (before.size > BigInt(maxBytes)) return { ok: false, reason: 'over-limit' }
         const size = Number(before.size)
@@ -246,11 +246,11 @@ export async function readConfinedBytes(root: string, path: string, maxBytes: nu
         }
         if (offset !== size) return { ok: false, reason: 'collision' }
         const after = await handle.stat({ bigint: true })
-        if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.nlink !== 1n || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
+        if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.nlink !== BigInt(1) || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
             return { ok: false, reason: 'collision' }
         }
         const named = await lstat(full, { bigint: true })
-        if (named.dev !== before.dev || named.ino !== before.ino || named.nlink !== 1n) return { ok: false, reason: 'collision' }
+        if (named.dev !== before.dev || named.ino !== before.ino || named.nlink !== BigInt(1)) return { ok: false, reason: 'collision' }
         const rootReal = await realpath(root)
         const fileReal = await realpath(full)
         if (fileReal !== resolve(rootReal, path)) return { ok: false, reason: 'alias' }
@@ -297,11 +297,11 @@ export async function readEnvironmentKeyNames(root: string): Promise<string[]> {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw new TemplateRequestError(409, 'Environment names cannot be read from a linked file') }
     try {
         const before = await handle.stat({ bigint: true })
-        if (!before.isFile() || before.nlink !== 1n || before.size > 65536n || typeof process.getuid === 'function' && before.uid !== BigInt(process.getuid())) throw new TemplateRequestError(409, 'Environment names require a bounded owned file')
+        if (!before.isFile() || before.nlink !== BigInt(1) || before.size > BigInt(65536) || typeof process.getuid === 'function' && before.uid !== BigInt(process.getuid())) throw new TemplateRequestError(409, 'Environment names require a bounded owned file')
         const bytes = Buffer.alloc(Number(before.size)); let offset = 0
         while (offset < bytes.length) { const read = await handle.read(bytes, offset, bytes.length - offset, offset); if (!read.bytesRead) break; offset += read.bytesRead }
         const after = await handle.stat({ bigint: true }), current = await lstat(full, { bigint: true })
-        if (offset !== bytes.length || before.dev !== after.dev || before.ino !== after.ino || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || before.size !== after.size || after.nlink !== 1n || current.dev !== before.dev || current.ino !== before.ino) throw new TemplateRequestError(409, 'Environment file changed during name capture')
+        if (offset !== bytes.length || before.dev !== after.dev || before.ino !== after.ino || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || before.size !== after.size || after.nlink !== BigInt(1) || current.dev !== before.dev || current.ino !== before.ino) throw new TemplateRequestError(409, 'Environment file changed during name capture')
         const names = new Set<string>()
         try {
             const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)

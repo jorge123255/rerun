@@ -43,6 +43,13 @@ import { shutdownDesktopSemanticMemory } from '../../desktop/semantic-memory/run
 import { reconcileIsolatedScreens, shutdownIsolatedScreens } from '../../desktop/isolated-screen/index.js'
 import { bindDesktopCoworkerCalls } from '../../desktop/coworker-calls/bind.js'
 import { createDesktopStopDiagnostic } from './desktop-stop-diagnostic.js'
+import { bindExternalMcpRuntimeAuthority } from '../../desktop/external-mcp-authority/authority.js'
+import { initializeDesktopExternalMcp, getExternalMcpService, closeDesktopExternalMcp } from '../../desktop/external-mcp-authority/runtime.js'
+import { createDesktopExternalMcpRouter } from '../../desktop/external-mcp-authority/router.js'
+import { registerExternalMcpDispatch } from '../../desktop/external-mcp-authority/dispatch.js'
+import { createExternalMcpUiDispatch } from '../../desktop/external-mcp-tools/bridge.js'
+import { bindSharedMutationWorkspace } from '../../desktop/shared-file-mutations/tools.js'
+import { assertDesktopRunAdmission, observeDesktopAdmissionChange } from '../../desktop/workspace-admission.js'
 
 const secret = z.string().regex(/^[a-f0-9]{64}$/)
 const origin = z.string().url().refine(value => {
@@ -73,18 +80,38 @@ export async function desktopRunCommand(): Promise<void> {
     if (runtime.workspaceId !== 1 && !runtime.installId) throw new Error('Desktop workspace install identity is missing')
     const owner = z.object({ installId: z.string().uuid(), workspaceId: z.number().int().positive() }).parse(JSON.parse(await readFile(resolve(expectedEngineRoot, 'desktop-owner.json'), 'utf8')))
     if (owner.workspaceId !== runtime.workspaceId || runtime.installId && owner.installId !== runtime.installId) throw new Error('Desktop engine owner mismatch')
+    let stopping = false
+    bindExternalMcpRuntimeAuthority({ read: () => {
+        let admissionsFrozen = true
+        try { assertDesktopRunAdmission(); admissionsFrozen = false } catch {}
+        return { installId: owner.installId, workspaceId: runtime.workspaceId, launchNonce: runtime.launchNonce, admissionsFrozen, stopping }
+    } })
+    bindSharedMutationWorkspace(async () => {
+        const epoch = assertDesktopRunAdmission()
+        return { workspaceId: runtime.workspaceId, assertCurrent: async signal => {
+            signal.throwIfAborted()
+            assertDesktopRunAdmission(epoch)
+            if (stopping) throw new Error('This workspace is stopping.')
+        } }
+    })
     await prepareDataDir()
     await ensureForeman()
     await initializeDesktopBrainStore()
     // The schema version persists, but this process-local binding must be recreated.
     await initializeDesktopCompanyBriefStore()
+    await initializeDesktopExternalMcp()
+    observeDesktopAdmissionChange(async () => {
+        let frozen = true
+        try { assertDesktopRunAdmission(); frozen = false } catch {}
+        if (frozen) await getExternalMcpService().close()
+    })
+    registerExternalMcpDispatch(createExternalMcpUiDispatch({ recheck: input => getExternalMcpService().recheck(input) }))
     const lifetime = new AbortController()
     let triggers: Awaited<ReturnType<typeof createDesktopTriggerRuntime>> | undefined
     let triggerTools: ReturnType<typeof createDesktopTriggerToolRuntime> | undefined
     let schedules: Awaited<ReturnType<typeof bindDesktopSchedules>> | undefined
     let scheduleTools: Awaited<ReturnType<typeof createDesktopScheduleToolRuntime>> | undefined
     let stopScheduler: ReturnType<typeof startScheduler> | undefined
-    let stopping = false
     let shutdownActive = false
     let initialized = false
     const app = new Hono()
@@ -125,6 +152,7 @@ export async function desktopRunCommand(): Promise<void> {
     installDesktopDelegation(delegation)
     app.route('/desktop/computer-panel', computerPanel.routes)
     app.route('/desktop/foreman', createDesktopForemanRoutes())
+    app.route('/desktop/external-mcp', createDesktopExternalMcpRouter(getExternalMcpService))
     app.route('/desktop/tool-install', toolInstall.routes)
     app.route('/agents/:id/screen', screen.routes)
     app.route('/desktop/delegation', delegation.routes)
@@ -156,6 +184,7 @@ export async function desktopRunCommand(): Promise<void> {
             diagnostic.track('foreman', () => foreman.close()),
             diagnostic.track('computer-panel', () => computerPanel.close()),
             diagnostic.track('guest-shell', () => guestShell.close()),
+            diagnostic.track('external-mcp', () => closeDesktopExternalMcp()),
             diagnostic.track('claude-workers', () => stopDesktopClaudeWorkers()),
         ])
         // Preparing scheduled runs already register a controller in runAgent. Signal those

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Readable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
-import { externalMcpDisplayedSecret, EXTERNAL_MCP_COPY, type ExternalMcpDispatchPort, type ExternalMcpToolResult } from '@rerun/contracts'
+import { externalMcpCanonicalJson, externalMcpDisplayedSecret, EXTERNAL_MCP_COPY, type ExternalMcpDispatchPort, type ExternalMcpToolResult } from '@rerun/contracts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { externalMcpHttpRefusal } from './http-guards.js'
 import { createExternalMcpService, type ExternalMcpDb } from './service.js'
@@ -26,7 +26,7 @@ function database(client: Client): ExternalMcpDb {
     }
 }
 
-function harness() {
+function harness(options: { cleanupMs?: number; ignoreAbort?: boolean } = {}) {
     let snapshot: ExternalMcpRuntimeSnapshot | null = {
         installId: INSTALL, launchNonce: LAUNCH, workspaceId: 1, admissionsFrozen: false, stopping: false,
     }
@@ -35,6 +35,12 @@ function harness() {
     let closed = 0
     let engineKey: string | undefined = 'a'.repeat(64)
     let calls = 0
+    let failClose = false
+    let holdFinish = false
+    let releaseFinish: () => void = () => {}
+    let finishGate = Promise.resolve()
+    let markFinishing: () => void = () => {}
+    const finishing = new Promise<void>(resolve => { markFinishing = resolve })
     let openGate: () => void = () => {}
     let markStarted: () => void = () => {}
     const started = new Promise<void>(resolve => { markStarted = resolve })
@@ -47,7 +53,7 @@ function harness() {
             calls += 1
             return new Promise<ExternalMcpToolResult>((resolve, reject) => {
                 const finish = () => resolve({ content: [{ type: 'text', text: 'sent' }] })
-                const stop = () => reject(new Error('aborted'))
+                const stop = () => { if (!options.ignoreAbort) reject(new Error('aborted')) }
                 if (signal.aborted) {
                     markStarted()
                     stop()
@@ -55,19 +61,23 @@ function harness() {
                 }
                 signal.addEventListener('abort', stop, { once: true })
                 markStarted()
-                void gate.then(() => { if (!signal.aborted) finish() })
+                void gate.then(() => { if (!signal.aborted || options.ignoreAbort) finish() })
             })
         },
     }
     const service = createExternalMcpService({
-        db: () => database(client),
+        db: () => ({ ...database(client), async execute(statement) {
+            if (holdFinish && statement.sql.includes('response_json = ?') && statement.sql.includes("status = 'pending'")) { markFinishing(); await finishGate }
+            return database(client).execute(statement)
+        } }),
+        cleanupMs: options.cleanupMs,
         authority: { read: () => snapshot },
         dispatch: () => dispatch,
         engineKey: () => engineKey,
         now: () => clock,
         listen: async () => {
             listens += 1
-            return { origin: 'http://127.0.0.1:9', close: async () => { closed += 1 } }
+            return { origin: 'http://127.0.0.1:9', close: async () => { closed += 1; if (failClose) throw new Error('Synthetic lost socket close') } }
         },
     })
     return {
@@ -77,17 +87,20 @@ function harness() {
         setEngineKey: (next: string | undefined) => { engineKey = next },
         holdCall() { gate = new Promise<void>(resolve => { openGate = resolve }) },
         releaseCall() { openGate() },
-        started,
+        started, finishing,
+        failClose: (value: boolean) => { failClose = value },
+        holdPersistence() { holdFinish = true; finishGate = new Promise<void>(resolve => { releaseFinish = resolve }) },
+        releasePersistence() { holdFinish = false; releaseFinish() },
     }
 }
 
 let client: Client
 let root: string
 
-async function setup() {
+async function setup(options: { cleanupMs?: number; ignoreAbort?: boolean } = {}) {
     root = await mkdtemp(join(tmpdir(), 'external-mcp-'))
     client = createClient({ url: `file:${join(root, 'external-mcp.db')}` })
-    const box = harness()
+    const box = harness(options)
     await box.service.initialize()
     return box
 }
@@ -114,6 +127,41 @@ function request(body: unknown, headers: Record<string, string>): IncomingMessag
 }
 
 describe('external MCP authority', () => {
+    it('preserves special JSON keys in request fingerprints without modifying object prototypes', () => {
+        const input = JSON.parse('{"__proto__":{"agentId":"other"},"name":"one"}')
+        expect(externalMcpCanonicalJson(input)).toBe('{"__proto__":{"agentId":"other"},"name":"one"}')
+        expect(externalMcpCanonicalJson(input)).not.toBe(externalMcpCanonicalJson({ name: 'one' }))
+    })
+
+    it('serializes concurrent key creation so the active-key cap cannot be exceeded', async () => {
+        const box = await setup()
+        try {
+            const results = await Promise.all(Array.from({ length: 21 }, (_, index) => box.service.create({ requestId: crypto.randomUUID(), workspaceId: 1, name: `Client ${index}` })))
+            expect(results.filter(result => result.ok)).toHaveLength(20)
+            expect(results.filter(result => !result.ok && result.code === 'too_many_keys')).toHaveLength(1)
+        } finally { await box.service.close(); client.close(); await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('replays a recorded mutation after restart under the same installation without invoking it again', async () => {
+        const box = await setup()
+        try {
+            const created = await box.service.create({ requestId: REQUEST, workspaceId: 1, name: 'CI', scopes: ['mcp:read', 'runs:send'] })
+            if (!created.ok || !created.secret) throw new Error('expected a secret')
+            await box.service.enable({ requestId: crypto.randomUUID(), workspaceId: 1 })
+            const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'send_message', arguments: {} } }
+            const first = response()
+            await box.service.handle(request(call, { authorization: `Bearer ${created.secret}`, 'x-rerun-external-request-id': EFFECT }), first.res)
+            expect(first.state.body).toContain('sent')
+            await box.service.initialize()
+            box.setSnapshot({ installId: INSTALL, launchNonce: crypto.randomUUID(), workspaceId: 1, admissionsFrozen: false, stopping: false })
+            await box.service.enable({ requestId: crypto.randomUUID(), workspaceId: 1 })
+            const second = response()
+            await box.service.handle(request(call, { authorization: `Bearer ${created.secret}`, 'x-rerun-external-request-id': EFFECT }), second.res)
+            expect(second.state.body).toContain('sent')
+            expect(box.calls).toBe(1)
+        } finally { await box.service.close(); client.close(); await rm(root, { recursive: true, force: true }) }
+    })
+
     it('stores only a hash and will not show the secret again', async () => {
         const box = await setup()
         const created = await box.service.create({ requestId: REQUEST, workspaceId: 1, name: 'Claude Code, MacBook' })
@@ -205,5 +253,69 @@ describe('external MCP authority', () => {
         expect(externalMcpHttpRefusal({ host: '127.0.0.1:9', origin: null, path: '/mcp', search: '?token=rk_secret', remoteAddress: '127.0.0.1', boundHost: '127.0.0.1:9' })?.code).toBe('forbidden_url')
         await isolated.close()
         await rm(root, { recursive: true, force: true })
+    })
+})
+
+describe('external MCP cleanup custody', () => {
+    it('freeze waits for a noncooperative effect and its durable uncertain receipt before acknowledging cleanup', async () => {
+        const box = await setup({ ignoreAbort: true })
+        try {
+            const created = await box.service.create({ requestId: REQUEST, workspaceId: 1, name: 'Drain QA', scopes: ['mcp:read','runs:send'] })
+            if (!created.ok || !created.secret) throw new Error('Expected the one-time key')
+            await box.service.enable({ requestId: crypto.randomUUID(), workspaceId: 1 })
+            box.holdCall(); box.holdPersistence()
+            const result = response()
+            const pending = box.service.handle(request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'send_message', arguments: {} } }, { authorization: `Bearer ${created.secret}`, 'x-rerun-external-request-id': EFFECT }), result.res)
+            await box.started
+            box.setSnapshot({ installId: INSTALL, launchNonce: LAUNCH, workspaceId: 1, admissionsFrozen: true, stopping: false })
+            let acknowledged = false
+            const closing = box.service.close().then(() => { acknowledged = true })
+            box.releaseCall()
+            await box.finishing
+            expect(acknowledged).toBe(false)
+            expect((await client.execute({ sql: 'SELECT status FROM desktop_external_mcp_receipts WHERE request_id=?', args: [EFFECT] })).rows[0].status).toBe('pending')
+            box.releasePersistence()
+            await Promise.all([pending, closing])
+            expect(acknowledged).toBe(true)
+            expect((await client.execute({ sql: 'SELECT status FROM desktop_external_mcp_receipts WHERE request_id=?', args: [EFFECT] })).rows[0].status).toBe('uncertain')
+            expect(box.calls).toBe(1)
+        } finally { box.releaseCall(); box.releasePersistence(); await box.service.close(); client.close(); await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('a bounded failed drain retains the pending call and database for the same cleanup retry', async () => {
+        const box = await setup({ ignoreAbort: true, cleanupMs: 10 })
+        try {
+            const created = await box.service.create({ requestId: REQUEST, workspaceId: 1, name: 'Timeout QA', scopes: ['mcp:read','runs:send'] })
+            if (!created.ok || !created.secret) throw new Error('Expected the one-time key')
+            await box.service.enable({ requestId: crypto.randomUUID(), workspaceId: 1 })
+            box.holdCall()
+            const result = response()
+            const pending = box.service.handle(request({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'send_message', arguments: {} } }, { authorization: `Bearer ${created.secret}`, 'x-rerun-external-request-id': EFFECT }), result.res)
+            await box.started
+            await expect(box.service.close()).rejects.toThrow('have not finished stopping')
+            expect((await client.execute({ sql: 'SELECT status FROM desktop_external_mcp_receipts WHERE request_id=?', args: [EFFECT] })).rows[0].status).toBe('pending')
+            box.releaseCall()
+            await pending
+            await expect(box.service.close()).resolves.toBeUndefined()
+            expect((await client.execute({ sql: 'SELECT status FROM desktop_external_mcp_receipts WHERE request_id=?', args: [EFFECT] })).rows[0].status).toBe('uncertain')
+            expect(box.calls).toBe(1)
+        } finally { box.releaseCall(); await box.service.close(); client.close(); await rm(root, { recursive: true, force: true }) }
+    })
+
+    it('retains a socket after failed close and retries the real acknowledgement before enabling another', async () => {
+        const box = await setup()
+        try {
+            await box.service.enable({ requestId: crypto.randomUUID(), workspaceId: 1 })
+            box.failClose(true)
+            await expect(box.service.close()).rejects.toThrow('cleanup is not confirmed')
+            await expect(box.service.listener()).rejects.toThrow('cleanup is not confirmed')
+            expect(box.listens).toBe(1)
+            box.failClose(false)
+            await box.service.close()
+            expect((await box.service.listener()).enabled).toBe(false)
+            await box.service.enable({ requestId: crypto.randomUUID(), workspaceId: 1 })
+            expect(box.listens).toBe(2)
+            expect(box.closed).toBe(3)
+        } finally { box.failClose(false); await box.service.close(); client.close(); await rm(root, { recursive: true, force: true }) }
     })
 })

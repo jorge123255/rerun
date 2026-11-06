@@ -27,12 +27,26 @@ export async function openExternalMcpListener(onRequest: (request: IncomingMessa
         server.close()
         throw new Error('External MCP listener did not bind to loopback.')
     }
+    let closing: Promise<void> | null = null
+    let closed = false
     return {
         origin: `http://127.0.0.1:${address.port}`,
-        close: () => new Promise(resolve => {
-            server.closeAllConnections?.()
-            server.close(() => resolve())
-        }),
+        close() {
+            if (closed) return Promise.resolve()
+            if (closing) return closing
+            const work = new Promise<void>((resolve, reject) => {
+                // Stop accepting before destroying sockets so a new connection cannot slip
+                // between the two operations. Concurrent/retried cleanup shares the ACK.
+                server.close(error => {
+                    if (error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') reject(error)
+                    else { closed = true; resolve() }
+                })
+                server.closeAllConnections?.()
+            })
+            closing = work
+            void work.catch(() => { if (closing === work) closing = null })
+            return work
+        },
     }
 }
 

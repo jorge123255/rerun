@@ -51,7 +51,7 @@ export async function handleExternalMcpMessage(raw: unknown, deps: ExternalMcpPr
     if (message.method === 'tools/call') {
         const parsed = CallToolRequestSchema.safeParse(raw)
         if (!parsed.success) return failure(message.id ?? null, -32602, 'Invalid params')
-        const outcome = await deps.callTool(parsed.params.name, parsed.params.arguments ?? {})
+        const outcome = await deps.callTool(parsed.data.params.name, parsed.data.params.arguments ?? {})
         if ('ok' in outcome && outcome.ok === false) {
             if (outcome.status === 200) return failure(message.id ?? null, -32001, outcome.message)
             return { status: outcome.status, body: { ok: false, code: outcome.code, message: outcome.message } }

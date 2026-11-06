@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 export const VERSION = 1
-export const LIMITS = Object.freeze({ addressBytes: 2048, keyBytes: 4096, responseBytes: 131072, requestMs: 10000, operationMs: 60000, cleanupMs: 5000, addresses: 8, receipts: 128 })
+export const LIMITS = Object.freeze({ addressBytes: 2048, keyBytes: 4096, responseBytes: 131072, requestBytes: 16384, requestMs: 10000, operationMs: 60000, cleanupMs: 5000, addresses: 8, receipts: 128 })
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const validWorkspace = id => Number.isSafeInteger(id) && id > 0 && id <= 1000000
 export const sameIdentity = (a, b) => !!a && !!b && a.protocolVersion === b.protocolVersion && a.machineId === b.machineId && a.workspaceId === b.workspaceId

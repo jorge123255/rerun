@@ -17,6 +17,8 @@ import { boxPlanPath, mcpPackagesDir, dataDir } from '../config/paths.js'
 // change of `rerun.db`. A shipped step is never edited nor removed, because an archived data-dir may
 // come back from before it. `up` must be re-runnable: a crash between the step and the version write
 // replays it on the next boot. Per-agent `system.db` and `shared.db` carry their own ladders.
+import { initializeDesktopExternalMcp } from '../desktop/external-mcp-authority/runtime.js'
+
 export type DataDirMigration = { version: number; id: string; up: () => Promise<void> }
 
 export const DATA_DIR_MIGRATIONS: DataDirMigration[] = [
@@ -78,6 +80,10 @@ export const DATA_DIR_MIGRATIONS: DataDirMigration[] = [
         await initializeDesktopBrainSemanticStore()
         await initializeDesktopWorkspaceRoutineRequests()
         await initializeDesktopCompanyBriefStore()
+    } },
+    { version: 7, id: 'desktop-external-mcp', up: async () => {
+        if (!desktopApp()) return
+        await initializeDesktopExternalMcp()
     } },
 ]
 

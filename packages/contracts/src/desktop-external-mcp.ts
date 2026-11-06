@@ -17,6 +17,7 @@ export const EXTERNAL_MCP_NAME_MAX = 60
 export const EXTERNAL_MCP_ACTIVE_KEY_MAX = 20
 export const EXTERNAL_MCP_PATH = '/mcp'
 export const EXTERNAL_MCP_REQUEST_HEADER = 'x-rerun-external-request-id'
+export const EXTERNAL_MCP_TOOLS_INTERNAL_PATH = '/api/desktop/internal/external-mcp-tools'
 export const EXTERNAL_MCP_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07'] as const
 export const EXTERNAL_MCP_DEFAULT_PROTOCOL_VERSION = '2025-06-18'
 
@@ -244,6 +245,11 @@ export const externalMcpCallContextSchema = z.strictObject({
 })
 export type ExternalMcpCallContext = z.infer<typeof externalMcpCallContextSchema>
 
+export const externalMcpBridgeRequestSchema = z.discriminatedUnion('action', [
+    z.strictObject({ action: z.literal('list'), principal: externalMcpPrincipalSchema }),
+    z.strictObject({ action: z.literal('call'), context: externalMcpCallContextSchema }),
+])
+
 export const externalMcpToolResultSchema = z.strictObject({
     content: z.array(z.strictObject({ type: z.literal('text'), text: z.string().max(60_000) })).length(1),
     structuredContent: z.unknown().optional(),
@@ -271,7 +277,7 @@ function canonicalize(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(canonicalize)
     if (typeof value === 'object') {
         const record = value as Record<string, unknown>
-        const out: Record<string, unknown> = {}
+        const out: Record<string, unknown> = Object.create(null)
         for (const key of Object.keys(record).sort()) {
             if (record[key] !== undefined) out[key] = canonicalize(record[key])
         }

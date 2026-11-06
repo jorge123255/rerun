@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate'] as const
+export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -39,7 +39,8 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('requestApproval', 'Request approval', 'Ask you to approve or decline proposed actions in chat.', 'request_approval'),
     supported('cardFile', 'Show result files', 'Show this coworker’s existing text, Markdown, PNG, JPEG, WebP, SVG, GIF and AVIF images, WAV/MP3/M4A/Ogg/FLAC audio, MP4/WebM/MOV/M4V video or PDF documents as preview tiles in chat.', 'card_file'),
     supported('privateFileWrite', 'Edit workspace files', 'Create new text or Markdown files and make exact, conflict-checked edits in this coworker’s private Files. Existing names are never replaced by create.', 'fs_write', 'fs_edit'),
-    supported('sharedFilesRead', 'Read shared files', 'Read and list text and Markdown files in the workspace shared folder. Every coworker with this permission sees the same shared documents.', 'shared_read', 'shared_list'),
+    supported('sharedFilesRead', 'Read shared files', 'Read, list and search text and Markdown files in the workspace shared folder. Every coworker with this permission sees the same shared documents.', 'shared_read', 'shared_list', 'shared_search'),
+    supported('sharedFilesWrite', 'Edit shared files', 'Create and edit text and Markdown files in the workspace shared folder. Changes are visible to coworkers with shared-file access.', 'shared_write', 'shared_edit'),
     supported('guestShell', 'Run commands in isolated computer', 'Run shell programs in this coworker’s isolated Linux computer. Commands can change guest files, use its browser profile and network, and install software. This does not grant Mac file or host command access.', 'shell_exec', 'shell_inspect'),
     supported('webFetch', 'Read public web pages', 'Read public HTTP(S) text and HTML pages without cookies or saved files.', 'web_fetch'),
     supported('webSearch', 'Search public web', 'Search with the Brave Search key in Settings. Separate from native Codex search.', 'web_search'),

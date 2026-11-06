@@ -197,6 +197,10 @@ describe('data-dir ladder', () => {
               6,
               "desktop-company-brief-brain-semantic-and-workspace-routines",
             ],
+            [
+              7,
+              "desktop-external-mcp",
+            ],
           ]
         `)
     })

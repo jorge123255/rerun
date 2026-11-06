@@ -53,3 +53,24 @@ it('a late old freeze cannot overwrite an acknowledged newer unfreeze after iden
     expect((await post('freeze', 2)).status).not.toBe(200)
     expect(() => assertDesktopRunAdmission()).not.toThrow()
 })
+
+it('awaits listener shutdown on freeze and leaves canceled quit admission usable without reopening listeners', async () => {
+    const nonce = 'c3333333-3333-4333-8333-333333333333'
+    vi.stubEnv('RERUN_DESKTOP_APP','1');vi.stubEnv('RERUN_DESKTOP_ADMISSIONS_FROZEN','0')
+    vi.stubEnv('RERUN_DESKTOP_RUNTIME_FILE','test-runtime');vi.stubEnv('RERUN_API_KEY','fake-key')
+    const { createDesktopWorkspaceAdmissionRouter,assertDesktopRunAdmission,observeDesktopAdmissionChange } = await import('./workspace-admission.js')
+    let release!: () => void,entered!: () => void,closed = 0
+    const held = new Promise<void>(resolve => { release = resolve }),started = new Promise<void>(resolve => { entered = resolve })
+    observeDesktopAdmissionChange(async () => {
+        try { assertDesktopRunAdmission() } catch { entered();await held;closed++ }
+    })
+    const router = createDesktopWorkspaceAdmissionRouter({ readRuntime: async () => ({ launchNonce: nonce,workspaceId: 2,engine: { apiKey: 'fake-key' } }) })
+    const post = (action: string,sequence: number) => router.request('/',{ method: 'POST',headers: { 'content-type': 'application/json' },body: JSON.stringify({ action,sequence,workspaceId: 2,launchNonce: nonce }) })
+    let answered = false
+    const freeze = post('freeze',1).then(result => { answered = true;return result })
+    await started
+    expect(answered).toBe(false);expect(() => assertDesktopRunAdmission()).toThrow('switching')
+    release();expect((await freeze).status).toBe(200);expect(closed).toBe(1)
+    expect((await post('unfreeze',2)).status).toBe(200)
+    expect(() => assertDesktopRunAdmission()).not.toThrow();expect(closed).toBe(1)
+})

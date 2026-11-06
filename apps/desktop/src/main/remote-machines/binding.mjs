@@ -24,17 +24,21 @@ export function createNativeRemoteMachines(options) {
     }
     return {
         async execute(raw, signal = new AbortController().signal) {
-            let input
+            let input, result
             try { input = command(raw) } catch {
                 return { ok: false, code: 'invalid', message: 'This server request was not understood.', receipt: null }
             }
             try {
                 await ports.checkActor(input.actor, signal)
-                const result = await get(input.actor.workspaceId).execute(input, signal)
-                if (result.ok) result.snapshot.runtimeState = ports.connectionState(input.actor, result.snapshot.connection)
+                result = await get(input.actor.workspaceId).execute(input, signal)
+                if (result.ok) {
+                    await ports.checkActor(input.actor, signal)
+                    result.snapshot.runtimeState = ports.connectionState(input.actor, result.snapshot.connection)
+                    result.snapshot.localRuntime = ports.localState(input.actor)
+                }
                 return result
             }
-            catch (error) { return { ok: false, ...publicFailure(error), receipt: null } }
+            catch (error) { return { ok: false, ...publicFailure(result?.receipt ? refusal('uncertain', 'This workspace changed before the server acknowledgement.') : error), receipt: result?.receipt ?? null } }
         },
         async withCandidate(context, consume, signal) {
             const coordinator = coordinators.get(context.workspaceId)

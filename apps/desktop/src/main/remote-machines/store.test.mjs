@@ -34,10 +34,20 @@ test('another canonical workspace cannot adopt the saved credential envelope', a
         const created = await createWorkspace(root, actor.installId, { requestId: randomUUID(), name: 'Second workspace' })
         assert.equal(created.ok, true)
         const custody = fixtureCustody(), owner = { ...actor, workspaceId: created.workspace.workspaceId }
-        const connection = { connectionId: randomUUID(), revision: randomUUID(), sealedKey: null }
+        const connection = { connectionId: randomUUID(), revision: randomUUID(), address: 'https://server.example', identity: null, tlsPin: null, sealedKey: null }
         connection.sealedKey = await custody.seal(actor, connection, FIXTURE_KEY)
         await assert.rejects(custody.use(owner, connection, async () => { assert.fail('foreign credentials must never be consumed') }))
         const { catalog } = await readCatalog(root, actor.installId)
         assert.equal(catalog.workspaces.length, 2)
     } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('sealed credential refuses destination, certificate or machine proof changes within the same revision', async () => {
+    const custody = fixtureCustody()
+    const connection = { connectionId: randomUUID(), revision: randomUUID(), address: 'https://server.example', identity: remoteIdentity, tlsPin: 'a'.repeat(64), sealedKey: null }
+    connection.sealedKey = await custody.seal(actor, connection, FIXTURE_KEY)
+    for (const changed of [{ address: 'https://another.example' }, { tlsPin: 'b'.repeat(64) }, { identity: { ...remoteIdentity, machineId: randomUUID() } }]) {
+        await assert.rejects(custody.use(actor, { ...connection, ...changed }, async () => { assert.fail('changed destination must not consume the key') }))
+    }
+    assert.equal(await custody.use(actor, connection, async key => key === FIXTURE_KEY), true)
 })

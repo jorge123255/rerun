@@ -17,6 +17,7 @@ import {
     externalMcpRevokeInputSchema,
     externalMcpScopeSchema,
     externalMcpToolRegistrationSchema,
+    externalMcpToolResultSchema,
     type ExternalMcpCreateResult,
     type ExternalMcpDispatchPort,
     type ExternalMcpKeyView,
@@ -83,36 +84,76 @@ export function createExternalMcpService(deps: {
     engineKey: () => string | undefined
     now?: () => Date
     listen?: Listen
+    cleanupMs?: number
 }) {
     const now = deps.now ?? (() => new Date())
     const listen = deps.listen ?? openExternalMcpListener
     let ready = false
     let listener: { socket: ExternalMcpSocket; workspaceId: number; installId: string; launchNonce: string } | null = null
-    const owned = new Map<string, { keyId: string; abort: () => void }>()
+    const owned = new Map<string, { keyId: string; abort: () => void; done: Promise<unknown> }>()
+    let listenerClosing = false
+    let closingTask: Promise<void> | null = null
+    const cleanupMs = deps.cleanupMs ?? 5000
+    let managementTail: Promise<unknown> = Promise.resolve()
+    function manage<T>(work: () => Promise<T>): Promise<T> {
+        const result = managementTail.catch(() => {}).then(work)
+        managementTail = result.catch(() => {})
+        return result
+    }
 
     function stamp(): string {
         return now().toISOString()
     }
 
     function abortOwned(keyId?: string): void {
-        for (const [id, stream] of owned) {
+        for (const stream of owned.values()) {
             if (keyId && stream.keyId !== keyId) continue
             stream.abort()
-            owned.delete(id)
         }
     }
 
-    async function closeListener(): Promise<void> {
-        const current = listener
-        listener = null
+    function closeListener(): Promise<void> {
+        if (closingTask) return closingTask
+        listenerClosing = true
         abortOwned()
-        if (current) await current.socket.close().catch(() => undefined)
+        const current = listener
+        const socket = current ? Promise.resolve().then(() => current.socket.close()).then(() => {
+            if (listener === current) listener = null
+        }) : Promise.resolve()
+        // The owned promise includes outcome persistence, not just the dispatch's return.
+        // Keep both the socket and unfinished calls available for another cleanup attempt.
+        const drained = Promise.allSettled([...owned.values()].map(call => call.done))
+        const work = (async () => {
+            let timer: ReturnType<typeof setTimeout> | undefined
+            try {
+                await Promise.race([
+                    Promise.all([socket.catch(() => { throw new Error('External MCP cleanup is not confirmed. Retry Stop.') }), drained]),
+                    new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('External MCP calls have not finished stopping. Retry Stop.')), cleanupMs) }),
+                ])
+                listenerClosing = false
+            } finally { if (timer) clearTimeout(timer) }
+        })()
+        closingTask = work
+        void work.finally(() => { if (closingTask === work) closingTask = null }).catch(() => {})
+        return work
+    }
+
+    function own<T>(keyId: string, action: (signal: AbortSignal) => Promise<T>, parent: AbortSignal): Promise<T> {
+        if (listenerClosing || !listener) return Promise.reject(new Error(EXTERNAL_MCP_COPY.listenerOff))
+        const id = randomUUID(), controller = new AbortController()
+        const signal = AbortSignal.any([parent, controller.signal])
+        // Register before yielding, including tool discovery and durable receipt publication.
+        const work = Promise.resolve().then(() => { signal.throwIfAborted(); return action(signal) })
+        const entry = { keyId, abort: () => controller.abort(), done: work }
+        owned.set(id, entry)
+        void work.finally(() => { if (owned.get(id) === entry) owned.delete(id) }).catch(() => {})
+        return work
     }
 
     function view(): ExternalMcpListenerView {
         return {
             version: DESKTOP_EXTERNAL_MCP_CONTRACT_VERSION,
-            enabled: Boolean(listener),
+            enabled: Boolean(listener) && !listenerClosing,
             origin: listener?.socket.origin ?? null,
             path: EXTERNAL_MCP_PATH,
             workspaceId: listener?.workspaceId ?? null,
@@ -131,9 +172,9 @@ export function createExternalMcpService(deps: {
     }
 
     async function reconcile(): Promise<void> {
-        if (!listener) return
+        if (!listener && !listenerClosing) return
         const snapshot = deps.authority.read()
-        if (!snapshot || snapshot.stopping || snapshot.admissionsFrozen || snapshot.workspaceId !== listener.workspaceId || snapshot.launchNonce !== listener.launchNonce || snapshot.installId !== listener.installId) {
+        if (listenerClosing || !snapshot || snapshot.stopping || snapshot.admissionsFrozen || listener && (snapshot.workspaceId !== listener.workspaceId || snapshot.launchNonce !== listener.launchNonce || snapshot.installId !== listener.installId)) {
             await closeListener()
         }
     }
@@ -191,7 +232,10 @@ export function createExternalMcpService(deps: {
     }
 
     function receiptOf(row: Row): ExternalMcpReceipt {
-        return externalMcpReceiptSchema.parse(JSON.parse(required(row, 'receipt_json')))
+        const receipt = externalMcpReceiptSchema.parse(JSON.parse(required(row, 'receipt_json')))
+        if (receipt.requestId !== required(row, 'request_id') || receipt.fingerprint !== required(row, 'fingerprint') || receipt.kind !== required(row, 'kind')
+            || required(row, 'status') !== 'pending' && receipt.status !== required(row, 'status')) throw new Error('External MCP receipt identity changed.')
+        return receipt
     }
 
     async function saveReceipt(receipt: ExternalMcpReceipt, fingerprint: string, response: unknown): Promise<void> {
@@ -229,7 +273,9 @@ export function createExternalMcpService(deps: {
 
     async function recheck(input: ExternalMcpLiveCheckInput): Promise<ExternalMcpLiveCheckResult> {
         if (!ready) return refusal('authority_missing', 'External MCP storage is not initialized.', EXTERNAL_MCP_RUNTIME_AUTHORITY)
-        await reconcile()
+        // A checkpoint belongs to an owned call. It must refuse a closing/frozen
+        // lifetime directly, never await the drain that is waiting for this call.
+        if (listenerClosing) return refusal('listener_disabled', EXTERNAL_MCP_COPY.listenerOff)
         const parsed = externalMcpLiveCheckInputSchema.safeParse(input)
         if (!parsed.success) return refusal('invalid', 'That external key check is not valid.')
         const opened = gate(parsed.data.workspaceId)
@@ -238,6 +284,9 @@ export function createExternalMcpService(deps: {
             return refusal('revision_changed', EXTERNAL_MCP_COPY.changed)
         }
         const row = await keyById(parsed.data.keyId)
+        const current = gate(parsed.data.workspaceId)
+        if (!current.ok) return current
+        if (current.snapshot.installId !== parsed.data.installId || current.snapshot.launchNonce !== parsed.data.launchNonce) return refusal('revision_changed', EXTERNAL_MCP_COPY.changed)
         if (!row || Number(required(row, 'workspace_id')) !== parsed.data.workspaceId) return refusal('not_found', 'Key not found')
         const key = keyView(row)
         if (key.status === 'revoked') return refusal('revoked', EXTERNAL_MCP_COPY.revoked)
@@ -245,11 +294,16 @@ export function createExternalMcpService(deps: {
         if (key.revision !== parsed.data.keyRevision) return refusal('revision_changed', EXTERNAL_MCP_COPY.changed)
         const scopes = [...parsed.data.scopes].sort().join()
         if ([...key.scopes].sort().join() !== scopes) return refusal('scope_missing', 'This key does not include that access.')
-        return externalMcpLiveCheckResultSchema.parse({ ok: true, principal: principalOf(row, opened.snapshot) })
+        return externalMcpLiveCheckResultSchema.parse({ ok: true, principal: principalOf(row, current.snapshot) })
+    }
+
+    function checkInput(principal: ExternalMcpPrincipal, requestId: string): ExternalMcpLiveCheckInput {
+        const { keyId,workspaceId,keyRevision,installId,launchNonce,scopes } = principal
+        return { keyId,workspaceId,keyRevision,installId,launchNonce,scopes,requestId }
     }
 
     async function visibleTools(principal: ExternalMcpPrincipal): Promise<ExternalMcpToolRegistration[]> {
-        const live = await recheck({ ...principal, requestId: randomUUID() })
+        const live = await recheck(checkInput(principal,randomUUID()))
         if (!live.ok) throw Object.assign(new Error(live.message), { code: live.code })
         const dispatch = deps.dispatch()
         if (!dispatch) throw Object.assign(new Error(EXTERNAL_MCP_COPY.adapterMissing), { code: 'adapter_missing' })
@@ -263,7 +317,7 @@ export function createExternalMcpService(deps: {
         return tools.filter(tool => live.principal.scopes.includes(tool.scope))
     }
 
-    async function callTool(principal: ExternalMcpPrincipal, requestId: string | null, name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ExternalMcpToolResult | ExternalMcpCallFailure> {
+    async function performCallTool(principal: ExternalMcpPrincipal, requestId: string | null, name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ExternalMcpToolResult | ExternalMcpCallFailure> {
         let tools: ExternalMcpToolRegistration[]
         try {
             tools = await visibleTools(principal)
@@ -278,7 +332,7 @@ export function createExternalMcpService(deps: {
         if (!principal.scopes.includes(tool.scope)) return { ok: false, status: 403, code: 'scope_missing', message: 'This key does not include that access.' }
         const dispatch = deps.dispatch()
         if (!dispatch) return { ok: false, status: 503, code: 'adapter_missing', message: EXTERNAL_MCP_COPY.adapterMissing }
-        const live = await recheck({ ...principal, requestId: requestId && /^[0-9a-f-]{36}$/i.test(requestId) ? requestId : randomUUID() })
+        const live = await recheck(checkInput(principal,requestId && /^[0-9a-f-]{36}$/i.test(requestId) ? requestId : randomUUID()))
         if (!live.ok) return { ok: false, status: 401, code: live.code, message: live.message }
         if (!tool.effect) {
             const read = await runCall(dispatch, live.principal, name, args, signal, null)
@@ -287,14 +341,16 @@ export function createExternalMcpService(deps: {
         if (!requestId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
             return { ok: false, status: 400, code: 'invalid', message: 'This effect needs a request id. It was not run.' }
         }
-        const fingerprint = externalMcpFingerprint({ kind: 'operation', tool: name, arguments: args, keyId: live.principal.keyId, keyRevision: live.principal.keyRevision, workspaceId: live.principal.workspaceId, launchNonce: live.principal.launchNonce, installId: live.principal.installId })
+        const fingerprint = externalMcpFingerprint({ kind: 'operation', tool: name, arguments: args, keyId: live.principal.keyId, keyRevision: live.principal.keyRevision, workspaceId: live.principal.workspaceId, installId: live.principal.installId })
         const existing = await receiptRow(requestId)
         if (existing) {
             if (required(existing, 'fingerprint') !== fingerprint) return { ok: false, status: 409, code: 'replay_conflict', message: EXTERNAL_MCP_COPY.changed }
+            const receipt = receiptOf(existing)
+            if (receipt.kind !== 'operation' || receipt.keyId !== live.principal.keyId || receipt.workspaceId !== live.principal.workspaceId || receipt.installId !== live.principal.installId) return { ok: false, status: 409, code: 'replay_conflict', message: EXTERNAL_MCP_COPY.changed }
             if (required(existing, 'status') === 'pending') return { ok: false, status: 409, code: 'in_flight', message: EXTERNAL_MCP_COPY.inFlight }
             const stored = cell(existing, 'response_json')
             if (!stored || required(existing, 'status') !== 'recorded') return { ok: false, status: 200, code: 'uncertain', message: EXTERNAL_MCP_COPY.uncertain }
-            return JSON.parse(stored) as ExternalMcpToolResult
+            return externalMcpToolResultSchema.parse(JSON.parse(stored))
         }
         const receipt = draftReceipt({ requestId, kind: 'operation', workspaceId: live.principal.workspaceId, snapshot: { installId: live.principal.installId, launchNonce: live.principal.launchNonce, workspaceId: live.principal.runtimeWorkspaceId, admissionsFrozen: false, stopping: false }, fingerprint, keyId: live.principal.keyId, keyRevision: live.principal.keyRevision, message: EXTERNAL_MCP_COPY.inFlight, status: 'uncertain' })
         await insertReceipt(receipt, fingerprint)
@@ -310,27 +366,24 @@ export function createExternalMcpService(deps: {
     }
 
     async function runCall(dispatch: ExternalMcpDispatchPort, principal: ExternalMcpPrincipal, name: string, args: Record<string, unknown>, signal: AbortSignal, requestId: string | null): Promise<{ ok: true; value: ExternalMcpToolResult } | ExternalMcpCallFailure> {
-        const controller = new AbortController()
         const id = requestId ?? randomUUID()
-        owned.set(id, { keyId: principal.keyId, abort: () => controller.abort() })
-        const linked = AbortSignal.any([signal, controller.signal])
+        const linked = signal
         try {
-            const before = await recheck({ ...principal, requestId: requestId && requestId.length === 36 ? requestId : randomUUID() })
+            const before = await recheck(checkInput(principal,requestId && requestId.length === 36 ? requestId : randomUUID()))
             if (!before.ok || linked.aborted) return { ok: false, status: 401, code: before.ok ? 'revoked' : before.code, message: before.ok ? EXTERNAL_MCP_COPY.revoked : before.message }
             const context = externalMcpCallContextSchema.parse({ version: DESKTOP_EXTERNAL_MCP_CONTRACT_VERSION, requestId: requestId ?? id, fingerprint: externalMcpFingerprint({ tool: name, arguments: args, keyId: principal.keyId, keyRevision: principal.keyRevision }), principal: before.principal, tool: name, arguments: args })
-            const value = await dispatch.callTool(context, linked)
-            const after = await recheck({ ...before.principal, requestId: context.requestId })
+            const value = externalMcpToolResultSchema.parse(await dispatch.callTool(context, linked))
+            const after = await recheck(checkInput(before.principal,context.requestId))
             if (linked.aborted || !after.ok) return { ok: false, status: 401, code: 'revoked', message: after.ok ? EXTERNAL_MCP_COPY.revoked : after.message }
             return { ok: true, value }
         } catch {
             return { ok: false, status: 200, code: 'uncertain', message: EXTERNAL_MCP_COPY.uncertain }
-        } finally {
-            owned.delete(id)
         }
     }
 
-    return {
+    const api = {
         async initialize(): Promise<void> {
+            await closeListener()
             await deps.db().executeMultiple(DESKTOP_EXTERNAL_MCP_SCHEMA_SQL)
             const pending = await deps.db().execute({ sql: `SELECT request_id, receipt_json FROM desktop_external_mcp_receipts WHERE status = 'pending'`, args: [] }).catch(() => ({ rows: [] }))
             for (const row of pending.rows) {
@@ -340,7 +393,6 @@ export function createExternalMcpService(deps: {
                     args: [JSON.stringify(receipt), required(row, 'request_id')],
                 })
             }
-            await closeListener()
             ready = true
         },
         recheck,
@@ -398,6 +450,7 @@ export function createExternalMcpService(deps: {
                 const again = await receiptRow(parsed.data.requestId)
                 const stored = again ? (await deps.db().execute({ sql: 'SELECT * FROM desktop_external_mcp_keys WHERE create_request_id = ?', args: [parsed.data.requestId] })).rows[0] : undefined
                 if (!again || !stored) return refusal('uncertain', EXTERNAL_MCP_COPY.uncertain)
+                if (required(again, 'fingerprint') !== fingerprint) return refusal('replay_conflict', EXTERNAL_MCP_COPY.changed)
                 return { ok: true, recovered: true, secretAvailable: false, secret: null, key: keyView(stored), receipt: receiptOf(again), message: EXTERNAL_MCP_COPY.secretDiscarded }
             }
             const won = await deps.db().execute({ sql: `UPDATE desktop_external_mcp_keys SET secret_delivered = 1 WHERE key_id = ? AND secret_delivered = 0`, args: [keyId] })
@@ -456,6 +509,11 @@ export function createExternalMcpService(deps: {
                     await socket.close().catch(() => undefined)
                     return refusal('forbidden_host', 'This listener only answers its loopback host.')
                 }
+                const current = gate(parsed.data.workspaceId)
+                if (!current.ok || current.snapshot.installId !== opened.snapshot.installId || current.snapshot.launchNonce !== opened.snapshot.launchNonce) {
+                    await socket.close()
+                    return current.ok ? refusal('revision_changed', EXTERNAL_MCP_COPY.changed) : current
+                }
                 listener = { socket, workspaceId: opened.snapshot.workspaceId, installId: opened.snapshot.installId, launchNonce: opened.snapshot.launchNonce }
             }
             const receipt = draftReceipt({ requestId: parsed.data.requestId, kind: 'enable', workspaceId: parsed.data.workspaceId, snapshot: opened.snapshot, fingerprint, message: 'Local MCP listener is on for this workspace.' })
@@ -492,6 +550,15 @@ export function createExternalMcpService(deps: {
         },
     }
 
+    return {
+        ...api,
+        create: (input: unknown) => manage(() => api.create(input)),
+        revoke: (input: unknown) => manage(() => api.revoke(input)),
+        enable: (input: unknown) => manage(() => api.enable(input)),
+        disable: (input: unknown) => manage(() => api.disable(input)),
+        close: () => manage(() => api.close()),
+    }
+
     async function handle(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse): Promise<void> {
         const send = (status: number, body: unknown) => {
             const payload = body === null ? '' : JSON.stringify(body)
@@ -524,8 +591,8 @@ export function createExternalMcpService(deps: {
         const inbound = new AbortController()
         request.once('aborted', () => inbound.abort())
         const rpc = await handleExternalMcpMessage(raw, {
-            listTools: () => visibleTools(admitted.principal),
-            callTool: (name, args) => callTool(admitted.principal, requestId, name, args, inbound.signal),
+            listTools: () => own(admitted.principal.keyId, async signal => { const tools = await visibleTools(admitted.principal); signal.throwIfAborted(); return tools }, inbound.signal),
+            callTool: (name, args) => own(admitted.principal.keyId, signal => performCallTool(admitted.principal, requestId, name, args, signal), inbound.signal),
         })
         send(rpc.status, rpc.body)
     }
@@ -535,10 +602,11 @@ export function createExternalMcpService(deps: {
     }
 
     async function createHandleAdmit(token: string | null) {
-        if (!listener) return refusal('listener_disabled', EXTERNAL_MCP_COPY.listenerOff)
+        if (!listener || listenerClosing) return refusal('listener_disabled', EXTERNAL_MCP_COPY.listenerOff)
         const engineKey = deps.engineKey()
         if (!token || !token.startsWith('rk_') || (engineKey ? sameExternalMcpSecret(token, engineKey) : false)) return refusal('unauthorized', EXTERNAL_MCP_COPY.unauthorized)
         const row = await keyByHash(hashExternalMcpSecret(token))
+        if (!listener || listenerClosing) return refusal('listener_disabled', EXTERNAL_MCP_COPY.listenerOff)
         if (!row) return refusal('unauthorized', EXTERNAL_MCP_COPY.unauthorized)
         const key = keyView(row)
         if (key.workspaceId !== listener.workspaceId) return refusal('workspace_mismatch', EXTERNAL_MCP_COPY.workspace)

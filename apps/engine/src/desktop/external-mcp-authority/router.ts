@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { externalMcpCreateResultSchema, externalMcpListResultSchema, externalMcpListenerResultSchema, externalMcpRevokeResultSchema, externalMcpWorkspaceIdSchema } from '@rerun/contracts'
+import { externalMcpCreateResultSchema, externalMcpListResultSchema, externalMcpListenerResultSchema, externalMcpRevokeResultSchema, externalMcpWorkspaceIdSchema, externalMcpLiveCheckInputSchema, externalMcpLiveCheckResultSchema } from '@rerun/contracts'
 import { desktopApp } from '../policy.js'
 import type { createExternalMcpService } from './service.js'
 
@@ -29,7 +29,8 @@ export function createDesktopExternalMcpRouter(getService: () => Service) {
         return next()
     })
     app.onError((error, c) => {
-        const status = typeof (error as { status?: number }).status === 'number' ? (error as { status: number }).status : 400
+        const reported = 'status' in error ? error.status : undefined
+        const status = typeof reported === 'number' && Number.isInteger(reported) && reported >= 400 && reported <= 599 ? reported : 400
         return c.json({ ok: false, code: 'invalid', message: error instanceof Error ? error.message : 'That external key request is not valid.' }, status as 400)
     })
     const send = (result: { ok: boolean; code?: string }) => {
@@ -55,6 +56,12 @@ export function createDesktopExternalMcpRouter(getService: () => Service) {
         return c.json(http.body, http.status)
     })
     app.get('/listener', async c => c.json(await getService().listener()))
+    app.post('/recheck', async c => {
+        const input = externalMcpLiveCheckInputSchema.parse(await body(c.req.raw))
+        const result = externalMcpLiveCheckResultSchema.parse(await getService().recheck(input))
+        const http = send(result)
+        return c.json(http.body, http.status)
+    })
     app.post('/listener/enable', async c => {
         const result = externalMcpListenerResultSchema.parse(await getService().enable(await body(c.req.raw)))
         const http = send(result)

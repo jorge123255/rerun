@@ -91,3 +91,16 @@ it('rejects invalid scope/effect pairing at construction', () => {
         invoke: async () => ({}),
     })).toThrow('scope/effect')
 })
+
+it('does not advertise or execute creation without both coworker-write and first-run access', async () => {
+    const create = { name: 'create_agent', description: 'Create and start a coworker.', inputSchema: {}, scope: 'coworkers:write' as const, effect: true }
+    const write: ExternalMcpPrincipal = { ...principal, scopes: ['mcp:read', 'coworkers:write'] }
+    const invoke = vi.fn(async () => ({}))
+    const port = createExternalMcpDispatch({ tools: [...readTools, create], recheck: async () => ({ ok: true, principal: write }), invoke })
+    expect((await port.listTools(write)).map(tool => tool.name)).toEqual(['list_agents'])
+    await expect(port.callTool({ ...context, principal: write, tool: 'create_agent' }, new AbortController().signal)).rejects.toThrow(/Missing scope/)
+    expect(invoke).not.toHaveBeenCalled()
+    const all: ExternalMcpPrincipal = { ...write, scopes: [...write.scopes, 'runs:send'] }
+    const allowed = createExternalMcpDispatch({ tools: [create], recheck: async () => ({ ok: true, principal: all }), invoke })
+    expect((await allowed.listTools(all)).map(tool => tool.name)).toEqual(['create_agent'])
+})

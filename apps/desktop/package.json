@@ -6,7 +6,7 @@
     "type": "module",
     "main": "dist/main/index.js",
     "scripts": {
-        "test": "node --test test/*.test.mjs",
+        "test": "node --test test/*.test.mjs src/main/remote-machines/*.test.mjs",
         "stage": "node ../../scripts/desktop/package.mjs --stage-only",
         "package": "node ../../scripts/desktop/package.mjs",
         "package:dmg": "node ../../scripts/desktop/package.mjs --dmg",

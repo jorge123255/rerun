@@ -63,22 +63,7 @@ export function createDesktopTemplateFiles({ dialog, context, fetch: request = f
                 const path = picked.filePaths[0]
                 const fileName = basename(path)
                 if (!safeName(fileName)) throw new Error('Rename the package before importing it.')
-                const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-                let bytes
-                try {
-                    const before = await handle.stat()
-                    if (!before.isFile() || before.size < 24 || before.size > MAX_BYTES) throw new Error('Choose a template package smaller than 160 MB.')
-                    bytes = Buffer.alloc(before.size)
-                    let offset = 0
-                    while (offset < bytes.length) {
-                        check()
-                        const read = await handle.read(bytes, offset, Math.min(1024 * 1024, bytes.length - offset), offset)
-                        if (!read.bytesRead) throw new Error('The selected package changed. Choose it again.')
-                        offset += read.bytesRead
-                    }
-                    const after = await handle.stat()
-                    if (!sameFile(before, after) || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('The selected package changed. Choose it again.')
-                } finally { await handle.close() }
+                const bytes = await readDesktopPackageBytes(path,check)
                 check()
                 const uploadId = randomUUID()
                 const response = await call(`uploads/${uploadId}`, { method: 'POST', headers: { 'Content-Type': 'application/gzip', 'x-template-filename': encodeURIComponent(fileName) }, body: bytes })
@@ -113,4 +98,25 @@ export function createDesktopTemplateFiles({ dialog, context, fetch: request = f
             })
         },
     }
+}
+
+/** Read only the native-selected regular file; retained handle and final stat fence replacements. */
+export async function readDesktopPackageBytes(path,check) {
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    let bytes
+    try {
+        const before = await handle.stat()
+        if (!before.isFile() || before.size < 24 || before.size > MAX_BYTES) throw new Error('Choose a template package smaller than 160 MB.')
+        bytes = Buffer.alloc(before.size)
+        let offset = 0
+        while (offset < bytes.length) {
+            check()
+            const read = await handle.read(bytes, offset, Math.min(1024 * 1024, bytes.length - offset), offset)
+            if (!read.bytesRead) throw new Error('The selected package changed. Choose it again.')
+            offset += read.bytesRead
+        }
+        const after = await handle.stat()
+        if (!sameFile(before, after) || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('The selected package changed. Choose it again.')
+    } finally { await handle.close() }
+    return bytes
 }

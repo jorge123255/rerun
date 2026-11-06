@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, readFile, realpath, type FileHandle } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { importSharedText, listSharedDirectory, readSharedText, SharedWorkspaceFileError, type SharedFileAccess } from '../shared-workspace-files.js'
+import { sharedRegexLines } from './regex.js'
 
 // Create, exact edit, and search under an already resolved shared root.
 // The root is `<dataRoot>/workspaces/<id>/engine/shared`. Callers pass that directory.
@@ -14,9 +15,10 @@ const TEXT_NAME = /\.(txt|md)$/i
 const MAX_BYTES = 256 * 1024
 const MAX_DEPTH = 8
 const MAX_FILES = 200
-const MAX_LINE = 4_000
 const SNIPPET = 300
 const SKIP_DIRS = new Set(['node_modules', '.git'])
+const EDIT_QUEUES = Symbol.for('rerun.desktop.shared-file-edit-queues.v1')
+const editQueues = () => ((globalThis as unknown as Record<symbol,Map<string,Promise<void>>>)[EDIT_QUEUES] ??= new Map())
 
 export class SharedMutationError extends Error {
     constructor(readonly code: 'outside' | 'symlink' | 'malformed' | 'oversized' | 'uncertain' | 'root_replaced' | 'cancelled', message: string) {
@@ -61,7 +63,7 @@ const uid = () => {
 
 export function canonicalSharedRoot(dataRoot: string, workspaceId: number): string {
     if (!Number.isInteger(workspaceId) || workspaceId < 1 || workspaceId > 1_000_000) throw new SharedMutationError('root_replaced', 'That workspace is not the open workspace.')
-    return join(dataRoot, 'workspaces', String(workspaceId), 'engine', 'shared')
+    return workspaceId === 1 ? join(dataRoot, 'workspaces', '1', 'engine', 'shared') : join(dataRoot, 'engine', 'shared')
 }
 
 export async function assertCanonicalSharedRoot(dataRoot: string, workspaceId: number, sharedRoot: string, signal?: AbortSignal): Promise<string> {
@@ -100,7 +102,7 @@ function textBytes(content: string, label: string): Buffer {
     const bytes = Buffer.from(content, 'utf8')
     if (bytes.byteLength > MAX_BYTES) throw new SharedMutationError('oversized', 'Shared text files can be up to 256 KiB.')
     try {
-        if (new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes) !== content) throw new Error('roundtrip')
+        if (new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) !== content) throw new Error('roundtrip')
     } catch { throw new SharedMutationError('malformed', 'Only UTF-8 text can be saved in the shared folder.') }
     return bytes
 }
@@ -160,7 +162,29 @@ export async function createSharedDocument(root: string, path: string, content: 
     }
 }
 
-export async function editSharedDocument(root: string, input: { path: string; oldString: string; newString: string; replaceAll?: boolean; expectedBytes: number; expectedSha256: string }, access?: SharedFileAccess): Promise<SharedEditOutcome> {
+type SharedEditInput = { path: string; oldString: string; newString: string; replaceAll?: boolean; expectedBytes: number; expectedSha256: string }
+
+export async function editSharedDocument(root: string, input: SharedEditInput, access?: SharedFileAccess): Promise<SharedEditOutcome> {
+    access?.signal?.throwIfAborted()
+    const canonicalRoot = await realpath(root)
+    if (canonicalRoot !== root) throw outside()
+    // All desktop mutation requests execute in the canonical UI authority process.
+    // Share the queue across factory/module instances and distinct run/call identities.
+    // Keep compare, recovery publication, write/truncate and readback in one admission.
+    // The recovery import takes its existing native publication lease independently;
+    // recursively taking that lease here would deadlock its create-only publication.
+    const queues = editQueues(), previous = queues.get(canonicalRoot) ?? Promise.resolve()
+    const result = previous.catch(() => {}).then(() => {
+        access?.signal?.throwIfAborted()
+        return editSharedDocumentUnlocked(root,input,access)
+    })
+    const tail = result.then(() => {},() => {})
+    queues.set(canonicalRoot,tail)
+    try { return await result }
+    finally { if (queues.get(canonicalRoot) === tail) queues.delete(canonicalRoot) }
+}
+
+async function editSharedDocumentUnlocked(root: string, input: SharedEditInput, access?: SharedFileAccess): Promise<SharedEditOutcome> {
     const parts = partsOf(input.path, 'file')
     const { target, rel } = await ownedFile(root, parts, access?.signal)
     const listed = await lstat(target, { bigint: true }).catch(error => {
@@ -193,22 +217,33 @@ export async function editSharedDocument(root: string, input: { path: string; ol
             return { status: 'refused', path: rel, code: 'conflict', message: `The shared file changed. It was kept. Current identity is ${size} bytes, sha256 ${sha256}.`, bytes: size, sha256, committed: false }
         }
         let text: string
-        try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(current) }
+        try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(current) }
         catch { return { status: 'refused', path: rel, code: 'malformed', message: 'Only UTF-8 text can be edited in the shared folder.', committed: false } }
         if (Buffer.from(text, 'utf8').equals(current) === false) return { status: 'refused', path: rel, code: 'malformed', message: 'Only UTF-8 text can be edited in the shared folder.', committed: false }
         if (input.oldString === input.newString) return { status: 'unchanged', path: rel, message: 'oldString and newString are identical; nothing to do.', bytes: size, sha256, committed: false }
         const occurrences = text.split(input.oldString).length - 1
         if (occurrences === 0) return { status: 'refused', path: rel, code: 'not_found', message: `oldString not found in ${rel}`, committed: false }
         if (occurrences > 1 && !input.replaceAll) return { status: 'refused', path: rel, code: 'malformed', message: `oldString matches ${occurrences} times in ${rel}; pass replaceAll or provide a more specific string.`, committed: false }
-        const nextText = input.replaceAll ? text.split(input.oldString).join(input.newString) : text.replace(input.oldString, input.newString)
+        const at = text.indexOf(input.oldString)
+        const nextText = input.replaceAll ? text.split(input.oldString).join(input.newString) : text.slice(0, at) + input.newString + text.slice(at + input.oldString.length)
         const next = textBytes(nextText, 'newString')
+        // Keep a complete, visible prior version before touching the original inode. A process
+        // crash or partial native write must not destroy the only copy of the user's document.
+        const recoveryName = `shared-edit-recovery-${randomUUID()}.txt`
+        await importSharedText(root, parts.slice(0, -1).join('/'), recoveryName, current, access)
         await access?.beforeCommit?.()
         access?.signal?.throwIfAborted()
         const again = await handle.stat({ bigint: true })
-        if (again.dev !== opened.dev || again.ino !== opened.ino || again.size !== opened.size || again.ctimeNs !== opened.ctimeNs) {
+        const named = await lstat(target,{ bigint: true })
+        if (again.dev !== opened.dev || again.ino !== opened.ino || again.size !== opened.size || again.ctimeNs !== opened.ctimeNs || named.dev !== opened.dev || named.ino !== opened.ino || named.isSymbolicLink() || named.nlink !== BigInt(1)) {
             return { status: 'refused', path: rel, code: 'conflict', message: 'The shared file changed. It was kept.', bytes: size, sha256, committed: false }
         }
-        await handle.write(next, 0, next.length, 0)
+        let written = 0
+        while (written < next.length) {
+            const part = await handle.write(next, written, next.length - written, written)
+            if (!part.bytesWritten) throw new SharedMutationError('uncertain', 'The edit was not confirmed. Inspect the original file before another change.')
+            written += part.bytesWritten
+        }
         if (next.length < size) await handle.truncate(next.length)
         await handle.sync()
         const check = Buffer.alloc(next.length)
@@ -219,11 +254,12 @@ export async function editSharedDocument(root: string, input: { path: string; ol
             seen += chunk.bytesRead
         }
         const after = await handle.stat({ bigint: true })
-        if (seen !== next.length || !check.equals(next) || after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== BigInt(1)) {
+        const published = await lstat(target,{ bigint: true })
+        if (seen !== next.length || !check.equals(next) || after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== BigInt(1) || published.dev !== after.dev || published.ino !== after.ino || published.isSymbolicLink() || published.nlink !== BigInt(1)) {
             throw new SharedMutationError('uncertain', 'The edit was not confirmed. The file was not written again.')
         }
         const digest = hashOf(next)
-        return { status: 'saved', path: rel, message: `Edited ${rel} (${occurrences} replacement${occurrences === 1 ? '' : 's'})`, bytes: next.length, sha256: digest, occurrences, committed: true }
+        return { status: 'saved', path: rel, message: `Edited shared file (${occurrences} replacement${occurrences === 1 ? '' : 's'}). Previous bytes kept as ${recoveryName}.`, bytes: next.length, sha256: digest, occurrences, committed: true }
     } finally { await handle.close() }
 }
 
@@ -233,12 +269,8 @@ async function searchFile(root: string, path: string, pattern: RegExp, access: S
         const page = await readSharedText(root, path, 0, access)
         if (page.truncated || page.nextOffset !== null) { omitted.push({ path, reason: 'too-large' }); return }
         const lines = page.content.split('\n')
-        for (let index = 0; index < lines.length && hits.length < maxResults; index += 1) {
-            const line = lines[index] ?? ''
-            if (line.length > MAX_LINE) continue
-            pattern.lastIndex = 0
-            if (pattern.test(line)) hits.push({ path, line: index + 1, text: line.trim().slice(0, SNIPPET) })
-        }
+        const found = await sharedRegexLines(lines, pattern.source, maxResults - hits.length, access?.signal)
+        for (const index of found) hits.push({ path, line: index + 1, text: lines[index]!.trim().slice(0, SNIPPET) })
     } catch (error) {
         if (error instanceof SharedWorkspaceFileError && error.status === 415) omitted.push({ path, reason: 'binary' })
         else if (!(error instanceof SharedWorkspaceFileError && error.status === 404)) omitted.push({ path, reason: 'unreadable' })

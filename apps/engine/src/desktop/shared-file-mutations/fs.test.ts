@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
@@ -75,4 +75,39 @@ test('edit keeps the file on a hash conflict and preserves newlines', async () =
     const linked = await editSharedDocument(shared, { path: 'link.txt', oldString: 'PRIVATE-SENTINEL', newString: 'changed', expectedBytes: 16, expectedSha256: 'cd'.repeat(32) })
     expect(linked).toMatchObject({ status: 'refused', code: 'symlink' })
     expect(await readFile(join(root, 'workspaces', '1', 'engine', 'coworkers', 'alpha', 'secret.md'), 'utf8')).toBe('PRIVATE-SENTINEL')
+})
+
+test('edit replacement is literal, preserves the BOM, and keeps complete previous bytes before publication', async () => {
+    const original = Buffer.from('\ufeffkeep me\r\n')
+    await writeFile(join(shared,'literal.txt'),original)
+    const before = new Set(await readdir(shared))
+    const result = await editSharedDocument(shared,{ path: 'literal.txt',oldString: 'me',newString: '$& $` $\'',expectedBytes: original.length,expectedSha256: hash(original) })
+    expect(result.status).toBe('saved')
+    expect(await readFile(join(shared,'literal.txt'),'utf8')).toBe('\ufeffkeep $& $` $\'\r\n')
+    const copies = (await readdir(shared)).filter(name => !before.has(name) && name.startsWith('shared-edit-recovery-'))
+    expect(copies).toHaveLength(1)
+    expect(await readFile(join(shared,copies[0]!))).toEqual(original)
+    expect(result.message).toContain(copies[0])
+})
+
+test('concurrent distinct edits with the same fingerprint serialize the full shorter/longer publication and retain the original recovery bytes', async () => {
+    const original = Buffer.from('before: TARGET :after\r\n')
+    await writeFile(join(shared,'concurrent.txt'),original)
+    const before = new Set(await readdir(shared))
+    const base = { path: 'concurrent.txt',oldString: 'TARGET',expectedBytes: original.length,expectedSha256: hash(original) }
+    const outcomes = await Promise.all([
+        editSharedDocument(shared,{ ...base,newString: 'x' }),
+        editSharedDocument(shared,{ ...base,newString: 'a substantially longer replacement' }),
+    ])
+    expect(outcomes.filter(outcome => outcome.status === 'saved')).toHaveLength(1)
+    expect(outcomes.filter(outcome => outcome.status === 'refused' && outcome.code === 'conflict')).toHaveLength(1)
+    const final = await readFile(join(shared,'concurrent.txt'))
+    const expected = [Buffer.from('before: x :after\r\n'),Buffer.from('before: a substantially longer replacement :after\r\n')]
+    expect(expected.some(bytes => bytes.equals(final))).toBe(true)
+    const copies = (await readdir(shared)).filter(name => !before.has(name) && name.startsWith('shared-edit-recovery-'))
+    expect(copies).toHaveLength(1)
+    expect(await readFile(join(shared,copies[0]!))).toEqual(original)
+    const saved = outcomes.find(outcome => outcome.status === 'saved')!
+    expect(saved.bytes).toBe(final.length)
+    expect(saved.sha256).toBe(hash(final))
 })

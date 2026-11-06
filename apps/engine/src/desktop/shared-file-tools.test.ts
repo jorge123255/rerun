@@ -1,4 +1,5 @@
 import { mkdtempSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -41,8 +42,9 @@ it('registers only shared_read and shared_list, and both coworkers read the same
     expect(Object.keys(bravo).sort()).toEqual(['shared_list', 'shared_read'])
     expect('shared_write' in alpha).toBe(false)
     const read = async (tools: typeof alpha) => tools.shared_read!.execute!({ path: 'note.txt', offset: 0, root: '/tmp', engineId: 'no', scope: 'private' }, call)
-    expect(await read(alpha)).toBe('from both')
-    expect(await read(bravo)).toBe('from both')
+    const receipt = `[Shared file receipt: ${JSON.stringify({ path: 'note.txt', expectedBytes: 9, expectedSha256: createHash('sha256').update('from both').digest('hex') })}]\n\nfrom both`
+    expect(await read(alpha)).toBe(receipt)
+    expect(await read(bravo)).toBe(receipt)
     expect(await alpha.shared_list!.execute!({ path: '.', root: '/tmp' }, call)).toContain('note.txt')
     const privateDir = join(engine, 'agents', 'alpha', 'workspace')
     await mkdir(privateDir, { recursive: true })

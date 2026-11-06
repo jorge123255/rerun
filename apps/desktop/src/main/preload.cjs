@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld('desktopApp', {
         recoverSwitch: input => ipcRenderer.invoke('desktop:workspaces-recover', input),
         reconcile: () => ipcRenderer.invoke('desktop:workspaces-reconcile'),
     },
+    remoteMachines: {
+        actor: () => ipcRenderer.invoke('desktop:remote-machines-actor'),
+        execute: command => ipcRenderer.invoke('desktop:remote-machines-execute', command),
+    },
+    coworkerShare: {
+        pickImport: () => ipcRenderer.invoke('desktop:coworker-share-pick'),
+    },
     saveResultFile: (name, bytes) => ipcRenderer.invoke('desktop:result-save', { name, bytes }),
     templates: {
         pickImport: () => ipcRenderer.invoke('desktop:template-pick'),

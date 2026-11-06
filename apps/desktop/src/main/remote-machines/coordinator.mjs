@@ -101,19 +101,29 @@ export function createRemoteMachineCoordinator({ store, custody, client, ports }
         }
         try {
             await check()
-            if (op.receipt.kind !== 'remove' && !op.proof) {
-                await setPhase('target_starting')
-                const proof = await custody.use(op.receipt, op.candidate, apiKey => client.probe({ address: op.candidate.address, apiKey,
-                    expectedIdentity: ['select', 'health'].includes(op.receipt.kind) ? op.candidate.identity : null,
-                    tlsPin: ['select', 'health'].includes(op.receipt.kind) ? op.candidate.tlsPin : null }, check, signal))
-                await check()
-                op = await edit(requestId, current => { current.proof = proof; current.target = proof.identity; Object.assign(current.candidate, proof); current.receipt.phase = 'identity_verified' })
-            }
             const transition = op.receipt.kind === 'select' || (op.selectedBefore && ['replace', 'remove'].includes(op.receipt.kind))
             if (transition) {
-                ports.assertAvailable?.(effectNames.filter(name => name !== (op.receipt.kind === 'remove' ? 'bind_remote' : 'bind_local')))
                 if (typeof ports.assertAvailable !== 'function') throw missing('W1-R-PREFLIGHT')
+                ports.assertAvailable(effectNames.filter(name => name !== (op.receipt.kind === 'remove' ? 'bind_remote' : 'bind_local')))
                 if (typeof ports.checkOperation !== 'function' || typeof ports.effect !== 'function' || typeof ports.lookupEffect !== 'function') throw missing('W1-R-LIFECYCLE')
+            } else if (op.receipt.kind === 'remove') {
+                if (typeof ports.assertAvailable !== 'function') throw missing('W1-R-PREFLIGHT')
+                ports.assertAvailable(['close'])
+            }
+            if (op.receipt.kind !== 'remove' && !op.proof) {
+                await setPhase('target_starting')
+                const proof = await custody.use(op.receipt, op.candidate, async apiKey => {
+                    const value = await client.probe({ address: op.candidate.address, apiKey,
+                        expectedIdentity: ['select', 'health'].includes(op.receipt.kind) ? op.candidate.identity : null,
+                        tlsPin: ['select', 'health'].includes(op.receipt.kind) ? op.candidate.tlsPin : null }, check, signal)
+                    await check()
+                    return { ...value, sealedKey: await custody.seal(op.receipt, { ...op.candidate, ...value }, apiKey) }
+                })
+                await check()
+                const { sealedKey, ...publicProof } = proof
+                op = await edit(requestId, current => { current.proof = publicProof; current.target = proof.identity; Object.assign(current.candidate, publicProof, { sealedKey }); current.receipt.phase = 'identity_verified' })
+            }
+            if (transition) {
                 await effect(requestId, 'freeze', signal, recovering); await setPhase('admissions_frozen')
                 if ((await effect(requestId, 'flush', signal, recovering)).saved !== true) throw refusal('unavailable', 'Open drafts were not saved.')
                 await setPhase('drafts_flushed'); await check()
@@ -131,8 +141,6 @@ export function createRemoteMachineCoordinator({ store, custody, client, ports }
                 const published = await effect(requestId, 'publish', signal, recovering)
                 if (published.lifetimeId !== verified.lifetimeId) throw refusal('uncertain', 'The active runtime publication was not confirmed.')
             } else if (op.receipt.kind === 'remove') {
-                if (typeof ports.assertAvailable !== 'function') throw missing('W1-R-PREFLIGHT')
-                ports.assertAvailable(['close'])
                 op = await edit(requestId, current => { current.receipt.closeAttempted = true; current.receipt.phase = 'old_runtime_closing' })
                 if ((await effect(requestId, 'close', signal, recovering)).closed !== true) throw refusal('uncertain', 'This saved server connection has not confirmed closure.')
             }

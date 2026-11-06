@@ -8,9 +8,12 @@ import {
     type DesktopCoworkerSnapshotManifest,
     desktopCoworkerImportPlanSchema,
     desktopCoworkerShareSourceSchema,
+    scanPathForSecrets,
 } from '@rerun/contracts'
 import { sealPortableManifest, writePortableArchive, type PortablePackageMemberBytes } from '../templates/portable-package.js'
 import { sha256 } from '../templates/hash.js'
+import { scrubConfig } from '../templates/inspect.js'
+export type { DesktopCoworkerShareSource } from '@rerun/contracts'
 
 export type DesktopCoworkerSnapshot = {
     manifest: DesktopCoworkerSnapshotManifest
@@ -19,25 +22,12 @@ export type DesktopCoworkerSnapshot = {
     archiveSha256: string
 }
 
-const CONFIG_REDACTIONS = new Set(['connectionId', 'provider', 'model', 'desktopToolGrants', 'desktopCodexGrants', 'mcpServers', 'services', 'grants', 'history', 'schedules', 'triggers'])
-
-function sanitizedConfig(value: unknown, stripped: string[], path = 'config'): unknown {
-    if (Array.isArray(value)) return value.map(item => sanitizedConfig(item, stripped, path))
-    if (!value || typeof value !== 'object') return value
-    const result: Record<string, unknown> = {}
-    for (const [key, child] of Object.entries(value)) {
-        if (CONFIG_REDACTIONS.has(key)) { stripped.push(`${path}.${key}`); continue }
-        result[key] = sanitizedConfig(child, stripped, `${path}.${key}`)
-    }
-    return result
-}
-
 function includeMember(path: string, ownership: string, include: DesktopCoworkerShareInclude): boolean {
-    if (path === '.env' || path === 'data/system.db' || path.startsWith('schedules/') || path.startsWith('triggers/') || ownership !== 'user') return false
-    if (path.startsWith('memory/')) return include.memories
+    if (ownership !== 'user' || scanPathForSecrets(path).length || path.split('/').some(part => part === '.rerun' || part === '.git' || part === 'node_modules')) return false
+    if (path.startsWith('memory/')) return include.memories && /\.(?:md|txt|json)$/.test(path)
     if (path === 'data/agent.db') return include.database
     if (path.startsWith('workspace/')) return include.files
-    return true
+    return ['SOUL.md','INSTALL.md','config.json'].includes(path) || /^skills\/[^/]+\/.+/.test(path)
 }
 
 function exclusionReason(path: string, ownership: string): 'credentials' | 'history' | 'memory' | 'database' | 'connector-skill' | 'service-registry' | 'native-grant' | 'routine' | 'webhook' | 'system-skill' {
@@ -56,14 +46,18 @@ export async function createDesktopCoworkerSnapshot(source: DesktopCoworkerShare
     const members: PortablePackageMemberBytes[] = []
     const exclusions: { path: string; reason: ReturnType<typeof exclusionReason> }[] = []
     const strippedConfigKeys: string[] = []
-    for (const member of [...parsed.members].sort((a, b) => a.path.localeCompare(b.path)) {
+    for (const member of [...parsed.members].sort((a, b) => a.path.localeCompare(b.path))) {
         if (!includeMember(member.path, member.ownership, include)) {
             exclusions.push({ path: member.path, reason: exclusionReason(member.path, member.ownership) })
             continue
         }
-        const bytes = member.path === 'config.json'
-            ? Buffer.from(`${JSON.stringify(sanitizedConfig(JSON.parse(member.bytes.toString('utf8')), strippedConfigKeys), null, 2)}\n`, 'utf8')
-            : Buffer.from(member.bytes)
+        let bytes = Buffer.from(member.bytes)
+        if (member.path === 'config.json') {
+            const cleaned = scrubConfig(JSON.parse(bytes.toString('utf8')),parsed.name)
+            if ('error' in cleaned) throw new Error('The coworker configuration cannot be safely shared.')
+            strippedConfigKeys.push(...cleaned.stripped)
+            bytes = Buffer.from(`${JSON.stringify({ ...JSON.parse(cleaned.text),enabled: false },null,2)}\n`)
+        }
         members.push({ agentKey: 'c01', path: member.path, bytes, digest: sha256(bytes) })
     }
     const requirements = [
@@ -104,7 +98,7 @@ export async function createDesktopCoworkerSnapshot(source: DesktopCoworkerShare
         excludedCategories: [
             'credentials', 'history', 'memory', 'database', 'connector-skill', 'system-skill', 'service-registry', 'native-grant', 'tool-permissions',
             'active-schedule', 'active-trigger', 'browser-profile', 'private-memory', 'paid-data', 'cached-pages', 'chat-transcript', 'tool-arguments', 'telemetry', 'marketplace', 'hosted-publish',
-        ] as const,
+        ] as DesktopCoworkerSnapshotManifest['excludedCategories'],
     }
     const manifest = sealPortableManifest(body)
     const archive = await writePortableArchive({ title: parsed.name, packageKey: manifest.packageKey, manifest, members, startedAt: Date.now() })

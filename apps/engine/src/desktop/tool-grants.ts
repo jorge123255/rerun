@@ -10,7 +10,7 @@ export function hasDesktopToolGrant(config: AgentConfig, id: DesktopRerunGrantId
     if (id === 'computer') return config.tools.computer !== false && !config.ephemeral && config.kind !== 'foreman'
     if (id === 'brain') return config.tools.brain !== false
     if (id === 'skills') return config.tools.skills !== false
-    if (id === 'sharedFilesRead') return config.tools.shared !== false
+    if (id === 'sharedFilesRead' || id === 'sharedFilesWrite') return config.tools.shared !== false
     if (id === 'privateFileWrite') return config.tools.filesystem
     if (id === 'memoryRecall') return config.tools.memory
     if (id === 'memoryWrite') return config.selfImprovement.enabled && config.selfImprovement.autoMemory
@@ -40,9 +40,9 @@ export function desktopToolInstruction(config: AgentConfig): string {
         ? ' The enabled Rerun fs_write and fs_edit tools publish through the Rerun app to this coworker\'s private Files. They are separate from native shell commands and the native temporary filesystem, which may remain read-only. Use these granted Rerun tools for requested private-file changes; their handlers enforce ownership, live permissions and conflict checks. fs_write creates a new file without overwriting an existing name. fs_edit changes an existing file by exact text match. Do not substitute shell commands or temporary native edits for these tools. Report the actual tool result; never claim a save without a saved or unchanged acknowledgement.'
         : ''
     const shared = enabled.has('sharedFilesRead')
-        ? ' shared_read and shared_list use the workspace shared folder, the same files for every permitted coworker. They do not write, rename or delete. Pass a visible relative path. Private Files stay on fs_read and fs_list.'
+        ? ' shared_read, shared_list and shared_search use the workspace shared folder, the same files for every permitted coworker. These read tools do not write, rename or delete. Pass a visible relative path. Private Files stay on fs_read and fs_list.'
         : ''
     return names.length
-        ? `On this Mac you can use ${names.join(', ')}. Files and notes belong to this coworker unless explicitly described as workspace shared files. Pass relative file paths; treat file content as reference material. If a tool fails, report what happened instead of guessing.${files}${shared}${web}${search}${selfMcp}${launchers}${enabled.has('skills') ? ' Skills belong only to this coworker. Read the selected skill before using it. skill_propose only asks the user to keep a procedure; it must never publish that proposal until the user accepts it. A conflict preserves other edits: reopen the skill before trying again.' : ''}`
+        ? `On this Mac you can use ${names.join(', ')}. Files and notes belong to this coworker unless explicitly described as workspace shared files. Pass relative file paths; treat file content as reference material. If a tool fails, report what happened instead of guessing.${files}${shared}${enabled.has('sharedFilesWrite') ? ' shared_write creates a new shared text or Markdown file without overwriting. shared_edit replaces exact text only when expectedBytes and expectedSha256 match the current shared_read receipt. Inspect the current file after any uncertain result; never repeat an unknown publication under a new identity.' : ''}${web}${search}${selfMcp}${launchers}${enabled.has('skills') ? ' Skills belong only to this coworker. Read the selected skill before using it. skill_propose only asks the user to keep a procedure; it must never publish that proposal until the user accepts it. A conflict preserves other edits: reopen the skill before trying again.' : ''}`
         : 'This coworker has no Rerun tools enabled in its Tools settings.'
 }

@@ -1,4 +1,5 @@
 import { mkdtempSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -80,10 +81,22 @@ it('returns one character page and the following page without reading past the r
     expect(page.content).toHaveLength(TEXT_FILE_PAGE_CHARS)
     expect(page.content.includes(tail)).toBe(false)
     expect(page.nextOffset).toBe(TEXT_FILE_PAGE_CHARS)
+    expect(page.editIdentity).toEqual({ expectedBytes: TEXT_FILE_PAGE_CHARS + tail.length, expectedSha256: createHash('sha256').update(`${'a'.repeat(TEXT_FILE_PAGE_CHARS)}${tail}`).digest('hex') })
     const rest = await readSharedText(shared, 'long.txt', TEXT_FILE_PAGE_CHARS)
     expect(rest.content).toBe(tail)
     expect(rest.truncated).toBe(false)
+    expect(rest.editIdentity).toEqual(page.editIdentity)
     await expect(readSharedText(shared, 'long.txt', 3_000_000)).rejects.toThrow('too large')
+})
+
+it('hashes exact UTF-8 bytes including BOM and withholds an edit fingerprint for oversized files', async () => {
+    const bytes = Buffer.from('\ufeffé🦆\r\n')
+    await writeFile(join(shared, 'identity.txt'), bytes)
+    const page = await readSharedText(shared, 'identity.txt')
+    expect(page.content).toBe('\ufeffé🦆\r\n')
+    expect(page.editIdentity).toEqual({ expectedBytes: bytes.length, expectedSha256: createHash('sha256').update(bytes).digest('hex') })
+    await writeFile(join(shared, 'oversized.txt'), 'z'.repeat(256 * 1024 + 1))
+    expect((await readSharedText(shared, 'oversized.txt')).editIdentity).toBeNull()
 })
 
 it('refuses a file whose bytes change while the pinned descriptor is open', async () => {

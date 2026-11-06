@@ -48,11 +48,13 @@ export type DesktopRemoteReceipt = z.infer<typeof desktopRemoteReceiptSchema>
 export const desktopRemoteSnapshotSchema = z.strictObject({
     version: z.literal(1), actor: desktopRemoteActorSchema, revision: z.uuid().or(z.literal('unconfigured')),
     connection: desktopRemoteConnectionSchema.nullable(), selected: z.boolean(),
-    runtimeState: z.enum(['connected', 'not_connected', 'unknown']), activeReceipt: desktopRemoteReceiptSchema.nullable(),
+    runtimeState: z.enum(['connected', 'not_connected', 'unknown']),
+    localRuntime: z.strictObject({ state: z.enum(['connected', 'not_connected', 'unknown']), workspaceId: desktopWorkspaceIdSchema }).optional(),
+    activeReceipt: desktopRemoteReceiptSchema.nullable(),
     openReceipt: desktopRemoteReceiptSchema.nullable(),
 }).refine(s => s.selected ? !!s.connection && !!s.activeReceipt
     && s.activeReceipt.connectionId === s.connection.connectionId && s.activeReceipt.configurationRevision === s.connection.revision
-    : s.activeReceipt === null)
+    : s.activeReceipt === null).refine(s => !s.localRuntime || s.localRuntime.workspaceId === s.actor.workspaceId)
 export type DesktopRemoteSnapshot = z.infer<typeof desktopRemoteSnapshotSchema>
 const command = z.strictObject({ actor: desktopRemoteActorSchema, requestId: z.uuid() })
 const exact = { connectionId: z.uuid(), expectedRevision: z.uuid() }

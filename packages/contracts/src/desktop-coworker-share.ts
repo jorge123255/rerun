@@ -49,6 +49,8 @@ export type DesktopCoworkerShareReviewResult = z.infer<typeof desktopCoworkerSha
 
 export const desktopCoworkerSharePlanSchema = z.strictObject({
     agentName: z.string().min(1).max(200),
+    sourceRevision: desktopTemplateRevisionSchema.optional(),
+    unavailable: z.strictObject({ memories: z.string().min(1).max(400).optional(), database: z.string().min(1).max(400).optional(), files: z.string().min(1).max(400).optional() }).optional(),
     warnings: z.array(z.string().min(1).max(400)).max(30),
     envKeyCount: z.number().int().nonnegative().max(100),
     mcpAuthCount: z.number().int().nonnegative().max(50),

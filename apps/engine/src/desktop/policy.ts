@@ -19,6 +19,9 @@ export function assertDesktopProvider(provider: string, id?: string): void {
 }
 
 export function desktopRouteAllowed(method: string, path: string): boolean {
+    if (path === '/desktop/external-mcp/keys') return method === 'GET' || method === 'POST'
+    if (path === '/desktop/external-mcp/listener') return method === 'GET'
+    if (/^\/desktop\/external-mcp\/(?:keys\/revoke|listener\/enable|listener\/disable|recheck)$/.test(path)) return method === 'POST'
     if (path === '/desktop/workspace-admission') return method === 'POST'
     if (/^\/desktop\/workspace-routines\/[A-Za-z0-9_-]+$/.test(path)) return method === 'GET' || method === 'POST'
     if (/^\/desktop\/brain\/semantic\/[A-Za-z0-9_-]+\/status$/.test(path)) return method === 'GET'

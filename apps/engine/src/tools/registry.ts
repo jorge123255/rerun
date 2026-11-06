@@ -53,6 +53,7 @@ import { desktopApp } from '../desktop/policy.js'
 import { desktopSkillTools } from '../desktop/skill-tools.js'
 import { desktopPrivateFileTools } from '../desktop/private-file-tools.js'
 import { desktopSharedFileTools } from '../desktop/shared-file-tools.js'
+import { desktopSharedMutationTools } from '../desktop/shared-file-mutations/tools.js'
 import { desktopMcpTools } from '../desktop/mcp-tools.js'
 import { desktopStdioTools } from '../desktop/mcp-stdio/client.js'
 import { desktopServiceTools } from '../desktop/service-tools.js'
@@ -74,7 +75,7 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         const child = await desktopDelegationChildTools(ctx)
         if (child) return child
         const screen = isolatedScreenTools(ctx, { publishExports: desktopBrowserExportPublisher })
-        const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopSuggestServiceTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx), ...desktopBrainSemanticTools(ctx) }
+        const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopSharedMutationTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopSuggestServiceTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx), ...desktopBrainSemanticTools(ctx) }
         Object.assign(tools, readDesktopDelegation()?.tools(ctx) ?? {})
         Object.assign(tools, desktopSecretRequestTools(ctx))
         Object.assign(tools, desktopMcpSignInTools(ctx))

@@ -9,6 +9,11 @@ export function createRemoteSupervisorPorts({ dataRoot, installId, supervisor, d
         return transitions[method].bind(transitions)
     }
     return {
+        localState(owner) {
+            const runtime = supervisor.runtime
+            return { workspaceId: owner.workspaceId, state: !runtime || runtime.remoteMachine ? 'not_connected'
+                : runtime.workspaceId !== owner.workspaceId ? 'unknown' : supervisor.status.state === 'ready' ? 'connected' : 'unknown' }
+        },
         connectionState(owner, connection) {
             const runtime = supervisor.runtime, binding = runtime?.remoteMachine
             if (!runtime || runtime.workspaceId !== owner.workspaceId) return 'not_connected'

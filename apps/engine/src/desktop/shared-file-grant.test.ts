@@ -26,7 +26,7 @@ describe('desktopSharedFilesAllowed', () => {
         const config = agentConfigSchema.parse({ name: 'reader', ...granted })
         expect(desktopRerunGrantsOf(config.tools)).toMatchObject({ sharedFilesRead: true, workspaceRead: false, sharedDb: false })
         expect(desktopSharedFilesAllowed(config)).toBe(true)
-        expect(desktopRerunToolCatalog.find(row => row.id === 'sharedFilesRead')).toMatchObject({ available: true, tools: ['shared_read', 'shared_list'] })
+        expect(desktopRerunToolCatalog.find(row => row.id === 'sharedFilesRead')).toMatchObject({ available: true, tools: ['shared_read', 'shared_list', 'shared_search'] })
         const instruction = desktopToolInstruction(config)
         expect(instruction).toContain('shared_read')
         expect(instruction).toContain('workspace shared folder')

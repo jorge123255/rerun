@@ -2,12 +2,16 @@ import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, 
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { createWorkspaceCoordinator, seedLegacyCatalog, getWorkspace } from './workspaces/index.mjs'
-import { loadBundle, loadIdentity } from './runtime.mjs'
+import { loadBundle, loadIdentity, workspaceIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
 import { BeforeQuitDrafts, completeDesktopQuit } from './before-quit.mjs'
 import { createDesktopTemplateFiles } from './templates.mjs'
+import { createDesktopCoworkerShareFiles } from './coworker-share-files.mjs'
+import { createNativeRemoteMachines } from './remote-machines/binding.mjs'
+import { createRemoteMachineIpc } from './remote-machines/ipc.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createDesktopResultFileSave } from './result-files.mjs'
 
@@ -17,6 +21,10 @@ let window
 let supervisor
 let runtime
 let workspaces
+let remoteMachines
+let remoteInstallId
+let rendererEpoch = randomUUID()
+const remoteClosures = new Map()
 let activeSession
 let activeWorkspaceId
 let transitioning = false
@@ -32,6 +40,17 @@ const saveResultFile = createDesktopResultFileSave({ dialog, context: () => {
 const templateFiles = createDesktopTemplateFiles({ dialog, context: () => {
     if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { runtime, window }
+} })
+const coworkerShareFiles = createDesktopCoworkerShareFiles({ dialog, context: () => {
+    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
+    return { runtime, window }
+} })
+const remoteMachineIpc = createRemoteMachineIpc({ trusted, context: () => {
+    const current = supervisor?.runtime
+    if (quitting || transitioning || !remoteMachines || !runtime || runtime !== current || supervisor.status.state !== 'ready'
+        || remoteClosures.has(current.workspaceId) || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
+    return { binding: remoteMachines, actor: { installId: remoteInstallId, workspaceId: current.workspaceId,
+        launchNonce: current.launchNonce, rendererEpoch } }
 } })
 let desktopNotifications = createNotices()
 function createNotices() { return createDesktopNotifications({ Notification, onClick: target => {
@@ -68,7 +87,7 @@ else {
                 const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
                 return result.response === 1
             },
-            stop: () => supervisor?.stop(),
+            stop: async () => { await remoteMachines?.close(); await supervisor?.stop() },
             quit: () => { quittingNow = true; app.quit() },
             cancelled: resumeAfterCancelledQuit,
         }).catch(() => { if (!quittingNow) resumeAfterCancelledQuit() })
@@ -118,6 +137,7 @@ async function launch() {
         if (['starting', 'stopping'].includes(supervisor.status.state)) return false
         const pending = (await workspaces.reconcile()).openReceipt
         if (pending) return runWorkspaceTransition(() => workspaces.recoverSwitch({ requestId: pending.requestId, workspaceId: pending.toWorkspaceId }))
+        await closeRemoteWorkspace(supervisor.runtime?.workspaceId)
         runtime = null
         await window.loadFile(startup)
         await supervisor.stop()
@@ -144,6 +164,9 @@ async function launch() {
         return runWorkspaceTransition(() => workspaces.recoverSwitch(input))
     })
     ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
+    ipcMain.handle('desktop:remote-machines-actor', event => remoteMachineIpc.actor(event))
+    ipcMain.handle('desktop:remote-machines-execute', (event, command) => remoteMachineIpc.execute(event, command))
+    ipcMain.handle('desktop:coworker-share-pick', event => { trusted(event); return coworkerShareFiles.pickImport() })
     ipcMain.handle('desktop:template-pick', event => { trusted(event); return templateFiles.pickImport() })
     ipcMain.handle('desktop:template-save', (event, value) => { trusted(event); return templateFiles.saveArtifact(value) })
     ipcMain.handle('desktop:result-save', (event, value) => { trusted(event); return saveResultFile(value) })
@@ -166,6 +189,24 @@ async function launch() {
     const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
     const bundle = await loadBundle(resources)
     supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity })
+    remoteInstallId = identity.installId
+    remoteMachines = createNativeRemoteMachines({ dataRoot, installId: identity.installId, safeStorage,
+        workspaceKey: workspaceId => workspaceIdentity(identity, workspaceId).encryptionKey,
+        supervisor, draftQuit,
+        currentRenderer: () => {
+            const current = supervisor.runtime
+            if (quitting || transitioning || !runtime || current !== runtime || supervisor.status.state !== 'ready'
+                || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
+            return { epoch: rendererEpoch, workspaceId: current.workspaceId, launchNonce: current.launchNonce }
+        },
+        sendDraftFlush: value => {
+            if (!window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) throw new Error('The workspace window is unavailable')
+            window.webContents.send('desktop:before-quit', value)
+        },
+        // The canonical local workspace supervisor is connected here. Remote activation
+        // needs an owned loopback gateway and durable lifecycle receipts; neither is
+        // replaced by a health response. Missing transitions fail before any effect.
+    })
     supervisor.on('status', status => {
         if (!window?.isDestroyed()) window.webContents.send('desktop:status', status)
         if (status.state === 'error') { runtime = null; void window.loadFile(startup) }
@@ -184,7 +225,7 @@ async function launch() {
             return { saved: await draftQuit.request(value => window.webContents.send('desktop:before-quit', value)) }
         },
         prepareRecovery: () => supervisor.prepareWorkspaceRecovery(),
-        stopAndDrain: () => supervisor.stop(),
+        stopAndDrain: async () => { await closeRemoteWorkspace(supervisor.runtime?.workspaceId); await supervisor.stop() },
         bindAndStart: async workspaceId => {
             const { workspace } = await getWorkspace(dataRoot, identity.installId, workspaceId)
             if (!workspace) throw new Error('Workspace no longer exists')
@@ -193,6 +234,16 @@ async function launch() {
         verifyRuntimeIdentity: async workspaceId => supervisor.status.state === 'ready' && supervisor.runtime?.workspaceId === workspaceId,
     } })
     await startWorkspace()
+}
+
+function closeRemoteWorkspace(workspaceId) {
+    if (!remoteMachines || !workspaceId) return Promise.resolve()
+    if (remoteClosures.has(workspaceId)) return remoteClosures.get(workspaceId)
+    const work = remoteMachines.closeWorkspace(workspaceId)
+    remoteClosures.set(workspaceId, work)
+    // Always observe the cleanup task; awaited switch/quit paths still receive failure.
+    void work.finally(() => { if (remoteClosures.get(workspaceId) === work) remoteClosures.delete(workspaceId) }).catch(() => {})
+    return work
 }
 
 async function prepareWorkspaceWindow(workspaceId, load = true) {
@@ -219,11 +270,21 @@ async function prepareWorkspaceWindow(workspaceId, load = true) {
         if (quitting && !quittingNow) { event.preventDefault(); return }
         if (!quittingNow && process.platform === 'darwin') { event.preventDefault(); window.hide() }
     })
-    window.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-        if (isMainFrame && !isInPlace) draftQuit.reset()
+    const contents = window.webContents
+    rendererEpoch = randomUUID()
+    const invalidateRenderer = () => {
+        if (window?.webContents !== contents) return
+        rendererEpoch = randomUUID()
+        draftQuit.reset()
+        // Revoke the lease immediately, then drain only this workspace's remote work.
+        // A failed drain cannot turn an old receipt into a successful connection.
+        void closeRemoteWorkspace(activeWorkspaceId).catch(() => {})
+    }
+    contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) invalidateRenderer()
     })
-    window.webContents.on('render-process-gone', () => draftQuit.reset())
-    window.webContents.on('destroyed', () => draftQuit.reset())
+    contents.on('render-process-gone', invalidateRenderer)
+    contents.on('destroyed', invalidateRenderer)
     window.webContents.on('will-attach-webview', event => event.preventDefault())
     window.webContents.on('will-navigate', (event, target) => {
         let url

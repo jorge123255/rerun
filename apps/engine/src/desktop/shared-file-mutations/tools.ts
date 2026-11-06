@@ -47,9 +47,9 @@ async function gate(signal: AbortSignal): Promise<SharedWorkspaceGate> {
 }
 
 function formatSearch(result: { hits: { path: string; line: number; text: string }[]; truncated: boolean; omitted: { path: string; reason: string }[] }): string {
-    if (result.hits.length === 0 && result.omitted.length === 0) return 'No matches.'
+    if (result.hits.length === 0 && result.omitted.length === 0 && !result.truncated) return 'No matches.'
     const lines = result.hits.map(hit => `${hit.path}:${hit.line}: ${hit.text}`)
-    if (result.truncated) lines.push(`(truncated at ${result.hits.length} results)`)
+    if (result.truncated) lines.push(`(search incomplete: search bounds reached; ${result.hits.length} matches shown)`)
     for (const skip of result.omitted) lines.push(`(omitted ${skip.reason}: ${skip.path})`)
     return lines.join('\n')
 }

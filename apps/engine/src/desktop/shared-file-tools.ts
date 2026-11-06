@@ -10,7 +10,7 @@ import { listSharedDirectory, readSharedText, resolveEngineSharedDirectory, Shar
 
 // Desktop shared_read and shared_list. The root is the engine data shared directory.
 // Arguments cannot name a root, a host path, an engine id, or a private/shared selector.
-// shared_write, shared_edit, and shared_search are not registered.
+// The mutation tools are registered separately against their write authority.
 
 const TURNED_OFF = 'This tool is turned off for this coworker.'
 
@@ -73,7 +73,10 @@ export function desktopSharedFileTools(ctx: RunContext): ToolSet {
                     signal,
                     beforeCommit: () => requireShared(ctx, signal),
                 })
-                return pageText(page.path, page.content, page.offset, page.nextOffset)
+                const receipt = page.editIdentity
+                    ? { path: page.path, ...page.editIdentity }
+                    : { path: page.path, bytes: page.size, editIdentity: null, reason: 'This file exceeds the shared_edit size limit. No full-file edit fingerprint is supplied.' }
+                return `[Shared file receipt: ${JSON.stringify(receipt)}]\n\n${pageText(page.path, page.content, page.offset, page.nextOffset)}`
             }),
         }),
         shared_list: tool({

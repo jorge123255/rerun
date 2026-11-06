@@ -117,3 +117,18 @@ test('an inactive connection close with a lost ACK still blocks competing change
     assert.equal(recovered.ok, true); assert.equal(f.calls.filter(c => c.name === 'close').length, 1)
     assert.equal(f.state().connection, null)
 })
+
+test('missing remote activation authority refuses before any selection proof or local runtime effect', async () => {
+    const f = fixture(); await f.coordinator.execute(f.pair)
+    const original = f.state().connection.revision
+    f.ports.assertAvailable = () => { throw Object.assign(new Error('No owned remote gateway'), { code: 'authority_missing', authority: 'W1-R-BINDREMOTE' }) }
+    const result = await f.coordinator.execute(select(f))
+    assert.equal(result.ok, false)
+    assert.equal(result.code, 'authority_missing')
+    assert.equal(result.receipt.closeAttempted, false)
+    assert.equal(result.receipt.requiresRecovery, false)
+    assert.equal(f.probes.length, 1)
+    assert.equal(f.calls.length, 0)
+    assert.equal(f.state().selected, false)
+    assert.equal(f.state().connection.revision, original)
+})

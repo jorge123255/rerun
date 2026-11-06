@@ -28,21 +28,30 @@ export function externalMcpDbFile(): string {
 
 let client: Client | null = null
 let service: ReturnType<typeof createExternalMcpService> | null = null
+let initializing: Promise<void> | null = null
 
 export async function initializeDesktopExternalMcp(): Promise<void> {
     if (!desktopApp()) return
-    const file = externalMcpDbFile()
-    await mkdir(dirname(file), { mode: 0o700 })
-    const pin = await prepareDesktopDataFile(dataDir(), file)
-    client ??= createClient({ url: pathToFileURL(file).href })
-    await verifyDesktopDataFile(pin)
-    service = createExternalMcpService({
-        db: () => database(client!),
-        authority: { read: () => readExternalMcpRuntimeAuthority().read() },
-        dispatch: readExternalMcpDispatch,
-        engineKey: () => env().RERUN_API_KEY,
-    })
-    await service.initialize()
+    if (service) return
+    if (initializing) return initializing
+    const work = (async () => {
+        const file = externalMcpDbFile()
+        await mkdir(dirname(file), { mode: 0o700, recursive: true })
+        const pin = await prepareDesktopDataFile(dataDir(), file)
+        client ??= createClient({ url: pathToFileURL(file).href })
+        await verifyDesktopDataFile(pin)
+        const next = createExternalMcpService({
+            db: () => database(client!),
+            authority: { read: () => readExternalMcpRuntimeAuthority().read() },
+            dispatch: readExternalMcpDispatch,
+            engineKey: () => env().RERUN_API_KEY,
+        })
+        await next.initialize()
+        service = next
+    })()
+    initializing = work
+    try { await work } catch (error) { client?.close(); client = null; throw error }
+    finally { if (initializing === work) initializing = null }
 }
 
 export function getExternalMcpService() {
@@ -51,8 +60,14 @@ export function getExternalMcpService() {
 }
 
 export async function closeDesktopExternalMcp(): Promise<void> {
-    await service?.close()
-    service = null
+    await initializing?.catch(() => {})
+    const currentService = service, currentClient = client
+    // Failed or timed-out drains retain the service and database for the same Stop retry.
+    // No live call may publish its durable outcome after this client is closed.
+    await currentService?.close()
+    if (service === currentService) service = null
+    currentClient?.close()
+    if (client === currentClient) client = null
 }
 
 export { bindExternalMcpRuntimeAuthority }

@@ -130,3 +130,7 @@ export * from './desktop-foreman-voice.js'
 export * from './desktop-foreman-docs.js'
 
 export * from './desktop-workspaces.js'
+export * from './desktop-shared-file-mutations.js'
+export * from './desktop-external-mcp.js'
+export * from './desktop-coworker-share.js'
+export * from './desktop-remote-machines.js'

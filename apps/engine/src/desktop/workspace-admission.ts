@@ -7,6 +7,8 @@ let frozen = process.env.RERUN_DESKTOP_ADMISSIONS_FROZEN === '1'
 let epoch = 0
 let lastSequence = 0
 let lastAction: 'freeze' | 'unfreeze' | undefined
+let changed: (() => Promise<void>) | undefined
+export function observeDesktopAdmissionChange(listener: () => Promise<void>) { changed = listener }
 export function assertDesktopRunAdmission(expectedEpoch?: number): number {
     if (process.env.RERUN_DESKTOP_APP !== '1') return 0
     if (frozen || expectedEpoch !== undefined && expectedEpoch !== epoch) throw new HttpError(409, 'This workspace is switching. Try again when it is ready.')
@@ -25,6 +27,7 @@ export function createDesktopWorkspaceAdmissionRouter(options: { readRuntime?: (
         if (input.sequence < lastSequence || input.sequence === lastSequence && input.action !== lastAction) throw new HttpError(409, 'Workspace admission request is stale')
         lastSequence = input.sequence; lastAction = input.action
         if (frozen !== (input.action === 'freeze')) { frozen = input.action === 'freeze'; ++epoch }
+        await changed?.()
         return c.json({ ok: true, frozen, launchNonce: input.launchNonce, workspaceId: input.workspaceId, sequence: input.sequence })
     })
     return router

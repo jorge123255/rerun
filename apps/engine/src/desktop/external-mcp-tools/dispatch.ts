@@ -10,6 +10,10 @@ function hasScope(principal: ExternalMcpPrincipal, scope: ExternalMcpScope) {
     return principal.scopes.includes(scope)
 }
 
+function available(tool: ExternalMcpToolRegistration, principal: ExternalMcpPrincipal) {
+    return hasScope(principal, tool.scope) && (tool.name !== 'create_agent' || hasScope(principal, 'runs:send'))
+}
+
 /** Full B ExternalMcpDispatchPort for reads and scoped effects. B owns effect receipts around this port. */
 export function createExternalMcpDispatch(binding: ExternalMcpInvokeBinding): ExternalMcpDispatchPort {
     if (binding.tools.some(tool => tool.effect ? tool.scope === 'mcp:read' : tool.scope !== 'mcp:read')) {
@@ -32,13 +36,14 @@ export function createExternalMcpDispatch(binding: ExternalMcpInvokeBinding): Ex
     return {
         async listTools(principal) {
             await check(principal, crypto.randomUUID(), AbortSignal.timeout(15_000))
-            return structuredClone(tools.filter(tool => hasScope(principal, tool.scope)))
+            return structuredClone(tools.filter(tool => available(tool, principal)))
         },
         async callTool(raw, signal) {
             const context = externalMcpCallContextSchema.parse(raw)
             const linked = AbortSignal.any([signal, AbortSignal.timeout(600_000)])
             const tool = byName.get(context.tool)
             if (!tool) throw new Error('Unsupported external tool.')
+            if (!available(tool, context.principal)) throw new Error('Missing scope for this external tool.')
             await check(context.principal, context.requestId, linked, tool.scope)
             const result = await binding.invoke(context, linked)
             await check(context.principal, context.requestId, linked, tool.scope)

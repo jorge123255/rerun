@@ -7,7 +7,7 @@ const components = [
     'mcp-callback', 'skill-proposals', 'screen-viewer', 'isolated-screens',
     'semantic-memory', 'schedule-tools', 'tool-install', 'foreman',
     'computer-panel', 'guest-shell', 'claude-workers', 'run-abort-initial',
-    'scheduler-preparation', 'run-abort-final', 'mcp-pool', 'native-workers',
+    'scheduler-preparation', 'run-abort-final', 'mcp-pool', 'native-workers', 'external-mcp',
 ] as const
 type Component = typeof components[number]
 type ComponentStatus = 'not-started' | 'pending' | 'fulfilled' | 'rejected'
