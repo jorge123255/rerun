@@ -125,3 +125,9 @@ No critical blocker found that prevents RD38 A. Memories remain correctly fail-c
 - RD39/40/41 cloud audits reconciled into `docs/desktop-round42-*.md`. Implementation of unrepaired candidates is **not** claimed complete. C–I still RESERVED.
 - Same-box Duplicate currently inherits config grants; portable import forces grants off. User t18u no-inherited-grants on copies/imports recorded as root discrepancy (not overridden by audit product-decision label).
 
+## RD39 E3/C3 source repairs (master)
+
+- E3 paste: `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0` — `docs/desktop-round39-paste-handoff.md` (SOURCE-REPAIRED; ROOT-UNVERIFIED guest).
+- C3 document add: `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb` — `docs/desktop-round39-document-attachments-handoff.md` (SOURCE-REPAIRED hook; INTEGRATION-PENDING conversation >14/await).
+- C7: do not remove native notification channel.
+

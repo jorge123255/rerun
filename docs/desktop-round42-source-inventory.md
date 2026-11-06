@@ -1,7 +1,7 @@
 # RD42 source inventory (preparation — not complete)
 
 **Status:** independent RD42 preparation checkpoint only. Does **not** claim release-candidate completion, Mac acceptance, or that RD39–41 / C–I are done.  
-**Worktree tip at inventory authorship:** `73b6855e6d227011fcd6198ce3ee71f1d640a94c` on `desktop/round38-master-completion` (W4 grant-guard impl; docs tip follows)  
+**Worktree tip at inventory authorship:** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb` on `desktop/round38-master-completion` (RD39 E3+C3 source repairs; docs tip may follow)  
 **Prepared base:** `6f6ad959a09abaf1947950b6f82413c94407e22a` (`desktop/rd38-cloud-base`)  
 **Original comparison pin:** `2a57fa6dd53311f763bfc9abde85997b7f7e5309` (historical `a6d63a4b542674ddd002e51b39ba0df6e0807bcc` secondary)  
 **Seam:** A/B/E `abe-1` in `docs/desktop-round38-a-transfer-seam.md`  
@@ -20,6 +20,9 @@
 | 6 | `3ecdd20c1889df01109c73864a325c9fe5ea1d2c` | RD42 RC preparation docs |
 | 7 | `92dc02509cd9a3069bb588b39da6f3e6f6184bba` | RD39 frozen-base reconcile into RD42 |
 | 8 | `73b6855e6d227011fcd6198ce3ee71f1d640a94c` | **RD40 W4** external `update_agent` grant-guard (narrow adapter deny) |
+| 9 | `ddbcd349017f42665d0760f58721cc23e40940e9` | RD40 W4 handoff + RD40/RD41 → RD42 docs |
+| 10 | `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0` | **RD39 E3** non-Latin guest paste Unicode keysym path |
+| 11 | `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb` | **RD39 C3** per-file document attach outcomes |
 
 ## Delivered on this branch (source only)
 
@@ -69,7 +72,7 @@ export * from './desktop-coworker-share-database.js'
 | RD38 **G** named API-connection UI | PENDING — seven-agent isolated tree (depends F) |
 | RD38 **H** packaging/startup readiness source | PENDING — seven-agent isolated tree |
 | RD38 **I** remote gateway transitions source | PENDING — seven-agent isolated tree |
-| **RD39** local journey audits/fixes | **audit reconciled** — 4 confirmed defects **unrepaired** (root/owners); not complete |
+| **RD39** local journey audits/fixes | **E3 paste + C3 document add SOURCE-REPAIRED**; D2 >14 + D4 C7 receipt **INTEGRATION/ROOT pending**; not complete / not accepted |
 | **RD40** providers/recall/Foreman/W4 | **W4 grant-bypass source repaired** at `73b6855e…` (not accepted/not tested); candidates 2–5 **unrepaired**; not complete |
 | **RD41** whole-product design/state audit | **audit reconciled** — 3 confirmed defects + Duplicate-grants discrepancy **unrepaired** (root); not complete |
 | **RD42** RC repair + root acceptance | **this doc is preparation only** — not finished |
@@ -104,8 +107,9 @@ Static review of A/B modules, contracts, and handoffs found **no** product `Conn
 
 ### Defects confirmed on current master (surgical recommendations — root/owners apply)
 
-#### RD39-D1 · E3 non-Latin Paste (confirmed)
+#### RD39-D1 · E3 non-Latin Paste (**SOURCE-REPAIRED** at `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0`)
 
+- **Handoff:** `docs/desktop-round39-paste-handoff.md` · **INTEGRATION-PENDING / ROOT-UNVERIFIED** (guest native). Extended clipboard still disabled.
 - **Local symbols:** `apps/ui/components/desktop/DesktopViewer.tsx` `paste` (uses `clipboardPasteFrom` + Ctrl+V); `type` + `keysymOf` already map >U+00FF; `apps/engine/src/desktop/isolated-screen/rfb-input.ts` strips extended clipboard encoding.
 - **Original:** pin `DesktopViewer.tsx` clipboardPasteFrom; Unicode keysym path is the intended non-Latin adaptation while extended clipboard stays disabled.
 - **Trigger / consequence:** Paste of code points >U+00FF while driving isolated screen → legacy ClientCutText keeps low 8 bits → wrong characters.
@@ -122,8 +126,9 @@ Static review of A/B modules, contracts, and handoffs found **no** product `Conn
 - **Owner:** C3 / root central conversation.
 - **Unrun regression proposal:** 10 txt+4 png all attach; +1 txt names overflow; 15 txt keeps first 10; quit mid-batch preserves flushed draft only.
 
-#### RD39-D3 · C3 document group all-or-nothing + batch ignore (confirmed)
+#### RD39-D3 · C3 document group all-or-nothing + batch ignore (**SOURCE-REPAIRED** hook at `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb`; conversation **INTEGRATION-PENDING**)
 
+- **Handoff:** `docs/desktop-round39-document-attachments-handoff.md` · root must await `documents.add` + remove >14 early return (D2).
 - **Local:** `useDesktopDocumentAttachments.add` returns `[]` if **any** file empty/>16MB with “Nothing was attached.”; `beginUpload` document branch does not await `documents.add`; batch success compares only text/image `failureVersion`.
 - **Trigger / consequence:** One bad PDF drops valid sibling PDFs; batch can look successful after partial attach; ordering vs later image group races.
 - **Surgical repair:** Per-file accept/reject from document start; await and fold into batch success; do not reject valid neighbor. No second uploader.
@@ -146,7 +151,7 @@ C3 draft/queue/image cap 4 / text 10; C4 voice/mentions; C6 sealed follow-up; E3
 
 ### Pending outside this reconcile
 
-C–I seven-agent packages still PENDING. Applying RD39 D1–D4, RD40 candidates 2–5, and RD41 D1–D3 / Duplicate-grants discrepancy remains root/owner work. W4 grant-guard is source-repaired only.
+C–I seven-agent packages still PENDING. RD39 D1+D3 source-repaired (paste + document add); D2 >14 + D4 C7 still root/owner. RD40 W4 source-repaired; candidates 2–5 open. RD41 D1–D3 + Duplicate-grants discrepancy open. C7: keep native channel.
 
 
 ## RD40 frozen-base audit reconciliation (source review + one narrow repair)

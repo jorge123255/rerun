@@ -2,7 +2,7 @@
 
 **Purpose:** checklist for root’s integrated release-candidate / Mac acceptance work.  
 **This agent did not create fixtures, run the app, grant permissions, or mark results.**  
-**Tip referenced:** `73b6855e6d227011fcd6198ce3ee71f1d640a94c` (W4 grant-guard source) · base `6f6ad959a09abaf1947950b6f82413c94407e22a` · original pin `2a57fa6dd53311f763bfc9abde85997b7f7e5309`
+**Tip referenced:** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb` (RD39 E3+C3 + prior W4) · base `6f6ad959a09abaf1947950b6f82413c94407e22a` · original pin `2a57fa6dd53311f763bfc9abde85997b7f7e5309`
 
 Result cells stay blank until root fills them. Distinguish: source present ≠ root accepted ≠ configured service live.
 
@@ -61,9 +61,9 @@ Audit base `6f6ad959a09abaf1947950b6f82413c94407e22a`; symbols re-confirmed on m
 
 | ID | Journey | Expected user outcome after repair | Disposable fixture (define only) | Temp perms/config | Failure evidence | Cleanup | Preserve | Root result |
 |---|---|---|---|---|---|---|---|---|
-| R1 | E3 Paste | Non-Latin paste matches typed characters; Latin-1 still clipboard+Ctrl+V; extended clipboard not negotiated | Guest browser field + terminal; strings `café`, `こんにちは`, `Hello` | Docker/guest image; computer grant on disposable coworker | Wrong glyphs / disconnect from extended clipboard | Stop guest; revoke grant | Host clipboard; sibling screens | |
+| R1 | E3 Paste | Non-Latin paste matches typed characters; Latin-1 still clipboard+Ctrl+V; extended clipboard not negotiated | Guest browser field + terminal; strings `café`, `こんにちは`, `Hello`, astral | Docker/guest image; computer grant on disposable coworker | Wrong glyphs / disconnect from extended clipboard | Stop guest; revoke grant | Host clipboard; sibling screens | SOURCE-REPAIRED `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0` — ROOT-UNVERIFIED |
 | R2 | C3 >14 | Files that fit attach; overflow named; order kept | 10 txt + 4 png; +1 txt; 15 txt; mix+PDF | Local desktop app | Empty attach set despite legal files | Delete disposable Files rows | Other drafts | |
-| R3 | C3 docs | Valid PDF kept when neighbor empty/oversize; batch status includes document outcome | `note.md`, `ok.pdf`, `empty.pdf`, `photo.png` | n/a | “Nothing was attached” after text/image committed; missing ok.pdf | Delete doc rows | Tab-scoped only | |
+| R3 | C3 docs | Valid PDF kept when neighbor empty/oversize; batch status includes document outcome | `note.md`, `ok.pdf`, `empty.pdf`, `photo.png` | n/a | “Nothing was attached” after text/image committed; missing ok.pdf | Delete doc rows | Tab-scoped only | Hook SOURCE-REPAIRED `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb`; conversation INTEGRATION-PENDING |
 | R4 | C7 receipt | Native `failed`/`unknown` does **not** durable-mark `shown`; retry/cooldown can run; toast may still show; Open click still resolves | Disposable question event; force native fail/timeout if possible | In-app toasts on; **do not** request new OS permission | Seen row inserted despite failed native | Delete disposable coworker | Real inbox receipts | |
 
 **C7 note for root:** Prefer receipt-truthfulness with native channel retained (t18u). Do not remove `bridge.notify` solely to make toast-only receipts look consistent.

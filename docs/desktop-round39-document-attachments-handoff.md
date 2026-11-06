@@ -4,7 +4,7 @@
 **Branch:** `desktop/round38-master-completion`  
 **Frozen base:** `6f6ad959a09abaf1947950b6f82413c94407e22a`  
 **Original pin:** `2a57fa6` prompt-input keeps capacity-fitting files and names overflow (`apps/ui/components/ai-elements/prompt-input.tsx`); Mac document hook previously all-or-nothing on empty/oversized.  
-**Impl SHA:** `0f23d59dced2449c30ca0b4b8e4e9a1d409213c3`  
+**Impl SHA:** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb`  
 **Parent tip before this commit:** `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0`
 
 ## Change

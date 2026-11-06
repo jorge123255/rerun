@@ -4,6 +4,8 @@
 **Base:** `6f6ad959a09abaf1947950b6f82413c94407e22a`  
 **Original pin:** `2a57fa6dd53311f763bfc9abde85997b7f7e5309`  
 **W4 impl SHA:** `73b6855e6d227011fcd6198ce3ee71f1d640a94c`  
+**RD39 E3 paste SHA:** `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0`  
+**RD39 C3 documents SHA:** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb`  
 **Parent tip before W4 impl:** `92dc02509cd9a3069bb588b39da6f3e6f6184bba`  
 **Branch:** `desktop/round38-master-completion`  
 **No checks executed. No installed acceptance. No push/PR. Canonical checklist not mutated.**
@@ -16,6 +18,8 @@
 | `docs/desktop-round42-root-verification-matrix.md` | Local/A/B + RD39 R1–R4 + RD40 F + RD41 G |
 | `docs/desktop-round42-release-readiness.md` | Supported/unavailable + audit intake |
 | `docs/desktop-round40-w4-grant-guard-handoff.md` | Exact W4 impl SHA, paths, denied fields, unrun regressions, limits |
+| `docs/desktop-round39-paste-handoff.md` | E3 paste SOURCE-REPAIRED |
+| `docs/desktop-round39-document-attachments-handoff.md` | C3 document add SOURCE-REPAIRED + root fragments |
 | `docs/desktop-round42-handoff.md` | This file |
 
 ## Status snapshot
@@ -24,7 +28,7 @@
 |---|---|
 | RD38 A/B | Source delivered; product binding still `unavailable.*` |
 | RD38 C–I | **PENDING** seven-agent exclusive trees |
-| RD39 | Audit reconciled; **4 defects unrepaired** |
+| RD39 | E3+C3 doc-add **SOURCE-REPAIRED**; >14 + C7 **pending**; handoffs `desktop-round39-*-handoff.md` |
 | RD40 | Audit reconciled; **W4 source repaired** (`73b6855e…`); **4 candidates unrepaired**; not accepted/tested |
 | RD41 | Audit reconciled; **3 defects unrepaired** + Duplicate grants discrepancy vs t18u; no runtime edits |
 | RD42 | Preparation / inventory only — **not** RC complete |
@@ -33,10 +37,10 @@
 
 | ID | Action |
 |---|---|
-| D1 E3 Paste | Root/E3 — route non-Latin via `type()` |
-| D2 C3 >14 | Root/C3 — remove hard cap |
-| D3 C3 docs batch | Root/C3 — per-file + await batch |
-| D4 C7 receipt | **Keep native channel**; status from native result |
+| D1 E3 Paste | **SOURCE-REPAIRED** `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0` — root guest verify |
+| D2 C3 >14 | Root/C3 — remove hard cap (**INTEGRATION-PENDING**) |
+| D3 C3 docs batch | Hook **SOURCE-REPAIRED** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb`; root await + batch fold |
+| D4 C7 receipt | **Keep native channel**; status from native result (root) |
 
 ## RD40 outcome
 

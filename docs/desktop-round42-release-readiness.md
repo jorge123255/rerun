@@ -1,7 +1,7 @@
 # RD42 source-only release readiness notes (preparation)
 
 **Not a distribution, store, or notarization claim.** No version bump, signing, update-feed, or publication action is authorized here.  
-**Referenced tip:** `73b6855e6d227011fcd6198ce3ee71f1d640a94c` · base `6f6ad959a09abaf1947950b6f82413c94407e22a`
+**Referenced tip:** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb` · base `6f6ad959a09abaf1947950b6f82413c94407e22a`
 
 ## Supported local features (source present on this branch / prior accepted slices)
 
@@ -42,7 +42,7 @@ Owned A/B docs/source reviewed: no fake Connected/PASS success claims found; no 
 
 ## RD39 audit intake (not acceptance)
 
-Frozen-base audit `bc-1e95582a-a658-55d3-8480-85f654b18cc8` reconciled. Four confirmed source defects remain open for root/owner repair (E3 paste, C3 >14, C3 document batch, C7 native receipt). **Do not treat audit text as PASS or as permission to disable native notifications.** Live OAuth/STT/Docker/native banner observation remain configuration/root gates. C–I and RD40–41 still PENDING.
+Frozen-base audit `bc-1e95582a-a658-55d3-8480-85f654b18cc8` reconciled. **SOURCE-REPAIRED:** E3 paste (`d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0`), C3 document add (`2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb`). **INTEGRATION-PENDING:** >14 + await docs in conversation. **ROOT-UNVERIFIED:** guest paste + C7 receipt (**keep native channel**). C–I still PENDING.
 
 ## RD40 / RD41 audit intake (not acceptance)
 
