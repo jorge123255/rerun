@@ -6,7 +6,7 @@ Worktree `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round36-shared-fi
 
 ## Commit
 
-Implementation commit: `IMPLEMENTATION_SHA`
+Implementation commit: `b37039967b53f50564c2a2ca2c6ee47febba85c1`
 
 That commit is the parent of the one-line recording commit that wrote this SHA. `git rev-parse HEAD` on this branch is the recording commit. `git status --short` was empty before the implementation commit. No push, merge, rebase, or amend.
 
