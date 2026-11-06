@@ -1,0 +1,44 @@
+import { expect, test, vi } from 'vitest'
+import { createDesktopWorkspaceRoutinesReader, type DesktopWorkspaceRoutinesAuthority } from './reader'
+import type { DesktopScheduleRecord } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+
+const schedule = (agentId: string, slug: string, patch: Partial<DesktopScheduleRecord> = {}) => ({
+    agentId, slug, name: slug, description: '', body: 'Do work', cron: '0 8 * * *', runAt: null, timezone: 'UTC', enabled: true, revision: `${agentId}-${slug}-v1`, lastRunAt: null, ...patch,
+})
+const run = (agentId: string, slug: string, patch: Record<string, unknown> = {}) => ({ id: `${agentId}-${slug}-run`, agentId, sessionId: `${agentId}-${slug}-session`, triggerSource: 'schedule', triggerSlug: slug, status: 'running', startedAt: '2026-11-05T08:00:00.000Z', ...patch })
+const owners = [
+    { agentId: 'agent-a', engineAgentId: 'engine-a', name: 'Ada', enabled: true, setupPending: false },
+    { agentId: 'agent-b', engineAgentId: 'engine-b', name: 'Bea', enabled: true, setupPending: true },
+]
+
+test('aggregates exact owners/revisions, running/last results, setup state and ordering without granting mutations', async () => {
+    const authority: DesktopWorkspaceRoutinesAuthority = {
+        listOwners: vi.fn(async () => owners),
+        listSchedules: vi.fn(async (owner: { agentId: string }) => owner.agentId === 'agent-a' ? [schedule('agent-a', 'daily')] : [schedule('agent-b', 'weekly', { nextRunAt: null })]),
+        listRuns: vi.fn(async (owner: { agentId: string }) => owner.agentId === 'agent-a' ? [run('agent-a', 'daily')] : []),
+        adopt: vi.fn(async (_owner, run) => ({ agentId: run.agentId, sessionId: run.sessionId, engineSessionId: run.sessionId, tabUid: `schedule:${run.sessionId}`, title: 'Daily result', runId: run.id })),
+        canRename: vi.fn(async () => true),
+    }
+    const reader = createDesktopWorkspaceRoutinesReader(authority)
+    const result = await reader.list()
+    expect(result.canRename).toBe(true)
+    expect(result.routines).toHaveLength(2)
+    const daily = result.routines.find(routine => routine.slug === 'daily')!
+    expect(daily).toMatchObject({ agentId: 'agent-a', revision: 'agent-a-daily-v1', runningSince: '2026-11-05T08:00:00.000Z' })
+    expect(daily.lastResult).toMatchObject({ runId: 'agent-a-daily-run', chat: { sessionId: 'agent-a-daily-session', runId: 'agent-a-daily-run' } })
+    expect(result.routines.find(routine => routine.slug === 'weekly')).toMatchObject({ agentId: 'agent-b', setupPending: true, nextRunAt: null })
+    expect(authority.adopt).toHaveBeenCalledTimes(1)
+})
+
+test('a failed owner drops out without emptying the workspace or inventing history', async () => {
+    const authority: DesktopWorkspaceRoutinesAuthority = {
+        listOwners: vi.fn(async () => owners),
+        listSchedules: vi.fn(async (owner: { agentId: string }) => { if (owner.agentId === 'agent-a') throw new Error('offline'); return [schedule('agent-b', 'weekly', { lastRunAt: null })] }),
+        listRuns: vi.fn(async () => []),
+        adopt: vi.fn(),
+        canRename: vi.fn(async () => false),
+    }
+    const result = await createDesktopWorkspaceRoutinesReader(authority).list()
+    expect(result.routines.map(routine => routine.slug)).toEqual(['weekly'])
+    expect(result.routines[0]?.lastResult).toBeUndefined()
+})
