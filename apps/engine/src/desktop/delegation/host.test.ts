@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { beforeEach, expect, test, vi } from 'vitest'
-import type { Allocation } from './protocol.js'
+import { sourceSchema, type Allocation } from './protocol.js'
+import type { DelegationStore, Record as DelegationRecord, ReceiptStore } from './types.js'
+import { createDelegationRuntime } from './runtime.js'
 import type { DelegationClient } from './client.js'
 
 const hooks = vi.hoisted(() => ({ getRun: vi.fn(), closeDb: vi.fn(), inspect: vi.fn(), cleanup: vi.fn(), deletion: vi.fn() }))
@@ -69,5 +71,48 @@ test('durable cleanup intent precedes filesystem cleanup and a lost acknowledgem
 test('an unadmitted resource never reaches filesystem cleanup', async () => {
     const { host, resource } = fixture({ phase: 'running' })
     await expect(host.cleanup(resource, [], signal())).rejects.toThrow('not admitted')
+    expect(hooks.cleanup).not.toHaveBeenCalled()
+})
+
+
+test('queued recovery projects a full snapshot through the strict bridge and completes without any allocated resource', async () => {
+    let record: DelegationRecord = {
+        version: 1, digest: 'queued-fixture', resources: [null], outputs: [null],
+        snapshot: {
+            parentAgentId: 'owner', parentSessionId: 'chat', parentRunId: 'parent-run', toolCallId: 'delegate-tool',
+            delegationId: randomUUID(), revision: randomUUID(),
+            tasks: [{ taskId: randomUUID(), stopRevision: randomUUID(), title: 'Never launched', status: 'queued', steps: 0, toolCalls: 0, failures: 0, preview: '', calls: [], cleanup: 'pending' }],
+        },
+    }
+    const snapshot = structuredClone(record.snapshot)
+    expect(() => sourceSchema.parse(snapshot)).toThrow()
+    const request = vi.fn(async (operation: string, input: { source: unknown; taskId: string }) => {
+        expect(operation).toBe('recover')
+        expect(sourceSchema.parse(input.source)).toEqual({ parentAgentId: 'owner', parentSessionId: 'chat', parentRunId: 'parent-run', toolCallId: 'delegate-tool' })
+        expect(input.taskId).toBe(snapshot.tasks[0]!.taskId)
+        return null
+    })
+    const { host } = createDesktopDelegationHost({ request } as unknown as DelegationClient, 'new-launch')
+    await expect(host.recover(snapshot, snapshot.tasks[0]!.taskId)).resolves.toBeNull()
+    request.mockClear()
+    const store: DelegationStore = {
+        reserve: async () => { throw new Error('Recovery must not allocate work') },
+        save: async (next, expectedRevision) => {
+            if (record.snapshot.revision !== expectedRevision) throw new Error('Fixture revision conflict')
+            record = structuredClone(next)
+        },
+        read: async id => id === record.snapshot.delegationId ? structuredClone(record) : null,
+        list: async () => [structuredClone(record)],
+    }
+    const receipts: ReceiptStore = { read: async () => null, reserve: async (_id, receipt) => receipt, put: async () => {} }
+    const runtime = createDelegationRuntime(store, host, receipts)
+    await runtime.reconcile()
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(record.snapshot.tasks[0]).toMatchObject({ cleanup: 'complete', status: 'error' })
+    expect(record.snapshot.tasks[0]!.startedAt).toBeUndefined()
+    expect(record.resources).toEqual([null])
+    expect(hooks.getRun).not.toHaveBeenCalled()
+    expect(hooks.closeDb).not.toHaveBeenCalled()
+    expect(hooks.inspect).not.toHaveBeenCalled()
     expect(hooks.cleanup).not.toHaveBeenCalled()
 })

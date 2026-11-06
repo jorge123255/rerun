@@ -26,6 +26,7 @@ import type { Authority, DelegationHost, Resource, Source } from './types.js'
 
 const sourceKey = (s: Source) => JSON.stringify([s.parentAgentId, s.parentSessionId, s.parentRunId, s.toolCallId])
 const resourceOf = (row: Allocation): Resource => ({ token: row.token, identity: row.identity })
+const sourceOf = (source: Source): Source => ({ parentAgentId: source.parentAgentId, parentSessionId: source.parentSessionId, parentRunId: source.parentRunId, toolCallId: source.toolCallId })
 export function createDesktopDelegationHost(client: DelegationClient, epoch: string) {
     const parents = new Map<string, RunContext>()
     const running = new Map<string, { run?: AgentRun; launching?: Promise<AgentRun>; runId?: string; stopped: boolean; drained: Promise<void>; release: () => void }>()
@@ -52,13 +53,13 @@ export function createDesktopDelegationHost(client: DelegationClient, epoch: str
             const ctx = parents.get(sourceKey(source)); if (!ctx?.abortSignal) throw new Error('Parent unavailable')
             const check = async () => { await current(source, ctx.abortSignal!) }
             await check()
-            let row = await client.request<Allocation>('allocate', { source, taskId })
+            let row = await client.request<Allocation>('allocate', { source: sourceOf(source), taskId })
             if (row.epoch !== epoch || row.phase !== 'reserved' || row.rootIdentity) throw new Error('Delegated work was already allocated; it will not replay')
             const identity = await allocateDelegationDirectory(row, check)
             row = await patch(row, { rootIdentity: identity, manifest: [] })
             return resourceOf(row)
         },
-        async recover(source, taskId) { const row = await client.request<Allocation | null>('recover', { source, taskId }); return row ? resourceOf(row) : null },
+        async recover(source, taskId) { const row = await client.request<Allocation | null>('recover', { source: sourceOf(source), taskId }); return row ? resourceOf(row) : null },
         async create(resource, input) {
             let row = await allocation(resource)
             if (row.epoch !== epoch || row.phase !== 'reserved' || !row.rootIdentity || running.has(row.token)) throw new Error('Delegation child cannot replay')

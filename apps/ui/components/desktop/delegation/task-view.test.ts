@@ -1,3 +1,4 @@
+import { subRunHeadline } from '@rerun/contracts'
 import { expect, test } from 'vitest'
 import { DELEGATION_EMPTY_RESULT, DELEGATION_OUTCOME_UNREAD, delegationDetail, delegationOutcome, delegationTaskToSubRun } from './task-view'
 
@@ -47,4 +48,11 @@ test('distinguishes an empty recorded result from a missing outcome', () => {
     expect(delegationOutcome({ ...task, status: 'stopped', error: 'stopped along with the calling run or by the user', preview: 'partial' })?.text).toBe('Stopped, partial work kept')
     expect(delegationDetail({ ...task, preview: '', result: 'Kept after the workspace was removed.' })).toBe('Kept after the workspace was removed.')
     expect(delegationDetail({ ...task, preview: 'Visible tail', result: 'Full result' })).toBe('Visible tail')
+})
+
+
+test('reports intentional stops separately from failed delegated tasks', () => {
+    const row = (status: 'done' | 'error' | 'stopped') => ({ title: status, status, steps: 0 })
+    expect(subRunHeadline({ kind: 'delegate', tasks: [row('done'), row('done'), row('done'), row('stopped'), row('stopped')] }, false, 'delegate_tasks').label).toBe('3 done · 2 stopped')
+    expect(subRunHeadline({ kind: 'delegate', tasks: [row('done'), row('error'), row('stopped')] }, false, 'delegate_tasks').label).toBe('1 done · 1 failed · 1 stopped')
 })
