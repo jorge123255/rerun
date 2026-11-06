@@ -49,6 +49,7 @@ class FakeDocker implements DockerClient {
     failRefusal = true
     holdOps = new Set<string>()
     onHold: (() => void) | null = null
+    releaseHeld: (() => void) | null = null
     beforeStream: ((command: readonly string[]) => Promise<void> | void) | null = null
     afterRun: ((name: string) => void) | null = null
     execHook: ((body: Record<string, unknown>) => void) | null = null
@@ -136,10 +137,11 @@ class FakeDocker implements DockerClient {
         this.execHook?.(body)
         if (signal.aborted) return Promise.reject(abortErr())
         if (this.holdOps.has(String(body.op))) {
-            return new Promise((_resolve, reject) => {
+            return new Promise((resolve, reject) => {
                 const fail = () => reject(abortErr())
                 if (signal.aborted) { fail(); return }
                 signal.addEventListener('abort', fail, { once: true })
+                this.releaseHeld = () => { signal.removeEventListener('abort', fail); resolve(this.reply(body)) }
                 this.onHold?.()
             })
         }
@@ -863,12 +865,39 @@ describe('concrete launcher and foreground admission', () => {
         expect(box.docker.execs.filter(call => call.body.op === 'foreground')).toHaveLength(2)
         expect(box.docker.streams[0]?.duplex.destroyed).toBe(true)
     })
-    it('reports only capabilities acknowledged by the running guest without creating another guest', async () => {
-        const box = await boot()
-        expect((await box.service.status(owner, box.signal)).launchers).toBeUndefined()
-        box.docker.launchers = { terminal: true, files: false }
+    it('reports readiness capabilities only for the exact current generation without a passive guest RPC', async () => {
+        const initial = harness()
+        initial.docker.launchers = { terminal: true, files: false }
+        const box = await boot(initial), calls = box.docker.execs.length
         expect((await box.service.status(owner, box.signal)).launchers).toEqual({ terminal: true, files: false })
-        expect(box.docker.runs).toHaveLength(1)
+        expect(box.docker.execs).toHaveLength(calls)
+        const container = box.docker.containers.get(containerName(owner.engineAgentId))!
+        container.labels[LABEL_GENERATION] = 'f'.repeat(32)
+        expect((await box.service.status(owner, box.signal)).launchers).toBeUndefined()
+        expect(box.docker.execs).toHaveLength(calls)
+        container.labels[LABEL_GENERATION] = box.target.sessionGeneration
+        await box.service.stop(box.target, box.signal)
+        box.docker.launchers = { terminal: false, files: true }
+        const replacement = await box.service.ensure(owner, box.signal)
+        expect(replacement.target.sessionGeneration).not.toBe(box.target.sessionGeneration)
+        expect((await box.service.status(owner, box.signal)).launchers).toEqual({ terminal: false, files: true })
+    })
+    it('does not probe an unowned live generation for launcher capabilities', async () => {
+        const box = harness(), signal = new AbortController().signal
+        box.docker.seed(owner, generation, 'running')
+        box.docker.launchers = { terminal: true, files: true }
+        expect((await box.service.status(owner, signal)).launchers).toBeUndefined()
+        expect(box.docker.execs).toEqual([])
+        expect(box.docker.runs).toEqual([])
+    })
+    it('does not project an old human lease onto a replaced generation', async () => {
+        const box = await boot()
+        await box.service.startTakeover(box.target, box.signal)
+        expect((await box.service.status(owner, box.signal)).state).toBe('human')
+        box.docker.containers.get(containerName(owner.engineAgentId))!.labels[LABEL_GENERATION] = 'f'.repeat(32)
+        const calls = box.docker.execs.length
+        expect(await box.service.status(owner, box.signal)).toMatchObject({ state: 'running' })
+        expect(box.docker.execs).toHaveLength(calls)
     })
 })
 
@@ -901,6 +930,29 @@ describe('reviewed isolated installation control', () => {
 
 describe('isolated command native authority and drain', () => {
     const command = { op: 'guest-shell', commandId: 'a'.repeat(32), workspaceFingerprint: 'b'.repeat(64), fingerprint: 'c'.repeat(64), command: 'printf ok', cwd: '', timeoutMs: 1000 }
+    it('keeps a long command alive when an automatic passive status poll is cancelled', async () => {
+        const initial = harness()
+        initial.docker.launchers = { terminal: true, files: true }
+        const box = await boot(initial), controller = new AbortController(), poll = new AbortController()
+        box.docker.holdOps.add('guest-shell')
+        let submitted!: () => void
+        const started = new Promise<void>(resolve => { submitted = resolve }); box.docker.onHold = submitted
+        const pending = box.service.guestShell(box.target, { ...command, command: 'sleep 35', timeoutMs: 60000 }, controller.signal, async () => {})
+        await started
+        const calls = box.docker.execs.length
+        // Model the guest's serial RPC queue: a passive ping would wait behind the command.
+        box.docker.execHook = body => { if (body.op === 'ping') throw new Error('Status ping queued behind command') }
+        expect(await box.service.status(owner, poll.signal)).toMatchObject({ state: 'running', launchers: { terminal: true, files: true } })
+        poll.abort()
+        await expect(box.service.status(owner, poll.signal)).rejects.toThrow()
+        expect(box.docker.execs).toHaveLength(calls)
+        expect(controller.signal.aborted).toBe(false)
+        expect(box.docker.removedContainers).toEqual([])
+        box.docker.releaseHeld!()
+        expect(await pending).toMatchObject({ requestId: command.commandId, status: 'done' })
+        expect((await box.service.running(owner, box.signal)).target).toEqual(box.target)
+        expect(box.docker.execs.filter(item => item.body.op === 'guest-shell')).toHaveLength(1)
+    })
     it('checks permission inside the native mutation lock before sending the command', async () => {
         const box = await boot()
         await expect(box.service.guestShell(box.target, command, box.signal, async () => { throw new Error('grant revoked') })).rejects.toThrow('grant revoked')

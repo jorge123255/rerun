@@ -25,6 +25,7 @@ export function DesktopInstallGate({
     onContinue,
     inProgress = false,
     disabled = false,
+    busy = false,
     modelSlot,
     hint,
 }: {
@@ -36,12 +37,16 @@ export function DesktopInstallGate({
     onContinue?: () => void
     inProgress?: boolean
     disabled?: boolean
+    busy?: boolean
     modelSlot?: ReactNode
     hint?: ReactNode
 }) {
     const [launched, setLaunched] = useState(false)
     const [skipping, setSkipping] = useState(false)
-    const starting = (!inProgress && launched) || skipping || disabled
+    // A disabled coworker cannot start, but it is not running an installation. Only an
+    // actual setup mutation (including one submitted by another surface) owns the spinner.
+    const starting = (!inProgress && launched) || skipping || busy
+    const blocked = disabled || starting
 
     const start = async () => {
         setLaunched(true)
@@ -69,12 +74,12 @@ export function DesktopInstallGate({
             </div>
             {hint}
             {inProgress ? (
-                <Button size="lg" disabled={disabled || skipping} onClick={onContinue} className="w-full">
+                <Button size="lg" disabled={disabled || busy || skipping} onClick={onContinue} className="w-full">
                     Continue setup
                     <ArrowRightIcon data-icon="inline-end" />
                 </Button>
             ) : (
-                <Button size="lg" disabled={starting} onClick={() => void start()} className="w-full">
+                <Button size="lg" disabled={blocked} aria-busy={starting || undefined} onClick={() => void start()} className="w-full">
                     {starting && <Spinner data-icon="inline-start" />}
                     <span className="truncate">{starting ? 'Installing' : `Install ${agentName}`}</span>
                     {!starting && <ArrowRightIcon data-icon="inline-end" />}
@@ -82,7 +87,7 @@ export function DesktopInstallGate({
             )}
             <div className="flex flex-wrap items-center justify-between gap-1">
                 {modelSlot}
-                <Button size="sm" variant="ghost" disabled={starting} onClick={() => void skip()} className="ml-auto text-muted-foreground">
+                <Button size="sm" variant="ghost" disabled={blocked} onClick={() => void skip()} className="ml-auto text-muted-foreground">
                     Skip for now
                 </Button>
             </div>

@@ -67,7 +67,8 @@ export function DesktopSetupGate({ agentId, agentName, apps, disabled = false, c
             agentName={agentName}
             apps={apps}
             inProgress={!!setup.view.sessionId}
-            disabled={disabled || setup.mutating !== null}
+            disabled={disabled}
+            busy={setup.mutating !== null}
             hint={gateHint}
             modelSlot={modelSlot}
             onStart={start}

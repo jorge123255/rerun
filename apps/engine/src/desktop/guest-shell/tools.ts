@@ -48,7 +48,7 @@ export async function desktopGuestShellStop(ctx: RunContext, deps: DesktopGuestS
 }
 export function formatDesktopGuestShellResult(receipt: Awaited<ReturnType<DesktopGuestShellService['execute']>>): string {
     const body = `${receipt.stdout}${receipt.stderr ? `\n[stderr]\n${receipt.stderr}` : ''}`
-    const header = `Command request: ${receipt.requestId}\n`
+    const header = `Command request: ${receipt.requestId}\nStatus: ${receipt.status}\n`
     if (receipt.status === 'done') return header + (body || '(no output)')
     if (receipt.status === 'timeout') return `${header}Command timed out\n${body}`
     if (receipt.status === 'cancelled') return `${header}Command cancelled\n${body}`

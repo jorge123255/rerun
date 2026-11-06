@@ -56,6 +56,46 @@ it('opens the server-claimed chat only after Start acknowledgment', async () => 
     expect(onOpenSetupChat).toHaveBeenCalledWith({ agentId: 'owner', sessionId: 'claimed', action: 'start' })
 })
 
+it('a disabled imported coworker with rebind requirements stays idle until explicitly enabled and started', () => {
+    local.view = view({ prompt: 'To provide again on a copy:\n- connection-rebind: connection\n- model-rebind: model' })
+    const onOpenSetupChat = vi.fn()
+    const host = render(<DesktopSetupGate agentId="owner" agentName="Ada" apps={[]} disabled onOpenSetupChat={onOpenSetupChat} />)
+    const start = () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Install Ada')!
+    const skip = () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Skip for now')!
+    expect(host.textContent).toContain('Set up Ada')
+    expect(host.textContent).not.toContain('Installing')
+    expect(host.querySelector('[aria-busy="true"]')).toBeNull()
+    expect(start().disabled).toBe(true)
+    expect(skip().disabled).toBe(true)
+    act(() => { start().click(); skip().click() })
+    expect(local.start).not.toHaveBeenCalled()
+    expect(local.skip).not.toHaveBeenCalled()
+    expect(onOpenSetupChat).not.toHaveBeenCalled()
+
+    act(() => roots.at(-1)!.root.render(<DesktopSetupGate agentId="owner" agentName="Ada" apps={[]} onOpenSetupChat={onOpenSetupChat} />))
+    expect(start().disabled).toBe(false)
+    expect(skip().disabled).toBe(false)
+    expect(host.textContent).not.toContain('Installing')
+    expect(local.start).not.toHaveBeenCalled()
+    expect(onOpenSetupChat).not.toHaveBeenCalled()
+})
+
+it('an actual shared setup mutation owns the spinner and releases it after acknowledgement', () => {
+    local.view = view()
+    local.mutating = 'start'
+    const props = { agentId: 'owner', agentName: 'Ada', apps: [], onOpenSetupChat: vi.fn() }
+    const host = render(<DesktopSetupGate {...props} />)
+    expect(host.textContent).toContain('Installing')
+    expect(host.querySelector('button[aria-busy="true"]')).not.toBeNull()
+    expect([...host.querySelectorAll('button')].find(button => button.textContent === 'Skip for now')!.disabled).toBe(true)
+    local.mutating = null
+    act(() => roots.at(-1)!.root.render(<DesktopSetupGate {...props} />))
+    expect(host.textContent).toContain('Install Ada')
+    expect(host.textContent).not.toContain('Installing')
+    expect(host.querySelector('[aria-busy="true"]')).toBeNull()
+    expect(local.start).not.toHaveBeenCalled()
+})
+
 it('keeps the claimed chat closed when Start acknowledgment fails', async () => {
     local.view = view()
     local.start.mockResolvedValue(null)

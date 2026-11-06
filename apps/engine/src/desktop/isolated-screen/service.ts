@@ -50,6 +50,13 @@ type Live = {
     action: AbortController | null
     viewers: Set<Viewer>
     screen: ScreenGeometry
+    launchers?: ScreenStatus['launchers']
+}
+
+function launcherCapabilities(value: unknown): ScreenStatus['launchers'] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const caps = value as Record<string, unknown>
+    return typeof caps.terminal === 'boolean' && typeof caps.files === 'boolean' ? { terminal: caps.terminal, files: caps.files } : undefined
 }
 
 function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -334,7 +341,7 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         })
     }
 
-    async function waitReady(name: string, signal: AbortSignal): Promise<ScreenGeometry> {
+    async function waitReady(name: string, signal: AbortSignal): Promise<{ screen: ScreenGeometry; launchers?: ScreenStatus['launchers'] }> {
         for (let attempt = 0; attempt < readyAttempts; attempt++) {
             throwIfAborted(signal)
             const inspected = await docker.inspectContainer(name, signal)
@@ -346,7 +353,7 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
                     const reply = await guest(name, { op: 'ping' }, signal)
                     const width = reply.value.width
                     const height = reply.value.height
-                    if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) return viewOf(width, height)
+                    if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) return { screen: viewOf(width, height), launchers: launcherCapabilities(reply.value.launchers) }
                 } catch (error) {
                     if (isAbortError(error) || signal.aborted) throw isAbortError(error) ? error : abortError(signal)
                     if (error instanceof IsolatedScreenRefusal && error.kind === 'prerequisite') throw error
@@ -374,16 +381,15 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         if (volume.status === 'found' && !sameOwnerVolume(volume.labels, owner)) return absent('name-conflict')
         if (container.status !== 'found') return { available: true, prerequisite: 'ready', state: 'absent' }
         const live = lives.get(owner.engineAgentId)
-        let launchers: ScreenStatus['launchers']
-        if (container.state === 'running') {
-            const reply = await guest(containerName(owner.engineAgentId), { op: 'ping' }, signal)
-            const value = reply.value.launchers
-            if (value && typeof value === 'object' && !Array.isArray(value)) {
-                const caps = value as Record<string, unknown>
-                if (typeof caps.terminal === 'boolean' && typeof caps.files === 'boolean') launchers = { terminal: caps.terminal, files: caps.files }
-            }
-        }
-        return { available: true, prerequisite: 'ready', state: runState(container.state, Boolean(live?.lease || live?.takingOver)), ...(launchers && { launchers }) }
+        // A passive status poll must never queue a guest RPC behind a long action.
+        // Cancelling that queued ping can otherwise cancel the unrelated command.
+        // Image capabilities are captured at readiness and belong only to this live
+        // generation; Docker ownership/state above is still inspected on every read.
+        const ownedLive = live && !live.stopping && live.launchNonce === owner.launchNonce
+            && container.labels[LABEL_NONCE] === owner.launchNonce && container.labels[LABEL_GENERATION] === live.generation
+        const launchers = container.state === 'running' && ownedLive ? live?.launchers : undefined
+        throwIfAborted(signal)
+        return { available: true, prerequisite: 'ready', state: runState(container.state, Boolean(ownedLive && (live?.lease || live?.takingOver))), ...(launchers && { launchers }) }
     }
 
     async function running(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen> {
@@ -431,9 +437,9 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
             const generation = nextBytes(16).toString('hex')
             try {
                 await docker.run(containerRunArgs(owner, generation), signal)
-                const screen = await waitReady(name, signal)
+                const { screen, launchers } = await waitReady(name, signal)
                 throwIfAborted(signal)
-                lives.set(owner.engineAgentId, { generation, launchNonce: owner.launchNonce, lease: null, takingOver: false, action: null, viewers: new Set(), screen })
+                lives.set(owner.engineAgentId, { generation, launchNonce: owner.launchNonce, lease: null, takingOver: false, action: null, viewers: new Set(), screen, launchers })
                 return { target: { ...owner, sessionGeneration: generation }, width: screen.viewWidth, height: screen.viewHeight }
             } catch (error) {
                 const cleanupSignal = AbortSignal.timeout(10_000)
