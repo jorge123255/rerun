@@ -85,6 +85,34 @@ function publicAgent(row: { id: string; name: string; description: string; space
     return { id: row.id, name: row.name, description: row.description, spaceId: row.spaceId ?? null, enabled: row.enabled }
 }
 
+
+/** Fields that change Mac tool grants, self-improvement, or MCP server config. External MCP must not set them. */
+export const EXTERNAL_MCP_AGENT_AUTHORITY_FIELDS = [
+    'tools',
+    'selfImprovement',
+    'mcpServers',
+    'desktopToolGrants',
+    'desktopCodexGrants',
+    'desktopWorkspaceRead',
+] as const
+
+export type ExternalMcpAgentAuthorityField = (typeof EXTERNAL_MCP_AGENT_AUTHORITY_FIELDS)[number]
+
+/**
+ * Fail closed before any coworker mutation when an update_agent payload carries
+ * authority-bearing fields. Top-level `tools` covers nested desktopToolGrants /
+ * desktopCodexGrants / desktopWorkspaceRead (engine merges those from tools).
+ * Rejects the whole request; never strips keys and continues.
+ */
+export function assertExternalMcpAgentMetadataOnlyUpdate(args: Record<string, unknown>): void {
+    const present = EXTERNAL_MCP_AGENT_AUTHORITY_FIELDS.filter(key => args[key] !== undefined)
+    if (present.length === 0) return
+    throw new Error(
+        `External update_agent cannot change tool grants, self-improvement, or MCP servers (${present.join(', ')}). Use the Mac coworker Tools panel for those settings; no changes were applied.`,
+    )
+}
+
+
 export function externalMcpTriggerSummary(value: unknown) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid trigger response.')
     const row = value as Record<string, unknown>
@@ -187,7 +215,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
     if (tool === 'create_agent') {
         if (!context.principal.scopes.includes('runs:send')) throw new Error('Creating a coworker starts its first chat and also requires runs:send.')
         if (['connectionId', 'model', 'provider', 'tools', 'selfImprovement', 'verbosity'].some(key => args[key] !== undefined)) {
-            throw new Error('Local creation uses current workspace defaults. Configure model, tools and reply settings with update_agent after creation; no coworker was created.')
+            throw new Error('Local creation uses current workspace defaults. Model and reply settings can be changed afterward with update_agent; tool grants and self-improvement stay on the Mac Tools panel. No coworker was created.')
         }
         const name = requireString(args.name, 'name').trim()
         if (name.length > 60) throw new Error('Keep the name under 60 characters.')
@@ -216,8 +244,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         if (soul) patch.soul = soul
         if (description) patch.description = description
         if (args.verbosity !== undefined) patch.verbosity = args.verbosity
-        if (args.tools && typeof args.tools === 'object') patch.tools = args.tools
-        if (args.selfImprovement && typeof args.selfImprovement === 'object') patch.selfImprovement = args.selfImprovement
+        // tools / selfImprovement / mcpServers are refused above; never copy them into a follow-up patch.
         if (asString(args.connectionId) || asString(args.model) || asString(args.provider)) {
             if (asString(args.connectionId)) patch.connectionId = asString(args.connectionId)
             if (asString(args.model)) patch.model = asString(args.model)
@@ -231,6 +258,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
     }
 
     if (tool === 'update_agent') {
+        assertExternalMcpAgentMetadataOnlyUpdate(args)
         const agentId = requireString(args.agentId, 'agentId')
         const agent = await externalMcpOwnedAgent(db, context, deps.recheck, signal, agentId)
         if (asString(args.name) && asString(args.name) !== agent.name) {
@@ -249,8 +277,6 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         if (asString(args.soul) !== undefined) patch.soul = asString(args.soul)
         if (asString(args.handle) !== undefined) patch.name = asString(args.handle)
         if (args.verbosity !== undefined) patch.verbosity = args.verbosity
-        if (args.tools && typeof args.tools === 'object') patch.tools = args.tools
-        if (args.selfImprovement && typeof args.selfImprovement === 'object') patch.selfImprovement = args.selfImprovement
         if (args.connectionId !== undefined) patch.connectionId = args.connectionId
         if (args.model !== undefined) patch.model = args.model
         if (args.provider !== undefined) patch.provider = args.provider

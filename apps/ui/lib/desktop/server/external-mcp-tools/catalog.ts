@@ -58,7 +58,7 @@ export function externalMcpToolRegistrations(options?: { servicesBound?: boolean
         const scope = EXTERNAL_MCP_TOOL_SCOPES[def.name as ExternalMcpBoundToolName]
         const effect = scope !== 'mcp:read'
         const description = def.name === 'read_skill_file' ? def.description + READ_ONLY_OFFSET_NOTE
-            : def.name === 'create_agent' ? def.description + ' Local creation starts its first chat and additionally requires runs:send. Creation uses workspace defaults; model/tool/reply settings must be changed afterward with update_agent.' : def.description
+            : def.name === 'create_agent' ? def.description + ' Local creation starts its first chat and additionally requires runs:send. Creation uses workspace defaults; model and reply settings can be changed afterward with update_agent; tool grants and self-improvement stay on the Mac Tools panel.' : def.description
         const inputSchema = def.name === 'attach_connector'
             ? { ...def.inputSchema, properties: { ...def.inputSchema.properties, authMethodId: { type: 'string', description: 'Exact locally supported authentication method ID.' }, values: { type: 'object', additionalProperties: { type: 'string' }, description: 'Explicit setup values; never reads an existing stored secret.' } }, additionalProperties: false }
             : def.name === 'read_skill_file'
