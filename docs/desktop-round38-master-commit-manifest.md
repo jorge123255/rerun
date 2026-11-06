@@ -28,6 +28,6 @@ Publication: local commits only until root approves exact head. No push from thi
 | — | RD40 E2 nontext handoff | docs on master | `42aa785f…` | nontext receipt | `81d31094…` |
 | — | RD40 E2 search credential-revision | source on master | `81d31094…` | capability vs provider failed | `aed68574…` |
 | — | RD40 E2 search handoff | docs on master | `aed68574…` | search revision | `dd4b86ab…` |
-| — | RD42 E2 + RD44/RD45 conditional docs | docs on master | `dd4b86ab…` | E2 status + sourced gates | `70e03e69d751…` |
+| — | RD42 E2 + RD44/RD45 conditional docs | docs on master | `dd4b86ab…` | E2 status + sourced gates | `2d769a5c…` (+ tip-ref fix commit) |
 
 

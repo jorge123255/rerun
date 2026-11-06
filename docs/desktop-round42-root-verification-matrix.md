@@ -2,7 +2,7 @@
 
 **Purpose:** checklist for root’s integrated release-candidate / Mac acceptance work.  
 **This agent did not create fixtures, run the app, grant permissions, or mark results.**  
-**Tip referenced:** `70e03e69d7515b122d56eb399699501b9cbdde85` (RD40 E2 nontext `42aa785f9b72…` + search `aed685747b0e…` + prior)
+**Tip referenced:** `2d769a5c53723b78de0ebb9c2501b353fec59521` (RD40 E2 nontext `42aa785f9b72…` + search `aed685747b0e…` + prior)
 
 Result cells stay blank until root fills them. Distinguish: source present ≠ root accepted ≠ configured service live.
 

@@ -1,7 +1,7 @@
 # RD42 source inventory (preparation — not complete)
 
 **Status:** independent RD42 preparation checkpoint only. Does **not** claim release-candidate completion, Mac acceptance, or that RD39–41 / C–I are done.  
-**Worktree tip at inventory authorship:** `70e03e69d7515b122d56eb399699501b9cbdde85` on `desktop/round38-master-completion` (RD40 E2 nontext+search SOURCE-REPAIRED; docs tip this commit)
+**Worktree tip at inventory authorship:** `2d769a5c53723b78de0ebb9c2501b353fec59521` on `desktop/round38-master-completion` (RD40 E2 nontext+search SOURCE-REPAIRED; docs tip this commit)
 **Prepared base:** `6f6ad959a09abaf1947950b6f82413c94407e22a` (`desktop/rd38-cloud-base`)  
 **Original comparison pin:** `2a57fa6dd53311f763bfc9abde85997b7f7e5309` (historical `a6d63a4b542674ddd002e51b39ba0df6e0807bcc` secondary)  
 **Seam:** A/B/E `abe-1` in `docs/desktop-round38-a-transfer-seam.md`  
@@ -31,7 +31,7 @@
 | 17 | `42aa785f9b72ca676bc473cab0f708f899db0d3f` | **RD40 E2** native non-text unsupported writeback receipt |
 | 18 | `81d3109489cabe7397763194f8adad44522d8199` | RD40 E2 nontext handoff |
 | 19 | `aed685747b0ee88fad99e90bf870650be997d990` | **RD40 E2** search credential-revision classification |
-| 20 | `70e03e69d7515b122d56eb399699501b9cbdde85` | RD40 E2 search revision handoff |
+| 20 | `dd4b86ab3a4c4ef4fe92c625eb1ec39493574d8f` | RD40 E2 search revision handoff |
 
 ## Delivered on this branch (source only)
 
