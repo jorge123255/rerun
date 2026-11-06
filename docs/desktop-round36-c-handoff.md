@@ -62,3 +62,40 @@ Read applicable root CLAUDE, UI AGENTS/CLAUDE and assignment standard. Installed
 Implement bounded canonical read adapters for every supported domain and scope-filtered tools/list. Add only mutations with actual operation scopes, object revisions, durable fingerprint/receipt recovery and existing human-review gates. Supply concrete registration against B’s published exports and root lifetime drain hooks. Author domain regressions for each operation family, cross-workspace denial, revoke during await, changed-request conflict, stale replacement and same-receipt recovery. Current regression source covers inventory only; no security/runtime regression passes or acceptance results are claimed.
 
 The owned runtime task is **blocked**, not complete. W4 and installed/native/restart acceptance remain pending root.
+
+## Resumption after B publication
+
+B published contract v1 in `9e81e11110e09aeb05266068c332b44fdee38496` on `desktop/round36-external-mcp-authority`. Earlier missing-contract observations above describe the initial checkpoint, not current status. Read its exact `packages/contracts/src/desktop-external-mcp.ts`, engine authority dispatch/runtime/service and receipt behavior. No paired source was copied or edited.
+
+Additional owned source now provides:
+
+- `apps/engine/src/desktop/external-mcp-tools/dispatch.ts`: exact B `ExternalMcpDispatchPort`, strict canonical context parsing, live rechecks, 15-second linked deadline/cancellation and 60,000-byte response refusal. Write tools cannot be registered through this read factory.
+- `apps/engine/src/desktop/external-mcp-tools/dispatch.test.ts`: authored/unrun revoke-during-await, unsupported effect, cancellation and oversized-result cases.
+- `apps/ui/lib/desktop/server/external-mcp-tools/reads.ts`: concrete same-runtime/workspace read bindings for list_agents, list_skills, get_skill, read_skill_file and list_runs. Uses existing roster DB, confined skill reader and canonical run projection. Public projections omit internal engine coworker ID and runtime credentials. Every awaited read is fenced by B checks; runtime nonce and workspace must equal the principal. Unknown parameters refuse. More than 200 coworkers/skills refuses instead of silently cutting the list; runs support original bounded limit. Skill reference reader has no offset support, so nonzero offsets explicitly refuse and the advertised schema/description states this restriction.
+
+The original inventory remains non-executable audit data. Only the five implemented operations above may be advertised by this factory. Remaining table/routine/trigger/Brain/files/connector/detail/mutation adapters are **not implemented**. No full-catalog or production feature completion claim is made.
+
+### Exact integration dependency and registration
+
+Root must export B's canonical contract from the contracts barrel before `@rerun/contracts` resolves. The UI factory `createLocalExternalReadTools(recheck)` returns B's exact dispatch port and can execute these five real reads inside the existing UI server domain. Engine registration is engine-process global, while roster/skill/setup authorities live in the UI server process. **A canonical authenticated engine-to-UI external-tool bridge is not present in either prepared C or published B source.** Root must mount that bridge through the existing internal desktop authority; do not import UI/Next server modules into the engine or send external keys/internal tokens in tool arguments.
+
+On the UI server, instantiate one factory with the canonical B live-check callback, and expose its `listTools(principal)` / `callTool(context, signal)` solely through root's authenticated internal bridge. That bridge must verify the exact install/workspace/launch identity and forward cancellation. On engine initialization, after B storage initialization:
+
+```ts
+import { registerExternalMcpDispatch } from './external-mcp-authority/dispatch.js'
+// canonicalUiExternalTools is root's authenticated bridge implementing
+// ExternalMcpDispatchPort; it is a required missing binding, not a success stub.
+registerExternalMcpDispatch(canonicalUiExternalTools)
+```
+
+Within the UI process:
+
+```ts
+import { createLocalExternalReadTools } from '@/lib/desktop/server/external-mcp-tools/reads'
+const tools = createLocalExternalReadTools(canonicalExternalLiveCheck)
+// Bind the same port into root's internal authenticated dispatcher, never a public route.
+```
+
+`canonicalExternalLiveCheck` must call B's actual `getExternalMcpService().recheck` over that same internal authority, selecting only the exact live-check fields (B's strict schema rejects spreading extra principal fields). No speculative URL, key format, auth header or standalone listener was invented. B continues to own request receipts for effects; this package adds no mutation store/migration and performs no effect calls. No root registration should occur until this missing bridge is concretely implemented and checked. The new factory is a partial read adapter, not finished W4.
+
+Root still owns activation, all checks and native/restart acceptance. Further domain work must preserve canonical domain revisions/review/setup gates; the five read adapters do not authorize writes or imply missing domains are supported.
