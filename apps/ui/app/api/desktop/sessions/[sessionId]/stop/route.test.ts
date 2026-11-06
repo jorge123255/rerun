@@ -31,7 +31,7 @@ beforeEach(async () => {
     server = createServer((req, res) => {
         const url = new URL(req.url ?? '/', 'http://engine')
         const json = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
-        const secretSource = /^\/agents\/([^/]+)\/sessions\/([^/]+)\/secret-request-source$/.exec(url.pathname)
+        const secretSource = /^\/agents\/([^/]+)\/sessions\/([^/]+)\/(?:secret-request|mcp-sign-in)-source$/.exec(url.pathname)
         if (req.method === 'POST' && secretSource) {
             const agentId = decodeURIComponent(secretSource[1]), sessionId = decodeURIComponent(secretSource[2])
             return runs.some(run => run.agentId === agentId && run.sessionId === sessionId)
@@ -73,6 +73,7 @@ beforeEach(async () => {
     const address = server.address()
     if (!address || typeof address === 'string') throw new Error('Missing test engine address')
     process.env.RERUN_DESKTOP_APP = '1'
+    process.env.RERUN_DESKTOP_SECRET_KEY = 'ab'.repeat(32)
     process.env.RERUN_DESKTOP_DATA_DIR = root
     process.env.RERUN_DESKTOP_RUNTIME_FILE = join(root, 'runtime.json')
     await writeFile(join(root, 'runtime.json'), JSON.stringify({

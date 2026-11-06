@@ -151,9 +151,9 @@ it('refuses shared, foreign, hidden, linked, directory, unsupported and oversize
         ['folder.wav', 'agent', /folder, not a file/],
         ['folder.mp4', 'agent', /folder, not a file/],
         ['folder.pdf', 'agent', /folder, not a file/],
-        ['reports/image.tiff', 'agent', /relative .* path/],
-        ['shots/clip.avi', 'agent', /relative .* path/],
-        ['voice/tone.aac', 'agent', /relative .* path/],
+        ['reports/image.tiff', 'agent', /unavailable/],
+        ['shots/clip.avi', 'agent', /unavailable/],
+        ['voice/tone.aac', 'agent', /unavailable/],
         ['big.md', 'agent', /32 KiB/],
         ['shots/big.png', 'agent', /8 MB/],
         ['shots/big.mp4', 'agent', /16 MB/],
@@ -195,7 +195,7 @@ it('returns an audio card with the authenticated endpoint identity and byte size
     expect(card.files[0]).toMatchObject({ path: 'voice/tone.wav', name: 'tone.wav', size: 1024, scope: 'agent' })
     expect(card.files[0]?.identity).toMatch(/^\d+:\d+$/)
     expect(await show(tool, join(workspaceDir(alpha), 'voice', 'tone.wav'))).toContain('voice/tone.wav')
-    expect((await registry(alpha)).card_file!.description).toContain('16 MB per audio')
+    expect((await registry(alpha)).card_file!.description).toContain('16 MB per PDF, download file, audio file or video')
 })
 
 it('returns a PDF card with the authenticated endpoint identity and leaves it out of the media budget', async () => {
@@ -230,7 +230,7 @@ it('returns an MP4 card with the authenticated endpoint identity, byte size and 
     expect(card.files[0]).toMatchObject({ path: 'shots/clip.mp4', name: 'clip.mp4', size: 1024, scope: 'agent' })
     expect(card.files[0]?.identity).toMatch(/^\d+:\d+$/)
     expect(await show(tool, join(workspaceDir(alpha), 'shots', 'clip.mp4'))).toContain('shots/clip.mp4')
-    expect((await registry(alpha)).card_file!.description).toContain('16 MB per video')
+    expect((await registry(alpha)).card_file!.description).toContain('16 MB per PDF, download file, audio file or video')
     expect((await registry(alpha)).card_file!.description).toContain('.mp4/.webm/.mov/.m4v')
 })
 

@@ -5,6 +5,11 @@ const mocks = vi.hoisted(() => ({
     send: vi.fn(), exit: vi.fn(), close: vi.fn(), drain: vi.fn(), stop: vi.fn(), bindingClose: vi.fn(), events: new Map<string, (...args: unknown[]) => void>(),
     brain: vi.fn(), recover: vi.fn(), nativeDrain: vi.fn(),
 }))
+vi.mock('../../agents/foreman.js', () => ({ ensureForeman: vi.fn(async () => {}) }))
+vi.mock('../../desktop/foreman/binding.js', () => ({ bindDesktopForeman: () => ({ close: vi.fn() }) }))
+vi.mock('../../desktop/foreman/routes.js', async () => { const { Hono } = await import('hono'); return { createDesktopForemanRoutes: () => new Hono() } })
+vi.mock('../../desktop/tool-install/binding.js', async () => { const { Hono } = await import('hono'); return { bindDesktopToolInstall: () => ({ routes: new Hono(), close: vi.fn(async () => {}) }) } })
+vi.mock('../../desktop/schedule-tools/runtime.js', () => ({ createDesktopScheduleToolRuntime: vi.fn(async () => ({ close: vi.fn(async () => {}) })) }))
 vi.mock('node:fs/promises', () => ({ readFile: mocks.read, realpath: async (path: string) => path }))
 vi.mock('@hono/node-server', () => ({ serve: mocks.serve }))
 vi.mock('../../config/env.js', () => ({ env: () => ({ RERUN_HOST: '127.0.0.1', RERUN_PORT: 3222, RERUN_HUB_BASE_URL: 'http://127.0.0.1:3210', RERUN_API_KEY: 'b'.repeat(64), RERUN_DATA_DIR: '/desktop-test/workspaces/1/engine' }) }))

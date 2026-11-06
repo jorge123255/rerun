@@ -55,9 +55,6 @@ test('keeps the endpoint identity for images, audio and video, and preserves a t
 
 test.each([
     ['a shared file', card([file({ scope: 'shared' })])],
-    ['a shared image', card([image({ scope: 'shared' })])],
-    ['a shared audio file', card([audio({ scope: 'shared' })])],
-    ['a shared video file', card([video({ scope: 'shared' })])],
     ['an absolute path', card([file({ path: '/tmp/summary.md' })])],
     ['an absolute image path', card([image({ path: '/tmp/photo.png', name: 'photo.png' })])],
     ['an absolute audio path', card([audio({ path: '/tmp/tone.wav', name: 'tone.wav' })])],
@@ -69,9 +66,6 @@ test.each([
     ['a hidden video segment', card([video({ path: '.secret/clip.mp4', name: 'clip.mp4' })])],
     ['a backslash', card([file({ path: 'reports\\summary.md' })])],
     ['an unsupported document', card([file({ path: 'reports/image.tiff', name: 'image.tiff' })])],
-    ['an unsupported image', card([image({ path: 'shots/photo.heic', name: 'photo.heic' })])],
-    ['an unsupported video', card([video({ path: 'shots/clip.avi', name: 'clip.avi' })])],
-    ['a shared pdf', card([pdf({ scope: 'shared' })])],
     ['an absolute pdf path', card([pdf({ path: '/tmp/codex-edit/deck.pdf', name: 'deck.pdf' })])],
     ['a hidden pdf', card([pdf({ path: '.secret/deck.pdf', name: 'deck.pdf' })])],
     ['a pdf without identity', card([pdf({ identity: undefined })])],
@@ -79,7 +73,6 @@ test.each([
     ['an empty pdf', card([pdf({ size: 0 })])],
     ['an oversized pdf', card([pdf({ size: DESKTOP_CARD_PDF_MAX_BYTES + 1 })])],
     ['a mismatched pdf name', card([pdf({ name: 'other.pdf' })])],
-    ['an unsupported AAC audio', card([audio({ path: 'voice/tone.aac', name: 'tone.aac' })])],
     ['a mismatched name', card([file({ name: 'other.md' })])],
     ['a mismatched image name', card([image({ name: 'other.png' })])],
     ['a mismatched audio name', card([audio({ name: 'other.wav' })])],
@@ -236,4 +229,17 @@ test.each([['webm', 'video/webm'], ['mov', 'video/quicktime'], ['m4v', 'video/mp
     expect(fetch).toHaveBeenCalledWith(`/api/desktop/agents/owner%20a/files/video?path=clips%2Fclip.${ext}&identity=12%3A35`, { cache: 'no-store' })
     fetch.mockImplementation(async () => Response.json({ error: 'Video was replaced' }, { status: 409 }))
     await expect(readDesktopCardVideo('owner a', String(entry.path), '12:35')).rejects.toThrow('Video was replaced')
+})
+
+test.each([
+    ['a shared image', card([image({ scope: 'shared' })])],
+    ['a shared audio file', card([audio({ scope: 'shared' })])],
+    ['a shared video file', card([video({ scope: 'shared' })])],
+    ['a shared pdf', card([pdf({ scope: 'shared' })])],
+    ['an unsupported image', card([image({ path: 'shots/photo.heic', name: 'photo.heic' })])],
+    ['an unsupported video', card([video({ path: 'shots/clip.avi', name: 'clip.avi' })])],
+    ['an unsupported AAC audio', card([audio({ path: 'voice/tone.aac', name: 'tone.aac' })])],
+])('restores %s through an identity-bound result-file tile', (_name, value) => {
+    expect(desktopFileCardOf(value)?.files).toEqual(value.files)
+    expect(desktopFileCardOf({ ...value, files: value.files.map(entry => ({ ...entry, identity: undefined })) })).toBeUndefined()
 })

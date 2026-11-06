@@ -11,6 +11,7 @@ import { readDesktopQuestion } from '@/lib/desktop/server/questions'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET } from './route'
 
+vi.mock('@/lib/desktop/server/mcp-sign-in/binding', () => ({ readDesktopMcpSignInView: async () => ({ request: null }) }))
 vi.mock('@/lib/desktop/server/secret-requests/binding', () => ({ readDesktopSecretRequestView: async () => ({ request: null }) }))
 
 const originalEnv = { ...process.env }
