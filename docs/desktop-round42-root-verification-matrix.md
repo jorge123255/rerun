@@ -54,3 +54,17 @@ Result cells stay blank until root fills them. Distinguish: source present ≠ r
 ## C5 → C6
 
 Interactive secure secret/sign-in/takeover verification is **C6** only. Do not double-count C5 as a separate secure-request package.
+
+## E. RD39 journey defects (root verifies after surgical source repair)
+
+Audit base `6f6ad959a09abaf1947950b6f82413c94407e22a`; symbols re-confirmed on master `3ecdd20c1889df01109c73864a325c9fe5ea1d2c`. Result cells blank until root runs.
+
+| ID | Journey | Expected user outcome after repair | Disposable fixture (define only) | Temp perms/config | Failure evidence | Cleanup | Preserve | Root result |
+|---|---|---|---|---|---|---|---|---|
+| R1 | E3 Paste | Non-Latin paste matches typed characters; Latin-1 still clipboard+Ctrl+V; extended clipboard not negotiated | Guest browser field + terminal; strings `café`, `こんにちは`, `Hello` | Docker/guest image; computer grant on disposable coworker | Wrong glyphs / disconnect from extended clipboard | Stop guest; revoke grant | Host clipboard; sibling screens | |
+| R2 | C3 >14 | Files that fit attach; overflow named; order kept | 10 txt + 4 png; +1 txt; 15 txt; mix+PDF | Local desktop app | Empty attach set despite legal files | Delete disposable Files rows | Other drafts | |
+| R3 | C3 docs | Valid PDF kept when neighbor empty/oversize; batch status includes document outcome | `note.md`, `ok.pdf`, `empty.pdf`, `photo.png` | n/a | “Nothing was attached” after text/image committed; missing ok.pdf | Delete doc rows | Tab-scoped only | |
+| R4 | C7 receipt | Native `failed`/`unknown` does **not** durable-mark `shown`; retry/cooldown can run; toast may still show; Open click still resolves | Disposable question event; force native fail/timeout if possible | In-app toasts on; **do not** request new OS permission | Seen row inserted despite failed native | Delete disposable coworker | Real inbox receipts | |
+
+**C7 note for root:** Prefer receipt-truthfulness with native channel retained (t18u). Do not remove `bridge.notify` solely to make toast-only receipts look consistent.
+

@@ -15,3 +15,4 @@ Publication: local commits only until root approves exact head. No push from thi
 
 | — | RD42 RC preparation docs | `desktop/round42-rc-preparation` | A+B tip | A/B delivered; C–I/RD39–41 pending | committing |
 
+| — | RD42 + RD39 reconcile docs | `desktop/round42-rc-preparation` | `3ecdd20c1889df01109c73864a325c9fe5ea1d2c` | RD39 audit intake | committing |

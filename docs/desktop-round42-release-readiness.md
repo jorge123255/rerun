@@ -39,3 +39,8 @@
 ## Misleading claims
 
 Owned A/B docs/source reviewed: no fake Connected/PASS success claims found; no code repair in this checkpoint. Root should continue scrubbing any integrated UI copy that implies live Connected/hosted success without authority.
+
+## RD39 audit intake (not acceptance)
+
+Frozen-base audit `bc-1e95582a-a658-55d3-8480-85f654b18cc8` reconciled. Four confirmed source defects remain open for root/owner repair (E3 paste, C3 >14, C3 document batch, C7 native receipt). **Do not treat audit text as PASS or as permission to disable native notifications.** Live OAuth/STT/Docker/native banner observation remain configuration/root gates. C–I and RD40–41 still PENDING.
+

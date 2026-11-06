@@ -1,41 +1,42 @@
 # RD42 preparation handoff
 
-**Kind:** independent documentation / readiness preparation — **not** full RD42 completion.  
+**Kind:** RD42 preparation + RD39 audit reconciliation — **not** RD39/RD42 completion.  
 **Base:** `6f6ad959a09abaf1947950b6f82413c94407e22a`  
-**Parent tip before this handoff commit:** `406cb2661544e6d6828c36a6c4f8732d2281b3b7`  
+**Parent tip before this reconcile commit:** `3ecdd20c1889df01109c73864a325c9fe5ea1d2c`  
 **Branch:** `desktop/round38-master-completion`  
-**Proposed docs branch name:** `desktop/round42-rc-preparation`  
-**No checks executed. No installed acceptance. No push/PR.**
+**Proposed docs branch:** `desktop/round42-rc-preparation`  
+**No checks executed. No installed acceptance. No push/PR. No runtime edits.**
 
-## Deliverables (this checkpoint)
+## Deliverables
 
 | Doc | Role |
 |---|---|
-| `docs/desktop-round42-source-inventory.md` | Exact A/B commits, contracts, ports, unrun tests, pending C–I / RD39–41 |
-| `docs/desktop-round42-root-verification-matrix.md` | Root-only verification cells for local readiness + A/B share once bound |
-| `docs/desktop-round42-release-readiness.md` | Supported vs unavailable; RD43–45 gates; no distribution claim |
+| `docs/desktop-round42-source-inventory.md` | A/B inventory + **RD39 four-defect reconcile** |
+| `docs/desktop-round42-root-verification-matrix.md` | Local readiness + A/B share + **RD39 R1–R4** |
+| `docs/desktop-round42-release-readiness.md` | Supported/unavailable + RD39 intake note |
 | `docs/desktop-round42-handoff.md` | This file |
 
-## Diff summary
+## RD39 reconcile outcome
 
-Documentation only under `docs/desktop-round42-*.md`. No product runtime changes in this checkpoint. A/B fake-success audit: no owned repairs required.
+| ID | Confirmed on master? | Recommended owner action | Ambiguity |
+|---|---|---|---|
+| D1 E3 Paste | Yes — `DesktopViewer.paste` | Route non-Latin via `type()` | None material |
+| D2 C3 >14 | Yes — `beginUpload` | Remove hard cap; per-kind overflow | None material |
+| D3 C3 docs batch | Yes — document `add` + una waited batch | Per-file + await into batch flag | Exact API shape for document start return is root design within C3 |
+| D4 C7 receipt | Yes — toast forces `shown` | **Keep native channel**; set status from native result (reject audit’s “remove bridge.notify”) | How toast+native dual-surface UX copy should read on `failed` while toast visible — root product copy choice |
 
-## Dependencies / remaining gates
+## Diff this checkpoint
 
-1. Seven C–I handoffs still PENDING (isolated trees).
-2. Cloud RD39/RD40/RD41 readonly audits PENDING; their findings may extend the matrix.
-3. Root must still: export A/B contracts; bind authorities; run all checks; fill matrix result cells; integrate C–I when reviewed.
-4. RD42 “finish outstanding independent source fixes” beyond A/B docs remains open until C–I/audit findings arrive — **do not claim RD42 done.**
+Owned RD42 docs + master commit manifest only. No C–I/runtime/central conversation edits.
+
+## Remaining gates
+
+C–I PENDING; RD40–41 PENDING; apply D1–D4 via root/owners; fill matrix cells; A/B binding still unbound in product.
 
 ## Checks NOT run
 
-tests, typecheck, lint, build, dependency prep, install, fixtures, servers, provider/network, Docker, browser/native UI, Keychain, restart, live DB reads.
-
-## Draft PR text (not opened)
-
-**Title:** `docs(desktop): RD42 RC preparation inventory and root verification matrix`  
-**Body:** Source-only RD42 preparation docs for master A/B deliveries and pending C–I/RD39–41 work. No runtime changes. Root owns acceptance and publication.
+tests, typecheck, lint, build, install, fixtures, app, provider, Docker, UI, Keychain, restart, live data.
 
 ## Next
 
-Wait for parent resume after seven packages / RD39–41 audits arrive. Do not implement C–I from this worktree.
+Wait for remaining seven-agent / RD40–41 reports before further RD42 expansion.
