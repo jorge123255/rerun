@@ -315,7 +315,7 @@ export function createDelegationRuntime(store: DelegationStore, host: Delegation
             const active = live.get(request.taskId)
             if (active) {
                 active.controller.abort()
-                await bounded(active.done, AbortSignal.timeout(DELEGATION_LIMITS.hostMs * 2))
+                await bounded(active.done, AbortSignal.timeout(DELEGATION_LIMITS.hostMs * 2), DELEGATION_LIMITS.hostMs * 2)
             }
             await clean(request.delegationId, index)
             const delegation = (await store.read(request.delegationId))!.snapshot

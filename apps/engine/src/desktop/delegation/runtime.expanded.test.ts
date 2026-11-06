@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createDelegationRuntime, orderedDelegationResult } from './runtime.js'
 import type { Authority, DelegationHost, DelegationStore, Record, ReceiptStore, StopReceipt } from './types.js'
 
@@ -309,4 +309,29 @@ describe('input confinement and receipt identity', () => {
         expect(await settledRuntime.stop(source, request)).toEqual(first)
         await expect(settledRuntime.stop(source, { ...request, taskId: crypto.randomUUID() })).rejects.toThrow('Stop identity conflict')
     })
+})
+
+
+it('waits for an exact child draining beyond thirty seconds before confirming Stop', async () => {
+    const { store } = memoryStore()
+    const wait = deferred<string>()
+    let started = false
+    const { host } = hostWith({ async create() {
+        return { settled: Promise.resolve(), async stop() {
+            await new Promise<void>(resolve => setTimeout(resolve, 40_000))
+            wait.resolve('late text')
+        }, async run() { started = true; return wait.promise } }
+    } })
+    const runtime = await ready(store, host)
+    const executing = runtime.execute(source, { tasks: [{ task: 'slow drain' }] }, new AbortController().signal)
+    await until(() => started)
+    const [current] = await runtime.list('session'), task = current!.tasks[0]!
+    vi.useFakeTimers()
+    try {
+        const stopping = runtime.stop(source, { operation: 'stop-task', requestId: crypto.randomUUID(), delegationId: current!.delegationId, taskId: task.taskId, expectedRevision: task.stopRevision! })
+            .then(result => ({ result }), error => ({ error }))
+        await vi.advanceTimersByTimeAsync(40_001)
+        expect(await stopping).toMatchObject({ result: { tasks: [{ status: 'stopped', cleanup: 'complete' }] } })
+        expect((await executing).tasks[0]!.status).toBe('stopped')
+    } finally { vi.useRealTimers() }
 })
