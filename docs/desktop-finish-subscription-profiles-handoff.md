@@ -6,7 +6,8 @@ Source only. Not validated. No tests, typecheck, lint, build, or app run were ex
 
 - Base: `8297fe6404caa114dcb0c2cd6006291a8abb2038` on `desktop/finish-cloud-base-20261106-8297fe64`.
 - Branch: `cursor/subscription-profiles-c094`, created from that commit. Foreman PR #3 (`cursor/foreman-agent-files-c094`, tip `b8db7f861513e21d1f7c3059bdb635ab1e29821f`) was not changed.
-- The branch tip is the HEAD of this branch after the last commit. The pull request body copies `git rev-parse HEAD`. Embedding that SHA here would change the commit.
+- Implementation commit: `2cc4fb9e8eee302170a399fa5e52c585af722ab7`.
+- The branch tip is the commit that records this line. Its SHA is copied into the pull request from `git rev-parse HEAD`.
 
 ## Custody and provider evidence
 
