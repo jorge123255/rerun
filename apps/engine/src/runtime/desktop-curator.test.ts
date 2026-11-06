@@ -23,6 +23,7 @@ const { addDesktopMemory, listDesktopMemory } = await import('../desktop/memory-
 const { writeMemoryFile } = await import('../memory/files.js')
 const { runCurator } = await import('./curator.js')
 const { agentRoutes } = await import('../http/routes/agents.js')
+const { shutdownDesktopSemanticMemory } = await import('../desktop/semantic-memory/runtime.js')
 
 async function coworker(id: string): Promise<LoadedAgent> {
     const config = agentConfigSchema.parse({ name: id, tools: { skills: false } })
@@ -32,9 +33,13 @@ async function coworker(id: string): Promise<LoadedAgent> {
 }
 
 afterAll(async () => {
-    for (const id of ['owner', 'sibling', 'optout', 'redirect', 'destination', 'pending-memory', 'pending-autoMemory', 'pending-enabled']) closeSystemDb(id)
-    vi.unstubAllEnvs()
-    await rm(root, { recursive: true, force: true })
+    try {
+        // agentRoutes installs the semantic observer; drain its background reconcile
+        // before closing databases or changing the root its lazy readers resolve.
+        await shutdownDesktopSemanticMemory()
+        for (const id of ['owner', 'sibling', 'optout', 'redirect', 'destination', 'pending-memory', 'pending-autoMemory', 'pending-enabled']) closeSystemDb(id)
+        await rm(root, { recursive: true, force: true })
+    } finally { vi.unstubAllEnvs() }
 })
 
 it('learns, corrects and removes indexed notes using only the selected Mac coworker’s candidates', async () => {

@@ -253,6 +253,9 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
     async function retry(input: CompanyBriefSynthesizeInput & { previousRequestId: string }, signal: AbortSignal): Promise<CompanyBriefSynthesizeResult> {
         if (input.previousRequestId === input.requestId) throw new HttpError(400, 'Retry uses a new request id.')
         const previous = await required(input.previousRequestId, input.workspaceId, input.chatId)
+        // A committed retry remains observable after its predecessor is dismissed.
+        // synthesize still verifies the exact immutable request fingerprint before recovery.
+        if (await row(input.requestId)) return synthesize(input, signal, { draft: previous.draft, draftRevision: previous.draftRevision })
         if (previous.status === 'pending') throw new HttpError(409, 'Stop this research before retrying it.')
         if (previous.status === 'dismissed') throw new HttpError(409, 'This company brief was dismissed. Create a new brief for the current research.')
         if (previous.discoveryId !== input.snapshot.discoveryId || previous.runId !== input.snapshot.runId || previous.sourceRevision !== input.sourceRevision) throw new HttpError(409, 'This is different company research. Create a new brief instead of carrying over the previous draft.')

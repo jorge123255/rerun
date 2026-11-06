@@ -173,11 +173,16 @@ it('preserves edits on explicit same-source retry, while dismissal requires a fr
     await expect(service.edit({ requestId: made.attempt.requestId, workspaceId, chatId, expectedDraftRevision: 1, brief: 'replaced' })).rejects.toMatchObject({ status: 409 })
     expect((await service.read(workspaceId, chatId))?.draft).toBe(edited.draft)
     await service.observe({ workspaceId, chatId, sourceRevision: made.attempt.sourceRevision, active: true })
-    const retry = await service.retry({ ...input(snapshot(), randomUUID()), previousRequestId: made.attempt.requestId }, new AbortController().signal)
+    const retryCommand = { ...input(snapshot(), randomUUID()), previousRequestId: made.attempt.requestId }
+    const retry = await service.retry(retryCommand, new AbortController().signal)
     expect(retry.attempt.draft).toBe(edited.draft)
     expect(retry.attempt.requestId).not.toBe(made.attempt.requestId)
     const dismissed = await service.dismiss(made.attempt.requestId, workspaceId, chatId)
     expect(dismissed.status).toBe('dismissed')
+    const receipts = (await db.execute('SELECT * FROM desktop_company_brief_requests ORDER BY request_id')).rows
+    expect(await service.retry(retryCommand, new AbortController().signal)).toEqual({ attempt: retry.attempt, modelCalled: false })
+    expect((await db.execute('SELECT * FROM desktop_company_brief_requests ORDER BY request_id')).rows).toEqual(receipts)
+    expect(calls).toHaveLength(2)
     await expect(service.retry({ ...input(snapshot(), randomUUID()), previousRequestId: made.attempt.requestId }, new AbortController().signal)).rejects.toMatchObject({ status: 409 })
     expect(proposeCalls).toBe(0)
 })

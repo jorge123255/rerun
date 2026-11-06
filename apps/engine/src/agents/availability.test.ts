@@ -10,7 +10,7 @@ process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-availability-'
 process.env.RERUN_HUB_BASE_URL = 'https://hub.example.com'
 process.env.RERUN_API_KEY = 'hub-key'
 
-const { beforeEach, describe, expect, it } = await import('vitest')
+const { beforeEach, describe, expect, it, vi } = await import('vitest')
 const { rm } = await import('node:fs/promises')
 const { DEFAULT_CONNECTION_MODELS, RERUN_CONNECTION_ID, RERUN_MODEL, agentConfigSchema } = await import('@rerun/contracts')
 const { connectionsDir } = await import('../config/paths.js')
@@ -185,10 +185,18 @@ describe('resolveConfiguredModel', () => {
     })
 
     it('still maps a bare provider onto the oldest connection of that provider', async () => {
-        const first = await connect('anthropic', { ANTHROPIC_API_KEY: 'k1' })
-        await connect('anthropic', { ANTHROPIC_API_KEY: 'k2' })
-        const resolved = await resolveConfiguredModel(agentConfigSchema.parse({ name: 'a1', provider: 'anthropic', model: 'claude-opus-4-8' }))
-        expect(resolved.connection?.id).toBe(first.id)
+        // Awaited file writes can still finish within one clock millisecond. A
+        // tied timestamp intentionally uses ID order, which is a separate test.
+        vi.useFakeTimers({ toFake: ['Date'] })
+        try {
+            vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+            const first = await connect('anthropic', { ANTHROPIC_API_KEY: 'k1' })
+            vi.setSystemTime(new Date('2026-01-01T00:00:00.001Z'))
+            const second = await connect('anthropic', { ANTHROPIC_API_KEY: 'k2' })
+            expect(Date.parse(first.config.createdAt)).toBeLessThan(Date.parse(second.config.createdAt))
+            const resolved = await resolveConfiguredModel(agentConfigSchema.parse({ name: 'a1', provider: 'anthropic', model: 'claude-opus-4-8' }))
+            expect(resolved.connection?.id).toBe(first.id)
+        } finally { vi.useRealTimers() }
     })
 })
 
