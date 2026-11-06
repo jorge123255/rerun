@@ -7,4 +7,3 @@ export async function desktopWebSearch(identity: DesktopWebSearchRunIdentity, in
     signal.throwIfAborted()
     return desktopWebSearchOutcomeSchema.parse(result)
 }
-

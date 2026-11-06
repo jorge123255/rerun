@@ -55,4 +55,3 @@ export function desktopAuxiliaryBackends(store: ReturnType<typeof desktopAuxilia
         },
     }
 }
-

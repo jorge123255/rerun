@@ -10,4 +10,3 @@ export const desktopAuxiliaryChangeSchema = z.object({
     purpose: desktopAuxiliaryPurposeSchema, expectedRevision: z.string().min(1).max(100),
     key: z.string().max(8192).regex(/^[\x21-\x7e]*$/),
 }).strict()
-

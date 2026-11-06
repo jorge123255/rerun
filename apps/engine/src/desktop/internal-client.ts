@@ -31,4 +31,3 @@ export async function desktopInternalJson(path: string, body: unknown, signal: A
         await abortable(reader.cancel(), AbortSignal.timeout(1_000)).catch(() => {})
     }
 }
-

@@ -55,4 +55,3 @@ function ServiceKey({ row, onSaved }: { row: DesktopAuxiliaryStatus; onSaved: (r
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     </form>
 }
-

@@ -56,4 +56,3 @@ export async function handleDesktopWebSearch(request: Request) {
         return Response.json({ status: 'error', message: 'Web search is unavailable for this run.' }, { status: 400, headers })
     }
 }
-

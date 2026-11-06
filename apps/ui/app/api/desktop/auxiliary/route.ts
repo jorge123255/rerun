@@ -14,4 +14,3 @@ export function PATCH(request: Request) {
         return Response.json(await store.list(), { headers: { 'Cache-Control': 'no-store' } })
     })
 }
-
