@@ -96,6 +96,6 @@ Root runs every check and repairs findings.
 
 ## Final tip (implementation commit)
 
-_Implementation SHA filled in follow-up doc commit once._
+`efc87104082b36bbc5b513113fda60c223e0ad0e` (implementation commit; this doc commit stamps it once).
 
 Status after C commits: report clean/dirty externally. W4 / native / restart acceptance remain root-owned. This package does **not** claim all A–H complete.
