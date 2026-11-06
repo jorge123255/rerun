@@ -10,14 +10,14 @@ describe('selected OpenCode vision model', () => {
         expect(desktopVisionModelFor(agent as never)).toBeUndefined()
     })
 
-    it('uses only the cheapest seeing Go model of the same connection', () => {
+    it('does not replace a selected model that cannot see images', () => {
         const agent = { resolved: { provider: 'opencode', model: 'go/blind', connection: connection([
             { id: 'go/blind', images: false, price: { input: 1, output: 1, cacheRead: null } },
             { id: 'go/expensive', images: true, price: { input: 5, output: 5, cacheRead: null } },
             { id: 'go/cheap', images: true, price: { input: 1, output: 1, cacheRead: null } },
             { id: 'console/seeing', images: true, price: { input: 0.1, output: 0.1, cacheRead: null } },
         ]) }
-        expect(desktopVisionModelFor(agent as never)).toEqual({ model: 'go/cheap' })
+        expect(desktopVisionModelFor(agent as never)).toBeNull()
     })
 
     it('is honestly unavailable without a seeing model or catalog metadata', () => {

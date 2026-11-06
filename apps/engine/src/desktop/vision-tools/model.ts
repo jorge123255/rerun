@@ -16,8 +16,7 @@ export function desktopVisionModelFor(agent: LoadedAgent): ModelOverride | undef
     if (!catalog?.length) return null
     const current = catalog.find(candidate => candidate.id === model)
     if (current?.images) return undefined
-    const seeing = catalog.filter(candidate => candidate.plan === 'go' && candidate.images).sort((a, b) => a.price.input + a.price.output - b.price.input - b.price.output)
-    return seeing[0] ? { model: seeing[0].id } : null
+    return null
 }
 
 export function canonicalDesktopVisionModelPort(): DesktopVisionPorts {

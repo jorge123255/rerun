@@ -13,6 +13,7 @@ import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, Fol
 import { DesktopFileAudioPreview, isDesktopAudioName } from './DesktopFileAudioPreview'
 import { DesktopFileImagePreview, isDesktopRasterName } from './DesktopFileImagePreview'
 import { DesktopFilePdfPreview, isDesktopPdfName } from './DesktopFilePdfPreview'
+import { FxFilesLoading } from './fx-repairs/PanelLoadingSkeletons'
 import { FileSiblingControls, useFileSiblingKeys } from './DesktopFileSiblingNav'
 import { DesktopFileVideoPreview, isDesktopVideoName } from './DesktopFileVideoPreview'
 import { applyEol, splitEol } from '@/lib/files/editable'
@@ -379,7 +380,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         {deletePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Deleting…</p>}
         {notice?.folder === currentPath && <p role={notice.ok ? 'status' : 'alert'} data-testid="import-notice" className={`pt-2 text-xs ${notice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{notice.text}</p>}
         <div className={`min-h-0 flex-1 overflow-y-auto py-2 ${busy || pending ? 'pointer-events-none opacity-60' : ''}`}>
-            {loading ? <p role="status" className="text-sm text-muted-foreground">Loading files…</p>
+            {loading && !error ? <FxFilesLoading />
                 : error ? <p role="alert" className="text-sm text-destructive">{error}</p>
                 : <ContextMenu onOpenChange={open => { if (!open) setMenuName(null) }}>
                     <ContextMenuTrigger asChild>

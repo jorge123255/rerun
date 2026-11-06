@@ -15,6 +15,7 @@ import { ArrowUpIcon, ChevronDownIcon, Maximize2Icon, PlusIcon, SendIcon, Square
 import { MarkdownEditorDialog } from '@/components/ui/markdown-editor-dialog'
 import { DesktopConversationFind } from './DesktopConversationFind'
 import { DesktopProviderErrorNotice } from './chat/recovery/DesktopProviderErrorNotice'
+import { planFxAttachmentBatch } from '@/lib/desktop/fx-repairs/attachment-overflow'
 import { useDesktopChatRecovery } from '@/lib/desktop/chat-recovery/use-desktop-chat-recovery'
 import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
 import { useDesktopReplyFeedback } from '@/lib/desktop/reply-feedback'
@@ -368,7 +369,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const uploadGate = useRef(false)
     const beginUpload = useCallback((files: File[]) => {
         if (!files.length || uploadGate.current || batchUpload.current || preparingSubmit.current || isDesktopQuitting()) return
-        if (files.length > 14) { setUploadNotice('Choose up to 10 files and 4 images at a time.'); return }
+        const groups = planFxAttachmentBatch(files)
         const scope = uploadScope.current
         const release = holdDraftAdmission()
         setBatchActive(true)
@@ -378,12 +379,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         // One ordered drain preserves mixed text/image selection order. Every next file still
         // belongs to the captured tab; closing it or beginning Quit cancels the remaining batch.
         const work = (async () => {
-            for (let index = 0; index < files.length;) {
+            for (const { kind, files: group } of groups) {
                 if (uploadScope.current !== scope || !scope.live || isDesktopQuitting()) break
-                const kindOf = (file: File) => desktopImageKindForName(file.name) ? 'image' : /\.(txt|md)$/i.test(file.name) ? 'text' : 'document'
-                const kind = kindOf(files[index])
-                const group: File[] = []
-                while (index < files.length && kindOf(files[index]) === kind) group.push(files[index++])
                 if (kind === 'image') await imageUploads.start(group)
                 else if (kind === 'document') {
                     if (!tabUid) throw new Error('Open a saved chat tab before adding documents.')

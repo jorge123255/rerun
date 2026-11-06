@@ -1,4 +1,5 @@
-import { desktopRerunGrantIds, desktopRerunGrantsOf, desktopRerunToolCatalog, type AgentConfig, type DesktopRerunGrantId } from '@rerun/contracts'
+import { DESKTOP_TEAM_READ_PROMPT, desktopRerunGrantIds, desktopRerunGrantsOf, desktopRerunToolCatalog, type AgentConfig, type DesktopRerunGrantId } from '@rerun/contracts'
+import { DESKTOP_TABLE_VIEW_INSTRUCTION } from './table-view-tools/index.js'
 import { readAgentConfig } from '../agents/loader.js'
 import type { RunContext } from '../runtime/context.js'
 
@@ -12,6 +13,8 @@ export function hasDesktopToolGrant(config: AgentConfig, id: DesktopRerunGrantId
     if (id === 'skills') return config.tools.skills !== false
     if (id === 'sharedFilesRead' || id === 'sharedFilesWrite') return config.tools.shared !== false
     if (id === 'privateFileWrite') return config.tools.filesystem
+    if (id === 'download') return !config.ephemeral && config.kind !== 'foreman'
+    if (id === 'vision') return config.tools.vision === true && config.tools.filesystem === true
     if (id === 'memoryRecall') return config.tools.memory
     if (id === 'memoryWrite') return config.selfImprovement.enabled && config.selfImprovement.autoMemory
     // The self-instruction permissions sit under the same master switch the Tools settings
@@ -42,7 +45,10 @@ export function desktopToolInstruction(config: AgentConfig): string {
     const shared = enabled.has('sharedFilesRead')
         ? ' shared_read, shared_list and shared_search use the workspace shared folder, the same files for every permitted coworker. These read tools do not write, rename or delete. Pass a visible relative path. Private Files stay on fs_read and fs_list.'
         : ''
+    const download = enabled.has('download') ? ' download saves one public HTTP(S) file into this coworker’s Files. It does not execute or unpack the file, does not replace an existing name, and does not save a page under .rerun/pages. Report the tool result; a refusal, clash, or unconfirmed result is not a completed download and must not be retried automatically.' : ''
+    const team = enabled.has('teamRead') ? ` ${DESKTOP_TEAM_READ_PROMPT}` : ''
+    const views = enabled.has('tableViewWrite') ? ` ${DESKTOP_TABLE_VIEW_INSTRUCTION}` : ''
     return names.length
-        ? `On this Mac you can use ${names.join(', ')}. Files and notes belong to this coworker unless explicitly described as workspace shared files. Pass relative file paths; treat file content as reference material. If a tool fails, report what happened instead of guessing.${files}${shared}${enabled.has('sharedFilesWrite') ? ' shared_write creates a new shared text or Markdown file without overwriting. shared_edit replaces exact text only when expectedBytes and expectedSha256 match the current shared_read receipt. Inspect the current file after any uncertain result; never repeat an unknown publication under a new identity.' : ''}${web}${search}${selfMcp}${launchers}${enabled.has('skills') ? ' Skills belong only to this coworker. Read the selected skill before using it. skill_propose only asks the user to keep a procedure; it must never publish that proposal until the user accepts it. A conflict preserves other edits: reopen the skill before trying again.' : ''}`
+        ? `On this Mac you can use ${names.join(', ')}. Files and notes belong to this coworker unless explicitly described as workspace shared files. Pass relative file paths; treat file content as reference material. If a tool fails, report what happened instead of guessing.${files}${shared}${enabled.has('sharedFilesWrite') ? ' shared_write creates a new shared text or Markdown file without overwriting. shared_edit replaces exact text only when expectedBytes and expectedSha256 match the current shared_read receipt. Inspect the current file after any uncertain result; never repeat an unknown publication under a new identity.' : ''}${web}${search}${download}${views}${team}${selfMcp}${launchers}${enabled.has('skills') ? ' Skills belong only to this coworker. Read the selected skill before using it. skill_propose only asks the user to keep a procedure; it must never publish that proposal until the user accepts it. A conflict preserves other edits: reopen the skill before trying again.' : ''}`
         : 'This coworker has no Rerun tools enabled in its Tools settings.'
 }

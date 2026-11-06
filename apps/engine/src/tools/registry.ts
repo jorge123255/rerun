@@ -68,6 +68,32 @@ import { isolatedScreenTools } from '../desktop/isolated-screen/tools.js'
 import { desktopBrainTools } from '../desktop/brain-tools.js'
 import { readDesktopCoworkerCallRuntime } from '../desktop/coworker-calls/bind.js'
 import { desktopCallAgentTools } from '../desktop/coworker-calls/tool.js'
+import { desktopDownloadTools } from '../desktop/download-tools/tool.js'
+import { bindDesktopDownloadPermission } from '../desktop/download-tools/binding.js'
+import { desktopNotifyTools } from '../desktop/notify-tools/index.js'
+import { desktopTableViewTools } from '../desktop/table-view-tools/index.js'
+import { desktopVisionTools } from '../desktop/vision-tools/tools.js'
+import { bindDesktopTeamReads, desktopTeamReadPorts, readDesktopTeamAdmit, readDesktopTeamReadGrantFromDisk, readDesktopTeamReads } from '../desktop/team-reads/index.js'
+import { desktopTeamDirectory } from '../desktop/team-reads/directory.js'
+
+let downloadPermissionBound = false
+function ensureDesktopDownloadPermission() {
+    if (downloadPermissionBound) return
+    downloadPermissionBound = true
+    bindDesktopDownloadPermission(async ctx => { await requireDesktopToolGrant(ctx, 'download') })
+}
+
+let teamReadsBound = false
+function ensureDesktopTeamReads() {
+    if (teamReadsBound) return
+    teamReadsBound = true
+    bindDesktopTeamReads({
+        grant: readDesktopTeamReadGrantFromDisk,
+        admit: readDesktopTeamAdmit,
+        reads: desktopTeamReadPorts(),
+        directory: desktopTeamDirectory(),
+    })
+}
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
     if (desktopApp()) {
@@ -75,7 +101,9 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         const child = await desktopDelegationChildTools(ctx)
         if (child) return child
         const screen = isolatedScreenTools(ctx, { publishExports: desktopBrowserExportPublisher })
-        const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopSharedMutationTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopSuggestServiceTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx), ...desktopBrainSemanticTools(ctx) }
+        ensureDesktopDownloadPermission()
+        ensureDesktopTeamReads()
+        const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopSharedMutationTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopSuggestServiceTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopTableViewTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'tableViewWrite')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDownloadTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx), ...desktopBrainSemanticTools(ctx) }
         Object.assign(tools, readDesktopDelegation()?.tools(ctx) ?? {})
         Object.assign(tools, desktopSecretRequestTools(ctx))
         Object.assign(tools, desktopMcpSignInTools(ctx))
@@ -88,6 +116,10 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         if (triggers && hasDesktopToolGrant(ctx.agent.config, 'trigger') && !ctx.agent.config.ephemeral) Object.assign(tools, triggers.tools(ctx.agent.id, ctx))
         const calls = readDesktopCoworkerCallRuntime()
         if (calls && hasDesktopToolGrant(ctx.agent.config, 'callAgent') && !ctx.agent.config.ephemeral) Object.assign(tools, desktopCallAgentTools(ctx, calls))
+        const teamReads = readDesktopTeamReads()
+        if (teamReads && !ctx.agent.config.ephemeral) Object.assign(tools, teamReads.tools(ctx))
+        if (hasDesktopToolGrant(ctx.agent.config, 'vision')) Object.assign(tools, desktopVisionTools(ctx))
+        if (hasDesktopToolGrant(ctx.agent.config, 'notify')) Object.assign(tools, desktopNotifyTools(ctx))
         if (ctx.agent.config.setup?.required && ctx.agent.install && desktopSetupRunAllowed(ctx.agent, ctx.sessionId)) Object.assign(tools, desktopSetupTools(ctx))
         const remote = await desktopMcpTools(ctx)
         if (Object.keys(remote.tools).some(name => Object.hasOwn(tools, name))) {

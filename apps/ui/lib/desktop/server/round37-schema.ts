@@ -1,10 +1,12 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
 import { DESKTOP_COMPANY_PROFILE_SCHEMA_SQL } from './company-profile/schema'
+import { FX_BOARD_CAMERA_SCHEMA_SQL } from '../fx-repairs/board-camera-store'
 
 export async function initializeDesktopRound37(db: Client) {
     const steps = [
         { version: 34, id: 'company-profile-derived-attempts', sql: DESKTOP_COMPANY_PROFILE_SCHEMA_SQL },
+        { version: 35, id: 'fx-board-camera', sql: FX_BOARD_CAMERA_SCHEMA_SQL },
     ]
     for (const step of steps) {
         const tx = await db.transaction('write')

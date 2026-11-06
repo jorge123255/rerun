@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { providerSchema } from '@rerun/contracts'
 import { deleteSchedule, listSchedules, readSchedule, scheduleExists, updateScheduleAt, writeSchedule } from '../../schedules/loader.js'
+import { ScheduleTimingError } from '../../schedules/next-run.js'
 import { isValidCron } from '../../schedules/cron.js'
 import { fireSchedule } from '../../runtime/scheduler.js'
 import { getAgent } from '../../agents/registry.js'
@@ -42,8 +43,13 @@ scheduleRoutes.post('/', async c => {
     const agentId = c.req.param('id')!
     const body = createSchema.parse(await c.req.json())
     await authorize(agentId)
-    const schedule = await writeSchedule(agentId, body)
-    return c.json(schedule, 201)
+    try {
+        const schedule = await writeSchedule(agentId, body)
+        return c.json(schedule, 201)
+    } catch (error) {
+        if (error instanceof ScheduleTimingError) return c.json({ error: error.message }, 400)
+        throw error
+    }
 })
 
 scheduleRoutes.get('/:slug', async c => {
@@ -79,8 +85,13 @@ scheduleRoutes.patch('/:slug', async c => {
     if(desktopApp() && Boolean(merged.cron)===Boolean(merged.runAt))return c.json({error:'Provide exactly one of cron or runAt'},400)
     if(body.timezone) {try {new Intl.DateTimeFormat('en',{timeZone:body.timezone})}catch{return c.json({error:'Invalid timezone'},400)}}
     await authorize(agentId)
-    const schedule = await updateScheduleAt(agentId, slug, body)
-    return c.json(schedule)
+    try {
+        const schedule = await updateScheduleAt(agentId, slug, body)
+        return c.json(schedule)
+    } catch (error) {
+        if (error instanceof ScheduleTimingError) return c.json({ error: error.message }, 400)
+        throw error
+    }
 })
 
 scheduleRoutes.post('/:slug/run', async c => {

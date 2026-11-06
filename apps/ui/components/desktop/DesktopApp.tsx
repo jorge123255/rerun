@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 import type { ThemePreference } from '@rerun/ui/theme'
@@ -31,6 +31,8 @@ import { createDesktopBrainPagesActions } from '@/lib/desktop/brain-pages'
 import { countDesktopBrainProposals } from '@/lib/desktop/brain-proposals'
 import { DesktopSharedFiles } from './DesktopSharedFiles'
 import { DesktopBoard } from './DesktopBoard'
+import { FxBoardCameraBoundary } from './fx-repairs/FxBoardCameraBoundary'
+import { createFxCameraHttpPersistence } from '@/lib/desktop/fx-repairs/board-camera-client'
 import { useDesktopBoardState } from './useDesktopBoardState'
 import { useDesktopCreation } from './useDesktopCreation'
 import { useDesktopTemplatePlacement } from './templates/useDesktopTemplatePlacement'
@@ -138,6 +140,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }, [])
     const [placingCopy, setPlacingCopy] = useState(false)
     const [quitting, setQuitting] = useState(false)
+    const cameraFlush = useRef<(() => Promise<boolean>) | null>(null)
+    const cameraPersistence = useMemo(() => createFxCameraHttpPersistence(workspaceId => `/api/desktop/workspaces/${workspaceId}/board-camera`), [])
     const creationAdmission = useRef({ blocked: false, settingsAllowed: true })
     useEffect(() => {
         const bridge = (window as Window & { desktopApp?: {
@@ -158,6 +162,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             setImportCoworkerOpen(false)
             // Freeze chat admissions synchronously, then let best-effort navigation history
             // settle alongside the existing durable draft handshake.
+            const cameraReady = cameraFlush.current ? await cameraFlush.current() : true
+            if (!cameraReady) return false
             const dockReady = await flushForemanDockPlacements()
             const voiceReady = await flushForemanVoicesForQuit()
             // A failed voice custody drain must remain visible. Do not hide its owner or
@@ -609,7 +615,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         <main className="relative flex h-dvh w-full flex-col overflow-clip bg-frame text-foreground md:p-2">
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
+                {runtimeWorkspaceId != null ? <FxBoardCameraBoundary workspaceId={runtimeWorkspaceId} currentWorkspace={() => runtimeWorkspaceId} persistence={cameraPersistence} bindFlush={flush => { cameraFlush.current = flush }}>{camera => (
                 <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
+                    cameraMountKey={camera.mountKey} initialCamera={camera.initialCamera} onCameraChange={camera.onCameraChange}
                     newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
@@ -622,6 +630,19 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetLeft={panelOpen ? 0 : foremanLeftTrack} panelInsetRight={panelOpen ? panelInsetRight : foremanRightTrack} onOpen={selectCoworker}
                     onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
+                )}</FxBoardCameraBoundary> : <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
+                    newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
+                    board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
+                    boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
+                    newCoworker={creation.placement} onPlaceCoworker={creation.place} onCancelCoworker={creation.cancel}
+                    templatePlacement={templatePlacement.placement} onPlaceTemplate={templatePlacement.place} onCancelTemplate={templatePlacement.cancel} onReviewTemplate={reviewTemplatePlacement}
+                    creationChecking={creation.checking} creationError={creation.checkError} onRetryCreation={creation.refresh}
+                    boardDisabled={workspaceDialogActive || templatesActive || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
+                    onBoardInteractionChange={setBoardInteraction}
+                    visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
+                    selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetLeft={panelOpen ? 0 : foremanLeftTrack} panelInsetRight={panelOpen ? panelInsetRight : foremanRightTrack} onOpen={selectCoworker}
+                    onRename={renameCoworker} onShare={agent => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting() && currentAgents.current.some(current => current.id === agent.id)) { rememberWorkspaceDialogFocus(agent.id); setShareTarget(agent) } }} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
+                    onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />}
                 {!controlCenterDisabled && !controlCenterOpen && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
                 {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
 

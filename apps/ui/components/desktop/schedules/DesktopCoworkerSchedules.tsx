@@ -10,6 +10,7 @@ import { TimezoneCombobox } from '@/components/agent/TimezoneCombobox'
 import { PanelList,PanelListHeader,PanelScroller } from '@/components/ui/panel-list'
 import { PanelRow } from '@/components/ui/panel-row'
 import { PanelSteps } from '@/components/ui/panel-steps'
+import { FxSchedulesLoading } from '../fx-repairs/PanelLoadingSkeletons'
 import { PanelDeleteButton,PanelEditorBody,PanelEditorFooter,PanelEditorHeader,PanelEditorShell } from '@/components/ui/panel-editor'
 import { EmptyState } from '@/components/ui/empty-state'
 import { CalendarClockIcon,PlusIcon } from '@/lib/icons'
@@ -58,7 +59,7 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
             onRun={editing==='new'?undefined:async requestId=>{const own=epoch.current;const chat=await request('POST',{slug:editing.slug,action:'run',requestId});if(alive.current && own===epoch.current){onOpenSession(chat);await load()}}}/> :
         <div className="flex flex-col h-full">{notice && <div className="px-3 pt-2 text-xs"><DesktopScheduleToolNotice outcome="committed" text={`The coworker changed routine ${notice.slug}. The list is refreshed.`}/></div>}{tasks!==null && !loading && !error ? <PanelListHeader count={tasks.length} noun="scheduled task">{newButton}</PanelListHeader> : <PanelListHeader>{newButton}</PanelListHeader>}
             {error && <p role="alert" className="p-3 text-xs text-destructive">{error}</p>}
-            {loading && <p className="p-3 text-xs" role="status">Loading scheduled tasks…</p>}
+            {loading && !error && <FxSchedulesLoading />}
             {error && tasks!==null && tasks.length>0 && <p className="px-3 text-xs text-muted-foreground">Showing previously loaded tasks.</p>}
             {!loading && !error && tasks?.length===0 ? <EmptyState icon={CalendarClockIcon} title="No scheduled tasks yet" description="Add a task for this local coworker to run while the app is open."/> : tasks && tasks.length>0 ?
             <PanelScroller><PanelList>{tasks.map(task=><div key={task.slug}><PanelRow onClick={()=>navigate(task)} title={task.name} description={scheduleSummary(task)} meta={!task.enabled ? <Badge size="xs" tone="neutral" glow={false}>paused</Badge> : undefined}

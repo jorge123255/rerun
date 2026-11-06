@@ -1,14 +1,14 @@
-# Codex test plan draft
+# Codex test plan draft — second candidate
 
-This is a draft for a later Codex run. It is not instructions that were followed here. Nothing in this integration was tested, typechecked, linted, built, installed, or packaged.
+This draft replaces the PR4 validation target for the next Codex pass. It was not executed here. Source is not a test run and not runtime acceptance. Do not call the app ready or PASS.
 
-This branch is not whole-app ready. Ten pending deliveries and the future-activation list in `docs/desktop-delivered-integration-handoff.md` are still open. Do not treat a green subset as acceptance of the desktop app.
+PR4 `134c4f043f102202a8de007bc9e24bcfd531eef5` stays the first candidate. Do not reuse the PR4 worktree or the Codex root. Native smoke stays blocked by the production-fixed profile. Do not bypass that isolation.
 
 ## Commit to test
 
 - Frozen base: `8297fe6404caa114dcb0c2cd6006291a8abb2038`
-- Source repair commit: `a6d1a7d39a321573f159dca434b3f030bdf3e01f`
-- Tree to check out: the pull request head on `cursor/desktop-delivered-integration-3a08`, which is the child of that repair commit and contains this draft. Confirm `git rev-parse HEAD^` is `a6d1a7d39a321573f159dca434b3f030bdf3e01f` and `git rev-parse HEAD` equals the pull request head SHA.
+- First candidate, unchanged: `134c4f043f102202a8de007bc9e24bcfd531eef5`
+- Second candidate: pull request head of `cursor/desktop-second-candidate-3a08`. Confirm it contains `docs/desktop-second-candidate-handoff.md` and that `134c4f043f102202a8de007bc9e24bcfd531eef5` is an ancestor. The exact head SHA is the pull request head, not a later unpushed commit.
 
 ## Workspace
 
@@ -19,15 +19,15 @@ Use a new clone or a new worktree outside that directory:
 ```bash
 git clone https://github.com/jorge123255/rerun.git rerun-integration-check
 cd rerun-integration-check
-git fetch origin cursor/desktop-delivered-integration-3a08
-git switch --detach <PR_HEAD_SHA>
+git fetch origin cursor/desktop-second-candidate-3a08
+git switch --detach <SECOND_CANDIDATE_PR_HEAD_SHA>
 ```
 
 Or, from an existing clone that is not the Codex root:
 
 ```bash
-git fetch origin cursor/desktop-delivered-integration-3a08
-git worktree add ../rerun-integration-check <PR_HEAD_SHA>
+git fetch origin cursor/desktop-second-candidate-3a08
+git worktree add ../rerun-integration-check <SECOND_CANDIDATE_PR_HEAD_SHA>
 ```
 
 Do not merge this branch. Do not push from the check workspace. Do not deploy, sign, or install certificates.
@@ -99,7 +99,13 @@ Do not run `pnpm db:start`, `pnpm db:reset`, or anything that opens Supabase, Ke
 | RD38 I | source composed, not activated | `apps/desktop/src/main/index.mjs` does not import `remote-gateway` |
 | H packaging | source composed | readiness files only; no archive was built |
 | Contracts barrel | source composed, buildable unverified | `dist/` was not rebuilt |
-| Ten pending deliveries | not implemented | no `coworker-overview/`, `subscription-profiles/`, or `optional-connectivity/` from those assignments |
+| Seven finish packets | source composed, buildable unverified | scheduler containment, default-off team/download/vision/notify/table-view grants, FX overflow and camera migration 35 |
+| Vision model | source composed | a selected model that cannot see images returns null; another model is not substituted |
+| Notify loopback | live gate | `/api/desktop/engine/notify-user` returns `unknown` and does not mark shown |
+| PR5 connectivity | source composed, not activated | foundation stays disabled; no listener |
+| PR6 profiles | source composed, not activated | selector not mounted; no second account |
+| PR7 overview | source composed, not mounted | existing coworker card remains |
+| Ten earlier pending locals | superseded as source by the seven packets above | UI01/UI13/optional-connectivity are the PR7/PR6/PR5 trees, still gated as rows above |
 | RD43, RD44, RD45 | not implemented | no host, webhook, account, SSO, or phone-pairing activation |
 
 ## Out of this draft
