@@ -1,3 +1,4 @@
+import { buildDesktopControlCommands } from '../control-center'
 import type {ControlSection,ControlRow} from '@/components/control-center/types'
 import {isDesktopCoworkerPanel} from '@/lib/desktop/coworker-panel'
 import {AGENT_TABS} from '@/components/agent/agent-tabs'
@@ -73,6 +74,7 @@ export function mergeParitySections(existing:ControlSection[],additions:ControlS
    destination.rows.push(row);return false
   })
  }
+ const desktopMetadata=buildDesktopControlCommands({brain:true,sharedFiles:true,addBox:true,shortcuts:true,notifications:true,workspaceSettings:true,recenterBoard:true,toggleTheme:true})
  const rank=(row:ControlRow)=>{
   const key=paritySemanticKey(row.id),tab=AGENT_TABS.findIndex(tab=>`panel:${tab.id}`===key)
   if(tab>=0)return tab
@@ -84,7 +86,12 @@ export function mergeParitySections(existing:ControlSection[],additions:ControlS
  const {text}=parseQuery(query)
  for(const section of result)if(['Actions','Settings','Open'].includes(section.heading)){
   section.rows.sort((a,b)=>rank(a)-rank(b))
-  if(text)section.rows=searchItems(section.rows.map(row=>({...row,keywords:metadata.find(command=>command.id===paritySemanticKey(row.id))?.keywords??(paritySemanticKey(row.id)==='servers'?['machine','computer','remote','connection']:AGENT_TABS.filter(tab=>`panel:${tab.id}`===paritySemanticKey(row.id)).map(tab=>tab.description))})),text)
+  if(text)section.rows=searchItems(section.rows.map(row=>{
+   const original=metadata.find(command=>command.id===paritySemanticKey(row.id))?.keywords??(paritySemanticKey(row.id)==='servers'?['machine','computer','remote','connection']:AGENT_TABS.filter(tab=>`panel:${tab.id}`===paritySemanticKey(row.id)).map(tab=>tab.description))
+   // Preserve supported Mac aliases such as notification sound alongside the original catalog.
+   const local=desktopMetadata.find(command=>`command-${command.id}`===row.id)?.keywords??[]
+   return {...row,keywords:[...new Set([...original,...local])]}
+  }),text)
  }
  return result.filter(section=>section.rows.length||section.loading)
 }
