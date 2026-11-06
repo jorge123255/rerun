@@ -11,8 +11,8 @@ import {
     type DesktopWebSearchResponse,
     type DesktopWebSearchRunIdentity,
 } from '@rerun/contracts'
-import { abortable } from '../web-fetch/transport.js'
-import { publicUrl } from '../web-fetch/public-url.js'
+import { abortable } from '../web-fetch/transport.ts'
+import { publicUrl } from '../web-fetch/public-url.ts'
 
 function normalize(value: string): string {
     return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '')
