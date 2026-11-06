@@ -5,6 +5,7 @@ import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'reac
 
 import { DESKTOP_CONNECTING_LABEL, DesktopScreenLoader } from '@/components/desktop/DesktopScreenLoader'
 import { cn } from '@/lib/utils'
+import { guestPasteMode } from '@/components/desktop/guest-paste'
 
 const KEYSYM_CONTROL_LEFT = 0xffe3
 const KEYSYM_V = 0x0076
@@ -88,6 +89,13 @@ export function DesktopViewer({ socketUrl, onDisconnect, viewOnly = false, ref, 
         paste: text => {
             const rfb = rfbRef.current
             if (!rfb) return
+            // ClientCutText is Latin-1. Any code point above U+00FF must use Unicode keysyms
+            // for the full string — never clipboardPasteFrom and type together.
+            if (guestPasteMode(text) === 'unicode-type') {
+                for (const char of text) rfb.sendKey(keysymOf(char), null)
+                rfb.focus()
+                return
+            }
             rfb.clipboardPasteFrom(text)
             rfb.sendKey(KEYSYM_CONTROL_LEFT, 'ControlLeft', true)
             rfb.sendKey(KEYSYM_V, 'KeyV')
