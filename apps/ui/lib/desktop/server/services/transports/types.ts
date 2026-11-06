@@ -1,6 +1,6 @@
 import type { McpRunIdentity } from '../../mcp/bridge'
 import type { DesktopMcpSseTool } from '../../../../../../../packages/contracts/src/desktop-mcp-sse'
-import type { ServiceTransportControl, ServiceTransportRef, ServiceTransportReceipt, ServiceTransportSnapshot } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import type { ServiceTransportControl, ServiceTransportRef, ServiceTransportReceipt, ServiceTransportSnapshot } from '@rerun/contracts'
 import type { TransportPlan, Template } from './compiler'
 export type TrustedRun = McpRunIdentity
 export type TransportAction = 'read' | 'discover' | 'call' | 'close'

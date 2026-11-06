@@ -3,7 +3,7 @@ import { serviceManifestSchema, type ServiceManifest, type AuthMethod } from '@/
 import { instanceServerName } from '@/lib/services/instances'
 import { parseServiceRegistryKey } from '@rerun/contracts'
 import { endpoint, serverName } from '../../mcp/model'
-import { SERVICE_TRANSPORT_LIMITS as L, serviceTransportRefSchema, type ServiceTransportRef, type ServiceTransportMethod } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import { SERVICE_TRANSPORT_LIMITS as L, serviceTransportRefSchema, type ServiceTransportRef, type ServiceTransportMethod } from '@rerun/contracts'
 
 export class TransportFailure extends Error {
     constructor(public code: 'unavailable' | 'unsupported' | 'auth-needed' | 'changed' | 'grant' | 'invalid' | 'cancelled' | 'unknown' | 'close-unconfirmed') { super(code) }

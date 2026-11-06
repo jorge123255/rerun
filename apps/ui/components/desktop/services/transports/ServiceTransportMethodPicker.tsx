@@ -1,6 +1,6 @@
 'use client'
 import { AuthMethodPicker } from '@/components/services/AuthMethodPicker'
-import { SERVICE_TRANSPORT_COPY, type ServiceTransportMethod } from '../../../../../../packages/contracts/src/desktop-service-transports'
+import { SERVICE_TRANSPORT_COPY, type ServiceTransportMethod } from '@rerun/contracts'
 export function ServiceTransportMethodPicker({ methods, onSelect }: { methods: ServiceTransportMethod[]; onSelect(id: string): void }) {
     return <div className="min-w-0 space-y-3">
         <p className="text-sm font-medium">Authentication</p>

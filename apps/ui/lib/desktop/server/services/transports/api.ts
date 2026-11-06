@@ -1,5 +1,5 @@
 import 'server-only'
-import { serviceTransportControlSchema, SERVICE_TRANSPORT_COPY, type ServiceTransportControl } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import { serviceTransportControlSchema, SERVICE_TRANSPORT_COPY, type ServiceTransportControl } from '@rerun/contracts'
 import type { createServiceTransports } from './lifecycle'
 import { TransportFailure } from './compiler'
 export function serviceTransportApi(runtime: ReturnType<typeof createServiceTransports>) {

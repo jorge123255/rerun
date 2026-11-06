@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { serviceTransportControlSchema, serviceTransportRefSchema, serviceTransportReceiptSchema, SERVICE_TRANSPORT_LIMITS as L, type ServiceTransportControl, type ServiceTransportRef, type ServiceTransportReceipt, type ServiceTransportSnapshot } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import { serviceTransportControlSchema, serviceTransportRefSchema, serviceTransportReceiptSchema, SERVICE_TRANSPORT_LIMITS as L, type ServiceTransportControl, type ServiceTransportRef, type ServiceTransportReceipt, type ServiceTransportSnapshot } from '@rerun/contracts'
 import { boundedJson, validateSseResult, validateSseTools } from '../../mcp-sse/validation'
 import { wait } from '../../mcp-sse/errors'
 import { TransportFailure } from './compiler'

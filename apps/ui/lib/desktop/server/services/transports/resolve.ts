@@ -1,5 +1,5 @@
 import 'server-only'
-import { SERVICE_TRANSPORT_LIMITS as L } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import { SERVICE_TRANSPORT_LIMITS as L } from '@rerun/contracts'
 import { assertRemoteEndpoint, TransportFailure, type Template } from './compiler'
 import type { TransportAuthority, ResolvedTransport, ValuePort, ProgramPort } from './types'
 const blockedExecutable = /^(?:sh|bash|zsh|fish|csh|tcsh|ksh|env|sudo|npx|npm|pnpm|yarn|bunx|uvx|uv|pip|pip3|pipx|osascript|open|launchctl)$/

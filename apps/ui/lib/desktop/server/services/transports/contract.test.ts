@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { serviceTransportControlSchema, serviceTransportSnapshotSchema } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import { serviceTransportControlSchema, serviceTransportSnapshotSchema } from '@rerun/contracts'
 import { ref, requestId } from './regression-harness'
 it('rejects client engine identity, headers, executable and inline credentials', () => {
     const request = { ...ref, requestId, action: 'probe' }

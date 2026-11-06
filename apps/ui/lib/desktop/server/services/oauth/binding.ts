@@ -11,8 +11,8 @@ import { sqliteServiceOAuthStore } from './store'
 import { catalogOAuthPrimitive } from './primitive'
 import { serviceOAuthLifecycle } from './lifecycle'
 import type { OAuthAccountBinding, OAuthAccounts } from './ports'
-import type { DesktopServiceOAuthAction } from '../../../../../../../packages/contracts/src/desktop-service-oauth'
-import { desktopServiceOAuthSnapshotSchema } from '../../../../../../../packages/contracts/src/desktop-service-oauth'
+import type { DesktopServiceOAuthAction } from '@rerun/contracts'
+import { desktopServiceOAuthSnapshotSchema } from '@rerun/contracts'
 
 export function createCanonicalServiceOAuth(runtime: DesktopRuntime, store: ServiceStore, services: LocalServices, feature: AccountFeature, key: () => Buffer, shutdownSignal: AbortSignal) {
     const attemptStore = sqliteServiceOAuthStore(store.db, key)

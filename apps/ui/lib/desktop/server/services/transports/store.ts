@@ -1,6 +1,6 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
-import { serviceTransportControlSchema, serviceTransportReceiptSchema, type ServiceTransportControl, type ServiceTransportRef } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import { serviceTransportControlSchema, serviceTransportReceiptSchema, type ServiceTransportControl, type ServiceTransportRef } from '@rerun/contracts'
 import type { TransportDependencies, TransportReceiptKey } from './types'
 export const SERVICE_TRANSPORT_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS desktop_service_transport_receipts (

@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { ServiceTransportSetup, type ServiceTransportSetupPorts } from './ServiceTransportSetup'
 import { ServiceTransportConnection } from './ServiceTransportConnection'
 import { ServiceTransportMethodPicker } from './ServiceTransportMethodPicker'
-import type { ServiceTransportMethod, ServiceTransportSetupIntent, ServiceTransportSnapshot } from '../../../../../../packages/contracts/src/desktop-service-transports'
+import type { ServiceTransportMethod, ServiceTransportSetupIntent, ServiceTransportSnapshot } from '@rerun/contracts'
 const ref = { agentId: 'alice', key: 'example', installationId: '00000000-0000-4000-8000-000000000001', revision: '00000000-0000-4000-8000-000000000002' }
 const requestId = '00000000-0000-4000-8000-000000000003'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true

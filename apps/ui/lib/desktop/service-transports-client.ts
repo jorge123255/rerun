@@ -1,5 +1,5 @@
 'use client'
-import { serviceTransportSnapshotSchema, serviceTransportControlSchema, type ServiceTransportRef, type ServiceTransportControl, type ServiceTransportSnapshot } from '../../../../packages/contracts/src/desktop-service-transports'
+import { serviceTransportSnapshotSchema, serviceTransportControlSchema, type ServiceTransportRef, type ServiceTransportControl, type ServiceTransportSnapshot } from '@rerun/contracts'
 export type ServiceTransportReply = { ok: true; snapshot: ServiceTransportSnapshot } | { ok: false; failure: string; message: string }
 export type ServiceTransportJournal = {
     read(ref: ServiceTransportRef): Promise<ServiceTransportControl | null>

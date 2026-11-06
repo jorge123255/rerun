@@ -1,6 +1,6 @@
 import 'server-only'
 import {createHash,randomUUID} from 'node:crypto'
-import {desktopServiceOAuthActionSchema,type DesktopServiceOAuthAction,type DesktopServiceOAuthState} from '../../../../../../../packages/contracts/src/desktop-service-oauth'
+import {desktopServiceOAuthActionSchema,type DesktopServiceOAuthAction,type DesktopServiceOAuthState} from '@rerun/contracts'
 import {canonical} from '../accounts/installs'
 import {compileCatalogOAuth} from './compiler'
 import {oauthHttps,publicOAuthAddress} from '../../mcp/oauth-network'

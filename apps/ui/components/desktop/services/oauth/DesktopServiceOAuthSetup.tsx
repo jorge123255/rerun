@@ -3,7 +3,7 @@ import {useEffect,useRef,useState} from 'react'
 import {Button} from '@/components/ui/button'
 import {ExternalLinkIcon,Loader2Icon} from '@/lib/icons'
 import type {DesktopServiceAccountIntent} from '../../../../../../packages/contracts/src/desktop-service-accounts'
-import type {DesktopServiceOAuthSnapshot} from '../../../../../../packages/contracts/src/desktop-service-oauth'
+import type {DesktopServiceOAuthSnapshot} from '@rerun/contracts'
 import type {ServiceOAuthDriver} from '@/lib/desktop/service-oauth-client'
 import {DesktopServiceOAuthConnect} from './DesktopServiceOAuthConnect'
 export function DesktopServiceOAuthSetup(props:{coworkerId:string;slug:string;name:string;methodId:string;intent:DesktopServiceAccountIntent;driver:ServiceOAuthDriver;onChanged?:(snapshot:DesktopServiceOAuthSnapshot)=>void}){

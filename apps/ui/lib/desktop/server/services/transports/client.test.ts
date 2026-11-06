@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createServiceTransportClient } from '@/lib/desktop/service-transports-client'
-import type { ServiceTransportControl, ServiceTransportSnapshot } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import type { ServiceTransportControl, ServiceTransportSnapshot } from '@rerun/contracts'
 import { ref, requestId } from './regression-harness'
 describe('restart-safe public request journal', () => {
     it('hydrates without an operation and reconciles the exact unknown acknowledgement', async () => {

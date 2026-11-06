@@ -1,4 +1,4 @@
-import {desktopServiceOAuthSnapshotSchema,type DesktopServiceOAuthAction,type DesktopServiceOAuthSnapshot} from '../../../../packages/contracts/src/desktop-service-oauth'
+import {desktopServiceOAuthSnapshotSchema,type DesktopServiceOAuthAction,type DesktopServiceOAuthSnapshot} from '@rerun/contracts'
 export type ServiceOAuthDriver={action:(owner:string,input:DesktopServiceOAuthAction,signal:AbortSignal)=>Promise<DesktopServiceOAuthSnapshot>}
 export function serviceOAuthClient(network:typeof fetch=fetch):ServiceOAuthDriver{
  return {async action(owner,input,signal){

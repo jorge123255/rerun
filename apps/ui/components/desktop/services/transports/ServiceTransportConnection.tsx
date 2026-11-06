@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { CheckIcon } from '@/lib/icons'
 import type { ServiceTransportClient } from '@/lib/desktop/service-transports-client'
-import { SERVICE_TRANSPORT_COPY, type ServiceTransportRef, type ServiceTransportControl, type ServiceTransportSnapshot } from '../../../../../../packages/contracts/src/desktop-service-transports'
+import { SERVICE_TRANSPORT_COPY, type ServiceTransportRef, type ServiceTransportControl, type ServiceTransportSnapshot } from '@rerun/contracts'
 export type ServiceTransportConnectionProps = { account: ServiceTransportRef; name: string; client: ServiceTransportClient }
 export function ServiceTransportConnection(props: ServiceTransportConnectionProps) { return <Connection key={JSON.stringify(props.account)} {...props} /> }
 function Connection({ account, name, client }: ServiceTransportConnectionProps) {

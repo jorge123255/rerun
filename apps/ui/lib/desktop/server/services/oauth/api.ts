@@ -1,7 +1,7 @@
 import 'server-only'
 import {authenticateDesktopRequest} from '../../auth'
 import {boundedText} from '../../mcp/remote'
-import {desktopServiceOAuthActionSchema} from '../../../../../../../packages/contracts/src/desktop-service-oauth'
+import {desktopServiceOAuthActionSchema} from '@rerun/contracts'
 import type {serviceOAuthLifecycle} from './lifecycle'
 export function serviceOAuthApi(lifecycle:ReturnType<typeof serviceOAuthLifecycle>,authorizeOwner:(request:Request,owner:string)=>Promise<void>){
  return async(request:Request,owner:string)=>{

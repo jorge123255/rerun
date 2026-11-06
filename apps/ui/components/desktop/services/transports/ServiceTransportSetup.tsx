@@ -5,7 +5,7 @@ import { methodKindLabel } from '@/components/services/AuthMethodPicker'
 import { Button } from '@/components/ui/button'
 import { PanelSteps } from '@/components/ui/panel-steps'
 import { ArrowLeftIcon } from '@/lib/icons'
-import { serviceTransportSetupIntentSchema, serviceTransportRefSchema, type ServiceTransportRef, type ServiceTransportMethod, type ServiceTransportSetupIntent } from '../../../../../../packages/contracts/src/desktop-service-transports'
+import { serviceTransportSetupIntentSchema, serviceTransportRefSchema, type ServiceTransportRef, type ServiceTransportMethod, type ServiceTransportSetupIntent } from '@rerun/contracts'
 import { ServiceTransportMethodPicker } from './ServiceTransportMethodPicker'
 export type SetupAcknowledgement = { requestId: string; outcome: 'saved' | 'unknown' | 'refused'; ref?: ServiceTransportRef }
 export type ServiceTransportSetupPorts = {

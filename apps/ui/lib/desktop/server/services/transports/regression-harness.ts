@@ -2,7 +2,7 @@ import { createServiceTransports } from './lifecycle'
 import { compileServiceTransport } from './compiler'
 import { serviceManifestSchema } from '@/lib/services/manifest'
 import type { TransportDependencies, TransportAuthority, TransportReceiptKey } from './types'
-import type { ServiceTransportRef, ServiceTransportReceipt } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import type { ServiceTransportRef, ServiceTransportReceipt } from '@rerun/contracts'
 export const ref: ServiceTransportRef = { agentId: 'alice', key: 'example', installationId: '00000000-0000-4000-8000-000000000001', revision: '00000000-0000-4000-8000-000000000002' }
 export const requestId = '00000000-0000-4000-8000-000000000003'
 export const run = { engineAgentId: 'engine', sessionId: 'session', runId: 'run' }

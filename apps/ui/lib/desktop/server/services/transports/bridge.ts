@@ -1,5 +1,5 @@
 import 'server-only'
-import { SERVICE_TRANSPORT_COPY, type ServiceTransportRef } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import { SERVICE_TRANSPORT_COPY, type ServiceTransportRef } from '@rerun/contracts'
 import type { createServiceTransports } from './lifecycle'
 import type { TrustedRun } from './types'
 export async function serviceTransportDefinitions(runtime: ReturnType<typeof createServiceTransports>, ref: ServiceTransportRef, discoveryRequestId: string, run: TrustedRun, signal: AbortSignal) {

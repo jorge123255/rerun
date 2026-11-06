@@ -1,5 +1,5 @@
 import type {DesktopServiceAccountIntent} from '../../../../../../../packages/contracts/src/desktop-service-accounts'
-import type {DesktopServiceOAuthSnapshot as Snapshot} from '../../../../../../../packages/contracts/src/desktop-service-oauth'
+import type {DesktopServiceOAuthSnapshot as Snapshot} from '@rerun/contracts'
 import type {ServiceManifest} from '@/lib/services/manifest'
 import type {CatalogOAuthPlan} from './compiler'
 import type {OAuthTokenBundle} from '../../mcp/store'

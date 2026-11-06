@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { authenticateDesktopRequest, DesktopHttpError } from '../../auth'
 import { getDesktopRemoteMcpService } from '../../mcp-binding'
 import { boundedText } from '../../mcp/remote'
-import { serviceTransportControlSchema, serviceTransportRefSchema } from '../../../../../../../packages/contracts/src/desktop-service-transports'
+import { serviceTransportControlSchema, serviceTransportRefSchema } from '@rerun/contracts'
 import { serviceTransportApi } from './api'
 const requestSchema = z.discriminatedUnion('action', [
     z.object({ action: z.enum(['control', 'reconcile']), request: serviceTransportControlSchema }).strict(),

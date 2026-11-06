@@ -2,7 +2,7 @@
 import {useEffect,useRef,useState} from 'react'
 import {Button} from '@/components/ui/button'
 import {CheckCircle2Icon,ExternalLinkIcon,Loader2Icon} from '@/lib/icons'
-import type {DesktopServiceOAuthSnapshot as Snapshot} from '../../../../../../packages/contracts/src/desktop-service-oauth'
+import type {DesktopServiceOAuthSnapshot as Snapshot} from '@rerun/contracts'
 import type {ServiceOAuthDriver} from '@/lib/desktop/service-oauth-client'
 export function DesktopServiceOAuthConnect({snapshot:initial,driver,onChanged}:{snapshot:Snapshot;driver:ServiceOAuthDriver;onChanged?:(snapshot:Snapshot)=>void}){
  const identity=JSON.stringify([initial.coworkerId,initial.accountKey,initial.installationId,initial.configGeneration])
