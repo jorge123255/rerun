@@ -30,15 +30,18 @@ RD37 tips are **source handoffs awaiting root review**; they are not integrated 
 
 | Package | Status | Owner |
 |---|---|---|
-| Inventory | this delivery | master agent (this worktree) |
-| **RD38 A** portable memories | implementing now | master agent (this worktree) |
-| **RD38 B** portable database | reserved — parent resumes after A | master agent |
-| **RD38 E** share UI for A/B | reserved — after A+B | master agent |
-| **RD38 C** control-center parity | **reservation released** | not allocated (cloud C never launched) |
-| **RD38 F** named API connections runtime | **reservation released** | cloud F canceled immediately; no active package |
-| RD38 D/G/H/I and later | not started | pending later allocation |
+| Inventory | delivered | master agent (this worktree) |
+| **RD38 A** portable memories | delivered (`cb7a184d…`) | master agent |
+| **RD38 B** portable database | implementing now | master agent (this worktree) |
+| **RD38 C** control-center parity | **RESERVED** for isolated agent | seven-agent wave (parent) |
+| **RD38 D** run presentations | **RESERVED** for isolated agent | seven-agent wave |
+| **RD38 E** share UI for A/B | **RESERVED** for isolated agent | seven-agent wave — consume A/B seam `abe-1` |
+| **RD38 F** named API connections runtime | **RESERVED** for isolated agent | seven-agent wave |
+| **RD38 G** named API connections UI | **RESERVED** for isolated agent | seven-agent wave (depends F) |
+| **RD38 H** startup/packaging readiness | **RESERVED** for isolated agent | seven-agent wave |
+| **RD38 I** remote gateway transitions | **RESERVED** for isolated agent | seven-agent wave |
 
-Do **not** edit `control-center-parity/` or create `desktop-api-connections` until parent reallocates C/F. Existing `apps/ui/**/control-center-parity` in the base remains untouched.
+Master agent must **not** implement C–I. Isolated trees are prepared from base `6f6ad959…` with no concurrent master edits, no publication, no checks. Existing `apps/ui/**/control-center-parity` remains for the C agent only.
 
 ## Four-state inventory
 

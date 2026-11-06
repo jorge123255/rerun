@@ -1,8 +1,9 @@
 # RD38 A/B/E portable share transfer seam
 
-Written contract for field names. **A implements memories only.** B owns database; E consumes ports. Root owns aggregate barrel export, binding/unavailable flips, and central mounts.
+**Seam revision:** `abe-1` (A delivered; B schema frozen here; E reserved for isolated agent).  
+Root owns aggregate barrel export, binding/unavailable flips, and central mounts. Do not invent a second share service.
 
-## Envelope (future aggregate; do not invent a second share service)
+## Envelope (future aggregate)
 
 ```ts
 {
@@ -11,40 +12,51 @@ Written contract for field names. **A implements memories only.** B owns databas
   sourceWorkspaceId: number,
   sourceAgentId: string,
   sourceRevision: string,           // existing desktop coworker share revision
-  captureRequestId: string,         // durable retry identity
+  captureRequestId: string,         // durable retry identity shared by A/B/E
   include: { memories: boolean, database: boolean, files: boolean },
-  memories?: DesktopCoworkerShareMemoryPackage,  // A — format desktop-coworker-share-memory
-  database?: DesktopCoworkerShareDatabasePackage, // B — TBD by B, same requestId/digest style
+  memories?: DesktopCoworkerShareMemoryPackage,    // format desktop-coworker-share-memory
+  database?: DesktopCoworkerShareDatabasePackage,  // format desktop-coworker-share-database
   files?: { count: number, bytes: number, digest: string } // existing workspace file members via snapshot
 }
 ```
 
-## A package fields (stable)
+## Shared field names (stable across A/B/E)
+
+| Field | Rule |
+|---|---|
+| `captureRequestId` | Same durable id for one share review/export/import attempt |
+| `sourceWorkspaceId` / `sourceAgentId` | Capture identity; restore never mutates source |
+| `contents` | `{ count: number, bytes: number }` preview bucket |
+| `digest` | SHA-256 hex of reviewed section payload |
+| `include.memories` / `include.database` / `include.files` | Existing `desktopCoworkerShareIncludeSchema` |
+
+## A package (delivered)
+
+`format: 'desktop-coworker-share-memory'`, `formatVersion: 1`  
+Ports: `previewDesktopCoworkerShareMemory`, `captureDesktopCoworkerShareMemory`, `restoreDesktopCoworkerShareMemory`  
+Implementation: `cb7a184d918e45899574c37232c43dba1261bd44`
+
+## B package (this revision)
+
+`format: 'desktop-coworker-share-database'`, `formatVersion: 1`
 
 | Field | Meaning |
 |---|---|
-| `format` | `desktop-coworker-share-memory` |
-| `formatVersion` | `1` |
-| `sourceWorkspaceId` / `sourceAgentId` | Capture identity; restore never mutates source |
-| `captureRequestId` | Durable recovery id for capture+restore retries |
-| `notes[]` | `{ id, kind, tags, createdAt, content, contentDigest }` only |
-| `contents` | `{ count, bytes }` preview bucket (same shape as share plan) |
-| `digest` | SHA-256 over canonical note digests + identities |
+| `tables[]` | `{ name, columns[{name,type,pk,notnull}], rows[], tableDigest }` logical only |
+| `views[]` | `{ id, table, name, position, config, viewDigest }` original saved-view metadata |
+| `contents` | `{ count, bytes }` where count = user table count |
+| `digest` | over ordered tableDigests + viewDigests |
 
-## Explicit exclusions (A)
+**Explicit exclusions (B):** live `data/agent.db` bytes; executable SQL text; `ATTACH`/`PRAGMA`; shared.db / workspace shared DB; `data/system.db`; chat/request/provider/credential tables; `sqlite_*` / `_rerun_*` user-table export (views are projected logically from `_rerun_views`); embeddings; `.rerun*` / `.rerun-skill-*` paths.
 
-Conversation history, provider/connection ids, embeddings, FTS/index caches, `data/system.db`, credentials, `.rerun*` / `.rerun-skill-*` metadata, recovery markers (`.adding-` / `.deleting-` / …), `accessCount` / `lastAccessedAt` / `strength` / `status` (runtime index stats; original share reindexes on import).
+**Mac adaptation vs original:** original share copies `data/agent.db` as a file (`packages/contracts/src/agent-share.ts`). Mac B uses a validated logical schema/row/view package instead of blind SQLite copy.
 
-## B coordination (reserved)
+## E consumption (reserved — do not implement in master while E agent owns it)
 
-Use the same `captureRequestId`, `sourceWorkspaceId`, `sourceAgentId`, and `{ count, bytes }` bucket naming. Database package must not embed live SQLite bytes as executable SQL. Exact B schema is owned by RD38 B.
+Enable Coworker database only when B preview `available === true` **and** capture+validation+isolated install authorities are bound. Bind review to B `digest`. Same for Memories via A. Keep precise `unavailable.database` / `unavailable.memories` otherwise.
 
-## E consumption
+## Root activation (not applied by A/B authors)
 
-Enable Memories only when A preview `available === true` **and** capture+validation+isolated install authorities are bound. Otherwise keep precise `unavailable.memories` reason. E must bind review to A `digest` and refuse stale packages.
-
-## Root activation (not applied by A)
-
-1. Export `desktop-coworker-share-memory.ts` from `packages/contracts/src/index.ts`.
-2. Bind capture list + fresh-destination install in coworker-share `binding.ts` / service; clear `unavailable.memories` only when both ports succeed.
-3. Keep generic template installer for non-memory members; memory restore goes through A restorer, not `isTemplateManifestPath` broadening.
+1. Export both contract files from `packages/contracts/src/index.ts`.
+2. Clear `unavailable.memories` / `unavailable.database` in coworker-share binding only when each section’s capture+install ports are bound.
+3. Do not broaden `isTemplateManifestPath` to accept raw `data/agent.db` or archive SQL.
