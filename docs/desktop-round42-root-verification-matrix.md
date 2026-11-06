@@ -2,7 +2,7 @@
 
 **Purpose:** checklist for root’s integrated release-candidate / Mac acceptance work.  
 **This agent did not create fixtures, run the app, grant permissions, or mark results.**  
-**Tip referenced:** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` (RD40 D4 clear wipe + prior repairs)
+**Tip referenced:** `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` (RD40 D3 Claude generation + prior)
 
 Result cells stay blank until root fills them. Distinguish: source present ≠ root accepted ≠ configured service live.
 
@@ -75,7 +75,7 @@ Audit asset `01M6S6Z5RSZHQX92H233BR0AH0.md`; verified on master before/after W4.
 | ID | Journey | Expected after repair | Disposable fixture | Temp perms | Failure evidence | Cleanup | Preserve | Root result |
 |---|---|---|---|---|---|---|---|---|
 | W4-G1 | External grant bypass | `coworkers:write` `update_agent` with tools/grants/selfImprovement returns unsupported; grants stay default-off after restart; metadata-only update still works | Disposable coworker + key (`mcp:read`+`coworkers:write`); listener QA-only | Grants off; listener off after | Grants flipped / partial apply / sibling changed | Revoke key; delete coworker; disable listener | Default model; other keys | |
-| D3-R1 | Claude re-login truthfulness | Cancel/fail replacement keeps prior generation `connected`; chat still uses that token; disconnect removes token | Fixture encrypted env token (no live account required for this row) | Desktop app flag | Snapshot shows signed-out while token live | Disconnect; delete fixture env | Other connections | |
+| D3-R1 | Claude re-login truthfulness | Cancel/fail replacement keeps prior generation `connected`; chat still uses that token; disconnect removes token | Fixture encrypted env token (no live account required for this row) | Desktop app flag | Snapshot shows signed-out while token live | Disconnect; delete fixture env | Other connections | SOURCE-REPAIRED `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` — ROOT-UNVERIFIED |
 | E2-N1 | Native nontext receipt | Shell `note.md` + `blob.bin` → markdown pending + bin unsupported; approve md only; bin absent after restart | Coworker with native write grant | n/a | Bin missing from review / bytes in workspace | Delete QA files | Sibling coworker | |
 | D4-V1 | Clear-all vector wipe | After clear, A index has no records before success receipt; B untouched; wipe failure surfaces | Two coworkers; optional fixture embedder | No OpenRouter unless consented | Vector residue for cleared notes / silent success | Clear A; confirm wipe | B notes; Brain | SOURCE-REPAIRED `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` — ROOT-UNVERIFIED |
 | E2-S1 | Search key rotation receipt | Mid-flight revision bump → “Search capability changed.” / uncertain as specified; body not published; next call can succeed | Fixture Brave-shaped server | webSearch grant | Generic “provider failed” replay forever | Delete outcome row + key | Other auxiliary | |

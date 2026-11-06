@@ -7,6 +7,7 @@
 **RD39 E3 paste SHA:** `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0`  
 **RD39 C3 documents SHA:** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb`  
 **RD40 D4 clear wipe SHA:** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16`  
+**RD40 D3 Claude generation SHA:** `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8`  
 **Parent tip before W4 impl:** `92dc02509cd9a3069bb588b39da6f3e6f6184bba`  
 **Branch:** `desktop/round38-master-completion`  
 **No checks executed. No installed acceptance. No push/PR. Canonical checklist not mutated.**
@@ -49,7 +50,8 @@
 |---|---|
 | 1 W4 grants | **Repaired source** in `external-mcp-tools/operations.ts` only — see W4 handoff |
 | 4 D4 clear wipe | **SOURCE-REPAIRED** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` — `docs/desktop-round40-memory-clear-handoff.md` |
-| 2,3,5 | Still open — Claude relogin / native nontext / search rotated |
+| 2 D3 Claude generation | **SOURCE-REPAIRED** `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` — `docs/desktop-round40-claude-generation-handoff.md` |
+| 3,5 | Still open — native nontext / search rotated |
 
 ## RD41 outcome
 

@@ -21,7 +21,9 @@ Publication: local commits only until root approves exact head. No push from thi
 | — | RD39 C3 document per-file add | source on master | `d7dc1685…` | confirmed doc all-or-nothing | `2520a0ef…` |
 | — | RD39 status → RD42 docs | docs on master | `2520a0ef…` | E3+C3 repaired notes | `47ad3bb1…` |
 | — | RD40 D4 memory clear wipe | source on master | `47ad3bb1…` | semantic residue on clear | `d0b2a798…` |
-| — | RD40 D4 → RD42 docs + handoff | docs on master | `d0b2a798…` | clear wipe status | committing |
+| — | RD40 D4 → RD42 docs + handoff | docs on master | `d0b2a798…` | clear wipe status | `c183cd50…` |
+| — | RD40 D3 Claude generation | source on master | `c183cd50…` | linked vs pending attempt | `4415d319…` |
+| — | RD40 D3 → RD42 docs + handoff | docs on master | `4415d319…` | generation status | committing |
 
 Publication: local commits only until root approves exact head. No push from this agent. No cloud packages active for edits. C–I remain RESERVED.
 

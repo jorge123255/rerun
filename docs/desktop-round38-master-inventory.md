@@ -137,3 +137,9 @@ No critical blocker found that prevents RD38 A. Memories remain correctly fail-c
 - After memory lock, bound `notesCleared` must accept before clear success; clear event skips swallowed reconcile.
 - SOURCE-REPAIRED / ROOT-UNVERIFIED. Preserves A portable memory + Brain separation.
 
+## RD40 D3 Claude generation (master)
+
+- Impl `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` — `docs/desktop-round40-claude-generation-handoff.md`.
+- Durable token ⇒ projected `connected` + `credentialRevision`; replacement ⇒ `pendingAttempt`.
+- SOURCE-REPAIRED / ROOT-UNVERIFIED (no live account this checkpoint).
+
