@@ -1,7 +1,7 @@
 import type { SubRunTask } from './chat-sub-runs.js'
 
 export type DesktopDelegationTask = Omit<SubRunTask, 'id' | 'toolCalls' | 'failures' | 'calls' | 'preview'> & {
-    taskId: string; toolCalls: number; failures: number; preview: string;
+    taskId: string; stopRevision?: string; toolCalls: number; failures: number; preview: string;
     calls: NonNullable<SubRunTask['calls']>; result?: string; partial?: boolean;
     cleanup: 'pending' | 'complete' | 'blocked';
 }

@@ -54,7 +54,8 @@ export function delegationReceipts(db: Client): ReceiptStore {
                 }
                 const row = (await tx.execute({ sql: 'SELECT record FROM desktop_delegations WHERE id=?', args: [receipt.request.delegationId] })).rows[0]
                 const current = row ? decode(row.record).snapshot : null
-                if (!current || current.parentAgentId !== receipt.source.parentAgentId || current.parentSessionId !== receipt.source.parentSessionId || current.revision !== receipt.request.expectedRevision || !current.tasks.some(task => task.taskId === receipt.request.taskId)) throw new Error('Stop reservation changed')
+                const task = current?.tasks.find(task => task.taskId === receipt.request.taskId)
+                if (!current || !task || current.parentAgentId !== receipt.source.parentAgentId || current.parentSessionId !== receipt.source.parentSessionId || (task.stopRevision ?? current.revision) !== receipt.request.expectedRevision) throw new Error('Stop reservation changed')
                 await tx.execute({ sql: 'INSERT INTO desktop_delegation_stops(request_id,receipt) VALUES(?,?)', args: [requestId, JSON.stringify(receipt)] })
                 await tx.commit(); return receipt
             } finally { tx.close() }

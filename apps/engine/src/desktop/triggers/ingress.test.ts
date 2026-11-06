@@ -38,7 +38,7 @@ function authority(trigger: DesktopTriggerRecord, opts: { setup?: boolean; grant
     return {
         assertActive: () => {},
         resolveOwnerByEngineId: async () => ({ localAgentId: 'local-1', engineAgentId: 'eng-1', enabled: opts.enabled !== false, deleting: opts.deleting === true }),
-        assertTriggerGrant: async () => { if (opts.grant === false) throw new Error('missing trigger grant') },
+        assertTriggerGrant: vi.fn(async () => { if (opts.grant === false) throw new Error('missing trigger grant') }),
         assertSetupClear: async () => { if (opts.setup) throw new Error('setup pending') },
         resolveAutomationModel: async () => ({ connectionId: null, provider: null, model: null }),
         startTriggerRun: start,
@@ -124,11 +124,27 @@ describe('desktop trigger ingress', () => {
         expect((auth as any).start).toHaveBeenCalledTimes(3)
     })
 
-    it('refuses disabled/deleting/pending-setup/missing-grant before effects', async () => {
+    it('fires a human-configured trigger with the model trigger grant off', async () => {
         const store = memoryStore()
         await store.initialize('eng-1')
-        for (const opts of [{ enabled: false }, { deleting: true }, { setup: true }, { grant: false }] as const) {
-            const auth = authority(record(), opts as any)
+        const auth = authority(record(), { grant: false })
+        const ingress = createDesktopTriggerIngressHandler({ authority: auth, store })
+        const response = await ingress.handle(new Request('http://127.0.0.1/t', { method: 'POST', body: '{}' }), {
+            engineAgentId: 'eng-1', slug: 'hook', token: 'secret-token-value-0001',
+        })
+        expect(response.status).toBe(202)
+        const receipt = await response.json() as { eventId: string; trigger: string; replay: boolean }
+        expect(receipt).toMatchObject({ trigger: 'hook', replay: false })
+        expect(await store.getEvent('eng-1', receipt.eventId)).toMatchObject({ runId: 'run-1', engineSessionId: 'sess-1', localSessionId: 'local-sess-1' })
+        expect(auth.startTriggerRun).toHaveBeenCalledTimes(1)
+        expect(auth.assertTriggerGrant).not.toHaveBeenCalled()
+    })
+
+    it('refuses disabled/deleting/pending-setup before effects even without a model trigger grant', async () => {
+        const store = memoryStore()
+        await store.initialize('eng-1')
+        for (const opts of [{ enabled: false }, { deleting: true }, { setup: true }] as const) {
+            const auth = authority(record(), { ...opts, grant: false })
             const ingress = createDesktopTriggerIngressHandler({ authority: auth, store })
             const res = await ingress.handle(new Request('http://127.0.0.1/t', { method: 'POST', body: '{}' }), {
                 engineAgentId: 'eng-1', slug: 'hook', token: 'secret-token-value-0001',

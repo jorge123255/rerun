@@ -287,3 +287,28 @@ test('opening the settled row does not post Stop', async () => {
     await act(async () => { trigger!.click() })
     expect(stop).not.toHaveBeenCalled()
 })
+
+test('Stop retries keep the selected task token when a sibling refresh changes the snapshot revision', async () => {
+    const stopRevision = '77777777-7777-4777-8777-777777777777'
+    let current = snapshot({ tasks: [task({ status: 'running', cleanup: 'pending', stopRevision })] })
+    const list = vi.fn(async () => [current])
+    const stop = vi.fn<DesktopDelegationClient['stop']>(async () => {
+        if (stop.mock.calls.length === 1) {
+            current = { ...current, revision: '88888888-8888-4888-8888-888888888888' }
+            throw new Error(DELEGATION_STOP_UNFINISHED)
+        }
+        current = { ...current, tasks: [task({ status: 'stopped', cleanup: 'complete', stopRevision })] }
+        return current
+    })
+    await render(<DesktopDelegationMount sessionId="session-a" toolCallId="tool-a" client={client(list, stop)} />)
+    await openDetails()
+    const stopButton = () => document.querySelector<HTMLButtonElement>('button[aria-label="Stop this task"]')!
+    expect(stopButton()).not.toBeNull()
+    await act(async () => { stopButton().click() })
+    expect(document.body.textContent).toContain(DELEGATION_STOP_UNFINISHED)
+    await act(async () => { stopButton().click() })
+    expect(stop.mock.calls.map(call => call[1])).toEqual([
+        { delegationId, taskId, expectedRevision: stopRevision },
+        { delegationId, taskId, expectedRevision: stopRevision },
+    ])
+})

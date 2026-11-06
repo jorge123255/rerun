@@ -48,6 +48,10 @@ function recordOf(value: unknown): DelegationRecord {
     if (!record || record.version !== 1 || !/^[a-f0-9]{64}$/.test(record.digest) || !record.snapshot || !Array.isArray(record.snapshot.tasks) || record.snapshot.tasks.length < 1 || record.snapshot.tasks.length > 32 || !Array.isArray(record.resources) || !Array.isArray(record.outputs) || record.resources.length !== record.snapshot.tasks.length || record.outputs.length !== record.resources.length) throw changed()
     sourceSchema.parse({ parentAgentId: record.snapshot.parentAgentId, parentSessionId: record.snapshot.parentSessionId, parentRunId: record.snapshot.parentRunId, toolCallId: record.snapshot.toolCallId })
     z.string().uuid().parse(record.snapshot.delegationId); z.string().uuid().parse(record.snapshot.revision)
+    for (const task of record.snapshot.tasks) {
+        z.string().uuid().parse(task.taskId)
+        if (task.stopRevision !== undefined) z.string().uuid().parse(task.stopRevision)
+    }
     return record
 }
 async function resourceOf(db: Client, token: string): Promise<Allocation> {
@@ -77,7 +81,7 @@ export async function handleDesktopDelegationBridge(incoming: Request): Promise<
         }
         case 'record-save': {
             const record = recordOf(data.record), prior = await store.read(record.snapshot.delegationId)
-            if (!prior || sourceKey(prior.snapshot) !== sourceKey(record.snapshot) || prior.digest !== record.digest || JSON.stringify(prior.snapshot.tasks.map(task => task.taskId)) !== JSON.stringify(record.snapshot.tasks.map(task => task.taskId))) throw changed()
+            if (!prior || sourceKey(prior.snapshot) !== sourceKey(record.snapshot) || prior.digest !== record.digest || JSON.stringify(prior.snapshot.tasks.map(task => [task.taskId, task.stopRevision ?? null])) !== JSON.stringify(record.snapshot.tasks.map(task => [task.taskId, task.stopRevision ?? null]))) throw changed()
             await currentEpoch(runtime); signal.throwIfAborted()
             await store.save(record, id.parse(data.expectedRevision)); result = null; break
         }

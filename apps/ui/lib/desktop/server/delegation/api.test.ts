@@ -52,3 +52,23 @@ describe('authenticated delegation API', () => {
         expect(runtime.stop).not.toHaveBeenCalled()
     })
 })
+
+
+it('allows an admitted Stop to finish draining beyond the short admission deadline', async () => {
+    const admission = new AbortController()
+    const draining = new AbortController()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(admission.signal).mockReturnValueOnce(draining.signal)
+    let finish!: (value: typeof snapshot) => void
+    let entered!: () => void
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const runtime = runtimeWith({ stop: vi.fn(async () => { entered(); return new Promise<typeof snapshot>(resolve => { finish = resolve }) }) })
+    try {
+        const body = { operation: 'stop-task', requestId: crypto.randomUUID(), delegationId: snapshot.delegationId, taskId: crypto.randomUUID(), expectedRevision: snapshot.revision }
+        const response = delegationApi(runtime, authorize)(new Request('http://local.test/api/desktop/sessions/session/delegation', { method: 'POST', body: JSON.stringify(body) }), 'session')
+        await started
+        admission.abort()
+        finish(snapshot)
+        expect((await response).status).toBe(200)
+        expect(timeout.mock.calls.map(call => call[0])).toEqual([10_000, 90_000])
+    } finally { timeout.mockRestore() }
+})

@@ -33,7 +33,6 @@ export function createDesktopTriggerLifecycle(authority: DesktopTriggerAuthority
         const current = await authority.resolveOwnerByEngineId(id)
         if (current.engineAgentId !== id || current.deleting) throw new DesktopTriggerLifecycleError(409, 'Coworker identity changed')
         if (!allowDisabled && !current.enabled) throw new DesktopTriggerLifecycleError(403, 'Enable this coworker to manage triggers')
-        if (!allowDisabled) await authority.assertTriggerGrant(id)
         authority.assertActive()
         return current
     }

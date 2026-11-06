@@ -9,7 +9,7 @@ const TASK_STATUS: Record<DesktopCoworkerCallSnapshot['status'], SubRunStatus> =
     'waiting-human': 'running',
     completed: 'done',
     error: 'error',
-    cancelled: 'error',
+    cancelled: 'stopped',
     interrupted: 'error',
 }
 
@@ -30,7 +30,7 @@ export function desktopCoworkerCallForTool(calls: readonly DesktopCoworkerCallSn
 }
 
 export const desktopCoworkerCallState = (call: DesktopCoworkerCallSnapshot): ToolState =>
-    isDesktopCoworkerCallLive(call) ? 'input-available' : call.status === 'error' || call.status === 'cancelled' || call.status === 'interrupted' ? 'output-error' : 'output-available'
+    isDesktopCoworkerCallLive(call) ? 'input-available' : call.status === 'error' || call.status === 'interrupted' ? 'output-error' : 'output-available'
 
 export function desktopCoworkerCallProgress(call: DesktopCoworkerCallSnapshot): SubRunProgress {
     return {

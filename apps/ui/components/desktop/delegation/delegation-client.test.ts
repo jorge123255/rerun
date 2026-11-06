@@ -156,3 +156,19 @@ test('lists only the delegation route for that session', async () => {
     expect(urls).toEqual(['/api/desktop/sessions/session%2Fa/delegation'])
     expect(rows.map(item => item.tasks[0]!.title)).toEqual(['Write the notes', 'Later'])
 })
+
+test('keeps a valid stable task Stop revision, rejects malformed tokens, and still reads older saved tasks', () => {
+    const stopRevision = '77777777-7777-4777-8777-777777777777'
+    expect(readDelegationSnapshot(snapshot({ tasks: [task({ stopRevision })] })).tasks[0]?.stopRevision).toBe(stopRevision)
+    expect(readDelegationSnapshot(snapshot()).tasks[0]).not.toHaveProperty('stopRevision')
+    for (const value of ['', 'not-a-uuid', null, 12]) {
+        expect(() => readDelegationSnapshot(snapshot({ tasks: [task({ stopRevision: value })] }))).toThrow()
+    }
+})
+
+
+test('keeps the full bounded worker result after restart', () => {
+    const result = 'x'.repeat(64_000)
+    expect(readDelegationSnapshot(snapshot({ tasks: [task({ status: 'done', result })] })).tasks[0]!.result).toBe(result)
+    expect(() => readDelegationSnapshot(snapshot({ tasks: [task({ result: result + 'x' })] }))).toThrow()
+})

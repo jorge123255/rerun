@@ -57,7 +57,7 @@ test('keeps completed, error, cancelled and interrupted outcomes truthful after 
     for (const [status, headline, detail] of [
         ['completed', 'Ada answered', 'Finished the research.'],
         ['error', 'Ada failed', 'Provider failed.'],
-        ['cancelled', 'Ada failed', 'Call cancelled.'],
+        ['cancelled', 'Ada stopped', 'Stopped, partial work kept'],
         ['interrupted', 'Ada failed', 'Call interrupted.'],
     ] as const) {
         const call = snapshot(status)

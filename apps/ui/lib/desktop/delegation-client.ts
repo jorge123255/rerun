@@ -26,6 +26,7 @@ const STOP_TIMEOUT_MS = 120_000
 const ID_MAX = 200
 const TITLE_MAX = 2_000
 const TEXT_MAX = 8_000
+const RESULT_MAX = 64_000
 const TASK_MAX = 64
 const CALL_MAX = 32
 const COUNT_MAX = 1_000_000
@@ -33,7 +34,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const STATUSES = new Set<SubRunStatus>(['queued', 'running', 'done', 'error', 'stopped', 'dispatched'])
 const CLEANUP = new Set(['pending', 'complete', 'blocked'])
 
-// Same page retries of one Stop share a request id. A new revision is a new attempt.
+// Retries use the same exact task admission token and request id while progress changes.
 const stopRequestIds = new Map<string, string>()
 
 export type DesktopDelegationStopInput = {
@@ -135,9 +136,13 @@ export function readDelegationSnapshot(value: unknown, message = DELEGATION_UNRE
             cleanup: task.cleanup as DesktopDelegationTask['cleanup'],
         }
         if (!UUID.test(view.taskId)) fail(message)
+        if (task.stopRevision !== undefined) {
+            if (typeof task.stopRevision !== 'string' || !UUID.test(task.stopRevision)) fail(message)
+            view.stopRevision = task.stopRevision
+        }
         const activity = optionalText(task, 'activity', ID_MAX, message)
         const error = optionalText(task, 'error', TEXT_MAX, message)
-        const result = optionalText(task, 'result', TEXT_MAX, message)
+        const result = optionalText(task, 'result', RESULT_MAX, message)
         const idleMs = optionalNumber(task, 'idleMs', message)
         const startedAt = optionalNumber(task, 'startedAt', message)
         const finishedAt = optionalNumber(task, 'finishedAt', message)

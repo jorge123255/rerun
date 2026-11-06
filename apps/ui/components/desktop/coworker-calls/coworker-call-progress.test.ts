@@ -16,7 +16,7 @@ test.each([
     ['dispatched', 'dispatched', 'output-available', false],
     ['completed', 'done', 'output-available', false],
     ['error', 'error', 'output-error', false],
-    ['cancelled', 'error', 'output-error', false],
+    ['cancelled', 'stopped', 'output-available', false],
     ['interrupted', 'error', 'output-error', false],
 ] as const)('maps %s to the original sub-run presentation', (status, taskStatus, toolState, live) => {
     const snapshot = call(status)

@@ -64,7 +64,9 @@ export function delegationApi(runtime: DelegationRuntime, authorize: DelegationS
             const current = await withDeadline(authorize(request, sessionId, 'stop'), signal)
             signal.throwIfAborted()
             if (current.parentAgentId !== owner.parentAgentId || current.parentSessionId !== sessionId) throw new Error('Session changed')
-            return Response.json({ delegation: await withDeadline(runtime.stop(current, body), signal) }, { headers })
+            // Stop can wait for the exact child to drain and retire its workspace.
+            const stopSignal = AbortSignal.any([request.signal, AbortSignal.timeout(90_000)])
+            return Response.json({ delegation: await withDeadline(runtime.stop(current, body), stopSignal) }, { headers })
         } catch {
             return Response.json({ error: 'Delegation unavailable or changed. Refresh and retry Stop.' }, { status: 409, headers })
         }

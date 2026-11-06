@@ -197,3 +197,20 @@ test('a request paused during body reading cannot reserve Stop after its launch 
     expect(await delegationReceipts(db).read(receipt.request.requestId)).toBeNull()
     expect(await delegationStore(db).read(saved.snapshot.delegationId)).toEqual(saved)
 })
+
+test('progress may change the storage revision but cannot replace or remove a task Stop token', async () => {
+    const saved = record()
+    saved.snapshot.tasks[0]!.stopRevision = crypto.randomUUID()
+    await delegationStore(db).reserve(saved)
+    for (const token of [undefined, crypto.randomUUID()]) {
+        const next = structuredClone(saved)
+        next.snapshot.revision = crypto.randomUUID()
+        next.snapshot.tasks[0]!.stopRevision = token
+        expect((await bridge('record-save', { record: next, expectedRevision: saved.snapshot.revision })).status).toBe(409)
+    }
+    const next = structuredClone(saved)
+    next.snapshot.revision = crypto.randomUUID()
+    next.snapshot.tasks[0]!.preview = 'New text'
+    expect((await bridge('record-save', { record: next, expectedRevision: saved.snapshot.revision })).status).toBe(200)
+    expect(await delegationStore(db).read(saved.snapshot.delegationId)).toEqual(next)
+})

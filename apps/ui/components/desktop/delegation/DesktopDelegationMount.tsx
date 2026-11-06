@@ -226,6 +226,8 @@ export function DesktopDelegationMount({
     const stopTask = useCallback(async (snapshot: DesktopDelegationSnapshot, taskId: string) => {
         const api = clientRef.current
         if (!api) throw new Error(DELEGATION_STOP_UNAVAILABLE)
+        const task = snapshot.tasks.find(task => task.taskId === taskId)
+        if (!task) throw new Error(DELEGATION_STOP_UNAVAILABLE)
         const generation = ++epoch.current
         const scope = filterRef.current
         const scopeKey = JSON.stringify(scope)
@@ -233,7 +235,7 @@ export function DesktopDelegationMount({
             const next = await api.stop(scope.sessionId, {
                 delegationId: snapshot.delegationId,
                 taskId,
-                expectedRevision: snapshot.revision,
+                expectedRevision: task.stopRevision ?? snapshot.revision,
             })
             if (!alive.current || generation !== epoch.current) return
             if (JSON.stringify(filterRef.current) !== scopeKey) return

@@ -180,10 +180,10 @@ describe('exact cancellation and partial outcomes', () => {
         await until(() => waits.size === 4); await tick()
         const [current] = await runtime.list('session'), queued = current!.tasks[4]!
         expect(queued.status).toBe('queued')
-        const stopped = await runtime.stop(source, { operation: 'stop-task', requestId: crypto.randomUUID(), delegationId: current!.delegationId, taskId: queued.taskId, expectedRevision: current!.revision })
+        const stopped = await runtime.stop(source, { operation: 'stop-task', requestId: crypto.randomUUID(), delegationId: current!.delegationId, taskId: queued.taskId, expectedRevision: queued.stopRevision! })
         expect(stopped.tasks[4]).toMatchObject({ status: 'stopped', cleanup: 'complete' })
         expect(stopped.tasks.slice(0,4).every(task => task.status === 'running')).toBe(true)
-        await runtime.stop(source, { operation: 'stop-task', requestId: crypto.randomUUID(), delegationId: current!.delegationId, taskId: current!.tasks[0]!.taskId, expectedRevision: stopped.revision })
+        await runtime.stop(source, { operation: 'stop-task', requestId: crypto.randomUUID(), delegationId: current!.delegationId, taskId: current!.tasks[0]!.taskId, expectedRevision: current!.tasks[0]!.stopRevision! })
         for (const name of ['two','three','four']) waits.get(name)!.resolve(name)
         const snapshot = await executing
         expect(snapshot.tasks[0]).toMatchObject({ status: 'stopped', result: 'partial active work', partial: true })
@@ -216,7 +216,7 @@ describe('exact cancellation and partial outcomes', () => {
         const { host } = hostWith()
         const runtime = await ready(store, host)
         const snapshot = await runtime.execute(source, { tasks: [{ task: 'settled' }] }, new AbortController().signal)
-        const request = { operation: 'stop-task' as const, requestId: crypto.randomUUID(), delegationId: snapshot.delegationId, taskId: snapshot.tasks[0]!.taskId, expectedRevision: snapshot.revision }
+        const request = { operation: 'stop-task' as const, requestId: crypto.randomUUID(), delegationId: snapshot.delegationId, taskId: snapshot.tasks[0]!.taskId, expectedRevision: snapshot.tasks[0]!.stopRevision! }
         await expect(runtime.stop({ ...source, parentSessionId: 'other' }, request)).rejects.toThrow('Delegation owner mismatch')
         await expect(runtime.stop(source, { ...request, taskId: crypto.randomUUID() })).rejects.toThrow()
         await expect(runtime.stop(source, { ...request, expectedRevision: crypto.randomUUID() })).rejects.toThrow('Delegation revision conflict')
@@ -304,7 +304,7 @@ describe('input confinement and receipt identity', () => {
         const settledHost = hostWith()
         const settledRuntime = await ready(settledStore.store, settledHost.host)
         const settled = await settledRuntime.execute(source, { tasks: [{ task: 'done' }] }, new AbortController().signal)
-        const request = { operation: 'stop-task' as const, requestId: crypto.randomUUID(), delegationId: settled.delegationId, taskId: settled.tasks[0]!.taskId, expectedRevision: settled.revision }
+        const request = { operation: 'stop-task' as const, requestId: crypto.randomUUID(), delegationId: settled.delegationId, taskId: settled.tasks[0]!.taskId, expectedRevision: settled.tasks[0]!.stopRevision! }
         const first = await settledRuntime.stop(source, request)
         expect(await settledRuntime.stop(source, request)).toEqual(first)
         await expect(settledRuntime.stop(source, { ...request, taskId: crypto.randomUUID() })).rejects.toThrow('Stop identity conflict')

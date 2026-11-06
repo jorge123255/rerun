@@ -118,3 +118,90 @@ test('a completion cannot substitute a different owner, task, request or delegat
     }
     expect(await receipts.read(receipt.request.requestId)).toEqual(receipt)
 })
+
+test('stable task admission survives sibling progress, but a legacy task still requires its displayed revision', async () => {
+    const saved = record(), store = delegationStore(db)
+    saved.snapshot.tasks[0]!.stopRevision = crypto.randomUUID()
+    const receipt = intent(saved)
+    receipt.request.expectedRevision = saved.snapshot.tasks[0]!.stopRevision!
+    await store.reserve(saved)
+    const progress = structuredClone(saved)
+    progress.snapshot.revision = crypto.randomUUID()
+    progress.snapshot.tasks[1]!.status = 'running'
+    progress.snapshot.tasks[1]!.preview = 'New sibling text since the button was rendered'
+    await store.save(progress, saved.snapshot.revision)
+    expect(await delegationReceipts(db).reserve(receipt.request.requestId, receipt)).toEqual(receipt)
+    const wrongToken = { ...receipt, request: { ...receipt.request, requestId: crypto.randomUUID(), expectedRevision: progress.snapshot.revision } }
+    await expect(delegationReceipts(db).reserve(wrongToken.request.requestId, wrongToken)).rejects.toThrow('reservation changed')
+    const legacy = { ...receipt, request: { ...receipt.request, requestId: crypto.randomUUID(), taskId: saved.snapshot.tasks[1]!.taskId, expectedRevision: saved.snapshot.revision } }
+    await expect(delegationReceipts(db).reserve(legacy.request.requestId, legacy)).rejects.toThrow('reservation changed')
+    legacy.request.expectedRevision = progress.snapshot.revision
+    expect(await delegationReceipts(db).reserve(legacy.request.requestId, legacy)).toEqual(legacy)
+    db.close(); db = connect()
+    expect(await delegationReceipts(db).read(receipt.request.requestId)).toEqual(receipt)
+    expect(await delegationReceipts(db).reserve(receipt.request.requestId, receipt)).toEqual(receipt)
+})
+
+test('five streaming tasks can stop the queued and selected active tasks using the original displayed tokens and replay receipts after restart', async () => {
+    const { createDelegationRuntime } = await import('../../../../../engine/src/desktop/delegation/runtime')
+    type Host = import('../../../../../engine/src/desktop/delegation/types').DelegationHost
+    type Event = import('../../../../../engine/src/desktop/delegation/types').ProgressEvent
+    const waits = new Map<string, { resolve: (text: string) => void; progress?: (event: Event) => Promise<void> }>()
+    const stopped: string[] = []
+    const host: Host = {
+        current: async () => ({ connectionId: 'connection', model: 'model', tools: [] }), isolatedTool: () => false,
+        allocate: async (_source, taskId) => ({ token: taskId, identity: `private-${taskId}` }), recover: async () => null,
+        create: async (_resource, input) => {
+            let resolve!: (text: string) => void
+            const result = new Promise<string>(done => { resolve = done })
+            const wait: { resolve: (text: string) => void; progress?: (event: Event) => Promise<void> } = { resolve }
+            waits.set(input.task, wait)
+            return { settled: Promise.resolve(), stop: async () => { stopped.push(input.task); resolve('late result') }, run: async progress => { wait.progress = progress; return result } }
+        },
+        drain: async () => {}, admitOutputs: async () => [], cleanup: async () => {}, publicText: (_source, text) => text,
+    }
+    const source = { parentAgentId: 'owner', parentSessionId: 'parent-chat', parentRunId: 'parent-run', toolCallId: 'delegate-tool' }
+    const runtime = createDelegationRuntime(delegationStore(db), host, delegationReceipts(db))
+    await runtime.reconcile()
+    const parent = new AbortController()
+    const executing = runtime.execute(source, { tasks: ['first', 'second', 'third', 'fourth', 'queued'].map(task => ({ task })) }, parent.signal)
+    try {
+        for (let attempt = 0; attempt < 100 && [...waits.values()].filter(wait => wait.progress).length < 4; attempt++) await new Promise(resolve => setTimeout(resolve, 10))
+        expect([...waits.values()].filter(wait => wait.progress)).toHaveLength(4)
+        const [displayed] = await runtime.list(source.parentSessionId)
+        expect(new Set(displayed!.tasks.map(task => task.stopRevision)).size).toBe(5)
+        const queued = displayed!.tasks[4]!, active = displayed!.tasks[0]!
+        const request = { operation: 'stop-task' as const, requestId: crypto.randomUUID(), delegationId: displayed!.delegationId, taskId: queued.taskId, expectedRevision: queued.stopRevision! }
+        for (let index = 0; index < 3; index++) for (const wait of waits.values()) await wait.progress!({ type: 'text', text: `streaming text ${index}` })
+        expect((await runtime.list(source.parentSessionId))[0]!.revision).not.toBe(displayed!.revision)
+        await expect(runtime.stop({ ...source, parentSessionId: 'wrong-chat' }, request)).rejects.toThrow('owner mismatch')
+        await expect(runtime.stop(source, { ...request, requestId: crypto.randomUUID(), taskId: crypto.randomUUID() })).rejects.toThrow('task unavailable')
+        await expect(runtime.stop(source, { ...request, requestId: crypto.randomUUID(), expectedRevision: active.stopRevision! })).rejects.toThrow('revision conflict')
+        const queuedResult = await runtime.stop(source, request)
+        expect(queuedResult.tasks[4]).toMatchObject({ status: 'stopped', cleanup: 'complete', stopRevision: queued.stopRevision })
+        expect(queuedResult.tasks[4]!.startedAt).toBeUndefined()
+        expect(queuedResult.tasks.slice(0, 4).every(task => task.status === 'running')).toBe(true)
+        expect(stopped).toEqual([])
+        expect(waits.has('queued')).toBe(false)
+        const activeRequest = { ...request, requestId: crypto.randomUUID(), taskId: active.taskId, expectedRevision: active.stopRevision! }
+        await waits.get('second')!.progress!({ type: 'step' })
+        const activeResult = await runtime.stop(source, activeRequest)
+        expect(activeResult.tasks[0]).toMatchObject({ status: 'stopped', cleanup: 'complete', stopRevision: active.stopRevision })
+        expect(stopped).toEqual(['first'])
+        expect(activeResult.tasks.slice(1, 4).every(task => task.status === 'running')).toBe(true)
+        for (const name of ['second', 'third', 'fourth']) waits.get(name)!.resolve(name)
+        const final = await executing
+        expect(final.tasks.map(task => task.status)).toEqual(['stopped', 'done', 'done', 'done', 'stopped'])
+        db.close(); db = connect()
+        const restarted = createDelegationRuntime(delegationStore(db), host, delegationReceipts(db))
+        await restarted.reconcile()
+        expect(await restarted.stop(source, request)).toEqual(queuedResult)
+        expect(await restarted.stop(source, activeRequest)).toEqual(activeResult)
+        expect(stopped).toEqual(['first'])
+        expect(waits.size).toBe(4)
+    } finally {
+        parent.abort()
+        for (const wait of waits.values()) wait.resolve('fixture finished')
+        await executing
+    }
+})

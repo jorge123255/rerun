@@ -173,6 +173,7 @@ export function createDelegationRuntime(store: DelegationStore, host: Delegation
                 revision: randomUUID(),
                 tasks: input.tasks.map(task => ({
                     taskId: randomUUID(),
+                    stopRevision: randomUUID(),
                     title: task.title ?? task.task.slice(0, 60),
                     status: 'queued',
                     steps: 0,
@@ -299,7 +300,8 @@ export function createDelegationRuntime(store: DelegationStore, host: Delegation
             if (prior?.delegation) return prior.delegation
             const intent = prior ?? await locked(async () => {
                 const current = await store.read(request.delegationId)
-                if (!current || current.snapshot.revision !== request.expectedRevision) throw new Error('Delegation revision conflict')
+                const task = current?.snapshot.tasks.find(task => task.taskId === request.taskId)
+                if (!current || !task || sourceKey(current.snapshot) !== sourceKey(record.snapshot) || (task.stopRevision ?? current.snapshot.revision) !== request.expectedRevision) throw new Error('Delegation revision conflict')
                 return receipts.reserve(request.requestId, { digest, source: owner, request })
             })
             if (intent.digest !== digest) throw new Error('Stop identity conflict')

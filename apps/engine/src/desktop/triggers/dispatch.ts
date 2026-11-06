@@ -29,12 +29,11 @@ export async function dispatchDesktopTriggerFire(input: { authority: DesktopTrig
         if (await store.isRevoked(id)) throw new Error('Coworker triggers revoked')
         const currentOwner = await authority.resolveOwnerByEngineId(id)
         if (currentOwner.localAgentId !== owner.localAgentId || currentOwner.engineAgentId !== id || currentOwner.deleting || !currentOwner.enabled) throw new Error('Coworker identity changed')
-        await authority.assertTriggerGrant(id)
         await authority.assertSetupClear(id)
         if (desktopTriggerDefinitionRevision(await authority.readTrigger(id, slug)) !== revision) throw new Error('Trigger changed before launch')
         authority.assertActive()
     }
-    try { await admission() } catch { return { status: 409, error: 'Trigger is not ready. Check its permissions and coworker setup.' } }
+    try { await admission() } catch { return { status: 409, error: 'Trigger is not ready. Check its settings and coworker setup.' } }
     const fingerprint = hashPayloadFingerprint({ method: fire.method, query: fire.query, contentType: fire.contentType, body: fire.body, explicit: fire.attemptFingerprint })
     const requestFingerprint = createHash('sha256').update(JSON.stringify({ revision, method: fire.method, query: fire.query, contentType: fire.contentType, body: fire.body })).digest('hex')
     const replay = async () => {

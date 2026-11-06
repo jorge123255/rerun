@@ -177,6 +177,7 @@ export function subRunHeadline({ kind, tasks }: SubRunProgress, live: boolean, t
 
     if (kind === 'call-agent') {
         const [call] = tasks
+        if (call.status === 'stopped') return { label: `${call.title} stopped${duration}` }
         if (call.status === 'dispatched') return { label: `Message sent to ${call.title}` }
         if (live) return { label: `Calling ${call.title}`, summary: `${progressLabel(call)}${trouble}` }
         return { label: call.status === 'error' ? `${call.title} failed${duration}` : `${call.title} answered${duration}` }

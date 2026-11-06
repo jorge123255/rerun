@@ -32,9 +32,14 @@ async function owner(runtime: DesktopRuntime, db: Client, id: string, signal?: A
     return { agent: current, detail, identity: { localAgentId: current.id, engineAgentId: id, enabled: current.enabled && detail.config.enabled, deleting: false } }
 }
 export async function authorizeDesktopTriggersBasic(runtime: DesktopRuntime, db: Client, id: string, signal?: AbortSignal) { await owner(runtime, db, id, signal) }
-export async function authorizeDesktopTriggers(runtime: DesktopRuntime, db: Client, id: string, signal?: AbortSignal) {
+async function enabledOwner(runtime: DesktopRuntime, db: Client, id: string, signal?: AbortSignal) {
     const result = await owner(runtime, db, id, signal)
-    if (!result.identity.enabled || !(desktopRerunGrantsOf(result.detail.config.tools) as Record<string, boolean>).trigger) throw new DesktopHttpError(403, 'Enable Triggers in this coworker’s Capabilities')
+    if (!result.identity.enabled) throw new DesktopHttpError(403, 'Enable this coworker to run triggers')
+    return result
+}
+export async function authorizeDesktopTriggers(runtime: DesktopRuntime, db: Client, id: string, signal?: AbortSignal) {
+    const result = await enabledOwner(runtime, db, id, signal)
+    if (!(desktopRerunGrantsOf(result.detail.config.tools) as Record<string, boolean>).trigger) throw new DesktopHttpError(403, 'Enable Triggers in this coworker’s Tools')
     return result
 }
 const identity = z.string().min(1).max(200)
@@ -53,16 +58,21 @@ export async function handleDesktopTriggerBridge(runtime: DesktopRuntime, body: 
         result = await adoptDesktopTriggerSession(db, engineOf(runtime), { agentId: input.localAgentId, engineAgentId: input.engineAgentId, engineSessionId: input.engineSessionId, runId: input.runId }, { signal })
     } else if (event.op === 'model') {
         const input = z.strictObject({ engineAgentId: identity, override: z.strictObject({ connectionId: z.string().nullable(), provider: z.string().nullable(), model: z.string().nullable() }) }).parse(event.payload)
-        const current = await authorizeDesktopTriggers(runtime, db, input.engineAgentId, signal)
+        const current = await enabledOwner(runtime, db, input.engineAgentId, signal)
         await assertDesktopSetupChatAllowed(runtime, current.agent.id)
         if ((input.override.connectionId === null) !== (input.override.model === null) || (input.override.provider !== null && input.override.connectionId === null)) throw new DesktopHttpError(409, 'Choose a currently connected trigger model')
         const selected = await resolveDesktopChatModel(runtime, current.agent, null, input.override.connectionId && input.override.model ? { connectionId: input.override.connectionId, model: input.override.model } : undefined)
-        await authorizeDesktopTriggers(runtime, db, input.engineAgentId, signal)
-        await assertDesktopSetupChatAllowed(runtime, current.agent.id)
+        const confirmed = await enabledOwner(runtime, db, input.engineAgentId, signal)
+        if (confirmed.agent.id !== current.agent.id) throw new DesktopHttpError(409, 'Coworker identity changed')
+        await assertDesktopSetupChatAllowed(runtime, confirmed.agent.id)
         result = { connectionId: selected.connectionId, model: selected.model }
     } else {
         const input = ownerInput.parse(event.payload)
-        const current = event.op === 'owner' ? await owner(runtime, db, input.engineAgentId, signal) : await authorizeDesktopTriggers(runtime, db, input.engineAgentId, signal)
+        const current = event.op === 'owner'
+            ? await owner(runtime, db, input.engineAgentId, signal)
+            : event.op === 'authorize'
+                ? await authorizeDesktopTriggers(runtime, db, input.engineAgentId, signal)
+                : await enabledOwner(runtime, db, input.engineAgentId, signal)
         if (event.op === 'setup') await assertDesktopSetupChatAllowed(runtime, current.agent.id)
         result = current.identity
     }

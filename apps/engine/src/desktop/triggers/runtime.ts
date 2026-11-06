@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { logger } from '../../lib/logger.js'
 import type { DesktopTriggerEngineBinding } from './binding.js'
-import { desktopRerunGrantsOf, desktopTriggerChatSchema } from '@rerun/contracts'
+import { desktopTriggerChatSchema } from '@rerun/contracts'
 import { getAgent } from '../../agents/registry.js'
 import { listAgentIdsOnDisk } from '../../agents/loader.js'
 import { getSystemDb } from '../../db/systemDb.js'
@@ -69,7 +69,7 @@ export async function createDesktopTriggerRuntime(runtime: Runtime, options: { l
             try {
                 await input.assertActive()
                 const agent = await getAgent(input.engineAgentId)
-                if (!agent.config.enabled || !(desktopRerunGrantsOf(agent.config.tools) as Record<string, boolean>).trigger) throw new Error('Trigger permission changed')
+                if (!agent.config.enabled) throw new Error('Enable this coworker to run triggers')
                 const session = await createSession(agent.id, input.name, undefined, 'trigger')
                 await input.onSessionCreated(session.id)
                 await sendNotification({ event: 'agent.session.created', kind: 'info', agentId: agent.id, sessionId: session.id, runId: null, message: `Triggered run: ${input.name}`, title: input.name, source: 'trigger' })
