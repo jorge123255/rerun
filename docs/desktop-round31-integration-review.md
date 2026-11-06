@@ -21,7 +21,7 @@ Shared engine/UI/contract wiring is implemented in the coding checkout. Author w
 
 Root alone executes all tests, type checks, lint, guest rebuild, packaging, installation and native/restart checks. Helpers authored source and regressions only. Root broad desktop UI and engine checks found failures; targeted reruns after fixture and product fixes passed. Full source evidence lives in the task work/round31 logs. The unchanged original 23 chats / 88 messages were verified before update; a complete, manifest-verified workspace backup was captured after quitting the old app.
 
-Native/full-restart acceptance remains required before checking off any capability. This document is source review, not native acceptance.
+Root completed native/full-restart acceptance in `40aa370`; see [recorded Mac evidence and limits](desktop-round31-native-acceptance.md). E10 closes, while broader browser, voice, connection-method and external-trigger scope stays open.
 
 ## Explicit limits
 
