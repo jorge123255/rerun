@@ -5,7 +5,7 @@
 **Worktree:** `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round38-master-completion`  
 **Frozen base:** `6f6ad959a09abaf1947950b6f82413c94407e22a`  
 **Original pin:** `2a57fa6dd53311f763bfc9abde85997b7f7e5309` (`apps/ui/components/desktop/DesktopViewer.tsx` paste always `clipboardPasteFrom`+Ctrl+V; `type`/`keysymOf` already Unicode-capable)  
-**Impl SHA:** `08b3a68902a99a7f399539b17e4414d59848f885`  
+**Impl SHA:** `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0`  
 **Parent tip before this commit:** `ddbcd349017f42665d0760f58721cc23e40940e9`
 
 ## Change

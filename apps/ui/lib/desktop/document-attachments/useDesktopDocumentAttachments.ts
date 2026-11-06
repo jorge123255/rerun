@@ -1,10 +1,13 @@
 'use client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DESKTOP_DOCUMENT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_FILES, DESKTOP_DOCUMENT_TOTAL_MAX_BYTES, type DesktopDocumentAttachment, type DesktopDocumentScope, type DesktopDocumentSelection, type DesktopDocumentSendSelection } from '@rerun/contracts'
+import { type DesktopDocumentAttachment, type DesktopDocumentScope, type DesktopDocumentSelection, type DesktopDocumentSendSelection } from '@rerun/contracts'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { admitDesktopDocuments, cancelDesktopDocumentUpload, consumeDesktopDocuments, convertDesktopDocument, discardDesktopDocument, detachDesktopDocument, listDesktopDocuments } from './client'
 import { canRetainDocuments, documentPlaceholder, documentScopeKey, forgetRetainedDocument, retainedDocument, retainedDocuments, retainDocument, saveRetainedDocument, subscribeRetainedDocuments } from './retained'
+import { planDesktopDocumentAdd, summarizeDesktopDocumentAddError, type DesktopDocumentAddResult } from './plan-document-add'
+
+export type { DesktopDocumentAddOutcome, DesktopDocumentAddResult, DesktopDocumentAddRejectReason } from './plan-document-add'
 
 export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enabled = true }: DesktopDocumentScope & { enabled?: boolean }) {
     const scope = useMemo(() => ({ agentId, tabUid, ...(sessionId ? { sessionId } : {}) }), [agentId, tabUid, sessionId])
@@ -41,17 +44,52 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enab
         for (const item of retainedDocuments(scope)) if (item.work) setPending(old => new Set(old).add(item.id))
         return () => { mounted.current = false; generation.current++; unsubscribe(); for (const controller of operations.current.values()) controller.abort(); operations.current.clear() }
     }, [scope, scopeKey, current, refresh, update])
-    const add = useCallback((files: readonly File[]) => {
-        if (!enabled || !loaded || isDesktopQuitting()) return []
-        if (!files.length || files.some(file => !file.size || file.size > DESKTOP_DOCUMENT_MAX_BYTES)) { setError('Choose non-empty documents up to 16 MB each. Nothing was attached.'); return [] }
-        if (rows.current.length + files.length > DESKTOP_DOCUMENT_MAX_FILES || [...rows.current.map(a => a.byteLength), ...files.map(f => f.size)].reduce((a, b) => a + b, 0) > DESKTOP_DOCUMENT_TOTAL_MAX_BYTES) { setError('Attachments can be up to 48 MB across ten files.'); return [] }
-        if (!canRetainDocuments(files)) { setError('Save or remove pending attachments before adding more.'); return [] }
-        selection.current = null; setError(null)
+    const add = useCallback((files: readonly File[]): DesktopDocumentAddResult => {
+        const empty: DesktopDocumentAddResult = { outcomes: [], attachedIds: [], error: null }
+        if (!files.length) return empty
+        if (!enabled || !loaded || isDesktopQuitting()) {
+            const outcomes = files.map(file => ({
+                status: 'rejected' as const,
+                name: file.name,
+                byteLength: file.size,
+                reason: 'unavailable' as const,
+                message: 'Documents are not available on this chat yet.',
+            }))
+            const error = summarizeDesktopDocumentAddError(outcomes)
+            setError(error)
+            return { outcomes, attachedIds: [], error }
+        }
+        const { accepts, rejects } = planDesktopDocumentAdd({
+            files,
+            attachedCount: rows.current.length,
+            attachedBytes: rows.current.reduce((sum, row) => sum + row.byteLength, 0),
+            canRetainOne: (file, accepting) => canRetainDocuments([...accepting, file]),
+        })
+        selection.current = null
+        const outcomes: DesktopDocumentAddResult['outcomes'] = []
+        const attachedIds: string[] = []
         let position = Math.max(-1, ...rows.current.map(a => a.position)) + 1
-        const records = files.map(file => retainDocument(scope, file, position++))
-        rows.current = [...rows.current, ...records.map(documentPlaceholder)]; setAttachments(rows.current)
-        for (const record of records) void saveRetainedDocument(record)
-        return records.map(record => record.id)
+        const rejectByFile = new Map(rejects.map(row => [row.file, row]))
+        const records = [] as ReturnType<typeof retainDocument>[]
+        for (const file of files) {
+            const rejected = rejectByFile.get(file)
+            if (rejected) {
+                outcomes.push({ status: 'rejected', name: file.name, byteLength: file.size, reason: rejected.reason, message: rejected.message })
+                continue
+            }
+            const record = retainDocument(scope, file, position++)
+            records.push(record)
+            attachedIds.push(record.id)
+            outcomes.push({ status: 'attached', name: file.name, byteLength: file.size, attachmentId: record.id, position: record.position })
+        }
+        if (records.length) {
+            rows.current = [...rows.current, ...records.map(documentPlaceholder)]
+            setAttachments(rows.current)
+            for (const record of records) void saveRetainedDocument(record)
+        }
+        const error = summarizeDesktopDocumentAddError(outcomes)
+        setError(error)
+        return { outcomes, attachedIds, error }
     }, [enabled, loaded, scope])
     const work = useCallback(async (id: string, action: (attachment: DesktopDocumentAttachment, signal: AbortSignal) => Promise<void>) => {
         if (!enabled || isDesktopQuitting() || operations.current.has(id)) return

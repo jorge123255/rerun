@@ -113,3 +113,26 @@ it('never reads an old tab after its pending save finishes on a different select
     expect(transport.listDesktopDocuments.mock.calls.map(call => call[0])).toEqual([next])
     expect(api.loaded).toBe(true)
 })
+
+
+it('per-file document add keeps eligible siblings and returns typed outcomes without attaching empty/oversized neighbors', async () => {
+    await mount()
+    let result!: ReturnType<typeof api.add>
+    await act(async () => {
+        result = api.add([
+            new File(['ok'], 'ok.pdf'),
+            new File([], 'empty.pdf'),
+            new File(['also'], 'also.pdf'),
+        ])
+    })
+    expect(result.attachedIds).toHaveLength(2)
+    expect(result.outcomes.map(row => [row.status, row.name])).toEqual([
+        ['attached', 'ok.pdf'],
+        ['rejected', 'empty.pdf'],
+        ['attached', 'also.pdf'],
+    ])
+    expect(result.error).toMatch(/empty\.pdf is empty/)
+    expect(result.error).not.toMatch(/Nothing was attached/)
+    expect(api.attachments.map(a => a.name)).toEqual(['ok.pdf', 'also.pdf'])
+    expect(transport.uploadDesktopDocument).toHaveBeenCalledTimes(2)
+})
