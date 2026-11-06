@@ -36,3 +36,25 @@ it('closing the mounted palette cancels the outstanding current-workspace read b
     await act(async () => { release(Response.json({ agents: [agent] })) })
     expect(open).not.toHaveBeenCalled()
 })
+
+it('exposes API keys & MCP through a bound callback in runtime workspace two after an observational recheck', async () => {
+    const externalMcp = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url.endsWith('/agents') ? { agents: [agent] } : { board })))
+    await act(async () => root.render(<DesktopControlCenter open coworkers={[agent]} board={board} runtimeWorkspaceId={2} selectedCoworkerId={null} onOpenConversation={() => {}} onAddCoworker={() => {}} onModelSettings={() => {}} onBackToBoard={() => {}} onExternalMcp={externalMcp} />))
+    const button = [...host.querySelectorAll('button')].find(button => button.textContent === 'API keys & MCP')!
+    expect(button).toBeTruthy()
+    await act(async () => { button.click() })
+    expect(externalMcp).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true)
+})
+
+it('shows Servers only when bound and refuses a retained selection after the palette closes', async () => {
+    const servers = vi.fn()
+    const render = (open: boolean) => act(async () => root.render(<DesktopControlCenter open={open} coworkers={[agent]} board={board} runtimeWorkspaceId={2} selectedCoworkerId={null} onOpenConversation={() => {}} onAddCoworker={() => {}} onModelSettings={() => {}} onBackToBoard={() => {}} onServers={servers} />))
+    await render(true)
+    const button = [...host.querySelectorAll('button')].find(button => button.textContent === 'Servers')!
+    expect(button).toBeTruthy()
+    await render(false)
+    await act(async () => { button.click() })
+    expect(servers).not.toHaveBeenCalled()
+})

@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS desktop_coworker_share_imports (
     target_workspace_id INTEGER NOT NULL,
     request_id TEXT NOT NULL UNIQUE,
     imported_agent_id TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('imported', 'rolled_back')),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'imported', 'uncertain', 'rolled_back')),
+    fingerprint TEXT NOT NULL,
+    expected_digest TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY(snapshot_id, target_workspace_id)
 );
@@ -32,6 +34,15 @@ CREATE TABLE IF NOT EXISTS desktop_coworker_share_receipts (
     recoverable INTEGER NOT NULL CHECK (recoverable IN (0, 1)),
     reason TEXT,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS desktop_coworker_share_operations (
+    request_id TEXT PRIMARY KEY, operation TEXT NOT NULL, fingerprint TEXT NOT NULL,
+    snapshot_id TEXT NOT NULL, state TEXT NOT NULL, result TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS desktop_coworker_share_attempts (
+    workspace_id INTEGER NOT NULL, route_agent_id TEXT NOT NULL, request_id TEXT NOT NULL,
+    operation TEXT NOT NULL, fingerprint TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY(workspace_id, route_agent_id, request_id)
 );`
 
 const initialized = new WeakMap<Client, Promise<void>>()

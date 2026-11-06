@@ -44,7 +44,12 @@ const connection = (health: DesktopRemoteHealth): DesktopRemoteConnection => ({
     health,
 })
 const health: DesktopRemoteHealth = { state: 'connected', checkedAt: '2026-11-06T00:00:00.000Z', commit: 'abc1234', activeAgents: 3, reason: null }
-const snapshot = (overrides: Partial<DesktopRemoteSnapshot> = {}): DesktopRemoteSnapshot => ({ version: 1, actor, revision: connection(health).revision, connection: connection(health), selected: true, openReceipt: null, ...overrides })
+const activeReceipt = { version: 1 as const, receiptId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', requestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', installId: actor.installId, workspaceId: 1, kind: 'select' as const, connectionId: connection(health).connectionId, expectedRevision: connection(health).revision, configurationRevision: connection(health).revision, revision: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', phase: 'published' as const, effectGeneration: 0, closeAttempted: true, requiresRecovery: false, reason: null, createdAt: '2026-11-06T00:00:00.000Z', updatedAt: '2026-11-06T00:00:00.000Z' }
+const snapshot = (overrides: Partial<DesktopRemoteSnapshot> = {}): DesktopRemoteSnapshot => {
+    const value = { version: 1 as const, actor, revision: connection(health).revision, connection: connection(health), selected: true, runtimeState: 'connected' as const, activeReceipt, openReceipt: null, ...overrides }
+    if (!value.selected) value.activeReceipt = null
+    return value
+}
 
 const noop = () => {}
 
@@ -62,7 +67,7 @@ describe('RemoteMachineRow', () => {
             ['auth_needed', 'Needs a key', 'the key was refused'],
             ['identity_changed', 'Identity changed', 'the machine identity changed'],
             ['unsupported', 'Unsupported version', 'does not provide a verifiable workspace identity'],
-            ['not_checked', 'Checking…', 'health not checked yet'],
+            ['not_checked', 'Not checked', 'health not checked yet'],
             ['cancelled', 'Checking stopped', 'checking stopped'],
         ]
         for (const [state, badge, text] of cases) {
@@ -82,6 +87,8 @@ describe('RemoteMachineRow', () => {
         render(<RemoteMachineRow snapshot={snapshot({ selected: false })} busy={null} onRemove={noop} onReplace={noop} onSelect={onSelect} onRecover={noop} onCancel={noop} onHealthCheck={noop} />)
         fireEvent.click(screen.getByRole('button', { name: 'Use this connection' }))
         expect(onSelect).toHaveBeenCalledTimes(1)
+        expect(document.body.textContent).not.toContain('Connected')
+        expect(document.body.textContent).toContain('Not in use')
     })
 
     it('shows Check again while the machine is not connected', () => {
@@ -102,7 +109,7 @@ describe('RemoteMachineRow', () => {
     it('switches to recovery actions when the last change stalled', () => {
         const onRecover = vi.fn()
         const onCancel = vi.fn()
-        render(<RemoteMachineRow snapshot={snapshot({ openReceipt: { version: 1, receiptId: '77777777-7777-4777-8777-777777777777', requestId: '88888888-8888-4888-8888-888888888888', installId: actor.installId, workspaceId: 1, kind: 'replace', connectionId: connection(health).connectionId, expectedRevision: 'unconfigured', revision: connection(health).revision, phase: 'failed_after_drain', effectGeneration: 0, closeAttempted: true, requiresRecovery: true, reason: null, createdAt: '2026-11-06T00:00:00.000Z', updatedAt: '2026-11-06T00:00:00.000Z' } })} busy={null} onRemove={noop} onReplace={noop} onSelect={noop} onRecover={onRecover} onCancel={onCancel} onHealthCheck={noop} />)
+        render(<RemoteMachineRow snapshot={snapshot({ openReceipt: { version: 1, receiptId: '77777777-7777-4777-8777-777777777777', requestId: '88888888-8888-4888-8888-888888888888', installId: actor.installId, workspaceId: 1, kind: 'replace', connectionId: connection(health).connectionId, configurationRevision: connection(health).revision, expectedRevision: 'unconfigured', revision: connection(health).revision, phase: 'failed_after_drain', effectGeneration: 0, closeAttempted: true, requiresRecovery: true, reason: null, createdAt: '2026-11-06T00:00:00.000Z', updatedAt: '2026-11-06T00:00:00.000Z' } })} busy={null} onRemove={noop} onReplace={noop} onSelect={noop} onRecover={onRecover} onCancel={onCancel} onHealthCheck={noop} />)
         expect(document.body.textContent).toContain('Retry recovery')
         fireEvent.click(screen.getByRole('button', { name: 'Retry recovery' }))
         expect(onRecover).toHaveBeenCalledTimes(1)

@@ -56,7 +56,7 @@ export function useDesktopExternalMcpController({ workspaceId, open, driver }: {
     const refresh = useCallback(async (value: number, signal: AbortSignal) => {
         const [nextKeys, nextListener] = await Promise.all([driver.list(workspaceId, signal), driver.listener(signal)])
         if (current(value)) {
-            setKeys(nextKeys)
+            setKeys(nextKeys.keys)
             setListener(nextListener)
         }
     }, [current, driver, workspaceId])
@@ -67,7 +67,7 @@ export function useDesktopExternalMcpController({ workspaceId, open, driver }: {
         try {
             const [nextKeys, nextListener, nextAttempts] = await Promise.all([driver.list(workspaceId, signal), driver.listener(signal), driver.attempts.list(workspaceId, signal)])
             if (!current(value)) return
-            setKeys(nextKeys)
+            setKeys(nextKeys.keys)
             setListener(nextListener)
             setAttempts(nextAttempts)
         } catch (cause) {

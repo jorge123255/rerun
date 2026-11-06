@@ -32,7 +32,7 @@ export function createSharedMutationPublisher(store: SharedReceiptStore, authori
         const call = sharedMutationCallSchema.parse(input)
         const signal = AbortSignal.any([stop, AbortSignal.timeout(30_000)])
         const allow = async () => {
-            const current = await authority.current({ engineAgentId: call.engineAgentId, workspaceId: call.workspaceId }, signal)
+            const current = await authority.current({ engineAgentId: call.engineAgentId, workspaceId: call.workspaceId, sessionId: call.sessionId, runId: call.runId, toolCallId: call.toolCallId }, signal)
             signal.throwIfAborted()
             if (current.state === 'deleted') throw new SharedMutationRefusal('owner_deleted', 'That coworker has been deleted.')
             if (current.state === 'disabled') throw new SharedMutationRefusal('owner_disabled', 'That coworker is disabled.')
@@ -43,6 +43,11 @@ export function createSharedMutationPublisher(store: SharedReceiptStore, authori
             return { ...current, sharedRoot }
         }
         const opened = await allow()
+        const guard = async () => {
+            const current = await allow()
+            if (current.owner !== opened.owner || current.launchNonce !== opened.launchNonce || current.dataRoot !== opened.dataRoot || current.sharedRoot !== opened.sharedRoot) throw new SharedMutationRefusal('stale_workspace', 'The shared file owner or workspace changed.')
+            return current
+        }
         const path = call.arguments.path
         const digest = digestOf(call)
         const key: SharedReceiptKey = { workspaceId: opened.workspaceId, owner: opened.owner, runId: call.runId, callId: call.toolCallId }
@@ -50,7 +55,9 @@ export function createSharedMutationPublisher(store: SharedReceiptStore, authori
         const fromRow = (row: SharedReceiptRow): SharedMutationResult => {
             if (row.digest !== digest) throw new Error('Tool call identity was reused')
             if (!row.result) return uncertain(path)
-            const parsed = sharedMutationResultSchema.safeParse(JSON.parse(row.result))
+            let body: unknown
+            try { body = JSON.parse(row.result) } catch { return uncertain(path) }
+            const parsed = sharedMutationResultSchema.safeParse(body)
             if (!parsed.success || parsed.data.path !== path || parsed.data.status !== row.state) return uncertain(path)
             return parsed.data
         }
@@ -61,10 +68,7 @@ export function createSharedMutationPublisher(store: SharedReceiptStore, authori
         }
         const work = async (): Promise<SharedMutationResult> => {
             const prior = await store.read(key)
-            const again = await allow()
-            if (again.owner !== opened.owner || again.launchNonce !== opened.launchNonce || again.sharedRoot !== opened.sharedRoot) {
-                throw new SharedMutationRefusal('stale_workspace', 'That workspace is not the open workspace.')
-            }
+            await guard()
             if (prior) return fromRow(prior)
             const claimed = await store.claim(key, digest)
             if (!claimed) {
@@ -73,9 +77,8 @@ export function createSharedMutationPublisher(store: SharedReceiptStore, authori
             }
             let committed = false
             try {
-                const fresh = await allow()
-                if (fresh.sharedRoot !== opened.sharedRoot || fresh.owner !== opened.owner) throw new SharedMutationRefusal('root_replaced', 'The shared folder was replaced.')
-                const access = { signal, beforeCommit: async () => { await allow(); signal.throwIfAborted() } }
+                const fresh = await guard()
+                const access = { signal, beforeCommit: async () => { await guard(); signal.throwIfAborted() } }
                 const outcome = call.tool === 'shared_write'
                     ? await io.create(fresh.sharedRoot, call.arguments.path, 'content' in call.arguments ? call.arguments.content : '', access)
                     : await io.edit(fresh.sharedRoot, call.arguments as { path: string; oldString: string; newString: string; replaceAll?: boolean; expectedBytes: number; expectedSha256: string }, access)

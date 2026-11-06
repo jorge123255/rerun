@@ -6,7 +6,7 @@ import {parseQuery,searchItems} from '@/lib/control-center/search'
 import {BellIcon,BoxIcon,BrainIcon,CirclePlusIcon,FocusCenterIcon,FolderIcon,GridIcon,HeadsetIcon,KeyboardIcon,KeyIcon,LockKeyholeIcon,MegaphoneIcon,MessageCircle,MessageCircleQuestionIcon,MonitorIcon,MoonIcon,SettingsIcon,SunIcon,UserRoundIcon,UsersIcon,CreditCardIcon} from '@/lib/icons'
 import type {ParityActions,ParityCommand,ParityPage,ParitySnapshot,ParityTarget} from './types'
 const icons:Record<ControlCommandId,Extract<ControlRow['leading'],{kind:'icon'}>['icon']>={new_agent:CirclePlusIcon,browse_templates:GridIcon,new_box:BoxIcon,ask_assistant:MessageCircleQuestionIcon,contact_support:HeadsetIcon,recenter_board:FocusCenterIcon,toggle_theme:SunIcon,workspace:SettingsIcon,members:UsersIcon,billing:CreditCardIcon,ai_providers:LockKeyholeIcon,api_keys:KeyIcon,company_brain:BrainIcon,shared_files:FolderIcon,account:UserRoundIcon,notifications:BellIcon,shortcuts:KeyboardIcon,whats_new:MegaphoneIcon}
-export const HOSTED_CONTROL_COMMANDS=new Set(['contact_support','members','billing','api_keys','account'])
+export const HOSTED_CONTROL_COMMANDS=new Set(['contact_support','members','billing','account'])
 const workspace=(s:ParitySnapshot):Extract<ParityTarget,{kind:'workspace'}>=>({kind:'workspace',workspaceId:s.workspace.id,revision:s.workspace.revision})
 const coworker=(s:ParitySnapshot,id:string):Extract<ParityTarget,{kind:'coworker'}>|null=>{const a=s.coworkers.find(a=>a.id===id);return a?{kind:'coworker',workspaceId:s.workspace.id,agentId:a.id,revision:a.revision}:null}
 export function buildParityCommands(snapshot:ParitySnapshot,page:ParityPage,query:string,actions:ParityActions,options:{darkTheme?:boolean;hasChangelog?:boolean;includeOmitted?:boolean}={}):ParityCommand[]{
@@ -78,12 +78,13 @@ export function mergeParitySections(existing:ControlSection[],additions:ControlS
   if(tab>=0)return tab
   const global=CONTROL_COMMAND_IDS.findIndex(id=>id===key)
   if(global>=0)return global
+  if(key==='servers')return CONTROL_COMMAND_IDS.indexOf('api_keys')+0.5
   return key==='desktop'?0:['coworker-move','agent-move'].includes(key)?1:key==='coworker-notifications'?2:1000
  }
  const {text}=parseQuery(query)
  for(const section of result)if(['Actions','Settings','Open'].includes(section.heading)){
   section.rows.sort((a,b)=>rank(a)-rank(b))
-  if(text)section.rows=searchItems(section.rows.map(row=>({...row,keywords:metadata.find(command=>command.id===paritySemanticKey(row.id))?.keywords??AGENT_TABS.filter(tab=>`panel:${tab.id}`===paritySemanticKey(row.id)).map(tab=>tab.description)})),text)
+  if(text)section.rows=searchItems(section.rows.map(row=>({...row,keywords:metadata.find(command=>command.id===paritySemanticKey(row.id))?.keywords??(paritySemanticKey(row.id)==='servers'?['machine','computer','remote','connection']:AGENT_TABS.filter(tab=>`panel:${tab.id}`===paritySemanticKey(row.id)).map(tab=>tab.description))})),text)
  }
  return result.filter(section=>section.rows.length||section.loading)
 }

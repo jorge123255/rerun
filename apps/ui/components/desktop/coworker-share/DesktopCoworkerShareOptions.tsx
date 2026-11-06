@@ -28,8 +28,8 @@ export function DesktopCoworkerShareOptions({ plan, include, onChange, disabled 
         { key: 'files' as const, label: 'Workspace files', helper: bucketLabel(plan.contents.files, 'file', 'No files yet'), value: include.files },
     ]
     return <div className={CONTAINER}>
-        {rows.map(row => <Field key={row.key} orientation="row" label={row.label} helperText={row.helper} className={ROW}>
-            <Switch checked={row.value} disabled={disabled} onCheckedChange={checked => onChange({ [row.key]: checked })} aria-label={row.label} />
+        {rows.map(row => <Field key={row.key} orientation="row" label={row.label} helperText={plan.unavailable?.[row.key] ?? row.helper} className={ROW}>
+            <Switch checked={!plan.unavailable?.[row.key] && row.value} disabled={disabled || !!plan.unavailable?.[row.key]} onCheckedChange={checked => onChange({ [row.key]: checked })} aria-label={row.label} />
         </Field>)}
     </div>
 }

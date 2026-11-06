@@ -1,6 +1,6 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
-import { REMOTE_MACHINE_COPY } from '@rerun/contracts'
+import { useEffect, useState } from 'react'
+import { REMOTE_MACHINE_COPY, type DesktopRemoteMachineBridge } from '@rerun/contracts'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -9,6 +9,7 @@ import { ScrollFade } from '@rerun/ui/primitives'
 import { useRemoteMachines, type RemoteMachineActorSeed } from '@/lib/desktop/remote-machines/use-remote-machines'
 import { RemoteMachinePairing } from './RemoteMachinePairing'
 import { RemoteMachineRow } from './RemoteMachineRow'
+import { LocalMachineRow } from './LocalMachineRow'
 
 /**
  * The Servers dialog of the Mac app, faithful to the original: the machine your
@@ -18,30 +19,25 @@ import { RemoteMachineRow } from './RemoteMachineRow'
  * connects as an effect of viewing the dialog; a lost acknowledgement keeps the
  * typed address and key and its request identity for retry.
  */
-export function RemoteMachinesDialog({ open, onOpenChange, actor }: { open: boolean; onOpenChange: (open: boolean) => void; actor: RemoteMachineActorSeed }) {
-    const machines = useRemoteMachines(actor, { active: open })
+type RemoteMachinesDialogProps = { open: boolean; onOpenChange: (open: boolean) => void; actor: RemoteMachineActorSeed; bridge?: DesktopRemoteMachineBridge }
+export function RemoteMachinesDialog(props: RemoteMachinesDialogProps) {
+    if (!props.open) return null
+    const { actor } = props
+    return <RemoteMachinesPanel key={JSON.stringify([actor.installId, actor.workspaceId, actor.launchNonce, actor.rendererEpoch])} {...props} />
+}
+function RemoteMachinesPanel({ open, onOpenChange, actor, bridge }: RemoteMachinesDialogProps) {
+    const machines = useRemoteMachines(actor, { active: open, bridge })
     const [pairingOpen, setPairingOpen] = useState(false)
-    const [confirmRemove, setConfirmRemove] = useState(false)
+    const [removeOpen, setRemoveOpen] = useState(false)
     const [replaceDraft, setReplaceDraft] = useState<{ address: string; apiKey: string } | null>(null)
-    const healthChecked = useRef(false)
 
     const snapshot = machines.snapshot
-    const hasConnection = !!snapshot?.connection
 
     useEffect(() => {
-        if (!open) return
         setPairingOpen(false)
-        setConfirmRemove(false)
+        setRemoveOpen(false)
         setReplaceDraft(null)
-        healthChecked.current = false
     }, [open])
-
-    // One live health probe on open; the poll afterwards stays observational.
-    useEffect(() => {
-        if (!open || !snapshot?.connection || healthChecked.current) return
-        healthChecked.current = true
-        void machines.healthRefresh()
-    }, [open, snapshot?.connection, machines])
 
     const connect = async (address: string, apiKey: string) => {
         if (snapshot?.connection) {
@@ -64,7 +60,7 @@ export function RemoteMachinesDialog({ open, onOpenChange, actor }: { open: bool
         const connection = snapshot?.connection
         if (!connection) return
         void machines.remove(connection.connectionId, connection.revision)
-        setConfirmRemove(false)
+        setRemoveOpen(false)
     }
 
     const connection = snapshot?.connection ?? null
@@ -77,7 +73,7 @@ export function RemoteMachinesDialog({ open, onOpenChange, actor }: { open: bool
             <div className="space-y-3">
                 <p role="alert" className="px-1 text-sm text-muted-foreground">{error ?? 'The machine service is unavailable right now.'}</p>
                 <div className="flex flex-wrap justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => void machines.refresh()}>Refresh</Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void machines.refresh()}>Refresh</Button>
                 </div>
             </div>
         )
@@ -94,6 +90,7 @@ export function RemoteMachinesDialog({ open, onOpenChange, actor }: { open: bool
                 onRetry={() => void machines.retry()}
                 onSettle={() => void machines.settle()}
                 onBack={connection ? () => setPairingOpen(false) : undefined}
+                onCancel={() => void machines.cancel()}
             />
         )
     } else {
@@ -103,7 +100,7 @@ export function RemoteMachinesDialog({ open, onOpenChange, actor }: { open: bool
                 <RemoteMachineRow
                     snapshot={snapshot}
                     busy={busy}
-                    onRemove={() => setConfirmRemove(true)}
+                    onRemove={() => setRemoveOpen(true)}
                     onReplace={() => setPairingOpen(true)}
                     onSelect={() => void machines.select(connection.connectionId, connection.revision)}
                     onRecover={() => void machines.recover()}
@@ -122,11 +119,11 @@ export function RemoteMachinesDialog({ open, onOpenChange, actor }: { open: bool
                     <p className="text-sm text-muted-foreground">{REMOTE_MACHINE_COPY.description}</p>
                 </DialogHeader>
                 <ScrollFade className="-mx-1 min-h-0 flex-1 px-1 py-1">
-                    <div className="space-y-4">{body}</div>
+                    <div className="space-y-4">{snapshot?.localRuntime && !snapshot.selected && <LocalMachineRow runtime={snapshot.localRuntime} />}{body}</div>
                 </ScrollFade>
                 <ConfirmDialog
-                    open={confirmRemove}
-                    onOpenChange={setConfirmRemove}
+                    open={removeOpen}
+                    onOpenChange={setRemoveOpen}
                     title={REMOTE_MACHINE_COPY.removeTitle}
                     description={REMOTE_MACHINE_COPY.removeDescription}
                     confirmLabel={REMOTE_MACHINE_COPY.removeLabel}

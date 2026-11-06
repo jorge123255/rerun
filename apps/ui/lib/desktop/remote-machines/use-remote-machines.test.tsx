@@ -1,214 +1,149 @@
 // @vitest-environment happy-dom
-import { act, type ReactNode } from 'react'
+import { act, StrictMode, useLayoutEffect, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { DesktopRemoteActor, DesktopRemoteCommand, DesktopRemoteMachineBridge, DesktopRemoteReceipt, DesktopRemoteSnapshot } from '@rerun/contracts'
+import { useRemoteMachines, type RemoteMachinesState } from './use-remote-machines'
+import { remoteActor as seed, remoteConnection as connection, remoteReceipt as receipt, emptyRemoteSnapshot as empty, connectedRemoteSnapshot as connected } from './remote-machines.test-support'
+
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const roots: { root: Root; host: HTMLElement }[] = []
 function render(node: ReactNode) {
-    const host = document.createElement('div')
-    document.body.append(host)
-    const root = createRoot(host)
-    roots.push({ root, host })
-    act(() => root.render(node))
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host); roots.push({ root, host }); act(() => root.render(node))
     return { rerender: (next: ReactNode) => act(() => root.render(next)) }
 }
-async function waitFor(check: () => void, rounds = 12) {
+async function waitFor(check: () => void, rounds = 20) {
     let lastError: unknown
     for (let i = 0; i < rounds; i++) {
-        try {
-            await act(async () => {})
-            check()
-            return
-        } catch (error) {
-            lastError = error
-        }
+        try { await act(async () => {}); check(); return } catch (error) { lastError = error }
     }
     throw lastError
 }
-
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DesktopRemoteActor, DesktopRemoteSnapshot } from '@rerun/contracts'
-import { useRemoteMachines, type RemoteMachinesState } from './use-remote-machines'
-
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
-
-const seed = { installId: '11111111-1111-4111-8111-111111111111', workspaceId: 1, launchNonce: '22222222-2222-4222-8222-222222222222' }
-const connection = {
-    connectionId: '33333333-3333-4333-8333-333333333333',
-    revision: '44444444-4444-4444-8444-444444444444',
-    workspaceId: 1,
-    address: 'https://machine.example',
-    identity: { protocolVersion: 1, machineId: '55555555-5555-4555-8555-555555555555', workspaceId: 1 },
-    credentialConfigured: true,
-    removable: true,
-    health: { state: 'connected', checkedAt: '2026-11-06T00:00:00.000Z', commit: 'abc1234', activeAgents: 3, reason: null },
+function Probe({ active = true, actor = seed, capture, bridge }: { active?: boolean; actor?: DesktopRemoteActor; capture: { current: RemoteMachinesState | null }; bridge?: DesktopRemoteMachineBridge }) {
+    const machines = useRemoteMachines(actor, { active, bridge })
+    useLayoutEffect(() => { capture.current = machines })
+    return <span>{machines.snapshot?.revision ?? 'none'}</span>
 }
-const receipt = {
-    version: 1,
-    receiptId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    requestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    installId: seed.installId,
-    workspaceId: 1,
-    kind: 'pair',
-    connectionId: connection.connectionId,
-    expectedRevision: 'unconfigured',
-    revision: connection.revision,
-    phase: 'published',
-    effectGeneration: 0,
-    closeAttempted: true,
-    requiresRecovery: false,
-    reason: null,
-    createdAt: '2026-11-06T00:00:00.000Z',
-    updatedAt: '2026-11-06T00:00:00.000Z',
+function effectResult(command: DesktopRemoteCommand, snapshot: DesktopRemoteSnapshot) {
+    const effect: DesktopRemoteReceipt = { ...receipt, requestId: command.requestId,
+        ...('connectionId' in command ? { connectionId: command.connectionId, expectedRevision: command.expectedRevision } : {}),
+        ...(['pair', 'replace', 'select', 'remove', 'health'].includes(command.action) ? { kind: command.action as DesktopRemoteReceipt['kind'] } : {}) }
+    const next = snapshot.connection && 'connectionId' in command ? { ...snapshot.connection, connectionId: command.connectionId } : snapshot.connection
+    return { ok: true, snapshot: { ...snapshot, connection: next, activeReceipt: snapshot.selected ? effect : null }, receipt: effect }
 }
-const empty = (actor: DesktopRemoteActor): DesktopRemoteSnapshot => ({ version: 1, actor, revision: 'unconfigured', connection: null, selected: false, openReceipt: null })
-const connected = (actor: DesktopRemoteActor, overrides: Partial<DesktopRemoteSnapshot> = {}): DesktopRemoteSnapshot => ({ version: 1, actor, revision: connection.revision, connection, selected: true, openReceipt: null, ...overrides })
-
-function Probe({ active = true, capture }: { active?: boolean; capture: { current: RemoteMachinesState | null } }) {
-    const machines = useRemoteMachines(seed, { active })
-    capture.current = machines
-    return (
-        <div>
-            <button onClick={() => void machines.pair('https://machine.example', 'engine-key-1234567890123456')}>pair</button>
-            <button onClick={() => void machines.replace(connection.connectionId, connection.revision, 'https://next.example', 'engine-key-1234567890123456')}>replace</button>
-            <button onClick={() => void machines.remove(connection.connectionId, connection.revision)}>remove</button>
-            <button onClick={() => void machines.select(connection.connectionId, connection.revision)}>select</button>
-            <button onClick={() => void machines.retry()}>retry</button>
-            <button onClick={() => void machines.settle()}>settle</button>
-            <button onClick={() => void machines.recover()}>recover</button>
-            <button onClick={() => void machines.cancel()}>cancel</button>
-            <button onClick={() => void machines.refresh()}>refresh</button>
-            <span data-testid="revision">{machines.snapshot?.revision ?? 'none'}</span>
-            <span data-testid="busy">{machines.busy?.kind ?? ''}</span>
-            <span data-testid="pending">{machines.pendingRetry ? 'yes' : 'no'}</span>
-            <span data-testid="unavailable">{machines.unavailable ? 'yes' : 'no'}</span>
-            <span data-testid="error">{machines.error ?? ''}</span>
-        </div>
-    )
+function responsesFor(handler: (body: DesktopRemoteCommand) => unknown) {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => Response.json(handler(JSON.parse(String(init?.body)) as DesktopRemoteCommand)))
+    vi.stubGlobal('fetch', fetchMock); return fetchMock
 }
-
-type Envelope = Record<string, unknown> & { action: string; actor: DesktopRemoteActor }
-function responsesFor(handler: (body: Envelope) => unknown) {
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => Response.json(handler(JSON.parse(String(init?.body)) as Envelope)))
-    vi.stubGlobal('fetch', fetchMock)
-    return fetchMock
-}
-
-afterEach(() => {
-    for (const { root, host } of roots.splice(0)) {
-        act(() => root.unmount())
-        host.remove()
-    }
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-})
+afterEach(() => { for (const { root, host } of roots.splice(0)) { act(() => root.unmount()); host.remove() }; vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('useRemoteMachines', () => {
-    it('reads on open and applies the snapshot for the panel actor', async () => {
-        const capture: { current: RemoteMachinesState | null } = { current: null }
-        responsesFor(body => ({ ok: true, snapshot: connected(body.actor), receipt: null }))
-        render(<Probe capture={capture} />)
-        await waitFor(() => expect(capture.current?.snapshot?.connection?.address).toBe('https://machine.example'))
-        expect(capture.current?.snapshot?.selected).toBe(true)
-    })
-
-    it('never fetches while the panel is not active', async () => {
-        const capture: { current: RemoteMachinesState | null } = { current: null }
+    it('reads on open with the native actor but never probes health or connects', async () => {
+        const capture = { current: null as RemoteMachinesState | null }
         const fetchMock = responsesFor(body => ({ ok: true, snapshot: connected(body.actor), receipt: null }))
-        render(<Probe capture={capture} active={false} />)
-        await act(async () => {})
-        expect(fetchMock).not.toHaveBeenCalled()
+        render(<Probe capture={capture} />)
+        await waitFor(() => expect(capture.current?.snapshot?.connection?.address).toBe(connection.address))
+        expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).action)).toEqual(['read'])
+        expect(capture.current?.actor).toEqual(seed)
     })
-
-    it('pairs on explicit connect and applies the settled snapshot', async () => {
-        const capture: { current: RemoteMachinesState | null } = { current: null }
+    it('does not fetch while inactive and recreates the disposed client on reopen', async () => {
+        const capture = { current: null as RemoteMachinesState | null }
+        const fetchMock = responsesFor(body => ({ ok: true, snapshot: connected(body.actor), receipt: null }))
+        const view = render(<Probe capture={capture} active={false} />)
+        expect(fetchMock).not.toHaveBeenCalled()
+        view.rerender(<Probe capture={capture} />)
+        await waitFor(() => expect(capture.current?.snapshot).not.toBeNull())
+        view.rerender(<Probe capture={capture} active={false} />)
+        view.rerender(<Probe capture={capture} />)
+        await waitFor(() => expect(capture.current?.snapshot).not.toBeNull())
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+    it('survives StrictMode setup/cleanup with an owned new client', async () => {
+        const capture = { current: null as RemoteMachinesState | null }
+        responsesFor(body => ({ ok: true, snapshot: connected(body.actor), receipt: null }))
+        render(<StrictMode><Probe capture={capture} /></StrictMode>)
+        await waitFor(() => expect(capture.current?.snapshot?.actor).toEqual(seed))
+        expect(capture.current?.unavailable).toBe(false)
+    })
+    it('pairs only from the explicit callback and applies its exact receipt', async () => {
+        const capture = { current: null as RemoteMachinesState | null }
         let paired = false
         responsesFor(body => {
-            if (body.action === 'pair') {
-                paired = true
-                return { ok: true, snapshot: connected(body.actor), receipt }
-            }
-            return { ok: true, snapshot: paired ? connected(body.actor) : empty(body.actor), receipt: null }
+            if (body.action === 'pair') { paired = true; return effectResult(body, connected(body.actor, { selected: false, runtimeState: 'not_connected' })) }
+            return { ok: true, snapshot: paired ? connected(body.actor, { selected: false, runtimeState: 'not_connected' }) : empty(body.actor), receipt: null }
         })
         render(<Probe capture={capture} />)
         await waitFor(() => expect(capture.current?.snapshot?.revision).toBe('unconfigured'))
-        act(() => { void capture.current!.pair('https://machine.example', 'engine-key-1234567890123456') })
-        await waitFor(() => expect(capture.current?.snapshot?.connection?.address).toBe('https://machine.example'))
+        await act(async () => { await capture.current!.pair(connection.address, 'engine-key-1234567890123456') })
+        expect(capture.current?.snapshot?.connection?.address).toBe(connection.address)
+        expect(capture.current?.snapshot?.selected).toBe(false)
         expect(capture.current?.busy).toBeNull()
-        expect(capture.current?.pendingRetry).toBeNull()
     })
-
-    it('keeps a lost-ack request identity and retries the exact envelope', async () => {
-        const capture: { current: RemoteMachinesState | null } = { current: null }
-        let uncertain = true
+    it('keeps a transport-lost mutation identity and retries the exact envelope', async () => {
+        const capture = { current: null as RemoteMachinesState | null }; let uncertain = true
         const fetchMock = responsesFor(body => {
             if (body.action === 'read') return { ok: true, snapshot: empty(body.actor), receipt: null }
             if (uncertain) return { ok: false, code: 'uncertain', message: 'No acknowledgement.', receipt: null }
-            return { ok: true, snapshot: connected(body.actor), receipt }
+            return effectResult(body, connected(body.actor))
         })
         render(<Probe capture={capture} />)
-        await waitFor(() => expect(capture.current?.snapshot?.revision).toBe('unconfigured'))
-        fetchMock.mockClear()
-        act(() => { void capture.current!.pair('https://machine.example', 'engine-key-1234567890123456') })
-        await waitFor(() => expect(capture.current?.pendingRetry).not.toBeNull())
-        const first = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { requestId: string }
+        await waitFor(() => expect(capture.current?.snapshot).not.toBeNull())
+        await act(async () => { await capture.current!.pair(connection.address, 'engine-key-1234567890123456') })
+        const first = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body))).find(body => body.action === 'pair')
+        expect(capture.current?.pendingRetry?.requestId).toBe(first.requestId)
         uncertain = false
-        act(() => { void capture.current!.retry() })
-        await waitFor(() => expect(capture.current?.pendingRetry).toBeNull())
-        const retried = fetchMock.mock.calls
-            .map(([, init]) => JSON.parse(String(init?.body)) as { action: string; requestId: string })
-            .find((body, index) => body.action === 'pair' && index > 0)
-        expect(retried).toBeTruthy()
-        expect(retried!.requestId).toBe(first.requestId)
+        await act(async () => { await capture.current!.retry() })
+        const pairs = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body))).filter(body => body.action === 'pair')
+        expect(pairs).toHaveLength(2); expect(pairs[1]).toEqual(pairs[0])
+        expect(capture.current?.pendingRetry).toBeNull()
     })
-
-    it('drops a read whose actor belongs to another renderer epoch', async () => {
-        const capture: { current: RemoteMachinesState | null } = { current: null }
+    it('targets the exact saved operation for recovery and cancellation', async () => {
+        const capture = { current: null as RemoteMachinesState | null }
+        const open = { ...receipt, requiresRecovery: true, phase: 'failed_after_drain' as const }
+        const fetchMock = responsesFor(body => body.action === 'read' ? { ok: true, snapshot: connected(body.actor, { openReceipt: open }), receipt: null } : effectResult(body, connected(body.actor)))
+        render(<Probe capture={capture} />)
+        await waitFor(() => expect(capture.current?.snapshot?.openReceipt).not.toBeNull())
+        await act(async () => { await capture.current!.recover() })
+        await act(async () => { await capture.current!.cancel() })
+        const calls = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
+        expect(calls.find(body => body.action === 'recover')).toMatchObject({ requestId: receipt.requestId, expectedReceiptRevision: receipt.revision, resume: true })
+        expect(calls.find(body => body.action === 'cancel')).toMatchObject({ requestId: receipt.requestId })
+    })
+    it('does not clear an uncertain request merely because its receipt was found', async () => {
+        const capture = { current: null as RemoteMachinesState | null }
+        const fetchMock = responsesFor(body => {
+            if (body.action === 'read') return { ok: true, snapshot: empty(body.actor), receipt: null }
+            if (body.action === 'receipt') return { ok: true, snapshot: empty(body.actor), receipt: { ...receipt, requestId: body.requestId, requiresRecovery: true, phase: 'failed_after_drain' } }
+            return { ok: false, code: 'uncertain', message: 'No acknowledgement.', receipt: null }
+        })
+        render(<Probe capture={capture} />)
+        await waitFor(() => expect(capture.current?.snapshot).not.toBeNull())
+        await act(async () => { await capture.current!.pair(connection.address, 'engine-key-1234567890123456') })
+        const id = capture.current!.pendingRetry!.requestId
+        await act(async () => { await capture.current!.settle() })
+        expect(capture.current?.pendingRetry?.requestId).toBe(id)
+        expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body))).find(body => body.action === 'receipt').requestId).toBe(id)
+    })
+    it('drops another renderer actor and surfaces unavailable state', async () => {
+        const capture = { current: null as RemoteMachinesState | null }
         responsesFor(body => ({ ok: true, snapshot: connected({ ...body.actor, rendererEpoch: '99999999-9999-4999-8999-999999999999' }), receipt: null }))
         render(<Probe capture={capture} />)
-        await act(async () => {})
+        await waitFor(() => expect(capture.current?.unavailable).toBe(true))
         expect(capture.current?.snapshot).toBeNull()
     })
-
-    it('reports authority_missing as unavailable and stops', async () => {
-        const capture: { current: RemoteMachinesState | null } = { current: null }
-        responsesFor(() => ({ ok: false, code: 'authority_missing', message: 'This remote-machine capability is not connected to the desktop lifecycle.', receipt: null }))
-        render(<Probe capture={capture} />)
-        await waitFor(() => expect(capture.current?.unavailable).toBe(true))
-        expect(capture.current?.error).toContain('not connected')
-    })
-
-    it('removes against the exact connection revision', async () => {
-        const capture: { current: RemoteMachinesState | null } = { current: null }
-        let removed = false
-        const fetchMock = responsesFor(body => {
-            if (body.action === 'remove') {
-                removed = true
-                return { ok: true, snapshot: empty(body.actor), receipt: { ...receipt, kind: 'remove' } }
-            }
-            return { ok: true, snapshot: removed ? empty(body.actor) : connected(body.actor), receipt: null }
-        })
-        render(<Probe capture={capture} />)
-        await waitFor(() => expect(capture.current?.snapshot?.connection).toBeTruthy())
-        fetchMock.mockClear()
-        act(() => { void capture.current!.remove(connection.connectionId, connection.revision) })
-        await waitFor(() => expect(capture.current?.snapshot?.revision).toBe('unconfigured'))
-        const removeCall = fetchMock.mock.calls.find(([, init]) => (JSON.parse(String(init?.body)) as { action: string }).action === 'remove')
-        expect(removeCall).toBeTruthy()
-        expect(JSON.parse(String(removeCall![1]?.body))).toMatchObject({ action: 'remove', connectionId: connection.connectionId, expectedRevision: connection.revision, confirmation: 'Remove' })
-    })
-
-    it('surfaces an open recovery receipt and recovers it', async () => {
-        const capture: { current: RemoteMachinesState | null } = { current: null }
-        const fetchMock = responsesFor(body => {
-            if (body.action === 'recover') return { ok: true, snapshot: connected(body.actor), receipt: { ...receipt, requiresRecovery: false } }
-            return { ok: true, snapshot: connected(body.actor, { openReceipt: { ...receipt, requiresRecovery: true, phase: 'failed_after_drain' } }), receipt: null }
-        })
-        render(<Probe capture={capture} />)
-        await waitFor(() => expect(capture.current?.snapshot?.openReceipt?.requiresRecovery).toBe(true))
-        fetchMock.mockClear()
-        act(() => { void capture.current!.recover() })
-        await waitFor(() => expect(capture.current?.busy).toBeNull())
-        const recoverCall = fetchMock.mock.calls.find(([, init]) => (JSON.parse(String(init?.body)) as { action: string }).action === 'recover')
-        expect(recoverCall).toBeTruthy()
+    it('does not publish an old scope response into a replacement native actor', async () => {
+        const capture = { current: null as RemoteMachinesState | null }; let resolveOld!: (response: Response) => void
+        const old = new Promise<Response>(resolve => { resolveOld = resolve })
+        const next = { ...seed, workspaceId: 2, rendererEpoch: '99999999-9999-4999-8999-999999999999' }
+        vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+            const body = JSON.parse(String(init.body)) as DesktopRemoteCommand
+            return body.actor.workspaceId === 1 ? old : Response.json({ ok: true, snapshot: empty(body.actor), receipt: null })
+        }))
+        const view = render(<Probe capture={capture} />)
+        view.rerender(<Probe capture={capture} actor={next} />)
+        await waitFor(() => expect(capture.current?.snapshot?.actor).toEqual(next))
+        await act(async () => { resolveOld(Response.json({ ok: true, snapshot: connected(seed), receipt: null })) })
+        expect(capture.current?.snapshot?.actor).toEqual(next)
     })
 })

@@ -204,3 +204,15 @@ test('abort before the claim writes nothing and stores nothing', async () => {
     expect(writer.writes()).toBe(0)
     expect(store.rows.size).toBe(0)
 })
+
+test('a changed canonical owner after the IO await cannot pass publication admission', async () => {
+    const store = memory()
+    let switched = false
+    const scoped: SharedMutationAuthority = { current: async () => ({ workspaceId: 1,owner: switched ? 'replacement-owner' : 'local-owner',sharedRoot,dataRoot,launchNonce: 'launch-1',state: 'active',writeGrant: true }) }
+    let published = false
+    const writer = io(async (_root,_path,_content,access) => { switched = true; await access.beforeCommit(); published = true; return saved(true) })
+    const publish = createSharedMutationPublisher(store,scoped,writer.io)
+    await expect(publish(call('owner-change'),AbortSignal.timeout(5_000))).rejects.toMatchObject({ code: 'stale_workspace' })
+    expect(published).toBe(false)
+    expect([...store.rows.values()][0]).toMatchObject({ state: 'uncertain' })
+})

@@ -6,6 +6,7 @@ import { createDesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share
 import type { DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
 import { exportInput, sharePlan, shareReview } from './test-fixtures'
 import { DesktopCoworkerShareDialog } from './DesktopCoworkerShareDialog'
+import { DesktopCoworkerShareOptions } from './DesktopCoworkerShareOptions'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
@@ -40,4 +41,20 @@ test('closing discards an uncommitted review and reopening does not repeat it', 
     expect(api.review).not.toHaveBeenCalled()
     expect(api.export).not.toHaveBeenCalled()
     expect(button('Review portable file')).toBeTruthy()
+})
+
+test('unsupported capture options stay disabled and do not describe omitted data as absent', async () => {
+    const onChange = vi.fn()
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopCoworkerShareOptions plan={{ ...sharePlan,unavailable: { memories: 'Memory transfer is unavailable.',database: 'Database transfer is unavailable.' } }} include={{ memories: true,database: true,files: false }} disabled={false} onChange={onChange} />))
+    expect(document.body.textContent).toContain('Memory transfer is unavailable.')
+    expect(document.body.textContent).toContain('Database transfer is unavailable.')
+    expect(document.body.textContent).not.toContain('Nothing remembered yet')
+    expect(document.body.textContent).not.toContain('No tables yet')
+    for (const name of ['Memories','Coworker database']) {
+        const toggle = document.querySelector(`[aria-label="${name}"]`) as HTMLButtonElement
+        expect(toggle.disabled).toBe(true)
+        expect(toggle.getAttribute('aria-checked')).toBe('false')
+    }
+    expect(onChange).not.toHaveBeenCalled()
 })

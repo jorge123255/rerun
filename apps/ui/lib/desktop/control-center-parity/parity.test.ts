@@ -17,7 +17,8 @@ it('reuses original method order/labels and does not manufacture destructive Con
 it('has original templates/assistant ordering, preserves query Ask last, and omits hosted actions',()=>{
  const snapshot=fixture(),commands=buildParityCommands(snapshot,{kind:'root'},'',actions(snapshot))
  expect(commands.slice(0,4).map(c=>c.key)).toEqual(['new_agent','browse_templates','new_box','ask_assistant'])
- expect(commands.some(c=>['members','billing','api_keys','account','contact_support'].includes(c.key))).toBe(false)
+ expect(commands.some(c=>['members','billing','account','contact_support'].includes(c.key))).toBe(false)
+ expect(commands.find(c=>c.key==='api_keys')?.label).toBe('API keys & MCP')
  const query=buildParityCommands(snapshot,{kind:'root'},'find my work',actions(snapshot))
  const sections=parityCommandSections(query,()=>{})
  expect(sections.at(-1)?.heading).toBe('Assistant')
@@ -90,9 +91,16 @@ it('a no-longer-pending To handle row never answers or opens another owner',()=>
 it('keeps original relevance ranking across existing and added commands',()=>{
  const snapshot=fixture(),ports=actions(snapshot)
  const commands=buildParityCommands(snapshot,{kind:'root'},'/key',ports)
- expect(commands.filter(c=>c.group==='settings').map(c=>c.key).slice(0,2)).toEqual(['shortcuts','ai_providers'])
+ expect(commands.filter(c=>c.group==='settings').map(c=>c.key)).toEqual(['shortcuts','api_keys','ai_providers'])
  const additions=parityCommandSections(commands,()=>{})
  const existing=[{id:'settings',heading:'Settings',rows:[{id:'command-model_settings',label:'Model settings',leading:commands.find(c=>c.key==='ai_providers')!.icon,onSelect:()=>{}},{id:'command-shortcuts',label:'Keyboard shortcuts',leading:commands.find(c=>c.key==='shortcuts')!.icon,onSelect:()=>{}}]}]
  const merged=mergeParitySections(existing,additions,'/key')
- expect(merged.find(s=>s.heading==='Settings')!.rows.map(row=>row.label).slice(0,2)).toEqual(['Keyboard shortcuts','Model settings'])
+ expect(merged.find(s=>s.heading==='Settings')!.rows.map(row=>row.label)).toEqual(['Keyboard shortcuts','API keys & MCP','Model settings'])
+})
+
+it('admits the locally bound API keys intent while retaining current-workspace and hosted-command guards',()=>{
+ const snapshot=fixture(),command=buildParityCommands(snapshot,{kind:'root'},'',actions(snapshot)).find(command=>command.key==='api_keys')!
+ expect(intentIsCurrent(command.intent,snapshot)).toBe(true)
+ expect(intentIsCurrent(command.intent,{...snapshot,workspace:{...snapshot.workspace,id:'other-workspace'}})).toBe(false)
+ for(const hosted of ['members','billing','account','contact_support'] as const)expect(intentIsCurrent({kind:'global',command:hosted,target:{kind:'workspace',workspaceId:snapshot.workspace.id,revision:snapshot.workspace.revision}},snapshot)).toBe(false)
 })

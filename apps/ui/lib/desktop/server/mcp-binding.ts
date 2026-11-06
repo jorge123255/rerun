@@ -35,7 +35,7 @@ import { loopbackMcpOAuth } from './mcp/oauth-loopback'
 import { loopbackOAuthApi } from './mcp/oauth-api'
 import { desktopMcpBridge, desktopMcpBridgeRequest, type McpRunIdentity } from './mcp/bridge'
 
-const authority = z.object({ id: z.string(), config: z.object({ enabled: z.boolean(), tools: z.object({ filesystem: z.boolean().optional(), desktopToolGrants: z.record(z.string(), z.boolean()).optional(), desktopCodexGrants: z.record(z.string(), z.boolean()).optional() }) }) })
+const authority = z.object({ id: z.string(), config: z.object({ enabled: z.boolean(), tools: z.object({ filesystem: z.boolean().optional(), shared: z.boolean().optional(), desktopToolGrants: z.record(z.string(), z.boolean()).optional(), desktopCodexGrants: z.record(z.string(), z.boolean()).optional() }) }) })
 const session = z.object({ id: z.string(), agentId: z.string() })
 const run = z.object({ id: z.string(), agentId: z.string(), sessionId: z.string(), status: z.string() })
 const SERVICE_KEY = Symbol.for('rerun.desktop.remote-mcp.services.v1')
@@ -78,7 +78,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (!response.ok) { await abortable(response.body?.cancel() ?? Promise.resolve(), signal).catch(() => {}); throw new Error('Coworker authority is unavailable') }
         return JSON.parse(await boundedText(response, signal))
     }
-    async function access(localId: string, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' = 'mcp') {
+    async function access(localId: string, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' | 'sharedFilesWrite' = 'mcp') {
         const generation = entry.generations.get(localId) ?? 0
         const current = () => { if (entry.closed || entry.pendingOwners.get(localId) || (entry.generations.get(localId) ?? 0) !== generation) throw new Error('Coworker permission is changing') }
         current()
@@ -89,12 +89,12 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         current()
         if (detail.id !== owner.engineId || final.engineId !== owner.engineId) throw new Error('Coworker identity changed')
         signal.throwIfAborted()
-        return { enabled: detail.config.enabled, granted: detail.config.tools.desktopToolGrants?.[grant] === true && (grant !== 'privateFileWrite' || detail.config.tools.filesystem === true) }
+        return { enabled: detail.config.enabled, granted: detail.config.tools.desktopToolGrants?.[grant] === true && (grant !== 'privateFileWrite' || detail.config.tools.filesystem === true) && (grant !== 'sharedFilesWrite' || detail.config.tools.shared !== false) }
     }
     const oauth = loopbackMcpOAuth(store, access)
     const material: DesktopMcpMaterialSource = (...args) => references.material(...args)
     const remote = remoteMcpRuntime(store, access, fetch, oauth.credential, material)
-    const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' = 'mcp') => {
+    const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' | 'sharedFilesWrite' = 'mcp') => {
         const signal = AbortSignal.any([stop, entry.shutdown.signal, AbortSignal.timeout(5_000)])
         const owner = await abortable(localOwner(undefined, identity.engineAgentId), signal)
         const generation = entry.generations.get(owner.id) ?? 0
@@ -258,7 +258,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     const bridge = desktopMcpBridge(store, remote, authorizeRun, sse)
     return { store, references, runtime: remote, bridge, access, authorizeRun, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
         localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback),
-        selfMcp, serviceOAuth, serviceTransports, services, servicesBridge, servicesApi: serviceApi(installedServices, services), accounts, sse }
+        selfMcp, serviceOAuth, serviceTransports, services, installedServices, servicesBridge, servicesApi: serviceApi(installedServices, services), accounts, sse }
 
 }
 

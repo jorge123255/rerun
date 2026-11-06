@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { createDesktopCoworkerShareAttempts, type DesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
+import { createDesktopCoworkerShareServerAttempts, type DesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
 import { createDesktopCoworkerShareClient, type DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
 import { DesktopCoworkerImportDialog } from './DesktopCoworkerImportDialog'
 import { DesktopCoworkerShareDialog } from './DesktopCoworkerShareDialog'
@@ -20,7 +20,7 @@ export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName
 }) {
     const [client, setClient] = React.useState<DesktopCoworkerShareClient | null>(null)
     const [localImport, setLocalImport] = React.useState<string | null>(importSnapshot)
-    const attemptStore = React.useMemo(() => attempts ?? createDesktopCoworkerShareAttempts(), [attempts])
+    const attemptStore = React.useMemo(() => attempts ?? createDesktopCoworkerShareServerAttempts(workspaceId,agentId), [attempts,workspaceId,agentId])
     React.useEffect(() => { setLocalImport(importSnapshot) }, [importSnapshot])
     React.useEffect(() => {
         const next = createDesktopCoworkerShareClient({ workspaceId, routeAgentId: agentId })

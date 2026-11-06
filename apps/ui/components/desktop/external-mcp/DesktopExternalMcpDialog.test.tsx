@@ -4,7 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { ExternalMcpCreateInput, ExternalMcpCreateResult, ExternalMcpKeyView, ExternalMcpListenerView, ExternalMcpRevokeInput } from '@rerun/contracts'
 import { DesktopExternalMcpDialog } from './DesktopExternalMcpDialog'
-import type { DesktopExternalMcpAttempt, DesktopExternalMcpDriver } from '@/lib/desktop/external-mcp/driver'
+import type { DesktopExternalMcpDriver } from '@/lib/desktop/external-mcp/driver'
+import type { DesktopExternalMcpAttempt } from '@/lib/desktop/external-mcp/attempts'
 
 let root: Root | undefined
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.innerHTML = ''; vi.restoreAllMocks() })
@@ -14,7 +15,7 @@ const key = (name = 'Claude Code'): ExternalMcpKeyView => ({
     createdAt: '2026-11-01T00:00:00.000Z', lastUsedAt: null, revision: 1,
 })
 const listener = (enabled = true): ExternalMcpListenerView => ({ version: 1, enabled, origin: enabled ? 'http://127.0.0.1:43123' : null, path: '/mcp', workspaceId: 1, installId: '123e4567-e89b-42d3-a456-426614174000', launchNonce: '123e4567-e89b-42d3-a456-426614174001' })
-const created = (input: ExternalMcpCreateInput, secretAvailable = true): ExternalMcpCreateResult => ({
+const created = (input: ExternalMcpCreateInput, secretAvailable = true): Extract<ExternalMcpCreateResult,{ ok: true }> => ({
     ok: true, recovered: !secretAvailable, secretAvailable, secret: secretAvailable ? 'rk_one_time_secret' : null, key: { ...key(input.name), scopes: input.scopes, expiresAt: input.expiresAt },
     receipt: { version: 1, receiptId: '123e4567-e89b-42d3-a456-426614174011', requestId: input.requestId, kind: 'create', status: 'recorded', workspaceId: 1, keyId: '123e4567-e89b-42d3-a456-426614174010', keyRevision: 1, installId: '123e4567-e89b-42d3-a456-426614174000', launchNonce: '123e4567-e89b-42d3-a456-426614174001', fingerprint: 'a'.repeat(64), message: 'Created', secretAvailable, createdAt: '2026-11-06T00:00:00.000Z' }, message: 'Created',
 })
@@ -22,10 +23,11 @@ const created = (input: ExternalMcpCreateInput, secretAvailable = true): Externa
 function harness(overrides: { keys?: ExternalMcpKeyView[]; listener?: ExternalMcpListenerView; create?: (input: ExternalMcpCreateInput) => Promise<ExternalMcpCreateResult> } = {}) {
     let attempts: DesktopExternalMcpAttempt[] = []
     let keys = overrides.keys ?? []
+    let currentListener = overrides.listener ?? listener()
     const calls = { create: 0, revoke: 0, enable: 0, disable: 0, reserve: 0 }
     const driver: DesktopExternalMcpDriver = {
         list: async () => ({ version: 1, workspaceId: 1, keys }),
-        listener: async () => overrides.listener ?? listener(),
+        listener: async () => currentListener,
         create: vi.fn(async input => { calls.create++; return overrides.create ? overrides.create(input) : created(input) }),
         revoke: vi.fn(async (input: ExternalMcpRevokeInput) => {
             calls.revoke++
@@ -33,8 +35,8 @@ function harness(overrides: { keys?: ExternalMcpKeyView[]; listener?: ExternalMc
             keys = keys.filter(item => item.keyId !== input.keyId)
             return { ok: true as const, recovered: false, key: { ...selected, status: 'revoked' as const, revokedAt: '2026-11-06T00:00:00.000Z', revision: selected.revision + 1 }, receipt: { ...created({ requestId: input.requestId, workspaceId: 1, name: selected.name, scopes: selected.scopes, expiresAt: selected.expiresAt }).receipt, kind: 'revoke' as const, requestId: input.requestId } }
         }),
-        enable: vi.fn(async input => { calls.enable++; return { ok: true as const, recovered: false, listener: listener(true), receipt: { ...created({ requestId: input.requestId, workspaceId: 1, name: 'listener', scopes: ['mcp:read'], expiresAt: null }).receipt, kind: 'enable' as const, requestId: input.requestId } } }),
-        disable: vi.fn(async input => { calls.disable++; return { ok: true as const, recovered: false, listener: listener(false), receipt: { ...created({ requestId: input.requestId, workspaceId: 1, name: 'listener', scopes: ['mcp:read'], expiresAt: null }).receipt, kind: 'disable' as const, requestId: input.requestId } } }),
+        enable: vi.fn(async input => { calls.enable++; currentListener = listener(true); return { ok: true as const, recovered: false, listener: listener(true), receipt: { ...created({ requestId: input.requestId, workspaceId: 1, name: 'listener', scopes: ['mcp:read'], expiresAt: null }).receipt, kind: 'enable' as const, requestId: input.requestId } } }),
+        disable: vi.fn(async input => { calls.disable++; currentListener = listener(false); return { ok: true as const, recovered: false, listener: listener(false), receipt: { ...created({ requestId: input.requestId, workspaceId: 1, name: 'listener', scopes: ['mcp:read'], expiresAt: null }).receipt, kind: 'disable' as const, requestId: input.requestId } } }),
         attempts: {
             list: async () => attempts,
             reserve: async attempt => { calls.reserve++; const prior = attempts.find(item => item.kind === attempt.kind && item.input.requestId === attempt.input.requestId); if (prior && JSON.stringify(prior) !== JSON.stringify(attempt)) throw new Error('conflict'); if (!prior) attempts = [...attempts, attempt]; return attempt },
@@ -165,7 +167,7 @@ it('retries revoke with the same request ID after a lost acknowledgement', async
     driver.revoke = async input => {
         ids.push(input.requestId)
         if (fail) { fail = false; throw new Error('lost acknowledgement') }
-        return acknowledged(input)
+        return acknowledged(input,new AbortController().signal)
     }
     await mount(driver)
     await click('Revoke this key')

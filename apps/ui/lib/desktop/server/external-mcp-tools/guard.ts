@@ -11,10 +11,14 @@ export async function externalMcpCheckpoint(context: ExternalMcpCallContext, rec
     const result = await recheck({ keyId: p.keyId, workspaceId: p.workspaceId, keyRevision: p.keyRevision, installId: p.installId, launchNonce: p.launchNonce, requestId: context.requestId, scopes: [...p.scopes] })
     signal.throwIfAborted()
     if (!result.ok) throw new Error('External authority changed.')
+    const current = result.principal
+    if (current.keyId !== p.keyId || current.workspaceId !== p.workspaceId || current.runtimeWorkspaceId !== p.runtimeWorkspaceId
+        || current.keyRevision !== p.keyRevision || current.installId !== p.installId || current.launchNonce !== p.launchNonce
+        || [...current.scopes].sort().join() !== [...p.scopes].sort().join()) throw new Error('External principal identity changed.')
     return result.principal
 }
 
-export async function externalMcpGuarded<T>(context: ExternalMcpCallContext, recheck: (input: ExternalMcpLiveCheckInput) => Promise<ExternalMcpLiveCheckResult>, signal: AbortSignal, action: () => Promise<T>): Promise<T> {
+export async function externalMcpGuarded<T>(context: ExternalMcpCallContext, recheck: (input: ExternalMcpLiveCheckInput) => Promise<ExternalMcpLiveCheckResult>, signal: AbortSignal, action: () => T | Promise<T>): Promise<T> {
     await externalMcpCheckpoint(context, recheck, signal)
     const result = await action()
     await externalMcpCheckpoint(context, recheck, signal)
@@ -36,7 +40,8 @@ export async function externalMcpDb(runtime: DesktopRuntime, context: ExternalMc
 
 export async function externalMcpOwnedAgent(db: Client, context: ExternalMcpCallContext, recheck: (input: ExternalMcpLiveCheckInput) => Promise<ExternalMcpLiveCheckResult>, signal: AbortSignal, agentId: string): Promise<DesktopAgent> {
     const agent = await externalMcpGuarded(context, recheck, signal, () => findDesktopAgent(db, agentId))
-    if (!agent || agent.workspaceId !== context.principal.workspaceId) throw new Error('Coworker not found.')
+    // The validated runtime selects the isolated database; its workspace row remains local ID 1.
+    if (!agent || agent.workspaceId !== 1) throw new Error('Coworker not found.')
     return agent
 }
 

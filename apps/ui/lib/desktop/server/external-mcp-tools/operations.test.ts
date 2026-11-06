@@ -34,6 +34,11 @@ it('requireConfirm and string helpers refuse closed without mutating', async () 
     expect(requireString('ok', 'agentId')).toBe('ok')
 })
 
+it('read-only trigger projections retain instructions but never reveal a capability URL or secret fields', async () => {
+    const { externalMcpTriggerSummary } = await import('./operations')
+    expect(externalMcpTriggerSummary({ slug: 'report', name: 'Report', body: 'Make the report.', methods: ['POST'], enabled: true, token: 'private-token', url: 'http://127.0.0.1/private-token', headers: { authorization: 'private' }, credentials: { value: 'private' } })).toEqual({ slug: 'report', name: 'Report', body: 'Make the report.', methods: ['POST'], enabled: true })
+})
+
 it('connector mutations fail closed when services authority is missing', async () => {
     vi.resetModules()
     vi.doMock('../runtime', () => ({

@@ -1,4 +1,7 @@
 import { createClient, type Client } from '@libsql/client'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopCoworkerShareSource } from '../../../../../engine/src/desktop/coworker-share/snapshot'
 import { ensureDesktopCoworkerShareSchema } from './schema'
@@ -6,14 +9,16 @@ import { createDesktopCoworkerShareService } from './service'
 import { createDesktopCoworkerShareStore } from './store'
 
 let db: Client
+let directory = ''
 let source: DesktopCoworkerShareSource
 beforeEach(async () => {
-    db = createClient({ url: ':memory:' })
+    directory = await mkdtemp(join(tmpdir(),'rerun-share-review-'))
+    db = createClient({ url: `file:${join(directory,'app.db')}` })
     await db.executeMultiple('CREATE TABLE desktop_agents (id TEXT PRIMARY KEY); CREATE TABLE desktop_sessions (id TEXT PRIMARY KEY, agent_id TEXT);')
     await ensureDesktopCoworkerShareSchema(db)
     source = { workspaceId: 1, agentId: 'agent-a', name: 'Ada', description: '', revision: 'a'.repeat(64), setup: { required: false, prompt: '', answered: true }, config: { setup: { required: false } }, envKeys: [], mcpAuth: [], members: [{ path: 'SOUL.md', bytes: Buffer.from('Be helpful.'), kind: 'instruction', binary: false, textScanned: true, flagged: [], ownership: 'user' }] }
 })
-afterEach(() => db.close())
+afterEach(async () => { db.close(); await rm(directory,{ recursive: true,force: true }) })
 const include = { memories: false, database: false, files: false }
 
 test('review returns the exact SnapshotResult and scoped identity without persisting a share', async () => {

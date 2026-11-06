@@ -9,7 +9,7 @@ import type { RemoteMachineBusy } from '@/lib/desktop/remote-machines/use-remote
 
 /** Truthful health presentation: one label/tone per canonical health state. */
 export const REMOTE_HEALTH_PRESENTATION: Record<DesktopRemoteHealth['state'], { label: string; tone: BadgeTone }> = {
-    not_checked: { label: 'Checking…', tone: 'neutral' },
+    not_checked: { label: 'Not checked', tone: 'neutral' },
     connected: { label: 'Connected', tone: 'green' },
     unreachable: { label: 'Unreachable', tone: 'red' },
     auth_needed: { label: 'Needs a key', tone: 'orange' },
@@ -60,7 +60,10 @@ export function RemoteMachineRow({
 }) {
     const connection = snapshot.connection
     if (!connection) return null
-    const { label, tone } = REMOTE_HEALTH_PRESENTATION[connection.health.state]
+    const presentation = REMOTE_HEALTH_PRESENTATION[connection.health.state]
+    const verifiedConnected = snapshot.selected && snapshot.runtimeState === 'connected'
+    const label = connection.health.state === 'connected' && !verifiedConnected ? snapshot.selected ? 'Not connected' : 'Not in use' : presentation.label
+    const tone = connection.health.state === 'connected' && !verifiedConnected ? 'neutral' : presentation.tone
     const recovering = !!snapshot.openReceipt
     const occupied = busy !== null
     const meta = (
@@ -73,11 +76,11 @@ export function RemoteMachineRow({
     if (recovering) {
         actions = (
             <>
-                <Button variant="outline" size="sm" disabled={occupied} onClick={onRecover}>
+                <Button type="button" variant="outline" size="sm" disabled={occupied} onClick={onRecover}>
                     {busy?.kind === 'recover' && <Loader2Icon className="size-3.5 animate-spin" />}
                     Retry recovery
                 </Button>
-                <Button variant="ghost" size="sm" disabled={occupied} onClick={onCancel}>
+                <Button type="button" variant="ghost" size="sm" disabled={busy?.kind === 'cancel'} onClick={onCancel}>
                     Cancel
                 </Button>
             </>
@@ -85,22 +88,22 @@ export function RemoteMachineRow({
     } else {
         actions = (
             <>
-                {connection.health.state !== 'connected' && (
-                    <Button variant="ghost" size="sm" disabled={occupied} onClick={onHealthCheck}>
+                {(
+                    <Button type="button" variant="ghost" size="sm" disabled={occupied} onClick={onHealthCheck}>
                         {busy?.kind === 'health' && <Loader2Icon className="size-3.5 animate-spin" />}
                         Check again
                     </Button>
                 )}
                 {!snapshot.selected && (
-                    <Button variant="outline" size="sm" disabled={occupied} onClick={onSelect}>
+                    <Button type="button" variant="outline" size="sm" disabled={occupied} onClick={onSelect}>
                         {busy?.kind === 'select' && <Loader2Icon className="size-3.5 animate-spin" />}
                         Use this connection
                     </Button>
                 )}
-                <Button variant="outline" size="sm" disabled={occupied} onClick={onReplace}>
+                <Button type="button" variant="outline" size="sm" disabled={occupied} onClick={onReplace}>
                     Replace
                 </Button>
-                <Button variant="outline" size="sm" disabled={occupied} onClick={onRemove}>
+                <Button type="button" variant="outline" size="sm" disabled={occupied} onClick={onRemove}>
                     {busy?.kind === 'remove' && <Loader2Icon className="size-3.5 animate-spin" />}
                     Remove
                 </Button>
@@ -111,9 +114,9 @@ export function RemoteMachineRow({
     return (
         <PanelRow
             leading={<ServerIcon className="size-4 shrink-0 text-muted-foreground" />}
-            title="This workspace's server"
+            title={snapshot.selected ? "This workspace's server" : "Saved server"}
             meta={meta}
-            description={remoteMachineDescription(connection)}
+            description={connection.health.state === 'connected' && !verifiedConnected ? `${connection.address} · last check succeeded${connection.health.checkedAt ? ` at ${new Date(connection.health.checkedAt).toLocaleString()}` : ''}` : remoteMachineDescription(connection)}
             footer={
                 recovering ? (
                     <span className="flex items-center gap-1.5">

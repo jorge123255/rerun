@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { CopyPlusIcon, MessageCircle, PencilIcon, PowerIcon, PowerOffIcon, Trash2Icon } from 'lucide-react'
+import { CopyPlusIcon, Link2, MessageCircle, PencilIcon, PowerIcon, PowerOffIcon, Trash2Icon } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { RenameAgentDialog } from '@/components/dialogs/RenameAgentDialog'
 import { DeleteCoworkerConfirmation } from '@/components/dialogs/DeleteCoworkerConfirmation'
@@ -9,10 +9,11 @@ import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { desktopSpaceLabel, firstDesktopSpacePosition } from './desktop-space-layout'
 
-export function DesktopBoardMenu({ agents, onOpen, onRename, onDuplicate, onSetEnabled, onDelete, disabled, children, spaces, onRenameSpace, onDeleteSpace, onMoveAgent, onInteractionChange }: {
+export function DesktopBoardMenu({ agents, onOpen, onRename, onShare, onDuplicate, onSetEnabled, onDelete, disabled, children, spaces, onRenameSpace, onDeleteSpace, onMoveAgent, onInteractionChange }: {
     agents: DesktopAgentView[]
     onOpen: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
+    onShare?: (agent: DesktopAgentView) => void
     onDuplicate?: (agent: DesktopAgentView) => void
     onSetEnabled?: (id: string, enabled: boolean) => Promise<void>
     onDelete?: (id: string, confirmationName: string) => Promise<void>
@@ -100,10 +101,15 @@ export function DesktopBoardMenu({ agents, onOpen, onRename, onDuplicate, onSetE
                 <ContextMenuLabel className="max-w-56 truncate pl-7">{target.name}</ContextMenuLabel>
                 <ContextMenuSeparator />
                 <ContextMenuItem onSelect={() => onOpen(target.id)}><MessageCircle className="size-4" />Open chat</ContextMenuItem>
+                {onRename && <ContextMenuItem onSelect={() => setRenaming(target)}><PencilIcon className="size-4" />Rename</ContextMenuItem>}
+                {onShare && <ContextMenuItem onSelect={() => {
+                    if (!currentMenu() || !latest.current.agents.some(agent => agent.id === target.id)) return
+                    startingPlacement.current = true
+                    onShare(target)
+                }}><Link2 className="size-4" />Share</ContextMenuItem>}
                 {onDuplicate && <ContextMenuItem onSelect={() => { startingPlacement.current = true; onDuplicate(target) }}>
                     <CopyPlusIcon className="size-4" />Duplicate
                 </ContextMenuItem>}
-                {onRename && <ContextMenuItem onSelect={() => setRenaming(target)}><PencilIcon className="size-4" />Rename</ContextMenuItem>}
                 {spaces && onMoveAgent && <ContextMenuSub>
                     <ContextMenuSubTrigger className="pl-7">Move to Box</ContextMenuSubTrigger>
                     <ContextMenuSubContent>{otherBoxes.length === 0 ? <ContextMenuItem disabled>No other Box yet</ContextMenuItem> : otherBoxes.map(space =>

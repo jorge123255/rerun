@@ -90,4 +90,31 @@ export function createDesktopCoworkerShareAttempts(storage?: DesktopCoworkerShar
     }
 }
 
-export type DesktopCoworkerShareAttempts = ReturnType<typeof createDesktopCoworkerShareAttempts>
+type LocalAttempts = ReturnType<typeof createDesktopCoworkerShareAttempts>
+export type DesktopCoworkerShareAttempts = { [K in keyof LocalAttempts]: (...args: Parameters<LocalAttempts[K]>) => ReturnType<LocalAttempts[K]> | Promise<ReturnType<LocalAttempts[K]>> }
+
+/** Production recovery lives in app.db and survives changing loopback origins. */
+export function createDesktopCoworkerShareServerAttempts(workspaceId: number, routeAgentId: string): DesktopCoworkerShareAttempts {
+    const url = `/api/desktop/coworkers/${encodeURIComponent(routeAgentId)}/share`
+    const call = async (kind: 'export' | 'import' | 'revoke',mode: 'remember' | 'forget' | 'list',extra: Record<string,unknown> = {}) => {
+        const query = new URLSearchParams({ attempts: kind,...(typeof extra.snapshotId === 'string' ? { forSnapshot: extra.snapshotId } : {}),...(extra.workspaceWide ? { workspaceWide: '1' } : {}) })
+        const response = await fetch(mode === 'list' ? `${url}?${query}` : url,{ ...(mode === 'list' ? { method: 'GET' } : { method: 'POST',headers: { 'Content-Type': 'application/json' },body: JSON.stringify({ action: 'attempts',kind,mode,...extra }) }),cache: 'no-store',signal: AbortSignal.timeout(15_000) })
+        if (!response.ok) throw new Error('Durable share recovery did not acknowledge. Retry the same attempt.')
+        return response.json() as Promise<{ attempts?: unknown[] }>
+    }
+    const own = (scope: DesktopCoworkerShareScope) => { if (scope.workspaceId !== workspaceId || scope.agentId !== routeAgentId) throw new Error('Share recovery scope changed.') }
+    const list = async <T>(kind: 'export' | 'import' | 'revoke',parse: (raw: unknown) => T,extra?: Record<string,unknown>) => ((await call(kind,'list',extra)).attempts ?? []).map(parse)
+    return {
+        listExport: async scope => { own(scope); return list('export',raw => desktopCoworkerShareExportInputSchema.parse(raw)) },
+        rememberExport: async input => { own(input); await call('export','remember',{ input }) },
+        forgetExport: async input => { own(input); await call('export','forget',{ input }) },
+        listImport: async scope => { if (scope.targetWorkspaceId !== workspaceId) throw new Error('Share recovery scope changed.'); return list('import',raw => desktopCoworkerShareImportInputSchema.parse(raw),{ snapshotId: scope.snapshotId,workspaceWide: true }) },
+        listWorkspaceImports: async target => { if (target !== workspaceId) throw new Error('Share recovery scope changed.'); return list('import',raw => desktopCoworkerShareImportInputSchema.parse(raw),{ workspaceWide: true }) },
+        rememberImport: async input => { if (input.targetWorkspaceId !== workspaceId) throw new Error('Share recovery scope changed.'); await call('import','remember',{ input }) },
+        forgetImport: async input => { if (input.targetWorkspaceId !== workspaceId) throw new Error('Share recovery scope changed.'); await call('import','forget',{ input }) },
+        listRevoke: async scope => { own(scope); return list('revoke',raw => desktopCoworkerShareRevokeInputSchema.parse(raw),{ snapshotId: scope.snapshotId }) },
+        listRevocations: async scope => { own(scope); return list('revoke',raw => desktopCoworkerShareRevokeInputSchema.parse(raw)) },
+        rememberRevoke: async (scope,input) => { own(scope); if (scope.snapshotId !== input.snapshotId) throw new Error('Share recovery scope changed.'); await call('revoke','remember',{ input }) },
+        forgetRevoke: async (scope,input) => { own(scope); await call('revoke','forget',{ input }) },
+    }
+}

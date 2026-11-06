@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import type { ExternalMcpCallContext, ExternalMcpLiveCheckInput, ExternalMcpLiveCheckResult } from '@rerun/contracts'
+import { dbQuerySchema, dbExecuteSchema, type ExternalMcpCallContext, type ExternalMcpLiveCheckInput, type ExternalMcpLiveCheckResult } from '@rerun/contracts'
 import {
     agentDataBase,
     createSchedule,
@@ -24,7 +24,7 @@ import { createCoworkerSkill, deleteCoworkerSkill, getCoworkerSkill, listCoworke
 import { deleteDesktopCoworker } from '../coworker-delete'
 import { renameDesktopCoworker } from '../coworker-rename'
 import { startDesktopChat } from '../engine'
-import { createDescribedDesktopCoworker } from '../new-agent'
+import { acknowledgeDesktopCreation, createDescribedDesktopCoworker } from '../new-agent'
 import { authorizeDesktopSchedules } from '../schedules-binding'
 import { listDesktopServiceCatalog } from '../services/catalog/index'
 import { changeDesktopSettings, engineOf, readDesktopProviders } from '../settings'
@@ -58,9 +58,9 @@ function messageOf(error: unknown): string {
     return 'Request failed.'
 }
 
-async function drain(response: Response) {
+async function drain(response: Response, signal: AbortSignal) {
     if (!response.body) return
-    await response.body.pipeTo(new WritableStream({ write() {} })).catch(() => {})
+    await response.body.pipeTo(new WritableStream({ write() {} }), { signal })
 }
 
 async function waitRun(engine: ReturnType<typeof engineOf>, engineAgentId: string, runId: string, waitSeconds: number, context: ExternalMcpCallContext, deps: ExternalMcpOperationsDeps, signal: AbortSignal) {
@@ -85,6 +85,12 @@ function publicAgent(row: { id: string; name: string; description: string; space
     return { id: row.id, name: row.name, description: row.description, spaceId: row.spaceId ?? null, enabled: row.enabled }
 }
 
+export function externalMcpTriggerSummary(value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid trigger response.')
+    const row = value as Record<string, unknown>
+    return Object.fromEntries(['slug', 'name', 'description', 'body', 'methods', 'enabled', 'createdAt', 'updatedAt', 'lastFiredAt', 'lastRunId', 'lastSessionId'].filter(key => row[key] !== undefined).map(key => [key, row[key]]))
+}
+
 export async function invokeExternalMcpOperation(context: ExternalMcpCallContext, signal: AbortSignal, deps: ExternalMcpOperationsDeps): Promise<unknown> {
     const runtime = await externalMcpRuntime(context, deps.recheck, signal)
     const db = await externalMcpDb(runtime, context, deps.recheck, signal)
@@ -95,7 +101,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
     if (tool === 'list_spaces') {
         const board = await externalMcpGuarded(context, deps.recheck, signal, () => readDesktopBoardState(db))
         const agents = await externalMcpGuarded(context, deps.recheck, signal, () => listDesktopAgents(db))
-        const owned = agents.filter(agent => agent.workspaceId === context.principal.workspaceId)
+        const owned = agents.filter(agent => agent.workspaceId === 1)
         return {
             spaces: board.spaces.map(space => ({
                 id: space.id,
@@ -109,7 +115,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
     if (tool === 'list_agents') {
         const parsed = z.strictObject({ spaceId: id.optional() }).parse(args)
         const rows = await externalMcpGuarded(context, deps.recheck, signal, () => listDesktopAgents(db))
-        const owned = rows.filter(row => row.workspaceId === context.principal.workspaceId && (!parsed.spaceId || row.spaceId === parsed.spaceId))
+        const owned = rows.filter(row => row.workspaceId === 1 && (!parsed.spaceId || row.spaceId === parsed.spaceId))
         if (owned.length > 200) throw new Error('Too many coworkers. Narrow by Box.')
         return { agents: owned.map(publicAgent) }
     }
@@ -117,7 +123,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
     if (tool === 'get_team_status') {
         const parsed = z.strictObject({ spaceId: id.optional(), agentId: id.optional() }).parse(args)
         const rows = await externalMcpGuarded(context, deps.recheck, signal, () => listDesktopAgents(db))
-        let owned = rows.filter(row => row.workspaceId === context.principal.workspaceId)
+        let owned = rows.filter(row => row.workspaceId === 1)
         if (parsed.spaceId) owned = owned.filter(row => row.spaceId === parsed.spaceId)
         if (parsed.agentId) owned = owned.filter(row => row.id === parsed.agentId)
         if (owned.length > 50) throw new Error('Too many coworkers for team status. Narrow the request.')
@@ -159,10 +165,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         try {
             await authorizeDesktopTriggers(runtime, db, agent.engineAgentId, signal)
             const listed = await desktopTriggerEngine(runtime, { op: 'list', localAgentId: agent.id, engineAgentId: agent.engineAgentId }, signal) as { triggers?: unknown[] }
-            triggers = Array.isArray(listed?.triggers) ? listed.triggers.map((row: any) => {
-                const { token, ...rest } = row ?? {}
-                return rest
-            }) : []
+            triggers = Array.isArray(listed?.triggers) ? listed.triggers.map(externalMcpTriggerSummary) : []
         } catch { unavailable.push('triggers') }
         return {
             ...publicAgent(agent),
@@ -182,6 +185,10 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
     }
 
     if (tool === 'create_agent') {
+        if (!context.principal.scopes.includes('runs:send')) throw new Error('Creating a coworker starts its first chat and also requires runs:send.')
+        if (['connectionId', 'model', 'provider', 'tools', 'selfImprovement', 'verbosity'].some(key => args[key] !== undefined)) {
+            throw new Error('Local creation uses current workspace defaults. Configure model, tools and reply settings with update_agent after creation; no coworker was created.')
+        }
         const name = requireString(args.name, 'name').trim()
         if (name.length > 60) throw new Error('Keep the name under 60 characters.')
         const soul = asString(args.soul)?.trim()
@@ -189,7 +196,6 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         const kickoff = (soul && soul.slice(0, 2000)) || (description && `You are ${name}. ${description}`.slice(0, 2000))
         if (!kickoff) throw new Error('Local create_agent requires soul or description as the durable first instruction.')
         if (Array.isArray(args.connectors) && args.connectors.length) throw new Error('create_agent connectors require attach_connector after creation; pass no connectors on create.')
-        if (runtime.workspaceId !== 1 || context.principal.workspaceId !== 1) throw new Error('Local coworker creation is only bound for workspace 1 on this prepared runtime.')
         let placement = await externalMcpGuarded(context, deps.recheck, signal, () => planDesktopAgentPlacement(db, asString(args.spaceId)))
         if (placement.createSpace) {
             const board = await externalMcpGuarded(context, deps.recheck, signal, () => readDesktopBoardState(db))
@@ -220,6 +226,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         if (Object.keys(patch).length) {
             await externalMcpGuarded(context, deps.recheck, signal, () => patchAgent(engine, created.agent.engineAgentId, patch as never))
         }
+        await externalMcpGuarded(context, deps.recheck, signal, () => acknowledgeDesktopCreation(runtime, context.requestId))
         return { agent: publicAgent(created.agent), sessionId: created.sessionId, recovered: false }
     }
 
@@ -244,9 +251,9 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         if (args.verbosity !== undefined) patch.verbosity = args.verbosity
         if (args.tools && typeof args.tools === 'object') patch.tools = args.tools
         if (args.selfImprovement && typeof args.selfImprovement === 'object') patch.selfImprovement = args.selfImprovement
-        if (asString(args.connectionId) !== undefined) patch.connectionId = asString(args.connectionId)
-        if (asString(args.model) !== undefined) patch.model = asString(args.model)
-        if (asString(args.provider) !== undefined) patch.provider = asString(args.provider)
+        if (args.connectionId !== undefined) patch.connectionId = args.connectionId
+        if (args.model !== undefined) patch.model = args.model
+        if (args.provider !== undefined) patch.provider = args.provider
         let detail = await externalMcpGuarded(context, deps.recheck, signal, () => getAgent(engine, agent.engineAgentId))
         if (Object.keys(patch).length) detail = await externalMcpGuarded(context, deps.recheck, signal, () => patchAgent(engine, agent.engineAgentId, patch as never))
         const latest = await externalMcpOwnedAgent(db, context, deps.recheck, signal, agentId)
@@ -335,12 +342,13 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
             if (!body.trim()) throw new Error('Skill body is required to create a skill.')
             const created = await externalMcpGuarded(context, deps.recheck, signal, () => createCoworkerSkill(runtime, agent.id, { name, description, body }))
             if (!created.success || !created.skill) throw new Error(created.error ?? 'Skill create failed.')
+            const skill = created.skill
             const files = Array.isArray(args.files) ? args.files : []
             for (const file of files) {
                 if (!file || typeof file !== 'object') continue
                 const path = requireString((file as { path?: unknown }).path, 'files.path')
                 const content = requireString((file as { content?: unknown }).content, 'files.content')
-                const written = await writeCoworkerSkillFile(runtime, agent.id, created.skill.slug, path, content)
+                const written = await externalMcpGuarded(context, deps.recheck, signal, () => writeCoworkerSkillFile(runtime, agent.id, skill.slug, path, content))
                 if (!written.success) throw new Error(written.error ?? 'Skill file write failed.')
             }
             return { skill: created.skill, created: true }
@@ -418,9 +426,9 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         if (asString(args.runAt) !== undefined) patch.runAt = input.runAt
         if (asString(args.timezone) !== undefined) patch.timezone = input.timezone
         if (typeof args.enabled === 'boolean') patch.enabled = input.enabled
-        patch.connectionId = null
-        patch.provider = null
-        patch.model = null
+        if (args.connectionId !== undefined) patch.connectionId = args.connectionId
+        if (args.provider !== undefined) patch.provider = args.provider
+        if (args.model !== undefined) patch.model = args.model
         const updated = await externalMcpGuarded(context, deps.recheck, signal, () => updateSchedule(engine, agent.engineAgentId, slug, patch as never))
         return { schedule: updated, created: false }
     }
@@ -431,11 +439,8 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         await externalMcpGuarded(context, deps.recheck, signal, () => authorizeDesktopTriggers(runtime, db, agent.engineAgentId, signal))
         const base = { localAgentId: agent.id, engineAgentId: agent.engineAgentId }
         if (tool === 'list_triggers') {
-            const listed = await externalMcpGuarded(context, deps.recheck, signal, () => desktopTriggerEngine(runtime, { op: 'list', ...base }, signal)) as { triggers?: any[] }
-            const triggers = (listed?.triggers ?? []).map(row => {
-                const { token, ...rest } = row ?? {}
-                return rest
-            })
+            const listed = await externalMcpGuarded(context, deps.recheck, signal, () => desktopTriggerEngine(runtime, { op: 'list', ...base }, signal)) as { triggers?: unknown[] }
+            const triggers = (listed?.triggers ?? []).map(externalMcpTriggerSummary)
             return { triggers }
         }
         if (tool === 'delete_trigger') {
@@ -477,10 +482,8 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
             body: asString(args.body),
             methods: Array.isArray(args.methods) ? args.methods : undefined,
             enabled: typeof args.enabled === 'boolean' ? args.enabled : undefined,
-            connectionId: null,
-            provider: null,
-            model: null,
         }
+        for (const key of ['connectionId', 'provider', 'model']) if (args[key] !== undefined) input[key] = args[key]
         if (!slug) {
             if (!input.name || !input.body) throw new Error('name and body are required to create a trigger.')
             const created = await externalMcpGuarded(context, deps.recheck, signal, () => desktopTriggerEngine(runtime, { op: 'create', ...base, input }, signal))
@@ -503,7 +506,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
             requestId: context.requestId,
         }))
         const runId = started.response.headers.get('x-run-id')
-        await drain(started.response)
+        await drain(started.response, signal)
         if (!runId) return { status: 'uncertain', sessionId: started.sessionId, message: 'Chat was accepted but no run id was returned.' }
         const run = await waitRun(engine, agent.engineAgentId, runId, waitSeconds, context, deps, signal)
         return { status: run.status, runId: run.id, sessionId: started.sessionId, run: desktopRunView(run) }
@@ -524,10 +527,14 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         const run = await externalMcpGuarded(context, deps.recheck, signal, () => getRun(engine, agent.engineAgentId, runId, { signal }))
         if (run.agentId !== agent.engineAgentId || run.id !== runId) throw new Error('Run identity mismatch.')
         let toolCalls: unknown[] | undefined
-        try {
-            const tools = await getRunTools(engine, agent.engineAgentId, runId)
+        if (args.includeToolCalls === true) try {
+            const tools = await externalMcpGuarded(context, deps.recheck, signal, () => getRunTools(engine, agent.engineAgentId, runId))
             if (tools.length > 50) throw new Error('Too many tool calls to include.')
-            toolCalls = tools
+            toolCalls = tools.map(call => {
+                if (call.agentId !== agent.engineAgentId || call.runId !== runId) throw new Error('Tool call identity mismatch.')
+                const preview = (value: string | null) => value && value.length > 2000 ? `${value.slice(0, 2000)}… [truncated]` : value
+                return { toolCallId: call.toolCallId, toolName: call.toolName, input: preview(call.inputJson), result: preview(call.resultJson), isError: call.isError }
+            })
         } catch { toolCalls = undefined }
         return { run: desktopRunView(run), ...(toolCalls ? { toolCalls } : {}) }
     }
@@ -543,12 +550,12 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         if (tool === 'db_query') {
             const sql = requireString(args.sql, 'sql')
             const limit = typeof args.limit === 'number' ? Math.min(Math.max(Math.trunc(args.limit), 1), 1000) : 100
-            return await externalMcpGuarded(context, deps.recheck, signal, () => queryDb(engine, base, { sql, params: Array.isArray(args.params) ? args.params : undefined, limit }))
+            return await externalMcpGuarded(context, deps.recheck, signal, () => queryDb(engine, base, dbQuerySchema.parse({ sql, params: args.params, limit })))
         }
         const sql = asString(args.sql)
         const statements = Array.isArray(args.statements) ? args.statements : undefined
         if (!sql && !statements) throw new Error('Provide sql or statements.')
-        return await externalMcpGuarded(context, deps.recheck, signal, () => executeDb(engine, base, { sql, params: Array.isArray(args.params) ? args.params : undefined, statements: statements as never }))
+        return await externalMcpGuarded(context, deps.recheck, signal, () => executeDb(engine, base, dbExecuteSchema.parse({ sql, params: args.params, statements })))
     }
 
     if (tool === 'list_space_tables' || tool === 'space_db_query' || tool === 'space_db_execute') {
@@ -563,12 +570,12 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
         if (tool === 'space_db_query') {
             const sql = requireString(args.sql, 'sql')
             const limit = typeof args.limit === 'number' ? Math.min(Math.max(Math.trunc(args.limit), 1), 1000) : 100
-            return await externalMcpGuarded(context, deps.recheck, signal, () => queryDb(engine, base, { sql, params: Array.isArray(args.params) ? args.params : undefined, limit }))
+            return await externalMcpGuarded(context, deps.recheck, signal, () => queryDb(engine, base, dbQuerySchema.parse({ sql, params: args.params, limit })))
         }
         const sql = asString(args.sql)
         const statements = Array.isArray(args.statements) ? args.statements : undefined
         if (!sql && !statements) throw new Error('Provide sql or statements.')
-        return await externalMcpGuarded(context, deps.recheck, signal, () => executeDb(engine, base, { sql, params: Array.isArray(args.params) ? args.params : undefined, statements: statements as never }))
+        return await externalMcpGuarded(context, deps.recheck, signal, () => executeDb(engine, base, dbExecuteSchema.parse({ sql, params: args.params, statements })))
     }
 
     if (tool === 'search_connectors' || tool === 'list_connectors') {
@@ -598,6 +605,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
             return { connectors }
         }
         if (tool === 'attach_connector') {
+            if (args.newInstance === true) throw new Error('Additional connector instances are not supported by this external adapter.')
             const slug = requireString(args.slug, 'slug')
             const authMethodId = asString(args.authMethodId)
             if (!authMethodId) throw new Error('attach_connector requires authMethodId for the local service install authority.')
@@ -623,6 +631,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
             key: match.key,
             expectedRevision: match.revision,
         }, signal))
+        if (!result || typeof result !== 'object' || (result as { status?: unknown }).status !== 'removed') throw new Error('Connector removal is not confirmed. Inspect the existing request before retrying.')
         return { key: match.key, detached: true, result }
     }
 

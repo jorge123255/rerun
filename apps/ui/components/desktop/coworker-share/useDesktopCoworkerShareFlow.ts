@@ -6,6 +6,7 @@ import type {
     DesktopCoworkerShareInclude,
     DesktopCoworkerSharePlan,
     DesktopCoworkerShareReceipt,
+    DesktopCoworkerShareReviewInput,
     DesktopCoworkerShareRevokeInput,
     DesktopCoworkerSnapshotResult,
 } from '@rerun/contracts'
@@ -51,9 +52,12 @@ export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, age
     const [busy, setBusy] = React.useState(false)
     const [error, setError] = React.useState<string | null>(null)
 
-    const refreshAttempts = React.useCallback(() => {
-        setPendingExports(attempts.listExport(owner))
-        setPendingRevocations(attempts.listRevocations(owner))
+    const refreshAttempts = React.useCallback(async () => {
+        try {
+            const [exports,revocations] = await Promise.all([attempts.listExport(owner),attempts.listRevocations(owner)])
+            if (!activeRef.current || latest.current.owner.workspaceId !== owner.workspaceId || latest.current.owner.agentId !== owner.agentId) return
+            setPendingExports(exports); setPendingRevocations(revocations)
+        } catch { if (activeRef.current) setError('Durable share recovery is unavailable. Reopen the panel before a new export.') }
     }, [attempts, owner])
 
     React.useEffect(() => {
@@ -75,11 +79,12 @@ export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, age
     }, [active, client, owner, sourceRevision, refreshAttempts])
 
     React.useEffect(() => {
+        activeRef.current = active
         return () => {
             activeRef.current = false
             operation.current++
         }
-    }, [])
+    }, [active])
 
     React.useEffect(() => {
         setIncludeState(DEFAULT_INCLUDE)
@@ -160,21 +165,23 @@ export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, age
         setBusy(true)
         setError(null)
         try {
-            attempts.rememberExport(input)
-            refreshAttempts()
+            await attempts.rememberExport(input)
+            await refreshAttempts()
+            if (!activeRef.current || request !== operation.current) return false
             const result = await client.export(input)
             const matches = recovery
                 ? result.manifest.packageKey === input.reviewId.slice(0, 32) && result.manifest.contentDigest === input.expectedDigest
                 : reviewed !== null && isDesktopCoworkerShareResultCurrent(reviewed, result)
             if (!matches) throw new Error('The export acknowledgement does not match the reviewed archive. Retry this same attempt.')
             if (!activeRef.current || request !== operation.current) return false
-            attempts.forgetExport(input)
+            await attempts.forgetExport(input)
+            if (!activeRef.current || request !== operation.current) return false
             setExported({ result, sourceRevision: input.sourceRevision, requestId: input.requestId })
             setReviewed(null)
             setApproved(false)
             setStep('success')
             setWithdrawn(false)
-            setPendingRevocations(attempts.listRevoke({ workspaceId: input.workspaceId, agentId: input.agentId, snapshotId: result.manifest.packageKey }))
+            setPendingRevocations(await attempts.listRevoke({ workspaceId: input.workspaceId, agentId: input.agentId, snapshotId: result.manifest.packageKey }))
             refreshAttempts()
             return true
         } catch (cause) {
@@ -205,21 +212,23 @@ export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, age
         setBusy(true)
         setError(null)
         try {
-            attempts.rememberRevoke(scope, input)
-            setPendingRevocations(attempts.listRevoke(scope))
+            await attempts.rememberRevoke(scope, input)
+            setPendingRevocations(await attempts.listRevoke(scope))
+            if (!activeRef.current || request !== operation.current) return false
             const receipt: DesktopCoworkerShareReceipt = await client.revoke(input)
             if (receipt.operation !== 'revoke' || receipt.status !== 'revoked' || receipt.requestId !== input.requestId || receipt.snapshotId !== input.snapshotId) {
                 throw new Error('The withdrawal acknowledgement does not match this local share. Retry the same attempt.')
             }
             if (!activeRef.current || request !== operation.current) return false
-            attempts.forgetRevoke(scope, input)
-            setPendingRevocations(attempts.listRevoke(scope))
+            await attempts.forgetRevoke(scope, input)
+            if (!activeRef.current || request !== operation.current) return false
+            setPendingRevocations(await attempts.listRevoke(scope))
             setWithdrawn(true)
             return true
         } catch (cause) {
             if (activeRef.current && request === operation.current) {
                 setError(cause instanceof Error ? cause.message : 'Could not confirm withdrawal. Retry this same attempt.')
-                setPendingRevocations(attempts.listRevoke(scope))
+                await refreshAttempts()
             }
             return false
         } finally {
@@ -230,7 +239,6 @@ export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, age
 
     function cancel() {
         operation.current++
-        running.current = false
         setStep('configure')
         setReviewed(null)
         setApproved(false)

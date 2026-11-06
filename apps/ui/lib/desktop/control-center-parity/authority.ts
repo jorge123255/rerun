@@ -12,7 +12,7 @@ export function targetIsCurrent(target:ParityTarget,snapshot:ParitySnapshot):boo
 }
 export function intentIsCurrent(intent:ParityIntent,snapshot:ParitySnapshot):boolean{
  if(!targetIsCurrent(intent.target,snapshot))return false
- if(intent.kind==='global'&&(!CONTROL_COMMAND_IDS.includes(intent.command)||['members','billing','api_keys','account','contact_support','ask_assistant'].includes(intent.command)))return false
+ if(intent.kind==='global'&&(!CONTROL_COMMAND_IDS.includes(intent.command)||['members','billing','account','contact_support','ask_assistant'].includes(intent.command)))return false
  if(intent.kind==='panel'&&!isDesktopCoworkerPanel(intent.panel))return false
  if(intent.kind==='desktop'&&!snapshot.coworkers.find(a=>a.id===intent.target.agentId)?.enabled)return false
  if(intent.kind==='panel'&&intent.panel==='actions'&&!snapshot.coworkers.find(a=>a.id===intent.target.agentId)?.pending)return false

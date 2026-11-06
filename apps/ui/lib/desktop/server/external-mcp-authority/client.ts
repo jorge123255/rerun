@@ -5,16 +5,18 @@ import {
     externalMcpListenerResultSchema,
     externalMcpListenerViewSchema,
     externalMcpRevokeResultSchema,
+    externalMcpLiveCheckResultSchema,
     type ExternalMcpCreateRequest,
     type ExternalMcpEnableInput,
     type ExternalMcpRevokeInput,
+    type ExternalMcpLiveCheckInput,
 } from '@rerun/contracts'
 import { z } from 'zod'
 import { DesktopHttpError } from '../auth'
 import type { DesktopRuntime } from '../runtime'
 
-async function request<T>(runtime: DesktopRuntime, path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> {
-    const signal = AbortSignal.timeout(15_000)
+async function request<T>(runtime: DesktopRuntime, path: string, schema: z.ZodType<T>, body?: unknown, stop?: AbortSignal): Promise<T> {
+    const signal = AbortSignal.any([AbortSignal.timeout(15_000), ...(stop ? [stop] : [])])
     let response: Response
     try {
         response = await fetch(`${runtime.engine.origin}/desktop/external-mcp${path}`, {
@@ -67,4 +69,9 @@ export function enableDesktopExternalMcpListener(runtime: DesktopRuntime, input:
 
 export function disableDesktopExternalMcpListener(runtime: DesktopRuntime, input: ExternalMcpEnableInput) {
     return request(runtime, '/listener/disable', externalMcpListenerResultSchema, input)
+}
+
+export function recheckDesktopExternalMcp(runtime: DesktopRuntime, input: ExternalMcpLiveCheckInput, signal?: AbortSignal) {
+    const { keyId, workspaceId, keyRevision, installId, launchNonce, requestId, scopes } = input
+    return request(runtime, '/recheck', externalMcpLiveCheckResultSchema, { keyId, workspaceId, keyRevision, installId, launchNonce, requestId, scopes }, signal)
 }

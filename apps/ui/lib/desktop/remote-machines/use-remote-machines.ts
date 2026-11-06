@@ -1,252 +1,164 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { toast } from 'sonner'
-import { DESKTOP_REMOTE_MACHINE_LIMITS, type DesktopRemoteActor, type DesktopRemoteSnapshot } from '@rerun/contracts'
-import {
-    createDesktopRemoteMachinesClient,
-    RemoteMachineRequestError,
-    type RemoteMachineActorSeed,
-    type RemoteMachineRefusalCode,
-} from './remote-machines-client'
+import { DESKTOP_REMOTE_MACHINE_LIMITS, type DesktopRemoteMachineBridge, type DesktopRemoteSnapshot } from '@rerun/contracts'
+import { createDesktopRemoteMachinesClient, RemoteMachineRequestError, type DesktopRemoteMachinesClient, type RemoteMachineActorSeed } from './remote-machines-client'
 
-/**
- * Panel-wide state for a workspace's remote machine. Polls the service with
- * observational reads (never a connect as an effect of viewing or restoring
- * the dialog), quick while a change is in flight. Mutations are serialized,
- * every command carries the panel's actor, and a response that does not carry
- * this panel's renderer epoch is dropped — a stale answer cannot relabel a
- * newer machine. A lost acknowledgement keeps its request identity and the
- * typed form input so a retry converges instead of duplicating.
- */
 const POLL_RELAXED_MS = 3000
 const POLL_QUICK_MS = 1200
-
 export type RemoteMachineBusyKind = 'pair' | 'replace' | 'remove' | 'select' | 'health' | 'cancel' | 'recover' | 'retry'
 export type RemoteMachineBusy = { kind: RemoteMachineBusyKind; requestId: string }
+type PanelState = { scope: string; snapshot: DesktopRemoteSnapshot | null; unavailable: boolean; error: string | null; busy: RemoteMachineBusy | null; pendingRetry: RemoteMachineBusy | null }
+const empty = (scope: string): PanelState => ({ scope, snapshot: null, unavailable: false, error: null, busy: null, pendingRetry: null })
+const newId = () => crypto.randomUUID()
 
-function newId(): string {
-    return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-export function useRemoteMachines(seed: RemoteMachineActorSeed, options: { active?: boolean } = {}) {
-    const { active = true } = options
-    const scopeKey = JSON.stringify([seed.installId, seed.workspaceId, seed.launchNonce, active])
-    const scopeRef = useRef(scopeKey)
-    if (scopeRef.current !== scopeKey) scopeRef.current = scopeKey
-    const scope = scopeRef.current
-
-    const clientRef = useRef<ReturnType<typeof createDesktopRemoteMachinesClient> | null>(null)
-    if (!clientRef.current) clientRef.current = createDesktopRemoteMachinesClient(seed)
-
-    const mounted = useRef(false)
-    const epoch = useRef(0)
-    const pending = useRef(false)
-    const [snapshot, setSnapshot] = useState<DesktopRemoteSnapshot | null>(null)
-    const [unavailable, setUnavailable] = useState(false)
-    const [error, setError] = useState<string | null>(null)
-    const [busy, setBusy] = useState<RemoteMachineBusy | null>(null)
-    const [pendingRetry, setPendingRetry] = useState<RemoteMachineBusy | null>(null)
-
-    const live = useCallback(() => mounted.current && scopeRef.current === scope && active, [scope, active])
-
-    const sameActor = useCallback((actor: DesktopRemoteActor) => {
-        const mine = clientRef.current?.actor
-        return !!mine && mine.installId === actor.installId && mine.workspaceId === actor.workspaceId
-            && mine.launchNonce === actor.launchNonce && mine.rendererEpoch === actor.rendererEpoch
-    }, [])
+/** Every open panel uses native's exact actor lease; viewing and polling are observational. */
+export function useRemoteMachines(actor: RemoteMachineActorSeed, options: { active?: boolean; bridge?: DesktopRemoteMachineBridge } = {}) {
+    const { active = true, bridge } = options
+    const scope = JSON.stringify([actor.installId, actor.workspaceId, actor.launchNonce, actor.rendererEpoch, active])
+    const scopeRef = useRef(scope)
+    scopeRef.current = scope
+    const clientRef = useRef<DesktopRemoteMachinesClient | null>(null)
+    const readEpoch = useRef(0), operationEpoch = useRef(0), pending = useRef(false)
+    const [state, setState] = useState<PanelState>(() => empty(scope))
+    const stateRef = useRef(state)
+    stateRef.current = state
+    const current = useCallback((client: DesktopRemoteMachinesClient) => active && scopeRef.current === scope && clientRef.current === client, [scope, active])
+    const update = useCallback((change: (value: PanelState) => PanelState) => setState(previous => previous.scope === scope ? change(previous) : previous), [scope])
 
     const refresh = useCallback(async () => {
         const client = clientRef.current
-        if (!live() || pending.current || !client) return
-        const myEpoch = ++epoch.current
+        if (!client || !current(client) || pending.current) return
+        const epoch = ++readEpoch.current
         try {
-            const next = await client.read()
-            if (!live() || myEpoch !== epoch.current || pending.current || !sameActor(next.actor)) return
-            setSnapshot(next)
-            setUnavailable(false)
+            const snapshot = await client.read()
+            if (!current(client) || pending.current || epoch !== readEpoch.current) return
+            update(previous => ({ ...previous, snapshot, unavailable: false, error: previous.pendingRetry ? previous.error : null }))
         } catch (error) {
-            if (!live() || myEpoch !== epoch.current) return
-            if (error instanceof RemoteMachineRequestError && error.code === 'authority_missing') {
-                setUnavailable(true)
-                setError(error.message)
-                return
-            }
-            setUnavailable(true)
+            if (!current(client) || epoch !== readEpoch.current) return
+            update(previous => ({ ...previous, unavailable: !previous.snapshot || error instanceof RemoteMachineRequestError && error.code === 'authority_missing', error: error instanceof RemoteMachineRequestError ? error.message : 'Saved server state could not be read. Refresh to retry.' }))
         }
-    }, [live, sameActor])
+    }, [current, update])
 
     useEffect(() => {
-        mounted.current = true
-        epoch.current++
-        setSnapshot(null)
-        setUnavailable(false)
-        setError(null)
-        setBusy(null)
-        setPendingRetry(null)
-        return () => {
-            mounted.current = false
-            epoch.current++
-            pending.current = false
-            clientRef.current?.dispose()
-            clientRef.current = null
-        }
-    }, [scope])
-
-    useEffect(() => {
-        if (!active || !clientRef.current) return
+        if (!active) { setState(empty(scope)); return }
+        const client = createDesktopRemoteMachinesClient(actor, { bridge })
+        clientRef.current = client
+        pending.current = false
+        readEpoch.current++
+        operationEpoch.current++
+        setState(empty(scope))
+        let stopped = false
         let timer: ReturnType<typeof setTimeout> | undefined
         const tick = async () => {
             await refresh()
-            if (!live()) return
-            timer = setTimeout(tick, busy || snapshot?.openReceipt ? POLL_QUICK_MS : POLL_RELAXED_MS)
+            if (stopped || !current(client)) return
+            const latest = stateRef.current
+            timer = setTimeout(tick, pending.current || latest.scope === scope && latest.snapshot?.openReceipt ? POLL_QUICK_MS : POLL_RELAXED_MS)
         }
         void tick()
         return () => {
+            stopped = true
             if (timer) clearTimeout(timer)
-        }
-    }, [active, refresh, live, busy, snapshot?.openReceipt])
-
-    const runMutation = useCallback(async (kind: RemoteMachineBusyKind, operation: (requestId: string) => Promise<DesktopRemoteSnapshot>): Promise<{ snapshot: DesktopRemoteSnapshot; requestId: string } | null> => {
-        const client = clientRef.current
-        if (!live() || pending.current || !client) return null
-        const requestId = newId()
-        pending.current = true
-        epoch.current++
-        setBusy({ kind, requestId })
-        setError(null)
-        try {
-            const next = await operation(requestId)
-            if (!live() || !sameActor(next.actor)) return null
-            setSnapshot(next)
-            setPendingRetry(null)
-            return { snapshot: next, requestId }
-        } catch (error) {
-            if (!live()) return null
-            if (error instanceof RemoteMachineRequestError) {
-                if (error.code === 'uncertain') {
-                    setPendingRetry({ kind, requestId })
-                    setError('The app could not confirm whether the machine change applied. Retrying uses the same request identity.')
-                    return null
-                }
-                if (error.code === 'cancelled') return null
-                if (error.code === 'authority_missing') {
-                    setUnavailable(true)
-                    setError(error.message)
-                    return null
-                }
-                if (error.code === 'stale') {
-                    toast.error(error.message)
-                    void refresh()
-                    return null
-                }
-                if (error.code === 'busy') {
-                    toast.info('Another machine change is already running; wait for it to settle.')
-                    return null
-                }
-                toast.error(error.message)
-                return null
+            client.dispose()
+            if (clientRef.current === client) {
+                clientRef.current = null
+                pending.current = false
+                readEpoch.current++
+                operationEpoch.current++
             }
-            toast.error('The machine change was not confirmed. Retry the same action.')
+        }
+    }, [scope, active, bridge, refresh, current])
+
+    const runMutation = useCallback(async (kind: RemoteMachineBusyKind, work: (client: DesktopRemoteMachinesClient, requestId: string) => Promise<DesktopRemoteSnapshot>, requestId = newId()) => {
+        const client = clientRef.current
+        if (!client || !current(client) || pending.current && kind !== 'cancel') return null
+        const latest = stateRef.current
+        if (latest.scope === scope && latest.pendingRetry && !['cancel', 'recover'].includes(kind)) {
+            update(previous => ({ ...previous, error: 'Check the previous request before starting another server change.' }))
+            return null
+        }
+        const epoch = ++operationEpoch.current
+        readEpoch.current++
+        pending.current = true
+        update(previous => ({ ...previous, busy: { kind, requestId }, error: null }))
+        try {
+            const snapshot = await work(client, requestId)
+            if (!current(client) || epoch !== operationEpoch.current) return null
+            update(previous => ({ ...previous, snapshot, unavailable: false, pendingRetry: null }))
+            return { snapshot, requestId }
+        } catch (error) {
+            if (!current(client) || epoch !== operationEpoch.current) return null
+            const known = error instanceof RemoteMachineRequestError ? error : new RemoteMachineRequestError('The server change was not confirmed. Check this same request.', 'uncertain')
+            const uncertain = known.code === 'uncertain' || known.code === 'network' || known.receipt?.requiresRecovery === true
+            update(previous => ({ ...previous, error: known.message, unavailable: known.code === 'authority_missing', pendingRetry: uncertain ? { kind, requestId } : null }))
             return null
         } finally {
-            pending.current = false
-            setBusy(null)
-            epoch.current++
-            void refresh()
+            if (current(client) && epoch === operationEpoch.current) {
+                pending.current = false
+                update(previous => ({ ...previous, busy: null }))
+                void refresh()
+            }
         }
-    }, [live, sameActor, refresh])
+    }, [current, scope, update, refresh])
 
-    const pair = useCallback((address: string, apiKey: string) => runMutation('pair', requestId => clientRef.current!.pair(address, apiKey, requestId)), [runMutation])
-    const replace = useCallback((connectionId: string, expectedRevision: string, address: string, apiKey: string) => runMutation('replace', requestId => clientRef.current!.replace(connectionId, expectedRevision, address, apiKey, requestId)), [runMutation])
-    const select = useCallback((connectionId: string, expectedRevision: string) => runMutation('select', requestId => clientRef.current!.select(connectionId, expectedRevision, requestId)), [runMutation])
-    const remove = useCallback((connectionId: string, expectedRevision: string) => runMutation('remove', requestId => clientRef.current!.remove(connectionId, expectedRevision, requestId)), [runMutation])
-    const cancel = useCallback(() => runMutation('cancel', requestId => clientRef.current!.cancel(requestId)), [runMutation])
+    const pair = useCallback((address: string, apiKey: string) => runMutation('pair', (client, id) => client.pair(address, apiKey, id)), [runMutation])
+    const replace = useCallback((connectionId: string, revision: string, address: string, apiKey: string) => runMutation('replace', (client, id) => client.replace(connectionId, revision, address, apiKey, id)), [runMutation])
+    const select = useCallback((connectionId: string, revision: string) => runMutation('select', (client, id) => client.select(connectionId, revision, id)), [runMutation])
+    const remove = useCallback((connectionId: string, revision: string) => runMutation('remove', (client, id) => client.remove(connectionId, revision, id)), [runMutation])
+    const cancel = useCallback(() => {
+        const latest = stateRef.current
+        const requestId = latest.scope === scope ? latest.busy?.requestId ?? latest.pendingRetry?.requestId ?? latest.snapshot?.openReceipt?.requestId : undefined
+        if (!requestId) return Promise.resolve(null)
+        return runMutation('cancel', client => client.cancel(requestId), requestId)
+    }, [scope, runMutation])
     const recover = useCallback(() => {
-        const open = snapshot?.openReceipt
-        if (!open) return
-        return runMutation('recover', requestId => clientRef.current!.recover(open.revision, requestId))
-    }, [runMutation, snapshot?.openReceipt])
-
-    const healthRefresh = useCallback(async () => {
-        const client = clientRef.current
-        if (!live() || pending.current || !client || !snapshot?.connection) return
-        const { connectionId, revision } = snapshot.connection
-        await runMutation('health', requestId => client.health(connectionId, revision, requestId))
-    }, [live, snapshot?.connection, runMutation])
-
+        const latest = stateRef.current, receipt = latest.scope === scope ? latest.snapshot?.openReceipt : null
+        if (!receipt) return Promise.resolve(null)
+        return runMutation('recover', client => client.recover(receipt.revision, receipt.requestId), receipt.requestId)
+    }, [scope, runMutation])
+    const healthRefresh = useCallback(() => {
+        const latest = stateRef.current, connection = latest.scope === scope ? latest.snapshot?.connection : null
+        if (!connection) return Promise.resolve(null)
+        return runMutation('health', (client, id) => client.health(connection.connectionId, connection.revision, id))
+    }, [scope, runMutation])
     const retry = useCallback(async () => {
-        const client = clientRef.current
-        if (!live() || pending.current || !client || !pendingRetry) return
-        const { kind, requestId } = pendingRetry
+        const client = clientRef.current, latest = stateRef.current
+        const retry = latest.scope === scope ? latest.pendingRetry : null
+        if (!client || !retry || !current(client) || pending.current) return
+        const epoch = ++operationEpoch.current
+        readEpoch.current++
         pending.current = true
-        epoch.current++
-        setBusy({ kind, requestId })
-        setError(null)
+        update(previous => ({ ...previous, busy: { kind: 'retry', requestId: retry.requestId }, error: null }))
         try {
-            const result = await client.retry(requestId)
-            if (!live()) return
-            if (!result.ok) {
-                if (result.code === 'uncertain') {
-                    toast.info(result.message || 'Still not confirmed; try again.')
-                    return
-                }
-                throw new RemoteMachineRequestError(result.message, result.code, result.receipt, result.authority ?? null)
-            }
-            if (!sameActor(result.snapshot.actor)) return
-            setSnapshot(result.snapshot)
-            setPendingRetry(null)
-            toast.success('The machine change was confirmed.')
+            const result = await client.retry(retry.requestId)
+            if (!current(client) || epoch !== operationEpoch.current) return
+            if (!result.ok) throw new RemoteMachineRequestError(result.message, result.code, result.receipt, result.authority ?? null)
+            update(previous => ({ ...previous, snapshot: result.snapshot, unavailable: false, pendingRetry: null }))
         } catch (error) {
-            if (!live()) return
-            toast.error(error instanceof Error ? error.message : 'The machine change is still unconfirmed. Try again.')
+            if (current(client) && epoch === operationEpoch.current) update(previous => ({ ...previous, error: error instanceof RemoteMachineRequestError ? error.message : 'The original server request is still unconfirmed. Check its acknowledgement.' }))
         } finally {
-            pending.current = false
-            setBusy(null)
-            epoch.current++
-            void refresh()
+            if (current(client) && epoch === operationEpoch.current) { pending.current = false; update(previous => ({ ...previous, busy: null })); void refresh() }
         }
-    }, [live, pendingRetry, sameActor, refresh])
-
+    }, [scope, current, update, refresh])
     const settle = useCallback(async () => {
-        const client = clientRef.current
-        if (!live() || !client || !pendingRetry) return
+        const epoch = operationEpoch.current
+        const client = clientRef.current, latest = stateRef.current
+        const retry = latest.scope === scope ? latest.pendingRetry : null
+        if (!client || !retry || !current(client) || pending.current) return
         try {
-            const receipt = await client.receipt(pendingRetry.requestId)
-            if (!live()) return
-            if (receipt) {
-                toast.success(`The machine change ${receipt.requiresRecovery ? 'needs recovery — use Retry recovery' : 'was confirmed'} by the server.`)
-                setPendingRetry(null)
-            } else {
-                toast.info('The server kept no receipt for that request identity; retry the same action.')
-            }
+            const receipt = await client.receipt(retry.requestId)
+            if (!current(client) || epoch !== operationEpoch.current) return
+            update(previous => ({ ...previous, pendingRetry: receipt && !receipt.requiresRecovery ? null : previous.pendingRetry,
+                error: !receipt ? 'The original request has no saved acknowledgement. Retry that same request.' : receipt.requiresRecovery ? 'The saved server change needs recovery. Use Retry recovery.' : receipt.phase === 'published' ? null : 'The saved server change did not finish. Review it before starting another.' }))
         } catch (error) {
-            if (!live()) return
-            toast.error(error instanceof Error ? error.message : 'Could not read the acknowledgement. Retry the same action.')
-        } finally {
-            void refresh()
-        }
-    }, [live, pendingRetry, refresh])
-
-    return {
-        snapshot,
-        unavailable,
-        error,
-        busy,
-        pendingRetry,
-        refresh,
-        healthRefresh,
-        pair,
-        replace,
-        select,
-        remove,
-        cancel,
-        recover,
-        retry,
-        settle,
-        limits: DESKTOP_REMOTE_MACHINE_LIMITS,
-    }
+            if (current(client) && epoch === operationEpoch.current) update(previous => ({ ...previous, error: error instanceof RemoteMachineRequestError ? error.message : 'The original acknowledgement could not be read.' }))
+        } finally { if (current(client) && epoch === operationEpoch.current) void refresh() }
+    }, [scope, current, update, refresh])
+    const visible = state.scope === scope ? state : empty(scope)
+    return { snapshot: visible.snapshot, unavailable: visible.unavailable, error: visible.error, busy: visible.busy, pendingRetry: visible.pendingRetry,
+        refresh, healthRefresh, pair, replace, select, remove, cancel, recover, retry, settle,
+        actor, limits: DESKTOP_REMOTE_MACHINE_LIMITS }
 }
+export type { RemoteMachineActorSeed }
+
 export type RemoteMachinesState = ReturnType<typeof useRemoteMachines>
-export type { RemoteMachineRefusalCode }

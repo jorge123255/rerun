@@ -34,7 +34,10 @@ const workspace = (runtime: DesktopRuntime, raw: unknown) => {
     if (runtime.workspaceId !== workspaceId) throw new DesktopHttpError(409, EXTERNAL_MCP_COPY.workspace)
     return workspaceId
 }
-const requestedWorkspace = (request: Request) => new URL(request.url).searchParams.get('workspaceId')
+const requestedWorkspace = (request: Request) => {
+    const value = new URL(request.url).searchParams.get('workspaceId')
+    return value && /^[1-9]\d*$/.test(value) ? Number(value) : Number.NaN
+}
 
 function failure(error: unknown): Response {
     const status = error instanceof DesktopHttpError ? error.status : error instanceof z.ZodError ? 400 : 503

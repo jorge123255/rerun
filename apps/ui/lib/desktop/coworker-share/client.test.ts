@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { exportInput, shareManifest, sharePlan, shareReview } from '@/components/desktop/coworker-share/test-fixtures'
-import { createDesktopCoworkerShareClient, DesktopCoworkerShareRequestError } from './client'
+import { createDesktopCoworkerShareClient } from './client'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -12,7 +12,7 @@ test('plan, review and export use E’s exact scoped operations and reviewed dig
     const fetcher = vi.fn()
         .mockResolvedValueOnce(response({ plan: sharePlan }))
         .mockResolvedValueOnce(response(shareReview))
-        .mockResolvedValueOnce(response({ ...shareReview, reused: true }))
+        .mockResolvedValueOnce(response({ manifest: shareReview.manifest,archiveSha256: shareReview.archiveSha256,archiveBytes: shareReview.archiveBytes,reused: true }))
     vi.stubGlobal('fetch', fetcher)
     const client = createDesktopCoworkerShareClient({ workspaceId: 1, routeAgentId: 'agent-a' })
     await client.plan()
@@ -30,7 +30,7 @@ test('plan, review and export use E’s exact scoped operations and reviewed dig
 test('preview is observational, download is explicit and import recovery retains request identity', async () => {
     const fetcher = vi.fn()
         .mockResolvedValueOnce(response({ manifest: shareManifest }))
-        .mockResolvedValue(response({ status: 'imported', importedAgentId: 'fresh-a' }))
+        .mockImplementation(async () => response({ status: 'imported', importedAgentId: 'fresh-a' }))
     vi.stubGlobal('fetch', fetcher)
     const client = createDesktopCoworkerShareClient({ workspaceId: 1, routeAgentId: 'agent-a' })
     expect(await client.preview(shareManifest.packageKey)).toEqual(shareManifest)
@@ -50,7 +50,7 @@ test('a stale review is definite while an interrupted acknowledgement is recover
         .mockResolvedValueOnce(response({ error: 'The coworker changed.' }, 409))
         .mockRejectedValueOnce(new TypeError('offline')))
     const client = createDesktopCoworkerShareClient({ workspaceId: 1, routeAgentId: 'agent-a' })
-    await expect(client.plan()).rejects.toMatchObject<DesktopCoworkerShareRequestError>({ definite: true })
-    await expect(client.plan()).rejects.toMatchObject<DesktopCoworkerShareRequestError>({ definite: false })
+    await expect(client.plan()).rejects.toMatchObject({ definite: true })
+    await expect(client.plan()).rejects.toMatchObject({ definite: false })
     client.dispose()
 })

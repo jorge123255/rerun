@@ -27,6 +27,7 @@ export function RemoteMachinePairing({
     onRetry,
     onSettle,
     onBack,
+    onCancel,
 }: {
     hasConnection: boolean
     busy: RemoteMachineBusy | null
@@ -36,12 +37,13 @@ export function RemoteMachinePairing({
     onRetry: () => void
     onSettle: () => void
     onBack?: () => void
+    onCancel?: () => void
 }) {
     const [mode, setMode] = useState<'menu' | 'manual' | 'tokenUnsupported'>('menu')
     const [address, setAddress] = useState('')
     const [apiKey, setApiKey] = useState('')
     const connecting = busy?.kind === 'pair' || busy?.kind === 'replace'
-    const canConnect = address.trim().length > 0 && apiKey.length > 0 && !connecting
+    const canConnect = address.trim().length > 0 && apiKey.length > 0 && busy === null && !pendingRetry
 
     if (mode === 'manual') {
         return (
@@ -52,20 +54,21 @@ export function RemoteMachinePairing({
                     <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2">
                         <p className="px-1 text-xs text-muted-foreground">The app could not confirm the last change. Your address and key are kept in this form; retrying uses the same request identity, so nothing is applied twice.</p>
                         <div className="flex flex-wrap justify-end gap-2">
-                            <Button size="sm" variant="outline" disabled={busy !== null} onClick={onSettle}>Check acknowledgement</Button>
-                            <Button size="sm" variant="outline" disabled={busy !== null} onClick={onRetry}>{busy?.kind === 'retry' && <Loader2Icon className="animate-spin" />}Retry</Button>
+                            <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={onSettle}>Check acknowledgement</Button>
+                            <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={onRetry}>{busy?.kind === 'retry' && <Loader2Icon className="animate-spin" />}Retry</Button>
                         </div>
                     </div>
                 )}
-                <Input label={REMOTE_MACHINE_COPY.address} placeholder="http://192.168.1.20:3000" value={address} onChange={event => setAddress(event.target.value)} />
+                <Input label={REMOTE_MACHINE_COPY.address} placeholder="https://your-server.example.com" value={address} onChange={event => setAddress(event.target.value)} />
                 <Input label={REMOTE_MACHINE_COPY.key} placeholder="RERUN_API_KEY of the engine" value={apiKey} onChange={event => setApiKey(event.target.value)} type="password" />
                 <div className="flex flex-wrap justify-end gap-2">
+                    {connecting && onCancel && <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>}
                     {onBack && (
-                        <Button variant="ghost" disabled={busy !== null} onClick={onBack}>
+                        <Button type="button" variant="ghost" disabled={busy !== null} onClick={onBack}>
                             Back
                         </Button>
                     )}
-                    <Button onClick={() => onConnect(address.trim(), apiKey)} disabled={!canConnect}>
+                    <Button type="button" onClick={() => onConnect(address.trim(), apiKey)} disabled={!canConnect}>
                         {connecting && <Loader2Icon className="animate-spin" />}
                         {REMOTE_MACHINE_COPY.connect}
                     </Button>
@@ -78,10 +81,10 @@ export function RemoteMachinePairing({
         return (
             <section className="min-w-0 space-y-3">
                 <SectionTitle>Add a server</SectionTitle>
-                <p className="px-1 text-sm text-muted-foreground">Pairing tokens are part of hosted Rerun and have no local port on the Mac. To use a machine you already run, enter its address and key instead.</p>
+                <p className="px-1 text-sm text-muted-foreground">Add a server by entering its HTTPS address and API key below.</p>
                 <div className="flex flex-wrap justify-end gap-2">
-                    <Button variant="ghost" onClick={() => setMode('menu')}>Back</Button>
-                    <Button onClick={() => setMode('manual')}>{REMOTE_MACHINE_COPY.manualTitle}</Button>
+                    <Button type="button" variant="ghost" onClick={() => setMode('menu')}>Back</Button>
+                    <Button type="button" onClick={() => setMode('manual')}>{REMOTE_MACHINE_COPY.manualTitle}</Button>
                 </div>
             </section>
         )
@@ -96,17 +99,17 @@ export function RemoteMachinePairing({
                 <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2">
                     <p className="px-1 text-xs text-muted-foreground">A previous change was not confirmed. Retrying uses the same request identity, so nothing is applied twice.</p>
                     <div className="flex flex-wrap justify-end gap-2">
-                        <Button size="sm" variant="outline" disabled={busy !== null} onClick={onSettle}>Check acknowledgement</Button>
-                        <Button size="sm" variant="outline" disabled={busy !== null} onClick={onRetry}>{busy?.kind === 'retry' && <Loader2Icon className="animate-spin" />}Retry</Button>
+                        <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={onSettle}>Check acknowledgement</Button>
+                        <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={onRetry}>{busy?.kind === 'retry' && <Loader2Icon className="animate-spin" />}Retry</Button>
                     </div>
                 </div>
             )}
             {hasConnection && <p className="px-1 text-xs text-amber-600">This workspace already has a server. Connecting replaces it after you confirm.</p>}
             <div className="flex flex-wrap justify-end gap-2">
-                <Button variant="ghost" onClick={() => setMode('manual')}>
+                <Button type="button" variant="ghost" onClick={() => setMode('manual')}>
                     Enter address and key
                 </Button>
-                <Button onClick={() => setMode('tokenUnsupported')}>Add server</Button>
+                <Button type="button" onClick={() => setMode('tokenUnsupported')}>Add server</Button>
             </div>
         </section>
     )

@@ -25,8 +25,12 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
     const [busy, setBusy] = React.useState(false)
     const [error, setError] = React.useState<string | null>(null)
 
-    const refreshAttempts = React.useCallback(() => {
-        setPendingImports(attempts.listImport(scope))
+    const refreshAttempts = React.useCallback(async () => {
+        const generation = epoch.current
+        try {
+            const pending = await attempts.listImport(scope)
+            if (activeRef.current && generation === epoch.current) setPendingImports(pending)
+        } catch { if (activeRef.current) setError('Durable import recovery is unavailable. Reopen the panel before importing.') }
     }, [attempts, scope])
 
     React.useEffect(() => {
@@ -51,11 +55,12 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
     }, [active, client, snapshotId, refreshAttempts])
 
     React.useEffect(() => {
+        activeRef.current = active
         return () => {
             activeRef.current = false
             epoch.current++
         }
-    }, [])
+    }, [active])
 
     async function importFresh(recovery?: DesktopCoworkerShareImportInput): Promise<boolean> {
         if (running.current || importedAgentId) return importedAgentId !== null
@@ -79,8 +84,9 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
         setBusy(true)
         setError(null)
         try {
-            attempts.rememberImport(input)
-            refreshAttempts()
+            await attempts.rememberImport(input)
+            await refreshAttempts()
+            if (!activeRef.current || request !== epoch.current) return false
             const result = await client.import(input)
             if (result.status === 'uncertain') {
                 if (activeRef.current && request === epoch.current) setError(result.reason)
@@ -88,7 +94,8 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
             }
             if (!result.importedAgentId) throw new Error('Import acknowledgement did not identify the fresh copy. Retry this same attempt.')
             if (!activeRef.current || request !== epoch.current) return false
-            attempts.forgetImport(input)
+            await attempts.forgetImport(input)
+            if (!activeRef.current || request !== epoch.current) return false
             setImportedAgentId(result.importedAgentId)
             refreshAttempts()
             return true
@@ -106,7 +113,6 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
 
     function cancel() {
         epoch.current++
-        running.current = false
         setApproved(false)
         setBusy(false)
         setError(null)

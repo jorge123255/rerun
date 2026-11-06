@@ -4,7 +4,7 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 import { changeDesktopSettings, readDesktopProviders } from '@/lib/desktop/server/settings'
 
 export function GET(request: Request) {
-    return desktopRoute(request, async runtime => Response.json(await readDesktopProviders(runtime)))
+    return desktopRoute(request, async runtime => Response.json({ ...await readDesktopProviders(runtime),runtimeWorkspaceId: runtime.workspaceId }))
 }
 
 export async function PATCH(request: Request) {
@@ -12,6 +12,6 @@ export async function PATCH(request: Request) {
         const parsed = settingsChange.safeParse(await request.json().catch(() => null))
         if (!parsed.success) throw new DesktopHttpError(400, 'Check the provider, model, or workspace name and try again.')
         await changeDesktopSettings(runtime, parsed.data)
-        return Response.json(await readDesktopProviders(runtime))
+        return Response.json({ ...await readDesktopProviders(runtime),runtimeWorkspaceId: runtime.workspaceId })
     })
 }

@@ -52,7 +52,7 @@ test('lost import acknowledgement recovers the same fresh copy without navigatio
 })
 
 test('another workspace cannot consume the saved import attempt', async () => {
-    const first = await mount({ import: vi.fn(async () => ({ status: 'uncertain' as const, recoverable: true, reason: 'unknown' })) })
+    const first = await mount({ import: vi.fn(async () => ({ status: 'uncertain' as const, recoverable: true as const, reason: 'unknown' })) })
     await act(async () => first.flow().setApproved(true))
     await act(async () => { await first.flow().importFresh() })
     expect(first.attempts.listImport({ targetWorkspaceId: 3, snapshotId: shareManifest.packageKey })).toEqual([])

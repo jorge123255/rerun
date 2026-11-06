@@ -20,18 +20,14 @@ function client(overrides: Partial<DesktopCoworkerShareClient> = {}): DesktopCow
 function attempts() { return createDesktopCoworkerShareAttempts() }
 async function mount(api: DesktopCoworkerShareClient, attemptStore = attempts()) {
     let flow!: ReturnType<typeof useDesktopCoworkerShareFlow>
-    function Probe() {
-        flow = useDesktopCoworkerShareFlow({ client: api, attempts: attemptStore, workspaceId: 1, agentId: 'agent-a', sourceRevision: exportInput.sourceRevision })
+    function Probe({ sourceRevision }: { sourceRevision: string }) {
+        flow = useDesktopCoworkerShareFlow({ client: api, attempts: attemptStore, workspaceId: 1, agentId: 'agent-a', sourceRevision })
         return null
     }
     root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => root!.render(<Probe />))
+    await act(async () => root!.render(<Probe sourceRevision={exportInput.sourceRevision} />))
     return { flow: () => flow, attemptStore, rerender: async (sourceRevision: string) => {
-        function Changed() {
-            flow = useDesktopCoworkerShareFlow({ client: api, attempts: attemptStore, workspaceId: 1, agentId: 'agent-a', sourceRevision })
-            return null
-        }
-        await act(async () => root!.render(<Changed />))
+        await act(async () => root!.render(<Probe sourceRevision={sourceRevision} />))
     } }
 }
 
@@ -76,7 +72,7 @@ test('lost acknowledgement retries the exact export and duplicate success has no
     await act(async () => { await mounted.flow().exportShare() })
     expect(api.export).toHaveBeenCalledTimes(2)
     expect(vi.mocked(api.export).mock.calls[0]![0]).toEqual(vi.mocked(api.export).mock.calls[1]![0])
-    expect(mounted.flow().exported?.manifest.contentDigest).toBe(shareReview.manifest.contentDigest)
+    expect(mounted.flow().exported?.result.manifest.contentDigest).toBe(shareReview.manifest.contentDigest)
     expect(mounted.attemptStore.listExport({ workspaceId: 1, agentId: 'agent-a' })).toEqual([])
 })
 

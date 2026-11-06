@@ -57,8 +57,11 @@ export function externalMcpToolRegistrations(options?: { servicesBound?: boolean
     return ACCOUNT_TOOL_DEFS.filter(def => def.name in EXTERNAL_MCP_TOOL_SCOPES && !skip.has(def.name)).map(def => {
         const scope = EXTERNAL_MCP_TOOL_SCOPES[def.name as ExternalMcpBoundToolName]
         const effect = scope !== 'mcp:read'
-        const description = def.name === 'read_skill_file' ? def.description + READ_ONLY_OFFSET_NOTE : def.description
-        const inputSchema = def.name === 'read_skill_file'
+        const description = def.name === 'read_skill_file' ? def.description + READ_ONLY_OFFSET_NOTE
+            : def.name === 'create_agent' ? def.description + ' Local creation starts its first chat and additionally requires runs:send. Creation uses workspace defaults; model/tool/reply settings must be changed afterward with update_agent.' : def.description
+        const inputSchema = def.name === 'attach_connector'
+            ? { ...def.inputSchema, properties: { ...def.inputSchema.properties, authMethodId: { type: 'string', description: 'Exact locally supported authentication method ID.' }, values: { type: 'object', additionalProperties: { type: 'string' }, description: 'Explicit setup values; never reads an existing stored secret.' } }, additionalProperties: false }
+            : def.name === 'read_skill_file'
             ? { ...def.inputSchema, properties: { ...def.inputSchema.properties, offset: { type: 'integer', const: 0 } }, additionalProperties: false }
             : { ...def.inputSchema, additionalProperties: false }
         return { name: def.name, description, inputSchema, scope, effect }

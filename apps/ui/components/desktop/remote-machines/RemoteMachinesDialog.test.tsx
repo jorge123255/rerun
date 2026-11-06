@@ -45,7 +45,7 @@ const alertDialog = () => document.querySelector<HTMLElement>('[role="alertdialo
 const alertDialogButton = (label: string) => [...alertDialog()!.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === label)!
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DesktopRemoteActor, DesktopRemoteSnapshot } from '@rerun/contracts'
+import type { DesktopRemoteActor } from '@rerun/contracts'
 import { RemoteMachinesDialog } from './RemoteMachinesDialog'
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
@@ -59,61 +59,31 @@ vi.mock('@/components/ui/dialog', () => ({
     DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
-const seed = { installId: '11111111-1111-4111-8111-111111111111', workspaceId: 1, launchNonce: '22222222-2222-4222-8222-222222222222' }
-const connection = {
-    connectionId: '33333333-3333-4333-8333-333333333333',
-    revision: '44444444-4444-4444-8444-444444444444',
-    workspaceId: 1,
-    address: 'https://machine.example',
-    identity: { protocolVersion: 1, machineId: '55555555-5555-4555-8555-555555555555', workspaceId: 1 },
-    credentialConfigured: true,
-    removable: true,
-    health: { state: 'connected', checkedAt: '2026-11-06T00:00:00.000Z', commit: 'abc1234', activeAgents: 3, reason: null },
-}
-const receipt = {
-    version: 1,
-    receiptId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    requestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    installId: seed.installId,
-    workspaceId: 1,
-    kind: 'pair',
-    connectionId: connection.connectionId,
-    expectedRevision: 'unconfigured',
-    revision: connection.revision,
-    phase: 'published',
-    effectGeneration: 0,
-    closeAttempted: true,
-    requiresRecovery: false,
-    reason: null,
-    createdAt: '2026-11-06T00:00:00.000Z',
-    updatedAt: '2026-11-06T00:00:00.000Z',
-}
-const empty = (actor: DesktopRemoteActor): DesktopRemoteSnapshot => ({ version: 1, actor, revision: 'unconfigured', connection: null, selected: false, openReceipt: null })
-const connected = (actor: DesktopRemoteActor, overrides: Partial<DesktopRemoteSnapshot> = {}): DesktopRemoteSnapshot => ({ version: 1, actor, revision: connection.revision, connection, selected: true, openReceipt: null, ...overrides })
+import { remoteActor as seed, remoteConnection as connection, remoteReceipt as receipt, emptyRemoteSnapshot as empty, connectedRemoteSnapshot as connected } from '@/lib/desktop/remote-machines/remote-machines.test-support'
 
 type Envelope = Record<string, unknown> & { action: string; actor: DesktopRemoteActor }
 const key = 'engine-key-1234567890123456'
 
 function fixture(initial: 'connected' | 'empty') {
-    const envelopes: Envelope[] = []
-    const healthProbes: Envelope[] = []
-    let hasConnection = initial === 'connected'
+    const envelopes: Envelope[] = [], healthProbes: Envelope[] = []
+    let hasConnection = initial === 'connected', selected = initial === 'connected'
+    let currentConnection = { ...connection }, activeReceipt = receipt
+    const view = (actor: DesktopRemoteActor) => hasConnection ? connected(actor, { connection: currentConnection, selected, runtimeState: selected ? 'connected' : 'not_connected', activeReceipt: selected ? activeReceipt : null }) : empty(actor)
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body)) as Envelope
         envelopes.push(body)
         if (body.action === 'health') healthProbes.push(body)
-        if (body.action === 'read' || body.action === 'health') {
-            return Response.json({ ok: true, snapshot: hasConnection ? connected(body.actor) : empty(body.actor), receipt: null })
-        }
+        if (body.action === 'read') return Response.json({ ok: true, snapshot: view(body.actor), receipt: null })
+        const effect = { ...receipt, requestId: body.requestId, kind: body.action, connectionId: body.connectionId ?? currentConnection.connectionId,
+            expectedRevision: body.expectedRevision ?? currentConnection.revision }
         if (body.action === 'pair' || body.action === 'replace') {
+            selected = body.action === 'replace' && selected
+            currentConnection = { ...connection, connectionId: String(body.connectionId), address: String(body.address) }
             hasConnection = true
-            return Response.json({ ok: true, snapshot: connected(body.actor), receipt: { ...receipt, kind: body.action } })
+            if (selected) activeReceipt = effect as typeof receipt
         }
-        if (body.action === 'remove') {
-            hasConnection = false
-            return Response.json({ ok: true, snapshot: empty(body.actor), receipt: { ...receipt, kind: 'remove' } })
-        }
-        return Response.json({ ok: true, snapshot: connected(body.actor), receipt: null })
+        if (body.action === 'remove') { hasConnection = false; selected = false }
+        return Response.json({ ok: true, snapshot: view(body.actor), receipt: effect })
     })
     vi.stubGlobal('fetch', fetchMock)
     return { fetchMock, envelopes, healthProbes }
@@ -152,13 +122,14 @@ describe('RemoteMachinesDialog', () => {
         mount()
         await waitFor(() => expect(document.body.textContent).toContain('Add a server'))
         await click(screen.getByRole('button', { name: 'Enter address and key' }))
-        setValue(inputByPlaceholder('http://192.168.1.20:3000')!, 'https://machine.example')
+        setValue(inputByPlaceholder('https://your-server.example.com')!, 'https://machine.example')
         setValue(inputByPlaceholder('RERUN_API_KEY of the engine')!, key)
         await click(screen.getByRole('button', { name: 'Connect' }))
         await waitFor(() => expect(envelopes.some(envelope => envelope.action === 'pair')).toBe(true))
         const pair = envelopes.find(envelope => envelope.action === 'pair')!
         expect(pair).toMatchObject({ address: 'https://machine.example', apiKey: key, expectedRevision: 'unconfigured' })
-        await waitFor(() => expect(document.body.textContent).toContain("This workspace's server"))
+        await waitFor(() => expect(document.body.textContent).toContain('Saved server'))
+        expect(document.body.textContent).toContain('Not in use')
     })
 
     it('replacing an existing machine goes through the confirmation gate and posts the exact revision', async () => {
@@ -167,7 +138,7 @@ describe('RemoteMachinesDialog', () => {
         await waitFor(() => expect(document.body.textContent).toContain("This workspace's server"))
         await click(screen.getByRole('button', { name: 'Replace' }))
         await click(screen.getByRole('button', { name: 'Enter address and key' }))
-        setValue(inputByPlaceholder('http://192.168.1.20:3000')!, 'https://next.example')
+        setValue(inputByPlaceholder('https://your-server.example.com')!, 'https://next.example')
         setValue(inputByPlaceholder('RERUN_API_KEY of the engine')!, key)
         await click(screen.getByRole('button', { name: 'Connect' }))
         await waitFor(() => expect(alertDialog()).not.toBeNull())
@@ -201,12 +172,14 @@ describe('RemoteMachinesDialog', () => {
         expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy()
     })
 
-    it('probes health exactly once on open and stays observational afterwards', async () => {
+    it('opening is observational and health runs only after Check again', async () => {
         const { healthProbes } = fixture('connected')
         mount()
         await waitFor(() => expect(document.body.textContent).toContain("This workspace's server"))
-        await waitFor(() => expect(healthProbes.length).toBe(1))
+        expect(healthProbes).toHaveLength(0)
+        await click(screen.getByRole('button', { name: 'Check again' }))
+        await waitFor(() => expect(healthProbes).toHaveLength(1))
         await act(async () => {})
-        expect(healthProbes.length).toBe(1)
+        expect(healthProbes).toHaveLength(1)
     })
 })

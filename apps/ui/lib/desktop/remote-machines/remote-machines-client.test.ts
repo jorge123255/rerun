@@ -1,111 +1,115 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createDesktopRemoteMachinesClient, RemoteMachineRequestError, REMOTE_MACHINES_ROUTE, type RemoteMachineActorSeed } from './remote-machines-client'
+import type { DesktopRemoteCommand, DesktopRemoteReceipt } from '@rerun/contracts'
+import { createDesktopRemoteMachinesClient, RemoteMachineRequestError, REMOTE_MACHINES_ROUTE } from './remote-machines-client'
+import { remoteActor as actor, remoteConnection as connection, remoteReceipt as receipt, connectedRemoteSnapshot as connected, emptyRemoteSnapshot as empty } from './remote-machines.test-support'
 
 const fetchMock = vi.fn()
-afterEach(() => {
-    fetchMock.mockReset()
-    vi.unstubAllGlobals()
-})
-
-const actorSeed: RemoteMachineActorSeed = {
-    installId: '11111111-1111-4111-8111-111111111111',
-    workspaceId: 1,
-    launchNonce: '22222222-2222-4222-8222-222222222222',
+afterEach(() => { fetchMock.mockReset(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+const ok = (command?: DesktopRemoteCommand) => {
+    const effect = command && command.action !== 'read' ? { ...receipt, requestId: command.requestId,
+        ...('connectionId' in command ? { connectionId: command.connectionId, expectedRevision: command.expectedRevision } : {}),
+        ...(['pair', 'replace', 'select', 'remove', 'health'].includes(command.action) ? { kind: command.action as DesktopRemoteReceipt['kind'] } : {}) } : null
+    const next = command && 'connectionId' in command ? { ...connection, connectionId: command.connectionId } : connection
+    return { ok: true as const, snapshot: command?.action === 'remove' ? empty(actor) : connected(actor, { connection: next, activeReceipt: effect ?? receipt }), receipt: effect }
 }
-const connection = {
-    connectionId: '33333333-3333-4333-8333-333333333333',
-    revision: '44444444-4444-4444-8444-444444444444',
-    workspaceId: 1,
-    address: 'https://machine.example',
-    identity: { protocolVersion: 1, machineId: '55555555-5555-4555-8555-555555555555', workspaceId: 1 },
-    credentialConfigured: true,
-    removable: true,
-    health: { state: 'connected', checkedAt: '2026-11-06T00:00:00.000Z', commit: 'abc1234', activeAgents: 3, reason: null },
-} as const
-const snapshot = {
-    version: 1,
-    actor: { ...actorSeed, rendererEpoch: '77777777-7777-4777-8777-777777777777' },
-    revision: connection.revision,
-    connection,
-    selected: true,
-    openReceipt: null,
-}
-const ok = (overrides: Record<string, unknown> = {}) => ({ ok: true, snapshot: { ...snapshot, ...overrides }, receipt: null })
+const bodyOf = (index = 0) => JSON.parse(String(fetchMock.mock.calls[index][1]?.body)) as DesktopRemoteCommand
+const response = () => fetchMock.mockImplementation(async (_url, init) => Response.json(ok(JSON.parse(String(init.body)))))
 
-function bodyOf(callIndex = 0): Record<string, unknown> {
-    return JSON.parse(String(fetchMock.mock.calls[callIndex][1]?.body)) as Record<string, unknown>
-}
-
-describe('createDesktopRemoteMachinesClient', () => {
-    it('reads the snapshot with the panel actor and a fresh request id', async () => {
-        vi.stubGlobal('fetch', fetchMock.mockResolvedValueOnce(Response.json(ok())))
-        const client = createDesktopRemoteMachinesClient(actorSeed)
-        const result = await client.read()
-        expect(result.connection?.address).toBe('https://machine.example')
-        expect(String(fetchMock.mock.calls[0][0])).toBe(REMOTE_MACHINES_ROUTE)
-        const body = bodyOf()
-        expect(body.action).toBe('read')
-        expect(body.actor).toMatchObject(actorSeed)
-        expect(String(body.actor.rendererEpoch)).toMatch(/^[0-9a-f-]{36}$/)
-        expect(String(body.requestId)).toMatch(/^[0-9a-f-]{36}$/)
+describe('native-actor remote machine client', () => {
+    it('uses the exact native renderer lease rather than minting an epoch', async () => {
+        vi.stubGlobal('fetch', response())
+        const client = createDesktopRemoteMachinesClient(actor)
+        await client.read()
+        expect(fetchMock.mock.calls[0][0]).toBe(REMOTE_MACHINES_ROUTE)
+        expect(bodyOf().actor).toEqual(actor)
+        expect(bodyOf().requestId).toMatch(/^[0-9a-f-]{36}$/)
         client.dispose()
     })
-
-    it('pairs with a fresh connection id against the unconfigured revision', async () => {
-        vi.stubGlobal('fetch', fetchMock.mockResolvedValueOnce(Response.json(ok())))
-        const client = createDesktopRemoteMachinesClient(actorSeed)
+    it('refuses a partial actor instead of trusting a renderer-generated epoch', () => {
+        const { rendererEpoch: _epoch, ...partial } = actor
+        expect(() => createDesktopRemoteMachinesClient(partial as typeof actor)).toThrow()
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+    it('uses a concrete native bridge without sending credentials through fetch', async () => {
+        const bridge = { execute: vi.fn(async (command: DesktopRemoteCommand) => ok(command)) }
+        const client = createDesktopRemoteMachinesClient(actor, { bridge })
+        await client.read()
+        expect(bridge.execute).toHaveBeenCalledWith(expect.objectContaining({ action: 'read', actor }), expect.any(AbortSignal))
+        expect(fetchMock).not.toHaveBeenCalled()
+        client.dispose()
+    })
+    it('pairs and replaces with exact typed envelopes, and removes only with confirmation', async () => {
+        vi.stubGlobal('fetch', response())
+        const client = createDesktopRemoteMachinesClient(actor)
         await client.pair('https://machine.example', 'engine-key-1234567890123456')
-        const body = bodyOf()
-        expect(body.action).toBe('pair')
-        expect(body.expectedRevision).toBe('unconfigured')
-        expect(String(body.connectionId)).toMatch(/^[0-9a-f-]{36}$/)
-        expect(body.address).toBe('https://machine.example')
-        expect(body.apiKey).toBe('engine-key-1234567890123456')
-        client.dispose()
-    })
-
-    it('replaces, selects and removes against the exact connection revision; remove confirms', async () => {
-        vi.stubGlobal('fetch', fetchMock.mockResolvedValue(Response.json(ok())))
-        const client = createDesktopRemoteMachinesClient(actorSeed)
         await client.replace(connection.connectionId, connection.revision, 'https://next.example', 'engine-key-1234567890123456')
         await client.select(connection.connectionId, connection.revision)
         await client.remove(connection.connectionId, connection.revision)
-        const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
-        expect(bodies[0]).toMatchObject({ action: 'replace', connectionId: connection.connectionId, expectedRevision: connection.revision, address: 'https://next.example' })
-        expect(bodies[1]).toMatchObject({ action: 'select', connectionId: connection.connectionId, expectedRevision: connection.revision })
-        expect(bodies[2]).toMatchObject({ action: 'remove', connectionId: connection.connectionId, expectedRevision: connection.revision, confirmation: 'Remove' })
+        expect(bodyOf()).toMatchObject({ action: 'pair', expectedRevision: 'unconfigured', apiKey: 'engine-key-1234567890123456' })
+        expect(bodyOf(1)).toMatchObject({ action: 'replace', connectionId: connection.connectionId, expectedRevision: connection.revision })
+        expect(bodyOf(2)).toMatchObject({ action: 'select', connectionId: connection.connectionId })
+        expect(bodyOf(3)).toMatchObject({ action: 'remove', confirmation: 'Remove' })
         client.dispose()
     })
-
-    it('surfaces a refusal with its code and the durable receipt', async () => {
-        vi.stubGlobal('fetch', fetchMock.mockResolvedValueOnce(Response.json({ ok: false, code: 'stale', message: 'The saved server changed in another owner.', receipt: null })))
-        const client = createDesktopRemoteMachinesClient(actorSeed)
-        const error = await client.read().catch(cause => cause)
-        expect(error).toBeInstanceOf(RemoteMachineRequestError)
-        expect((error as RemoteMachineRequestError).code).toBe('stale')
-        expect((error as RemoteMachineRequestError).message).toBe('The saved server changed in another owner.')
+    it('receipt, Cancel and Recover target the original operation rather than new IDs', async () => {
+        vi.stubGlobal('fetch', response())
+        const client = createDesktopRemoteMachinesClient(actor)
+        await client.receipt(receipt.requestId)
+        await client.cancel(receipt.requestId)
+        await client.recover(receipt.revision, receipt.requestId)
+        expect(bodyOf()).toMatchObject({ action: 'receipt', requestId: receipt.requestId })
+        expect(bodyOf(1)).toMatchObject({ action: 'cancel', requestId: receipt.requestId })
+        expect(bodyOf(2)).toMatchObject({ action: 'recover', requestId: receipt.requestId, resume: true, expectedReceiptRevision: receipt.revision })
         client.dispose()
     })
-
-    it('retries a lost mutation with the exact same request identity', async () => {
-        vi.stubGlobal('fetch', fetchMock.mockResolvedValueOnce(Response.json({ ok: false, code: 'uncertain', message: 'Unknown', receipt: null })).mockResolvedValueOnce(Response.json(ok())))
-        const client = createDesktopRemoteMachinesClient(actorSeed)
-        await expect(client.pair('https://machine.example', 'engine-key-1234567890123456')).rejects.toThrow(RemoteMachineRequestError)
+    it('retains a transport-lost mutation and retries byte-identical input once, then drops the raw-key retry body', async () => {
+        vi.stubGlobal('fetch', fetchMock.mockRejectedValueOnce(new TypeError('secret-bearing transport error')).mockImplementation(async (_url, init) => Response.json(ok(JSON.parse(String(init.body))))))
+        const client = createDesktopRemoteMachinesClient(actor)
+        const failure = await client.pair('https://machine.example', 'engine-key-1234567890123456').catch(error => error)
+        expect(failure).toMatchObject({ code: 'uncertain' })
+        expect(failure.message).not.toContain('secret-bearing')
         const first = bodyOf()
-        await client.retry(String(first.requestId))
-        const second = bodyOf(1)
-        expect(second.requestId).toBe(first.requestId)
-        expect(second.action).toBe('pair')
-        expect(second.address).toBe('https://machine.example')
+        await client.retry(first.requestId)
+        expect(bodyOf(1)).toEqual(first)
+        await expect(client.retry(first.requestId)).rejects.toMatchObject({ code: 'unavailable' })
+        expect(fetchMock).toHaveBeenCalledTimes(2)
         client.dispose()
     })
-
-    it('refuses work after dispose and maps transport failures to the network code', async () => {
+    it('refuses a receipt from another request and preserves the unresolved original retry', async () => {
+        vi.stubGlobal('fetch', fetchMock.mockResolvedValueOnce(Response.json({ ...ok(), receipt })))
+        const client = createDesktopRemoteMachinesClient(actor)
+        await expect(client.pair('https://machine.example', 'engine-key-1234567890123456')).rejects.toMatchObject({ code: 'uncertain' })
+        const first = bodyOf()
+        fetchMock.mockImplementation(async (_url, init) => Response.json(ok(JSON.parse(String(init.body)))))
+        await expect(client.retry(first.requestId)).resolves.toMatchObject({ ok: true })
+        client.dispose()
+    })
+    it('does not consider an unresolved receipt to be a completed retry', async () => {
+        vi.stubGlobal('fetch', fetchMock.mockImplementation(async (_url, init) => {
+            const command = JSON.parse(String(init.body)) as DesktopRemoteCommand
+            return Response.json({ ok: true as const, snapshot: connected(actor), receipt: { ...receipt, requestId: command.requestId, requiresRecovery: true, phase: 'failed_after_drain' } satisfies DesktopRemoteReceipt })
+        }))
+        const client = createDesktopRemoteMachinesClient(actor)
+        const commandId = receipt.requestId
+        expect((await client.receipt(commandId))?.requiresRecovery).toBe(true)
+        client.dispose()
+    })
+    it('bounds native bridge waits and retains uncertainty rather than losing an admitted request', async () => {
+        const timeout = new AbortController()
+        vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+        const client = createDesktopRemoteMachinesClient(actor, { bridge: { execute: () => new Promise(() => {}) } })
+        const pending = client.pair('https://machine.example', 'engine-key-1234567890123456').catch(error => error)
+        expect(AbortSignal.timeout).toHaveBeenCalledWith(70_000)
+        timeout.abort()
+        expect(await pending).toMatchObject({ code: 'uncertain' })
+        client.dispose()
+    })
+    it('keeps read failures safe and refuses work after dispose', async () => {
         vi.stubGlobal('fetch', fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch')))
-        const client = createDesktopRemoteMachinesClient(actorSeed)
+        const client = createDesktopRemoteMachinesClient(actor)
         await expect(client.read()).rejects.toMatchObject({ code: 'network' })
         client.dispose()
         await expect(client.read()).rejects.toMatchObject({ code: 'cancelled' })
-        expect(fetchMock).toHaveBeenCalledTimes(1)
+        expect(fetchMock).toHaveBeenCalledOnce()
     })
 })

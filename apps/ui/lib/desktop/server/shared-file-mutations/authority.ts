@@ -6,7 +6,7 @@ import type { SharedMutationCall } from '@rerun/contracts'
 export type SharedMutationOwnerState = 'active' | 'deleted' | 'disabled' | 'replaced'
 
 export type SharedMutationAuthority = {
-    current(input: { engineAgentId: string; workspaceId: number }, signal: AbortSignal): Promise<{
+    current(input: Pick<SharedMutationCall, 'engineAgentId' | 'workspaceId' | 'sessionId' | 'runId' | 'toolCallId'>, signal: AbortSignal): Promise<{
         workspaceId: number
         owner: string
         sharedRoot: string
