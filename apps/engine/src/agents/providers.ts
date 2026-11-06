@@ -43,6 +43,7 @@ import { isDesktopMcpTool } from '../desktop/mcp-tools.js'
 import { isDesktopStdioTool } from '../desktop/mcp-stdio/client.js'
 import { isDesktopServiceTool } from '../desktop/service-tools.js'
 import { isDesktopSetupTool } from '../desktop/setup/service.js'
+import { isDesktopForemanTool } from '../desktop/foreman/tool-identity.js'
 import type { StoredScreenshot } from '../runtime/screenshots.js'
 
 export { CLI_PROVIDERS }
@@ -364,7 +365,7 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
     const shared = codexShared(agent)
     const grants = desktopRerunGrantsOf(agent.config.tools)
     const allowed = new Set(desktopRerunToolCatalog.filter(entry => entry.available && grants[entry.id as keyof typeof grants]).flatMap(entry => entry.tools))
-    const localTools = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name, tool]) => allowed.has(name) || name === 'install_complete' && isDesktopSetupTool(tool, agent.id) || grants.mcp && isDesktopMcpTool(tool) || grants.localMcpStdio && isDesktopStdioTool(tool) || grants.services && isDesktopServiceTool(tool))) : {}
+    const localTools = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name, tool]) => allowed.has(name) || isDesktopForemanTool(tool, name, agent.id, agent.config.kind) || name === 'install_complete' && isDesktopSetupTool(tool, agent.id) || grants.mcp && isDesktopMcpTool(tool) || grants.localMcpStdio && isDesktopStdioTool(tool) || grants.services && isDesktopServiceTool(tool))) : {}
     const names = Object.keys(localTools)
     const native = desktopCodexGrantsOf(agent.config.tools)
     const worker = options.nativeWorker

@@ -6,6 +6,7 @@ import { getRun } from '../../db/repos/runs.js'
 import { getSession } from '../../db/repos/sessions.js'
 import { desktopApp } from '../policy.js'
 import { foremanTools } from './tools.js'
+import { registerDesktopForemanTools } from './tool-identity.js'
 import { createDesktopForemanBridge, type ForemanRuntime } from './bridge.js'
 type Binding = ReturnType<typeof createDesktopForemanBridge>
 let installed: Binding | undefined
@@ -40,5 +41,5 @@ export async function desktopForemanTools(ctx: RunContext) {
         async navigate(input) { callId(input.eventId, 128); await current(); const result = await runtime.request({ action: 'navigate', ...input }, signal); await current(); return z.object({ ok: z.boolean(), error: z.string().optional() }).parse(result) },
         discover: null,
     })
-    return { tools, close: async () => {} }
+    return { tools: registerDesktopForemanTools(tools), close: async () => {} }
 }
