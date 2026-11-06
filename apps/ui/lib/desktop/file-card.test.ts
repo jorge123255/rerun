@@ -240,6 +240,7 @@ test.each([
     ['an unsupported video', card([video({ path: 'shots/clip.avi', name: 'clip.avi' })])],
     ['an unsupported AAC audio', card([audio({ path: 'voice/tone.aac', name: 'tone.aac' })])],
 ])('restores %s through an identity-bound result-file tile', (_name, value) => {
-    expect(desktopFileCardOf(value)?.files).toEqual(value.files)
-    expect(desktopFileCardOf({ ...value, files: value.files.map(entry => ({ ...entry, identity: undefined })) })).toBeUndefined()
+    const restored = desktopFileCardOf(value)!
+    expect(restored.files).toEqual(value.files)
+    expect(desktopFileCardOf({ ...restored, files: restored.files.map(entry => ({ ...entry, identity: undefined })) })).toBeUndefined()
 })
