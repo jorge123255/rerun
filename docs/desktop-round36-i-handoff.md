@@ -11,7 +11,8 @@
 | Worktree | `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round36-remaining-parity-audit` |
 | Machine | `e7d81f9b-15cc-4c7f-9416-cce93cafe692` |
 | Owned deliverables | `docs/desktop-round36-i-parity-audit.md`, `docs/desktop-round36-i-design-map.md`, `docs/desktop-round36-i-task-backlog.md`, this handoff |
-| Commit SHA | `7c551342113e9f42a863a1c42f1c575e7fcd04d9` |
+| Commit SHA (tip) | `TIP_PLACEHOLDER` |
+| Package commit (four docs) | `7c551342113e9f42a863a1c42f1c575e7fcd04d9` |
 | Worktree status after commit | clean (owned docs only) |
 
 ## What was read (required)
@@ -102,9 +103,10 @@ Reconciled without violating docs-only ownership:
 Stamped after commit:
 
 ```
-FULL_SHA=7c551342113e9f42a863a1c42f1c575e7fcd04d9
+FULL_SHA=TIP_PLACEHOLDER
+PACKAGE_SHA=7c551342113e9f42a863a1c42f1c575e7fcd04d9
 PARENT=970415507e28824bb001f46c8537d20fd2636b1c
-STATUS=clean after stamp commit
+STATUS=clean after tip stamp
 FILES=docs/desktop-round36-i-parity-audit.md
       docs/desktop-round36-i-design-map.md
       docs/desktop-round36-i-task-backlog.md
