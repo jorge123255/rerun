@@ -36,6 +36,12 @@ test('desktop HTTP scope permits chat/history but denies filesystem, updater, MC
     for (const path of ['/agents', '/agents/foreman', '/agents/a/more', '/agents/a%2Fb', '/agents/..']) expect(desktopRouteAllowed('DELETE', path)).toBe(false)
 })
 
+test('credential source reads are available only at the owned session POST boundary', () => {
+    expect(desktopRouteAllowed('POST', '/agents/owner/sessions/chat/secret-request-source')).toBe(true)
+    for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, '/agents/owner/sessions/chat/secret-request-source')).toBe(false)
+    expect(desktopRouteAllowed('POST', '/agents/owner/secret-request-source')).toBe(false)
+})
+
 test('app suggestions use the existing chat continuation without opening hosted installers or secret APIs', () => {
     expect(desktopRouteAllowed('POST', '/agents/coworker/chat')).toBe(true)
     for (const path of ['/hub/services', '/agents/coworker/services', '/agents/coworker/secrets', '/agents/coworker/env', '/agents/coworker/service-requests']) {
