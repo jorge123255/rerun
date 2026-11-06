@@ -10,13 +10,13 @@ The updated fork contains substantial new public source, including a real iPhone
 | User fork `jorge123255/rerun`, `main` | `2a57fa6dd53311f763bfc9abde85997b7f7e5309` |
 | Official `rerun-build/rerun`, default `dev` | Initially `c93bd04…`; advanced during review to `a6295e04b10e820b5668732190fb1a36129fde29`, four commits beyond the fork including a merge |
 | Mac source before this documentation update | `57e5f74b3527e2104f83b0e6a7c5e6e9a66672e0`, `desktop/m1` |
-| Installed, previously tested Mac app | `052f6f66f8f8eaca27d5ea878d2cf3024e617dc0` |
+| Previously tested Mac app at the initial review checkpoint | `052f6f66f8f8eaca27d5ea878d2cf3024e617dc0` |
 
 The fork is 20 commits beyond the earlier pin: 1,839 changed files, 130,947 insertions and 13,826 deletions. Its new mobile tree accounts for 407 files and 29,104 inserted text lines. These are source statistics, not counts of completed features.
 
 Review checkout: `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/upstream-review-20261106`, detached at the fork pin. Three parallel source reviews covered mobile, UI/design and engine/contracts. No upstream code, install hook, test, build or app was executed. No merge, fork sync, provider request, live-data access, permission change or app installation occurred. This is a targeted source/architecture review, not runtime or exhaustive line-by-line acceptance. The coding tree and installed app retain their tested implementation.
 
-C35 is still working, as the user confirmed. Leave its worktree alone and accept no unfinished handoff. C36 remains queued until C35 is handed off.
+C35’s committed handoff is integrated with root repairs in installed source `7b6c6a101519bdb7482169871270c77a76af0dcc`. Full UI **6,275 tests** and engine **4,138 tests** pass. Native intake draft/save, navigation, Skip and cold-restart checks passed. Final live completion/reply is pending ChatGPT approval in isolated workspace 2. E11 remains open. Existing agent assignments stay unchanged; no mid-task update is required. The clean author handoff is `8c1d6b3dff7297668d74dbaff6dfd54703d5408a`; its worktree remains untouched.
 
 ## Public source and license boundaries
 
@@ -65,7 +65,7 @@ Upstream `dev` advanced during the review, while the reviewed fork stayed at `2a
 |---|---|
 | A | Keep shared write/edit/search; compare new file-containment and current managed access. Preserve the stronger local path/write authority. |
 | B | Keys/admission: bind creator/current authority, explicit scopes, revocation and role/access-change invalidation. No new ownerless fallback. |
-| C | External tool catalog: enforce B's canonical actor/Box scopes per operation; queued until C35 finishes. |
+| C | External tool catalog: enforce B's canonical actor/Box scopes per operation; C35 committed handoff has been received; existing C36 assignment stays unchanged. |
 | D | API-key UI: original admin-only creation/revocation and truthful disabled states, through B's local adapter. |
 | E | Offline share runtime: map manage authority; keep immutable archive/receipt and credential/history exclusions. No public hosting. |
 | F | Share UI: use current permission-aware original flow; keep offline archive scope. |
@@ -76,3 +76,7 @@ Upstream `dev` advanced during the review, while the reviewed fork stayed at `2a
 Prepared branches, base commits and owned paths stay unchanged. Each prompt now points to this review and an addendum. For agents already working, send the addendum; do not reset, rebase, replace their worktree or start a replacement lane. Root owns integration, migration allocation, all execution checks and Mac/restart QA.
 
 The existing **21 open groups are the prior-pin subtotal**, not a claim that the latest source has exactly 21 remaining items. New provider/platform scope is recorded separately until I completes the updated audit. Existing Mac acceptance is preserved; no new upstream feature is marked accepted just because its code is public.
+
+## Follow-up completeness check
+
+The complete public fork tree and all changed paths are reconciled in [the completeness report](</Users/gszulc/Documents/Codex/2026-11-03/the-rerun-project-working-directory-is/outputs/Rerun public source completeness check.md>). It adds REST-v1, full access/RLS execution scope, Realtime/feedback privacy, fork CI gates and self-host email/push boundaries omitted from this targeted first review. It also records a newer official release-workflow observation. Agents already working need no interruption; root applies necessary compatibility repairs during handoff review. C35 has now supplied its committed handoff and is under root integration/repair.
