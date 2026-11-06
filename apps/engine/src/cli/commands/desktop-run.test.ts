@@ -15,7 +15,9 @@ vi.mock('../../desktop/tool-install/binding.js', async () => { const { Hono } = 
 vi.mock('../../desktop/computer-panel/binding.js', async () => { const { Hono } = await import('hono'); return { bindDesktopComputerPanel: () => ({ routes: new Hono(), close: vi.fn() }) } })
 vi.mock('../../desktop/trigger-tools/runtime.js', () => ({ createDesktopTriggerToolRuntime: vi.fn(() => ({ close: vi.fn(async () => {}) })) }))
 vi.mock('../../desktop/schedule-tools/runtime.js', () => ({ createDesktopScheduleToolRuntime: vi.fn(async () => ({ close: vi.fn(async () => {}) })) }))
-vi.mock('node:fs/promises', () => ({ readFile: mocks.read, realpath: async (path: string) => path }))
+vi.mock('node:fs/promises', () => ({ readFile: mocks.read, realpath: async (path: string) => path,
+    writeFile: vi.fn(async () => {}), rename: vi.fn(async () => {}), rm: vi.fn(async () => {}),
+}))
 vi.mock('@hono/node-server', () => ({ serve: mocks.serve }))
 vi.mock('../../config/env.js', () => ({ env: () => ({ RERUN_HOST: '127.0.0.1', RERUN_PORT: 3222, RERUN_HUB_BASE_URL: 'http://127.0.0.1:3210', RERUN_API_KEY: 'b'.repeat(64), RERUN_DATA_DIR: mocks.engineDir }) }))
 vi.mock('../../desktop/isolated-screen/binding.js', async () => { const { Hono } = await import('hono'); return { bindIsolatedScreen: () => ({ routes: new Hono(), attach: vi.fn(), close: vi.fn(async () => {}) }) } })

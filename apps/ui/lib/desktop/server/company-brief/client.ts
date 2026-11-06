@@ -21,7 +21,7 @@ async function request<T>(runtime: DesktopRuntime, suffix: string, schema: z.Zod
     let response: Response
     try {
         response = await fetch(`${runtime.engine.origin}/desktop/company-brief${suffix}`, {
-            method: body === undefined && suffix.startsWith('/?') ? 'GET' : body === undefined ? 'GET' : 'POST',
+            method: body === undefined ? 'GET' : 'POST',
             headers: { Authorization: `Bearer ${runtime.engine.apiKey}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
             ...(body === undefined ? {} : { body: JSON.stringify(body) }),
             redirect: 'error', cache: 'no-store', signal,
@@ -52,7 +52,7 @@ async function request<T>(runtime: DesktopRuntime, suffix: string, schema: z.Zod
 }
 
 export function readCompanyBrief(runtime: DesktopRuntime, workspaceId: string, chatId: string, access?: Access): Promise<{ attempt: CompanyBriefAttempt | null }> {
-    return request(runtime, `/?${new URLSearchParams({ workspaceId, chatId })}`, readResponse, access)
+    return request(runtime, `?${new URLSearchParams({ workspaceId, chatId })}`, readResponse, access)
 }
 
 export function synthesizeCompanyBrief(runtime: DesktopRuntime, body: CompanyBriefSynthesizeInput, access?: Access) {

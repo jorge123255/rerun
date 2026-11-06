@@ -1,3 +1,5 @@
+import { hasPendingSetup } from '../agents/setup.js'
+import { desktopScheduleDefinitionRevision } from '../desktop/schedule-tools/revision.js'
 import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
 import { automationModel } from '../agents/availability.js'
 import { listAgentIdsOnDisk } from '../agents/loader.js'
@@ -13,7 +15,7 @@ import { startHeadlessRun } from './headless-run.js'
 import { sendNotification } from './notify.js'
 import { isBudgetLatched } from './budget-latch.js'
 import { nowIso } from '../lib/ids.js'
-import { agentDisabled, budgetExhausted, HttpError } from '../lib/errors.js'
+import { agentDisabled, budgetExhausted, setupPending, HttpError } from '../lib/errors.js'
 import { logger } from '../lib/logger.js'
 
 import { desktopApp, assertDesktopProvider } from '../desktop/policy.js'
@@ -95,12 +97,18 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
             const replay=await replayDesktopSchedule(agentId,schedule.slug,manualId);check();await authorize();check()
             if(replay){inFlight.delete(key);return replay}
         }
-        // Never trust a stale object passed by a tick or Run now request.
+        // Run now probes the exact definition the human reviewed; it never resumes
+        // recurrence. Automatic occurrences still require the current enabled task.
+        const requested = schedule
         schedule = await readSchedule(agentId,schedule.slug);check()
-        if(desktopApp() && !schedule.enabled)throw new Error('Task is paused')
-        if(desktopApp() && opts?.markFired!==false && !isDue(schedule,new Date()))throw new Error('Task is no longer due')
+        if (desktopApp()) {
+            if (!schedule.enabled && (opts?.markFired !== false || requested.enabled !== false)) throw new HttpError(409, 'Task is paused. Refresh it before running a manual test.')
+            if (opts?.markFired === false && desktopScheduleDefinitionRevision(schedule) !== desktopScheduleDefinitionRevision(requested)) throw new HttpError(409, 'Task changed. Refresh it before running a manual test.')
+            if (opts?.markFired !== false && !isDue(schedule,new Date())) throw new HttpError(409, 'Task is no longer due')
+        }
         const agent = await getAgent(agentId);check()
         if (!agent.config.enabled) throw agentDisabled()
+        if (desktopApp() && !schedule.enabled && agent.config.setup?.required && !agent.config.setup.completedAt && hasPendingSetup(agent)) throw setupPending()
         // Resolved before markFired so a budget skip leaves the schedule due: it resumes on the first
         // tick after the latch clears, with no session, no run and no notification in the meantime.
         // Only the managed provider burns the workspace budget, so an agent on its own key still fires.

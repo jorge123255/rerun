@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { request as engineRequest, getAgent, listRuns } from '@/lib/engine/client'
+import { request as engineRequest, EngineRequestError, getAgent, listRuns } from '@/lib/engine/client'
 import { desktopScheduleRecordSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
 import { openDesktopDatabase } from '../database'
 import { findDesktopAgent, listDesktopAgents } from '../store'
@@ -43,7 +43,22 @@ export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime)
     }
     async function command(input: DesktopWorkspaceRoutineMutation, operation: 'read' | 'mutate', signal?: AbortSignal) {
         const o = await owner(input.agentId)
-        const result = await engineRequest(engine, `/desktop/workspace-routines/${encodeURIComponent(o.engineAgentId)}`, { method: 'POST', body: JSON.stringify({ operation, input }), signal, cache: 'no-store' }, value => wire.parse(value))
+        let result: z.infer<typeof wire>
+        try {
+            result = await engineRequest(engine, `/desktop/workspace-routines/${encodeURIComponent(o.engineAgentId)}`, { method: 'POST', body: JSON.stringify({ operation, input }), signal, cache: 'no-store' }, value => wire.parse(value))
+        } catch (error) {
+            if (error instanceof EngineRequestError) {
+                const messages: Record<number, string> = {
+                    400: 'Check the routine fields before trying again.',
+                    403: 'Enable this coworker and its Schedules permission before running it.',
+                    404: 'This routine is no longer available. Refresh the list.',
+                    409: 'This routine or its setup changed. Refresh it before starting another test.',
+                    503: 'The routine acknowledgement is unknown. Retry this same request.',
+                }
+                if (messages[error.status]) throw new DesktopHttpError(error.status, messages[error.status])
+            }
+            throw error
+        }
         signal?.throwIfAborted()
         if ((await owner(input.agentId)).engineAgentId !== o.engineAgentId) throw new DesktopHttpError(409, 'Coworker changed')
         if (!result.result) return result.reserved ? { fingerprint: result.fingerprint, result: null, reserved: true } : null

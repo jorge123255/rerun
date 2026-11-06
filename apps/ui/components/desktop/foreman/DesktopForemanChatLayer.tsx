@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
+import { Conversation, ConversationContent, ConversationScrollButton } from '@/components/ai-elements/conversation'
 import { cn } from '@/lib/utils'
 import { DesktopForemanDocsTool } from './docs/DesktopForemanDocsTool'
 import type { UIMessage } from 'ai'
@@ -81,8 +82,9 @@ export function DesktopForemanChatLayer({
             <AnimatePresence>
                 {emptyWelcome && empty && restored && <DesktopForemanWelcome key="welcome" thinking={streaming} />}
             </AnimatePresence>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5 pt-24">
-                <div className="mx-auto flex w-full max-w-xl flex-col justify-end gap-4 md:min-h-full">
+            {/* Match ForemanChatLayer: resize follows the latest message until the reader scrolls up. */}
+            <Conversation className="min-h-0" aria-label="Foreman conversation">
+                <ConversationContent scrollClassName="overflow-y-auto" className="mx-auto w-full max-w-xl justify-end gap-4 px-3 pb-5 pt-24 md:min-h-full">
                     {!restored && empty && (
                         <div aria-hidden className="flex flex-col gap-4">
                             <div className="h-3.5 w-1/2 animate-pulse rounded bg-muted" />
@@ -134,8 +136,9 @@ export function DesktopForemanChatLayer({
                         </div>
                     )}
                     {children}
-                </div>
-            </div>
+                </ConversationContent>
+                <ConversationScrollButton />
+            </Conversation>
         </div>
     )
 }

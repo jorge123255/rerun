@@ -23,9 +23,11 @@ import type { CanonicalForemanVoiceSend } from '../foreman-voice/runtime'
 import { ForemanRefusal } from './authority'
 
 const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
+const SHUTDOWN_KEY = Symbol.for('rerun.desktop.foreman.shutdown.v1')
 type Subscriber = { chat: DesktopForemanChatRef; send: (event: DesktopForemanLiveEvent) => void }
 type Binding = Awaited<ReturnType<typeof createBinding>>
 const bindings = () => ((globalThis as unknown as Record<symbol, Map<string, Promise<Binding>>>)[KEY] ??= new Map())
+const shutdowns = () => ((globalThis as unknown as Record<symbol, WeakMap<Promise<Binding>, Promise<void>>>)[SHUTDOWN_KEY] ??= new WeakMap())
 export function desktopForeman(runtime: DesktopRuntime): Promise<Binding> {
     const key = JSON.stringify([runtime.dataRoot, String(runtime.workspaceId), runtime.launchNonce, runtime.engine.origin])
     let value = bindings().get(key)
@@ -221,12 +223,23 @@ export async function shutdownDesktopForeman(runtime: DesktopRuntime): Promise<v
     const key = JSON.stringify([runtime.dataRoot, String(runtime.workspaceId), runtime.launchNonce, runtime.engine.origin])
     const existing = bindings().get(key)
     if (!existing) return
-    const app = await existing
-    app.closeVoiceAdmission()
-    const row = (await app.db.execute({ sql: 'SELECT chat_id FROM desktop_foreman_chats WHERE workspace_id=?', args: [String(runtime.workspaceId)] })).rows[0]
-    const tasks: Promise<unknown>[] = [app.companyDiscovery.close()]
-    if (row) tasks.push(cancelCompanyBriefChat(runtime, { workspaceId: String(runtime.workspaceId), chatId: String(row.chat_id) }))
-    const outcomes = await Promise.allSettled(tasks)
-    const failed = outcomes.filter((item): item is PromiseRejectedResult => item.status === 'rejected')
-    if (failed.length) throw new AggregateError(failed.map(item => item.reason), 'Foreman shutdown is not confirmed.')
+    const previous = shutdowns().get(existing)
+    if (previous) return previous
+    // Native preflight drains while the engine is online. Its later IPC Stop makes
+    // another UI shutdown callback after closing engine HTTP admission. Reuse only
+    // this exact binding's confirmed cleanup instead of calling that engine again.
+    const closing = (async () => {
+        const app = await existing
+        app.closeVoiceAdmission()
+        const row = (await app.db.execute({ sql: 'SELECT chat_id FROM desktop_foreman_chats WHERE workspace_id=?', args: [String(runtime.workspaceId)] })).rows[0]
+        const tasks: Promise<unknown>[] = [app.companyDiscovery.close()]
+        if (row) tasks.push(cancelCompanyBriefChat(runtime, { workspaceId: String(runtime.workspaceId), chatId: String(row.chat_id) }))
+        const outcomes = await Promise.allSettled(tasks)
+        const failed = outcomes.filter((item): item is PromiseRejectedResult => item.status === 'rejected')
+        if (failed.length) throw new AggregateError(failed.map(item => item.reason), 'Foreman shutdown is not confirmed.')
+    })()
+    shutdowns().set(existing, closing)
+    // A failed drain proves nothing. The same owned binding must remain retryable.
+    void closing.catch(() => { if (shutdowns().get(existing) === closing) shutdowns().delete(existing) })
+    return closing
 }

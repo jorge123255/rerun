@@ -42,6 +42,7 @@ import { initializeComputerLaunchers } from '../../desktop/computer-launchers/sq
 import { shutdownDesktopSemanticMemory } from '../../desktop/semantic-memory/runtime.js'
 import { reconcileIsolatedScreens, shutdownIsolatedScreens } from '../../desktop/isolated-screen/index.js'
 import { bindDesktopCoworkerCalls } from '../../desktop/coworker-calls/bind.js'
+import { createDesktopStopDiagnostic } from './desktop-stop-diagnostic.js'
 
 const secret = z.string().regex(/^[a-f0-9]{64}$/)
 const origin = z.string().url().refine(value => {
@@ -134,24 +135,44 @@ export async function desktopRunCommand(): Promise<void> {
         if (shutdownActive) return
         shutdownActive = true
         stopping = true
+        const diagnostic = createDesktopStopDiagnostic(expectedEngineRoot, runtime)
         lifetime.abort()
         stopScheduler?.()
-        const closed = new Promise<void>(done => server.close(() => done()))
+        const closed = diagnostic.track('http-listener', () => new Promise<void>(done => server.close(() => done())))
         stopCodexLogin()
         claudeLogin.stop()
         // Close admissions before waiting for any preparation. Callback delivery is best effort
         // during teardown; failure must never reopen either local service or prevent shutdown.
-        const closing = Promise.allSettled([schedules?.close(), Promise.resolve(triggerTools?.close()).then(() => triggers?.close()), delegation.close(), stopDesktopMcp(), stopDesktopSkillProposals(), screen.close().then(() => shutdownIsolatedScreens(AbortSignal.timeout(25_000))), shutdownDesktopSemanticMemory(), scheduleTools?.close(), toolInstall.close(), foreman.close(), computerPanel.close(), guestShell.close(), stopDesktopClaudeWorkers()])
+        const closing = Promise.allSettled([
+            diagnostic.track('schedule-admission', () => schedules?.close()),
+            diagnostic.track('trigger-runtime', () => Promise.resolve(triggerTools?.close()).then(() => triggers?.close())),
+            diagnostic.track('delegation', () => delegation.close()),
+            diagnostic.track('mcp-callback', () => stopDesktopMcp()),
+            diagnostic.track('skill-proposals', () => stopDesktopSkillProposals()),
+            diagnostic.track('screen-viewer', () => screen.close()).then(() => diagnostic.track('isolated-screens', () => shutdownIsolatedScreens(AbortSignal.timeout(25_000)))),
+            diagnostic.track('semantic-memory', () => shutdownDesktopSemanticMemory()),
+            diagnostic.track('schedule-tools', () => scheduleTools?.close()),
+            diagnostic.track('tool-install', () => toolInstall.close()),
+            diagnostic.track('foreman', () => foreman.close()),
+            diagnostic.track('computer-panel', () => computerPanel.close()),
+            diagnostic.track('guest-shell', () => guestShell.close()),
+            diagnostic.track('claude-workers', () => stopDesktopClaudeWorkers()),
+        ])
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
-        await Promise.allSettled([closing, abortAllRuns(), stopScheduler?.drain()])
+        await Promise.allSettled([closing, diagnostic.track('run-abort-initial', () => abortAllRuns()), diagnostic.track('scheduler-preparation', () => stopScheduler?.drain())])
         // Schedule admission closes synchronously; its final UI notification is
         // best effort and owns no child process. Only tool drains require ACK.
         const shutdownFailures = (await closing).slice(1).filter(result => result.status === 'rejected').length
-        const remaining = await Promise.allSettled([abortAllRuns(), closeAllMcp(), stopAllDesktopNativeWorkers()])
+        const remaining = await Promise.allSettled([
+            diagnostic.track('run-abort-final', () => abortAllRuns()),
+            diagnostic.track('mcp-pool', () => closeAllMcp()),
+            diagnostic.track('native-workers', () => stopAllDesktopNativeWorkers()),
+        ])
         server.closeAllConnections()
         await closed
         const failed = shutdownFailures + remaining.filter(result => result.status === 'rejected').length
+        await diagnostic.finish(failed > 0)
         if (failed) logger.error({ count: failed }, 'Desktop process cleanup was not confirmed')
         process.send?.({ type: failed ? 'stop-failed' : 'stopped', launchNonce: runtime.launchNonce })
         // Keep process custody and admission closed after an uncertain drain.

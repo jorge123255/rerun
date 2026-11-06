@@ -42,3 +42,11 @@ it('retries the original immutable effect after a lost acknowledgement and a lat
     expect(document.body.textContent).toContain('proposal was not added')
     expect(document.body.textContent).not.toContain('were sent to Company Brain')
 })
+
+it('shows a retry surface when the initial saved research read fails instead of silently hiding the panel', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'Company research is temporarily unavailable.' }, { status: 502 })))
+    await render()
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('Company research is temporarily unavailable.')
+    expect([...document.querySelectorAll('button')].some(button => button.textContent === 'Refresh company research')).toBe(true)
+    expect(posts).toEqual([])
+})

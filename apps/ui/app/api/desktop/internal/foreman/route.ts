@@ -43,7 +43,7 @@ export async function POST(request: Request) {
         try {
             await app.core.waitDiscovery(discovery.discoveryId)
             request.signal.throwIfAborted()
-            return Response.json((await app.core.readView(input.binding)).discovery)
+            return Response.json((await app.core.readView({ workspaceId: input.binding.workspaceId, chatId: input.binding.chatId })).discovery)
         } finally { request.signal.removeEventListener('abort', stop) }
     } catch (error) {
         return Response.json({ error: 'This Foreman tool request could not be applied.' }, { status: error instanceof DesktopHttpError ? error.status : 409 })

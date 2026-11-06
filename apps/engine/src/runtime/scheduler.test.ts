@@ -14,7 +14,7 @@ const state = vi.hoisted(() => ({
     receipts:{} as Record<string,{runId:string;sessionId:string}|'incomplete'>,
     files: {} as Record<string,unknown>,
     modelWait:null as Promise<void>|null,
-    agents: {} as Record<string, { id: string; config: { enabled: boolean } } | Error>,
+    agents: {} as Record<string, { id: string; config: { enabled: boolean; setup?: { required: boolean; completedAt: string | null } }; install?: string } | Error>,
     agentIds: [] as string[] | Error,
     schedules: {} as Record<string, unknown[] | Error>,
     due: new Set<string>(),
@@ -98,7 +98,7 @@ const flush = async () => {
 }
 
 beforeEach(() => {
-    state.desktop=false;state.receipts={};state.files={};state.modelWait=null
+    state.desktop=false;state.receipts={};state.files={};state.modelWait=null;state.sessions=0
     state.agents = { on: { id: 'on', config: { enabled: true } }, off: { id: 'off', config: { enabled: false } } }
     state.agentIds = []
     state.schedules = {}
@@ -360,5 +360,41 @@ it('replays the persisted manual receipt after post-launch adoption fails while 
     state.receipts['on/receipt-active/incomplete']='incomplete'
     await expect(fireSchedule('on',task,{markFired:false,manualId:'incomplete'})).rejects.toThrow('reconciliation required')
     expect(state.runs).toHaveLength(1)
+    await stop.drain()
+})
+
+
+it('manually probes the currently paused definition without resuming its recurrence', async () => {
+    state.agentIds = []; const stop = startScheduler(); state.desktop = true
+    configureDesktopSchedules({ authorize: async () => {}, adopt: async () => {} })
+    const task = schedule('manual-paused', { enabled: false })
+    const result = await fireSchedule('on', task, { markFired: false, manualId: 'paused-probe' })
+    expect(result).toEqual({ runId: 'run-1', sessionId: 'sess-1' })
+    expect(state.runs).toHaveLength(1)
+    expect(state.files[task.slug]).toMatchObject({ enabled: false, lastRunAt: null })
+    expect(state.markFired).not.toHaveBeenCalled()
+    await expect(fireSchedule('on', task, { markFired: false, manualId: 'paused-probe' })).resolves.toEqual(result)
+    expect(state.runs).toHaveLength(1)
+    await stop.drain()
+})
+
+it('keeps automatic paused tasks blocked even if a stale timer considered them due', async () => {
+    state.agentIds = []; const stop = startScheduler(); state.desktop = true
+    configureDesktopSchedules({ authorize: async () => {}, adopt: async () => {} })
+    const task = schedule('automatic-paused', { enabled: false }); state.due.add(task.slug)
+    await expect(fireSchedule('on', task)).rejects.toMatchObject({ status: 409 })
+    expect(state.runs).toHaveLength(0)
+    expect(state.sessions).toBe(0)
+    await stop.drain()
+})
+
+it('does not manually probe a paused task while its coworker still needs setup', async () => {
+    state.agentIds = []; const stop = startScheduler(); state.desktop = true
+    configureDesktopSchedules({ authorize: async () => {}, adopt: async () => {} })
+    state.agents.on = { id: 'on', config: { enabled: true, setup: { required: true, completedAt: null } }, install: 'Complete setup first' }
+    const task = schedule('setup-paused', { enabled: false })
+    await expect(fireSchedule('on', task, { markFired: false, manualId: 'setup-probe' })).rejects.toMatchObject({ status: 409 })
+    expect(state.runs).toHaveLength(0)
+    expect(state.sessions).toBe(0)
     await stop.drain()
 })

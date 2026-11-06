@@ -66,7 +66,7 @@ export function DesktopWorkspaceRoutineEditor({ routine, externalChange, onBack,
             {routine.lastResult && <p className="text-xs">Last result: {routine.lastResult.status}</p>}
         </PanelEditorBody>
         <PanelEditorFooter>
-            <Button size="sm" variant="outline" disabled={busy || externalChange || !enabled} onClick={() => perform(() => onRun(routine))}>Run now</Button>
+            <Button size="sm" variant="outline" disabled={busy || externalChange || (routine.setupPending && !routine.enabled)} onClick={() => perform(() => onRun(routine))}>Run now</Button>
             <Button size="sm" disabled={busy || externalChange || !name.trim() || !body.trim()} onClick={() => perform(() => onSave({ name, description, body, enabled, timezone, cron: mode === 'cron' ? cron : null, runAt: mode === 'runAt' ? new Date(runAt).toISOString() : null }))}>Save changes</Button>
         </PanelEditorFooter>
     </PanelEditorShell>

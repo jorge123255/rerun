@@ -134,7 +134,13 @@ export function DesktopCompanyResearch({ chat, active, refreshKey }: { chat: Des
         } catch (error) { if (current.current === own && epoch.current === generation) setNotice(error instanceof Error ? error.message : 'Stop was not confirmed. Retry Stop.') }
         finally { if (current.current === own && epoch.current === generation && token === operation.current) { busyRef.current = false; setBusy(false) } }
     }
-    if (!active || !state?.snapshot) return null
+    if (!active) return null
+    if (!state?.snapshot) return notice ? <div className="pointer-events-none absolute inset-0 z-20" style={{ gridColumn: '2 / 3', gridRow: '1 / 2' }}>
+        <section aria-label="Company research" className="pointer-events-auto absolute bottom-4 left-4 w-72 space-y-2 rounded-xl border bg-card p-3 shadow-lg">
+            <p className="text-xs text-destructive" role="alert">{notice}</p>
+            <Button size="sm" variant="outline" onClick={() => { setNotice(null); void read().catch(error => setNotice(error instanceof Error ? error.message : 'Research unavailable.')) }}>Refresh company research</Button>
+        </section>
+    </div> : null
     const cards = companyDiscoveryBoard(state.snapshot).filter(entry => entry.type === 'finding')
     const attempt = state.attempt, showBrief = !!attempt && attempt.status !== 'dismissed'
     return <div className="pointer-events-none absolute inset-0 z-20" style={{ gridColumn: '2 / 3', gridRow: '1 / 2' }}>
