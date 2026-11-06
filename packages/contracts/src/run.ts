@@ -27,7 +27,10 @@ export type Run = z.infer<typeof runSchema>
 
 export const runsListSchema = z.object({ runs: z.array(runSchema) })
 
-export const runDetailSchema = runSchema.extend({ output: z.string().nullable().optional() })
+export const runDetailSchema = runSchema.extend({
+    output: z.string().nullable().optional(),
+    queuedUserMessageId: z.string().min(1).max(200).optional(),
+})
 export type RunDetail = z.infer<typeof runDetailSchema>
 
 export const runStepSchema = z.object({

@@ -1,5 +1,5 @@
 import type { InStatement } from '@libsql/client'
-import { desktopDocumentContextParts, type DesktopDocumentSendSelection, type DesktopResolvedDocument, type DesktopMcpSignInGuard } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, desktopDocumentContextParts, type DesktopDocumentSendSelection, type DesktopResolvedDocument, type DesktopMcpSignInGuard } from '@rerun/contracts'
 import type { DesktopForemanBinding, ForemanBrief, DesktopSecretRequestGuard, DesktopServiceRequestGuard, DesktopTakeoverGuard } from '@rerun/contracts'
 import { createHash } from 'node:crypto'
 import { desktopCoworkerMentionContextParts, type DesktopCoworkerMention, desktopAttachmentFingerprintOf, desktopAttachmentSelectionsOf, workspaceAttachmentParts, desktopResolvedAttachmentParts, type DesktopResolvedAttachment, type DesktopAttachmentItem, type DesktopApprovalGuard, type DesktopQuestionGuard, type DesktopWorkspaceAttachment, type MessageAuthor } from '@rerun/contracts'
@@ -32,6 +32,21 @@ export async function getDesktopQueuedTurn(agentId: string, turn: QueuedTurn): P
     if (!result.rows.length) return false
     if (result.rows[0].fingerprint !== fingerprint(turn)) throw new HttpError(409, 'This queued message ID belongs to a different message or conversation.')
     return true
+}
+
+export async function getDesktopForemanQueuedUserMessageId(runId: string, sessionId: string): Promise<string | null> {
+    const { client } = await getSystemDb(FOREMAN_AGENT_ID)
+    const result = await client.execute({
+        sql: `SELECT message.id AS message_id FROM desktop_queued_turns AS receipt
+              JOIN runs AS run ON run.id = receipt.run_id
+              JOIN messages AS message ON message.id = receipt.message_id
+              WHERE receipt.run_id = ? AND run.agent_id = ? AND run.session_id = ?
+                AND message.session_id = run.session_id AND message.role = 'user'
+              LIMIT 1`,
+        args: [runId, FOREMAN_AGENT_ID, sessionId],
+    })
+    const messageId = result.rows[0]?.message_id
+    return typeof messageId === 'string' && messageId.length > 0 && messageId.length <= 200 ? messageId : null
 }
 
 // The receipt, run and user text commit together before an HTTP acknowledgement. Even a crash

@@ -3,6 +3,7 @@ import type { Client } from '@libsql/client'
 import {
     desktopForemanIntakeCompletionReceiptSchema,
     type DesktopForemanChatRef,
+    type DesktopForemanPhase,
     type DesktopForemanIntakeAnswers,
     type DesktopForemanIntakeCompletionReceipt,
 } from '@rerun/contracts'
@@ -11,6 +12,11 @@ import { fingerprintIntakeAnswers } from '../foreman-intake/store'
 
 type ReceiptRow = Record<string, unknown>
 const unavailable = () => new DesktopHttpError(503, 'The saved company intake identity could not be confirmed.')
+
+/** The original intake profile closes discover; later plan/build/companion state wins. */
+export function desktopForemanIntakePhase(phase: DesktopForemanPhase, profile: DesktopForemanIntakeAnswers | null): DesktopForemanPhase {
+    return phase === 'discover' && profile ? 'plan' : phase
+}
 
 function receiptOf(row: ReceiptRow, chat: DesktopForemanChatRef): DesktopForemanIntakeCompletionReceipt {
     try {

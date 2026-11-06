@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
+import { FOREMAN_AGENT_ID } from '@rerun/contracts'
 import { listRunCompletions } from '../../db/completed-runs.js'
 import { aggregateUsageByDay, cancelRun, getRun, listRunsByAgent } from '../../db/repos/runs.js'
 import { listRunSteps, listToolCalls } from '../../db/repos/telemetry.js'
@@ -9,6 +10,7 @@ import { abortRun, waitForRunCancellation } from '../../runtime/run-control.js'
 import { desktopApp } from '../../desktop/policy.js'
 import { abortSubRun } from '../../tools/builtin/sub-run-watch.js'
 import { emitRunTerminal, triggerFromRun } from '../../runtime/run-events.js'
+import { getDesktopForemanQueuedUserMessageId } from '../../db/repos/desktop-queued-turns.js'
 
 const USAGE_RANGE_MS: Record<string, number> = {
     '24h': 24 * 60 * 60 * 1000,
@@ -123,5 +125,8 @@ runRoutes.get('/:rid', async c => {
     const run = await getRun(agentId, rid)
     if (!run || run.agentId !== agentId) return c.json({ error: 'run not found' }, 404)
     const output = await collectAssistantText(agentId, run.sessionId, run.startedAt, run.finishedAt)
-    return c.json({ ...run, output })
+    const queuedUserMessageId = desktopApp() && agentId === FOREMAN_AGENT_ID
+        ? await getDesktopForemanQueuedUserMessageId(run.id, run.sessionId)
+        : null
+    return c.json({ ...run, output, ...(queuedUserMessageId ? { queuedUserMessageId } : {}) })
 })
