@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 from urllib.parse import urlsplit
+from guest_shell import GuestShellManager
 
 DISPLAY = ':1'
 SCREEN = '1920x1080x24'
@@ -128,6 +129,7 @@ CLICK_BUTTONS = {'left': '1', 'right': '3'}
 children = []
 launchers = None
 action_lock = threading.Lock()
+guest_shell_manager = GuestShellManager()
 
 
 class GuestError(Exception):
@@ -376,6 +378,8 @@ def handle_client(client):
                     state['done'].set()
                     requests[request_id] = state
                 state['cancelled'] = True
+                if guest_shell_manager.owns(request_id):
+                    guest_shell_manager.cancel(request_id)
                 if state['client'] is not None:
                     try:
                         state['client'].shutdown(socket.SHUT_RDWR)
@@ -442,6 +446,14 @@ def dispatch(request, client):
     if not isinstance(request, dict):
         raise GuestError('The screen request was not valid.', refusal=True)
     op = request.get('op')
+    if op == 'guest-shell':
+        result = guest_shell_manager.execute(request)
+        result['ok'] = True
+        return result, b''
+    if op == 'guest-shell-inspect':
+        result = guest_shell_manager.inspect(request.get('requestId'))
+        result['ok'] = True
+        return result, b''
     if op == 'ping':
         width, height = geometry()
         return {'ok': True, 'ready': True, 'width': width, 'height': height, 'launchers': launchers.capabilities() if launchers is not None else {'terminal': False, 'files': False}}, b''
