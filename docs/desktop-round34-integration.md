@@ -1,6 +1,6 @@
-# Round34 combined source candidate
+# Round34 integration and Mac acceptance
 
-Root integrated A–I and repaired production mounts in `desktop/m1`, following original Rerun source `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. This is a source checkpoint; packaged Mac acceptance remains pending.
+Root integrated A–I and repaired production mounts in `desktop/m1`, following original Rerun source `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. The final repaired product is installed from `8be62edc59bca3ce7f1f79e1299fc225a54309d1`. Its accepted native scope and remaining limits are recorded below; live Claude sign-in is not accepted.
 
 The combined implementation mounts the Computer panel, webhook human continuations, credential-backed MCP configuration and proposals, coworker trigger tools, separately gated guest shell, Claude plan login/provider, contextual Control Center actions, and template fidelity/rollback. Claude uses the existing SDK provider with a packaged isolated runner; login state remains in the canonical encrypted workspace. Guest tools use the `rerun-desktop-guest:round34` image. App migrations 25–26 and engine migrations 10–11 preserve earlier data.
 
@@ -53,3 +53,20 @@ The rebuilt webhook UI retained the pending third event, showed Needs input ahea
 Native Stop confirmed a cancelled command with `GUEST34 STOP2` output and a 6406 ms duration. A separate 35-second command exposed a background-poll interference: Computer-panel status queued a guest ping behind the running shell, and cancelling the 12-second status request eventually stopped the whole guest. Root removed guest RPC from passive status and retains freshly checked Docker ownership/state plus readiness capabilities tied to the exact live generation. Saved command formatting now includes explicit status. Rebuilt duration, saved-inspect and final cleanup/restart checks remain required.
 
 Final passive-status/receipt checks pass: 25 engine files/174 tests, with the final isolated-screen file rerun at 61 passing tests after the stale-lease assertion was added. Engine/UI type checks pass. These totals overlap earlier checks and are not additive. Independent read-only review found no remaining actionable issue; root ran all checks.
+
+
+## Final installed acceptance — November 6, 2026
+
+The canonical preview is installed from `8be62edc59bca3ce7f1f79e1299fc225a54309d1`, using the existing stable development signing identity. Packaging/runtime verification passed. It reopened repeatedly without another Keychain prompt. No guest-image change was required for the passive-status fix.
+
+The exact build completed a real Codex `shell_exec` command after 35033 ms and returned `DURATION34 FINAL DONE 42` with saved status done. A separate native Stop saved cancelled with `FINAL34 STOP WAIT` and an 11111 ms duration. After full quit/reopen, the same board coworker/chat called only `shell_inspect` for both IDs and showed the correct status and output. There were still seven command receipts and no running guest container: inspection neither started a computer nor reran a command. Earlier uncertain receipts remain unchanged.
+
+The inactive template copy reopened with a disabled Install button and no false Installing spinner. It retained empty history, exact PNG/Markdown bytes, placement in the second Box and all tool/connection/self-improvement resets. The original source retained its four checked file hashes and six messages. The original first Box still had six members. The private library remembered Previously used with one surviving copy and offered Use again; no extra installation was submitted.
+
+All eight temporary permissions are restored off: Terminal, Files, Request credentials, Propose MCP servers, Custom MCP servers, guest commands, Triggers and Ask the user. Existing Browser, Computer control and Request approval settings are unchanged. The documentation server is disconnected; the disposable webhook is paused, retains three events and returns 404 to another local delivery. The two new QA coworkers remain inactive, retaining evidence rather than deleting data.
+
+A final full quit/reopen passed exact saved-state comparison after cleanup: original 23 chats/88 messages and the protected unsent draft, all coworker state, board placements, saved receipts, trigger admissions and paused definitions were unchanged. Separate template verification also passed. All local database foreign-key checks were clean. The app is left open on the board with Codex connected.
+
+Private root evidence: `round34-install5.log`, `round34-live-pre-final-repair.json`, `round34-live-final-command-restart.json`, `round34-live-cleanup-final.json`, `round34-final-command-evidence.json`, `round34-template-verify.py`, and `round34-trigger-restored-check.mjs`, under the root task's work directory. These snapshots are not publication artifacts.
+
+Remaining limits: live Claude account sign-in/reply/persistence; real OAuth and SSE providers; browser custom-timeout and non-Latin-1 clipboard acceptance; package-install lifecycle; broader template rollback/publishing; remaining original research/workspace capabilities. The public MCP response does not prove receipt of the optional fake header. No capability group is closed solely by these partial slices; the checklist remains at 21 open groups. Round35 A–I task lists were delivered first and remain separate from this accepted build.
