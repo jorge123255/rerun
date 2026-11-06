@@ -1,0 +1,61 @@
+'use client'
+
+import * as React from 'react'
+import { createDesktopCoworkerShareAttempts, type DesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
+import { createDesktopCoworkerShareClient, type DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
+import { DesktopCoworkerImportDialog } from './DesktopCoworkerImportDialog'
+import { DesktopCoworkerShareDialog } from './DesktopCoworkerShareDialog'
+
+export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName, sourceRevision, open, onOpenChange, importSnapshot = null, onImportSnapshotChange, onOpenCoworker, attempts }: {
+    workspaceId: number
+    agentId: string
+    agentName: string
+    sourceRevision: string
+    open: boolean
+    onOpenChange: (open: boolean) => void
+    importSnapshot?: string | null
+    onImportSnapshotChange?: (snapshotId: string | null) => void
+    onOpenCoworker?: (agentId: string) => void
+    attempts?: DesktopCoworkerShareAttempts
+}) {
+    const [client, setClient] = React.useState<DesktopCoworkerShareClient | null>(null)
+    const [localImport, setLocalImport] = React.useState<string | null>(importSnapshot)
+    const attemptStore = React.useMemo(() => attempts ?? createDesktopCoworkerShareAttempts(), [attempts])
+    React.useEffect(() => { setLocalImport(importSnapshot) }, [importSnapshot])
+    React.useEffect(() => {
+        const next = createDesktopCoworkerShareClient({ workspaceId, routeAgentId: agentId })
+        setClient(next)
+        return () => { next.dispose(); setClient(null) }
+    }, [workspaceId, agentId])
+    const closeImport = React.useCallback((next: boolean) => {
+        setLocalImport(next ? localImport : null)
+        if (!next) onImportSnapshotChange?.(null)
+    }, [localImport, onImportSnapshotChange])
+    if (!client) return null
+    const snapshot = importSnapshot ?? localImport
+    return <>
+        <DesktopCoworkerShareDialog
+            open={open}
+            onOpenChange={onOpenChange}
+            client={client}
+            attempts={attemptStore}
+            workspaceId={workspaceId}
+            agentId={agentId}
+            agentName={agentName}
+            sourceRevision={sourceRevision}
+            onPreviewImport={snapshotId => {
+                onOpenChange(false)
+                setLocalImport(snapshotId)
+                onImportSnapshotChange?.(snapshotId)
+            }}
+        />
+        {snapshot && <DesktopCoworkerImportDialog
+            open
+            onOpenChange={closeImport}
+            client={client}
+            attempts={attemptStore}
+            targetWorkspaceId={workspaceId}
+            snapshotId={snapshot}
+            onOpenCoworker={onOpenCoworker}
+        />}
+    </>}
