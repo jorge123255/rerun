@@ -4,7 +4,7 @@ Source handoff only. **E11 is not installed/native acceptance.** No tests, typec
 
 - **Branch:** `desktop/round35-foreman-intake`
 - **Prepared base (verified):** `5c0f589b51a8129d097f2b97fc420a8acf859b51`
-- **Commit:** f680fbe1a156db3db8a86f80ddb60fe71f3c09ff
+- **Commit:** `1e758a28bddd7236e5367496482f8350cdfc25cd` (full package); docs stamp is the tip commit on this branch
 - **Worktree:** `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round35-foreman-intake` (clean after commit)
 - **Dependent agent contract revision used:** none (consumes existing `@rerun/contracts` `onboarding-intake` + `desktop-foreman` chat refs already on base; publishes its own completion schema for A/B)
 
