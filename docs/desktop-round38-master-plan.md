@@ -1,5 +1,7 @@
 # RD38–RD45 master completion plan
 
+**Scope correction, November 6:** [The full source register](desktop-parity-full-register-20261106.md) supersedes this plan as the inventory of remaining original-to-Mac work. The seven UP packets were only a delta/selected-gap supplement. The broader audit adds coworker-panel design, Files/Brain/routine/Foreman controls, subscription connections, model semantics, external MCP adapters and platform gates. Existing author assignments/bases are unchanged; delivered work remains root integration rather than duplicate implementation. RD45 is a checkpoint, not a verified completion promise.
+
 The user requested one large agent to work through the entire remaining map, retaining the same original-code/design and root-only execution rules. This is a phased source assignment, not evidence that features are accepted or every old unchecked group needs fresh code.
 
 Prepared isolated worktree: `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round38-master-completion`; branch `desktop/round38-master-completion`; immutable source base `6f6ad959a09abaf1947950b6f82413c94407e22a`. Root's later import-refresh repair in `34c9cf39` stays in the integration worktree and is composed by root; the author worktree was not rebased or edited after allocation.
@@ -32,7 +34,7 @@ A/B are delivered on the master branch. C–I have existing isolated author work
 - **RD44, conditional:** Hosted share links/public webhooks and accounts/roles/presence/Box ACLs after real host/multi-user authority decisions.
 - **RD45, conditional:** Public mobile phone-to-Mac contract/device acceptance and reviewed public Mac distribution.
 
-A dependable local Mac milestone is estimated at 3–5 more implementation/review phases, depending on findings and configured services. Hosted, remote, collaboration, mobile and public distribution are separate milestones, not hidden prerequisites claimed complete by a local preview.
+The earlier 3–5-phase estimate is withdrawn pending integration and closure of the expanded register. Hosted, remote, collaboration, mobile and public distribution remain separate milestones. Root must measure remaining scope from evidence-backed entries and their acceptance, rather than infer completion from the last numbered round.
 
 ## Publication and execution
 
