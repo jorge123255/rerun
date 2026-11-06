@@ -34,7 +34,7 @@ vi.mock('@/lib/engine/client', () => ({
     getRun: vi.fn(async (_engine: unknown, _agent: string, id: string) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'finished' })),
     getSessionMessages: vi.fn(async () => []), cancelRun: vi.fn(),
 }))
-vi.mock('@/lib/chat/engine-history', () => ({ publicDesktopHistory: (value: unknown) => value, transformEngineMessages: (value: unknown) => value }))
+import { getRun, getSessionMessages } from '@/lib/engine/client'
 import { desktopForeman } from './binding'
 import { DESKTOP_FOREMAN_CHAT_SCHEMA } from './chat-store'
 import { DESKTOP_FOREMAN_SCHEMA_STATEMENTS } from './store'
@@ -66,6 +66,8 @@ describe('production Foreman intake phase and model brief', () => {
     }
     beforeEach(async () => {
         vi.clearAllMocks()
+        vi.mocked(getSessionMessages).mockResolvedValue([])
+        vi.mocked(getRun).mockImplementation(async (_engine, _agent, id) => ({ id, agentId: 'foreman', sessionId: 'original-session', status: 'done' }) as Awaited<ReturnType<typeof getRun>>)
         state.agentCount = 0
         directory = await mkdtemp(join(tmpdir(), 'rerun-intake-phase-'))
         state.db = open()
@@ -98,6 +100,33 @@ describe('production Foreman intake phase and model brief', () => {
         expect(sent[0]!.brief.instructions).toContain(JSON.stringify(answers))
         expect((await app.core.readView(chat)).phase).toBe('plan')
         expect((await app.state()).view.phase).toBe('plan')
+    })
+
+    it('a poll before completion ACK cannot cache the generated kickoff for the ordinary chat layer', async () => {
+        const app = await desktopForeman(runtime), intake = createDesktopForemanIntakeBinding(runtime, app)
+        const saved = await intake.save({ chat, requestId: randomUUID(), baseRevision: 0, stepIndex: 2,
+            draft: { ...EMPTY_DRAFT, companyUrl: answers.companyUrl, industry: answers.industry, position: answers.position, firstName: answers.firstName }, decidedIndustry: null, knownFirstName: null })
+        let release!: () => void
+        const gate = new Promise<void>(resolve => { release = resolve })
+        vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+            const turn = JSON.parse(String(init.body)); sent.push(turn)
+            await gate
+            return new Response(null, { headers: { 'x-run-id': turn.binding.runId, 'x-session-id': turn.sessionId } })
+        }))
+        const requestId = randomUUID()
+        const completion = intake.complete({ chat, requestId, expectedRevision: saved.session.revision, answers })
+        await vi.waitFor(() => expect(sent).toHaveLength(1))
+        const kickoff = { id: 'trusted-generated-row', sessionId: 'original-session', role: 'user' as const, contentJson: JSON.stringify(sent[0]!.text), toolCallsJson: null, createdAt: timestamp }
+        vi.mocked(getSessionMessages).mockResolvedValue([kickoff, { ...kickoff, id: 'genuine-same-text-row' }])
+        vi.mocked(getRun).mockResolvedValue({ id: requestId, agentId: 'foreman', sessionId: 'original-session', status: 'done', model: model.model, queuedUserMessageId: kickoff.id } as Awaited<ReturnType<typeof getRun>>)
+        try {
+            const pending = await app.state()
+            expect(pending.view.phase).toBe('discover')
+            expect(pending.messages.map(message => message.id)).toEqual(['engine-genuine-same-text-row'])
+        } finally { release(); await completion }
+        expect((await app.state()).messages.map(message => message.id)).toEqual(['engine-genuine-same-text-row'])
+        expect((await app.state()).view.phase).toBe('plan')
+        expect(sent).toHaveLength(1)
     })
 
     it('restored acknowledged intake advances both production view and subsequent briefs without a new kickoff', async () => {

@@ -67,12 +67,12 @@ describe('receipt-bound Foreman kickoff presentation', () => {
 
     it.each(['id', 'agentId', 'sessionId', 'model', 'queuedUserMessageId'])('retains history when the engine %s does not identify this exact kickoff', async field => {
         payload[field] = 'different-identity'
-        expect(await project()).toEqual(history())
+        await expect(project()).rejects.toMatchObject({ status: 503 })
     })
 
     it('requires a confirmed pointer, exact visible body and user role', async () => {
         delete payload.queuedUserMessageId
-        expect(await project()).toEqual(history())
+        await expect(project()).rejects.toMatchObject({ status: 503 })
         payload.queuedUserMessageId = messageId
         const assistant = history(); assistant[0]!.role = 'assistant'
         expect(await project(assistant)).toEqual(assistant)
@@ -80,10 +80,18 @@ describe('receipt-bound Foreman kickoff presentation', () => {
         expect(await project(changed)).toEqual(changed)
     })
 
-    it.each(['pending', 'uncertain', 'failed', 'unavailable'] as const)('never hides using a %s receipt', async state => {
+    it.each(['pending', 'uncertain', 'failed'] as const)('hides a proven generated row with a %s receipt without granting completion authority', async state => {
         const row = (await db.execute('SELECT body FROM desktop_foreman_intake_completions')).rows[0]!
-        const receipt = JSON.parse(String(row.body)); receipt.state = state
+        const receipt = JSON.parse(String(row.body)); receipt.state = state; receipt.followUp = null
         await db.execute({ sql: 'UPDATE desktop_foreman_intake_completions SET state=?,body=?', args: [state, JSON.stringify(receipt)] })
+        await db.execute({ sql: 'UPDATE desktop_foreman_turns SET status=?', args: [state === 'failed' ? 'failed' : 'pending'] })
+        expect((await project()).map(message => message.id)).toEqual(['engine-reply', 'engine-pasted-by-user'])
+        expect((await db.execute('SELECT state FROM desktop_foreman_intake_completions')).rows[0]!.state).toBe(state)
+        expect(fetcher).toHaveBeenCalledOnce()
+    })
+
+    it('never hides using an unavailable receipt', async () => {
+        await db.execute("UPDATE desktop_foreman_intake_completions SET state='unavailable'")
         expect(await project()).toEqual(history())
         expect(fetcher).not.toHaveBeenCalled()
     })
@@ -94,9 +102,9 @@ describe('receipt-bound Foreman kickoff presentation', () => {
         expect(fetcher).not.toHaveBeenCalled()
     })
 
-    it('leaves ordinary and unavailable-engine history visible without any retry effect', async () => {
+    it('keeps unproven kickoff history unavailable rather than publishing raw instructions, without any retry effect', async () => {
         fetcher.mockRejectedValueOnce(new Error('Engine unavailable'))
-        expect(await project()).toEqual(history())
+        await expect(project()).rejects.toMatchObject({ status: 503 })
         expect(fetcher).toHaveBeenCalledOnce()
         expect(await hideDesktopForemanIntakeKickoff({ ...runtime, workspaceId: 3 }, db, owner, history())).toEqual(history())
         expect(fetcher).toHaveBeenCalledOnce()
