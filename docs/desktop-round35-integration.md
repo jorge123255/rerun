@@ -1,6 +1,6 @@
 # Round35 integration and Mac acceptance
 
-Root reviewed and repaired the eight available source handoffs against original Rerun `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. A, B and D–I are integrated in the coding tree. C’s prepared intake worktree is unchanged at its base; its intended handoff has been requested. C is not integrated or accepted. Final installed acceptance and limitations are recorded at the end of this document; earlier sections retain the evidence from intermediate candidates.
+Root reviewed and repaired the eight available source handoffs against original Rerun `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`. A, B and D–I are integrated in the coding tree. The user confirmed C35 is still working; its prepared intake worktree remains at its base and its completed handoff is pending. C is not integrated or accepted. Final installed acceptance and limitations are recorded at the end of this document; earlier sections retain the evidence from intermediate candidates.
 
 Round36 full task lists for A–I were prepared and delivered first. They cover shared-file mutations, scoped external MCP authority/tool/UI packages, local coworker share runtime/UI, remote-machine adapters/UI and a complete remaining parity/design audit. External access and remote pairing remain inactive during agent work. Root retains every executed check, integration fix, build, installation and Mac/full-restart QA.
 

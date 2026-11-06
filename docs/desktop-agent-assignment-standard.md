@@ -27,3 +27,5 @@ Round35 integration lessons apply to subsequent packages:
 - Distinguish original behavior from intentional Mac additions and unavailable connected services. Preserve committed effects when dismissing a review, and never repeat them after a lost acknowledgement or restart.
 
 For assignments already underway, expand the description within the existing contract and ownership. Do not reset worktrees or imply that a revised prompt has been dispatched. New wider scope requires a separate allocation that avoids work already assigned.
+
+Updated-source reference (November 6): fork `2a57fa6dd53311f763bfc9abde85997b7f7e5309` is now the comparison target; `a6d63a4b542674ddd002e51b39ba0df6e0807bcc` remains the historical acceptance pin. Read `docs/desktop-upstream-review-20261106.md`. Update an active lane with the shared addendum, preserving its base and ownership. Keep AGPL core/community source separate from commercial `ee`/`(ee)` modules; root allocates appended migration versions and composes shared patches. New source availability is not installed acceptance.
