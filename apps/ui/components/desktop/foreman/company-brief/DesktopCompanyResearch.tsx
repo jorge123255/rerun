@@ -12,7 +12,7 @@ const stateSchema = z.object({ snapshot: companyDiscoverySnapshotSchema.nullable
 const attemptResponse = z.object({ attempt: companyBriefAttemptSchema })
 type State = z.infer<typeof stateSchema>
 type Action = 'synthesize' | 'retry' | 'edit' | 'dismiss' | 'handoff'
-type Pending = { action: Action; signature: string; input: Record<string, unknown>; draftVersion: number }
+type Pending = { action: Action; signature: string; input: Record<string, unknown>; draftVersion: number; sourceRevision: string }
 class ResearchError extends Error { constructor(message: string, readonly status: number) { super(message) } }
 async function body(response: Response) {
     const reader = response.body?.getReader()
@@ -38,6 +38,7 @@ export function DesktopCompanyResearch({ chat, active, refreshKey }: { chat: Des
     const busyRef = useRef(false), current = useRef(scope); current.current = scope
     const epoch = useRef(0), readVersion = useRef(0), operation = useRef(0)
     const previousAttempt = useRef<string | null>(null)
+    const currentSource = useRef<string | null>(null)
     const pending = useRef<Pending | null>(null)
     const request = useRef<AbortController | null>(null)
     const read = useCallback(async (signal?: AbortSignal) => {
@@ -45,6 +46,22 @@ export function DesktopCompanyResearch({ chat, active, refreshKey }: { chat: Des
         const next = stateSchema.parse(await body(await fetch(`/api/desktop/foreman/company?${new URLSearchParams(chat)}`, { cache: 'no-store', signal: AbortSignal.any([AbortSignal.timeout(20_000), ...(signal ? [signal] : [])]) })))
         if (next.snapshot && (next.snapshot.workspaceId !== chat.workspaceId || next.snapshot.chatId !== chat.chatId) || next.attempt && (next.attempt.workspaceId !== chat.workspaceId || next.attempt.chatId !== chat.chatId)) throw new Error('Company research belongs to a different conversation.')
         if (current.current !== scope || generation !== epoch.current || version !== readVersion.current || signal?.aborted) return
+        const nextId = next.attempt?.requestId ?? null
+        const changedAttempt = previousAttempt.current !== nextId
+        const changedSource = currentSource.current !== next.sourceRevision
+        if (changedAttempt || changedSource) setSelected([])
+        if (changedAttempt) {
+            previousAttempt.current = nextId
+            dirty.current = false; draftVersion.current = 0
+            setDraft(next.attempt?.draft ?? next.attempt?.result?.brief ?? '')
+        }
+        currentSource.current = next.sourceRevision
+        const obsolete = pending.current
+        if (obsolete && (obsolete.sourceRevision !== next.sourceRevision || changedAttempt && obsolete.input.requestId !== nextId)) {
+            request.current?.abort(); request.current = null; operation.current++
+            pending.current = null; busyRef.current = false; setBusy(false)
+            setNotice('Company research changed. Review the current brief before continuing.')
+        }
         const awaiting = pending.current
         const acknowledgedAttempt = next.attempt
         if (awaiting && acknowledgedAttempt && acknowledgedAttempt.requestId === awaiting.input.requestId) {
@@ -53,12 +70,11 @@ export function DesktopCompanyResearch({ chat, active, refreshKey }: { chat: Des
                 || awaiting.action === 'dismiss' && acknowledgedAttempt.status === 'dismissed'
             if (acknowledged) { pending.current = null; if (draftVersion.current === awaiting.draftVersion) dirty.current = false }
         }
-        if (previousAttempt.current !== (next.attempt?.requestId ?? null)) { setSelected([]); previousAttempt.current = next.attempt?.requestId ?? null }
         setState(next)
         if (!dirty.current) setDraft(next.attempt?.draft ?? next.attempt?.result?.brief ?? '')
     }, [scope, chat.workspaceId, chat.chatId])
     useEffect(() => {
-        epoch.current++; operation.current++; setState(null); setDraft(''); setSelected([]); setNotice(null); setBusy(false); busyRef.current = false; dirty.current = false; previousAttempt.current = null; pending.current = null
+        epoch.current++; operation.current++; setState(null); setDraft(''); setSelected([]); setNotice(null); setBusy(false); busyRef.current = false; dirty.current = false; previousAttempt.current = null; currentSource.current = null; pending.current = null
         return () => { epoch.current++; operation.current++; request.current?.abort() }
     }, [scope])
     useEffect(() => {
@@ -80,7 +96,7 @@ export function DesktopCompanyResearch({ chat, active, refreshKey }: { chat: Des
         if (previous?.scope === scope && previous.active && !active) void fetch('/api/desktop/foreman/company', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'observe', chat, active: false }) }).catch(() => {})
     }, [active, scope, chat.workspaceId, chat.chatId])
     async function perform(attempt: Pending) {
-        if (busyRef.current || isDesktopQuitting()) return
+        if (busyRef.current || isDesktopQuitting() || pending.current !== attempt || currentSource.current !== attempt.sourceRevision) return
         const own = scope, generation = epoch.current, token = ++operation.current
         const controller = new AbortController(); request.current = controller
         busyRef.current = true; setBusy(true); setNotice(null)
@@ -110,6 +126,9 @@ export function DesktopCompanyResearch({ chat, active, refreshKey }: { chat: Des
         if (busyRef.current || !state?.sourceRevision || isDesktopQuitting()) return
         if (pending.current) { setNotice('Retry the previous action to check its saved result before changing this request.'); return }
         const attempt = state.attempt
+        if (previousAttempt.current !== (attempt?.requestId ?? null) || currentSource.current !== state.sourceRevision) return
+        const matchingSource = !!attempt && !!state.snapshot && attempt.discoveryId === state.snapshot.discoveryId && attempt.runId === state.snapshot.runId && attempt.sourceRevision === state.sourceRevision
+        if (action !== 'synthesize' && (!matchingSource || attempt?.status === 'dismissed')) { setNotice('Create a new brief for the current company research.'); return }
         if (action === 'handoff' && dirty.current) { setNotice('Save your edits before proposing the brief.'); return }
         const values = action === 'synthesize' || action === 'retry'
             ? { chat, sourceRevision: state.sourceRevision, ...(action === 'retry' ? { previousRequestId: attempt?.requestId } : {}) }
@@ -117,7 +136,7 @@ export function DesktopCompanyResearch({ chat, active, refreshKey }: { chat: Des
             : action === 'handoff' ? { chat, requestId: attempt?.requestId, sourceRevision: state.sourceRevision, expectedDraftRevision: attempt?.draftRevision, selectedClaimIds: selected, includeDraft: true, expectedPages: state.expectedPages }
             : { chat, requestId: attempt?.requestId }
         const input = { action, ...values, ...(['synthesize', 'retry'].includes(action) ? { requestId: crypto.randomUUID() } : {}), ...(action === 'handoff' ? { handoffRequestId: crypto.randomUUID() } : {}) }
-        const next = { action, input, signature: JSON.stringify(input), draftVersion: draftVersion.current }
+        const next = { action, input, signature: JSON.stringify(input), draftVersion: draftVersion.current, sourceRevision: state.sourceRevision }
         pending.current = next
         void perform(next)
     }
@@ -142,18 +161,19 @@ export function DesktopCompanyResearch({ chat, active, refreshKey }: { chat: Des
         </section>
     </div> : null
     const cards = companyDiscoveryBoard(state.snapshot).filter(entry => entry.type === 'finding')
-    const attempt = state.attempt, showBrief = !!attempt && attempt.status !== 'dismissed'
+    const attempt = state.attempt
+    const showBrief = !!attempt && attempt.status !== 'dismissed' && attempt.discoveryId === state.snapshot.discoveryId && attempt.runId === state.snapshot.runId && attempt.sourceRevision === state.sourceRevision
     return <div className="pointer-events-none absolute inset-0 z-20" style={{ gridColumn: '2 / 3', gridRow: '1 / 2' }}>
         {!showBrief && <section aria-label="Company research" className="pointer-events-auto absolute bottom-4 left-4 max-h-[65vh] w-72 overflow-auto rounded-xl border bg-card p-3 shadow-lg">
             <div className="mb-2 flex items-center justify-between gap-2"><p className="text-sm font-medium">Company research</p><Button size="sm" variant="ghost" disabled={busy} onClick={() => { void read().catch(error => setNotice(error.message)) }}>Refresh</Button></div>
             <p className="mb-2 text-xs text-muted-foreground">{state.snapshot.status === 'running' ? 'Researching…' : `${cards.length} findings`}</p>
             {state.snapshot.pending.map(source => <p key={source} className="text-xs text-muted-foreground">{COMPANY_DISCOVERY_SOURCE_LABELS[source]}…</p>)}
             <div className="space-y-2">{cards.map(entry => entry.type === 'finding' && <DiscoveryCard key={entry.id} finding={entry.finding} still />)}</div>
-            {state.snapshot.status !== 'running' && <Button className="mt-3 w-full" disabled={busy || !companyBriefEvidence(state.snapshot).length} onClick={() => act(attempt ? 'retry' : 'synthesize')}>Create company brief</Button>}
+            {state.snapshot.status !== 'running' && <Button className="mt-3 w-full" disabled={busy || !companyBriefEvidence(state.snapshot).length} onClick={() => act('synthesize')}>Create company brief</Button>}
         </section>}
-        <DesktopCompanyBriefReview attempt={showBrief ? attempt : null} findings={state.snapshot.findings} draft={draft} selectedClaimIds={selected} notice={null} busy={busy || attempt?.status === 'pending'}
-            onDraft={value => { dirty.current = true; draftVersion.current++; setDraft(value) }} onEdit={() => act('edit')} onDismiss={() => act('dismiss')} onRetry={() => act('retry')}
-            onToggleClaim={id => setSelected(old => old.includes(id) ? old.filter(value => value !== id) : [...old, id])} onHandoff={() => act('handoff')} />
+        <DesktopCompanyBriefReview key={attempt?.requestId ?? 'no-brief'} attempt={showBrief ? attempt : null} findings={state.snapshot.findings} draft={draft} selectedClaimIds={selected} notice={null} busy={busy || attempt?.status === 'pending'}
+            onDraft={value => { if (previousAttempt.current !== attempt?.requestId) return; dirty.current = true; draftVersion.current++; setDraft(value) }} onEdit={() => act('edit')} onDismiss={() => act('dismiss')} onRetry={() => act('retry')}
+            onToggleClaim={id => { if (previousAttempt.current === attempt?.requestId) setSelected(old => old.includes(id) ? old.filter(value => value !== id) : [...old, id]) }} onHandoff={() => act('handoff')} />
         {(notice || pending.current || attempt?.status === 'pending') && <div className="pointer-events-auto absolute left-4 top-20 max-w-80 space-y-2 rounded-lg border bg-card p-3 shadow-lg">
             {notice && <p className="text-xs" role="status">{notice}</p>}
             {pending.current && !busy && <Button size="sm" onClick={() => { if (pending.current) void perform(pending.current) }}>Retry previous action</Button>}

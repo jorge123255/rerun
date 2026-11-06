@@ -164,7 +164,7 @@ it('cancels an in-flight brief and ignores the late reply', async () => {
     expect(finished.attempt.result).toBeNull()
 })
 
-it('edits, dismisses and retries without clearing the draft or proposing', async () => {
+it('preserves edits on explicit same-source retry, while dismissal requires a fresh brief', async () => {
     const made = await service.synthesize(input(), new AbortController().signal)
     const edited = await service.edit({ requestId: made.attempt.requestId, workspaceId, chatId, expectedDraftRevision: 0, brief: 'Acme sells widgets, as corrected. [site]' })
     expect(edited.draft).toBe('Acme sells widgets, as corrected. [site]')
@@ -173,12 +173,25 @@ it('edits, dismisses and retries without clearing the draft or proposing', async
     await expect(service.edit({ requestId: made.attempt.requestId, workspaceId, chatId, expectedDraftRevision: 1, brief: 'replaced' })).rejects.toMatchObject({ status: 409 })
     expect((await service.read(workspaceId, chatId))?.draft).toBe(edited.draft)
     await service.observe({ workspaceId, chatId, sourceRevision: made.attempt.sourceRevision, active: true })
-    const dismissed = await service.dismiss(made.attempt.requestId, workspaceId, chatId)
-    expect(dismissed.status).toBe('dismissed')
-    expect(proposeCalls).toBe(0)
     const retry = await service.retry({ ...input(snapshot(), randomUUID()), previousRequestId: made.attempt.requestId }, new AbortController().signal)
     expect(retry.attempt.draft).toBe(edited.draft)
     expect(retry.attempt.requestId).not.toBe(made.attempt.requestId)
+    const dismissed = await service.dismiss(made.attempt.requestId, workspaceId, chatId)
+    expect(dismissed.status).toBe('dismissed')
+    await expect(service.retry({ ...input(snapshot(), randomUUID()), previousRequestId: made.attempt.requestId }, new AbortController().signal)).rejects.toMatchObject({ status: 409 })
+    expect(proposeCalls).toBe(0)
+})
+
+it('refuses to carry an edited draft into a different discovery, run or canonical source revision', async () => {
+    const made = await service.synthesize(input(), new AbortController().signal)
+    await service.edit({ requestId: made.attempt.requestId, workspaceId, chatId, expectedDraftRevision: 0, brief: 'Old saved edit [site]' })
+    const before = (await db.execute('SELECT * FROM desktop_company_brief_requests ORDER BY request_id')).rows
+    for (const changed of [snapshot({ discoveryId: 'fmx_changed0001' }), snapshot({ runId: 'different-run' }), snapshot({ findings: [{ ...identity, name: 'Changed identity' }] })]) {
+        await expect(service.retry({ ...input(changed), previousRequestId: made.attempt.requestId }, new AbortController().signal)).rejects.toMatchObject({ status: 409 })
+    }
+    expect((await db.execute('SELECT * FROM desktop_company_brief_requests ORDER BY request_id')).rows).toEqual(before)
+    expect((await service.read(workspaceId, chatId))?.draft).toBe('Old saved edit [site]')
+    expect(calls).toHaveLength(1)
     expect(proposeCalls).toBe(0)
 })
 

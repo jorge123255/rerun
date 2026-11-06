@@ -173,3 +173,39 @@ it('rejects a proposal against the saved absent-page hash after the real desktop
     expect(brainPageResponseSchema.parse(await page.json()).page.hash).toBe(saved.page.hash)
     expect((await readCompanyState()).expectedPages.find(value => value.slug === 'company')?.expectedPageHash).toBe(saved.page.hash)
 })
+
+it.each(['dismissed', 'new-discovery'] as const)('Create starts a fresh review after %s instead of inheriting the previous saved edit', async change => {
+    mounted.snapshot = collectedSite()
+    const initial = await readCompanyState()
+    const oldId = randomUUID()
+    const action = async (body: unknown) => {
+        const response = await POST(new Request(`${mounted.runtime!.app.origin}/api/desktop/foreman/company`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }))
+        expect(response.status).toBe(200)
+        return z.object({ attempt: companyBriefAttemptSchema }).parse(await response.json()).attempt
+    }
+    await action({ action: 'synthesize', chat, requestId: oldId, sourceRevision: initial.sourceRevision })
+    const oldDraft = '## Overview\n\nOld manually edited overview. [site]'
+    const edited = await action({ action: 'edit', chat, requestId: oldId, expectedDraftRevision: 0, brief: oldDraft })
+    expect(edited.draftRevision).toBe(1)
+    if (change === 'dismissed') await action({ action: 'dismiss', chat, requestId: oldId })
+    else mounted.snapshot = { ...mounted.snapshot!, discoveryId: 'fmx_freshflow0002', runId: 'run-freshflow-2' }
+    complete.mockResolvedValueOnce(JSON.stringify({ claims: [{ section: 'Overview', text: 'Acme builds public web software.', sources: ['site'] }], unknowns: [] }))
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopCompanyResearch chat={chat} active refreshKey="fresh-source" />))
+    await waitForUi(() => expect(document.querySelector('[aria-label="Company research"]')).not.toBeNull())
+    expect(document.querySelector('[aria-label="Company brief"]')).toBeNull()
+    const create = [...document.querySelectorAll('button')].find(button => button.textContent === 'Create company brief')!
+    await act(async () => create.click())
+    await waitForUi(() => expect(document.querySelector('[aria-label="Company brief"]')).not.toBeNull())
+    const saved = (await readCompanyState()).attempt!
+    expect(browserActions).toHaveLength(1)
+    expect(browserActions[0]).toMatchObject({ action: 'synthesize', chat })
+    expect(browserActions[0]).not.toHaveProperty('previousRequestId')
+    expect(saved.requestId).not.toBe(oldId)
+    expect(saved.draftRevision).toBe(0)
+    expect(saved.draft).toBeNull()
+    expect(saved.result?.brief).toContain('Acme builds public web software.')
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Company brief"] textarea')?.value).toBe(saved.result?.brief)
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="Company brief"] textarea')?.value).not.toContain('Old manually edited overview')
+    expect(complete).toHaveBeenCalledTimes(2)
+})

@@ -17,4 +17,13 @@ Every assignment states:
 
 Root integrates, fixes every discovered issue directly, and validates the installed Mac app from the board and after a full restart. A group is checked off only when its recorded scope passes acceptance. Partial progress is recorded without silently changing the count.
 
+Round35 integration lessons apply to subsequent packages:
+
+- Use the existing authenticated desktop route and its public DTO. Upstream web endpoints and internal engine records are not interchangeable with the Mac boundary.
+- Keep network requests and live authority checks outside database write transactions. Recheck identity before committing; concurrent readers must remain able to observe progress.
+- Persist recovery identity in the canonical workspace store. A loopback origin, renderer state or successful-looking UI message is not durable evidence of a completed action.
+- Make confirmed cleanup repeatable for the exact runtime lifetime. Close subscriptions and event streams during shutdown; retain failed or uncertain cleanup for retry instead of reporting success.
+- Give every non-send control inside a composer form an explicit non-submit button type. Recording, playback, setup and discard must preserve any unrelated text draft.
+- Distinguish original behavior from intentional Mac additions and unavailable connected services. Preserve committed effects when dismissing a review, and never repeat them after a lost acknowledgement or restart.
+
 For assignments already underway, expand the description within the existing contract and ownership. Do not reset worktrees or imply that a revised prompt has been dispatched. New wider scope requires a separate allocation that avoids work already assigned.
