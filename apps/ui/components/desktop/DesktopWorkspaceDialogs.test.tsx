@@ -172,7 +172,7 @@ it('a cancelled explicit picker keeps saved recovery available and a fresh expli
 it('recovers the exact saved export while the source is unavailable and exposes download only after explicit recovery', async () => {
     const saved = { ...exportInput,workspaceId: 2,agentId: 'researcher' }
     mocks.plan.mockRejectedValue(new Error('Source folder unavailable'))
-    mocks.listExport.mockResolvedValue([saved]); mocks.export.mockResolvedValue(shareReview)
+    mocks.listExport.mockResolvedValue([saved]); mocks.export.mockResolvedValue({ manifest: shareReview.manifest,archiveSha256: shareReview.archiveSha256,archiveBytes: shareReview.archiveBytes,reused: true })
     await act(async () => root.render(<DesktopCoworkerShareLauncher workspaceId={2} agentId="researcher" agentName="Researcher" onClose={() => {}} onOpenCoworker={() => {}} />))
     expect(document.body.textContent).toContain('New share review is disabled')
     expect(mocks.share).not.toHaveBeenCalled(); expect(mocks.export).not.toHaveBeenCalled(); expect(mocks.revoke).not.toHaveBeenCalled()

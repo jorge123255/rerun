@@ -3,8 +3,11 @@ const runtime = { protocolVersion: 1, launchNonce: 'c1111111-1111-4111-8111-1111
 const mocks = vi.hoisted(() => ({
     read: vi.fn(), serve: vi.fn(), prepare: vi.fn(), reconcile: vi.fn(), bind: vi.fn(), start: vi.fn(), abort: vi.fn(), mcp: vi.fn(), closeMcp: vi.fn(),
     send: vi.fn(), exit: vi.fn(), close: vi.fn(), drain: vi.fn(), stop: vi.fn(), bindingClose: vi.fn(), events: new Map<string, (...args: unknown[]) => void>(),
-    engineDir: '/desktop-test/workspaces/1/engine', brain: vi.fn(), brief: vi.fn(), recover: vi.fn(), nativeDrain: vi.fn(),
+    engineDir: '/desktop-test/workspaces/1/engine', brain: vi.fn(), brief: vi.fn(), recover: vi.fn(), nativeDrain: vi.fn(), externalInit: vi.fn(), externalClose: vi.fn(), externalDispatch: vi.fn(),
 }))
+// Each command fixture represents a fresh engine process; isolate the process-owned dispatch registry.
+vi.mock('../../desktop/external-mcp-authority/dispatch.js', () => ({ registerExternalMcpDispatch: mocks.externalDispatch }))
+vi.mock('../../desktop/external-mcp-authority/runtime.js', () => ({ initializeDesktopExternalMcp: mocks.externalInit,closeDesktopExternalMcp: mocks.externalClose,getExternalMcpService: () => ({ close: mocks.externalClose,recheck: vi.fn(async () => ({ ok: false })) }) }))
 vi.mock('../../agents/foreman.js', () => ({ ensureForeman: vi.fn(async () => {}) }))
 vi.mock('../../desktop/claude-plan/auth.js', () => ({ bindDesktopClaudePlanAuth: () => ({ status: vi.fn(), action: vi.fn(), stop: vi.fn() }) }))
 vi.mock('../../desktop/claude-plan/runtime.js', () => ({ stopDesktopClaudeWorkers: vi.fn(async () => {}) }))
@@ -55,6 +58,7 @@ let fetchApp: (request: Request) => Response | Promise<Response>
 beforeEach(() => {
     vi.clearAllMocks(); mocks.events.clear(); mocks.engineDir = '/desktop-test/workspaces/1/engine'
     mocks.read.mockImplementation(async (path: string) => String(path).endsWith('desktop-owner.json') ? JSON.stringify({ installId: 'd1111111-1111-4111-8111-111111111111', workspaceId: 1 }) : JSON.stringify(runtime))
+    mocks.externalInit.mockResolvedValue(undefined); mocks.externalClose.mockResolvedValue(undefined)
     mocks.brain.mockResolvedValue(undefined);mocks.brief.mockResolvedValue(undefined);mocks.recover.mockResolvedValue({recovered:[],retained:[]});mocks.nativeDrain.mockResolvedValue(undefined)
     mocks.reconcile.mockResolvedValue(undefined); mocks.bind.mockResolvedValue({ close: mocks.bindingClose })
     mocks.start.mockImplementation(() => Object.assign(mocks.stop, { drain: mocks.drain }))
@@ -72,6 +76,8 @@ test('serves adoption reads during reconciliation but withholds writes, schedule
     mocks.reconcile.mockImplementation(() => reconciled.promise); mocks.bind.mockImplementation(() => bound.promise)
     mocks.recover.mockImplementation(()=>recovered.promise)
     await desktopRunCommand()
+    expect(mocks.externalInit).toHaveBeenCalledOnce()
+    expect(mocks.externalDispatch).toHaveBeenCalledOnce()
     expect(mocks.brain).toHaveBeenCalledOnce()
     expect(mocks.reconcile).not.toHaveBeenCalled()
     listener()
@@ -160,4 +166,18 @@ test('refuses a nonlegacy workspace without its install identity before bootstra
     await expect(desktopRunCommand()).rejects.toThrow('install identity is missing')
     expect(mocks.prepare).not.toHaveBeenCalled()
     expect(mocks.brief).not.toHaveBeenCalled()
+})
+
+
+test('retains process custody when external MCP cleanup is unconfirmed and retries its same authority',async () => {
+    await desktopRunCommand();listener()
+    await vi.waitFor(() => expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'ready' })))
+    mocks.externalClose.mockRejectedValueOnce(new Error('External writer is still settling')).mockResolvedValue(undefined)
+    mocks.events.get('message')!({ type: 'stop' })
+    await vi.waitFor(() => expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'stop-failed' })))
+    expect(mocks.exit).not.toHaveBeenCalled()
+    expect((await request('/agents/owner/schedules/task/run','POST')).status).toBe(503)
+    mocks.events.get('message')!({ type: 'stop' })
+    await vi.waitFor(() => expect(mocks.exit).toHaveBeenCalledWith(0))
+    expect(mocks.externalClose).toHaveBeenCalledTimes(2)
 })
