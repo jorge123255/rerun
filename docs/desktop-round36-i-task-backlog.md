@@ -136,6 +136,7 @@ Priority bands: **P0** blocks trust/safety or unblocks multiple lanes; **P1** cl
 - **Refs:** upstream `ai-sdk-provider-codex-cli` patch; keep Codex 0.166.0
 
 ### P2.8 Cron exception containment port
+- **Follow-up audit:** still missing in the engine; RD37 I excludes it. Carry root-owned UP-01 from `desktop-upstream-pr38-audit-20261106.md`; do not infer completion from the broad compatibility assignment.
 - **Outcome:** one bad saved routine cannot stop the scheduler tick  
 - **Owner:** root; based on official `dev` delta beyond fork (static note only)
 

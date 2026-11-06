@@ -20,7 +20,7 @@ Original public comparison: `2a57fa6dd53311f763bfc9abde85997b7f7e5309`. RD37 cus
 | H | Evidenced Mac startup/packaging/branding/privacy readiness defects; preserve stable signer |
 | I | Complete remote gateway and durable transition authority, source only; no pairing/activation |
 
-These labels can be completed sequentially by the master agent. They are not nine newly opened shared worktrees.
+A/B are delivered on the master branch. C–I have existing isolated author worktrees; preserve those owners rather than duplicating their packages. Current observed source tips and pending work are in the follow-up audit.
 
 ## Later checkpoints
 
@@ -39,3 +39,9 @@ A dependable local Mac milestone is estimated at 3–5 more implementation/revie
 The master agent authors source and meaningful regressions only. No executed tests, typecheck, lint, build, installer, provider call, native app/guest use, Keychain, pairing, listener activation, deployment or release. Root reviews and repairs all handoffs, runs every check and accepts the installed Mac behavior.
 
 Prepare one coherent package per local commit/branch and proposed draft PR. Root reviews the exact intended publication head before any push. Only after explicit approval may that exact branch/head be pushed and a draft PR opened. No automatic merge/default-branch push, force push, deployment or public release. Dependency stacks must name exact bases; no unreviewed RD37 cherry-picks.
+
+## Official-upstream follow-up, November 6
+
+See [the PR38 source audit and missing-work supplement](desktop-upstream-pr38-audit-20261106.md). Seven explicit packets attach to RD39/RD40/RD42: scheduler resilience (root-owned), five team-read tools and permission, WhatsApp/Linkup Status, public-file download, saved-image analysis, model table-view save/delete and nonblocking attention notifications. Do not add a whole numbered round for each packet or overwrite an active author tree.
+
+Correction to the broad original master preflight: RD37 I does not deliver the cron repair; its handoff excludes it. Root must carry that separate repair. The new master branch also contains the API permission-field guard; it and its Mac catalog correction precede external write-scope activation. Source deliveries, six remaining repair/integration items, service gates and clone-policy reconciliation are listed explicitly in the supplement. No author worktree/base or original full master prompt was rewritten during the audit. All executed checks and live acceptance remain root-owned.
