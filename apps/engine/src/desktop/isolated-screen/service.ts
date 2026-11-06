@@ -16,12 +16,13 @@ import { abortable } from '../web-fetch/transport.js'
 import { abortError, isAbortError, IsolatedScreenRefusal, throwIfAborted } from './refusal.js'
 import { guardedRfbInput } from './rfb-input.js'
 import type { ScreenForeground } from './permissions.js'
-import { desktopToolInstallInputSchema } from '@rerun/contracts'
+import { desktopGuestShellResultSchema, desktopToolInstallInputSchema } from '@rerun/contracts'
 import type { LauncherControl } from '../computer-launchers/ports.js'
 import { launcherRequestSchema } from '../computer-launchers/contract.js'
 import type { EnsuredScreen, IsolatedScreenService, ScreenComputerInput, ScreenLease, ScreenNavigate, ScreenNavigationExport, ScreenOwner, ScreenPage, ScreenPrerequisite, ScreenReconcile, ScreenRunState, ScreenShot, ScreenStatus, ScreenTakeover, ScreenTarget, ViewerMode } from './types.js'
 
 const READY_ATTEMPTS = 150
+const guestShellSavedResultSchema = desktopGuestShellResultSchema.omit({ requestId: true })
 const READY_PAUSE_MS = 200
 const CONFLICT = 'A container or volume already uses this screen name without Rerun labels.'
 const STALE = 'This screen session is no longer current.'
@@ -256,7 +257,18 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
             return result
         }
         if (op === 'guest-shell-cancel') {
-            try { return await cancelCommand(signal) }
+            try {
+                await cancelCommand(signal)
+                // Cancellation can lose a race to completion. Read only this drained
+                // command's saved receipt, without granting a new model action or guest.
+                current(target); throwIfAborted(signal)
+                const saved = (await guest(containerName(target.engineAgentId), { op: 'guest-shell-inspect', commandId: body.commandId, workspaceFingerprint: body.workspaceFingerprint }, signal)).value
+                current(target); throwIfAborted(signal)
+                if (saved.requestId !== body.commandId || !['done', 'failed', 'timeout', 'cancelled'].includes(String(saved.status))) throw new IsolatedScreenRefusal('Guest command outcome is unconfirmed.', 'closed')
+                const { ok: _ok, requestId: _requestId, ...outcome } = saved
+                guestShellSavedResultSchema.parse(outcome)
+                return { ...saved, drained: true }
+            }
             catch (error) {
                 // A lost cancel acknowledgement is not success; drain this generation before returning uncertainty.
                 await stop(target, AbortSignal.timeout(20000))
@@ -285,7 +297,7 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
                         // The RPC envelope cancellation only acknowledges its handler. Confirm
                         // this command's descendant drain while still holding the action lock.
                         // Keep its guest alive so the outer receipt service can confirm the same
-                        // command again and durably record cancelled, rather than a stale target.
+                        // command again and durably record its actual saved outcome.
                         cancellationAttempted = true
                         await cancelCommand(AbortSignal.timeout(25000))
                         cancellationConfirmed = true

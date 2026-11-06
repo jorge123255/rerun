@@ -4,6 +4,8 @@ import { act, type ComponentProps, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { IsoGridProps } from '@rerun/ui/iso-grid'
+import { templateAgentSchema } from '@rerun/contracts'
+import type { DesktopTemplatePlacement } from './templates/useDesktopTemplatePlacement'
 import { emptyBoardAttention } from '@/lib/desktop/board-activity'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 import type { DesktopBoardState, DesktopSpaceCommand } from '@/lib/desktop/spaces'
@@ -74,6 +76,36 @@ async function mount(patch: Partial<ComponentProps<typeof DesktopBoard>> = {}) {
 afterEach(async () => {
     await act(async () => { for (const root of roots.splice(0)) root.unmount(); cancelDraftShutdown() })
     rendered.grid = undefined; document.body.innerHTML = ''; vi.restoreAllMocks(); vi.unstubAllGlobals()
+})
+
+test('template placement uses original board ghosts, fixes the first Box and discards stale drop callbacks', async () => {
+    const templatePlacement: DesktopTemplatePlacement = {
+        id: 'template-placement', again: false, positions: [], submitted: false, saving: false,
+        template: { templateId: 'a'.repeat(32), revision: 'b'.repeat(64), title: 'Team', tagline: '', category: 'other', updatedAt: '', capturedAt: '2026-11-05T00:00:00Z', description: '', exclusions: [], unsupportedEntries: [],
+            agents: ['Ada', 'Ben'].map((name, index) => templateAgentSchema.parse({ key: `c0${index}`, name, description: '', skills: [], setupRequired: false })) },
+    }
+    const onPlaceTemplate = vi.fn<NonNullable<ComponentProps<typeof DesktopBoard>['onPlaceTemplate']>>().mockResolvedValue(undefined)
+    const onCancelTemplate = vi.fn(), onReviewTemplate = vi.fn()
+    const h = await mount({ templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate })
+    expect(rendered.grid!.placing).toBe(true)
+    expect(rendered.grid!.placementContainerId).toBeNull()
+    expect(document.body.textContent).toContain('1 of 2 coworkers')
+    const firstDrop = rendered.grid!.onConfirmPlacement!
+    await act(async () => { await firstDrop({ col: 13, row: 1 }) })
+    expect(onPlaceTemplate).toHaveBeenCalledWith({ col: 13, row: 1 }, initial())
+    await h.render({ templatePlacement: { ...templatePlacement, spaceId: b, positions: [{ col: 13, row: 1 }] } })
+    expect(rendered.grid!.placementContainerId).toBe(b)
+    expect(rendered.grid!.tiles).toContainEqual(expect.objectContaining({ position: { col: 13, row: 1 }, containerId: b, ariaLabel: 'Placed Ada in this template' }))
+    expect(document.body.textContent).toContain('2 of 2 coworkers')
+    await act(async () => { await firstDrop({ col: 15, row: 4 }) })
+    expect(onPlaceTemplate).toHaveBeenCalledOnce()
+    await click(button('Cancel'))
+    expect(onCancelTemplate).toHaveBeenCalledOnce()
+    await h.render({ templatePlacement: { ...templatePlacement, spaceId: b, positions: [{ col: 13, row: 1 }, { col: 15, row: 4 }], submitted: true, error: 'Unknown acknowledgement' } })
+    expect(rendered.grid!.placing).toBe(false)
+    expect(button('Cancel')).toBeUndefined()
+    await click(button('Review installation'))
+    expect(onReviewTemplate).toHaveBeenCalledOnce()
 })
 
 test('saved Boxes and membership replace legacy positions and empty Box selection recruits into that Box', async () => {

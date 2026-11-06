@@ -14,8 +14,9 @@ import type { DesktopTemplatesClient } from '@/lib/desktop/templates-client'
 import { DesktopTemplateDetailPanel } from './DesktopTemplateDetailPanel'
 import { DesktopTemplateLibraryBrowser } from './DesktopTemplateLibraryBrowser'
 import type { DesktopTemplateDetail, DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt, DesktopTemplateSummary } from './types'
+import type { DesktopBeginTemplatePlacement } from './useDesktopTemplatePlacement'
 
-export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = null, resumeInstall = null, onOpenChange, onCreateFromScratch, onNewTemplate, onInstalled, onInstallAttempt, portableActions = null, onPickImport, onSaveExport }: {
+export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = null, resumeInstall = null, onOpenChange, onCreateFromScratch, onNewTemplate, onInstalled, onInstallAttempt, onPlaceTemplate, portableActions = null, onPickImport, onSaveExport }: {
     open: boolean
     client: DesktopTemplatesClient
     initialTemplate?: DesktopTemplateIdentity | null
@@ -25,6 +26,7 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
     onNewTemplate: () => void
     onInstalled: (receipt: DesktopTemplateInstallReceipt) => void
     onInstallAttempt?: (intent: DesktopTemplateInstallIntent | null) => void
+    onPlaceTemplate?: DesktopBeginTemplatePlacement
     portableActions?: DesktopPortableTemplateActions | null
     onPickImport?: () => Promise<{ uploadId: string; requestId?: string } | null>
     onSaveExport?: (artifactId: string) => Promise<{ saved: boolean }>
@@ -203,6 +205,7 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
                                 client={client}
                                 template={shown}
                                 resume={resume}
+                                onPlaceTemplate={onPlaceTemplate}
                                 portableActions={portableActions}
                                 onPickImport={onPickImport}
                                 onSaveExport={onSaveExport}

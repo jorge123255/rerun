@@ -6,6 +6,7 @@ import { desktopTemplateCaptureResultSchema, desktopTemplateCreateDraftResultSch
 import type { DesktopCapturePlanSet, DesktopCaptureSelection, DesktopCaptureWorkspace, DesktopTemplateDetail, DesktopTemplateDraft, DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt, DesktopTemplateSummary } from '@/components/desktop/templates/types'
 import { templateFidelityView } from '@/components/desktop/templates/fidelity-view'
 import { desktopTemplateInstallStateSchema, type DesktopTemplateInstallState } from './template-install-state'
+import type { GridPosition } from '@rerun/ui/iso-grid'
 
 const UNKNOWN = 'Local template acknowledgement is unknown. Retry the same attempt.'
 export class DesktopTemplateRequestError extends Error {
@@ -125,13 +126,13 @@ export function createDesktopTemplatesClient() {
             else { installs.delete(key); againRequests.delete(key) }
             return result
         },
-        async install(template: DesktopTemplateIdentity, options: { again?: boolean; requestId?: string } = {}): Promise<DesktopTemplateInstallReceipt> {
+        async install(template: DesktopTemplateIdentity, options: { again?: boolean; requestId?: string; target?: { spaceId: string; positions: GridPosition[] } } = {}): Promise<DesktopTemplateInstallReceipt> {
             const key = `${template.templateId}:${template.revision}`
             installGenerations.set(key, (installGenerations.get(key) ?? 0) + 1)
             if(options.again && !againRequests.has(key))againRequests.set(key,crypto.randomUUID())
             let raw:unknown
-            try {raw=await mutate({ operation: 'install', templateId: template.templateId, revision: template.revision }, againRequests.get(key), options.requestId)}
-            catch(error){if(error instanceof DesktopTemplateRequestError && error.definite){againRequests.delete(key);installs.delete(key)}throw error}
+            try {raw=await mutate({ operation: 'install', templateId: template.templateId, revision: template.revision, ...options.target }, againRequests.get(key), options.requestId)}
+            catch(error){if(error instanceof DesktopTemplateRequestError && error.definite && !installs.has(key))againRequests.delete(key);throw error}
             const result = desktopTemplateInstallResultSchema.parse(raw)
             if (result.status !== 'installed') throw new DesktopTemplateRequestError(result.reason, false)
             if (result.templateId !== template.templateId || result.revision !== template.revision || result.requestId !== installs.get(key)?.requestId) throw new DesktopTemplateRequestError(UNKNOWN, false)

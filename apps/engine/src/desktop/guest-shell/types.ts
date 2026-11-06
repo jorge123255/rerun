@@ -12,7 +12,8 @@ export type DesktopGuestShellPackageAuthority = (guest: DesktopGuestShellIdentit
 export type DesktopGuestShellTransport = {
     execute(identity: DesktopGuestShellRequest, signal: AbortSignal): Promise<DesktopGuestShellResult>
     inspect(identity: DesktopGuestShellIdentity, signal: AbortSignal): Promise<DesktopGuestShellResult>
-    cancel(identity: DesktopGuestShellIdentity, signal: AbortSignal): Promise<void>
+    /** Confirm drain and return the saved outcome; drain alone does not prove Stop won. */
+    cancel(identity: DesktopGuestShellIdentity, signal: AbortSignal): Promise<DesktopGuestShellResult>
 }
 
 export type DesktopGuestShellStore = {

@@ -17,9 +17,9 @@ describe('guest command transport', () => {
     it.each([{ ...response, requestId: 'e'.repeat(32) }, { ...response, ok: false }, { ...response, exitCode: -9 }, { ...response, extra: true }])('rejects a mismatched or malformed ACK before normalization', async reply => {
         await expect(createDesktopGuestShellTransport(async () => reply).execute(identity, new AbortController().signal)).rejects.toThrow()
     })
-    it('requires an exact positive drain acknowledgement for cancellation', async () => {
-        for (const reply of [{ ok: true }, { ok: true, requestId: 'e'.repeat(32), drained: true }, { ok: true, requestId: commandId, drained: false }]) await expect(createDesktopGuestShellTransport(async () => reply).cancel(identity, new AbortController().signal)).rejects.toThrow()
-        await expect(createDesktopGuestShellTransport(async () => ({ ok: true, requestId: commandId, drained: true })).cancel(identity, new AbortController().signal)).resolves.toBeUndefined()
+    it('requires both exact positive drain acknowledgement and a validated final saved outcome', async () => {
+        for (const reply of [{ ok: true }, { ok: true, requestId: 'e'.repeat(32), drained: true }, { ok: true, requestId: commandId, drained: false }, { ok: true, requestId: commandId, drained: true }, { ...response, drained: true, status: 'interrupted' }, { ...response, drained: true, stdout: 42 }]) await expect(createDesktopGuestShellTransport(async () => reply).cancel(identity, new AbortController().signal)).rejects.toThrow()
+        await expect(createDesktopGuestShellTransport(async () => ({ ...response, drained: true })).cancel(identity, new AbortController().signal)).resolves.toEqual({ requestId: identity.requestId, status: 'done', stdout: 'ok', stderr: '', exitCode: 0, durationMs: 1 })
     })
     it('derives a stable UUID from the complete invocation without requiring provider UUIDs', () => {
         const id = guestShellRequestId('agent', 'session', 'run', 'functions.call-17')

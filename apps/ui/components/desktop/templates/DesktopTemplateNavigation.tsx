@@ -7,6 +7,7 @@ import { createDesktopPortableTemplateActions, type DesktopPortableTemplateActio
 import { DesktopCreateTemplateDialog } from './DesktopCreateTemplateDialog'
 import { DesktopTemplateLibraryDialog } from './DesktopTemplateLibraryDialog'
 import type { DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt } from './types'
+import type { DesktopBeginTemplatePlacement } from './useDesktopTemplatePlacement'
 
 type PortableBridge = {
     pickImport: () => Promise<{ uploadId: string } | null>
@@ -18,7 +19,7 @@ type PortableControls = {
     save: (artifactId: string) => Promise<{ saved: boolean }>
 }
 
-export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, onInstallAttempt, resumeInstall = null, open, onOpenChange, onActiveChange }: {
+export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, onInstallAttempt, onPlaceTemplate, requestedTemplate, resumeInstall = null, open, onOpenChange, onActiveChange }: {
     open: boolean
     onOpenChange: (open: boolean) => void
     onActiveChange?: (active: boolean) => void
@@ -26,13 +27,20 @@ export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, on
     onInstalled: (receipt: DesktopTemplateInstallReceipt) => void
     onInstallAttempt?: (intent: DesktopTemplateInstallIntent | null) => void
     resumeInstall?: DesktopTemplateInstallIntent | null
+    onPlaceTemplate?: DesktopBeginTemplatePlacement
+    requestedTemplate?: DesktopTemplateIdentity | null
 }) {
     const [client, setClient] = useState<DesktopTemplatesClient | null>(null)
     const [portable, setPortable] = useState<PortableControls | null>(null)
     const libraryOpen = open
     const setLibraryOpen = onOpenChange
     const [createOpen, setCreateOpen] = useState(false)
-    const [initialTemplate, setInitialTemplate] = useState<DesktopTemplateIdentity | null>(null)
+    const [initialTemplate, setInitialTemplate] = useState<DesktopTemplateIdentity | null>(requestedTemplate ?? null)
+    const [seenRequest, setSeenRequest] = useState(requestedTemplate)
+    if (requestedTemplate !== seenRequest) {
+        setSeenRequest(requestedTemplate)
+        if (requestedTemplate) setInitialTemplate(requestedTemplate)
+    }
     const [returnToLibrary, setReturnToLibrary] = useState(false)
     const activeCallback = useRef(onActiveChange)
     activeCallback.current = onActiveChange
@@ -80,6 +88,7 @@ export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, on
                 onInstalled(receipt)
             }}
             onInstallAttempt={onInstallAttempt}
+            onPlaceTemplate={onPlaceTemplate}
             portableActions={portable?.actions}
             onPickImport={portable?.pick}
             onSaveExport={portable?.save}

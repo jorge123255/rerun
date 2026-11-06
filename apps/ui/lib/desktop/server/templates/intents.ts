@@ -8,8 +8,13 @@ import { DesktopHttpError } from '../auth'
 import { withRosterWrite } from '../roster-writes'
 import type { DesktopTemplateEngineClient } from './server'
 import { desktopTemplateInstallIdentitySchema, desktopTemplateInstallStateSchema, type DesktopTemplateInstallState } from '../../template-install-state'
+import { desktopSpacePositionSchema } from '../../spaces'
 
 const bodySchema = z.strictObject({ operation: z.record(z.string(), z.unknown()), againRequestId: z.uuid().optional() })
+const installSelectionSchema = desktopTemplateInstallIdentitySchema.extend({
+    operation: z.literal('install'), spaceId: z.uuid().optional(),
+    positions: z.array(desktopSpacePositionSchema).min(1).max(DESKTOP_TEMPLATE_LIMITS.maxCoworkers).optional(),
+})
 function canonical(value: unknown): string {
     if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
     if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
@@ -68,7 +73,12 @@ export async function prepareTemplateIntent(db: Client, engine: DesktopTemplateE
     const body = input.data.operation
     if ('requestId' in body || !['create-draft', 'plan', 'capture', 'install'].includes(String(body.operation))) throw new DesktopHttpError(400, 'Invalid template attempt')
     if (internal && (!z.uuid().safeParse(internal.requestId).success || !internal.scopeKey.startsWith('foreman:') || input.data.againRequestId)) throw new DesktopHttpError(400, 'Invalid internal template attempt')
-    const key = createHash('sha256').update(canonical(internal ? { body, scopeKey: internal.scopeKey } : body)).digest('hex')
+    if (body.operation === 'install' && !installSelectionSchema.safeParse(body).success) throw new DesktopHttpError(400, 'Invalid template placement')
+    // A human install has one durable identity per template revision. Placement belongs to the
+    // saved operation, not its lookup key: reopening or choosing another Box cannot create a
+    // second install or hide an unresolved receipt. Keep the original key for existing installs.
+    const identity = body.operation === 'install' ? { operation: 'install', templateId: body.templateId, revision: body.revision } : body
+    const key = createHash('sha256').update(canonical(internal ? { body, scopeKey: internal.scopeKey } : identity)).digest('hex')
     const detail = body.operation === 'install' ? desktopTemplateDetailSchema.parse(await engine.get(`/desktop/templates/${encodeURIComponent(String(body.templateId))}?revision=${encodeURIComponent(String(body.revision))}`)) : null
     return withRosterWrite(async () => {
         const tx = await db.transaction('write')
@@ -95,8 +105,9 @@ export async function prepareTemplateIntent(db: Client, engine: DesktopTemplateE
             }
             let positionBody = {}
             if (detail) {
+                if (!internal && (typeof body.spaceId !== 'string' || !Array.isArray(body.positions))) throw new DesktopHttpError(409, 'Place the template coworkers on your board first.')
                 const space = (await tx.execute({ sql: 'SELECT * FROM desktop_spaces WHERE workspace_id=1 AND (? IS NULL OR id=?) ORDER BY rowid LIMIT 1', args: [typeof body.spaceId === 'string' ? body.spaceId : null, typeof body.spaceId === 'string' ? body.spaceId : null] })).rows[0]
-                if (!space) throw new DesktopHttpError(409, 'Create a Box before installing a template')
+                if (!space) throw new DesktopHttpError(409, 'This Box is no longer available. Choose another spot on the board.')
                 const spaceId = String(space.id)
                 const rect = { col_start: Number(space.col_start), row_start: Number(space.row_start), col_end: Number(space.col_end), row_end: Number(space.row_end) }
                 const occupied = (await tx.execute({ sql: `SELECT col,row FROM desktop_space_placements WHERE space_id=? UNION ALL SELECT board_col,board_row FROM desktop_duplicates WHERE completed=0 AND space_id=? UNION ALL SELECT board_col,board_row FROM desktop_creations WHERE phase='reserved' AND space_id=?`, args: [spaceId, spaceId, spaceId] })).rows.map(row => ({ col: Number(row.col), row: Number(row.row) }))
@@ -106,6 +117,16 @@ export async function prepareTemplateIntent(db: Client, engine: DesktopTemplateE
                     if (operation.operation === 'install' && operation.spaceId === spaceId) occupied.push(...operation.positions)
                 }
                 const positions: { col: number; row: number }[] = []
+                if (Array.isArray(body.positions)) {
+                    const selected = z.array(desktopSpacePositionSchema).parse(body.positions)
+                    if (selected.length !== detail.coworkers.length) throw new DesktopHttpError(400, 'Place every coworker in this template.')
+                    for (const position of selected) {
+                        if (!containerContainsTile(rect, position, DEFAULT_SPAN) || [...occupied, ...positions].some(other => agentsOverlap(other, position))) {
+                            throw new DesktopHttpError(409, 'That spot is no longer available. Review the template and choose another placement.')
+                        }
+                        positions.push(position)
+                    }
+                }
                 let examined = 0
                 for (let row = rect.row_start; row <= rect.row_end && positions.length < detail.coworkers.length && examined < 100_000; row += DEFAULT_SPAN) {
                     for (let col = rect.col_start; col <= rect.col_end && positions.length < detail.coworkers.length && examined++ < 100_000; col += DEFAULT_SPAN) {

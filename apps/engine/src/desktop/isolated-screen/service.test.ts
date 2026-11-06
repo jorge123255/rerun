@@ -53,6 +53,7 @@ class FakeDocker implements DockerClient {
     afterRun: ((name: string) => void) | null = null
     execHook: ((body: Record<string, unknown>) => void) | null = null
     guestShellCancelReply: Record<string, unknown> | undefined
+    guestShellInspectReply: Record<string, unknown> | undefined
     bytes = 0
 
     version(signal: AbortSignal): Promise<DockerVersion> {
@@ -178,6 +179,7 @@ class FakeDocker implements DockerClient {
             const url = String(body.url)
             return encodeOk({ pageOptionsVersion: 1, status: 200, finalUrl: url, text: 'Hello', html: '<p>secret</p>', truncated: false, links: body.links ? [{ href: 'https://example.com/a', text: 'A' }] : [], linksTruncated: false, htmlBytes: 0, screenshotBytes: 0, screenshotWidth: 0, screenshotHeight: 0, exportErrors: [] })
         }
+        if (body.op === 'guest-shell-inspect' && this.guestShellInspectReply) return encodeOk(this.guestShellInspectReply)
         if (body.op === 'guest-shell' || body.op === 'guest-shell-inspect') return encodeOk({ requestId: body.commandId, status: 'done', stdout: 'ok', stderr: '', exitCode: 0, durationMs: 1 })
         if (body.op === 'guest-shell-cancel') return encodeOk(this.guestShellCancelReply ?? { requestId: body.commandId, drained: true })
         if (body.op === 'location') {
@@ -922,7 +924,13 @@ describe('isolated command native authority and drain', () => {
         expect(box.docker.removedContainers).toEqual([])
         expect((await box.service.running(owner, box.signal)).target).toEqual(box.target)
     })
-    it.each([true, false])('records Stop across the real host/native transport boundary only when command drain is acknowledged: %s', async acknowledged => {
+    it.each([
+        { acknowledged: true, savedStatus: 'cancelled', expected: 'cancelled' },
+        { acknowledged: true, savedStatus: 'done', expected: 'done' },
+        { acknowledged: true, savedStatus: 'failed', expected: 'failed' },
+        { acknowledged: true, savedStatus: 'interrupted', expected: 'interrupted' },
+        { acknowledged: false, savedStatus: 'cancelled', expected: 'interrupted' },
+    ])('records the real saved outcome after Stop across the host/native boundary: $savedStatus, drained $acknowledged', async ({ acknowledged, savedStatus, expected }) => {
         const box = await boot(), controller = new AbortController()
         const requestId = '11111111-1111-4111-8111-111111111111'
         const base = { agentId: owner.engineAgentId, sessionId: 'shell-session', runId: 'shell-run', toolCallId: 'shell-call', requestId }
@@ -939,6 +947,7 @@ describe('isolated command native authority and drain', () => {
         }
         const shell = createDesktopGuestShellService(deps)
         box.docker.holdOps.add('guest-shell')
+        box.docker.guestShellInspectReply = { requestId: requestId.replaceAll('-', ''), status: savedStatus, stdout: 'before Stop', stderr: '', exitCode: savedStatus === 'done' ? 0 : null, durationMs: 3000 }
         if (!acknowledged) box.docker.guestShellCancelReply = { requestId: requestId.replaceAll('-', ''), drained: false }
         let submitted!: () => void
         const started = new Promise<void>(resolve => { submitted = resolve }); box.docker.onHold = submitted
@@ -947,10 +956,12 @@ describe('isolated command native authority and drain', () => {
         expect(receipts.get(requestId)?.status).toBe('interrupted')
         controller.abort()
         const receipt = await pending
-        expect(receipt.status).toBe(acknowledged ? 'cancelled' : 'interrupted')
+        expect(receipt.status).toBe(expected)
         expect(receipts.get(requestId)).toEqual(receipt)
         expect(box.docker.execs.filter(item => item.body.op === 'guest-shell')).toHaveLength(1)
-        if (acknowledged) {
+        if (expected !== 'interrupted') {
+            expect(receipt.stdout).toBe('before Stop')
+            expect(receipt.durationMs).toBe(3000)
             expect(box.docker.removedContainers).toEqual([])
             const cancellations = box.docker.execs.filter(item => item.body.op === 'guest-shell-cancel')
             expect(cancellations).toHaveLength(2) // Native drain, then host receipt confirmation.
@@ -966,6 +977,17 @@ describe('isolated command native authority and drain', () => {
             expect(box.docker.removedContainers).toContain(containerName(owner.engineAgentId))
             expect(box.docker.removedContainers).not.toContain(containerName(otherOwner.engineAgentId))
         }
+    })
+    it.each([
+        { requestId: 'e'.repeat(32), stdout: 'ok' },
+        { requestId: command.commandId, stdout: 42 },
+    ])('quarantines the exact guest when post-drain inspection has a foreign or malformed receipt', async invalid => {
+        const box = await boot()
+        await box.service.guestShell(box.target, command, box.signal, async () => {})
+        box.docker.guestShellInspectReply = { status: 'done', stderr: '', exitCode: 0, durationMs: 1, ...invalid }
+        await expect(box.service.guestShell(box.target, { op: 'guest-shell-cancel', commandId: command.commandId, workspaceFingerprint: command.workspaceFingerprint }, box.signal, async () => { throw new Error('Cleanup must not grant model actions') })).rejects.toThrow()
+        expect(box.docker.execs.filter(item => item.body.op === 'guest-shell')).toHaveLength(1)
+        expect(box.docker.removedContainers).toEqual([containerName(owner.engineAgentId)])
     })
     it('rejects a stale target before cancellation can reach a replacement guest', async () => {
         const box = await boot(); await box.service.stop(box.target, box.signal)

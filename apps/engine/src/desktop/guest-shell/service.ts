@@ -50,22 +50,25 @@ export function createDesktopGuestShellService(deps: DesktopGuestShellDependenci
             const request = { ...identity, ...input, fingerprint, ...(evidence ? { expectedPackageEvidence: [...evidence] } : {}) }
             const reserved = await deps.store.begin(request, initial)
             if (reserved !== 'execute') { assertBase(reserved, base); if (reserved.fingerprint !== fingerprint) throw new Error('This request belongs to a different command.'); return reconcile(reserved, signal) }
-            let dispatched = false
+            let dispatched = false, completed: DesktopGuestShellReceipt | undefined
             try {
                 await authorize(identity, signal, 'execute')
                 dispatched = true
-                const completed = result(await deps.transport.execute(request, signal), identity, fingerprint)
+                completed = result(await deps.transport.execute(request, signal), identity, fingerprint)
                 await authorize(identity, signal, 'execute')
                 await deps.store.complete(identity, completed)
                 return completed
             } catch (error) {
                 if (!dispatched) throw error
-                let receipt = initial
+                // A final authorization or persistence failure cannot change an already
+                // acknowledged command outcome. Save it even when Stop arrived too late.
+                let receipt = completed && isFinalGuestShellReceipt(completed) ? completed : initial
                 if (signal.aborted) {
                     try {
-                        await deps.transport.cancel(identity, AbortSignal.timeout(25000))
-                        receipt = result({ requestId: base.requestId, status: 'cancelled', stdout: '', stderr: '', exitCode: null, durationMs: 0, message: 'The isolated command was stopped.' }, identity, fingerprint)
-                    } catch { /* Unknown drain is never represented as cancelled. Native transport quarantines its exact guest. */ }
+                        const stopped = result(await deps.transport.cancel(identity, AbortSignal.timeout(25000)), identity, fingerprint)
+                        if (!isFinalGuestShellReceipt(stopped)) throw new Error('Guest command outcome is unconfirmed.')
+                        if (!isFinalGuestShellReceipt(receipt)) receipt = stopped
+                    } catch { /* Unknown cleanup cannot replace an acknowledged result. Native transport quarantines its exact guest. */ }
                 }
                 await deps.store.complete(identity, receipt)
                 return receipt
@@ -87,12 +90,12 @@ export function createDesktopGuestShellService(deps: DesktopGuestShellDependenci
         if (!existing) throw new Error('No original command receipt exists.')
         assertBase(existing, base)
         if (isFinalGuestShellReceipt(existing)) return existing
-        await deps.transport.cancel(existing.identity, signal)
+        const stopped = result(await deps.transport.cancel(existing.identity, signal), existing.identity, existing.fingerprint)
+        if (!isFinalGuestShellReceipt(stopped)) throw new Error('Guest command outcome is unconfirmed.')
         const settled = await deps.store.read(base.requestId)
         if (settled && isFinalGuestShellReceipt(settled)) { assertBase(settled, base); return settled }
-        const cancelled = result({ requestId: base.requestId, status: 'cancelled', stdout: '', stderr: '', exitCode: null, durationMs: 0, message: 'The isolated command was stopped.' }, existing.identity, existing.fingerprint)
-        await deps.store.complete(existing.identity, cancelled)
-        return cancelled
+        await deps.store.complete(existing.identity, stopped)
+        return stopped
     }
     return { execute, inspect, stop, read: (requestId: string) => deps.store.read(requestId) }
 }

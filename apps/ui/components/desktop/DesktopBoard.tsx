@@ -5,6 +5,7 @@ import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_
 import { Plus } from 'lucide-react'
 import type { DesktopAgentView } from './DesktopApp'
 import type { DesktopCreationPlacement } from './useDesktopCreation'
+import { templatePlacementBoard, type DesktopTemplatePlacement } from './templates/useDesktopTemplatePlacement'
 import { useBoardActivity } from './useBoardActivity'
 import { latestBoardAttention, type BoardActivityStatus, type BoardActivitySnapshot } from '@/lib/desktop/board-activity'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
@@ -34,7 +35,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation }: {
+export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate }: {
     activitySnapshot?: BoardActivitySnapshot
     agents: DesktopAgentView[]
     workspaceName: string
@@ -68,6 +69,10 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     creationChecking?: boolean
     creationError?: string
     onRetryCreation?: () => Promise<void>
+    templatePlacement?: DesktopTemplatePlacement | null
+    onPlaceTemplate?: (position: GridPosition, board: DesktopBoardState) => Promise<void>
+    onCancelTemplate?: () => void
+    onReviewTemplate?: () => void
 }) {
     const localActivity = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]), !activitySnapshot)
     const { statuses: activity, attention } = activitySnapshot ?? localActivity
@@ -79,7 +84,11 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
         return counts
     }, [attention])
     const [copyPlacement, setPlacement] = useState<CopyPlacement | null>(null)
-    const placement: CopyPlacement | null = newCoworker ? { sourceId: '', requestId: newCoworker.intent.requestId, name: newCoworker.intent.name,
+    const placement: CopyPlacement | null = templatePlacement ? { sourceId: '', requestId: templatePlacement.id,
+        name: templatePlacement.template.agents[Math.min(templatePlacement.positions.length, templatePlacement.template.agents.length - 1)]?.name ?? templatePlacement.template.title,
+        position: templatePlacement.submitted ? templatePlacement.positions.at(-1) : undefined,
+        spaceId: templatePlacement.spaceId, saving: templatePlacement.saving, error: templatePlacement.error,
+    } : newCoworker ? { sourceId: '', requestId: newCoworker.intent.requestId, name: newCoworker.intent.name,
         position: newCoworker.position, spaceId: newCoworker.spaceId, saving: newCoworker.saving, error: newCoworker.error } : copyPlacement
     const [spaceDialog, setSpaceDialog] = useState<DesktopSpaceDialogTarget | null>(null)
     const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null)
@@ -97,8 +106,8 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     const mounted = useRef(true)
     const quitting = useSyncExternalStore(subscribeDraftShutdown, isDesktopQuitting, () => false)
     const covered = useBoardCoverStore(state => state.covers > 0)
-    const latestBoard = useRef({ board, onBoardCommand, boardDisabled, boardSaving, placement, spaceDialog, covered, newCoworker, onPlaceCoworker, onCancelCoworker })
-    latestBoard.current = { board, onBoardCommand, boardDisabled, boardSaving, placement, spaceDialog, covered, newCoworker, onPlaceCoworker, onCancelCoworker }
+    const latestBoard = useRef({ board, onBoardCommand, boardDisabled, boardSaving, placement, spaceDialog, covered, newCoworker, onPlaceCoworker, onCancelCoworker, templatePlacement, onPlaceTemplate, onCancelTemplate })
+    latestBoard.current = { board, onBoardCommand, boardDisabled, boardSaving, placement, spaceDialog, covered, newCoworker, onPlaceCoworker, onCancelCoworker, templatePlacement, onPlaceTemplate, onCancelTemplate }
     const interaction = !!spaceDialog || !!resizing || menuInteracting || commandBusy
     const interactionCallback = useRef(onBoardInteractionChange)
     interactionCallback.current = onBoardInteractionChange
@@ -129,7 +138,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     const baseBlocked = boardDisabled || boardSaving || commandBusy || quitting
     const gridBlocked = baseBlocked || !!spaceDialog || covered
     const boardRevision = board?.revision
-    const gestureScope = JSON.stringify([boardRevision, boardDisabled, boardSaving, !!spaceDialog, covered, placement?.requestId, newCoworker?.spaceId, newCoworker?.position])
+    const gestureScope = JSON.stringify([boardRevision, boardDisabled, boardSaving, !!spaceDialog, covered, placement?.requestId, newCoworker?.spaceId, newCoworker?.position, templatePlacement?.positions, templatePlacement?.submitted])
     const gestureIdentity = useRef({ scope: gestureScope, generation: 0 })
     if (gestureIdentity.current.scope !== gestureScope) gestureIdentity.current = { scope: gestureScope, generation: gestureIdentity.current.generation + 1 }
     const gestureGeneration = gestureIdentity.current.generation
@@ -194,6 +203,11 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
 
     function cancelCopy() {
         if (!placement || submitting.current) return
+        if (templatePlacement) {
+            const live = latestBoard.current
+            if (mounted.current && live.templatePlacement?.id === templatePlacement.id && !live.templatePlacement.submitted && !live.templatePlacement.saving) live.onCancelTemplate?.()
+            return
+        }
         if (newCoworker) {
             const live = latestBoard.current
             if (mounted.current && live.newCoworker?.intent.requestId === newCoworker.intent.requestId && !live.newCoworker.submitted && !live.newCoworker.saving) live.onCancelCoworker?.()
@@ -205,6 +219,15 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     }
 
     async function placeCopy(position: GridPosition) {
+        if (templatePlacement) {
+            const live = latestBoard.current
+            if (!mounted.current || !live.board || !live.onPlaceTemplate || submitting.current || live.templatePlacement?.id !== templatePlacement.id
+                || gestureIdentity.current.generation !== gestureGeneration || live.board.revision !== boardRevision || live.templatePlacement.saving
+                || live.boardDisabled || live.boardSaving || live.spaceDialog || live.covered || commandFlight.current || isDesktopQuitting()) return
+            submitting.current = true
+            try { await live.onPlaceTemplate(position, live.board) } finally { submitting.current = false }
+            return
+        }
         if (newCoworker) {
             const live = latestBoard.current
             if (!mounted.current || !live.onPlaceCoworker || submitting.current || live.newCoworker?.intent.requestId !== newCoworker.intent.requestId
@@ -302,7 +325,13 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
             if (mounted.current) setCommandError('')
         } catch (error) { if (mounted.current) setCommandError(error instanceof Error ? error.message : 'Could not refresh the board. Try again.') }
     }
-    const suggestion = board ? firstDesktopSpacePosition(board, newCoworker?.spaceId)?.position : newCoworker ? undefined : layout.suggested
+    const suggestionBoard = board && templatePlacement ? templatePlacementBoard(board, templatePlacement) : board
+    const suggestion = suggestionBoard ? firstDesktopSpacePosition(suggestionBoard, templatePlacement?.spaceId ?? newCoworker?.spaceId)?.position : newCoworker || templatePlacement ? undefined : layout.suggested
+    const placedTemplateTiles: Tile[] = templatePlacement?.positions.map((position, index) => ({
+        id: `template-placement-${templatePlacement.id}-${index}`, position, span: 2, containerId: templatePlacement.spaceId,
+        style: agentTileStyle('idle', templatePlacement.template.agents[index]?.name ?? ''),
+        ariaLabel: `Placed ${templatePlacement.template.agents[index]?.name ?? 'coworker'} in this template`,
+    })) ?? []
     const canEditBoard = !!board && !!onBoardCommand && !gridBlocked && !placement
     function restoreBoxFocus() {
         if (!mounted.current || isDesktopQuitting()) return
@@ -327,7 +356,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                 onMoveAgent={onBoardCommand ? (agentId, spaceId) => moveAgent(agentId, spaceId) : undefined} onInteractionChange={setMenuInteracting}>
                 {(onTileContextMenu, onContainerContextMenu) =>
                 <IsoGrid
-                    tiles={tiles}
+                    tiles={placedTemplateTiles.length ? [...tiles, ...placedTemplateTiles] : tiles}
                     containers={containers}
                     onTileContextMenu={placement || gridBlocked ? undefined : onTileContextMenu}
                     onContainerContextMenu={canEditBoard ? onContainerContextMenu : undefined}
@@ -344,7 +373,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                     locked={gridBlocked || !!placement?.saving}
                     placing={!!placement && !placement.position}
                     placingTile={placement ? { span: 2, style: agentTileStyle('idle', placement.name) } : undefined}
-                    placementContainerId={newCoworker?.spaceId ?? null}
+                    placementContainerId={templatePlacement?.spaceId ?? newCoworker?.spaceId ?? null}
                     onConfirmPlacement={placement && !placement.position && !gridBlocked ? placeCopy : undefined}
                     selectedTileId={selectedAgentId}
                     frameInset={{ left: 0, right: panelInsetRight }}
@@ -377,12 +406,14 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                         <Shimmer as="span" duration={1.6} className="block truncate text-sm font-medium">
                             {placement.saving ? `Placing ${placement.name}…` : `Tap a tile to place ${placement.name}`}
                         </Shimmer>
+                        {templatePlacement && !templatePlacement.submitted && <p className="text-xs text-muted-foreground">{templatePlacement.positions.length + 1} of {templatePlacement.template.agents.length} coworkers{templatePlacement.spaceId ? ' · Keep this team in the same Box' : ' · Choose a Box on the board'}</p>}
                         {placement.error && <p className="text-xs text-destructive" role="alert">{placement.error}</p>}
                     </div>
                     {!suggestion && !placement.position && <p className="text-xs text-muted-foreground">No free spot. Cancel and add or resize a Box.</p>}
-                    <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : newCoworker ? 'Place coworker' : 'Place copy'} disabled={placement.saving || (!suggestion && !placement.position) || gridBlocked}
+                    <ChromeButton ref={placeButton} label={placement.position && !placement.saving ? 'Retry' : newCoworker || templatePlacement ? 'Place coworker' : 'Place copy'} disabled={placement.saving || (!suggestion && !placement.position) || gridBlocked}
                         onClick={() => { const position = placement.position ?? suggestion; if (position) void placeCopy(position) }} />
-                    <ChromeButton label="Cancel" disabled={placement.saving || newCoworker?.submitted} onClick={cancelCopy} />
+                    {templatePlacement?.submitted ? <ChromeButton label="Review installation" disabled={placement.saving || gridBlocked} onClick={onReviewTemplate} />
+                        : <ChromeButton label="Cancel" disabled={placement.saving || newCoworker?.submitted} onClick={cancelCopy} />}
                 </div> : <>
                     {onOpenConversation && <><DesktopFindChat onSelect={onOpenConversation} /><ChromeDivider /></>}
                     <ChromeButton icon={Plus} label="Add coworker" disabled={baseBlocked || !!spaceDialog || covered || creationChecking || !!creationError} onClick={() => onCreate()} />

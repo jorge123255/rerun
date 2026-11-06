@@ -17,13 +17,15 @@ import { DesktopTemplateDraftDelete } from './DesktopTemplateDraftDelete'
 import { DesktopTemplatePortableActions } from './DesktopTemplatePortableActions'
 import { DesktopTemplateFidelityReview } from './DesktopTemplateFidelityReview'
 import { useDesktopTemplateInstall } from './useDesktopTemplateInstall'
+import type { DesktopBeginTemplatePlacement } from './useDesktopTemplatePlacement'
 
-export function DesktopTemplateDetailPanel({ client, template, resume = null, onInstalled, onInterrupted, portableActions = null, onLibraryChanged, onPickImport, onSaveExport }: {
+export function DesktopTemplateDetailPanel({ client, template, resume = null, onInstalled, onInterrupted, onPlaceTemplate, portableActions = null, onLibraryChanged, onPickImport, onSaveExport }: {
     client: DesktopTemplatesClient
     template: DesktopTemplateDetail
     resume?: DesktopTemplateInstallIntent | null
     onInstalled: (receipt: DesktopTemplateInstallReceipt) => void
     onInterrupted?: (intent: DesktopTemplateInstallIntent | null) => void
+    onPlaceTemplate?: DesktopBeginTemplatePlacement
     portableActions?: DesktopPortableTemplateActions | null
     onLibraryChanged?: (change?: DesktopTemplateLibraryChange) => void
     onPickImport?: () => Promise<{ uploadId: string; requestId?: string } | null>
@@ -31,6 +33,13 @@ export function DesktopTemplateDetailPanel({ client, template, resume = null, on
 }) {
     const install = useDesktopTemplateInstall({ client, template, resume, onInstalled, onInterrupted })
     const canInstall = template.capturedAt !== null && template.agents.length > 0
+    const placeLabel = `Place ${template.agents.length} coworker${template.agents.length === 1 ? '' : 's'}`
+    const start = () => {
+        if (install.readFailed) { void install.refresh(); return }
+        if (install.cleanupPending || install.interrupted) { void install.run(); return }
+        if (onPlaceTemplate) { onPlaceTemplate(template, !!install.receipt); return }
+        void (install.receipt ? install.again() : install.run())
+    }
     return <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
         <ScrollFade className="min-h-0 flex-1">
             <div className="relative flex aspect-video shrink-0 items-center justify-center overflow-hidden border-b bg-muted/40">
@@ -66,13 +75,13 @@ export function DesktopTemplateDetailPanel({ client, template, resume = null, on
             {portableActions && !template.draftRevision && <div className="mb-3"><DesktopTemplatePortableActions template={template} actions={portableActions} onLibraryChanged={onLibraryChanged ?? (() => undefined)} onPickImport={onPickImport} onSaveExport={onSaveExport} /></div>}
             {install.receipt && <p role="status" className="mb-2 text-center text-xs text-muted-foreground">Previously used · {install.receipt.coworkers.length} coworker{install.receipt.coworkers.length === 1 ? '' : 's'} still in this workspace</p>}
             {install.error && <p role="alert" className="mb-2 text-center text-xs text-destructive">{install.error}</p>}
-            <Button type="button" className="w-full" loading={install.busy} disabled={!canInstall || install.busy} title={!canInstall ? 'Capture at least one coworker before installing.' : undefined} onClick={install.readFailed ? install.refresh : install.receipt ? install.again : install.run}>
-                {install.checking ? 'Checking previous use…' : install.readFailed ? 'Try again' : install.receipt ? 'Use again' : install.cleanupPending ? 'Retry cleanup' : install.interrupted ? 'Retry installation' : 'Use template'}
+            <Button type="button" className="w-full" loading={install.busy} disabled={!canInstall || install.busy} title={!canInstall ? 'Capture at least one coworker before installing.' : undefined} onClick={start}>
+                {install.checking ? 'Checking previous use…' : install.readFailed ? 'Try again' : install.receipt ? 'Use again' : install.cleanupPending ? 'Retry cleanup' : install.interrupted ? 'Retry installation' : onPlaceTemplate ? placeLabel : 'Use template'}
             </Button>
             {install.interrupted && !install.cleanupPending && <ConfirmDialog title="Remove this unfinished installation?" description="This cancels the saved installation and removes only its unused, unchanged copies. Copies already on the board or containing new work are kept. You can use the template again after cleanup finishes." confirmLabel="Remove unfinished copies" onConfirm={() => void install.rollback()} pending={install.busy}>
                 <Button type="button" variant="ghost" className="mt-2 w-full" disabled={install.busy}>Remove unfinished copies</Button>
             </ConfirmDialog>}
-            <p className="mt-2 text-center text-[11px] text-muted-foreground">{canInstall ? 'Creates fresh coworkers with empty histories and tools switched off.' : 'Capture at least one coworker before installing this draft.'}</p>
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">{canInstall ? onPlaceTemplate ? 'Place them in a Box on your board. Copies have empty histories and tools switched off.' : 'Creates fresh coworkers with empty histories and tools switched off.' : 'Capture at least one coworker before installing this draft.'}</p>
         </div>
     </div>
 }

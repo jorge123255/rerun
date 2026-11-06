@@ -6,6 +6,7 @@ const requestId = '11111111-1111-4111-8111-111111111111'
 const receiptId = '22222222-2222-4222-8222-222222222222'
 const agentId = '33333333-3333-4333-8333-333333333333'
 const spaceId = '44444444-4444-4444-8444-444444444444'
+const target = { spaceId, positions: [{ col: 0, row: 0 }] }
 afterEach(() => vi.unstubAllGlobals())
 
 function fixture(reply: (body: Record<string, unknown>) => unknown, calls: Record<string, unknown>[]) {
@@ -48,17 +49,17 @@ it('never reports an uncertain install as installed and resumes it after client 
     const calls:Record<string,unknown>[]=[]
     fixture(body=>calls.length===1?{status:'uncertain',requestId:body.requestId,receiptId,recoverable:true,created:[],reason:'Retry this installation.'}:{status:'installed',...template,requestId:body.requestId,receiptId,coworkers:[]},calls)
     const first=createDesktopTemplatesClient()
-    await expect(first.install(template)).rejects.toThrow('Retry this installation')
+    await expect(first.install(template, { target })).rejects.toThrow('Retry this installation')
     first.dispose()
     const second=createDesktopTemplatesClient()
     await expect(second.install(template)).resolves.toEqual({receiptId,coworkers:[]})
     expect(calls[0]).toEqual(calls[1])
-    await second.install(template,{again:true})
+    await second.install(template,{again:true,target})
     expect(calls[2].requestId).not.toBe(calls[0].requestId)
 })
 it('rejects a successful body belonging to another template',async()=>{
     fixture(body=>({status:'installed',...template,templateId:'e'.repeat(32),requestId:body.requestId,receiptId,coworkers:[]}),[])
-    await expect(createDesktopTemplatesClient().install(template)).rejects.toThrow('unknown')
+    await expect(createDesktopTemplatesClient().install(template, { target })).rejects.toThrow('unknown')
 })
 
 
@@ -127,12 +128,12 @@ it('a read-confirmed lost Use again response clears only the completed rotation 
     }))
     const client = createDesktopTemplatesClient()
     await client.currentInstall(template)
-    await expect(client.install(template, { again: true })).rejects.toThrow('unknown')
+    await expect(client.install(template, { again: true, target })).rejects.toThrow('unknown')
     expect(client.pendingInstall(template)?.requestId).toBe(currentRequest)
     await client.currentInstall(template)
     expect(client.pendingInstall(template)).toBeNull()
     expect(posts).toHaveLength(1)
-    await client.install(template, { again: true })
+    await client.install(template, { again: true, target })
     expect(rotations).toHaveLength(2)
     expect(rotations[0]).not.toBe(rotations[1])
     expect(posts[0]).not.toBe(posts[1])
@@ -149,8 +150,33 @@ it('a late pre-install status read cannot replace the completed attempt', async 
     const client = createDesktopTemplatesClient()
     const read = client.currentInstall(template)
     const rejected = expect(read).rejects.toThrow('unknown')
-    await client.install(template)
+    await client.install(template, { target })
     finishRead(Response.json({ status: 'pending', ...template, requestId }))
     await rejected
     expect(client.pendingInstall(template)).toBeNull()
+})
+
+it('sends explicit board anchors and preserves an admitted Use again request after a definite execution error', async () => {
+    const intents: { againRequestId?: string; operation: unknown }[] = []
+    const executions: unknown[] = []
+    const chosen = { spaceId, positions: [{ col: 13, row: 3 }] }
+    let refuse = true
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body))
+        if (url.endsWith('/intent')) {
+            intents.push(body)
+            return Response.json({ operation: 'install', ...template, ...chosen, requestId })
+        }
+        executions.push(body)
+        if (refuse) { refuse = false; return Response.json({ error: 'Please retry the saved install' }, { status: 409 }) }
+        return Response.json({ status: 'installed', ...template, requestId, receiptId, coworkers: [] })
+    }))
+    const client = createDesktopTemplatesClient()
+    await expect(client.install(template, { again: true, target: chosen })).rejects.toThrow('Please retry')
+    expect(client.pendingInstall(template)).toEqual({ ...template, requestId })
+    await client.install(template, { again: true, target: chosen })
+    expect(intents).toHaveLength(2)
+    expect(intents[0]).toEqual(intents[1])
+    expect(intents[0].operation).toEqual({ operation: 'install', ...template, ...chosen })
+    expect(executions[0]).toEqual(executions[1])
 })

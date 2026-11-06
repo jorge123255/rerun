@@ -27,6 +27,8 @@ import { DesktopSharedFiles } from './DesktopSharedFiles'
 import { DesktopBoard } from './DesktopBoard'
 import { useDesktopBoardState } from './useDesktopBoardState'
 import { useDesktopCreation } from './useDesktopCreation'
+import { useDesktopTemplatePlacement } from './templates/useDesktopTemplatePlacement'
+import type { DesktopTemplateDetail, DesktopTemplateIdentity, DesktopTemplateInstallReceipt } from './templates/types'
 import { DesktopNewAgentDialog } from './DesktopNewAgentDialog'
 import type { DesktopCreationIntent } from '@/lib/desktop/new-agent'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
@@ -155,6 +157,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [settings, setSettings] = useState(false)
     const [templatesOpen, setTemplatesOpen] = useState(false)
     const [templateFlowActive, setTemplateFlowActive] = useState(false)
+    const [templateToReview, setTemplateToReview] = useState<DesktopTemplateIdentity | null>(null)
     const templatesActive = templatesOpen || templateFlowActive
     useEffect(() => {
         const openSettings = (event: KeyboardEvent) => {
@@ -199,8 +202,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         presentCoworker(agent.id, sessionId)
         if (!refreshed && initialData.board) throw new Error('Could not refresh the created coworker’s board placement.')
     })
-    const busy = creation.placement?.saving === true
-    const creationNavigationBlocked = !!creation.placement || creation.checking || !!creation.checkError
+    const templatePlacement = useDesktopTemplatePlacement(finishTemplateInstall)
+    const busy = creation.placement?.saving === true || templatePlacement.placement?.saving === true
+    const creationNavigationBlocked = !!creation.placement || !!templatePlacement.placement || creation.checking || !!creation.checkError
     const creationSettingsAllowed = !creationNavigationBlocked || (!busy && (!!creation.checkError || !!creation.placement?.error))
     creationAdmission.current = { blocked: creationNavigationBlocked, settingsAllowed: creationSettingsAllowed }
     const resumedCreation = useRef<string | null>(null)
@@ -353,6 +357,39 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setPanelOpen(false)
     }
 
+    function beginTemplatePlacement(template: DesktopTemplateDetail, again: boolean) {
+        if (creationAdmission.current.blocked || boardState.saving || boardInteraction || isDesktopQuitting()) return
+        if (!templatePlacement.begin(template, again)) return
+        setTemplatesOpen(false)
+        setTemplateToReview(null)
+        showBoard()
+    }
+
+    function reviewTemplatePlacement() {
+        const target = templatePlacement.review()
+        if (!target) return
+        setTemplateToReview(target)
+        setTemplatesOpen(true)
+    }
+
+    async function finishTemplateInstall(receipt: DesktopTemplateInstallReceipt, selectedAtInstall = selectedAgentRef.current) {
+        const fromPlacement = templatePlacement.placement !== null
+        const firstId = receipt.coworkers[0]?.id
+        const result = await json<{ agents: DesktopAgentView[] }>(await fetch('/api/desktop/agents', { cache: 'no-store', signal: AbortSignal.timeout(15_000) }))
+        if (isDesktopQuitting()) return
+        const first = result.agents.find(agent => agent.id === firstId)
+        if (firstId && !first) throw new Error('The installed coworker could not be read from the board yet.')
+        mergeBoardAgents(result.agents)
+        const refreshed = await boardState.refresh()
+        if (boardState.board && !refreshed) throw new Error('The installed coworker’s board position could not be refreshed yet.')
+        if (!first || selectedAgentRef.current !== selectedAtInstall || (!fromPlacement && creationAdmission.current.blocked) || isDesktopQuitting() || deletedAgents.current.has(first.id)) return
+        setBoardFocus(current => ({ tileId: first.id, nonce: (current?.nonce ?? 0) + 1,
+            insetRight: window.matchMedia('(min-width: 768px)').matches ? loadSidePanelWidth(window.innerWidth) + SIDE_PANEL_GAP : 0 }))
+        // Only an acknowledged install bypasses the placement navigation gate. Opening the
+        // fresh chat reads setup; it never sends a message or enables the copied coworker.
+        presentCoworker(first.id)
+    }
+
     function closePanel() {
         setRequestedPanel(null)
         setPanelOpen(false)
@@ -478,6 +515,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
                     newCoworker={creation.placement} onPlaceCoworker={creation.place} onCancelCoworker={creation.cancel}
+                    templatePlacement={templatePlacement.placement} onPlaceTemplate={templatePlacement.place} onCancelTemplate={templatePlacement.cancel} onReviewTemplate={reviewTemplatePlacement}
                     creationChecking={creation.checking} creationError={creation.checkError} onRetryCreation={creation.refresh}
                     boardDisabled={templatesActive || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
                     onBoardInteractionChange={setBoardInteraction}
@@ -514,29 +552,15 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 </div>
                 <DesktopSettings providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} />
             </div>}
-            <DesktopTemplateNavigation open={templatesOpen} onOpenChange={setTemplatesOpen} onActiveChange={setTemplateFlowActive} onCreateFromScratch={() => showBoard(true)} onInstalled={receipt => {
-                setTemplatesOpen(false)
-                const firstId = receipt.coworkers[0]?.id
-                const selectedAtInstall = selectedAgentRef.current
-                const showInstalled = async () => {
-                    const result = await json<{ agents: DesktopAgentView[] }>(await fetch('/api/desktop/agents', { cache: 'no-store' }))
-                    const first = result.agents.find(agent => agent.id === firstId)
-                    if (firstId && !first) throw new Error('The installed coworker could not be read from the board yet.')
-                    mergeBoardAgents(result.agents)
-                    const refreshed = await boardState.refresh()
-                    if (boardState.board && !refreshed) throw new Error('The installed coworker’s board position could not be refreshed yet.')
-                    if (!first || selectedAgentRef.current !== selectedAtInstall || creationAdmission.current.blocked || isDesktopQuitting() || deletedAgents.current.has(first.id)) return
-                    setBoardFocus(current => ({ tileId: first.id, nonce: (current?.nonce ?? 0) + 1,
-                        insetRight: window.matchMedia('(min-width: 768px)').matches ? loadSidePanelWidth(window.innerWidth) + SIDE_PANEL_GAP : 0 }))
-                    // Opening the fresh chat reads its pending setup gate. Start remains an
-                    // explicit click; a successful template receipt never submits a message.
-                    selectCoworker(first.id)
-                }
-                void showInstalled().catch(cause => toast.error('Coworkers were installed, but the board could not refresh.', {
-                    description: cause instanceof Error ? cause.message : 'Try again.',
-                    action: { label: 'Retry', onClick: () => { void showInstalled().catch(() => boardState.retry()) } },
-                }))
-            }} />
+            <DesktopTemplateNavigation open={templatesOpen} onOpenChange={setTemplatesOpen} onActiveChange={setTemplateFlowActive} onCreateFromScratch={() => showBoard(true)}
+                requestedTemplate={templateToReview} onPlaceTemplate={beginTemplatePlacement} onInstalled={receipt => {
+                    setTemplatesOpen(false)
+                    const selectedAtInstall = selectedAgentRef.current
+                    void finishTemplateInstall(receipt, selectedAtInstall).catch(cause => toast.error('Coworkers were installed, but the board could not refresh.', {
+                        description: cause instanceof Error ? cause.message : 'Try again.',
+                        action: { label: 'Retry', onClick: () => { void finishTemplateInstall(receipt, selectedAtInstall).catch(() => boardState.retry()) } },
+                    }))
+                }} />
             <DesktopNewAgentDialog open={creating} onOpenChange={setCreating} onCreate={prepareCoworker} first={!agents.length}
                 resolvingReceipt={creation.checking} />
             <DesktopWorkspaceSettings open={workspaceSettings} onOpenChange={setWorkspaceSettings} workspaceName={workspaceName}

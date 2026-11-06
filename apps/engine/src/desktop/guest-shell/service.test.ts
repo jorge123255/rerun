@@ -8,7 +8,7 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 function fixture() {
     const records = new Map<string, DesktopGuestShellReceipt>()
     const store: DesktopGuestShellStore = { read: vi.fn(async id => records.get(id) ?? null), begin: vi.fn(async (_id, value) => { const prior = records.get(value.requestId); if (prior) return prior; records.set(value.requestId, value); return 'execute' as const }), complete: vi.fn(async (_id, value) => { records.set(value.requestId, value) }) }
-    const transport = { execute: vi.fn(async (_identity: DesktopGuestShellRequest, _signal: AbortSignal) => result()), inspect: vi.fn(async (_identity: DesktopGuestShellIdentity, _signal: AbortSignal) => result()), cancel: vi.fn(async (_identity: DesktopGuestShellIdentity, _signal: AbortSignal) => {}) }
+    const transport = { execute: vi.fn(async (_identity: DesktopGuestShellRequest, _signal: AbortSignal) => result()), inspect: vi.fn(async (_identity: DesktopGuestShellIdentity, _signal: AbortSignal) => result()), cancel: vi.fn(async (_identity: DesktopGuestShellIdentity, _signal: AbortSignal) => result('cancelled')) }
     const authority = vi.fn(async (_base: Omit<DesktopGuestShellIdentity, 'guest'>, _signal: AbortSignal, _phase?: 'execute' | 'inspect') => identity.guest)
     const packageAuthority = vi.fn(async () => [{ package: 'is-number@7.0.0', manifestSha256: 'c'.repeat(64), lockSha256: 'd'.repeat(64) }])
     return { records, store, transport, authority, packageAuthority, service: createDesktopGuestShellService({ store, transport, authority, packageAuthority }) }
@@ -49,11 +49,48 @@ describe('guest command immutable admission and recovery', () => {
         f.transport.cancel.mockImplementationOnce(async (_identity, signal) => { expect(signal.aborted).toBe(false); throw new Error('No drain ACK') })
         expect((await f.service.execute(identity, input, controller.signal)).status).toBe('interrupted')
     })
-    it('records cancelled only after exact cleanup acknowledges drain', async () => {
+    it('records the saved cancelled result only after exact cleanup acknowledges drain', async () => {
         const f = fixture(), controller = new AbortController()
         f.transport.execute.mockImplementationOnce(async () => { controller.abort(); throw new Error('Stopped') })
         expect((await f.service.execute(identity, input, controller.signal)).status).toBe('cancelled')
         expect(f.transport.cancel).toHaveBeenCalledWith(identity, expect.any(AbortSignal))
+    })
+    it.each(['done', 'failed', 'timeout'] as const)('retains known %s through a late final-authorization Abort even when cleanup fails', async status => {
+        const f = fixture(), controller = new AbortController(), completed = result(status)
+        f.transport.execute.mockResolvedValueOnce(completed)
+        f.authority.mockImplementation(async () => {
+            if (f.transport.execute.mock.calls.length) controller.abort()
+            return identity.guest
+        })
+        f.transport.cancel.mockRejectedValueOnce(new Error('Cleanup acknowledgement lost'))
+        const receipt = await f.service.execute(identity, input, controller.signal)
+        expect(receipt).toMatchObject(completed)
+        expect(f.records.get(identity.requestId)).toEqual(receipt)
+        const reopened = createDesktopGuestShellService({ store: f.store, transport: f.transport, authority: async () => { throw new Error('Stopped owner') } })
+        expect(await reopened.inspect(identity, new AbortController().signal)).toEqual(receipt)
+        expect(f.transport.inspect).not.toHaveBeenCalled()
+        expect(f.transport.execute).toHaveBeenCalledTimes(1)
+    })
+    it('uses the saved completion when Stop loses its race with the execute acknowledgement', async () => {
+        const f = fixture(), controller = new AbortController()
+        f.transport.execute.mockImplementationOnce(async () => { controller.abort(); throw new Error('Execute acknowledgement lost') })
+        f.transport.cancel.mockResolvedValueOnce(result())
+        expect(await f.service.execute(identity, input, controller.signal)).toMatchObject(result())
+        expect(f.transport.execute).toHaveBeenCalledTimes(1)
+    })
+    it('keeps an unknown saved result interrupted despite a positive drain acknowledgement', async () => {
+        const f = fixture(), controller = new AbortController()
+        f.transport.execute.mockImplementationOnce(async () => { controller.abort(); throw new Error('Stopped') })
+        f.transport.cancel.mockResolvedValueOnce(result('interrupted'))
+        expect((await f.service.execute(identity, input, controller.signal)).status).toBe('interrupted')
+    })
+    it('explicit Stop preserves the original completed receipt and output', async () => {
+        const f = fixture()
+        f.transport.execute.mockRejectedValueOnce(new Error('Execute acknowledgement lost'))
+        expect((await f.service.execute(identity, input, new AbortController().signal)).status).toBe('interrupted')
+        f.transport.cancel.mockResolvedValueOnce(result())
+        expect(await f.service.stop(identity, new AbortController().signal)).toMatchObject(result())
+        expect(f.transport.execute).toHaveBeenCalledTimes(1)
     })
     it('aborted admission and absent reviewed package evidence cause no reservation or guest work', async () => {
         const f = fixture(), controller = new AbortController(); controller.abort()
