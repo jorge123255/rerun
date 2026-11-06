@@ -52,7 +52,7 @@ try {
 } finally { await rm(probeHome, { recursive: true, force: true }) }
 
 const engineDir = join(resourcesDir, 'runtime', 'engine')
-const claudeProbe = await mkdtemp(join(tmpdir(), 'rerun-verify-claude-'))
+const claudeProbe = await realpath(await mkdtemp(join(tmpdir(), 'rerun-verify-claude-')))
 try {
     await mkdir(join(claudeProbe, 'tmp'), { mode: 0o700 })
     const requireEngine = createRequire(join(engineDir, 'package.json'))
