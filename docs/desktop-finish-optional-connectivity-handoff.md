@@ -7,13 +7,14 @@ Disabled foundation only. Not remote access, public hosting, mobile pairing, or 
 | | |
 |---|---|
 | Base | `8297fe6404caa114dcb0c2cd6006291a8abb2038` on `desktop/finish-cloud-base-20261106-8297fe64` |
+| Implementation | `455f3becb1e8023626c626c517ea6017fda7adb5` |
 | Branch | `cursor/optional-connectivity-8cc8` |
 | Remote authority | `packages/contracts/src/desktop-remote-machines.ts` and `apps/desktop/src/main/remote-machines/coordinator.mjs` (`createRemoteMachineCoordinator`). RD38 I tip `a9fa38881e30e31d5fa20e516bb7bbff562765b6` stays the owner of that store. This branch does not edit it. |
 | Share filters | `resolveShareInclude` / `shareExcludePaths` in `packages/contracts/src/agent-share.ts`. Template exclusion reasons in `packages/contracts/src/desktop-templates.ts`. |
 | Webhook contract | `triggerFireSchema` and `tokenMatches` in `apps/engine/src/http/routes/triggers.ts`. Body cap `DESKTOP_TRIGGER_MAX_INGRESS_BODY_BYTES`. Existing ingress `createDesktopTriggerIngressHandler` already does not listen. |
 | Original pin | `2a57fa6dd53311f763bfc9abde85997b7f7e5309` has hub membership checks and `/api/engines/pair` for an engine posting its own key to a hub. That is not phone-to-Mac pairing. |
 
-The branch tip is the head of `cursor/optional-connectivity-8cc8` after this handoff. It is not `main` or `dev`.
+`455f3becb1e8023626c626c517ea6017fda7adb5` is the implementation commit. The branch head after the handoff SHA line is the published tip. It is not `main` or `dev`.
 
 ## Changed paths
 
