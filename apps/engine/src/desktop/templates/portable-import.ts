@@ -13,15 +13,15 @@ import {
     type DesktopPortableImportResult,
     type DesktopPortableProvenance,
 } from '@rerun/contracts'
-import { normalizeTemplateRequirements, templateMediaType } from './fidelity.js'
-import { TemplateRequestError } from './errors.js'
-import { writeExclusiveFile, ensurePrivateDir } from './files.js'
-import { canonicalJson, draftRevision, newTemplateId, sha256 } from './hash.js'
-import { isTemplateManifestPath, readManifest, sealManifest, type TemplateManifest } from './install.js'
-import { scrubConfig } from './inspect.js'
-import { withPortableLibraryLease } from './portable-lock.js'
-import { readOwnJson, replaceOwnJson, requestHome, templateHome, writeOwnJson } from './store.js'
-import { readImmutableUploadBytes, readPortableArchive } from './portable-package.js'
+import { normalizeTemplateRequirements, templateMediaType } from './fidelity.ts'
+import { TemplateRequestError } from './errors.ts'
+import { writeExclusiveFile, ensurePrivateDir } from './files.ts'
+import { canonicalJson, draftRevision, newTemplateId, sha256 } from './hash.ts'
+import { isTemplateManifestPath, readManifest, sealManifest, type TemplateManifest } from './install.ts'
+import { scrubConfig } from './inspect.ts'
+import { withPortableLibraryLease } from './portable-lock.ts'
+import { readOwnJson, replaceOwnJson, requestHome, templateHome, writeOwnJson } from './store.ts'
+import { readImmutableUploadBytes, readPortableArchive } from './portable-package.ts'
 
 const importReceiptSchema = z.strictObject({
     version: z.literal(1),

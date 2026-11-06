@@ -2,8 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, readFile, realpath, type FileHandle } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
-import { importSharedText, listSharedDirectory, readSharedText, SharedWorkspaceFileError, type SharedFileAccess } from '../shared-workspace-files.js'
-import { sharedRegexLines } from './regex.js'
+import { importSharedText, listSharedDirectory, readSharedText, SharedWorkspaceFileError, type SharedFileAccess } from '../shared-workspace-files.ts'
+import { sharedRegexLines } from './regex.ts'
 
 // Create, exact edit, and search under an already resolved shared root.
 // The root is `<dataRoot>/workspaces/<id>/engine/shared`. Callers pass that directory.

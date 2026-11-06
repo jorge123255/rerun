@@ -15,9 +15,9 @@ import {
     type DesktopTemplateFidelityMember as DesktopPortableMember,
     type DesktopTemplateFidelityManifest as DesktopPortablePackageManifest,
 } from '@rerun/contracts'
-import { TemplateRequestError } from './errors.js'
-import { collidingRelativePaths, readConfinedBytes, writeExclusiveFile } from './files.js'
-import { canonicalJson, sha256 } from './hash.js'
+import { TemplateRequestError } from './errors.ts'
+import { collidingRelativePaths, readConfinedBytes, writeExclusiveFile } from './files.ts'
+import { canonicalJson, sha256 } from './hash.ts'
 
 export type PortablePackageMemberBytes = {
     agentKey: string
@@ -93,29 +93,30 @@ export async function writePortableArchive(input: {
     if (Date.now() - input.startedAt > DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxElapsedMs) {
         throw new TemplateRequestError(413, 'Portable export exceeded the time bound')
     }
-    const staging = await mkdtemp(join(tmpdir(), 'desktop-portable-export-'))
-    const archivePath = join(staging, 'package.tar.gz')
+    // These paths exist only in the OS temporary directory during an explicit export.
+    const staging = await mkdtemp(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ tmpdir(), 'desktop-portable-export-'))
+    const archivePath = join(/* turbopackIgnore: true */ staging, 'package.tar.gz')
     try {
-        await writeFile(join(staging, DESKTOP_PORTABLE_MANIFEST_MEMBER), `${JSON.stringify(input.manifest, null, 2)}\n`, { mode: 0o600 })
+        await writeFile(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ staging, DESKTOP_PORTABLE_MANIFEST_MEMBER), `${JSON.stringify(input.manifest, null, 2)}\n`, { mode: 0o600 })
         for (const member of [...input.members].sort((a,b) => memberArchivePath(a.agentKey, a.path).localeCompare(memberArchivePath(b.agentKey, b.path), 'en'))) {
             const relative = memberArchivePath(member.agentKey, member.path)
-            const full = join(staging, relative)
-            const parent = join(full, '..')
-            await writeFile(join(staging, '.keep'), '', { flag: 'a' }).catch(() => undefined)
+            const full = join(/* turbopackIgnore: true */ staging, relative)
+            const parent = join(/* turbopackIgnore: true */ full, '..')
+            await writeFile(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ staging, '.keep'), '', { flag: 'a' }).catch(() => undefined)
             const { mkdir } = await import('node:fs/promises')
-            await mkdir(parent, { recursive: true, mode: 0o700 })
-            await writeFile(full, member.bytes, { mode: 0o600 })
+            await mkdir(/* turbopackIgnore: true */ parent, { recursive: true, mode: 0o700 })
+            await writeFile(/* turbopackIgnore: true */ full, member.bytes, { mode: 0o600 })
         }
         const entries = [DESKTOP_PORTABLE_MANIFEST_MEMBER, ...input.members.map(member => memberArchivePath(member.agentKey, member.path)).sort()]
-        await create({ gzip: true, cwd: staging, portable: true, file: archivePath, noMtime: true }, entries)
-        const info = await stat(archivePath)
+        await create({ gzip: true, cwd: /* turbopackIgnore: true */ staging, portable: true, file: /* turbopackIgnore: true */ archivePath, noMtime: true }, entries)
+        const info = await stat(/* turbopackIgnore: true */ archivePath)
         if (info.size > DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxCompressedBytes) {
             throw new TemplateRequestError(413, 'Portable export exceeds the compressed size bound')
         }
         if (Date.now() - input.startedAt > DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxElapsedMs) {
             throw new TemplateRequestError(413, 'Portable export exceeded the time bound')
         }
-        const archiveBytes = await readFile(archivePath)
+        const archiveBytes = await readFile(/* turbopackIgnore: true */ archivePath)
         const safeTitle = input.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'template'
         return {
             manifest: input.manifest,
@@ -124,7 +125,7 @@ export async function writePortableArchive(input: {
             fileName: `${safeTitle}-${input.packageKey.slice(0, 8)}.portable.tar.gz`,
         }
     } finally {
-        await rm(staging, { recursive: true, force: true })
+        await rm(/* turbopackIgnore: true */ staging, { recursive: true, force: true })
     }
 }
 

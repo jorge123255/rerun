@@ -3,10 +3,10 @@ import { constants } from 'node:fs'
 import { lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises'
 import { isAbsolute, join, dirname, basename, relative, resolve, sep } from 'node:path'
 import { isDesktopTemplateRelativePath, scanPathForSecrets, type DesktopTemplateExclusionReason } from '@rerun/contracts'
-import { openWithoutLinks } from '../open-without-links.js'
-import { TemplateRequestError } from './errors.js'
-import { sha256 } from './hash.js'
-import { renameSkillEntry } from '../skill-publication-native.js'
+import { openWithoutLinks } from '../open-without-links.ts'
+import { TemplateRequestError } from './errors.ts'
+import { sha256 } from './hash.ts'
+import { renameSkillEntry } from '../skill-publication-native.ts'
 
 const BINARY_EXTENSIONS = new Set([
     'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'ico', 'bmp', 'tiff',

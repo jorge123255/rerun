@@ -2,8 +2,8 @@ import { lstat, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DESKTOP_TEMPLATE_LIMITS, desktopTemplateIdSchema, desktopTemplateRevisionSchema } from '@rerun/contracts'
 import { z } from 'zod'
-import { TemplateRequestError } from './errors.js'
-import { readConfined, replaceOwnFile, writeExclusiveFile, ensurePrivateDir } from './files.js'
+import { TemplateRequestError } from './errors.ts'
+import { readConfined, replaceOwnFile, writeExclusiveFile, ensurePrivateDir } from './files.ts'
 
 const jsonLimit = 48 * 1024 * 1024
 

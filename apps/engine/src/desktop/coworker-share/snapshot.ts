@@ -10,9 +10,9 @@ import {
     desktopCoworkerShareSourceSchema,
     scanPathForSecrets,
 } from '@rerun/contracts'
-import { sealPortableManifest, writePortableArchive, type PortablePackageMemberBytes } from '../templates/portable-package.js'
-import { sha256 } from '../templates/hash.js'
-import { scrubConfig } from '../templates/inspect.js'
+import { sealPortableManifest, writePortableArchive, type PortablePackageMemberBytes } from '../templates/portable-package.ts'
+import { sha256 } from '../templates/hash.ts'
+import { scrubConfig } from '../templates/inspect.ts'
 export type { DesktopCoworkerShareSource } from '@rerun/contracts'
 
 export type DesktopCoworkerSnapshot = {

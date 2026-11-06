@@ -12,12 +12,12 @@ import {
     type DesktopTemplateExclusion,
     type DesktopTemplateExclusionReason,
 } from '@rerun/contracts'
-import { TemplateRequestError } from './errors.js'
-import { desktopSkillAuthorityRequired, trustedSkillOwners } from '../service-skills/authority.js'
-import { collidingRelativePaths, readConfined, readConfinedBytes, walkConfined } from './files.js'
-import { templateMediaType, normalizeTemplateRequirements } from './fidelity.js'
-import { readEnvironmentKeyNames } from './files.js'
-import { canonicalJson, sha256 } from './hash.js'
+import { TemplateRequestError } from './errors.ts'
+import { desktopSkillAuthorityRequired, trustedSkillOwners } from '../service-skills/authority.ts'
+import { collidingRelativePaths, readConfined, readConfinedBytes, walkConfined } from './files.ts'
+import { templateMediaType, normalizeTemplateRequirements } from './fidelity.ts'
+import { readEnvironmentKeyNames } from './files.ts'
+import { canonicalJson, sha256 } from './hash.ts'
 
 const VERBOSITY = new Set(['minimal', 'concise', 'normal', 'detailed'])
 const ROOT_EXCLUSIONS: { path: string; reason: DesktopTemplateExclusionReason }[] = [

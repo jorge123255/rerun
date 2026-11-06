@@ -1,9 +1,9 @@
 import { constants } from 'node:fs'
 import { lstat, open, readdir, rmdir, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
-import { acquireSkillLease } from '../skill-publication-native.js'
-import { ensurePrivateDir, pinDirectory } from './files.js'
-import { TemplateRequestError } from './errors.js'
+import { acquireSkillLease } from '../skill-publication-native.ts'
+import { ensurePrivateDir, pinDirectory } from './files.ts'
+import { TemplateRequestError } from './errors.ts'
 
 const libraryQueues = new Map<string, Promise<unknown>>()
 export function withPortableLibraryLease<T>(dataRoot: string, work: () => Promise<T>): Promise<T> {

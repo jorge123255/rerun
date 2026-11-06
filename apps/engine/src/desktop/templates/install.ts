@@ -15,12 +15,12 @@ import {
     desktopTemplateMediaTypeSchema,
     type DesktopTemplateDetail,
 } from '@rerun/contracts'
-import { withPortableLibraryLease } from './portable-lock.js'
-import { TemplateRequestError } from './errors.js'
-import { readConfined, writeExclusiveFile } from './files.js'
-import { canonicalJson, sha256 } from './hash.js'
-import { renameSkillEntry } from '../skill-publication-native.js'
-import { readOwnJson, replaceOwnJson, templateHome, writeOwnJson, requestHome } from './store.js'
+import { withPortableLibraryLease } from './portable-lock.ts'
+import { TemplateRequestError } from './errors.ts'
+import { readConfined, writeExclusiveFile } from './files.ts'
+import { canonicalJson, sha256 } from './hash.ts'
+import { renameSkillEntry } from '../skill-publication-native.ts'
+import { readOwnJson, replaceOwnJson, templateHome, writeOwnJson, requestHome } from './store.ts'
 
 const fileSchema = z.strictObject({
     path: desktopTemplateRelativePathSchema,
@@ -113,7 +113,7 @@ export async function readManifest(dataRoot: string, templateId: string, revisio
             paths.add(file.path)
             total += file.bytes
             const reader = file.binary || file.kind === 'binary'
-                ? (await import('./files.js')).readConfinedBytes
+                ? (await import('./files.ts')).readConfinedBytes
                 : readConfined
             const stored = await reader(join(directory, coworker.agentKey), file.path, DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFileBytes)
             if (!stored.ok || stored.bytes.length !== file.bytes || stored.contentRevision !== file.sourceRevision) {
@@ -235,7 +235,7 @@ async function installManifestUnlocked(input: {
         let partial = false
         for (const file of receipt.phase === 'bound' ? coworker.files : []) {
             const reader = file.binary || file.kind === 'binary'
-                ? (await import('./files.js')).readConfinedBytes
+                ? (await import('./files.ts')).readConfinedBytes
                 : readConfined
             const stored = await reader(archiveDir, file.path, DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFileBytes)
             if (!stored.ok || stored.contentRevision !== file.sourceRevision) {
