@@ -17,7 +17,7 @@ import {
 } from '@rerun/contracts'
 import { withPortableLibraryLease } from './portable-lock.ts'
 import { TemplateRequestError } from './errors.ts'
-import { isReservedTemplateWorkspacePath, readConfined, writeExclusiveFile } from './files.ts'
+import { isReservedTemplateMetadataPath, readConfined, writeExclusiveFile } from './files.ts'
 import { canonicalJson, sha256 } from './hash.ts'
 import { renameSkillEntry } from '../skill-publication-native.ts'
 import { readOwnJson, replaceOwnJson, templateHome, writeOwnJson, requestHome } from './store.ts'
@@ -82,7 +82,7 @@ const importReceiptSchema = z.strictObject({
 type ImportReceipt = z.infer<typeof importReceiptSchema>
 
 const ALLOWED = /^(?:SOUL\.md|INSTALL\.md|config\.json|workspace\/.+|skills\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\/.+)$/
-export const isTemplateManifestPath = (path: string): boolean => ALLOWED.test(path) && !isReservedTemplateWorkspacePath(path)
+export const isTemplateManifestPath = (path: string): boolean => ALLOWED.test(path) && !isReservedTemplateMetadataPath(path)
 
 export function manifestBody(manifest: TemplateManifest): Omit<TemplateManifest, 'revision'> {
     const { revision, ...body } = manifest

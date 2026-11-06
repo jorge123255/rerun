@@ -13,7 +13,7 @@ import {
 import { sealPortableManifest, writePortableArchive, type PortablePackageMemberBytes } from '../templates/portable-package.ts'
 import { sha256 } from '../templates/hash.ts'
 import { scrubConfig } from '../templates/inspect.ts'
-import { isReservedTemplateWorkspacePath } from '../templates/files.ts'
+import { isReservedTemplateMetadataPath } from '../templates/files.ts'
 export type { DesktopCoworkerShareSource } from '@rerun/contracts'
 
 export type DesktopCoworkerSnapshot = {
@@ -24,7 +24,7 @@ export type DesktopCoworkerSnapshot = {
 }
 
 function includeMember(path: string, ownership: string, include: DesktopCoworkerShareInclude): boolean {
-    if (ownership !== 'user' || isReservedTemplateWorkspacePath(path) || scanPathForSecrets(path).length || path.split('/').some(part => part === '.rerun' || part === '.git' || part === 'node_modules')) return false
+    if (ownership !== 'user' || isReservedTemplateMetadataPath(path) || scanPathForSecrets(path).length || path.split('/').some(part => part === '.rerun' || part === '.git' || part === 'node_modules')) return false
     if (path.startsWith('memory/')) return include.memories && /\.(?:md|txt|json)$/.test(path)
     if (path === 'data/agent.db') return include.database
     if (path.startsWith('workspace/')) return include.files

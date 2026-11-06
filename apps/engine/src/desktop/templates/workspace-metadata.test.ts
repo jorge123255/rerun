@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, expect, test, vi } from 'vitest'
 import { DESKTOP_PORTABLE_TEMPLATE_FORMAT, DESKTOP_PORTABLE_TEMPLATE_FORMAT_VERSION, DESKTOP_PORTABLE_TEMPLATE_LIMITS, DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING, DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING } from '@rerun/contracts'
 import { prepareSkillHelperFixture } from '../skill-publication.test-support.js'
+import { publishNewSkill, readConfinedFile, writeConfinedFile } from '../skill-publication.ts'
+import { createDesktopCoworkerSnapshot } from '../coworker-share/snapshot.ts'
 import { inspectCoworker } from './inspect.ts'
 import { isTemplateManifestPath, installManifest, readManifest, sealManifest } from './install.ts'
 import { importDesktopPortableTemplate } from './portable-import.ts'
@@ -12,8 +14,11 @@ import { readPortableArchive, sealPortableManifest, writePortableArchive } from 
 import { listTemplateIds } from './store.ts'
 import { sha256 } from './hash.ts'
 
-const reserved = ['workspace/.rerun-backup-old','workspace/.rerun-skill-lock','workspace/.rerun/services.json','workspace/docs/.rerun-edit-old','workspace/docs/.rerun-publish-id.json','workspace/docs/.rerun-backup-dir/old.md','workspace/docs/.RERUN-retire-alias']
+const reservedWorkspace = ['workspace/.rerun-backup-old','workspace/.rerun-skill-lock','workspace/.rerun/services.json','workspace/docs/.rerun-edit-old','workspace/docs/.rerun-publish-id.json','workspace/docs/.rerun-backup-dir/old.md','workspace/docs/.RERUN-retire-alias']
+const reservedSkills = ['skills/.rerun-skill-lock','skills/user/.rerun-skill-bak-old','skills/user/references/.rerun-skill-bak-old','skills/user/assets/.rerun-skill-stage-old/image.bin','skills/user/references/.rerun-skill-journal-old.json','skills/user/.RERUN-SKILL-tmp-alias']
+const reserved = [...reservedWorkspace,...reservedSkills]
 const ordinary = ['workspace/.notes.md','workspace/docs/.keep','workspace/.user-folder/guide.txt']
+const ordinarySkills = ['skills/user/.notes.md','skills/user/assets/.keep','skills/user/.user-folder/guide.txt']
 const roots: string[] = []
 let helper: Awaited<ReturnType<typeof prepareSkillHelperFixture>>
 const previousHelper = process.env.RERUN_DESKTOP_RENAME_HELPER
@@ -24,7 +29,7 @@ async function root() { const value = await realpath(await mkdtemp(join(tmpdir()
 
 test('the real inspector prunes reserved workspace files and trees before the walk limit while preserving user hidden files and skills', async () => {
     const agentsRoot = await root(), folder = join(agentsRoot,'source')
-    const files = ['SOUL.md','INSTALL.md','config.json','skills/user/SKILL.md',...reserved,...ordinary]
+    const files = ['SOUL.md','INSTALL.md','config.json','skills/user/SKILL.md',...reserved,...ordinary,...ordinarySkills]
     for (const path of files) {
         await mkdir(dirname(join(folder,path)),{ recursive: true })
         const text = path === 'config.json' ? JSON.stringify({ name: 'Source',setup: { required: false } }) : path === 'skills/user/SKILL.md' ? '---\nname: User\ndescription: User notes\n---\nRead the notes.' : reserved.includes(path) ? 'PRIVATE_INTERNAL_BYTES' : 'User content'
@@ -33,17 +38,41 @@ test('the real inspector prunes reserved workspace files and trees before the wa
     // Internal contents must neither become selectable nor exhaust the user-file budget.
     await mkdir(join(folder,'workspace','.rerun-cache'),{ recursive: true })
     for (let index=0; index<30; index++) await writeFile(join(folder,'workspace','.rerun-cache',`${index}.txt`),'PRIVATE_INTERNAL_BYTES')
+    await mkdir(join(folder,'skills','user','.rerun-skill-stage-cache'),{ recursive: true })
+    for (let index=0; index<30; index++) await writeFile(join(folder,'skills','user','.rerun-skill-stage-cache',`${index}.txt`),'PRIVATE_INTERNAL_BYTES')
     const inspected = await inspectCoworker(agentsRoot,randomUUID(),'source',{ includeBinary: true,requireTrustedOwnership: true,skillOwnership: () => 'user',maxWalkEntries: 12 })
     expect(inspected.blocked).toBeNull()
     expect(inspected.soul?.path).toBe('SOUL.md'); expect(inspected.install?.path).toBe('INSTALL.md')
     expect(inspected.selectableFiles.map(file => file.path).sort()).toEqual([...ordinary].sort())
     expect(inspected.selectableSkills.map(skill => skill.slug)).toEqual(['user'])
+    expect(inspected.selectableSkills[0]!.files.map(file => file.path).sort()).toEqual(['skills/user/SKILL.md',...ordinarySkills].sort())
     expect(inspected.selectableFiles.some(file => file.raw.includes(Buffer.from('PRIVATE_INTERNAL_BYTES')))).toBe(false)
+    expect(inspected.selectableSkills[0]!.files.some(file => file.raw.includes(Buffer.from('PRIVATE_INTERNAL_BYTES')))).toBe(false)
 })
 
 test('the canonical path guard refuses reserved segments at any workspace depth and preserves normal hidden user paths', () => {
     for (const path of reserved) expect(isTemplateManifestPath(path),path).toBe(false)
-    for (const path of ['SOUL.md','INSTALL.md','config.json','skills/user/SKILL.md',...ordinary]) expect(isTemplateManifestPath(path),path).toBe(true)
+    for (const path of ['SOUL.md','INSTALL.md','config.json','skills/user/SKILL.md',...ordinary,...ordinarySkills]) expect(isTemplateManifestPath(path),path).toBe(true)
+})
+
+test('a real retained skill-edit backup stays out of a Files-off inspector-to-share archive', async () => {
+    const agentsRoot = await root(), folder = join(agentsRoot,'source'), skill = join(folder,'skills','notes')
+    await mkdir(join(folder,'workspace'),{ recursive: true })
+    await writeFile(join(folder,'config.json'),JSON.stringify({ name: 'Source',setup: { required: false } }))
+    await writeFile(join(folder,'SOUL.md'),'User instructions')
+    await publishNewSkill(join(folder,'skills'),'notes',{ name: 'Notes',description: 'User procedure',body: 'Read the current guide.' })
+    await writeConfinedFile(skill,'references/guide.md','OLD_PRIVATE_SKILL_VERSION',{ createOnly: true })
+    const read = await readConfinedFile(skill,'references/guide.md')
+    if (!read) throw new Error('The fixture skill file could not be read')
+    await writeConfinedFile(skill,'references/guide.md','Current user guide',{ completeRead: true,baseIdentity: read.identity })
+    expect((await readdir(join(skill,'references'))).some(name => name.startsWith('.rerun-skill-bak-'))).toBe(true)
+    const inspected = await inspectCoworker(agentsRoot,randomUUID(),'source',{ includeBinary: true,requireTrustedOwnership: true,skillOwnership: () => 'user' })
+    expect(inspected.blocked).toBeNull()
+    const files = [inspected.soul,inspected.config,...inspected.selectableSkills.flatMap(value => value.files)].filter((file): file is NonNullable<typeof file> => file !== null)
+    const snapshot = await createDesktopCoworkerSnapshot({ workspaceId: 2,agentId: 'source',name: inspected.name,description: inspected.description,revision: 'a'.repeat(64),setup: inspected.setup,config: {},envKeys: [],mcpAuth: [],members: files.map(file => ({ path: file.path,bytes: file.raw,kind: file.path === 'config.json' ? 'config' as const : file.path.startsWith('skills/') ? 'skill' as const : 'instruction' as const,binary: file.binary,textScanned: file.textScanned,flagged: file.flagged,ownership: 'user' as const })) },{ memories: false,database: false,files: false })
+    const restored = await readPortableArchive(snapshot.archiveBytes)
+    expect(restored.members.find(member => member.path === 'skills/notes/references/guide.md')?.bytes.toString('utf8')).toBe('Current user guide')
+    expect(restored.members.some(member => member.path.includes('.rerun-skill-') || member.bytes.includes(Buffer.from('OLD_PRIVATE_SKILL_VERSION')))).toBe(false)
 })
 
 async function archive(path: string) {
@@ -61,18 +90,18 @@ test.each(reserved)('portable import rejects a valid archive containing internal
     expect(await listTemplateIds(dataRoot)).toEqual([])
 })
 
-test('portable import still accepts ordinary hidden user files', async () => {
-    const dataRoot = await root(), archiveBytes = await archive(ordinary[0]!)
+test.each([ordinary[0]!,ordinarySkills[0]!])('portable import still accepts ordinary hidden user files: %s', async path => {
+    const dataRoot = await root(), archiveBytes = await archive(path)
     const result = await importDesktopPortableTemplate({ requestId: randomUUID(),uploadId: randomUUID(),deps: { dataRoot,readImmutableUpload: async () => archiveBytes } })
     expect(result.status).toBe('imported')
     if (result.status !== 'imported') throw new Error('Canonical import was not acknowledged')
-    expect((await readManifest(dataRoot,result.templateId,result.revision)).coworkers[0]!.files.map(file => file.path)).toContain(ordinary[0])
+    expect((await readManifest(dataRoot,result.templateId,result.revision)).coworkers[0]!.files.map(file => file.path)).toContain(path)
 })
 
-test('canonical install refuses a previously saved manifest with nested internal metadata before creating any destination', async () => {
+test.each(['workspace/docs/.rerun-backup-old','skills/user/references/.rerun-skill-bak-old'])('canonical install refuses a previously saved manifest before creating any destination: %s', async path => {
     const dataRoot = await root(), agentsRoot = join(dataRoot,'agents'), templateId = 'c'.repeat(32)
     await mkdir(agentsRoot)
-    const manifest = sealManifest({ version: 1,kind: 'desktop-local-template',templateId,title: 'Old internal metadata',capturedAt: '2026-11-06T00:00:00.000Z',planRevision: 'b'.repeat(64),requestId: randomUUID(),proseWarning: DESKTOP_TEMPLATE_PROSE_WARNING,limits: DESKTOP_TEMPLATE_LIMITS,engineCommit: null,coworkers: [{ agentKey: 'c00',sourceEngineId: 'source',name: 'Source',description: '',setup: { required: false,prompt: '',answered: false },files: [{ path: 'workspace/docs/.rerun-backup-old',bytes: 4,kind: 'text',sourceRevision: 'd'.repeat(64),flagged: [] }],exclusions: [],redactions: [],strippedConfigKeys: [] }] })
+    const manifest = sealManifest({ version: 1,kind: 'desktop-local-template',templateId,title: 'Old internal metadata',capturedAt: '2026-11-06T00:00:00.000Z',planRevision: 'b'.repeat(64),requestId: randomUUID(),proseWarning: DESKTOP_TEMPLATE_PROSE_WARNING,limits: DESKTOP_TEMPLATE_LIMITS,engineCommit: null,coworkers: [{ agentKey: 'c00',sourceEngineId: 'source',name: 'Source',description: '',setup: { required: false,prompt: '',answered: false },files: [{ path,bytes: 4,kind: 'text',sourceRevision: 'd'.repeat(64),flagged: [] }],exclusions: [],redactions: [],strippedConfigKeys: [] }] })
     const directory = join(dataRoot,'desktop-templates',templateId,'revisions',manifest.revision)
     await mkdir(directory,{ recursive: true }); await writeFile(join(directory,'manifest.json'),JSON.stringify(manifest))
     const insertIndex = vi.fn(), engineAgentId = `i${'e'.repeat(31)}`

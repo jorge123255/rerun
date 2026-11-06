@@ -73,3 +73,20 @@ test('internal workspace rows never enter snapshot members or archive bytes whil
     }
     expect(restored.members.some(member => member.bytes.includes(Buffer.from('OLD_PRIVATE_BACKUP_SENTINEL')))).toBe(false)
 })
+
+test('Files off still excludes internal skill backups and nested assets while keeping ordinary hidden skill assets', async () => {
+    const current = source()
+    const reserved = ['skills/user/.rerun-skill-bak-old','skills/user/references/.rerun-skill-bak-old','skills/user/assets/.rerun-skill-stage-old/private.txt','skills/user/references/.rerun-skill-journal-old.json','skills/user/.RERUN-SKILL-tmp-alias']
+    const hidden = ['skills/user/.notes.md','skills/user/assets/.keep','skills/user/.user-assets/guide.txt']
+    for (const path of [...reserved,...hidden]) current.members.push({ path,bytes: Buffer.from(reserved.includes(path) ? 'OLD_PRIVATE_SKILL_BACKUP_SENTINEL' : 'Hidden user skill content'),kind: 'skill',binary: false,textScanned: true,flagged: [],ownership: 'user' })
+    const snapshot = await createDesktopCoworkerSnapshot(current,{ memories: false,database: false,files: false })
+    const restored = await readPortableArchive(snapshot.archiveBytes)
+    const paths = restored.members.map(member => member.path)
+    expect(paths).toEqual(expect.arrayContaining(['SOUL.md','INSTALL.md','config.json','skills/user/SKILL.md',...hidden]))
+    expect(paths.some(path => path.startsWith('workspace/'))).toBe(false)
+    for (const path of reserved) {
+        expect(paths).not.toContain(path)
+        expect(snapshot.manifest.coworkers[0]!.members.some(member => member.path === path)).toBe(false)
+    }
+    expect(restored.members.some(member => member.bytes.includes(Buffer.from('OLD_PRIVATE_SKILL_BACKUP_SENTINEL')))).toBe(false)
+})

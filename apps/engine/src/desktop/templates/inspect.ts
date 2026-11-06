@@ -14,7 +14,7 @@ import {
 } from '@rerun/contracts'
 import { TemplateRequestError } from './errors.ts'
 import { desktopSkillAuthorityRequired, trustedSkillOwners } from '../service-skills/authority.ts'
-import { collidingRelativePaths, isReservedTemplateWorkspacePath, readConfined, readConfinedBytes, walkConfined } from './files.ts'
+import { collidingRelativePaths, isReservedTemplateMetadataPath, readConfined, readConfinedBytes, walkConfined } from './files.ts'
 import { templateMediaType, normalizeTemplateRequirements } from './fidelity.ts'
 import { readEnvironmentKeyNames } from './files.ts'
 import { canonicalJson, sha256 } from './hash.ts'
@@ -286,10 +286,10 @@ export async function inspectCoworker(
 
     const selectableFiles: InspectedFile[] = []
     if ((await existsKind(resolve(folder, 'workspace'))) === 'link') exclusions.push({ path: 'workspace', reason: 'link' })
-    const workspace = await walkConfined(folder, 'workspace', maxWalkEntries, path => !isReservedTemplateWorkspacePath(path))
+    const workspace = await walkConfined(folder, 'workspace', maxWalkEntries, path => !isReservedTemplateMetadataPath(path))
     if (workspace.truncated) blocked = blocked ?? 'This coworker has too many files to capture'
     for (const entry of workspace.entries) {
-        if (isReservedTemplateWorkspacePath(entry.path)) continue
+        if (isReservedTemplateMetadataPath(entry.path)) continue
         if (entry.kind !== 'file') {
             exclusions.push({ path: entry.path, reason: entry.kind === 'link' ? 'link' : 'unsupported' })
             continue
@@ -308,10 +308,11 @@ export async function inspectCoworker(
     const selectableSkills: InspectedSkill[] = []
     if ((await existsKind(resolve(folder, 'skills'))) === 'link') exclusions.push({ path: 'skills', reason: 'link' })
     const ownershipFallback = options.skillOwnership ? null : await connectorOwners(folder, exclusions)
-    const skillWalk = await walkConfined(folder, 'skills', maxWalkEntries)
+    const skillWalk = await walkConfined(folder, 'skills', maxWalkEntries, path => !isReservedTemplateMetadataPath(path))
     if (skillWalk.truncated) blocked = blocked ?? 'This coworker has too many skill files to capture'
     const bySlug = new Map<string, { path: string; kind: 'file' | 'link' | 'other' }[]>()
     for (const entry of skillWalk.entries) {
+        if (isReservedTemplateMetadataPath(entry.path)) continue
         const slug = entry.path.split('/')[1]
         // The native read lease creates this inert lock; its presence cannot alter a capture plan.
         if (!slug || slug === '.rerun-skill-lock') continue

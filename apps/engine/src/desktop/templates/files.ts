@@ -168,10 +168,11 @@ export async function writeExclusiveFile(directory: string, relativeName: string
 
 export type WalkEntry = { path: string; kind: 'file' | 'link' | 'other' }
 
-/** Workspace journals, backups, locks and service metadata are never portable user files. */
-export function isReservedTemplateWorkspacePath(path: string): boolean {
+/** Native journals, backups, locks and service metadata are never portable user files. */
+export function isReservedTemplateMetadataPath(path: string): boolean {
     const parts = path.split('/')
-    return parts[0] === 'workspace' && parts.slice(1).some(part => part.normalize('NFKC').toLowerCase().startsWith('.rerun'))
+    const prefix = parts[0] === 'workspace' ? '.rerun' : parts[0] === 'skills' ? '.rerun-skill-' : null
+    return prefix !== null && parts.slice(1).some(part => part.normalize('NFKC').toLowerCase().startsWith(prefix))
 }
 
 // Directory links are recorded and not entered. The walk stops at maxEntries.
