@@ -127,7 +127,7 @@ export function DesktopForemanColumn({
                 />
                 <div className={onRoutines ? 'hidden' : 'contents'}>
                     {intake ? <>
-                        <div className="flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-3 py-6">
+                        <div className="relative flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-3 py-6">
                             <DesktopForemanIntakeHeader intake={intake} />
                         </div>
                         <div className="shrink-0 px-3 pb-3"><DesktopForemanIntakeCard intake={intake} autoFocus={ui.open && !hidden} /></div>
