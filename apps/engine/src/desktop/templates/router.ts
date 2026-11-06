@@ -1,11 +1,15 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { desktopTemplateIdSchema, desktopTemplateRevisionSchema, desktopTemplateSelectionSchema } from '@rerun/contracts'
+import { DESKTOP_PORTABLE_TEMPLATE_LIMITS, desktopPortableOperationSchema, desktopTemplateIdSchema, desktopTemplateRevisionSchema, desktopTemplateSelectionSchema } from '@rerun/contracts'
+import { join } from 'node:path'
 import { agentsDir, dataDir } from '../../config/paths.js'
 import { HttpError, notFound } from '../../lib/errors.js'
 import { desktopApp } from '../policy.js'
 import { TemplateRequestError } from './errors.js'
 import { createDesktopTemplateEngine } from './service.js'
+import { createDesktopPortableTemplateService } from './portable-service.js'
+import { createDesktopPortableFileStore } from './portable-files.js'
+import { trustedSkillOwners } from '../service-skills/authority.js'
 
 const draftBody = z.strictObject({ requestId: z.uuid(), title: z.string() })
 const planBody = z.strictObject({
@@ -35,8 +39,19 @@ const installBody = z.strictObject({
 })
 
 function engine() {
-    return createDesktopTemplateEngine({ dataRoot: dataDir(), agentsRoot: agentsDir() })
+    const ownership = new Map<string, Promise<Map<string, string>>>()
+    return createDesktopTemplateEngine({ dataRoot: dataDir(), agentsRoot: agentsDir() }, undefined, {
+        includeBinary: true,
+        requireTrustedOwnership: true,
+        skillOwnership: async ({ engineAgentId, slug }) => {
+            let current = ownership.get(engineAgentId)
+            if (!current) { current = trustedSkillOwners(join(agentsDir(), engineAgentId, 'workspace')); ownership.set(engineAgentId, current) }
+            return (await current).has(slug) || slug.startsWith('svc-') ? 'connector' : 'user'
+        },
+    })
 }
+
+function portable() { return createDesktopPortableTemplateService({ dataRoot: dataDir(), ...createDesktopPortableFileStore(dataDir()) }) }
 
 function reject(error: unknown): never {
     if (error instanceof TemplateRequestError) throw new HttpError(error.status, error.message)
@@ -46,9 +61,22 @@ function reject(error: unknown): never {
 async function jsonBody(request: Request): Promise<unknown> {
     const length = request.headers.get('content-length')
     if (length !== null && (!/^\d+$/.test(length) || Number(length) > 262_144)) throw new HttpError(413, 'Template request is too large')
-    const text = await request.text()
-    if (text.length > 262_144) throw new HttpError(413, 'Template request is too large')
-    try { return JSON.parse(text) as unknown }
+    const reader = request.body?.getReader()
+    if (!reader) throw new HttpError(400, 'Invalid template request')
+    const chunks: Uint8Array[] = []
+    let bytes = 0
+    try {
+        for (;;) {
+            request.signal.throwIfAborted()
+            const next = await reader.read()
+            if (next.done) break
+            bytes += next.value.byteLength
+            if (bytes > 262_144) throw new HttpError(413, 'Template request is too large')
+            chunks.push(next.value)
+        }
+    } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+    request.signal.throwIfAborted()
+    try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown }
     catch { throw new HttpError(400, 'Invalid template request') }
 }
 
@@ -81,6 +109,49 @@ desktopTemplateRoutes.post('/install', async c => {
     const body = installBody.safeParse(await jsonBody(c.req.raw))
     if (!body.success) throw new HttpError(400, 'Invalid template request')
     return c.json(await engine().install(body.data).catch(reject))
+})
+
+for (const operation of ['export', 'import-package', 'delete'] as const) {
+    desktopTemplateRoutes.post(`/${operation}`, async c => {
+        const body = desktopPortableOperationSchema.safeParse(await jsonBody(c.req.raw))
+        if (!body.success || body.data.operation !== operation) throw new HttpError(400, 'Invalid portable template request')
+        return c.json(await portable().handle(body.data).catch(reject))
+    })
+}
+
+desktopTemplateRoutes.get('/portable-receipt/:requestId', async c => c.json(await portable().receipt(c.req.param('requestId')).catch(reject)))
+
+desktopTemplateRoutes.post('/uploads/:uploadId', async c => {
+    const request = c.req.raw
+    const limit = DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxCompressedBytes
+    const length = request.headers.get('content-length')
+    if (length && (!/^\d+$/.test(length) || Number(length) > limit)) throw new HttpError(413, 'Template package is too large')
+    const reader = request.body?.getReader()
+    if (!reader) throw new HttpError(400, 'Template package is missing')
+    const chunks: Uint8Array[] = []
+    let bytes = 0
+    try {
+        for (;;) {
+            request.signal.throwIfAborted()
+            const part = await reader.read()
+            if (part.done) break
+            bytes += part.value.byteLength
+            if (bytes > limit) throw new HttpError(413, 'Template package is too large')
+            chunks.push(part.value)
+        }
+    } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+    request.signal.throwIfAborted()
+    if (length && Number(length) !== bytes) throw new HttpError(400, 'Template package was incomplete')
+    let fileName: string
+    try { fileName = decodeURIComponent(request.headers.get('x-template-filename') ?? '') }
+    catch { throw new HttpError(400, 'Invalid template filename') }
+    return c.json(await createDesktopPortableFileStore(dataDir()).upload(c.req.param('uploadId'), Buffer.concat(chunks), fileName).catch(reject))
+})
+desktopTemplateRoutes.get('/uploads/:uploadId', async c => c.json(await createDesktopPortableFileStore(dataDir()).uploadInfo(c.req.param('uploadId')).catch(reject)))
+desktopTemplateRoutes.get('/artifacts/:artifactId', async c => c.json(await createDesktopPortableFileStore(dataDir()).downloadInfo(c.req.param('artifactId')).catch(reject)))
+desktopTemplateRoutes.get('/artifacts/:artifactId/content', async c => {
+    const download = await createDesktopPortableFileStore(dataDir()).download(c.req.param('artifactId')).catch(reject)
+    return new Response(new Uint8Array(download.bytes), { headers: { 'content-type': 'application/gzip', 'content-length': String(download.bytes.length), 'cache-control': 'no-store' } })
 })
 
 desktopTemplateRoutes.get('/', async c => c.json(await engine().list().catch(reject)))

@@ -1,7 +1,7 @@
 import 'server-only'
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 
 const AAD_LABEL = 'desktop-service-header-v1'
 

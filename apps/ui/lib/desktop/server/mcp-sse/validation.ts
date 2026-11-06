@@ -1,4 +1,4 @@
-import { DESKTOP_MCP_SSE_LIMITS as L, desktopMcpSseToolSchema, type DesktopMcpSseTool } from '../../../../../../packages/contracts/src/desktop-mcp-sse'
+import { DESKTOP_MCP_SSE_LIMITS as L, desktopMcpSseToolSchema, type DesktopMcpSseTool } from '@rerun/contracts'
 import type { RemoteTool } from '../mcp/model'
 import { SseFailure } from './errors'
 import { z } from 'zod'

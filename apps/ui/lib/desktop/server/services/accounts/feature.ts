@@ -8,7 +8,7 @@ import {
     DESKTOP_SERVICE_ACCOUNT_MESSAGES as M,
     type DesktopServiceAccountBinding,
     type DesktopServiceAccountView,
-} from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+} from '@rerun/contracts'
 import { accountMethodAvailability, additionalAccountVisible } from './availability'
 import type { AccountCatalogPort } from './lifecycle'
 import { accountLifecycle, type AccountLifecycleDeps } from './lifecycle'

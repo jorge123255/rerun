@@ -31,7 +31,6 @@ export function createDesktopPortableTemplateService(deps: PortableTemplateDeps)
                     }))
                 case 'import-package':
                     if (!deps.readImmutableUpload) throw new TemplateRequestError(503, 'Immutable upload callback is not configured')
-                    if (!deps.publishDownloadArtifact && false) { /* export-only */ }
                     return desktopPortableImportResultSchema.parse(await importDesktopPortableTemplate({
                         requestId: parsed.requestId,
                         uploadId: parsed.uploadId,
@@ -61,6 +60,7 @@ export function createDesktopPortableTemplateService(deps: PortableTemplateDeps)
                 const raw = await readOwnJson(home, name)
                 if (!raw || typeof raw !== 'object') continue
                 const row = raw as Record<string, unknown>
+                if (row.requestId !== requestId) throw new TemplateRequestError(409, 'Portable receipt identity does not match')
                 const deleted = operation === 'delete' ? await reconcilePortableDelete(deps.dataRoot, requestId) : null
                 if (deleted) {
                     return desktopPortableReceiptSchema.parse({
@@ -74,17 +74,18 @@ export function createDesktopPortableTemplateService(deps: PortableTemplateDeps)
                         recoverable: deleted.status === 'uncertain',
                     })
                 }
+                const acknowledged = operation === 'export'
+                    ? row.phase === 'published' && typeof row.artifactId === 'string' && typeof row.contentDigest === 'string' && typeof row.bytes === 'number' && typeof row.fileName === 'string'
+                    : row.phase === 'published' && typeof row.templateId === 'string' && typeof row.revision === 'string' && row.provenance != null && row.fidelity != null
                 return desktopPortableReceiptSchema.parse({
                     requestId,
                     receiptId: requestId,
                     operation,
-                    status: typeof row.artifactId === 'string' || typeof row.templateId === 'string' || typeof row.tombstoneId === 'string'
-                        ? 'acknowledged'
-                        : 'uncertain',
+                    status: acknowledged ? 'acknowledged' : 'uncertain',
                     templateId: typeof row.templateId === 'string' ? row.templateId : null,
                     revision: typeof row.revision === 'string' ? row.revision : null,
                     artifactId: typeof row.artifactId === 'string' ? row.artifactId : null,
-                    recoverable: !(typeof row.artifactId === 'string' || typeof row.tombstoneId === 'string' || (typeof row.templateId === 'string' && typeof row.revision === 'string')),
+                    recoverable: !acknowledged,
                 })
             }
             throw new TemplateRequestError(404, 'Portable template receipt not found')

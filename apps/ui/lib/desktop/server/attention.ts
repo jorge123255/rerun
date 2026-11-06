@@ -1,4 +1,5 @@
 import { readDesktopServiceRequestView } from './service-requests/view'
+import { readDesktopSecretRequestView } from './secret-requests/binding'
 import 'server-only'
 import { resolve } from 'node:path'
 import type { DesktopAttention, DesktopAttentionItem } from '../attention'
@@ -60,6 +61,11 @@ async function collect(runtime: DesktopRuntime): Promise<DesktopAttention> {
                             signal.throwIfAborted()
                             const {request} = await readDesktopServiceRequestView(runtime, session.id, {signal})
                             if(request && !request.receipt?.accepted) pending = {id:request.serviceRequestId,kind:'service',summary:summary(request.services[0]?.reason ?? 'Connect apps')}
+                            else {
+                                signal.throwIfAborted()
+                                const { request: secret } = await readDesktopSecretRequestView(runtime, session.id, { signal })
+                                if (secret) pending = { id: secret.requestId, kind: 'secret', summary: summary(`Needs ${secret.fields[0].label}${secret.fields.length > 1 ? ` (+${secret.fields.length - 1} more)` : ''}`), requestedAt: secret.createdAt }
+                            }
                         }
                     }
                 }

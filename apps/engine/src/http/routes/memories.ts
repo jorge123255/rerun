@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { desktopMemoryCreateSchema, memoryRecallQuerySchema } from '@rerun/contracts'
+import { desktopMemoryCreateSchema, memoryRecallQuerySchema, desktopSemanticRecallRequestSchema, desktopSemanticMaintainSchema } from '@rerun/contracts'
 import { z } from 'zod'
 import { getAgent } from '../../agents/registry.js'
 import { listMemoryFiles } from '../../memory/files.js'
@@ -8,8 +8,25 @@ import { computeStrength, memoryStatus } from '../../memory/decay.js'
 import { listMemories } from '../../db/repos/memories.js'
 import { desktopApp } from '../../desktop/policy.js'
 import { addDesktopMemory, clearDesktopMemories, listDesktopMemory, recallDesktopMemory, removeDesktopMemory } from '../../desktop/memory-store.js'
+import { maintainSemanticDesktopMemory, recallSemanticDesktopMemory, semanticDesktopMemoryStatus } from '../../desktop/semantic-memory/runtime.js'
+import { notFound } from '../../lib/errors.js'
 
 export const memoryRoutes = new Hono()
+
+memoryRoutes.get('/semantic/status', async c => {
+    if (!desktopApp()) throw notFound('desktop memories')
+    return c.json(await semanticDesktopMemoryStatus(c.req.param('id')!, c.req.raw.signal))
+})
+memoryRoutes.post('/semantic/recall', async c => {
+    if (!desktopApp()) throw notFound('desktop memories')
+    const input = desktopSemanticRecallRequestSchema.parse(await c.req.json())
+    return c.json(await recallSemanticDesktopMemory(c.req.param('id')!, { ...input, reinforce: 'none' }, c.req.raw.signal))
+})
+memoryRoutes.post('/semantic/index', async c => {
+    if (!desktopApp()) throw notFound('desktop memories')
+    const input = desktopSemanticMaintainSchema.parse(await c.req.json())
+    return c.json(await maintainSemanticDesktopMemory(c.req.param('id')!, input.operation, c.req.raw.signal))
+})
 
 memoryRoutes.get('/', async c => {
     const agentId = c.req.param('id')!

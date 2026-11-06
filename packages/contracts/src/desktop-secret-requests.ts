@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { stripBridgePrefix } from './chat-tool-name.js'
 
 export const DESKTOP_SECRET_REQUEST_VERSION = 1
 export const DESKTOP_SECRET_VALUE_MAX_BYTES = 16_384
@@ -10,7 +11,7 @@ export const DESKTOP_SECRET_RESERVED_KEYS = new Set([
 export const DESKTOP_SECRET_RESERVED_PREFIXES = ['RERUN_', 'NEXT_']
 
 const id = z.string().min(1).max(128)
-const publicText = z.string().min(1).max(256)
+const publicText = z.string().min(1).max(32_768)
 
 export const desktopSecretRequestFieldSchema = z.object({
     key: z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(64),
@@ -39,11 +40,76 @@ export const desktopSecretRequestSourceSchema = z.object({
     agentId: id,
     sessionId: id,
     runId: id,
-    sourceMessageId: id,
-    toolCallId: id,
+    sourceMessageId: z.string().min(1).max(256),
+    toolCallId: z.string().min(1).max(256),
     fingerprint: publicText,
 }).strict()
 export type DesktopSecretRequestSource = z.infer<typeof desktopSecretRequestSourceSchema>
+export const desktopSecretRequestGuardSchema = desktopSecretRequestSourceSchema.omit({ agentId: true, sessionId: true })
+export type DesktopSecretRequestGuard = z.infer<typeof desktopSecretRequestGuardSchema>
+
+export type DesktopSecretRequestRow = { id: string; role: string; contentJson: string; toolCallsJson?: string | null; createdAt?: string | null }
+export type DesktopSecretRequestCall = DesktopSecretRequestInput & { sourceMessageId: string; toolCallId: string; fingerprint: string; requestedAt?: string | null }
+const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+function json(value: unknown): unknown { if (typeof value !== 'string') return value; try { return JSON.parse(value) } catch { return value } }
+
+export function parseDesktopSecretToolInput(raw: unknown): DesktopSecretRequestInput | null {
+    const input = record(json(raw))
+    const batch = json(input.secrets)
+    if (!Array.isArray(batch)) return null
+    const fields = batch.map(raw => {
+        const { help, docsUrl, ...field } = record(raw)
+        return { ...field, ...(help != null ? { help } : {}), ...(docsUrl != null ? { docsUrl } : {}) }
+    })
+    const parsed = desktopSecretRequestInputSchema.safeParse({ fields, ...(input.reason != null ? { reason: input.reason } : {}) })
+    return parsed.success ? parsed.data : null
+}
+
+function delivered(raw: unknown, depth = 0): boolean {
+    if (depth > 5) return false
+    const value = record(json(raw))
+    if (value.isError === true || value.type === 'error-text' || value.type === 'error-json') return false
+    if (value.status === 'delivered') return true
+    if ((value.type === 'json' || value.type === 'text') && 'value' in value) return delivered(value.value, depth + 1)
+    if (value.structuredContent != null && delivered(value.structuredContent, depth + 1)) return true
+    return Array.isArray(value.content) && value.content.some(part => record(part).type === 'text' && delivered(record(part).text, depth + 1))
+}
+
+/** Only an acknowledged last-turn request can become a form. No field values are accepted. */
+export function findDesktopSecretRequest(rows: readonly DesktopSecretRequestRow[]): DesktopSecretRequestCall | null {
+    let candidate: DesktopSecretRequestCall | null = null
+    let acknowledged = false
+    for (const row of rows) {
+        if (row.role === 'user') { candidate = null; acknowledged = false; continue }
+        const content = json(row.contentJson), legacy = json(row.toolCallsJson)
+        for (const raw of [...(Array.isArray(content) ? content : [content]), ...(Array.isArray(legacy) ? legacy : [])]) {
+            const part = record(raw), callId = part.toolCallId ?? part.id
+            if (part.type === 'tool-result' || (row.role === 'tool' && (part.output !== undefined || part.result !== undefined))) {
+                if (candidate && callId === candidate.toolCallId) acknowledged = part.isError !== true && delivered(part.output ?? part.result)
+                continue
+            }
+            if (row.role !== 'assistant' || (part.type !== 'tool-call' && !part.toolName && !part.name && !record(part.function).name)) continue
+            const rawName = part.toolName ?? part.name ?? record(part.function).name
+            const name = typeof rawName === 'string' ? stripBridgePrefix(rawName) : ''
+            if (name === 'skill_propose') continue
+            candidate = null; acknowledged = false
+            if (name !== 'request_secret' || typeof callId !== 'string' || !callId || callId.length > 256 || !row.id || row.id.length > 256) continue
+            const input = parseDesktopSecretToolInput(part.input ?? part.args ?? part.arguments ?? record(part.function).arguments)
+            if (input) candidate = { ...input, sourceMessageId: row.id, toolCallId: callId, fingerprint: JSON.stringify(input), requestedAt: row.createdAt }
+        }
+    }
+    return acknowledged ? candidate : null
+}
+
+export const desktopSecretSourceResponseSchema = z.object({
+    agentId: id, sessionId: id,
+    request: z.object({ input: desktopSecretRequestInputSchema, guard: desktopSecretRequestGuardSchema, status: z.enum(['running', 'done', 'error', 'cancelled']), requestedAt: z.string().nullable().optional() }).strict().nullable(),
+}).strict()
+
+export function sameDesktopSecretRequestSource(left: DesktopSecretRequestSource, right: DesktopSecretRequestSource): boolean {
+    return left.agentId === right.agentId && left.sessionId === right.sessionId && left.runId === right.runId
+        && left.sourceMessageId === right.sourceMessageId && left.toolCallId === right.toolCallId && left.fingerprint === right.fingerprint
+}
 
 export const desktopSecretRequestViewFieldSchema = desktopSecretRequestFieldSchema.extend({ existing: z.boolean() }).strict()
 export type DesktopSecretRequestViewField = z.infer<typeof desktopSecretRequestViewFieldSchema>
@@ -90,6 +156,13 @@ export const desktopSecretRequestDecisionSchema = z.object({
     values: z.record(z.string(), z.string()).optional(),
 }).strict()
 export type DesktopSecretRequestDecision = z.infer<typeof desktopSecretRequestDecisionSchema>
+
+export const desktopSecretRequestRecoverySchema = desktopSecretRequestDecisionSchema.omit({ operation: true, values: true }).extend({
+    operation: z.literal('recover'),
+}).strict()
+export type DesktopSecretRequestRecovery = z.infer<typeof desktopSecretRequestRecoverySchema>
+export const desktopSecretRequestActionSchema = z.union([desktopSecretRequestDecisionSchema, desktopSecretRequestRecoverySchema])
+export type DesktopSecretRequestAction = z.infer<typeof desktopSecretRequestActionSchema>
 
 export function serializeDesktopSecretReceiptSummary(fields: readonly DesktopSecretRequestField[], providedKeys: readonly string[], _decision: DesktopSecretRequestReceipt['decision']): string {
     const provided = new Set(providedKeys)

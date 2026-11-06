@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { DownloadIcon, EllipsisIcon, Trash2Icon, UploadIcon } from '@/lib/icons'
@@ -8,31 +8,58 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import type { DesktopPortableTemplateActions } from '@/lib/desktop/portable-template-actions'
 import type { DesktopTemplateDetail } from './types'
 
+type Attempt = { requestId: string; uploadId?: string }
+
 export function DesktopTemplatePortableActions({
     template,
     actions,
     onLibraryChanged,
     onPickImport,
+    onSaveExport,
 }: {
     template: DesktopTemplateDetail
     actions: DesktopPortableTemplateActions
     onLibraryChanged: () => void
-    onPickImport?: () => Promise<{ uploadId: string } | null>
+    onPickImport?: () => Promise<{ uploadId: string; requestId?: string } | null>
+    onSaveExport?: (artifactId: string) => Promise<{ saved: boolean }>
 }) {
     const [busy, setBusy] = useState<'export' | 'import' | 'delete' | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [note, setNote] = useState<string | null>(null)
     const [deleteOpen, setDeleteOpen] = useState(false)
+    const running = useRef(false)
+    const mounted = useRef(true)
+    useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+    const attempts = useRef(new Map<string, Attempt>())
     const canManage = Boolean(template.capturedAt && template.revision)
 
+    function attemptKey(kind: string) { return `rerun-portable-attempt:v1:${template.templateId}:${template.revision}:${kind}` }
+    function savedAttempt(kind: string): Attempt | null {
+        const key = attemptKey(kind)
+        return attempts.current.get(key) ?? null
+    }
+    function remember(kind: string, attempt: Attempt) {
+        const key = attemptKey(kind)
+        attempts.current.set(key, attempt)
+        return attempt
+    }
+    function forget(kind: string) {
+        const key = attemptKey(kind)
+        attempts.current.delete(key)
+    }
+
     async function runExport() {
-        if (!canManage || busy) return
+        if (!canManage || running.current) return
+        running.current = true
         setBusy('export')
         setError(null)
         setNote(null)
         try {
-            const result = await actions.exportTemplate({ templateId: template.templateId, revision: template.revision })
+            const attempt = remember('export', savedAttempt('export') ?? { requestId: crypto.randomUUID() })
+            const result = await actions.exportTemplate({ templateId: template.templateId, revision: template.revision, requestId: attempt.requestId })
+            if (!mounted.current) return
             if (!result.ok) {
+                if (!result.uncertain) forget('export')
                 setError(result.error)
                 return
             }
@@ -40,23 +67,34 @@ export function DesktopTemplatePortableActions({
                 setError(result.result.reason)
                 return
             }
-            setNote(`Exported ${result.result.fileName}. Root opens the owned download artifact; files already saved outside the app stay owned by the user.`)
-            onLibraryChanged()
+            forget('export')
+            if (onSaveExport) {
+                const saved = await onSaveExport(result.result.artifactId)
+                setNote(saved.saved ? `Saved ${result.result.fileName}.` : 'Export ready. Choose Export to save the package.')
+            } else setNote(`Exported ${result.result.fileName}.`)
+        } catch {
+            setError('Could not confirm the export. Try again to recover this attempt.')
         } finally {
+            running.current = false
             setBusy(null)
         }
     }
 
     async function runImport() {
-        if (!onPickImport || busy) return
+        if (!onPickImport || running.current) return
+        running.current = true
         setBusy('import')
         setError(null)
         setNote(null)
         try {
-            const picked = await onPickImport()
+            const previous = savedAttempt('import')
+            const picked = previous?.uploadId ? { uploadId: previous.uploadId, requestId: previous.requestId } : await onPickImport()
             if (!picked) return
-            const result = await actions.importPackage({ uploadId: picked.uploadId })
+            const attempt = remember('import', previous?.uploadId ? previous : { requestId: picked.requestId ?? crypto.randomUUID(), uploadId: picked.uploadId })
+            const result = await actions.importPackage({ uploadId: picked.uploadId, requestId: attempt.requestId })
+            if (!mounted.current) return
             if (!result.ok) {
+                if (!result.uncertain) forget('import')
                 setError(result.error)
                 return
             }
@@ -64,21 +102,29 @@ export function DesktopTemplatePortableActions({
                 setError(result.result.reason)
                 return
             }
-            setNote(`Imported “${result.result.provenance.sourceTitle}” as a new local library template. Setup stays unanswered until the owner completes it.`)
+            forget('import')
+            setNote(`Imported “${result.result.provenance.sourceTitle}” into your library.`)
             onLibraryChanged()
+        } catch {
+            setError('Could not confirm the import. Try again to recover this attempt.')
         } finally {
+            running.current = false
             setBusy(null)
         }
     }
 
     async function runDelete() {
-        if (!canManage || busy) return
+        if (!canManage || running.current) return
+        running.current = true
         setBusy('delete')
         setError(null)
         setNote(null)
         try {
-            const result = await actions.deleteTemplate({ templateId: template.templateId, revision: template.revision })
+            const attempt = remember('delete', savedAttempt('delete') ?? { requestId: crypto.randomUUID() })
+            const result = await actions.deleteTemplate({ templateId: template.templateId, revision: template.revision, requestId: attempt.requestId })
+            if (!mounted.current) return
             if (!result.ok) {
+                if (!result.uncertain) forget('delete')
                 setError(result.error)
                 return
             }
@@ -86,9 +132,13 @@ export function DesktopTemplatePortableActions({
                 setError(result.result.reason)
                 return
             }
-            setNote('Removed from the local library. Installed coworkers and their chats were left intact.')
+            forget('delete')
+            setNote('Removed from the library. Your installed coworkers and their chats are still available.')
             onLibraryChanged()
+        } catch {
+            setError('Could not confirm the deletion. Try again to recover this attempt.')
         } finally {
+            running.current = false
             setBusy(null)
             setDeleteOpen(false)
         }

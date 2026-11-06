@@ -5,8 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { PanelEditorShell, PanelEditorHeader, PanelEditorBody, PanelEditorFooter, PanelDeleteButton } from '@/components/ui/panel-editor'
-import type { DesktopMcpSseConfiguration, DesktopMcpSseRef } from '../../../../../packages/contracts/src/desktop-mcp-sse'
-import { desktopMcpSseRefSchema } from '../../../../../packages/contracts/src/desktop-mcp-sse'
+import type { DesktopMcpSseConfiguration, DesktopMcpSseRef } from '@rerun/contracts'
+import { desktopMcpSseRefSchema } from '@rerun/contracts'
 import { sameSseEditorAttempt, sameSseEditorOwner, sseAttemptId, sseEditorConfiguration, sseEditorSlot, type SseEditorAttempt, type SseEditorDriver } from './editor-state'
 
 export function DesktopMcpTransportButtons({ value, disabled, onChange }: { value: 'stdio' | 'sse' | 'http'; disabled?: boolean; onChange?: (value: 'stdio' | 'sse' | 'http') => void }) {
@@ -91,9 +91,9 @@ function Editor({ agentId, reference, configuration, readOnly, authentication, d
         <PanelEditorBody>
             {error && <p role="alert" className="break-words text-xs text-destructive">{error}</p>}
             {readOnly && <p className="text-xs text-muted-foreground">This MCP server is provided by an app and is managed automatically.</p>}
-            <Field label="Name" helperText={`Tools are merged as "${name.trim() || 'name'}_<tool>".`}><Input value={name} onChange={event => setName(event.target.value)} disabled={!!reference || readOnly || busy || !!attempt || !loaded} className="h-8 text-sm" placeholder="filesystem"/></Field>
+            <Field label="Name" htmlFor="desktop-sse-name" helperText={`Tools are merged as "${name.trim() || 'name'}_<tool>".`}><Input id="desktop-sse-name" value={name} onChange={event => setName(event.target.value)} disabled={!!reference || readOnly || busy || !!attempt || !loaded} className="h-8 text-sm" placeholder="filesystem"/></Field>
             <DesktopMcpTransportButtons value="sse" disabled={readOnly || busy || !!attempt || !loaded} onChange={onChooseTransport}/>
-            <Field label="URL"><Input value={url} onChange={event => setUrl(event.target.value)} disabled={readOnly || busy || !!attempt || !loaded} className="h-8 text-sm" placeholder="https://example.com/sse"/></Field>
+            <Field label="URL" htmlFor="desktop-sse-url"><Input id="desktop-sse-url" value={url} onChange={event => setUrl(event.target.value)} disabled={readOnly || busy || !!attempt || !loaded} className="h-8 text-sm" placeholder="https://example.com/sse"/></Field>
             <Field label="Headers" helperText="Authentication is managed by the existing per-server MCP settings. Header values are never returned here.">
                 <p className="break-words text-xs text-muted-foreground">{authentication === 'configured' ? 'Authentication configured.' : 'Anonymous connection.'}</p>
                 {!readOnly && reference && onOpenAuthentication && <Button size="sm" variant="outline" disabled={busy || !!attempt || !loaded} onClick={() => void authenticationFlow()}>Configure authentication</Button>}

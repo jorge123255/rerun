@@ -5,7 +5,7 @@ import {
     desktopSemanticRecallResultSchema,
     type DesktopSemanticIndexStatus,
     type DesktopSemanticRecallResult,
-} from '../../../../packages/contracts/src/desktop-semantic-memory.ts'
+} from '@rerun/contracts'
 
 export class DesktopSemanticMemoryClientError extends Error {
     constructor(message: string) {

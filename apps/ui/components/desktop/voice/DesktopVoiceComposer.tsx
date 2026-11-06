@@ -1,24 +1,38 @@
 'use client'
 
-import type { DesktopVoiceDraft, DesktopVoiceScope } from '../../../../../packages/contracts/src/desktop-voice.ts'
+import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import type { DesktopVoiceSendReceipt, DesktopVoiceScope, DesktopVoiceRevisionAction } from '@rerun/contracts'
 import { useDesktopVoiceMessage } from '@/lib/desktop/voice/useDesktopVoiceMessage'
 import { DesktopVoiceComposerControls } from './DesktopVoiceComposerControls'
 import { DesktopVoiceRecorderBar } from './DesktopVoiceRecorderBar'
 import { DesktopVoiceReview } from './DesktopVoiceReview'
 
-export function DesktopVoiceComposer({ agentId, tabUid, sessionId, besideSend = false, onSent }: DesktopVoiceScope & {
+export function DesktopVoiceComposer({ agentId, tabUid, sessionId, besideSend = false, disabled = false, active = true, reviewTarget, modelChoice, onActivity, onSent }: DesktopVoiceScope & {
     besideSend?: boolean
-    onSent?: (result: { draft: DesktopVoiceDraft; text: string }) => void
+    disabled?: boolean
+    active?: boolean
+    reviewTarget?: HTMLElement | null
+    modelChoice?: DesktopVoiceRevisionAction['modelChoice']
+    onActivity?: (state: { busy: boolean; dirty: boolean }) => void
+    onSent?: (result: DesktopVoiceSendReceipt & { text: string }) => void
 }) {
-    const voice = useDesktopVoiceMessage({ agentId, tabUid, sessionId, onSent })
+    const voice = useDesktopVoiceMessage({ agentId, tabUid, sessionId, enabled: !disabled, active, modelChoice, onSent })
+    const busy = ['starting', 'recording', 'uploading', 'transcribing', 'sending'].includes(voice.status)
+    const dirty = busy || !!(voice.take || voice.draft && voice.status !== 'sent')
+    useEffect(() => { onActivity?.({ busy, dirty }) }, [busy, dirty, onActivity])
+    useEffect(() => () => onActivity?.({ busy: false, dirty: false }), [onActivity])
     const scope = { agentId, tabUid, sessionId }
-    return <div className="relative flex w-full min-w-0 items-center gap-2">
-        {voice.status === 'starting' || voice.status === 'recording'
+    const review = voice.status === 'starting' || voice.status === 'recording'
             ? <DesktopVoiceRecorderBar status={voice.status} stream={voice.stream} getLiveState={voice.getLiveState} />
-            : voice.status === 'idle' ? null : <DesktopVoiceReview scope={scope} take={voice.take} draft={voice.draft} error={voice.error} />}
+            : voice.status === 'idle' || voice.status === 'sent' ? null : <DesktopVoiceReview scope={scope} take={voice.take} draft={voice.draft} error={voice.error} />
+    return <TooltipProvider><div className="relative flex min-w-0 shrink-0 items-center gap-2">
+        {reviewTarget ? createPortal(review, reviewTarget) : review}
         <div className="flex shrink-0 items-center gap-1">
             <DesktopVoiceComposerControls
                 status={voice.status}
+                disabled={disabled || !active}
                 besideSend={besideSend}
                 onStart={() => void voice.start()}
                 onFinish={() => void voice.finish()}
@@ -29,5 +43,5 @@ export function DesktopVoiceComposer({ agentId, tabUid, sessionId, besideSend = 
                 onRerecord={() => void voice.rerecord()}
             />
         </div>
-    </div>
+    </div></TooltipProvider>
 }

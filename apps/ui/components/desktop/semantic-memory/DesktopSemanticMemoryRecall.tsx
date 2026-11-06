@@ -7,7 +7,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { PanelList } from '@/components/ui/panel-list'
 import { BrainIcon } from '@/lib/icons'
 import { createDesktopSemanticMemoryClient, DesktopSemanticMemoryClientError } from '@/lib/desktop/semantic-memory-client'
-import type { DesktopSemanticIndexStatus } from '../../../../../packages/contracts/src/desktop-semantic-memory.ts'
+import type { DesktopSemanticIndexStatus } from '@rerun/contracts'
 import { reduceSemanticMemoryPanel, semanticMemoryPanelState, semanticMemoryStatusCopy } from './state'
 
 // Root mounts this under the existing Memories search. It does not add, edit, clear, or strengthen notes.

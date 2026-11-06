@@ -31,6 +31,12 @@ beforeEach(async () => {
     server = createServer((req, res) => {
         const url = new URL(req.url ?? '/', 'http://engine')
         const json = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
+        const secretSource = /^\/agents\/([^/]+)\/sessions\/([^/]+)\/secret-request-source$/.exec(url.pathname)
+        if (req.method === 'POST' && secretSource) {
+            const agentId = decodeURIComponent(secretSource[1]), sessionId = decodeURIComponent(secretSource[2])
+            return runs.some(run => run.agentId === agentId && run.sessionId === sessionId)
+                ? json(200, { agentId, sessionId, request: null }) : json(404, { error: 'conversation not found' })
+        }
         // Board attention now verifies that a stopped chat has no pending request.
         const messages = /^\/agents\/([^/]+)\/sessions\/([^/]+)\/messages$/.exec(url.pathname)
         if (req.method === 'GET' && messages) {

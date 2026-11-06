@@ -17,6 +17,7 @@ import { assertDesktopSetupChatAllowed } from '../setup/service'
 import { resolveDesktopChatModel } from '../chat-model'
 import { readDesktopQuestion } from '../questions'
 import { readDesktopApproval } from '../approvals'
+import { readDesktopSecretRequestView } from '../secret-requests/binding'
 import { readDesktopTakeover } from '../takeover'
 import { readPendingDesktopServiceToolCallView } from '../service-requests/view'
 import { getSession } from '@/lib/engine/client'
@@ -123,6 +124,7 @@ async function currentSnapshot(runtime: DesktopRuntime, row: CoworkerCallRecord)
     if ((await readDesktopApproval(runtime, session.id, options)).approval?.toolCallId === row.pendingToolCallId) return result
     if ((await readDesktopTakeover(runtime, session.id, options)).takeover?.toolCallId === row.pendingToolCallId) return result
     if (await readPendingDesktopServiceToolCallView(runtime, session.id, options) === row.pendingToolCallId) return result
+    if ((await readDesktopSecretRequestView(runtime, session.id, options)).request?.source.toolCallId === row.pendingToolCallId) return result
     return { ...result, status: 'completed' as const }
 }
 

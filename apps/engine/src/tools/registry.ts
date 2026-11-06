@@ -51,6 +51,10 @@ import { desktopMcpTools } from '../desktop/mcp-tools.js'
 import { desktopStdioTools } from '../desktop/mcp-stdio/client.js'
 import { desktopServiceTools } from '../desktop/service-tools.js'
 import { desktopSuggestServiceTools } from '../desktop/service-requests/suggest-service.js'
+import { desktopSelfMcpTools } from '../desktop/self-mcp/index.js'
+import { desktopSecretRequestTools } from '../desktop/secret-requests/request-secret.js'
+import { desktopWebSearchTools } from '../desktop/web-search-tool.js'
+import { desktopWebSearch } from '../desktop/web-search/client.js'
 import { desktopSetupRunAllowed, desktopSetupTools } from '../desktop/setup/service.js'
 import { desktopBrowserExportPublisher } from '../desktop/isolated-screen/export-client.js'
 import { isolatedScreenTools } from '../desktop/isolated-screen/tools.js'
@@ -65,6 +69,9 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         const screen = isolatedScreenTools(ctx, { publishExports: desktopBrowserExportPublisher })
         const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopSuggestServiceTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx) }
         Object.assign(tools, readDesktopDelegation()?.tools(ctx) ?? {})
+        Object.assign(tools, desktopSecretRequestTools(ctx))
+        Object.assign(tools, desktopSelfMcpTools(ctx))
+        Object.assign(tools, desktopWebSearchTools(ctx, { search: desktopWebSearch }))
         const triggers = readDesktopTriggerRuntime()
         if (triggers && hasDesktopToolGrant(ctx.agent.config, 'trigger') && !ctx.agent.config.ephemeral) Object.assign(tools, triggers.toolFactory(ctx.agent.id, ctx))
         const calls = readDesktopCoworkerCallRuntime()

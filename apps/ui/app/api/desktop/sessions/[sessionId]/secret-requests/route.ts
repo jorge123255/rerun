@@ -1,5 +1,5 @@
 import { createDesktopSecretRequestApi } from '@/lib/desktop/server/secret-requests/api'
-import { desktopSecretRequestPorts } from '@/lib/desktop/server/engine'
+import { desktopSecretRequestPorts } from '@/lib/desktop/server/secret-requests/binding'
 import { desktopRoute } from '@/lib/desktop/server/http'
 
 export const dynamic = 'force-dynamic'

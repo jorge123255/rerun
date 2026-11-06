@@ -14,6 +14,8 @@ import { useDesktopReplyFeedback } from '@/lib/desktop/reply-feedback'
 import { DesktopBrowserRun } from './browser-runs/DesktopBrowserRun'
 import { DesktopSelectedMentionText } from './mentions/DesktopSelectedMentionText'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
+import { DesktopVoiceComposer } from './voice/DesktopVoiceComposer'
+import { DesktopVoiceHistoryMessage } from './voice/DesktopVoiceHistoryMessage'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { lastUserText } from '@/lib/chat-payload'
@@ -21,9 +23,13 @@ import { cn } from '@/lib/utils'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
-import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage } from '@rerun/contracts'
+import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, type DesktopVoiceSendReceipt } from '@rerun/contracts'
 import { DesktopServiceRequestBlock, type DesktopServiceRequestBlockProps } from './service-requests/DesktopServiceRequestBlock'
 import { DesktopServiceRequestReceipt } from './service-requests/DesktopServiceRequestReceipt'
+import { DesktopSecretRequestBlock } from './secret-requests/DesktopSecretRequestBlock'
+import { DesktopSecretSummaryReceipt } from './secret-requests/DesktopSecretRequestReceipt'
+import { readDesktopSecretRequest } from '@/lib/desktop/secret-requests-client'
+import { parseDesktopSecretReceiptSummary, type DesktopSecretRequestView } from '@rerun/contracts'
 import type { DesktopOpenApps } from '@/lib/desktop/service-requests-client'
 import { useDesktopSetup } from './setup/useDesktopSetup'
 import { DesktopInstallBlock as AgentInstallBlock } from './setup/DesktopInstallBlock'
@@ -83,7 +89,7 @@ import { IsolatedScreenDialog } from './isolated-screen/IsolatedScreenDialog'
 import { DesktopBrowserCard } from './isolated-screen/DesktopBrowserCard'
 
 type ServiceRequest = DesktopServiceRequestBlockProps['request']
-type AcceptedService = Parameters<DesktopServiceRequestBlockProps['onAccepted']>[0]
+type AcceptedService = Parameters<DesktopServiceRequestBlockProps['onAccepted']>[0] & { secretRequestId?: string }
 class AcceptedResponseDecoder extends DefaultChatTransport<UIMessage> {
     decode(response: Response) { if (!response.body) throw new Error('The app response has no stream.'); return this.processResponseStream(response.body) }
 }
@@ -92,6 +98,10 @@ async function serviceRequestFor(sessionId: string, signal: AbortSignal) {
     if (!response.ok) throw new Error('Could not load the coworker’s app request. Try again.')
     const value = desktopServiceRequestViewSchema.parse(await response.json()).request
     return value?.receipt?.accepted ? null : value
+}
+async function secretRequestFor(sessionId: string, signal: AbortSignal) {
+    const request = await readDesktopSecretRequest(sessionId, { signal })
+    return request?.status === 'accepted' ? null : request
 }
 
 const takeoverUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/takeover`
@@ -130,7 +140,7 @@ const stopUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURICompone
 const RUN_POLL_MS = 3000
 
 export type ComposerDraft = DesktopCoworkerMentionFields & { text: string; attachment?: string; attachments?: DesktopAttachmentSelection[] }
-export type TabActivity = { busy: boolean; dirty: boolean; readableSessionId?: string | null }
+export type TabActivity = { busy: boolean; dirty: boolean; recordingPending?: boolean; readableSessionId?: string | null }
 
 const draftPaths = (draft: ComposerDraft | undefined) => draft ? (draft.attachments?.length ? draft.attachments : draft.attachment ? [draft.attachment] : []) : []
 const samePaths = (a: readonly DesktopAttachmentSelection[], b: readonly DesktopAttachmentSelection[]) => JSON.stringify(a) === JSON.stringify(b)
@@ -173,6 +183,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const setupBlocked = !setup.view || !!setup.error || setup.view.pending && (!setup.view.sessionId || setup.view.sessionId !== sessionId)
     const [cardOpen, setCardOpen] = useState(false)
     const [serviceStreaming, setServiceStreaming] = useState(false)
+    const [voiceActivity, setVoiceActivity] = useState({ busy: false, dirty: false })
+    const [voiceReviewTarget, setVoiceReviewTarget] = useState<HTMLDivElement | null>(null)
     const serviceStream = useRef<AcceptedService | null>(null)
     const serviceOwner = useRef({agentId:agent.id,sessionId,active})
     serviceOwner.current = {agentId:agent.id,sessionId,active}
@@ -353,7 +365,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         })
         batchUpload.current = work
     }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion])
-    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null })
+    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer | DesktopTakeoverTerminal; onAccepted?: () => void; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
     const quickReplyIds = useRef(new Map<string, string>())
@@ -518,11 +530,11 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         conversationRoot.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
         setPanelFocus(null)
     }, [panelFocus, active, detailPanel, cardOpen])
-    const dirty = !draft.loaded || !uploadsLoaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive || uploadItems.length || imageUploads.items.length)
+    const dirty = voiceActivity.dirty || !draft.loaded || !uploadsLoaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive || uploadItems.length || imageUploads.items.length)
     const readable = active && !cardOpen && !detailPanel && !chatsOpen && ready && !generating && history.loadedGeneration === historyGeneration
-        && !!history.transcript && history.question !== undefined && history.approval !== undefined && history.takeover !== undefined && history.serviceRequest !== undefined
+        && !!history.transcript && history.question !== undefined && history.approval !== undefined && history.takeover !== undefined && history.serviceRequest !== undefined && history.secretRequest !== undefined
         && engineRunning.id === sessionId
-    useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating, dirty, readableSessionId: readable ? sessionId : null }) }, [tabUid, generating, dirty, readable, sessionId, onTabActivity])
+    useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating || voiceActivity.busy, dirty, recordingPending: voiceActivity.dirty, readableSessionId: readable ? sessionId : null }) }, [tabUid, generating, voiceActivity.busy, voiceActivity.dirty, dirty, readable, sessionId, onTabActivity])
     const question = history.id === sessionId ? history.question : undefined
     const approval = history.id === sessionId ? history.approval : undefined
     const takeover = history.id === sessionId ? history.takeover : undefined
@@ -530,9 +542,10 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const screenApi = useMemo(() => sessionId && takeover ? takeoverScreenApi(sessionId, takeover.id) : undefined, [sessionId, takeover?.id])
     useEffect(() => { setScreenOpen(null) }, [active, sessionId, takeover?.id])
     const serviceRequest = history.id === sessionId ? history.serviceRequest : undefined
-    const pendingRequest = question || approval || takeover || (serviceRequest ? { id: serviceRequest.serviceRequestId, toolCallId: serviceRequest.source.toolCallId } : null)
+    const secretRequest = history.id === sessionId ? history.secretRequest : undefined
+    const pendingRequest = question || approval || takeover || (serviceRequest ? { id: serviceRequest.serviceRequestId, toolCallId: serviceRequest.source.toolCallId } : null) || (secretRequest ? { id: secretRequest.requestId, toolCallId: secretRequest.source.toolCallId } : null)
     // Every pending request must be known before a later turn or an automatic queue flush.
-    const requestBlocked = setupBlocked || !!sessionId && (question !== null || approval !== null || takeover !== null || serviceRequest !== null)
+    const requestBlocked = setupBlocked || !!sessionId && (question !== null || approval !== null || takeover !== null || serviceRequest !== null || secretRequest !== null)
     const canRegenerate = draft.loaded && !draft.error && !draft.quitting && !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
@@ -566,12 +579,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     useEffect(() => {
         if (busy) return
         const controller = new AbortController()
-        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal), approvalFor(sessionId, controller.signal), takeoverFor(sessionId, controller.signal), serviceRequestFor(sessionId, controller.signal)]) : Promise.resolve([[], null, null, null, null] as [UIMessage[], null, null, null, null])
-        void read.then(([result, pending, approval, takeover, serviceRequest]) => {
+        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal), approvalFor(sessionId, controller.signal), takeoverFor(sessionId, controller.signal), serviceRequestFor(sessionId, controller.signal), secretRequestFor(sessionId, controller.signal)]) : Promise.resolve([[], null, null, null, null, null] as [UIMessage[], null, null, null, null, null])
+        void read.then(([result, pending, approval, takeover, serviceRequest, secretRequest]) => {
             if (controller.signal.aborted) return
-            if ([pending, approval, takeover, serviceRequest].filter(Boolean).length > 1) throw new Error('This conversation changed while loading. Reload it to see the current request.')
+            if ([pending, approval, takeover, serviceRequest, secretRequest?.receipt ? null : secretRequest].filter(Boolean).length > 1) throw new Error('This conversation changed while loading. Reload it to see the current request.')
             setMessages(result)
-            setHistory({ id: sessionId, transcript: result, question: pending, approval, takeover, serviceRequest, loadedGeneration: historyGeneration })
+            setHistory({ id: sessionId, transcript: result, question: pending, approval, takeover, serviceRequest, secretRequest, loadedGeneration: historyGeneration })
         }).catch(cause => {
             if (!controller.signal.aborted) setHistory({ id: sessionId, error: cause instanceof Error ? cause.message : 'Could not load history' })
         })
@@ -596,7 +609,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     wasRunning = true
                     timer = setTimeout(check, RUN_POLL_MS)
                 } else if (wasRunning) {
-                    setHistory(current => current.id === sessionId ? { ...current, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined } : current)
+                    setHistory(current => current.id === sessionId ? { ...current, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined, secretRequest: undefined } : current)
                     setAttempt(n => n + 1) // The reply finished elsewhere: reload the saved transcript.
                 }
             } catch {
@@ -623,7 +636,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             const body = await response.json().catch(() => ({}))
             if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not stop this reply. Try again.')
             setEngineRunning({ id, running: false })
-            setHistory(current => current.id === id ? { ...current, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined } : current)
+            setHistory(current => current.id === id ? { ...current, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined, secretRequest: undefined } : current)
             setAttempt(n => n + 1)
             return true
         } catch (cause) {
@@ -873,11 +886,20 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         return accepted
     }
 
-    const adoptServiceResponse: DesktopServiceRequestBlockProps['onAccepted'] = async result => {
+    const voiceSent = (result: DesktopVoiceSendReceipt & { text: string }) => {
+        if (!result.dispatch || !active || isDesktopQuitting()) { setAttempt(value => value + 1); return }
+        const { sessionId: acceptedSessionId, runId } = result.dispatch
+        // The voice endpoint already admitted this exact turn. Attach to its stream only.
+        void sendMessage({ text: result.text }, { body: {
+            agentId: agent.id, ...(result.draft.scope.sessionId ? { sessionId: acceptedSessionId, requestId: runId, reconcileOnly: true } : { tabUid: result.draft.scope.tabUid, ...(result.draft.sendModelChoice && { modelChoice: result.draft.sendModelChoice }) }),
+        } }).catch(() => { setAttempt(value => value + 1) })
+    }
+
+    const adoptServiceResponse = async (result: AcceptedService) => {
         const owns = () => serviceOwner.current.agentId === result.agentId && serviceOwner.current.sessionId === result.sessionId && serviceOwner.current.active
         if (!owns() || serviceStream.current) { result.cancelStream(); throw new Error('This conversation is no longer active.') }
         serviceStream.current = result
-        setHistory(current => current.id === result.sessionId ? {...current,serviceRequest:null} : current)
+        setHistory(current => current.id === result.sessionId ? {...current, ...(result.secretRequestId ? { secretRequest: null } : { serviceRequest: null })} : current)
         setMessages(history.transcript ?? messages)
         setServiceStreaming(true); setLiveSessionId(result.sessionId); setLiveRunId(result.requestId)
         try {
@@ -1066,6 +1088,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         const install = message.role==='user' ? parseInstallMessage(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         if(install)return <AgentInstallBlock key={message.id} agentId={agent.id} agentName={agent.name} guide={install.guide} installing={setup.view?.completedAt == null} />
                         const hitl = message.role === 'user' ? parseHitlReply(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
+                        const secretReceipt = message.role === 'user' ? parseDesktopSecretReceiptSummary(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
+                        if (secretReceipt) return <DesktopSecretSummaryReceipt key={message.id} entries={secretReceipt} />
                         if(hitl?.kind==='service')return <DesktopServiceRequestReceipt key={message.id} entries={hitl.entries} />
                         if (triggerPayload) return <DesktopWebhookRunBlock key={message.id} agentId={agent.id} payload={triggerPayload} />
                         if (scheduledRun) return <DesktopScheduledRunBlock key={message.id} run={scheduledRun} />
@@ -1093,7 +1117,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                             feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
                                             onRate={message.id.startsWith('engine-') ? rating => feedback.rate(message.id, rating) : undefined}
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />
-                                        : message.parts.map((part, index) => part.type === 'text' ? <DesktopSelectedMentionText key={index} text={part.text} metadata={message.metadata} /> : null)}
+                                        : message.parts.map((part, index) => part.type === 'text' ? <DesktopVoiceHistoryMessage key={index} agentId={agent.id} text={part.text}><DesktopSelectedMentionText text={part.text} metadata={message.metadata} /></DesktopVoiceHistoryMessage> : null)}
                                 </MessageContent>
                             </Message>
                             {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
@@ -1145,6 +1169,10 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     busy={generating} pending={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || queue.pending || stopping || inactive || !!flushingQueue.current}
                     onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued && !isDesktopQuitting()) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
                 {serviceRequest && sessionId && <DesktopServiceRequestBlock agentId={agent.id} sessionId={sessionId} request={serviceRequest} inline disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onOpenApps={openServiceApps} onAccepted={adoptServiceResponse} />}
+                {secretRequest && sessionId && <DesktopSecretRequestBlock sessionId={sessionId} request={secretRequest} inline active={!draft.quitting && active && (!inactive || !!secretRequest.receipt) && !generating && !stopping && ready} onAccepted={(response, stream) => adoptServiceResponse({
+                    agentId: agent.id, sessionId, serviceRequestId: secretRequest.requestId, secretRequestId: secretRequest.requestId,
+                    requestId: response.headers.get('x-run-id')!, response, ...stream,
+                })} />}
                 {setup.error && <div role="alert" className="p-2 text-sm text-destructive">{setup.error}<Button type="button" size="sm" variant="ghost" onClick={()=>void setup.refresh()}>Retry setup</Button></div>}
                 {setupBlocked && <DesktopSetupGate agentId={agent.id} agentName={agent.name} apps={[]} canStart={modelReady} onStartBlocked={onOpenModelSettings} modelSlot={<Button type="button" variant="ghost" size="sm" onClick={onOpenModelSettings}>{modelLabel ?? 'Choose a model'}</Button>} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {setup.view?.skipped && <DesktopSetupSkippedBanner agentId={agent.id} canStart={modelReady} onStartBlocked={onOpenModelSettings} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
@@ -1206,6 +1234,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     </div>}
                     </>}
                     </DesktopCoworkerMentions>
+                    <div ref={setVoiceReviewTarget} />
                     <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
                         <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
                             workspaceModel={modelLabel} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel} onReady={setModelReady} />
@@ -1220,8 +1249,13 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                 onClick={() => uploadFileInput.current?.click()}>
                                 <UploadIcon aria-hidden className="size-4" /><span className="sr-only">Upload files from this Mac</span>
                             </Button>
+                            {tabUid && draft.loaded && <DesktopVoiceComposer agentId={agent.id} tabUid={tabUid} sessionId={sessionId ?? undefined}
+                                reviewTarget={voiceReviewTarget} modelChoice={!sessionId && conversationChoice.current?.session === null ? conversationChoice.current.pick : undefined}
+                                active={active && !draft.quitting && !cardOpen && !detailPanel && !chatsOpen} besideSend
+                                disabled={generating || stopping || inactive || !ready || !modelReady || requestBlocked || !!pendingRequest || !!queue.queued || queue.pending || uploadsActive || preparingSend || !draft.loaded}
+                                onActivity={setVoiceActivity} onSent={voiceSent} />}
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
-                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={!draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || (!input.trim() && !attachmentPaths.length) || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
+                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={voiceActivity.busy || !draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || (!input.trim() && !attachmentPaths.length) || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
                             </Button>
                         </div>

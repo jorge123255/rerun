@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -98,7 +98,7 @@ test('portable package rejects path traversal, future versions, truncated archiv
 })
 
 test('readConfinedBytes preserves binary bytes and does not claim text scanning', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'desktop-portable-bytes-'))
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'desktop-portable-bytes-')))
     roots.push(root)
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02])
     await writeFile(join(root, 'icon.png'), png, { mode: 0o600 })

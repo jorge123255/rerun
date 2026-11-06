@@ -6,8 +6,11 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     if ((init?.method ?? 'GET') !== 'GET') return
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
     const setup = url.pathname.match(/^\/api\/desktop\/coworkers\/([^/]+)\/setup$/)
+    if (/^\/api\/desktop\/coworkers\/[^/]+\/voice$/.test(url.pathname) && !url.searchParams.has('attemptId')) return Response.json({ drafts: [] })
+    if (/^\/api\/desktop\/coworkers\/[^/]+\/semantic-memory$/.test(url.pathname)) return Response.json({ mode: 'keyword-only', backend: null, indexed: 0, pending: 0, omitted: 0, detail: 'Keyword search is available.' })
     if (setup) return Response.json({agentId:decodeURIComponent(setup[1]),revision:'fixture-setup',required:false,prompt:'',completedAt:null,sessionId:null,pending:false,skipped:false,defaultPrompt:''})
     if (/^\/api\/desktop\/sessions\/[^/]+\/service-requests$/.test(url.pathname)) return Response.json({request:null})
+    if (/^\/api\/desktop\/sessions\/[^/]+\/secret-requests$/.test(url.pathname)) return Response.json({request:null})
     if (/^\/api\/desktop\/sessions\/[^/]+\/takeover$/.test(url.pathname)) return Response.json({takeover:null})
     if (/^\/api\/desktop\/coworkers\/[^/]+\/mentions$/.test(url.pathname)) return Response.json({targets:[]})
     if (/^\/api\/desktop\/agents\/[^/]+\/sessions\/[^/]+\/browser-run$/.test(url.pathname)) return Response.json({trusted:null})
@@ -22,8 +25,11 @@ export function desktopNativeReviewRead(input: RequestInfo | URL, init?: Request
     if ((init?.method ?? 'GET') !== 'GET') return
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
     const setup = url.pathname.match(/^\/api\/desktop\/coworkers\/([^/]+)\/setup$/)
+    if (/^\/api\/desktop\/coworkers\/[^/]+\/voice$/.test(url.pathname) && !url.searchParams.has('attemptId')) return Response.json({ drafts: [] })
+    if (/^\/api\/desktop\/coworkers\/[^/]+\/semantic-memory$/.test(url.pathname)) return Response.json({ mode: 'keyword-only', backend: null, indexed: 0, pending: 0, omitted: 0, detail: 'Keyword search is available.' })
     if (setup) return Response.json({agentId:decodeURIComponent(setup[1]),revision:'fixture-setup',required:false,prompt:'',completedAt:null,sessionId:null,pending:false,skipped:false,defaultPrompt:''})
     if (/^\/api\/desktop\/sessions\/[^/]+\/service-requests$/.test(url.pathname)) return Response.json({request:null})
+    if (/^\/api\/desktop\/sessions\/[^/]+\/secret-requests$/.test(url.pathname)) return Response.json({request:null})
     if (/^\/api\/desktop\/sessions\/[^/]+\/takeover$/.test(url.pathname)) return Response.json({takeover:null})
     if (/^\/api\/desktop\/coworkers\/[^/]+\/mentions$/.test(url.pathname)) return Response.json({targets:[]})
     if (/^\/api\/desktop\/agents\/[^/]+\/sessions\/[^/]+\/browser-run$/.test(url.pathname)) return Response.json({trusted:null})

@@ -1,5 +1,6 @@
 import 'server-only'
 
+import { parseServiceRegistryKey } from '@rerun/contracts'
 import { createHmac } from 'node:crypto'
 import type { DesktopServiceHealth } from '@rerun/contracts'
 import type { ServiceStore, ServiceInstall, OwnedSkill } from '../store'
@@ -45,7 +46,18 @@ export function canonical(value: unknown): unknown {
 }
 
 function asAccount(record: ServiceInstall): AccountInstallRecord {
-    return { ...record, plan: record.plan as ServiceInstall['plan'] & AccountCompilePlan }
+    const plan = record.plan as Partial<AccountCompilePlan> & ServiceInstall['plan']
+    if (plan.shape !== undefined) {
+        if (!['anonymous', 'bearer', 'headers'].includes(plan.shape) || !Array.isArray(plan.credentialInputs) || !Array.isArray(plan.headerPlan) || !plan.publicInputs || typeof plan.label !== 'string') throw new Error('Invalid service account plan')
+        return { ...record, plan: plan as AccountCompilePlan }
+    }
+    const { instanceId } = parseServiceRegistryKey(record.key)
+    return { ...record, plan: {
+        ...record.plan, label: record.plan.name, ...(instanceId ? { instanceId } : {}),
+        shape: record.plan.secretInput ? 'bearer' : 'anonymous',
+        credentialInputs: record.plan.secretInput ? [record.plan.secretInput] : [], publicInputs: {},
+        headerPlan: record.plan.secretInput ? [{ name: 'Authorization', source: 'input', inputKeys: [record.plan.secretInput], secret: true }] : [],
+    } }
 }
 
 function asService(record: AccountInstallRecord, bearer: string): ServiceInstall {

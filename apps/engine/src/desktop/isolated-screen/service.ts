@@ -14,6 +14,10 @@ import { screenExportFailure, validateScreenExportResult } from './transport.js'
 import { decodePageExports, exportPath, navigationOptions } from './exports.js'
 import { abortable } from '../web-fetch/transport.js'
 import { abortError, isAbortError, IsolatedScreenRefusal, throwIfAborted } from './refusal.js'
+import { guardedRfbInput } from './rfb-input.js'
+import type { ScreenForeground } from './permissions.js'
+import type { LauncherControl } from '../computer-launchers/ports.js'
+import { launcherRequestSchema } from '../computer-launchers/contract.js'
 import type { EnsuredScreen, IsolatedScreenService, ScreenComputerInput, ScreenLease, ScreenNavigate, ScreenNavigationExport, ScreenOwner, ScreenPage, ScreenPrerequisite, ScreenReconcile, ScreenRunState, ScreenShot, ScreenStatus, ScreenTakeover, ScreenTarget, ViewerMode } from './types.js'
 
 const READY_ATTEMPTS = 150
@@ -31,6 +35,7 @@ export type IsolatedScreenDeps = {
     randomBytes?: (size: number) => Buffer
     sleep?: (ms: number, signal: AbortSignal) => Promise<void>
     readyAttempts?: number
+    authorizeInput?: (target: ScreenTarget, app: ScreenForeground, signal: AbortSignal) => Promise<void>
 }
 
 type Viewer = { mode: ViewerMode; destroy: () => void }
@@ -68,7 +73,7 @@ function prerequisiteText(prerequisite: ScreenPrerequisite): string {
         case 'docker-missing': return 'Docker is not installed.'
         case 'daemon-unreachable': return 'Docker is not running.'
         case 'docker-wrong-arch': return 'Docker is not a linux/arm64 engine.'
-        case 'image-missing': return 'The isolated screen image rerun-desktop-guest:round29 is not built.'
+        case 'image-missing': return 'The isolated screen image rerun-desktop-guest:round32 is not built.'
         case 'image-wrong-arch': return 'The isolated screen image is not arm64.'
         case 'name-conflict': return CONFLICT
         case 'ready': return 'The screen is ready.'
@@ -194,6 +199,45 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         return reply
     }
 
+    async function foreground(target: ScreenTarget, signal: AbortSignal) {
+        current(target); throwIfAborted(signal)
+        if (!deps.authorizeInput) throw new IsolatedScreenRefusal('Screen input authority is unavailable.', 'refused')
+        // This read also works under a human lease; it never performs an input.
+        const reply = await guest(containerName(target.engineAgentId), { op: 'foreground' }, signal)
+        const app = reply.value.app, windowId = reply.value.windowId
+        if ((app !== 'browser' && app !== 'terminal' && app !== 'files') || typeof windowId !== 'string' || !/^[1-9][0-9]{0,15}$/.test(windowId)) throw new IsolatedScreenRefusal('The foreground app could not be verified.', 'refused')
+        await deps.authorizeInput(target, app, signal)
+        current(target); throwIfAborted(signal)
+        return { app, windowId }
+    }
+
+    async function capture(target: ScreenTarget, live: Live, signal: AbortSignal): Promise<ScreenShot> {
+        const reply = await guestCall(target, { op: 'screenshot' }, signal)
+        const width = reply.value.width, height = reply.value.height
+        if (typeof width !== 'number' || typeof height !== 'number' || !reply.binary.length) throw new IsolatedScreenRefusal('The screenshot could not be taken.', 'closed')
+        const screen = viewOf(width, height)
+        live.screen = screen
+        const image = await encodeJpeg(reply.binary, screen.viewWidth, screen.viewHeight)
+        current(target); throwIfAborted(signal)
+        return { image, mediaType: 'image/jpeg', width: screen.viewWidth, height: screen.viewHeight }
+    }
+
+    async function withLauncherControl<T>(target: ScreenTarget, signal: AbortSignal, work: (control: LauncherControl, signal: AbortSignal) => Promise<T>): Promise<T> {
+        return action(target, signal, async (live, linked) => {
+            const check = async (stop: AbortSignal) => { current(target); throwIfAborted(linked); throwIfAborted(stop); if (live.lease || live.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused') }
+            return work({ target, check,
+                async guest(body, stop) {
+                    // Fixed launcher-only operation; no arbitrary guest RPC escapes.
+                    launcherRequestSchema.parse({ app: body.app })
+                    if (body.op !== 'computer-launcher' || !['launch', 'reconcile', 'verify'].includes(body.mode) || !/^[a-f0-9]{64}$/.test(body.operationId) || !/^[a-f0-9]{64}$/.test(body.fingerprint)) throw new IsolatedScreenRefusal('Invalid launcher request.', 'refused')
+                    const active = AbortSignal.any([linked, stop]); await check(active)
+                    return (await guestCall(target, { op: body.op, operationId: body.operationId, fingerprint: body.fingerprint, app: body.app, mode: body.mode }, active)).value
+                },
+                capture: stop => capture(target, live, AbortSignal.any([linked, stop])),
+            }, linked)
+        })
+    }
+
     async function waitReady(name: string, signal: AbortSignal): Promise<ScreenGeometry> {
         for (let attempt = 0; attempt < readyAttempts; attempt++) {
             throwIfAborted(signal)
@@ -234,7 +278,16 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         if (volume.status === 'found' && !sameOwnerVolume(volume.labels, owner)) return absent('name-conflict')
         if (container.status !== 'found') return { available: true, prerequisite: 'ready', state: 'absent' }
         const live = lives.get(owner.engineAgentId)
-        return { available: true, prerequisite: 'ready', state: runState(container.state, Boolean(live?.lease || live?.takingOver)) }
+        let launchers: ScreenStatus['launchers']
+        if (container.state === 'running') {
+            const reply = await guest(containerName(owner.engineAgentId), { op: 'ping' }, signal)
+            const value = reply.value.launchers
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                const caps = value as Record<string, unknown>
+                if (typeof caps.terminal === 'boolean' && typeof caps.files === 'boolean') launchers = { terminal: caps.terminal, files: caps.files }
+            }
+        }
+        return { available: true, prerequisite: 'ready', state: runState(container.state, Boolean(live?.lease || live?.takingOver)), ...(launchers && { launchers }) }
     }
 
     async function running(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen> {
@@ -346,18 +399,26 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
             throwIfAborted(signal)
             if (live.lease || live.takingOver) throw new IsolatedScreenRefusal(HUMAN_DRIVING, 'refused')
             if (call.kind === 'wait') await sleep(call.ms, signal)
-            else await guestCall(target, call.body, signal)
+            else {
+                const expectedForeground = await foreground(target, signal)
+                await guestCall(target, { ...call.body, expectedForeground }, signal)
+            }
         }
         if (plan.settleMs > 0) await sleep(plan.settleMs, signal)
-        const reply = await guestCall(target, { op: 'screenshot' }, signal)
-        const width = reply.value.width
-        const height = reply.value.height
-        if (typeof width !== 'number' || typeof height !== 'number') throw new IsolatedScreenRefusal('The screenshot could not be taken.', 'closed')
-        const screen = viewOf(width, height)
-        live.screen = screen
-        if (reply.binary.length === 0) throw new IsolatedScreenRefusal('The screenshot could not be taken.', 'closed')
-        const image = await encodeJpeg(reply.binary, screen.viewWidth, screen.viewHeight)
-        return { image, mediaType: 'image/jpeg', width: screen.viewWidth, height: screen.viewHeight }
+        return capture(target, live, signal)
+        })
+    }
+
+    async function openBrowser(target: ScreenTarget, signal: AbortSignal): Promise<ScreenShot> {
+        return action(target, signal, async (live, linked) => {
+            if (!deps.authorizeInput) throw new IsolatedScreenRefusal('Screen input authority is unavailable.', 'refused')
+            await deps.authorizeInput(target, 'browser', linked)
+            await guestCall(target, { op: 'focus-browser' }, linked)
+            await deps.authorizeInput(target, 'browser', linked)
+            const frame = await capture(target, live, linked)
+            const app = await foreground(target, linked)
+            if (app.app !== 'browser') throw new IsolatedScreenRefusal('The browser is no longer in front.', 'refused')
+            return frame
         })
     }
 
@@ -472,7 +533,14 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         const live = current(target)
         if (mode === 'drive' && !live.lease) throw new IsolatedScreenRefusal(NOT_DRIVING, 'refused')
         const lease = live.lease
-        const stream = await docker.execStream(containerName(target.engineAgentId), ['rerun-vnc', mode], signal)
+        const rawStream = await docker.execStream(containerName(target.engineAgentId), ['rerun-vnc', mode], signal)
+        const stream = mode === 'drive' ? guardedRfbInput(rawStream, async () => {
+            const live = current(target)
+            if (!live.lease || live.lease !== lease || live.takingOver) throw new IsolatedScreenRefusal(NOT_DRIVING, 'refused')
+            await foreground(target, signal)
+            const latest = current(target)
+            if (latest.lease !== lease) throw new IsolatedScreenRefusal(NOT_DRIVING, 'refused')
+        }) : rawStream
         const viewer: Viewer = { mode, destroy: () => stream.destroy() }
         try {
             const latest = current(target)
@@ -562,5 +630,5 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         return result
     }
 
-    return { status, ensure, running, navigate, act, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }
+    return { status, ensure, running, navigate, act, openBrowser, withLauncherControl, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }
 }

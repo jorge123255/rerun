@@ -15,6 +15,7 @@ WORKSPACE = '/home/rerun/workspace'
 JOURNAL = '/run/rerun/computer-launchers'
 APPS = {'terminal': ('/usr/bin/xfce4-terminal', 'Xfce4-terminal'),
         'files': ('/usr/bin/thunar', 'Thunar')}
+WINDOW_APPS = {**APPS, 'browser': ('/usr/lib/chromium/chromium', 'Chromium')}
 MAX_ATTEMPTS = 256
 READY_SECONDS = 8.0
 QUERY_SECONDS = 1.0
@@ -122,7 +123,7 @@ class GuestComputerLaunchers:
             if info.st_uid != os.getuid():
                 return None
             executable = os.path.realpath(path / 'exe')
-            if executable != APPS[app][0]:
+            if executable != WINDOW_APPS[app][0]:
                 return None
             with open(path / 'environ', 'rb') as handle:
                 env = handle.read(16385)
@@ -147,14 +148,14 @@ class GuestComputerLaunchers:
         code, text = self._query(['/usr/bin/xprop', '-id', window, '_NET_WM_PID', 'WM_CLASS'], client, deadline)
         pid_match = re.search(r'_NET_WM_PID\(CARDINAL\)\s*=\s*(\d+)', text)
         classes = re.findall(r'"([^"\n]*)"', text)
-        if code or not pid_match or APPS[app][1] not in classes:
+        if code or not pid_match or WINDOW_APPS[app][1] not in classes:
             return None
         pid = int(pid_match[1])
         start = self._process(pid, app)
         return {'windowId': window, 'pid': pid, 'start': start} if start else None
 
     def _windows(self, app, client, deadline):
-        code, text = self._query(['/usr/bin/xdotool', 'search', '--onlyvisible', '--class', '^' + APPS[app][1] + '$'], client, deadline)
+        code, text = self._query(['/usr/bin/xdotool', 'search', '--onlyvisible', '--class', '^' + WINDOW_APPS[app][1] + '$'], client, deadline)
         if code not in (0, 1):
             raise LauncherError('runtime-unavailable')
         ids = text.split()
@@ -162,6 +163,28 @@ class GuestComputerLaunchers:
             raise LauncherError('busy')
         windows = [self._window(window, app, client, deadline) for window in ids]
         return [window for window in windows if window]
+
+    def capabilities(self):
+        ready = all(os.path.isfile(path) and os.access(path, os.X_OK) for path in ('/usr/bin/xdotool', '/usr/bin/xprop'))
+        return {app: ready and os.path.isfile(spec[0]) and os.access(spec[0], os.X_OK) for app, spec in APPS.items()}
+
+    def foreground(self, client):
+        deadline = time.monotonic() + 4.0
+        code, text = self._query(['/usr/bin/xdotool', 'getactivewindow'], client, deadline)
+        window = text.strip()
+        if code or not re.fullmatch(r'[1-9][0-9]{0,15}', window):
+            return {'app': 'unknown', 'windowId': None}
+        for app in WINDOW_APPS:
+            if self._window(window, app, client, deadline):
+                return {'app': app, 'windowId': window}
+        return {'app': 'unknown', 'windowId': None}
+
+    def focus_browser(self, client):
+        deadline = time.monotonic() + READY_SECONDS
+        windows = self._windows('browser', client, deadline)
+        if not windows:
+            raise LauncherError('runtime-unavailable')
+        self._activate(windows[-1], 'browser', client, deadline)
 
     def _path(self, operation_id):
         check_directory(JOURNAL)

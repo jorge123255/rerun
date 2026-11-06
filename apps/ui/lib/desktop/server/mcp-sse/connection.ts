@@ -1,5 +1,5 @@
 import 'server-only'
-import { DESKTOP_MCP_SSE_LIMITS as L, type DesktopMcpSseRef, type DesktopMcpSseTool } from '../../../../../../packages/contracts/src/desktop-mcp-sse'
+import { DESKTOP_MCP_SSE_LIMITS as L, type DesktopMcpSseRef, type DesktopMcpSseTool } from '@rerun/contracts'
 import { advertisedSseEndpoint } from './endpoint'
 import { createLegacySseParser } from './parser'
 import { deferred, SseFailure, safeFailure, wait } from './errors'

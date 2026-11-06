@@ -4,6 +4,7 @@ import type {DesktopServiceHealth} from '@rerun/contracts'
 import {remoteMcpLifecycle} from '../mcp/lifecycle'
 import {abortable,remoteMcpRuntime} from '../mcp/remote'
 import type {RemoteMcpStore} from '../mcp/store'
+import type {RemoteTool} from '../mcp/model'
 import type {DesktopRuntime} from '../runtime'
 import type {ServiceStore,ServiceInstall} from './store'
 import {compileLocalService} from './compiler'
@@ -17,21 +18,33 @@ export type ServiceAuthority=(owner:string,action:'manage'|'use',run:ServiceRun|
 export type ServiceToolNames=(owner:string,installationId:string,names:string[],signal:AbortSignal)=>Promise<void>
 export type ServiceRestartAuthority=(owner:string,signal:AbortSignal)=>Promise<{engineId:string;skillsRoot:string}>
 export type ServiceRegistryWriter=(skillsRoot:string,records:ServiceInstall[],signal:AbortSignal)=>Promise<void>
+export type ServiceTransport={
+ probe(owner:string,name:string,revision:string,signal?:AbortSignal):Promise<{tools?:RemoteTool[];result?:Record<string,unknown>}>
+ call(owner:string,name:string,revision:string,tool:string,args:Record<string,unknown>,signal?:AbortSignal):Promise<{tools?:RemoteTool[];result?:Record<string,unknown>}>
+ validate(owner:string,name:string,revision:string,signal:AbortSignal):Promise<void>
+}
+export const isAccountService=(record:ServiceInstall)=>'shape' in record.plan
 export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthority,assertToolNames:ServiceToolNames,network:typeof fetch=fetch,writeRegistry:ServiceRegistryWriter=syncDesktopServiceRegistry,restartAuthority?:ServiceRestartAuthority){
  const lifecycle=remoteMcpLifecycle(),shutdown=new AbortController()
  const skillJournal=serviceSkillJournal(store.db)
  const skillAuthority=connectorSkillAuthority(store,skillJournal,async (owner,signal=shutdown.signal)=>{const authority=await current(owner,'manage',undefined,signal);return {engineId:authority.engineAgentId,skillsRoot:authority.skillsRoot}})
  const active=new Map<string,Promise<unknown>>()
+ const ownerTails=new Map<string,Promise<unknown>>(),transportWork=new Map<string,Set<Promise<unknown>>>()
+ let accountTransport:((record:ServiceInstall,run:ServiceRun|undefined,signal:AbortSignal)=>ServiceTransport)|undefined
+ function trackTransport<T>(owner:string,work:Promise<T>):Promise<T>{const works=transportWork.get(owner)??new Set();transportWork.set(owner,works);works.add(work);const done=()=>{works.delete(work);if(!works.size)transportWork.delete(owner)};void work.then(done,done);return work}
+ function exclusive<T>(owner:string,write:()=>Promise<T>):Promise<T>{const work=(ownerTails.get(owner)??Promise.resolve()).catch(()=>{}).then(write);ownerTails.set(owner,work);const done=()=>{if(ownerTails.get(owner)===work)ownerTails.delete(owner)};void work.then(done,done);return work}
  const idName=(record:ServiceInstall)=>desktopServiceRegistryName(record.id)
  const syncRegistry=async(skillsRoot:string,owner:string,signal:AbortSignal)=>writeRegistry(skillsRoot,await abortable(store.list(owner),signal),signal)
  async function current(owner:string,action:'manage'|'use',run:ServiceRun|undefined,signal:AbortSignal){signal.throwIfAborted();shutdown.signal.throwIfAborted();const value=await abortable(authorize(owner,action,run,signal),signal);signal.throwIfAborted();shutdown.signal.throwIfAborted();value.check?.();if(action==='use'&&(!value.enabled||!value.granted))throw new Error('Service permission is off');return value}
  async function liveRecord(owner:string,key:string,revision:string,signal:AbortSignal){const record=await abortable(store.read(owner,key),signal);signal.throwIfAborted();if(!record || record.revision!==revision || record.state!=='ready')throw new Error('Service connection changed');await skillAuthority.assertReady(owner,record.id,signal);return record}
- function transport(record:ServiceInstall,run:ServiceRun|undefined,signal:AbortSignal){
+ function transport(record:ServiceInstall,run:ServiceRun|undefined,signal:AbortSignal):ServiceTransport{
+  if(isAccountService(record)){if(!accountTransport)throw new Error('Service account transport unavailable');return accountTransport(record,run,signal)}
   const reader:RemoteMcpStore={lifecycle,
    list:async()=>[],read:async(owner,name)=>{if(owner!==record.owner||name!==idName(record))throw new Error('Service owner mismatch');const now=await liveRecord(owner,record.key,record.revision,signal);return {name,url:now.plan.url,revision:now.revision,bearer:await abortable(store.credential(owner,now.id),signal)}},
    readOAuth:async()=>null,writeOAuth:async()=>{throw new Error('Service OAuth unavailable')},save:async()=>{throw new Error('Read-only service transport')},remove:async()=>{throw new Error('Read-only service transport')},
   }
-  return remoteMcpRuntime(reader,async(owner)=>{const authority=await current(owner,'use',run,signal);if(authority.engineAgentId!==record.engineId)throw new Error('Service owner changed');return {enabled:authority.enabled,granted:authority.granted}},network)
+  const runtime=remoteMcpRuntime(reader,async(owner)=>{const authority=await current(owner,'use',run,signal);if(authority.engineAgentId!==record.engineId)throw new Error('Service owner changed');return {enabled:authority.enabled,granted:authority.granted}},network)
+  return {...runtime,probe:(...args:Parameters<typeof runtime.probe>)=>trackTransport(record.owner,runtime.probe(...args)),call:(...args:Parameters<typeof runtime.call>)=>trackTransport(record.owner,runtime.call(...args))}
  }
  async function view(record:ServiceInstall,signal:AbortSignal){
   const authority=await current(record.owner,'manage',undefined,signal)
@@ -64,7 +77,7 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
   const now=await store.read(owner,key);if(!now)throw new Error('Service removed');return view(now,signal)
  }
  type Action={action:'install';requestId:string;slug:string;authMethodId:string;values:Record<string,string>}|{action:'probe'|'disconnect'|'remove';requestId:string;key:string;expectedRevision:string}
- async function mutate(owner:string,input:Action,stop:AbortSignal){
+ async function mutateLegacy(owner:string,input:Action,stop:AbortSignal){
   const signal=AbortSignal.any([stop,shutdown.signal,AbortSignal.timeout(120_000)]),authority=await current(owner,'manage',undefined,signal)
   const requestDigest=store.digest(owner,input),requestKey=JSON.stringify([owner,input.requestId])
   const previous=(await abortable(store.db.execute({sql:'SELECT * FROM desktop_service_requests WHERE owner=? AND request_id=?',args:[owner,input.requestId]}),signal)).rows[0]
@@ -78,6 +91,7 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
     const availability=await getDesktopServiceMethodAvailability(input.slug,input.authMethodId)
     const compiled=compileLocalService(raw.manifest,input.authMethodId,input.values,availability)
     const existing=await store.read(owner,compiled.plan.key)
+    if(existing&&isAccountService(existing))throw new Error('Use the account settings for this connection')
     if(existing&&existing.engineId!==authority.engineAgentId)throw new Error('Service installation belongs to a previous engine identity')
     if(existing?.state==='ready')throw new Error('Existing service must be disconnected before configuring again')
     if(existing && JSON.stringify(existing.plan)!==JSON.stringify(compiled.plan))throw new Error('Remove the previous installation before changing its method or owned skill plan')
@@ -102,6 +116,7 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
     result=await probe(owner,record.key,record.revision,signal)
    }else{
     const record=await store.read(owner,input.key);if(!record||record.revision!==input.expectedRevision)throw new Error('Service revision conflict')
+    if(isAccountService(record))throw new Error('Use the account settings for this connection')
     if(input.action==='probe')result=await probe(owner,input.key,input.expectedRevision,signal)
     else await lifecycle.mutate(owner,idName(record),async()=>{
      const now=await current(owner,'manage',undefined,signal);if(now.engineAgentId!==record.engineId||now.runtime.launchNonce!==authority.runtime.launchNonce||now.skillsRoot!==authority.skillsRoot)throw new Error('Service owner changed')
@@ -127,7 +142,9 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
    return result
   }
   const work=Promise.resolve().then(run);active.set(requestKey,work);void work.finally(()=>{if(active.get(requestKey)===work)active.delete(requestKey)}).catch(()=>{})
-  return abortable(work,signal)
+  // Keep the shared mutation queue occupied until real work settles, even when
+  // the request observer has stopped waiting for its acknowledgement.
+  return work
  }
  async function reconcile(owner:string,signal:AbortSignal){
   const scope=async()=>{
@@ -141,11 +158,19 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
    const revision=record.revision;record.health={state:'unchecked'};record.healthLaunch=null;record.toolNames=[]
    const now=await scope()
    if(now.engineId!==authority.engineId||now.skillsRoot!==authority.skillsRoot)throw new Error('Service owner changed')
-   if(record.engineId!==now.engineId||!skillsValid||record.state==='preparing'||record.state==='removing'){record.state='error';record.revision=randomUUID();await store.update(record,revision,'')}else await store.update(record,revision)
+   // Account receipts and encrypted bundles bind this exact revision. Restart must
+   // not rotate it or abandon a partially published/removed owned resource.
+   if(isAccountService(record)){
+    if(record.engineId!==now.engineId||!skillsValid)record.health={state:'error',message:'App resources need review before reconnecting.'}
+    await store.update(record,revision)
+   }else if(record.engineId!==now.engineId||!skillsValid||record.state==='preparing'||record.state==='removing'){record.state='error';record.revision=randomUUID();await store.update(record,revision,'')}else await store.update(record,revision)
   })}
   await scope();await syncRegistry(authority.skillsRoot,owner,signal)
  }
- return {skillAuthority,skillJournal,mutate,view,probe,discover,transport,current,liveRecord,idName,lifecycle,reconcile,
+ return {skillAuthority,skillJournal,view,probe,discover,transport,current,liveRecord,idName,lifecycle,reconcile,syncRegistry,assertToolNames,trackTransport,
+  mutate:(owner:string,input:Action,stop:AbortSignal)=>exclusive(owner,()=>mutateLegacy(owner,input,stop)),
+  setAccountTransport(factory:NonNullable<typeof accountTransport>){if(accountTransport)throw new Error('Account transport already bound');accountTransport=factory},
+  accountMutation:<T>(owner:string,probe:boolean,write:()=>Promise<T>)=>exclusive(owner,()=>probe?write():lifecycle.transitionOwner(owner,async()=>{await Promise.allSettled([...(transportWork.get(owner)??[])]);return write()})),
   async reconcileOwners(signal:AbortSignal){
    // Clear usable health before any owner inspection; restart never probes a provider.
    await abortable(store.db.execute(`UPDATE desktop_service_installs SET health='{"state":"unchecked"}',health_launch=NULL,tool_names='[]'`),signal)
@@ -157,14 +182,23 @@ export function localServiceLifecycle(store:ServiceStore,authorize:ServiceAuthor
     try{await reconcile(owner,stop)}catch{
      signal.throwIfAborted();shutdown.signal.throwIfAborted()
      // A missing/deleting owner or broken projection cannot hold unrelated MCP startup hostage.
-     await abortable(store.db.execute({sql:`UPDATE desktop_service_installs SET state='error',bearer=NULL,revision=?,health='{"state":"error","message":"App resources need review before reconnecting."}',health_launch=NULL,tool_names='[]' WHERE owner=?`,args:[randomUUID(),owner]}),signal)
+     // Do not decode the same corrupt/unknown-version row that caused recovery
+     // to fail. Unknown records remain unreadable; unrelated owners can start.
+     await abortable(store.db.execute({sql:`UPDATE desktop_service_installs SET health='{"state":"error","message":"App resources need review before reconnecting."}',health_launch=NULL,tool_names='[]' WHERE owner=?`,args:[owner]}),signal)
+     const saved=await abortable(store.db.execute({sql:'SELECT key,id,revision,schema_version,plan FROM desktop_service_installs WHERE owner=?',args:[owner]}),signal)
+     for(const row of saved.rows){
+      if(Number(row.schema_version)!==1)continue
+      let plan:unknown;try{plan=JSON.parse(String(row.plan))}catch{continue}
+      if(!plan||typeof plan!=='object'||Array.isArray(plan)||'shape' in plan)continue
+      await abortable(store.db.execute({sql:"UPDATE desktop_service_installs SET state='error',bearer=NULL,revision=? WHERE owner=? AND key=? AND id=? AND revision=?",args:[randomUUID(),owner,String(row.key),String(row.id),String(row.revision)]}),signal)
+     }
     }
    }
   },
   async ownedSkills(owner:string,signal:AbortSignal){await current(owner,'manage',undefined,signal);return (await store.list(owner)).flatMap(record=>record.skills.map(skill=>({key:record.key,installationId:record.id,state:record.state,...skill})))},
-  transitionOwner:<T>(owner:string,write:()=>Promise<T>)=>lifecycle.transitionOwner(owner,write),
+  transitionOwner:<T>(owner:string,write:()=>Promise<T>)=>{lifecycle.disconnect(owner);return exclusive(owner,()=>lifecycle.transitionOwner(owner,async()=>{await Promise.allSettled([...(transportWork.get(owner)??[])]);return write()}))},
   shutdown(){shutdown.abort();lifecycle.shutdown()},
-  async drain(){await Promise.allSettled([...active.values()])},
+  async drain(){await Promise.allSettled([...active.values(),...ownerTails.values(),...[...transportWork.values()].flatMap(works=>[...works])])},
  }
 }
 export type LocalServices=ReturnType<typeof localServiceLifecycle>

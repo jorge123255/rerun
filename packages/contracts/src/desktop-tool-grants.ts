@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'db', 'sharedDb', 'schedule', 'mcp', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'callAgent', 'trigger', 'delegate'] as const
+export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'db', 'sharedDb', 'schedule', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -42,7 +42,8 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('sharedFilesRead', 'Read shared files', 'Read and list text and Markdown files in the workspace shared folder. Every coworker with this permission sees the same shared documents.', 'shared_read', 'shared_list'),
     pending('shell', 'Run commands', 'Run Rerun shell commands in a workspace.', 'Requires a confined engine command runner.', 'shell_exec'),
     supported('webFetch', 'Read public web pages', 'Read public HTTP(S) text and HTML pages without cookies or saved files.', 'web_fetch'),
-    pending('web', 'Use the web', 'Search or download content.', 'Rerun web search needs a search provider; downloads and saved pages are unavailable.', 'web_search', 'download'),
+    supported('webSearch', 'Search public web', 'Search with the Brave Search key in Settings. Separate from native Codex search.', 'web_search'),
+    pending('web', 'Download files', 'Download remote content.', 'Requires a reviewed download destination.', 'download'),
     supported('db', 'Private database', 'Read and change structured records in this coworker’s private database.', 'db_query', 'db_execute', 'db_schema'),
     supported('sharedDb', 'Shared database', 'Read and change workspace shared records.', 'shared_db_query', 'shared_db_execute', 'shared_db_schema'),
     supported('brain', 'Company brain', 'Read and search shared company knowledge, and propose changes for your review.', 'brain_read', 'brain_search', 'brain_propose'),
@@ -53,16 +54,19 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('callAgent', 'Call coworkers', 'Ask an allowed coworker to work in its own new chat, using its own model and permissions.', 'call_agent'),
     supported('browser', 'Use a browser', 'Read pages in this coworker’s isolated browser and ask you to take over. Requires Docker Desktop and Computer control.', 'browser_navigate', 'request_takeover'),
     pending('vision', 'Vision', 'Inspect images and screenshots.', 'Requires an image input path and a model with vision.'),
-    supported('computer', 'Computer control', 'See and drive this coworker’s isolated browser screen. Requires Docker Desktop and Use a browser.', 'computer', 'computer_open_app'),
+    supported('computer', 'Computer control', 'See and drive this coworker’s isolated screen. Requires Docker Desktop and permission for the app in front.', 'computer', 'computer_open_app'),
+    supported('terminalLaunch', 'Terminal', 'Open and drive Terminal inside this coworker’s isolated Linux screen. Requires Computer control. Commands can access the guest’s files and browser profile, not Mac files.'),
+    supported('filesLaunch', 'Files', 'Open and drive the file manager inside this coworker’s isolated Linux screen. Requires Computer control. This does not open Finder or publish files to the Mac.'),
     pending('notify', 'Send notifications', 'Deliver a coworker notification.', 'Requires a Mac notification destination and user permission.'),
     supported('services', 'Apps', 'Use tools from apps you connect in this coworker’s Apps panel. Installing an app does not enable this permission.'),
     pending('hub', 'Service catalog', 'Discover and configure Rerun services.', 'Requires an authenticated Rerun hub.'),
     pending('paidData', 'Paid data', 'Search external datasets.', 'Requires a configured provider and billing controls.'),
     supported('cardTable', 'Show table cards', 'Show a frozen snapshot of a saved database view in chat. Requires the matching private or shared database permission.', 'card_table'),
     supported('suggestService', 'Suggest apps', 'Suggest catalog apps in chat and wait for the setup card. This does not enable Apps or store a credential.', 'suggest_service'),
-    pending('requestSecret', 'Request a secret', 'Request a credential through a secure field.', 'Requires a secure entry and credential storage flow.'),
+    supported('requestSecret', 'Request credentials', 'Ask for credentials in a masked form. Values are encrypted for this coworker and kept out of chat; storage does not grant permission to use them.', 'request_secret'),
     supported('self', 'Improve itself', 'Let this coworker refine its own instructions and how long its answers are over time.', 'soul_update', 'verbosity_set'),
     nested('self', 'selfInstruction', 'Edit own instructions', 'Let this coworker rewrite its own instructions — the identity at the top of its prompt — and have them take effect from the next message.', 'soul_update'),
+    nested('self', 'selfMcpRegister', 'Propose MCP servers', 'Let this coworker suggest tool connections for your review. Approval and tool access use separate permissions; proposing never installs packages or launches programs.', 'mcp_register'),
     nested('self', 'verbositySet', 'Change reply length', 'Let this coworker durably change how long its answers are, from minimal to detailed.', 'verbosity_set'),
     supported('mcp', 'Custom MCP servers', 'Use tools from this coworker’s configured HTTPS MCP servers. Configure connections in MCP servers.'),
     supported('localMcpStdio', 'Local MCP programs', 'Run explicitly configured programs as your Mac user. These programs can access your Mac files and network. Saving a connection does not enable this permission.'),

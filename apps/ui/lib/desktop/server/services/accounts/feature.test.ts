@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 import { accountFeature } from './feature'
 import { accountHarness, bearerManifest, FIXTURE_TOKEN, rfcUuid } from './regression-harness'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 
 function featureFor() {
     const h = accountHarness()

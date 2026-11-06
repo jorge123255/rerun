@@ -69,7 +69,7 @@ export function desktopSemanticBackendCanonical(identity: DesktopSemanticBackend
 
 export const desktopSemanticRecallRequestSchema = z.strictObject({
     query: memoryRecallQuerySchema.shape.query.max(DESKTOP_SEMANTIC_QUERY_MAX),
-    limit: memoryRecallQuerySchema.shape.limit.max(DESKTOP_SEMANTIC_LIMIT_MAX),
+    limit: memoryRecallQuerySchema.shape.limit.unwrap().max(DESKTOP_SEMANTIC_LIMIT_MAX).default(5),
     includeDormant: memoryRecallQuerySchema.shape.includeDormant,
     reinforce: z.enum(desktopSemanticReinforceModes).default('none'),
 })

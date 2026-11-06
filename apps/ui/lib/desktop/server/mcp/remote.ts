@@ -62,7 +62,7 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
         let bearer = '', session = '', id = 0, configuredUrl = '', configuredBearer = ''
         const execute = async () => {
         try {
-            const first = await abortable(store.read(agent,name),signal); configuredBearer=first.bearer; bearer = oauthCredential ? (await abortable(oauthCredential(agent,name,revision,signal),signal)) ?? first.bearer : first.bearer
+            const first = await abortable(store.read(agent,name),signal); if (first.transport === 'sse') throw new Error('Use the SSE transport'); configuredBearer=first.bearer; bearer = oauthCredential ? (await abortable(oauthCredential(agent,name,revision,signal),signal)) ?? first.bearer : first.bearer
             const url = endpoint(first.url); configuredUrl = url
             async function guard() {
                 ticket.assertCurrent()

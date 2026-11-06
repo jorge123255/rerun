@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import type { SelfMcpDecisionResult, SelfMcpReviewSnapshot } from '@rerun/contracts'
+import type { SelfMcpDecisionRequest, SelfMcpDecisionResult, SelfMcpReviewSnapshot } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PanelListHeader, PanelScroller } from '@/components/ui/panel-list'
@@ -29,6 +29,7 @@ function SelfMcpPanel({ agentId }: { agentId: string }) {
     const { proposals, pendingId, unavailable, refresh, review, decide, dismiss } = useSelfMcp(agentId)
     const alive = useRef(true)
     const epoch = useRef(0)
+    const attempts = useRef(new Map<string, SelfMcpDecisionRequest>())
     const [selectedId, setSelectedId] = useState<string | null>(null)
     const [snapshot, setSnapshot] = useState<SelfMcpReviewSnapshot | null>(null)
     const [busy, setBusy] = useState(false)
@@ -73,13 +74,19 @@ function SelfMcpPanel({ agentId }: { agentId: string }) {
         const myEpoch = ++epoch.current
         setBusy(true)
         setError('')
-        const result: SelfMcpDecisionResult | null = await decide({
-            proposalId: snapshot.proposal.id,
-            decisionId: newId(),
-            expectedProposalRevision: snapshot.proposal.revision,
-            expectedConfigRevision: snapshot.configRevision,
-            outcome,
-        })
+        const attemptKey = JSON.stringify([snapshot.proposal.id, snapshot.proposal.revision, snapshot.configRevision, outcome])
+        let request = attempts.current.get(attemptKey)
+        if (!request) {
+            request = {
+                proposalId: snapshot.proposal.id,
+                decisionId: newId(),
+                expectedProposalRevision: snapshot.proposal.revision,
+                expectedConfigRevision: snapshot.configRevision,
+                outcome,
+            }
+            attempts.current.set(attemptKey, request)
+        }
+        const result: SelfMcpDecisionResult | null = await decide(request)
         if (!alive.current || myEpoch !== epoch.current) return
         if (result) {
             if (result.outcome === 'in_flight') {
@@ -87,9 +94,15 @@ function SelfMcpPanel({ agentId }: { agentId: string }) {
                 setError(result.message)
                 return
             }
-            if (result.message) toast.success(result.message)
+            if (result.receipt || result.outcome !== 'failed') attempts.current.delete(attemptKey)
+            if (result.message) {
+                if (result.outcome === 'failed') toast.error(result.message)
+                else toast.success(result.message)
+            }
         } else {
-            setError('Review failed; the proposal may have settled. Refresh the list.')
+            setBusy(false)
+            setError('The result could not be confirmed. Retry this decision or go back and refresh its status.')
+            return
         }
         close()
     }, [snapshot, busy, decide, close])
@@ -145,7 +158,7 @@ function SelfMcpPanel({ agentId }: { agentId: string }) {
                             ))}
                         </PanelScroller>
                     )}
-                    <p className="p-3 text-xs text-muted-foreground">The model can propose an MCP server but never approve or execute its own proposal. Approval saves and connects it behind the existing MCP and local-program permissions.</p>
+                    <p className="p-3 text-xs text-muted-foreground">The model can propose an MCP server but never approve or execute its own proposal. Approval saves it behind the existing MCP and local-program permissions; connection status is shown separately.</p>
                 </div>
             )}
         </PanelSteps>

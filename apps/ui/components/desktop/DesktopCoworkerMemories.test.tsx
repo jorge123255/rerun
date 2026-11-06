@@ -10,6 +10,19 @@ import { DesktopConversation } from './DesktopConversation'
 
 const coworker = (id: string) => ({ id, name: id, description: '', createdAt: '', updatedAt: '' })
 const note = (id: string, content: string) => ({ id, content, kind: 'fact', tags: ['project'], createdAt: '2026-11-03T08:00:00Z', strength: 0.64, status: 'dormant' })
+const keywordIndex = { mode: 'keyword-only', backend: null, indexed: 0, pending: 0, omitted: 0, detail: 'Keyword search only. An embedding backend is not configured.' }
+// Keep the existing CRUD scenarios focused on canonical note changes while supplying
+// the semantic transport envelope. The integration case below checks the real endpoint.
+function stubMemoryFetch(handler: (url: string, init: RequestInit) => Promise<Response> | Response) {
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
+        const match = /^\/api\/desktop\/coworkers\/([^/]+)\/semantic-memory$/.exec(url)
+        if (!match) return handler(url, init)
+        if (init.method !== 'POST') return Response.json(keywordIndex)
+        const response = await handler(`/api/desktop/agents/${match[1]}/memories/recall`, init)
+        if (!response.ok) return response
+        return Response.json({ ...(await response.json()), mode: 'keyword-only', detail: keywordIndex.detail, index: keywordIndex })
+    })
+}
 const dialog = () => document.querySelector('[role="dialog"]')
 const click = async (text: string) => {
     const button = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === text)
@@ -24,6 +37,33 @@ function mount() {
 
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = '' })
 
+test('semantic search uses the same editable MemoryRow and shows honest indexing status without requesting reinforcement', async () => {
+    const root = mount(), requests: { url: string; body: unknown }[] = []
+    const base = '/api/desktop/coworkers/reviewer/semantic-memory'
+    const index = { mode: 'partial', backend: { backendId: 'fixture', model: 'fixture', version: '1', dimensions: 2 }, indexed: 1, pending: 1, omitted: 0, detail: 'Some notes are still indexing. Keyword matches are included.' }
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
+        const body = init.body ? JSON.parse(String(init.body)) : null
+        requests.push({ url, body })
+        if (url === base + '/index') return Response.json(index)
+        if (url === base) return Response.json(init.method === 'POST' ? { mode: 'partial', detail: index.detail, index, memories: [note('location', 'The printer is by the cabinet')] } : index)
+        return Response.json({ memories: [note('location', 'The printer is by the cabinet')] })
+    })
+    try {
+        await act(async () => { root.render(<DesktopCoworkerMemories agent={coworker('reviewer')} />) })
+        await click('Memories')
+        expect(dialog()?.textContent).toContain('Some notes are still indexing')
+        await enter('desktop-memory-search', 'office equipment')
+        await click('Search')
+        expect(requests).toContainEqual({ url: base, body: { query: 'office equipment' } })
+        expect(dialog()?.textContent).toContain('The printer is by the cabinet')
+        expect(dialog()?.querySelector('[aria-label="Delete memory"]')).not.toBeNull()
+        expect(dialog()?.textContent).toContain('64%')
+        await click('Retry indexing')
+        expect(requests).toContainEqual({ url: base + '/index', body: { operation: 'retry' } })
+        expect(requests.every(value => !value.body || !('reinforce' in (value.body as object)))).toBe(true)
+    } finally { await act(async () => { root.unmount() }) }
+})
+
 test('a coworker can open memories, retry and refresh without losing a chat draft', async () => {
     const root = mount()
     let finish!: (response: Response) => void
@@ -31,7 +71,7 @@ test('a coworker can open memories, retry and refresh without losing a chat draf
         .mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve }))
         .mockResolvedValueOnce(Response.json({ memories: [note('one', 'Keeps weekly notes.')] }))
         .mockResolvedValueOnce(Response.json({ memories: [] }))
-    vi.stubGlobal('fetch', (url: string, init: RequestInit) => url === '/api/desktop/agents/local-id/model'
+    stubMemoryFetch((url: string, init: RequestInit) => url === '/api/desktop/agents/local-id/model'
         ? Promise.resolve(Response.json({ error: 'No test model' }, { status: 404 }))
         : desktopBackgroundRead(url, init) ?? fetcher(url, init))
     try {
@@ -62,7 +102,7 @@ test('a coworker can open memories, retry and refresh without losing a chat draf
 test('late responses from another coworker or a closed dialog never populate a newly opened view', async () => {
     const root = mount()
     const reads: { url: string; signal: AbortSignal; finish(response: Response): void }[] = []
-    vi.stubGlobal('fetch', (url: string, { signal }: RequestInit) => new Promise<Response>(finish => { reads.push({ url, signal: signal!, finish }) }))
+    stubMemoryFetch((url: string, { signal }: RequestInit) => new Promise<Response>(finish => { reads.push({ url, signal: signal!, finish }) }))
     const render = (id: string) => act(async () => { root.render(<DesktopCoworkerMemories agent={coworker(id)} />) })
     try {
         await render('researcher')
@@ -99,7 +139,7 @@ test('recalls by submitted query, retries an error, and updates matching results
     const outside = note('outside', 'Vacation dates')
     let notes = [outside]
     const queries: string[] = []
-    vi.stubGlobal('fetch', async (target: string, init: RequestInit) => {
+    stubMemoryFetch(async (target: string, init: RequestInit) => {
         if (target === url + '/recall') {
             expect(init.method).toBe('POST')
             const { query } = JSON.parse(String(init.body))
@@ -151,7 +191,7 @@ test('recalls by submitted query, retries an error, and updates matching results
 test('late search results cannot replace a new query or the full list after clearing search', async () => {
     const root = mount()
     const reads: { signal: AbortSignal; finish: (r: Response) => void }[] = []
-    vi.stubGlobal('fetch', (url: string, init: RequestInit) => url.endsWith('/recall')
+    stubMemoryFetch((url: string, init: RequestInit) => url.endsWith('/recall')
         ? new Promise<Response>(finish => { reads.push({ signal: init.signal!, finish }) })
         : Promise.resolve(Response.json({ memories: [note('full', 'Full list note')] })))
     try {
@@ -180,7 +220,7 @@ test('saves trimmed content and metadata, retaining drafts and request IDs acros
     const root = mount()
     const writes: { content: string; kind?: string; tags?: string[]; requestId: string }[] = []
     const stored = new Map<string, ReturnType<typeof note>>()
-    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    stubMemoryFetch(async (url: string, init: RequestInit) => {
         expect(url).toBe('/api/desktop/agents/reviewer/memories')
         if (init.method === 'POST') {
             const input = JSON.parse(String(init.body))
@@ -224,7 +264,7 @@ test('deletes only the confirmed note, keeps the note on failure and supports ca
     const second = note('second', 'Remove this note.')
     let stored = [first, second]
     let deletes = 0
-    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    stubMemoryFetch(async (url: string, init: RequestInit) => {
         if (init.method === 'DELETE') {
             expect(url).toBe('/api/desktop/agents/reviewer/memories/second')
             if (++deletes === 1) return Response.json({ error: 'Delete failed. Try again.' }, { status: 503 })
@@ -265,7 +305,7 @@ test('a save finishing after a coworker switch cannot replace the new coworkerâ€
     const root = mount()
     let finish!: (response: Response) => void
     const calls: string[] = []
-    vi.stubGlobal('fetch', (url: string, init: RequestInit) => {
+    stubMemoryFetch((url: string, init: RequestInit) => {
         calls.push(`${init.method ?? 'GET'} ${url}`)
         if (init.method === 'POST') return new Promise<Response>(resolve => { finish = resolve })
         return Promise.resolve(Response.json({ memories: url.includes('/second/') ? [note('kept', 'Second coworker note')] : [] }))
@@ -293,7 +333,7 @@ test('an already-deleted note is reconciled from the coworker list without disca
     const survivor = note('other', 'Existing second note')
     let stored = [note('gone', 'Already removed elsewhere'), survivor]
     let reads = 0
-    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    stubMemoryFetch(async (url: string, init: RequestInit) => {
         if (init.method === 'DELETE') {
             expect(url).toBe('/api/desktop/agents/writer/memories/gone')
             stored = [survivor]
@@ -325,7 +365,7 @@ test('cancel keeps every note and the search, and confirming clears all notes be
     const cider = note('cider', 'Presses cider from apples')
     let stored = [outside, apple, cider]
     const calls: string[] = []
-    vi.stubGlobal('fetch', async (target: string, init: RequestInit) => {
+    stubMemoryFetch(async (target: string, init: RequestInit) => {
         calls.push(`${init.method ?? 'GET'} ${target}`)
         if (init.method === 'DELETE' && target === url) {
             stored = []
@@ -375,7 +415,7 @@ test('clear-all stays available for zero recall results and removes notes outsid
     const url = '/api/desktop/agents/reviewer/memories'
     let stored = [note('outside', 'Vacation dates in July')]
     let clears = 0
-    vi.stubGlobal('fetch', async (target: string, init: RequestInit) => {
+    stubMemoryFetch(async (target: string, init: RequestInit) => {
         if (init.method === 'DELETE') {
             expect(target).toBe(url)
             clears++
@@ -409,7 +449,7 @@ test('a failed clear keeps every note and the search intact, and retrying the co
     let stored = [outside, apple]
     let clears = 0
     const calls: string[] = []
-    vi.stubGlobal('fetch', async (target: string, init: RequestInit) => {
+    stubMemoryFetch(async (target: string, init: RequestInit) => {
         calls.push(`${init.method ?? 'GET'} ${target}`)
         if (init.method === 'DELETE' && target === url) {
             if (++clears === 1) return Response.json({ error: 'Engine unavailable' }, { status: 503 })
@@ -450,7 +490,7 @@ test('a partial clear failure refreshes the remaining notes and retains its erro
     const url = '/api/desktop/agents/reviewer/memories'
     let stored = [note('outside', 'Vacation dates'), note('apples', 'Buys apples weekly')]
     let clears = 0
-    vi.stubGlobal('fetch', async (target: string, init: RequestInit) => {
+    stubMemoryFetch(async (target: string, init: RequestInit) => {
         if (init.method === 'DELETE') {
             stored = clears++ === 0 ? [stored[0]] : []
             return clears === 1 ? Response.json({ error: 'Could not finish clearing memories' }, { status: 503 }) : new Response(null, { status: 204 })
@@ -484,7 +524,7 @@ test('a clear finishing after a coworker switch cannot empty the newly selected 
     const url = (id: string) => `/api/desktop/agents/${id}/memories`
     let finish!: (response: Response) => void
     const calls: string[] = []
-    vi.stubGlobal('fetch', (target: string, init: RequestInit) => {
+    stubMemoryFetch((target: string, init: RequestInit) => {
         calls.push(`${init.method ?? 'GET'} ${target}`)
         if (init.method === 'DELETE') {
             expect(target).toBe(url('first'))

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { MAX_RECORDING_MS } from '@rerun/contracts'
-import { DESKTOP_VOICE_MAX_BYTES, DESKTOP_VOICE_MAX_LEVELS, type DesktopVoiceFormat } from '../../../../../../packages/contracts/src/desktop-voice.ts'
+import { DESKTOP_VOICE_MAX_BYTES, DESKTOP_VOICE_MAX_LEVELS, type DesktopVoiceFormat } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { inspectDesktopAudioBytes } from '../audio-bytes'
 

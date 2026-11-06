@@ -5,6 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const local = vi.hoisted(() => ({ list: vi.fn(), sources: vi.fn(), detail: vi.fn(), createDraft: vi.fn(), dispose: vi.fn() }))
 const factory = vi.hoisted(() => ({ create: vi.fn() }))
+const portable = vi.hoisted(() => ({ pendingImport: vi.fn(), importPackage: vi.fn(), exportTemplate: vi.fn(), deleteTemplate: vi.fn(), dispose: vi.fn() }))
+vi.mock('@/lib/desktop/portable-template-client', () => ({ createDesktopPortableTemplatesClient: () => portable }))
 vi.mock('@/lib/desktop/templates-client', () => ({
     createDesktopTemplatesClient: () => factory.create(),
     DesktopTemplateRequestError: class extends Error { constructor(message: string, readonly definite: boolean) { super(message) } },
@@ -32,8 +34,26 @@ afterEach(() => {
     document.body.innerHTML = ''
     for (const mock of Object.values(local)) mock.mockReset()
     factory.create.mockReset()
+    for (const mock of Object.values(portable)) mock.mockReset()
+    delete (window as Window & { desktopApp?: unknown }).desktopApp
 })
 const button = (label: string) => [...document.querySelectorAll('button')].find(item => item.textContent?.trim() === label)!
+
+it('Import from the mounted library recovers the server attempt without reopening the Mac picker', async () => {
+    const pending = { operation: 'import-package', requestId: '11111111-1111-4111-8111-111111111111', uploadId: '22222222-2222-4222-8222-222222222222' }
+    const pickImport = vi.fn()
+    ;(window as Window & { desktopApp?: unknown }).desktopApp = { templates: { pickImport, saveArtifact: vi.fn() } }
+    local.list.mockResolvedValue([])
+    portable.pendingImport.mockResolvedValue(pending)
+    portable.importPackage.mockResolvedValue({ status: 'uncertain', requestId: pending.requestId, receiptId: pending.requestId, recoverable: true, reason: 'Recover this import' })
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopTemplateNavigation open onOpenChange={() => {}} onCreateFromScratch={() => {}} onInstalled={() => {}} />))
+    await act(async () => button('Import package').click())
+    expect(portable.pendingImport).toHaveBeenCalledOnce()
+    expect(pickImport).not.toHaveBeenCalled()
+    expect(portable.importPackage).toHaveBeenCalledExactlyOnceWith({ requestId: pending.requestId, uploadId: pending.uploadId })
+    expect(document.body.textContent).toContain('Recover this import')
+})
 
 it('does no library or capture reads while closed, then loads only the explicitly opened step', async () => {
     const onActiveChange = vi.fn()

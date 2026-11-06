@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 import { accountLifecycle, defaultToolGuard } from './lifecycle'
 import { accountHarness, anonymousManifest, bearerManifest, FIXTURE_TOKEN, mcpResponse } from './regression-harness'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 import type { ServiceManifest } from '@/lib/services/manifest'
 
 type Harness = ReturnType<typeof accountHarness>
@@ -42,7 +42,7 @@ it('keeps a blank reconfigure and rejects a display mask without storing it', as
     await expect(life.mutate(h.binding, { action: 'reconfigure', requestId: h.requestId(), intent: { kind: 'existing', accountKey: 'fixture', expectedRevision: again.revision! }, authMethodId: 'token', values: { TOKEN: '••••' } }, h.signal())).rejects.toThrow(M.mask)
     expect((await h.secrets.read(h.binding.coworkerId, again.installationId!, again.revision!))?.inputs.TOKEN).toBe(FIXTURE_TOKEN)
     h.manifests.other = bearerManifest('other')
-    await expect(life.mutate(h.binding, installInput(h, 'other', 'token', { TOKEN: '' }), h.signal())).rejects.toThrow(M.credential)
+    await expect(life.mutate(h.binding, installInput(h, 'other', 'token', { TOKEN: '' }), h.signal())).rejects.toThrow(M.bearer)
     expect(await h.installs.read(h.binding.coworkerId, 'other')).toBeNull()
 })
 
@@ -256,7 +256,7 @@ it('keeps a shared usage-skill bundle until nothing else references it', async (
     await expect(life.mutate(h.binding, installInput(h, 'fixture', 'token', { TOKEN: FIXTURE_TOKEN }), h.signal())).rejects.toThrow(M.skillsUnavailable)
     expect(await h.installs.list(h.binding.coworkerId)).toHaveLength(0)
     const withSkills = h.lifecycle()
-    h.skills.create = async () => ({ slug: 'svc-shared', directoryIdentity: 'dir:svc-shared', manifestVersion: '1' })
+    h.skills.create = async () => ({ slug: 'svc-shared', directoryIdentity: 'dir:svc-shared', contentHash: 'fixture-content-hash', manifestVersion: '1' })
     const base = await withSkills.mutate(h.binding, installInput(h, 'fixture', 'token', { TOKEN: FIXTURE_TOKEN }), h.signal())
     const extra = await withSkills.mutate(h.binding, installInput(h, 'fixture', 'token', { TOKEN: 'second-fixture-value' }, 'additional'), h.signal())
     await withSkills.mutate(h.binding, { action: 'remove', requestId: h.requestId(), intent: { kind: 'existing', accountKey: extra.accountKey!, expectedRevision: extra.revision! } }, h.signal())

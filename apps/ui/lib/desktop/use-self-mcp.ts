@@ -24,7 +24,6 @@ export function useSelfMcp(agentId: string, options: { active?: boolean } = {}) 
     const scope = scopeRef.current
 
     const clientRef = useRef<ReturnType<typeof createDesktopSelfMcpClient> | null>(null)
-    if (!clientRef.current) clientRef.current = createDesktopSelfMcpClient(agentId)
 
     const mounted = useRef(false)
     const epoch = useRef(0)
@@ -41,11 +40,11 @@ export function useSelfMcp(agentId: string, options: { active?: boolean } = {}) 
         const myEpoch = ++epoch.current
         try {
             const result = await client.list()
-            if (!live() || myEpoch !== epoch.current || pending.current) return
+            if (!live() || clientRef.current !== client || myEpoch !== epoch.current || pending.current) return
             setProposals(result.proposals)
             setUnavailable(false)
         } catch {
-            if (live() && myEpoch === epoch.current) setUnavailable(true)
+            if (live() && clientRef.current === client && myEpoch === epoch.current) setUnavailable(true)
         }
     }, [live])
 
@@ -53,14 +52,17 @@ export function useSelfMcp(agentId: string, options: { active?: boolean } = {}) 
         const client = clientRef.current
         if (!live() || !client) return null
         try {
-            return await client.review(proposalId)
+            const result = await client.review(proposalId)
+            return live() && clientRef.current === client ? result : null
         } catch (error) {
-            toast.error(error instanceof Error ? error.message : 'Review unavailable; refresh the list.')
+            if (live() && clientRef.current === client) toast.error(error instanceof Error ? error.message : 'Review unavailable; refresh the list.')
             return null
         }
     }, [live])
 
     useEffect(() => {
+        const client = createDesktopSelfMcpClient(agentId)
+        clientRef.current = client
         mounted.current = true
         epoch.current++
         setProposals([])
@@ -70,10 +72,10 @@ export function useSelfMcp(agentId: string, options: { active?: boolean } = {}) 
             mounted.current = false
             epoch.current++
             pending.current = false
-            clientRef.current?.dispose()
-            clientRef.current = null
+            client.dispose()
+            if (clientRef.current === client) clientRef.current = null
         }
-    }, [scope])
+    }, [scope, agentId])
 
     useEffect(() => {
         if (!active || !clientRef.current) return
@@ -89,30 +91,34 @@ export function useSelfMcp(agentId: string, options: { active?: boolean } = {}) 
         }
     }, [active, refresh, live])
 
-    const settle = useCallback(async (operation: () => Promise<SelfMcpDecisionResult>, proposalId: string): Promise<SelfMcpDecisionResult | null> => {
-        if (!live() || pending.current) return null
+    const settle = useCallback(async (operation: (client: ReturnType<typeof createDesktopSelfMcpClient>) => Promise<SelfMcpDecisionResult>, proposalId: string): Promise<SelfMcpDecisionResult | null> => {
+        const client = clientRef.current
+        if (!live() || pending.current || !client) return null
         pending.current = true
         setPendingId(proposalId)
         epoch.current++
         try {
-            const result = await operation()
+            const result = await operation(client)
+            if (!live() || clientRef.current !== client) return null
             if (result.outcome === 'in_flight') {
                 toast.info('Another review is being processed; refresh to see its result.')
             }
             return result
         } catch (error) {
-            toast.error(error instanceof Error ? error.message : 'Review failed; refresh and try again.')
+            if (live() && clientRef.current === client) toast.error(error instanceof Error ? error.message : 'Review failed; refresh and try again.')
             return null
         } finally {
-            pending.current = false
-            setPendingId(null)
-            epoch.current++
-            void refresh()
+            if (live() && clientRef.current === client) {
+                pending.current = false
+                setPendingId(null)
+                epoch.current++
+                void refresh()
+            }
         }
     }, [live, refresh])
 
-    const decide = useCallback((decision: SelfMcpDecisionRequest) => settle(() => clientRef.current!.decide(decision), decision.proposalId), [settle])
-    const dismiss = useCallback((proposalId: string, expectedProposalRevision: number) => settle(() => clientRef.current!.dismiss(proposalId, expectedProposalRevision), proposalId), [settle])
+    const decide = useCallback((decision: SelfMcpDecisionRequest) => settle(client => client.decide(decision), decision.proposalId), [settle])
+    const dismiss = useCallback((proposalId: string, expectedProposalRevision: number) => settle(client => client.dismiss(proposalId, expectedProposalRevision), proposalId), [settle])
 
     return { proposals, pendingId, unavailable, refresh, review, decide, dismiss }
 }

@@ -1,13 +1,14 @@
 'use client'
 
-import type { DesktopServiceAccountResult, DesktopServiceAccountView } from '../../../../packages/contracts/src/desktop-service-accounts'
+import type { InputDef } from '@/lib/services/manifest'
+import type { DesktopServiceAccountResult, DesktopServiceAccountView } from '@rerun/contracts'
 
 export type ServiceAccountMethod = {
     id: string
     label: string
     kind: 'oauth' | 'key' | 'stdio' | 'none' | 'managed' | 'composio' | 'app'
     recommended: boolean
-    inputs: Array<{ key: string; label: string; type?: string; secret?: boolean; required?: boolean; placeholder?: string; help?: string; guide?: string; options?: Array<{ value: string; label: string }> }>
+    inputs: InputDef[]
     requiresSecrets: boolean
     availability: { id: string; supported: boolean; reason?: string }
 }
@@ -87,6 +88,7 @@ function forget(key: string) {
 export function createDesktopServiceAccountsClient(coworkerId: string) {
     const url = `/api/desktop/coworkers/${encodeURIComponent(coworkerId)}/service-accounts`
     const requests = new Map<string, string>()
+    const acknowledged = new Map<string, string>()
     const controllers = new Set<AbortController>()
     let closed = false
     async function request<T>(method: 'GET' | 'POST', body?: Record<string, unknown>, query?: URLSearchParams): Promise<T> {
@@ -111,26 +113,38 @@ export function createDesktopServiceAccountsClient(coworkerId: string) {
             controllers.delete(controller)
         }
     }
-    async function mutate(action: string, payload: Record<string, unknown>, reuse: 'keep' | 'probe'): Promise<DesktopServiceAccountResult> {
-        const stamp = await fingerprint([action, payload])
+    async function mutate(action: string, payload: Record<string, unknown>, _reuse: 'keep' | 'probe'): Promise<DesktopServiceAccountResult> {
+        if (closed) throw new Error('Service panel owner changed')
+        const stamp = await fingerprint([coworkerId, action, payload])
+        const afterRequestId = acknowledged.get(stamp) ?? recall(`${stamp}:ack`)
         let requestId = requests.get(stamp) ?? recall(stamp)
-        if (!requestId) {
+        if (!requestId || requestId === afterRequestId) {
             requestId = crypto.randomUUID()
             requests.set(stamp, requestId)
             remember(stamp, requestId)
         } else requests.set(stamp, requestId)
-        const result = await request<MutationResult>('POST', { action, requestId, ...payload })
-        if (result.status === 'unknown') {
-            if (reuse === 'probe') {
-                requests.delete(stamp)
-                forget(stamp)
-            }
-            throw new Error(result.message ?? 'Prior request acknowledgement unavailable; inspect connection state.')
-        }
-        if (reuse === 'probe' || result.status === 'removed') {
+        const prepared = await request<{ requestId: string }>('POST', { action: 'prepare-attempt', mutation: { action, requestId, ...payload }, ...(afterRequestId ? { afterRequestId } : {}) })
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(prepared.requestId)) throw new Error('Account attempt identity unavailable')
+        const attemptId = prepared.requestId
+        requests.set(stamp, attemptId)
+        remember(stamp, attemptId)
+        const mutation = { action, requestId: attemptId, ...payload }
+        const result = await request<MutationResult>('POST', mutation)
+        const acknowledge = async () => {
+            const receipt = await request<{ acknowledged: boolean; requestId: string }>('POST', { action: 'acknowledge-attempt', mutation })
+            if (receipt.acknowledged !== true || receipt.requestId !== attemptId) throw new Error('Account acknowledgement unavailable')
             requests.delete(stamp)
             forget(stamp)
+            acknowledged.set(stamp, attemptId)
+            remember(`${stamp}:ack`, attemptId)
         }
+        if (result.status === 'unknown') {
+            // Only the server can distinguish a completed stale receipt from an
+            // interrupted operation. Never rotate an uncertain write on our own.
+            await acknowledge().catch(() => {})
+            throw new Error(result.message ?? 'Prior request acknowledgement unavailable; inspect connection state.')
+        }
+        await acknowledge()
         return result
     }
     return {

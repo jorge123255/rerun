@@ -2,7 +2,7 @@ import 'server-only'
 
 import { abortable, boundedText, decodeReply } from '../../mcp/remote'
 import { endpoint, type RemoteTool } from '../../mcp/model'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 
 export type AccountNetwork = (url: string, init: RequestInit) => Promise<Response>
 
@@ -10,6 +10,8 @@ export type AccountTransportProbe = {
     url: string
     headers: Record<string, string>
     signal: AbortSignal
+    secretValues?: string[]
+    guard?: () => Promise<void>
 }
 
 export interface AccountTransportPort {
@@ -43,7 +45,7 @@ export function accountTransport(network: AccountNetwork): AccountTransportPort 
         const url = endpoint(input.url)
         if (url !== input.url) failed()
         const signal = input.signal
-        const secrets = Object.values(input.headers)
+        const secrets = [...Object.values(input.headers), ...(input.secretValues ?? [])]
         let sessionId = ''
         let rpcId = 0
         const headers = () => ({
@@ -54,6 +56,9 @@ export function accountTransport(network: AccountNetwork): AccountTransportPort 
             ...(sessionId ? { 'Mcp-Session-Id': sessionId } : {}),
         })
         async function rpc(method: string, params: unknown, notification = false) {
+            signal.throwIfAborted()
+            await input.guard?.()
+            signal.throwIfAborted()
             const requestId = ++rpcId
             const body = JSON.stringify({ jsonrpc: '2.0', ...(notification ? {} : { id: requestId }), method, params })
             if (Buffer.byteLength(body) > 65536) failed()
@@ -81,6 +86,8 @@ export function accountTransport(network: AccountNetwork): AccountTransportPort 
                 failed()
             }
             const raw = await boundedText(response, signal, LIMIT, mime === 'text/event-stream' ? requestId : undefined)
+            await input.guard?.()
+            signal.throwIfAborted()
             return redact(decodeReply(raw, mime ?? 'application/json', requestId), secrets) as Record<string, unknown>
         }
         try {
@@ -117,6 +124,7 @@ export function accountTransport(network: AccountNetwork): AccountTransportPort 
             if (sessionId && !signal.aborted) {
                 const cleanup = AbortSignal.any([signal, AbortSignal.timeout(1000)])
                 try {
+                    await input.guard?.()
                     const closed = await abortable(network(url, { method: 'DELETE', redirect: 'manual', credentials: 'omit', signal: cleanup, headers: headers() }), cleanup)
                     if (closed.type === 'opaqueredirect' || (closed.status >= 300 && closed.status < 400)) {
                         if (closed.body) await closed.body.cancel().catch(() => {})
@@ -131,13 +139,13 @@ export function accountTransport(network: AccountNetwork): AccountTransportPort 
     return {
         async probe(input) {
             const result = await session(input)
-            if (!('tools' in result)) failed()
-            return result
+            if (!result.tools) failed()
+            return { tools: result.tools }
         },
         async call(input) {
             const result = await session(input, { name: input.name, arguments: input.arguments })
-            if (!('result' in result)) failed()
-            return result
+            if (!result.result) failed()
+            return { result: result.result }
         },
     }
 }

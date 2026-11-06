@@ -6,18 +6,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { RunContext } from '../../runtime/context.js'
 import type { AgentConfig } from '../../agents/types.js'
 import { selfMcpFingerprint } from './fingerprint.js'
+import { setEnv } from '../../config/env.js'
 
 // The engine -> UI propose bridge is a plain loopback fetch. These tests never
 // open a network connection: fetch is stubbed and every refusal asserts it was
 // never called.
 //
-// NOTE (root wiring): the execute-path cases below (happy propose, reconcile,
-// conflict, revoked-grant stale call) write `selfMcpRegister: true` into the
-// agent config, which only survives `agentConfigSchema.parse` once
-// `'selfMcpRegister'` joins `desktopRerunGrantIds` (packages/contracts/src/
-// desktop-tool-grants.ts) and the tool-grants master rule exists. Authored,
-// unrun — root runs them after that wiring. The factory gate and validation
-// refusal cases run today with the default-off grant.
+// Root executes these regression sources after integrating the desktop grant and binding.
 const root = mkdtempSync(join(tmpdir(), 'rerun-mac-self-mcp-'))
 process.env.RERUN_DATA_DIR = root
 process.env.RERUN_HUB_BASE_URL = 'http://127.0.0.1:39876/'
@@ -145,13 +140,13 @@ describe('mcp_register — strict nonsecret validation before any effect', () =>
 
 // Post-wiring execute-path cases (see header note): these require the grants
 // catalog entry so the fresh `requireDesktopToolGrant` read parses.
-describe.skip('mcp_register — propose bridge (requires root grant wiring; authored, unrun)', () => {
+describe('mcp_register — propose bridge', () => {
     beforeEach(() => {
         fetchMock.mockReset()
     })
 
     const proposeReply = (outcome: 'proposed' | 'reconciled' | 'conflict' | 'refused', message: string, fingerprint = 'a'.repeat(64)) =>
-        new Response(JSON.stringify({ outcome, message, ...(outcome === 'proposed' || outcome === 'reconciled' ? { proposal: { id: 'prop-1', revision: 1, agentId: id, identity: { engineAgentId: id, sessionId: 'session-1', runId: 'run-1', toolCallId: 'call-1' }, fingerprint, input: input(), transport: 'http', configRevision: 1, status: 'pending', createdAt: new Date().toISOString() } } : {}) }), {
+        new Response(JSON.stringify({ outcome, message, ...(outcome === 'proposed' || outcome === 'reconciled' ? { proposal: { id: 'prop-1', revision: 1, agentId: id, launchEpoch: 'epoch-1', identity: { engineAgentId: id, sessionId: 'session-1', runId: 'run-1', toolCallId: 'call-1' }, fingerprint, input: input(), transport: 'http', configRevision: 1, status: 'pending', createdAt: new Date().toISOString() } } : {}) }), {
             status: 200,
             headers: { 'content-type': 'application/json' },
         })
@@ -212,11 +207,11 @@ describe.skip('mcp_register — propose bridge (requires root grant wiring; auth
     it('refuses when the proposal bridge is unavailable (no hub configured)', async () => {
         await writeAgentConfig(id, granted())
         const tools = toolsOf(ctxFor(granted()))
-        process.env.RERUN_HUB_BASE_URL = ''
+        setEnv({ RERUN_HUB_BASE_URL: '' })
         try {
             await expect(call(tools.mcp_register!, input())).rejects.toThrow('MCP review service is unavailable')
         } finally {
-            process.env.RERUN_HUB_BASE_URL = 'http://127.0.0.1:39876/'
+            setEnv({ RERUN_HUB_BASE_URL: 'http://127.0.0.1:39876/' })
         }
         expect(fetchMock).not.toHaveBeenCalled()
     })

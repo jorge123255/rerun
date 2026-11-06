@@ -6,6 +6,8 @@ import { loadBundle, loadIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
 import { BeforeQuitDrafts, completeDesktopQuit } from './before-quit.mjs'
+import { createDesktopTemplateFiles } from './templates.mjs'
+import { desktopMicrophonePermissions } from './media-permissions.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -17,6 +19,10 @@ let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const draftQuit = new BeforeQuitDrafts()
+const templateFiles = createDesktopTemplateFiles({ dialog, context: () => {
+    if (quitting || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
+    return { runtime, window }
+} })
 const desktopNotifications = createDesktopNotifications({ Notification, onClick: target => {
     if (quitting || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return
     if (window.isMinimized()) window.restore()
@@ -91,8 +97,12 @@ async function launch() {
     await mkdir(dataRoot, { recursive: true, mode: 0o700 })
     app.setPath('userData', dataRoot)
     const desktopSession = session.fromPartition(profile)
-    desktopSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-    desktopSession.setPermissionCheckHandler(() => false)
+    const microphone = desktopMicrophonePermissions({
+        context: () => !quitting && window && !window.isDestroyed() && window.isVisible() ? window : null,
+        isDesktopPage,
+    })
+    desktopSession.setPermissionRequestHandler(microphone.request)
+    desktopSession.setPermissionCheckHandler(microphone.check)
     window = new BrowserWindow({
         width: 1220, height: 820, minWidth: 720, minHeight: 520, show: false,
         title: 'Rerun Desktop Preview', backgroundColor: '#101214',
@@ -133,6 +143,8 @@ async function launch() {
         return true
     })
     ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
+    ipcMain.handle('desktop:template-pick', event => { trusted(event); return templateFiles.pickImport() })
+    ipcMain.handle('desktop:template-save', (event, value) => { trusted(event); return templateFiles.saveArtifact(value) })
     ipcMain.handle('desktop:notify', (event, value) => {
         trusted(event)
         if (quitting || !isDesktopPage(event.senderFrame.url)) return { status: 'unavailable' }

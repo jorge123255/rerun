@@ -7,6 +7,7 @@ import { desktopRoute } from '@/lib/desktop/server/http'
 import { engineOf } from '@/lib/desktop/server/settings'
 import { desktopAgentView } from '@/lib/desktop/server/views'
 import { withDesktopMcpOwnerTransition } from '@/lib/desktop/server/mcp-binding'
+import { withDesktopSecretOwnerTransition } from '@/lib/desktop/server/secret-requests/lifecycle'
 
 const input = z.strictObject({ name: z.string().trim().min(1).max(60) })
 type Context = { params: Promise<{ agentId: string }> }
@@ -28,7 +29,7 @@ export function DELETE(request: Request, { params }: Context) {
         if (!parsed.success) throw new DesktopHttpError(400, 'Type the coworker’s name to confirm deletion.')
         const agentId = (await params).agentId
         const db = await openDesktopDatabase(runtime.dataRoot)
-        const deleted = await withDesktopMcpOwnerTransition(runtime, agentId, () => deleteDesktopCoworker(db, engineOf(runtime), agentId, parsed.data.confirmationName))
+        const deleted = await withDesktopSecretOwnerTransition(runtime, agentId, () => withDesktopMcpOwnerTransition(runtime, agentId, () => deleteDesktopCoworker(db, engineOf(runtime), agentId, parsed.data.confirmationName)))
         return Response.json(deleted, { headers: { 'cache-control': 'no-store' } })
     })
 }

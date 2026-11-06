@@ -17,7 +17,7 @@ export const desktopNotificationPrefsPatchSchema = notificationPrefsPatchSchema
 
 export const desktopNotificationEventSchema = z.object({
     key: z.string().min(1),
-    kind: z.enum(['done', 'error', 'question', 'approval', 'takeover', 'service']),
+    kind: z.enum(['done', 'error', 'question', 'approval', 'takeover', 'service', 'secret']),
     source: z.enum(['chat', 'schedule', 'trigger']),
     agentId: z.string().min(1),
     agentName: z.string(),

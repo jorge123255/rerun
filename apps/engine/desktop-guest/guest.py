@@ -126,6 +126,7 @@ SCROLL_BUTTONS = {'up': '4', 'down': '5', 'left': '6', 'right': '7'}
 CLICK_BUTTONS = {'left': '1', 'right': '3'}
 
 children = []
+launchers = None
 action_lock = threading.Lock()
 
 
@@ -300,9 +301,12 @@ def chromium_bin():
 
 
 def supervise():
+    global launchers
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
     try:
+        from computer_launchers import GuestComputerLaunchers
+        launchers = GuestComputerLaunchers(os.urandom(32).hex(), guest_env, cancelled)
         clear_stale_profile()
         spawn(['Xvfb', DISPLAY, '-screen', '0', SCREEN, '-nolisten', 'tcp'])
         if not wait_for(display_ready, 10):
@@ -440,7 +444,22 @@ def dispatch(request, client):
     op = request.get('op')
     if op == 'ping':
         width, height = geometry()
-        return {'ok': True, 'ready': True, 'width': width, 'height': height}, b''
+        return {'ok': True, 'ready': True, 'width': width, 'height': height, 'launchers': launchers.capabilities() if launchers is not None else {'terminal': False, 'files': False}}, b''
+    if op in ('computer-launcher', 'foreground', 'focus-browser'):
+        from computer_launchers import LauncherError
+        if launchers is None:
+            raise GuestError('The isolated app launcher is unavailable.', refusal=True)
+        try:
+            if op == 'computer-launcher':
+                return launchers.dispatch(request, client), b''
+            if op == 'foreground':
+                return {'ok': True, **launchers.foreground(client)}, b''
+            launchers.focus_browser(client)
+            return {'ok': True}, b''
+        except LauncherError as error:
+            states = {'refused', 'interrupted', 'runtime-unavailable', 'app-missing', 'busy', 'timeout'}
+            state = error.state if error.state in states else 'unavailable'
+            raise GuestError('The isolated app launcher is ' + state + '.', refusal=True)
     if op == 'geometry':
         width, height = geometry()
         return {'ok': True, 'width': width, 'height': height}, b''
@@ -452,6 +471,9 @@ def dispatch(request, client):
     if op == 'location':
         return {'ok': True, 'url': current_url()}, b''
     if op == 'input':
+        expected = request.get('expectedForeground')
+        if launchers is None or not isinstance(expected, dict) or set(expected) != {'app', 'windowId'} or expected.get('app') not in ('browser', 'terminal', 'files') or launchers.foreground(client) != expected:
+            raise GuestError('The foreground app changed before input.', refusal=True)
         perform_input(request, client)
         return {'ok': True}, b''
     if op == 'navigate':

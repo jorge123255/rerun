@@ -30,7 +30,8 @@ import { closeSystemDb } from '../../db/systemDb.js'
 import { closeAgentDb } from '../../db/agentDb.js'
 import { stopDesktop } from '../../desktop/session.js'
 import { finishTakeover } from '../../desktop/takeover.js'
-import { revokeIsolatedScreen, screenGranted } from '../../desktop/isolated-screen/binding.js'
+import { revokeIsolatedScreen, screenPermissionsRevoked } from '../../desktop/isolated-screen/binding.js'
+import { invalidateDesktopSemanticMemory } from '../../desktop/semantic-memory/runtime.js'
 import { agentDir, configPath, installPath, soulPath } from '../../config/paths.js'
 import { agentToolCatalog } from '../../tools/catalog.js'
 import type { RunModel } from '../../agents/availability.js'
@@ -142,7 +143,8 @@ agentRoutes.patch('/:id', async c => {
         })
         if (desktopApp()) assertNativeChangeAllowed(id, current, next)
         await writeAgentConfig(id, next)
-        if (desktopApp() && !screenGranted(next)) await revokeIsolatedScreen(id)
+        if (desktopApp()) invalidateDesktopSemanticMemory(id)
+        if (desktopApp() && screenPermissionsRevoked(current, next)) await revokeIsolatedScreen(id)
         if (desktopApp()) noteLearningChange(id, current, next)
         if (next.name !== current.name) {
             await updateAgentIndex(id, next.name)
@@ -259,6 +261,7 @@ agentRoutes.delete('/:id', async c => {
             const held = await lstat(pending)
             if (!held.isDirectory() || held.isSymbolicLink()) throw new HttpError(409, 'Could not safely finish coworker deletion.')
         }
+        invalidateDesktopSemanticMemory(id)
         await revokeIsolatedScreen(id, true)
         await finishTakeover(id)
         await stopDesktop(id)

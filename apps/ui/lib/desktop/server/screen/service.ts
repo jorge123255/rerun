@@ -18,6 +18,7 @@ const screenStatusSchema = z.object({
     running: z.boolean().default(false),
     currentRun: z.object({ sessionId: z.string(), runId: z.string(), kind: z.enum(['browser', 'computer']), site: z.string().nullable() }).nullable().optional(),
     sessionGeneration: z.string().optional(),
+    launchers: z.object({ terminal: z.boolean(), files: z.boolean() }).optional(),
     width: z.number().optional(),
     height: z.number().optional(),
 })

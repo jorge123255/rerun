@@ -1,5 +1,6 @@
 import type { Duplex } from 'node:stream'
 import type { BotWall } from '../../tools/bot-wall.js'
+import type { LauncherControl } from '../computer-launchers/ports.js'
 
 // Resolved by authenticated server code. Never a renderer or model Docker name.
 export type ScreenOwner = { engineAgentId: string; launchNonce: string }
@@ -22,6 +23,7 @@ export type ScreenStatus = {
     available: boolean
     prerequisite: ScreenPrerequisite
     state: ScreenRunState
+    launchers?: { terminal: boolean; files: boolean }
 }
 
 export type EnsuredScreen = {
@@ -114,6 +116,8 @@ export type IsolatedScreenService = {
     running(owner: ScreenOwner, signal: AbortSignal): Promise<EnsuredScreen>
     navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal, exports?: ScreenNavigationExport): Promise<ScreenPage>
     act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal): Promise<ScreenShot>
+    openBrowser(target: ScreenTarget, signal: AbortSignal): Promise<ScreenShot>
+    withLauncherControl<T>(target: ScreenTarget, signal: AbortSignal, work: (control: LauncherControl, signal: AbortSignal) => Promise<T>): Promise<T>
     startTakeover(target: ScreenTarget, signal: AbortSignal): Promise<ScreenLease>
     finishTakeover(target: ScreenTarget, lease: ScreenLease, signal: AbortSignal): Promise<ScreenTakeover>
     stop(target: ScreenTarget, signal: AbortSignal): Promise<void>

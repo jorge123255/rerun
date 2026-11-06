@@ -3,7 +3,7 @@ import {assertTarget} from '../isolated-screen/identity.js'
 import type {ScreenTarget} from '../isolated-screen/types.js'
 import type {LauncherAttemptStore,LauncherInvocation,LauncherPorts} from './ports.js'
 import {launcherRequestSchema,launcherOperationSchema,guestLauncherReplySchema,LauncherRefusal} from './contract.js'
-import type {DesktopComputerLauncherOutcome as Outcome} from '../../../../../packages/contracts/src/desktop-computer-launchers.js'
+import type {DesktopComputerLauncherOutcome as Outcome} from '@rerun/contracts'
 export const LAUNCHER_LIMITS={operationMs:25_000,guestMs:12_000,settleMs:2_000,attemptsPerGeneration:256} as const
 const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const sameTarget=(a:ScreenTarget,b:ScreenTarget)=>a.engineAgentId===b.engineAgentId&&a.launchNonce===b.launchNonce&&a.sessionGeneration===b.sessionGeneration

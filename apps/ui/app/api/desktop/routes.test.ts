@@ -262,7 +262,8 @@ describe('desktop API routes', () => {
             expect(body).toMatchObject({ message: text, workspaceAttachment: { path, content: 'Summary.\r\nAnswer '+index+' 🙂' } })
         }
         const plain = 'Literal [Attachments added to your workspace: nonexistent.txt]'
-        expect((await send(agents[0].id, { sessionId, text: plain, workspaceAttachment: { path, content: 'client-injected' } })).status).toBe(200)
+        expect((await send(agents[0].id, { sessionId, text: plain, workspaceAttachment: { path, content: 'client-injected' } })).status).toBe(400)
+        expect((await send(agents[0].id, { sessionId, text: plain })).status).toBe(200)
         expect(sentChats[2]).toMatchObject({ message: plain })
         expect(sentChats[2]).not.toHaveProperty('workspaceAttachment')
         await writeFile(join(dirs[0], 'limit.txt'), Buffer.alloc(DESKTOP_ATTACHMENT_MAX_BYTES, 65))
@@ -486,7 +487,8 @@ describe('desktop API routes', () => {
         expect(response.rerun).toContainEqual(expect.objectContaining({ id: 'workspaceRead', enabled: true }))
         expect(response.codex).toContainEqual(expect.objectContaining({ id: 'shell', enabled: false }))
         expect((await (await get(bob.id)).json()).rerun).toContainEqual(expect.objectContaining({ id: 'workspaceRead', enabled: false }))
-        expect((await patch(alice.id, { ...grant, id: 'requestSecret' })).status).toBe(400)
+        expect((await patch(alice.id, { ...grant, id: 'requestSecret' })).status).toBe(200)
+        expect((await (await get(bob.id)).json()).rerun).toContainEqual(expect.objectContaining({ id: 'requestSecret', enabled: false }))
         expect((await patch(alice.id, { ...grant, id: 'unknown' })).status).toBe(400)
         expect((await get('engine-agent-2')).status).toBe(404)
         expect((await patch('engine-agent-2', grant)).status).toBe(404)

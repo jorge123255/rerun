@@ -934,3 +934,67 @@ describe('desktop Regenerate reply', () => {
         } finally { vi.unstubAllEnvs() }
     })
 })
+
+
+describe('desktop credential follow-ups', () => {
+    const owner = 'credential-agent'
+    const fields = [{ key: 'EXAMPLE_API_KEY', label: 'Example key' }]
+    async function pendingSecret(status = 'done') {
+        const { appendMessage } = await import('../../db/repos/messages.js')
+        const { getSystemDb } = await import('../../db/systemDb.js')
+        const { findDesktopSecretRequest } = await import('@rerun/contracts')
+        await seed(owner, { name: 'Credential fixture', tools: { desktopToolGrants: { requestSecret: true } } })
+        const session = await createSession(owner)
+        const runId = crypto.randomUUID(), callId = crypto.randomUUID()
+        const input = { secrets: fields }
+        const call = await appendMessage(owner, session.id, { role: 'assistant', content: [{ type: 'tool-call', toolCallId: callId, toolName: 'request_secret', input }] })
+        const result = await appendMessage(owner, session.id, { role: 'tool', content: [{ type: 'tool-result', toolCallId: callId, toolName: 'request_secret', output: { type: 'json', value: { status: 'delivered' } } }] })
+        const { client } = await getSystemDb(owner)
+        const now = new Date().toISOString()
+        await client.execute({ sql: 'INSERT INTO runs (id,agent_id,session_id,status,started_at) VALUES(?,?,?,?,?)', args: [runId, owner, session.id, status, now] })
+        await client.execute({ sql: 'INSERT INTO tool_calls (id,run_id,agent_id,session_id,step_number,tool_call_id,tool_name,input_json,result_json,is_error,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)', args: [crypto.randomUUID(), runId, owner, session.id, 1, callId, 'request_secret', JSON.stringify(input), JSON.stringify({ status: 'delivered' }), 0, now] })
+        const found = findDesktopSecretRequest([call, result])!
+        return { session, secret: { runId, sourceMessageId: found.sourceMessageId, toolCallId: found.toolCallId, fingerprint: found.fingerprint } }
+    }
+    it('blocks ordinary queued sends while credentials are pending and replays the exact accepted metadata result after disable', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const { serializeDesktopSecretReceiptSummary } = await import('@rerun/contracts')
+            const { listMessages } = await import('../../db/repos/messages.js')
+            const { session, secret } = await pendingSecret()
+            expect((await chat(owner, { sessionId: session.id, message: 'Ignore the form' })).status).toBe(409)
+            expect((await chat(owner, { sessionId: session.id, message: 'Queued', desktopQueuedTurn: { runId: crypto.randomUUID() } })).status).toBe(409)
+            const input = { sessionId: session.id, message: serializeDesktopSecretReceiptSummary(fields, ['EXAMPLE_API_KEY'], 'save'), desktopQueuedTurn: { runId: crypto.randomUUID(), secret } }
+            const accepted = await chat(owner, input)
+            expect(accepted.status).toBe(200); await accepted.text()
+            await seed(owner, { name: 'Credential fixture', enabled: false })
+            const replay = await chat(owner, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, replayOnly: true } })
+            expect([200, 204]).toContain(replay.status)
+            expect(replay.headers.get('x-run-id')).toBe(input.desktopQueuedTurn.runId)
+            expect((await listMessages(owner, session.id)).filter(row => row.role === 'user')).toHaveLength(1)
+            expect((await chat(owner, { ...input, desktopQueuedTurn: { ...input.desktopQueuedTurn, secret: { ...secret, runId: 'other-run' }, replayOnly: true } })).status).toBe(409)
+        } finally { vi.unstubAllEnvs() }
+    })
+    it('rejects source run substitution and non-metadata credential follow-ups before reserving any turn', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const { session, secret } = await pendingSecret()
+            const runId = crypto.randomUUID()
+            const input = { sessionId: session.id, message: 'private-value-must-not-be-admitted', desktopQueuedTurn: { runId, secret } }
+            expect((await chat(owner, input)).status).toBe(400)
+            expect(await getRun(owner, runId)).toBeUndefined()
+            expect((await chat(owner, { ...input, desktopQueuedTurn: { runId, secret: { ...secret, runId: 'foreign-run' } } })).status).toBe(409)
+            expect((await chat(owner, { ...input, desktopQueuedTurn: { runId, secret, question: { sourceMessageId: secret.sourceMessageId, toolCallId: secret.toolCallId, fingerprint: secret.fingerprint } } })).status).toBe(400)
+        } finally { vi.unstubAllEnvs() }
+    })
+    it('a stopped source cannot accept a credential result or keep ordinary chat blocked', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const { serializeDesktopSecretReceiptSummary } = await import('@rerun/contracts')
+            const { session, secret } = await pendingSecret('cancelled')
+            expect((await chat(owner, { sessionId: session.id, message: serializeDesktopSecretReceiptSummary(fields, [], 'skip'), desktopQueuedTurn: { runId: crypto.randomUUID(), secret } })).status).toBe(409)
+            const normal = await chat(owner, { sessionId: session.id, message: 'Continue after Stop' })
+            expect(normal.status).toBe(200); await normal.text()
+        } finally { vi.unstubAllEnvs() }
+    })
+})

@@ -13,6 +13,7 @@ import { withKeyedLock } from '../lib/lock.js'
 import { listMemoryFiles, readDesktopMemoryFile } from '../memory/files.js'
 import { rankRecallHits, type RecalledMemory } from '../memory/store.js'
 import { desktopMemoryPaths } from './memory-paths.js'
+import { desktopMemoryChanged } from './semantic-memory/events.js'
 
 const noteId = /^[A-Za-z0-9_-]+$/
 
@@ -69,9 +70,10 @@ type Directory = { dir?: string; data?: string; memory: string; hasIndex: boolea
 
 function withMemoryStore<T>(agentId: string, mode: 'list' | 'create' | 'update' | 'delete' | 'recall' | 'chat', action: (store: Directory) => Promise<T>) {
     return withKeyedLock('desktop-memories:' + agentId, async () => {
+        const mutation = mode === 'create' || mode === 'update' || mode === 'delete' ? mode : null
+        if (mutation) desktopMemoryChanged({ agentId, phase: 'before', mode: mutation })
         const paths = await desktopMemoryPaths(agentId)
-        if (!paths.hasMemory && mode !== 'create') return action(paths)
-        return inDirectory(dirname(paths.memory), async parent => {
+        const result = !paths.hasMemory && mode !== 'create' ? await action(paths) : await inDirectory(dirname(paths.memory), async parent => {
             const memory = join(parent, 'memory')
             if (!paths.hasMemory) await mkdir(memory, { mode: 0o700 })
             return inDirectory(memory, async dir => {
@@ -80,6 +82,17 @@ function withMemoryStore<T>(agentId: string, mode: 'list' | 'create' | 'update' 
                 return action({ ...paths, dir, data })
             })
         })
+        if (mutation) desktopMemoryChanged({ agentId, phase: 'after', mode: mutation })
+        return result
+    })
+}
+
+export function reinforceDesktopMemories(agentId: string, noteIds: readonly string[], mode: 'full' | 'touch') {
+    return withMemoryStore(agentId, 'recall', async ({ data, hasIndex }) => {
+        if (!data || !hasIndex) return
+        const indexed = new Set((await listMemories(agentId)).map(note => note.id))
+        const owned = noteIds.filter(id => noteId.test(id) && indexed.has(id))
+        if (owned.length) await withRecallIndex(data, 'rw', db => bumpMemoryAccess(agentId, owned, mode, db))
     })
 }
 

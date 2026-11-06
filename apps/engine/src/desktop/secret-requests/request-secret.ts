@@ -1,11 +1,13 @@
 import type { ToolSet } from 'ai'
 import { z } from 'zod'
 import { HITL_ACK, jsonTolerantArray } from '../../tools/builtin/hitl.js'
-import { desktopSecretRequestInputSchema, desktopSecretRequestSourceSchema, type DesktopSecretRequestInput, type DesktopSecretRequestSource } from '../../../../../packages/contracts/src/desktop-secret-requests.js'
+import { desktopSecretRequestInputSchema, desktopSecretRequestSourceSchema, type DesktopSecretRequestInput, type DesktopSecretRequestSource } from '@rerun/contracts'
+import type { RunContext } from '../../runtime/context.js'
+import { hasDesktopToolGrant, requireDesktopToolGrant } from '../tool-grants.js'
 
 export type DesktopSecretRequestToolAuthority = {
     authorize: (context: { toolCallId: string; abortSignal?: AbortSignal }) => Promise<void>
-    deliver: (input: DesktopSecretRequestInput, context: { toolCallId: string; abortSignal?: AbortSignal }) => Promise<DesktopSecretRequestSource>
+    deliver?: (input: DesktopSecretRequestInput, context: { toolCallId: string; abortSignal?: AbortSignal }) => Promise<DesktopSecretRequestSource>
 }
 
 export function createDesktopSecretRequestTool(authority: DesktopSecretRequestToolAuthority): ToolSet {
@@ -26,11 +28,27 @@ export function createDesktopSecretRequestTool(authority: DesktopSecretRequestTo
                 context.abortSignal?.throwIfAborted()
                 await authority.authorize(context)
                 context.abortSignal?.throwIfAborted()
-                const parsed = desktopSecretRequestInputSchema.parse({ fields: input.secrets, ...(input.reason != null ? { reason: input.reason } : {}) })
-                const source = desktopSecretRequestSourceSchema.parse(await authority.deliver(parsed, context))
-                if (source.toolCallId !== context.toolCallId) throw new Error('Credential delivery returned a different source tool call.')
+                const fields = input.secrets.map(({ help, docsUrl, ...field }: { key: string; label: string; help?: string | null; docsUrl?: string | null }) => ({ ...field,
+                    ...(help != null ? { help } : {}), ...(docsUrl != null ? { docsUrl } : {}),
+                }))
+                const parsed = desktopSecretRequestInputSchema.parse({ fields, ...(input.reason != null ? { reason: input.reason } : {}) })
+                if (authority.deliver) {
+                    const source = desktopSecretRequestSourceSchema.parse(await authority.deliver(parsed, context))
+                    if (source.toolCallId !== context.toolCallId) throw new Error('Credential delivery returned a different source tool call.')
+                }
+                context.abortSignal?.throwIfAborted()
                 return HITL_ACK
             },
         },
     }
+}
+
+export function desktopSecretRequestTools(ctx: RunContext): ToolSet {
+    if (!ctx.runId || !hasDesktopToolGrant(ctx.agent.config, 'requestSecret') || ctx.agent.config.ephemeral) return {}
+    return createDesktopSecretRequestTool({ authorize: async ({ toolCallId, abortSignal }) => {
+        if (!toolCallId || toolCallId.length > 256) throw new Error('Credential request source is unavailable.')
+        abortSignal?.throwIfAborted()
+        await requireDesktopToolGrant(ctx, 'requestSecret')
+        abortSignal?.throwIfAborted()
+    } })
 }

@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS desktop_service_account_tombstones (
     retired_at TEXT NOT NULL,
     PRIMARY KEY (owner, account_key)
 );
+CREATE TABLE IF NOT EXISTS desktop_service_account_attempts (
+    owner TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN (0,1)),
+    PRIMARY KEY (owner, fingerprint),
+    UNIQUE (owner, request_id)
+);
 `
 
 export async function ensureDesktopServiceAccountSchema(db: Client): Promise<void> {

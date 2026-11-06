@@ -142,7 +142,7 @@ export async function writeExclusiveFile(directory: string, relativeName: string
     try {
         const existing = await lstat(join(pin.pinned, name)).catch((error: NodeJS.ErrnoException) => error.code === 'ENOENT' ? null : Promise.reject(error))
         if (existing) {
-            const read = await readConfined(directory, relativeName, bytes.length)
+            const read = await readConfinedBytes(directory, relativeName, bytes.length)
             if (!read.ok || !read.bytes.equals(bytes)) throw new TemplateRequestError(409, 'A template file already exists with different bytes')
             return 'same'
         }
@@ -155,7 +155,7 @@ export async function writeExclusiveFile(directory: string, relativeName: string
             const parentIdentity = await lstat(parent, { bigint: true })
             try { await renameSkillEntry(parent, parentIdentity, temporary, identity, name) }
             catch (error) {
-                const read = await readConfined(directory, relativeName, bytes.length)
+                const read = await readConfinedBytes(directory, relativeName, bytes.length)
                 if (!read.ok || !read.bytes.equals(bytes)) throw error
                 return 'same'
             }

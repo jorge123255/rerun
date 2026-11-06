@@ -4,7 +4,7 @@ import { accountDigest } from './installs'
 import { openStoredHeaderBundle, sealHeaderBundle } from './header-secret-codec'
 import { DESKTOP_SERVICE_ACCOUNT_SCHEMA_SQL } from './schema'
 import { memoryHeaderSecrets, secretWriteDecision } from './secret-store'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 
 const key = Buffer.alloc(32, 9)
 const token = 'fixture-header-value'

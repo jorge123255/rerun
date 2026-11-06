@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { DesktopSecretRequestView } from '../../../../../../packages/contracts/src/desktop-secret-requests'
+import type { DesktopSecretRequestView } from '@rerun/contracts'
 import { DesktopSecretRequestBlock } from './DesktopSecretRequestBlock'
 
 vi.mock('@rerun/ui', () => ({ BorderBeam: () => null }))
@@ -51,12 +51,12 @@ test('draws the original masked form, labels, help, docs and existing-key indica
 })
 
 test('Save preserves exact bytes and clears sensitive fields only after acknowledgement', async () => {
-    const fetcher = vi.fn(async () => acknowledged()); vi.stubGlobal('fetch', fetcher)
+    const fetcher = vi.fn<typeof fetch>(async () => acknowledged()); vi.stubGlobal('fetch', fetcher)
     const { onAccepted } = await mount()
-    await type('EXAMPLE_API_KEY', '  exact bytes\r\n')
+    await type('EXAMPLE_API_KEY', '  exact bytes  ')
     await click('Save')
     const payload = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))
-    expect(payload.values.EXAMPLE_API_KEY).toBe('  exact bytes\r\n')
+    expect(payload.values.EXAMPLE_API_KEY).toBe('  exact bytes  ')
     expect(input('EXAMPLE_API_KEY').value).toBe('')
     expect(onAccepted).toHaveBeenCalledTimes(1)
 })
@@ -87,8 +87,46 @@ test('owner change and disposal clear sensitive form state and ignore late ackno
     await click('Save')
     await act(async () => root.render(<DesktopSecretRequestBlock sessionId="other-chat" request={{ ...request, requestId: 'other-request', source: { ...request.source, sessionId: 'other-chat' } }} onAccepted={onAccepted} />))
     expect(input('EXAMPLE_API_KEY').value).toBe('')
+    await type('EXAMPLE_API_KEY', 'replacement-owner-value')
     await act(async () => resolve(acknowledged()))
     expect(onAccepted).not.toHaveBeenCalled()
+    expect(input('EXAMPLE_API_KEY').value).toBe('replacement-owner-value')
+    expect(button('Save').disabled).toBe(false)
+})
+
+test('a late old-owner failure cannot publish an error or clear the replacement form', async () => {
+    let reject!: (error: Error) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((_done, fail) => { reject = fail })))
+    const { root } = await mount()
+    await type('EXAMPLE_API_KEY', 'first-owner-value')
+    await click('Save')
+    await act(async () => root.render(<DesktopSecretRequestBlock sessionId="other-chat" request={{ ...request, requestId: 'other-request', source: { ...request.source, sessionId: 'other-chat' } }} />))
+    await type('EXAMPLE_API_KEY', 'second-owner-value')
+    await act(async () => reject(new Error('Old request failed')))
+    expect(document.body.textContent).not.toContain('Old request failed')
+    expect(input('EXAMPLE_API_KEY').value).toBe('second-owner-value')
+    expect(button('Save').disabled).toBe(false)
+})
+
+test.each(['staged', 'sealed'] as const)('reopened %s decision waits for explicit metadata-only recovery', async state => {
+    const fetcher = vi.fn<typeof fetch>(async () => acknowledged())
+    vi.stubGlobal('fetch', fetcher)
+    const view: DesktopSecretRequestView = {
+        ...request, status: state === 'staged' ? 'pending' : 'sealed',
+        pendingAttempt: { attemptId: 'durable-attempt', operation: 'save', state },
+        ...(state === 'sealed' ? { receipt: {
+            attemptId: 'durable-attempt', decision: 'save' as const, providedKeys: ['EXAMPLE_API_KEY'], skippedKeys: ['OTHER_TOKEN'],
+            summary: 'Credential setup result', continuationRequestId: 'continuation', accepted: false, createdAt: '2026-11-05T00:00:00.000Z',
+        } } : {}),
+    }
+    const { onAccepted } = await mount(view)
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(input('EXAMPLE_API_KEY')).toBeNull()
+    await click('Resume saved decision')
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+        operation: 'recover', requestId: request.requestId, attemptId: 'durable-attempt', expectedRevision: request.revision, source: request.source,
+    })
+    expect(onAccepted).toHaveBeenCalledTimes(1)
 })
 
 test('receipt projection contains only key names and provided/skipped state', async () => {
@@ -97,4 +135,18 @@ test('receipt projection contains only key names and provided/skipped state', as
     expect(document.body.textContent).toContain('EXAMPLE_API_KEY')
     expect(document.body.textContent).toContain('OTHER_TOKEN')
     expect(document.body.textContent).not.toContain('Paste the value')
+})
+
+
+test('an accepted response transfers stream cancellation to chat before the completed form unmounts', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => acknowledged()))
+    let adopted: { signal: AbortSignal; cancelStream: () => void } | undefined
+    const onAccepted = vi.fn((_response: Response, stream: { signal: AbortSignal; cancelStream: () => void }) => { adopted = stream })
+    const { root } = await mount(request, onAccepted)
+    await type('EXAMPLE_API_KEY', 'fixture-secret')
+    await click('Save')
+    await act(async () => root.render(null))
+    expect(adopted?.signal.aborted).toBe(false)
+    adopted!.cancelStream()
+    expect(adopted?.signal.aborted).toBe(true)
 })

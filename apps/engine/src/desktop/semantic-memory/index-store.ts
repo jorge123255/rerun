@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, rename } from 'node:fs/promises'
+import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DESKTOP_SEMANTIC_STORE_BYTES_MAX, type DesktopSemanticIndexStore, type DesktopSemanticOwnerIndex, type DesktopSemanticPendingWork, type DesktopSemanticIndexRecord } from '@rerun/contracts'
 import { desktopSemanticLocalId } from './identity.js'
@@ -162,17 +163,22 @@ async function readFileNoFollow(path: string): Promise<string | null> {
 
 async function writeAtomic(directory: string, document: FileDocument) {
     const target = join(directory, FILE_NAME)
-    const temporary = join(directory, `.${FILE_NAME}.${process.pid}.tmp`)
+    const temporary = join(directory, `.${FILE_NAME}.${randomUUID()}.tmp`)
     const payload = JSON.stringify(document)
     if (Buffer.byteLength(payload) > DESKTOP_SEMANTIC_STORE_BYTES_MAX) throw new DesktopSemanticStorageError()
-    const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC, 0o600)
+    const noFollow = process.platform === 'darwin' ? 0x20000000 : constants.O_NOFOLLOW
+    const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o600)
     try {
         await file.writeFile(payload, 'utf8')
         await file.sync()
+    } catch (error) {
+        await unlink(temporary).catch(() => undefined)
+        throw error
     } finally {
         await file.close()
     }
-    await rename(temporary, target)
+    try { await rename(temporary, target) }
+    catch (error) { await unlink(temporary).catch(() => undefined); throw error }
 }
 
 export async function initializeDesktopSemanticIndex(directory: string): Promise<void> {
@@ -228,10 +234,9 @@ export function createFileSemanticIndexStore(directory: string): DesktopSemantic
             const document = await load()
             const copy = copyDesktopSemanticOwnerIndex(next)
             if (desktopSemanticIndexBytes(copy) > DESKTOP_SEMANTIC_STORE_BYTES_MAX) throw new DesktopSemanticStorageError()
-            document.owners[ownerId] = copy
-            document.invalid = false
-            await writeAtomic(directory, document)
-            loaded = document
+            const candidate = { ...document, invalid: false, owners: { ...document.owners, [ownerId]: copy } }
+            await writeAtomic(directory, candidate)
+            loaded = candidate
         }),
         listOwnerIds: () => queue(chain, async () => Object.keys((await load()).owners).filter(desktopSemanticLocalId)),
     }

@@ -5,6 +5,7 @@ type HttpHandler=(req:import('node:http').IncomingMessage,res:import('node:http'
 const http=vi.hoisted(()=>({callback:null as null|HttpHandler,closed:vi.fn()}))
 vi.mock('node:http',()=>({createServer:(callback:HttpHandler)=>{http.callback=callback;return {once:()=>{},listen:(_port:number,_host:string,ready:()=>void)=>ready(),address:()=>({port:49152}),close:http.closed,closeIdleConnections:()=>{}}}}))
 vi.mock('./oauth-network',async original=>({...await original<typeof import('./oauth-network')>(),publicOAuthAddress:vi.fn(async()=>({address:'93.184.216.34',family:4}))}))
+import {migrateDesktopSse} from '../mcp-sse/schema'
 import {remoteMcpStore,remoteMcpSchema,remoteMcpOAuthSchema} from './store'
 import {loopbackMcpOAuth} from './oauth-loopback'
 import {discoverLoopbackOAuth,type OAuthJson} from './oauth-network'
@@ -27,6 +28,7 @@ function fixture(){
 async function setup(){
  const db=createClient({url:'file::memory:'});clients.push(db)
  await db.executeMultiple('CREATE TABLE desktop_agents(id TEXT PRIMARY KEY);INSERT INTO desktop_agents VALUES (\'a\');'+remoteMcpSchema+remoteMcpOAuthSchema)
+ await migrateDesktopSse(db)
  const store=remoteMcpStore(db,()=>Buffer.alloc(32,7));await store.save('a',{name:'x',url:resource})
  const revision=(await store.list('a'))[0].revision,fixture_=fixture()
  let granted=true

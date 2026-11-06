@@ -1,7 +1,7 @@
 import 'server-only'
 
 import type { Client } from '@libsql/client'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M, type DesktopServiceAccountResult } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M, type DesktopServiceAccountResult } from '@rerun/contracts'
 import { ensureDesktopServiceAccountSchema } from './schema'
 
 export type ReservationPhase = 'reserved' | 'allocated' | 'sealed' | 'published' | 'probing' | 'mutating' | 'complete'

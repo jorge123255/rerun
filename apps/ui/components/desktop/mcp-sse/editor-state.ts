@@ -1,5 +1,5 @@
-import type { DesktopMcpSseConfiguration, DesktopMcpSseRef, DesktopMcpSseSave, DesktopMcpSseMutationResult } from '../../../../../packages/contracts/src/desktop-mcp-sse'
-import { desktopMcpSseConfigurationSchema } from '../../../../../packages/contracts/src/desktop-mcp-sse'
+import type { DesktopMcpSseConfiguration, DesktopMcpSseRef, DesktopMcpSseSave, DesktopMcpSseMutationResult } from '@rerun/contracts'
+import { desktopMcpSseConfigurationSchema } from '@rerun/contracts'
 import { endpoint } from '@/lib/desktop/server/mcp/model'
 
 export type SseEditorAttempt = { kind: 'save'; change: DesktopMcpSseSave } | { kind: 'delete'; requestId: string; reference: DesktopMcpSseRef }

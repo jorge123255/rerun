@@ -5,7 +5,7 @@ import { Badge } from '@rerun/ui/primitives'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipLabeled } from '@/components/ui/tooltip'
-import { desktopMcpSseSnapshotSchema, type DesktopMcpSseRef, type DesktopMcpSseRequest, type DesktopMcpSseSnapshot } from '../../../../../packages/contracts/src/desktop-mcp-sse'
+import { desktopMcpSseSnapshotSchema, type DesktopMcpSseRef, type DesktopMcpSseRequest, type DesktopMcpSseSnapshot } from '@rerun/contracts'
 
 export type SseStatusDriver = {
     read(reference: DesktopMcpSseRef, signal: AbortSignal): Promise<DesktopMcpSseSnapshot>

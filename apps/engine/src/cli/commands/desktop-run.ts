@@ -27,6 +27,8 @@ import { initializeDesktopBrainStore } from '../../desktop/brain-pages-router.js
 import { stopDesktopMcp } from '../../desktop/mcp-tools.js'
 import { logger } from '../../lib/logger.js'
 import { bindIsolatedScreen } from '../../desktop/isolated-screen/binding.js'
+import { initializeComputerLaunchers } from '../../desktop/computer-launchers/sqlite-store.js'
+import { shutdownDesktopSemanticMemory } from '../../desktop/semantic-memory/runtime.js'
 import { reconcileIsolatedScreens, shutdownIsolatedScreens } from '../../desktop/isolated-screen/index.js'
 import { bindDesktopCoworkerCalls } from '../../desktop/coworker-calls/bind.js'
 
@@ -78,6 +80,7 @@ export async function desktopRunCommand(): Promise<void> {
         return c.json(await codexLoginAction(parsed.data))
     })
     app.get('/health', c => initialized ? c.json(ready) : c.json({ status: 'starting' }, 503))
+    await initializeComputerLaunchers()
     const screen = bindIsolatedScreen(runtime)
     const delegation = bindDesktopDelegation(runtime.launchNonce)
     installDesktopDelegation(delegation)
@@ -96,7 +99,7 @@ export async function desktopRunCommand(): Promise<void> {
         stopCodexLogin()
         // Close admissions before waiting for any preparation. Callback delivery is best effort
         // during teardown; failure must never reopen either local service or prevent shutdown.
-        const closing = Promise.allSettled([schedules?.close(), triggers?.close(), delegation.close(), stopDesktopMcp(), stopDesktopSkillProposals(), screen.close().then(() => shutdownIsolatedScreens(AbortSignal.timeout(25_000)))])
+        const closing = Promise.allSettled([schedules?.close(), triggers?.close(), delegation.close(), stopDesktopMcp(), stopDesktopSkillProposals(), screen.close().then(() => shutdownIsolatedScreens(AbortSignal.timeout(25_000))), shutdownDesktopSemanticMemory()])
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
         await Promise.allSettled([closing, abortAllRuns(), stopScheduler?.drain()])

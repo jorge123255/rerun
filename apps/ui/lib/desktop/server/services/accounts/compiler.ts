@@ -1,7 +1,7 @@
 import 'server-only'
 
 import { parseServiceRegistryKey, serviceRegistryKey, type DesktopServiceMethodAvailability } from '@rerun/contracts'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 import { serviceManifestSchema, type AuthMethod, type InputDef, type ServiceManifest } from '@/lib/services/manifest'
 import { instanceServerName } from '@/lib/services/instances'
 import { endpoint, serverName } from '../../mcp/model'

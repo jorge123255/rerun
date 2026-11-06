@@ -28,13 +28,15 @@ export function createDesktopSemanticEmbedder(capability: DesktopSemanticEmbeddi
             if (texts.some(text => typeof text !== 'string' || text.length < 1 || text.length > DESKTOP_SEMANTIC_NOTE_MAX)) return { ok: false, reason: 'invalid' }
             const timer = new AbortController()
             const timeout = setTimeout(() => timer.abort(), deadline)
+            const linked = AbortSignal.any([signal, timer.signal])
+            let cleanupAbort = () => {}
             try {
-                const linked = AbortSignal.any([signal, timer.signal])
                 // A capability that ignores cancellation still cannot publish after the deadline.
                 const vectors = await new Promise<number[][] | 'refused' | 'caller' | 'deadline'>((resolve, reject) => {
                     const onAbort = () => resolve(signal.aborted ? 'caller' : 'deadline')
-                    if (linked.aborted) onAbort()
-                    else linked.addEventListener('abort', onAbort, { once: true })
+                    if (linked.aborted) { onAbort(); return }
+                    linked.addEventListener('abort', onAbort, { once: true })
+                    cleanupAbort = () => linked.removeEventListener('abort', onAbort)
                     configured.embed(texts, linked).then(resolve, reject)
                 })
                 if (vectors === 'caller' || signal.aborted) return { ok: false, reason: 'cancelled' }
@@ -53,6 +55,7 @@ export function createDesktopSemanticEmbedder(capability: DesktopSemanticEmbeddi
                 if (timer.signal.aborted) return { ok: false, reason: 'timeout' }
                 return { ok: false, reason: 'unavailable' }
             } finally {
+                cleanupAbort()
                 clearTimeout(timeout)
             }
         },

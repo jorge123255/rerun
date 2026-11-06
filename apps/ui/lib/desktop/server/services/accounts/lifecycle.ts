@@ -10,14 +10,15 @@ import {
     type DesktopServiceAccountMutation,
     type DesktopServiceAccountResult,
     type DesktopServiceAccountView,
-} from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+} from '@rerun/contracts'
 import { accountMethodAvailability } from './availability'
 import { compileAccountService, type AccountCompilePlan } from './compiler'
 import { accountKeyFor, isDisplayMask, nextAccountLabel, takenInstanceIds } from './identity'
-import { DESKTOP_SERVICE_ACCOUNT_LIMIT } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_LIMIT } from '@rerun/contracts'
 import { canonical, type AccountInstallPort, type AccountInstallRecord } from './installs'
 import type { AccountReservation, ReservationPhase, ReservationPort } from './reservations'
-import { bundlesMatch, type HeaderSecretBundle, type HeaderSecretPort } from './secret-store'
+import { type HeaderSecretPort } from './secret-store'
+import { bundlesMatch, type HeaderSecretBundle } from './header-secret-codec'
 import type { AccountTransportPort } from './transport'
 
 export interface AccountAuthority {
@@ -185,8 +186,8 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
             if (base) throw new Error(M.baseExists)
             return { reservation: await save(reservation, reservation.phase, { phase: 'allocated', accountKey: manifest.slug, installationId: deps.ids.uuid(), revision: deps.ids.uuid() }), label: manifest.name, instanceId: undefined as string | undefined }
         }
-        if (!manifest.multiInstance) throw new Error(M.notMulti)
         if (!base) throw new Error(M.needBase)
+        if (!manifest.multiInstance) throw new Error(M.notMulti)
         const tombstones = await deps.reservations.tombstones(binding.coworkerId)
         const reserved = (await deps.reservations.list(binding.coworkerId)).flatMap(row => (row.accountKey && row.requestId !== reservation.requestId ? [row.accountKey] : []))
         const taken = takenInstanceIds(manifest.slug, [...installs.map(row => row.key), ...tombstones, ...reserved])
@@ -282,7 +283,7 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
         let target = reservation
         let label = existing?.plan.label ?? manifest.name
         let instanceId = existing?.plan.instanceId
-        if (input.intent.kind === 'existing' && existing && !target.accountKey) {
+        if (input.intent.kind === 'existing' && existing && !target.installationId) {
             target = await save(target, target.phase, { phase: 'allocated', accountKey: existing.key, installationId: existing.id, revision: deps.ids.uuid() })
             label = existing.plan.label
             instanceId = existing.plan.instanceId
@@ -319,9 +320,10 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
     }
     const disconnectOrRemove = async (binding: DesktopServiceAccountBinding, reservation: AccountReservation, action: 'disconnect' | 'remove', expectedRevision: string, signal: AbortSignal) => {
         if (!reservation.accountKey) throw new Error(M.revision)
-        let record = await deps.installs.read(binding.coworkerId, reservation.accountKey)
+        const accountKey = reservation.accountKey
+        let record = await deps.installs.read(binding.coworkerId, accountKey)
         if (record && record.engineId !== binding.engineOwnerId) throw new Error(M.owner)
-        if (!record && action === 'disconnect') return { status: 'unknown' as const, accountKey: reservation.accountKey, message: M.gone }
+        if (!record && action === 'disconnect') return { status: 'unknown' as const, accountKey: accountKey, message: M.gone }
         if (record && record.revision !== expectedRevision && record.revision !== reservation.revision) throw new Error(M.revision)
         if (reservation.phase === 'reserved') {
             if (record && record.revision !== expectedRevision) throw new Error(M.revision)
@@ -338,18 +340,18 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
         }
         if (action === 'remove') {
             if (record) await dropSkills(binding, record, signal)
-            await deps.reservations.tombstone(binding.coworkerId, reservation.accountKey, deps.clock.now())
+            await deps.reservations.tombstone(binding.coworkerId, accountKey, deps.clock.now())
             if (record) await deps.installs.remove(record)
         }
         await authorityOf(binding, 'manage', signal)
-        const after = await deps.installs.read(binding.coworkerId, reservation.accountKey)
+        const after = await deps.installs.read(binding.coworkerId, accountKey)
         const result: DesktopServiceAccountResult = action === 'remove' || !after
-            ? { status: 'removed', accountKey: reservation.accountKey, installationId: record?.id, revision: reservation.revision, message: M.removed }
+            ? { status: 'removed', accountKey: accountKey, installationId: record?.id, revision: reservation.revision, message: M.removed }
             : { status: 'disconnected', accountKey: after.key, installationId: after.id, revision: after.revision, message: M.removed, account: await view(after, binding, signal) }
         await save(reservation, reservation.phase, { phase: 'complete', publicResult: { ...result, account: undefined } })
         return result
     }
-    const probe = async (binding: DesktopServiceAccountBinding, reservation: AccountReservation, signal: AbortSignal) => {
+    const probe = async (binding: DesktopServiceAccountBinding, reservation: AccountReservation, signal: AbortSignal): Promise<DesktopServiceAccountResult> => {
         if (reservation.phase === 'probing') return { status: 'unknown' as const, accountKey: reservation.accountKey ?? undefined, message: M.unknown }
         if (!reservation.accountKey || !reservation.revision) throw new Error(M.revision)
         const record = await deps.installs.read(binding.coworkerId, reservation.accountKey)
@@ -376,10 +378,18 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
         let aborted = false
         try {
             if (deps.skills) for (const skill of record.skills) await deps.skills.verify(useAuthority.skillsRoot, skill)
-            const discovered = await deps.transport.probe({ url: record.plan.url, headers: bundle.headers, signal })
+            const guard = async () => {
+                const current = await deps.installs.read(binding.coworkerId, record.key)
+                const latest = await authorityOf(binding, 'use', signal)
+                if (!latest.enabled || !latest.granted) throw new Error(M.grant)
+                if (latest.launchNonce !== useAuthority.launchNonce || latest.engineAgentId !== record.engineId) throw new Error(M.owner)
+                if (!current || current.id !== record.id || current.revision !== record.revision || current.state !== 'ready' || current.plan.url !== record.plan.url) throw new Error(M.revision)
+            }
+            await guard()
+            const discovered = await deps.transport.probe({ url: record.plan.url, headers: bundle.headers, secretValues: Object.values(bundle.inputs), guard, signal })
             const names = discovered.tools.map(tool => `${record.plan.serverName}_${tool.name}`)
             await (deps.assertToolNames ?? defaultToolGuard(deps.installs))(binding.coworkerId, record.id, names, signal)
-            await authorityOf(binding, 'use', signal)
+            await guard()
             record.toolNames = names
             record.health = { state: 'healthy', checkedAt: deps.clock.now(), toolCount: names.length }
             record.healthLaunch = useAuthority.launchNonce
@@ -396,7 +406,7 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
         } finally {
             wipe(bundle)
         }
-        if (aborted) return { status: 'unknown' as const, accountKey: reservation.accountKey, message: M.cancelled }
+        if (aborted) return { status: 'unknown' as const, accountKey: reservation.accountKey ?? undefined, message: M.cancelled }
         const now = await deps.installs.read(binding.coworkerId, record.key)
         if (!now) throw new Error(M.gone)
         const result: DesktopServiceAccountResult = { status: 'probed', accountKey: now.key, installationId: now.id, revision: now.revision, message: now.health.message, account: await view(now, binding, signal) }
@@ -422,7 +432,7 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
             await authorityOf(binding, 'manage', signal)
             return Promise.all((await deps.installs.list(binding.coworkerId)).map(row => view(row, binding, signal)))
         },
-        async mutate(binding: DesktopServiceAccountBinding, input: DesktopServiceAccountMutation, signal: AbortSignal) {
+        mutate(binding: DesktopServiceAccountBinding, input: DesktopServiceAccountMutation, signal: AbortSignal) {
             const fingerprint = deps.installs.digest(binding.coworkerId, canonical(input))
             const flightKey = `${binding.coworkerId}\0${input.requestId}`
             const current = active.get(flightKey)
@@ -432,9 +442,10 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
             }
             const promise = exclusive(binding.coworkerId, () => run(binding, input, fingerprint, signal))
             active.set(flightKey, { fingerprint, promise })
-            void promise.finally(() => {
+            const cleanup = () => {
                 if (active.get(flightKey)?.promise === promise) active.delete(flightKey)
-            })
+            }
+            void promise.then(cleanup, cleanup)
             return promise
         },
         async callTool(binding: DesktopServiceAccountBinding, accountKey: string, revision: string, call: { name: string; arguments: Record<string, unknown> }, signal: AbortSignal) {
@@ -445,12 +456,23 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
             if (!authority.enabled || !authority.granted) throw new Error(M.grant)
             const checkedAt = Date.parse(record.health.checkedAt ?? '')
             const fresh = record.health.state === 'healthy' && record.healthLaunch === authority.launchNonce && Number.isFinite(checkedAt) && Date.parse(deps.clock.now()) - checkedAt < 60_000
-            if (!fresh || record.toolNames.length === 0) throw new Error(M.probeFailed)
+            if (!fresh || !record.toolNames.includes(`${record.plan.serverName}_${call.name}`)) throw new Error(M.probeFailed)
             const bundle = record.plan.shape === 'anonymous' ? { headers: {}, inputs: {} } : await deps.secrets.read(binding.coworkerId, record.id, record.revision)
             if (!bundle) throw new Error(M.credential)
+            const guard = async () => {
+                const current = await deps.installs.read(binding.coworkerId, accountKey)
+                const latest = await authorityOf(binding, 'use', signal)
+                if (!latest.enabled || !latest.granted) throw new Error(M.grant)
+                if (latest.launchNonce !== authority.launchNonce || latest.engineAgentId !== record.engineId) throw new Error(M.owner)
+                if (!current || current.id !== record.id || current.revision !== revision || current.state !== 'ready'
+                    || current.plan.url !== record.plan.url || !current.toolNames.includes(`${record.plan.serverName}_${call.name}`)) throw new Error(M.revision)
+            }
             try {
                 if (deps.skills) for (const skill of record.skills) await deps.skills.verify(authority.skillsRoot, skill)
-                return await deps.transport.call({ url: record.plan.url, headers: bundle.headers, signal, ...call })
+                await guard()
+                const result = await deps.transport.call({ url: record.plan.url, headers: bundle.headers, secretValues: Object.values(bundle.inputs), guard, signal, ...call })
+                await guard()
+                return result
             } finally {
                 wipe(bundle)
             }

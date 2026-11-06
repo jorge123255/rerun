@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createLegacySseParser } from './parser'
 import { advertisedSseEndpoint } from './endpoint'
-import { DESKTOP_MCP_SSE_LIMITS as L } from '../../../../../../packages/contracts/src/desktop-mcp-sse'
+import { DESKTOP_MCP_SSE_LIMITS as L } from '@rerun/contracts'
 
 describe('legacy SSE event stream, separate from HTTP response SSE', () => {
     it('handles split UTF-8, CRLF, lone CR, multiline data and comments in order', () => {

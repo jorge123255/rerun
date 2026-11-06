@@ -11,6 +11,7 @@ import {
     desktopTemplateRedactionSchema,
     desktopTemplateRelativePathSchema,
     desktopTemplateRevisionSchema,
+    desktopPortableCoworkerSchema,
     type DesktopTemplateDetail,
 } from '@rerun/contracts'
 import { TemplateRequestError } from './errors.js'
@@ -38,10 +39,13 @@ const coworkerSchema = z.strictObject({
         prompt: z.string().max(DESKTOP_TEMPLATE_LIMITS.maxFileBytes),
         answered: z.boolean(),
     }),
-    files: z.array(fileSchema).max(DESKTOP_TEMPLATE_LIMITS.maxFiles),
+    files: z.array(fileSchema).max(DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFiles),
     exclusions: z.array(desktopTemplateExclusionSchema).max(500),
     redactions: z.array(desktopTemplateRedactionSchema).max(50),
     strippedConfigKeys: z.array(z.string().min(1).max(200)).max(100),
+    requirements: desktopPortableCoworkerSchema.shape.requirements.optional(),
+    envKeys: desktopPortableCoworkerSchema.shape.envKeys.optional(),
+    mcpAuth: desktopPortableCoworkerSchema.shape.mcpAuth.optional(),
 })
 const manifestSchema = z.strictObject({
     version: z.literal(1),
@@ -71,6 +75,7 @@ const importReceiptSchema = z.strictObject({
 type ImportReceipt = z.infer<typeof importReceiptSchema>
 
 const ALLOWED = /^(?:SOUL\.md|INSTALL\.md|config\.json|workspace\/(?!\.rerun(?:\/|$)).+|skills\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\/.+)$/
+export const isTemplateManifestPath = (path: string): boolean => ALLOWED.test(path)
 
 export function manifestBody(manifest: TemplateManifest): Omit<TemplateManifest, 'revision'> {
     const { revision, ...body } = manifest

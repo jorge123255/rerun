@@ -4,6 +4,7 @@ import { readDesktopChatHistory, type DesktopChatHistory } from '@/lib/desktop/s
 import { readDesktopTakeover } from '@/lib/desktop/server/takeover'
 import { readDesktopApproval } from '@/lib/desktop/server/approvals'
 import { readDesktopQuestion } from '@/lib/desktop/server/questions'
+import { readDesktopSecretRequestView } from '@/lib/desktop/server/secret-requests/binding'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { engineOf } from '@/lib/desktop/server/settings'
@@ -30,7 +31,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ agen
                     if (question) return question.questions[0].question.slice(0, 200)
                     const { approval } = await readDesktopApproval(runtime, id)
                     if (approval) return approval.approvals[0].action.slice(0, 200)
-                    return (await readDesktopTakeover(runtime, id)).takeover?.reason.slice(0, 200) ?? null
+                    const takeover = (await readDesktopTakeover(runtime, id)).takeover
+                    if (takeover) return takeover.reason.slice(0, 200)
+                    const secret = (await readDesktopSecretRequestView(runtime, id)).request
+                    return secret ? `Needs ${secret.fields[0].label}`.slice(0, 200) : null
                 },
             }, agent)
         } catch {

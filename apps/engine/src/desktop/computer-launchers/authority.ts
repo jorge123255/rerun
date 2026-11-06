@@ -1,5 +1,5 @@
 import type {LauncherInvocation,LauncherPorts} from './ports.js'
-import type {DesktopComputerLauncherApp} from '../../../../../packages/contracts/src/desktop-computer-launchers.js'
+import type {DesktopComputerLauncherApp} from '@rerun/contracts'
 import type {ScreenTarget} from '../isolated-screen/types.js'
 import {LauncherRefusal} from './contract.js'
 export type LauncherLiveAuthority={agentId:string;sessionId:string;runId:string;target:ScreenTarget;enabled:boolean;deleting:boolean;active:boolean;computer:boolean;terminalLaunch:boolean;filesLaunch:boolean}

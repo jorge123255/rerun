@@ -12,6 +12,11 @@ export const remoteMcpSchema = `CREATE TABLE IF NOT EXISTS desktop_remote_mcp (
 export const remoteMcpOAuthSchema = `CREATE TABLE IF NOT EXISTS desktop_remote_mcp_oauth (
  agent_id TEXT NOT NULL,name TEXT NOT NULL,revision TEXT NOT NULL,bundle TEXT NOT NULL,
  PRIMARY KEY(agent_id,name), FOREIGN KEY(agent_id,name) REFERENCES desktop_remote_mcp(agent_id,name) ON DELETE CASCADE);`
+const transportDrains = new WeakMap<object, (owner: string, name: string) => Promise<void>>()
+export function bindRemoteTransportDrain(store: Pick<RemoteMcpStore, 'lifecycle'>, drain: (owner: string, name: string) => Promise<void>) {
+    if (transportDrains.has(store.lifecycle)) throw new Error('Remote transport cleanup is already bound')
+    transportDrains.set(store.lifecycle, drain)
+}
 export type OAuthTokenBundle={refreshPending?:string;accessToken:string;refreshToken?:string;expiresAt:number;resource:string;issuer:string;tokenEndpoint:string;clientId:string;scope?:string}
 export function remoteMcpStore(db: Client, key: () => Buffer) {
     const lifecycle = remoteMcpLifecycle()
@@ -28,8 +33,8 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
         return Buffer.concat([cipher.update(b.subarray(28)), cipher.final()]).toString('utf8')
     }
     async function list(agent: string): Promise<RemoteServer[]> {
-        const result = await db.execute({ sql: 'SELECT name,url,revision,bearer IS NOT NULL AS has_bearer FROM desktop_remote_mcp WHERE agent_id=? ORDER BY name', args:[agent] })
-        return result.rows.map(r => ({ name:String(r.name), url:String(r.url), revision:String(r.revision), hasBearer:!!r.has_bearer }))
+        const result = await db.execute({ sql: 'SELECT id,transport,name,url,revision,bearer IS NOT NULL AS has_bearer FROM desktop_remote_mcp WHERE agent_id=? ORDER BY name', args:[agent] })
+        return result.rows.map(r => ({ id:String(r.id), transport:String(r.transport) as 'http' | 'sse', name:String(r.name), url:String(r.url), revision:String(r.revision), hasBearer:!!r.has_bearer }))
     }
     return {
         list, lifecycle,
@@ -40,6 +45,8 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
         async writeOAuth(agent:string,name:string,revision:string,bundle:OAuthTokenBundle,signal:AbortSignal) {
             return lifecycle.commitCredentials(agent,name,signal,async check=>{
                 check()
+                const remote=(await db.execute({sql:'SELECT transport FROM desktop_remote_mcp WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
+                if(remote?.transport==='sse'){const drain=transportDrains.get(lifecycle);if(!drain)throw new Error('SSE cleanup unavailable');await drain(agent,name);check()}
                 const previous=(await db.execute({sql:'SELECT revision,bundle FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
                 check()
                 const encrypted=seal(agent,`oauth:${name}`,JSON.stringify(bundle))
@@ -57,14 +64,20 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
                 }
             })
         },
-        async read(agent: string, name: string) {
+        async read(agent: string, name: string): Promise<Omit<RemoteServer, 'hasBearer'> & { bearer: string }> {
             const row = (await db.execute({ sql:'SELECT * FROM desktop_remote_mcp WHERE agent_id=? AND name=?',args:[agent,name] })).rows[0]
             if (!row) throw new Error('MCP server unavailable')
-            return { name:String(row.name), url:String(row.url), revision:String(row.revision), bearer:row.bearer ? open(agent,name,String(row.bearer)) : '' }
+            return { id:String(row.id), transport:String(row.transport) as 'http' | 'sse', name:String(row.name), url:String(row.url), revision:String(row.revision), bearer:row.bearer ? open(agent,name,String(row.bearer)) : '' }
         },
         async save(agent: string, input: { name:string; url:string; bearer?:string; revision?:string }) {
             return lifecycle.mutate(agent,input.name,async () => {
             const name = serverName(input.name), url = endpoint(input.url)
+            const previous = (await db.execute({sql:'SELECT transport,url,revision FROM desktop_remote_mcp WHERE agent_id=? AND name=?',args:[agent,name]})).rows[0]
+            if (previous && previous.transport !== 'http') {
+                const drain = transportDrains.get(lifecycle)
+                if (!drain || previous.url !== url || previous.revision !== input.revision || input.bearer === undefined) throw new Error('Use the SSE settings for this server')
+                await drain(agent, name)
+            }
             if (input.bearer !== undefined && (!/^[\x21-\x7e]*$/.test(input.bearer) || input.bearer.length > 8192)) throw new Error('Invalid bearer')
             // Optimistic revision guard makes edits atomic and prevents silently losing a credential change.
             const bearer = input.bearer === undefined ? undefined : input.bearer ? seal(agent,name,input.bearer) : null
@@ -72,13 +85,13 @@ export function remoteMcpStore(db: Client, key: () => Buffer) {
             if (input.revision) {
                 const result = await db.execute({sql: `UPDATE desktop_remote_mcp SET url=?,revision=?,bearer=${bearer === undefined ? 'bearer' : '?'} WHERE agent_id=? AND name=? AND revision=?`,args:[url,rev,...(bearer === undefined ? [] : [bearer]),agent,name,input.revision]})
                 if (result.rowsAffected !== 1) throw new Error('MCP server changed; reload')
-            } else await db.execute({sql:'INSERT INTO desktop_remote_mcp(agent_id,name,url,revision,bearer) VALUES(?,?,?,?,?)',args:[agent,name,url,rev,bearer ?? null]})
+            } else await db.execute({sql:'INSERT INTO desktop_remote_mcp(id,transport,agent_id,name,url,revision,bearer) VALUES(?,?,?,?,?,?,?)',args:[randomUUID(),'http',agent,name,url,rev,bearer ?? null]})
             return list(agent)
             })
         },
         async remove(agent:string,name:string,revision:string) {
             return lifecycle.mutate(agent,name,async () => {
-            const result = await db.execute({sql:'DELETE FROM desktop_remote_mcp WHERE agent_id=? AND name=? AND revision=?',args:[agent,name,revision]})
+            const result = await db.execute({sql:"DELETE FROM desktop_remote_mcp WHERE agent_id=? AND name=? AND revision=? AND transport='http'",args:[agent,name,revision]})
             if (result.rowsAffected !== 1) throw new Error('MCP server changed; reload')
             return list(agent)
             })

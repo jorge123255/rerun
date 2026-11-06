@@ -14,7 +14,9 @@ import { GET } from './route'
 import { POST } from './read/route'
 
 const serviceReader = vi.hoisted(() => vi.fn())
+const secretReader = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/desktop/server/service-requests/view', () => ({ readDesktopServiceRequestView: serviceReader }))
+vi.mock('@/lib/desktop/server/secret-requests/binding', () => ({ readDesktopSecretRequestView: secretReader }))
 
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent
@@ -47,7 +49,7 @@ async function read() {
     expect(response.headers.get('cache-control')).toBe('no-store')
     return desktopPendingInboxSchema.parse(await response.json())
 }
-const seen = async () => (await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_pending_inbox_seen_v3')).rows
+const seen = async () => (await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_pending_inbox_seen_v4')).rows
 const questionId = async () => (await questionResolvers.readDesktopQuestion(runtime, question.id)).question!.id
 const approvalId = async () => (await readDesktopApproval(runtime, approval.id)).approval!.id
 
@@ -70,6 +72,7 @@ beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-pending-inbox-api-'))
     histories.clear(); calls.length = 0; failures.clear(); stalled.clear()
     serviceReader.mockReset(); serviceReader.mockResolvedValue({ request: null })
+    secretReader.mockReset(); secretReader.mockResolvedValue({ request: null })
     server = createServer((req, res) => {
         calls.push(`${req.method} ${req.url}`)
         const reply = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
@@ -358,4 +361,19 @@ test('a resolver finishing after the deadline cannot create a read receipt', asy
     } finally {
         controller.abort(); timeout.mockRestore(); reader.mockRestore()
     }
+})
+
+
+test('credential requests share durable unread state without storing any credential bytes', async () => {
+    const db = await openDesktopDatabase(root)
+    const chat = await createDesktopSession(db, { agentId: alice.id, engineSessionId: 'credential-chat', title: 'Configure credentials' })
+    histories.set('credential-chat', { owner: alice.engineAgentId, rows: [] })
+    secretReader.mockImplementation(async (_runtime, id) => ({ request: id === chat.id ? { requestId: 'credential-request', fields: [{ key: 'EXAMPLE_API_KEY', label: 'Example key' }], createdAt: time } : null }))
+    const snapshot = await read()
+    expect(snapshot.items).toContainEqual(expect.objectContaining({ id: 'credential-request', kind: 'secret', summary: 'Needs Example key' }))
+    const response = await mark([{ id: 'credential-request', kind: 'secret', agentId: alice.id, sessionId: chat.id }])
+    expect(response.status).toBe(200)
+    expect(await seen()).toContainEqual(expect.objectContaining({ item_id: 'credential-request', kind: 'secret' }))
+    await closeDesktopDatabase(root)
+    expect((await read()).items.some(item => item.id === 'credential-request')).toBe(false)
 })

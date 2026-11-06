@@ -1,5 +1,5 @@
 import type {ScreenTarget,ScreenShot} from '../isolated-screen/types.js'
-import type {DesktopComputerLauncherOperation as Operation,DesktopComputerLauncherApp as App,DesktopComputerLauncherOutcome as Outcome} from '../../../../../packages/contracts/src/desktop-computer-launchers.js'
+import type {DesktopComputerLauncherOperation as Operation,DesktopComputerLauncherApp as App,DesktopComputerLauncherOutcome as Outcome} from '@rerun/contracts'
 export type LauncherInvocation={agentId:string;sessionId:string;runId:string;requestId:string;target:ScreenTarget}
 export type LauncherAttempt={version:1;operation:Operation;fingerprint:string;operationId:string;phase:'reserved'|'submitted'|'settled';outcome:Outcome|null}
 export interface LauncherAttemptStore {

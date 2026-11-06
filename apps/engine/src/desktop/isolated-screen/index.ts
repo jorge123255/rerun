@@ -1,6 +1,7 @@
 import { createDockerCli } from './docker-cli.js'
 import { encodeScreenJpeg } from './encode.js'
 import { createIsolatedScreenService } from './service.js'
+import { authorizeScreenInput } from './permissions.js'
 import type { IsolatedScreenService, ScreenOwner } from './types.js'
 
 export { GUEST_IMAGE, GUEST_PLATFORM } from './docker-args.js'
@@ -31,7 +32,7 @@ export type {
 let shared: IsolatedScreenService | undefined
 
 export function service(): IsolatedScreenService {
-    shared ??= createIsolatedScreenService({ docker: createDockerCli(), encodeJpeg: encodeScreenJpeg })
+    shared ??= createIsolatedScreenService({ docker: createDockerCli(), encodeJpeg: encodeScreenJpeg, authorizeInput: authorizeScreenInput })
     return shared
 }
 

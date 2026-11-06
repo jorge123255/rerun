@@ -1,4 +1,5 @@
 import { parseVoiceMessage } from '@rerun/contracts'
+import type { DesktopVoiceRecording } from '@rerun/contracts'
 import { describe, expect, it } from 'vitest'
 import {
     buildDesktopVoiceMessage,
@@ -8,7 +9,7 @@ import {
 } from './voice'
 
 const scope = { agentId: 'owner', tabUid: 'tab-1', sessionId: 'session-1' }
-const recording = {
+const recording: DesktopVoiceRecording = {
     attemptId: '11111111-1111-4111-8111-111111111111',
     sha256: 'a'.repeat(64),
     byteLength: 4,
@@ -33,6 +34,7 @@ describe('desktop voice identity and marker', () => {
         expect(parsed?.peaks).toHaveLength(48)
         expect(isDesktopVoiceAudioReference(scope, parsed!.src)).toBe(true)
         expect(isDesktopVoiceAudioReference({ ...scope, agentId: 'other' }, parsed!.src)).toBe(false)
+        expect(isDesktopVoiceAudioReference({ ...scope, sessionId: 'other-session' }, parsed!.src)).toBe(false)
         expect(isDesktopVoiceAudioReference(scope, 'https://example.com/audio')).toBe(false)
         expect(isDesktopVoiceAudioReference(scope, '/api/desktop/coworkers/other/voice?attemptId=other')).toBe(false)
     })

@@ -22,7 +22,7 @@ export function SelfMcpReviewCard({ proposal, onOpen, selected }: { proposal: Se
                 <SelfMcpStatusBadge status={proposal.status} />
             </div>
             <p className="text-xs text-muted-foreground break-all">{destination}</p>
-            <p className="text-xs text-muted-foreground">Proposed by an engine call · {proposal.identity.toolCallId}</p>
+            <p className="text-xs text-muted-foreground">Suggested by your coworker.</p>
         </div>
     )
 }

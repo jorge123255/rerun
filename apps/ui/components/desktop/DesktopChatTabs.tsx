@@ -172,6 +172,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
     }, [active.uid, layout.tabs])
 
     function close(uid: string) {
+        if (activityRef.current[uid]?.recordingPending) { setNotice('Send or discard this recording before closing its tab.'); setPendingClose(null); return }
         const state = current.current
         const index = state.tabs.findIndex(tab => tab.uid === uid)
         if (index >= 0) change(closeSessionTab(state, index))
@@ -182,6 +183,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
         if (isDesktopQuitting()) return
         const tab = current.current.tabs[index]
         if (!tab) return
+        if (activityRef.current[tab.uid]?.recordingPending) { setNotice('Send or discard this recording before closing its tab.'); return }
         if (activityRef.current[tab.uid]?.busy) {
             if (tab.id) setPendingClose(tab.uid)
             else setNotice('This conversation is starting. You can switch tabs and close it once the first message is accepted.')

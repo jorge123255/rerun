@@ -120,7 +120,7 @@ function skillMeta(text: string, slug: string): { name: string; description: str
     return { name: read('name') || slug, description: read('description') }
 }
 
-function scrubConfig(raw: unknown, fallbackName: string): { text: string; name: string; description: string; stripped: string[]; setupRequired: boolean | null; requirements: InspectedCoworker['requirements']; mcpAuth: InspectedCoworker['mcpAuth'] } | { error: string } {
+export function scrubConfig(raw: unknown, fallbackName: string): { text: string; name: string; description: string; stripped: string[]; setupRequired: boolean | null; requirements: InspectedCoworker['requirements']; mcpAuth: InspectedCoworker['mcpAuth'] } | { error: string } {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'config.json is not an object' }
     const source = raw as Record<string, unknown>
     const display = typeof source.displayName === 'string' ? source.displayName.trim() : ''
@@ -315,9 +315,6 @@ export async function inspectCoworker(
             exclusions.push({ path: `skills/${slug}`, reason: 'unsupported' })
             continue
         }
-<<<<<<< HEAD
-        if (slug.startsWith('svc-') || owners?.has(slug)) {
-=======
         let ownership: DesktopSkillOwnershipKind = 'unknown'
         if (options.skillOwnership) {
             ownership = await options.skillOwnership({ engineAgentId, slug })
@@ -329,8 +326,7 @@ export async function inspectCoworker(
         } else {
             ownership = 'user'
         }
-        if (ownership === 'connector') {
->>>>>>> b9542bf (feat(desktop): portable local template lifecycle (W3))
+        if (slug.startsWith('svc-') || ownership === 'connector') {
             exclusions.push({ path: `skills/${slug}`, reason: 'connector-skill' })
             continue
         }

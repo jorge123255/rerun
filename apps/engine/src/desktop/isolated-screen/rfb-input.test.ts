@@ -1,0 +1,63 @@
+import { Duplex } from 'node:stream'
+import { expect, it, vi } from 'vitest'
+import { guardedRfbInput } from './rfb-input.js'
+
+const handshake = Buffer.concat([Buffer.from('RFB 003.008\n'), Buffer.from([1, 1])])
+const key = Buffer.from([4, 1, 0, 0, 0, 0, 0, 65])
+const pointer = Buffer.from([5, 1, 0, 10, 0, 20])
+function fixture(authorize = vi.fn(async () => {})) {
+    const writes: Buffer[] = []
+    const remote = new Duplex({ read() {}, write(chunk: Buffer, _encoding, done) { writes.push(Buffer.from(chunk)); done() } })
+    const stream = guardedRfbInput(remote, authorize)
+    stream.on('error', () => {})
+    const write = (chunk: Buffer) => new Promise<void>((resolve, reject) => stream.write(chunk, error => error ? reject(error) : resolve()))
+    return { stream, remote, authorize, writes, write }
+}
+it('handles split handshake and coalesced packets, checking every input rather than every transport chunk', async () => {
+    const f = fixture()
+    await f.write(handshake.subarray(0, 5)); await f.write(handshake.subarray(5))
+    await f.write(key.subarray(0, 3))
+    expect(f.authorize).not.toHaveBeenCalled()
+    await f.write(Buffer.concat([key.subarray(3), pointer]))
+    expect(f.authorize).toHaveBeenCalledTimes(2)
+    expect(Buffer.concat(f.writes)).toEqual(Buffer.concat([handshake, key, pointer]))
+    f.stream.destroy()
+})
+it('forwards display negotiation without granting input and refuses clipboard or unknown extensions', async () => {
+    const f = fixture()
+    await f.write(handshake)
+    const encodings = Buffer.from([2, 0, 0, 1, 0, 0, 0, 0])
+    await f.write(encodings.subarray(0, 2)); await f.write(encodings.subarray(2))
+    expect(f.authorize).not.toHaveBeenCalled()
+    await expect(f.write(Buffer.from([6, 0, 0, 0, 0, 0, 0, 1, 65]))).rejects.toThrow('input unavailable')
+    expect(Buffer.concat(f.writes)).toEqual(Buffer.concat([handshake, encodings]))
+    expect(f.remote.destroyed).toBe(true)
+})
+it('checks fresh authority between two key packets in a single chunk and stops at revocation', async () => {
+    const authorize = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('permission revoked'))
+    const f = fixture(authorize)
+    await f.write(handshake)
+    await expect(f.write(Buffer.concat([key, key]))).rejects.toThrow('permission revoked')
+    expect(f.writes.filter(packet => packet[0] === 4)).toHaveLength(1)
+    expect(f.remote.destroyed).toBe(true)
+})
+it('never forwards a pending authorized input after its drive stream closes', async () => {
+    let release!: () => void, entered!: () => void
+    const ready = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const f = fixture(vi.fn(async () => { entered(); await gate }))
+    await f.write(handshake)
+    const pending = f.write(key).catch(error => error as Error)
+    await ready
+    f.stream.destroy(); release()
+    expect(await pending).toBeInstanceOf(Error)
+    expect(f.writes.filter(packet => packet[0] === 4)).toHaveLength(0)
+})
+it('refuses invalid security negotiation and oversized encoding lists before forwarding them', async () => {
+    const f = fixture()
+    await f.write(Buffer.from('RFB 003.008\n'))
+    await expect(f.write(Buffer.from([2]))).rejects.toThrow('security')
+    const other = fixture(); await other.write(handshake)
+    await expect(other.write(Buffer.from([2, 0, 1, 1]))).rejects.toThrow('encodings exceed')
+    expect(f.authorize).not.toHaveBeenCalled(); expect(other.authorize).not.toHaveBeenCalled()
+})

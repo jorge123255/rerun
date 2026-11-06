@@ -79,6 +79,8 @@ export const selfMcpProposalSchema = z.object({
     /** Local coworker id the proposal belongs to. */
     agentId: z.string().min(1).max(128),
     identity: selfMcpRunIdentitySchema,
+    /** Captured from trusted source authority, never from the model proposal. */
+    launchEpoch: z.string().min(1).max(256),
     /** sha256 hex of `selfMcpCanonicalInput(input)`; same invocation reconciles one proposal. */
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     input: selfMcpServerInputSchema,
@@ -256,6 +258,7 @@ export function selfMcpInputIssue(value: unknown): string | null {
     const kind = transport as SelfMcpTransport | undefined
     const command = typeof input.command === 'string' && input.command ? input.command.trim() : undefined
     const url = typeof input.url === 'string' && input.url ? input.url.trim() : undefined
+    if (command && url) return 'Provide one destination: a local command or a remote URL.'
     if (kind === 'stdio' && !command) return `MCP server "${name}" needs a command for stdio.`
     if ((kind === 'http' || kind === 'sse') && !url) return `MCP server "${name}" needs a url for ${kind}.`
     if (!kind && !command && !url) return `MCP server "${name}" needs a command (stdio) or a url (sse/http).`

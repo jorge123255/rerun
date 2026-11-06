@@ -1,5 +1,5 @@
 import 'server-only'
-import { desktopSecretRequestDecisionSchema, desktopSecretRequestResponseSchema, type DesktopSecretRequestDecision, type DesktopSecretRequestView } from '../../../../../../packages/contracts/src/desktop-secret-requests'
+import { desktopSecretRequestActionSchema, desktopSecretRequestResponseSchema, type DesktopSecretRequestAction, type DesktopSecretRequestDecision, type DesktopSecretRequestRecovery, type DesktopSecretRequestView } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 
 export const DESKTOP_SECRET_REQUEST_BODY_MAX_BYTES = 100_000
@@ -7,6 +7,7 @@ export const DESKTOP_SECRET_REQUEST_BODY_MAX_BYTES = 100_000
 export type DesktopSecretRequestApiPorts = {
     read: (sessionId: string, signal: AbortSignal) => Promise<DesktopSecretRequestView | null>
     decide: (sessionId: string, input: DesktopSecretRequestDecision, signal: AbortSignal) => Promise<Response>
+    recover: (sessionId: string, input: DesktopSecretRequestRecovery, signal: AbortSignal) => Promise<Response>
 }
 
 async function body(request: Request): Promise<unknown> {
@@ -17,8 +18,8 @@ async function body(request: Request): Promise<unknown> {
     try { return JSON.parse(text) } catch { throw new DesktopHttpError(400, 'Credential submission must be JSON.') }
 }
 
-function decision(value: unknown): DesktopSecretRequestDecision {
-    const parsed = desktopSecretRequestDecisionSchema.safeParse(value)
+function decision(value: unknown): DesktopSecretRequestAction {
+    const parsed = desktopSecretRequestActionSchema.safeParse(value)
     if (!parsed.success) throw new DesktopHttpError(400, 'Credential submission is invalid.')
     return parsed.data
 }
@@ -32,8 +33,9 @@ export function createDesktopSecretRequestApi(ports: DesktopSecretRequestApiPort
         async POST(request: Request, sessionId: string): Promise<Response> {
             const input = decision(await body(request))
             if (input.source.sessionId !== sessionId) throw new DesktopHttpError(409, 'This credential request belongs to another conversation.')
-            const response = await ports.decide(sessionId, input, requestSignal(request))
-            if (response.headers.get('x-secret-request-id') !== input.requestId || !response.headers.get('x-run-id')) throw new DesktopHttpError(502, 'Credential decision acknowledgement belonged to another request.')
+            const signal = requestSignal(request)
+            const response = input.operation === 'recover' ? await ports.recover(sessionId, input, signal) : await ports.decide(sessionId, input, signal)
+            if (response.headers.get('x-secret-request-id') !== input.requestId || !response.headers.get('x-run-id') || response.headers.get('x-session-id') !== sessionId) throw new DesktopHttpError(502, 'Credential decision acknowledgement belonged to another request.')
             response.headers.set('Cache-Control', 'no-store')
             return response
         },

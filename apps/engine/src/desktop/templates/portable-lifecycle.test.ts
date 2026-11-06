@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -37,8 +37,8 @@ async function seedCoworker(agentsRoot: string, engineId: string) {
 }
 
 test('binary-aware capture, export, import, delete and lost-ack reuse stay independent of source installs', async () => {
-    const dataRoot = await mkdtemp(join(tmpdir(), 'desktop-portable-data-'))
-    const agentsRoot = await mkdtemp(join(tmpdir(), 'desktop-portable-agents-'))
+    const dataRoot = await realpath(await mkdtemp(join(tmpdir(), 'desktop-portable-data-')))
+    const agentsRoot = await realpath(await mkdtemp(join(tmpdir(), 'desktop-portable-agents-')))
     roots.push(dataRoot, agentsRoot)
     await seedCoworker(agentsRoot, 'agent_source_1')
     const names = new Map<string, string>()
@@ -134,8 +134,8 @@ test('binary-aware capture, export, import, delete and lost-ack reuse stay indep
 })
 
 test('unknown ownership and connector skills are blocked; missing ownership callback fails closed for portable capture', async () => {
-    const dataRoot = await mkdtemp(join(tmpdir(), 'desktop-portable-own-'))
-    const agentsRoot = await mkdtemp(join(tmpdir(), 'desktop-portable-own-agents-'))
+    const dataRoot = await realpath(await mkdtemp(join(tmpdir(), 'desktop-portable-own-')))
+    const agentsRoot = await realpath(await mkdtemp(join(tmpdir(), 'desktop-portable-own-agents-')))
     roots.push(dataRoot, agentsRoot)
     await seedCoworker(agentsRoot, 'agent_source_2')
     const engine = createDesktopTemplateEngine({ dataRoot, agentsRoot }, undefined, {

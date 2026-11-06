@@ -4,6 +4,8 @@ import { migrate } from '../db/migrate.js'
 import { latestVersion } from '../db/ladder.js'
 import { foldAgentKeysIntoConnections } from '../connections/migrate.js'
 import { initializeDesktopBrainStore } from '../desktop/brain-pages-router.js'
+import { initializeDesktopPortableFiles } from '../desktop/templates/portable-files.js'
+import { initializeDesktopSemanticIndex } from '../desktop/semantic-memory/index-store.js'
 import { desktopApp } from '../desktop/policy.js'
 import { join } from 'node:path'
 import { boxPlanPath, mcpPackagesDir, dataDir } from '../config/paths.js'
@@ -55,6 +57,17 @@ export const DATA_DIR_MIGRATIONS: DataDirMigration[] = [
             if (!desktopApp()) return
             await initializeDesktopBrainStore()
             await mkdir(join(dataDir(), 'desktop-native-writeback-outbox'), { recursive: true, mode: 0o700 })
+        },
+    },
+    {
+        version: 5,
+        id: 'desktop-portable-templates-and-semantic-memory',
+        up: async () => {
+            if (!desktopApp()) return
+            await initializeDesktopPortableFiles(dataDir())
+            const directory = join(dataDir(), 'desktop-semantic-memory')
+            await mkdir(directory, { recursive: true, mode: 0o700 })
+            await initializeDesktopSemanticIndex(directory)
         },
     },
 ]

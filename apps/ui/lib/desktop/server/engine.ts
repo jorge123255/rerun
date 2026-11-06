@@ -127,6 +127,8 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
     await assertDesktopSetupChatAllowed(runtime, input.agentId, input.sessionId)
     const regenerate = 'regenerateMessageId' in input
+    // Reject a disabled canonical coworker before reserving an alternate or probing its history.
+    const regenerationModel = regenerate ? await resolveDesktopChatModel(runtime, agent, existing) : undefined
     const mentions = regenerate ? [] : checkedDesktopCoworkerMentions(input.text, input.coworkerMentions)
     const mentionFields = desktopCoworkerMentionFieldsOf(mentions)
     const attachmentPaths = regenerate ? [] : desktopAttachmentSelectionsOf(input)
@@ -174,7 +176,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     }
     // Existing chats resolve their own saved model. Only a first send carries an unsaved choice.
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
-    const { connectionId, model } = replay ? {} : await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
+    const { connectionId, model } = replay ? {} : regenerationModel ?? await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
     const images = attachmentPaths.filter((item): item is Exclude<typeof item, string> => typeof item !== 'string')
     if (!replay && images.length) {
         const { connections } = await readDesktopProviders(runtime)

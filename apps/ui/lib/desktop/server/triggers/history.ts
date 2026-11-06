@@ -9,6 +9,7 @@ import { readDesktopQuestion } from '../questions'
 import { readDesktopApproval } from '../approvals'
 import { readDesktopTakeover } from '../takeover'
 import { readPendingDesktopServiceToolCallView } from '../service-requests/view'
+import { readDesktopSecretRequestView } from '../secret-requests/binding'
 const envelope = z.strictObject({ items: z.array(desktopTriggerHistoryItemSchema), pending: z.array(z.strictObject({ eventId: z.string(), localSessionId: z.string(), engineSessionId: z.string(), toolCallId: z.string() })) })
 export async function projectDesktopTriggerHistory(runtime: DesktopRuntime, db: Client, agentId: string, value: unknown, signal?: AbortSignal) {
     const parsed = envelope.parse(value), results = []
@@ -19,7 +20,8 @@ export async function projectDesktopTriggerHistory(runtime: DesktopRuntime, db: 
         if (!session || session.agentId !== agentId || session.engineSessionId !== pending.engineSessionId) throw new DesktopHttpError(409, 'Trigger conversation identity changed')
         const options = { signal: AbortSignal.any([AbortSignal.timeout(5000), ...(signal ? [signal] : [])]) }
         const unresolved = (await readDesktopQuestion(runtime, session.id, options)).question?.toolCallId === pending.toolCallId || (await readDesktopApproval(runtime, session.id, options)).approval?.toolCallId === pending.toolCallId || (await readDesktopTakeover(runtime, session.id, options)).takeover?.toolCallId === pending.toolCallId || await readPendingDesktopServiceToolCallView(runtime, session.id, options) === pending.toolCallId
-        results.push(unresolved ? item : { ...item, status: 'finished' as const })
+        const secret = !unresolved && (await readDesktopSecretRequestView(runtime, session.id, options)).request?.source.toolCallId === pending.toolCallId
+        results.push(unresolved || secret ? item : { ...item, status: 'finished' as const })
     }
     return results
 }

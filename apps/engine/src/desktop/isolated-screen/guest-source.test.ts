@@ -12,12 +12,12 @@ describe('guest image source', () => {
         expect(dockerfile).toContain('FROM debian:bookworm-slim')
         expect(dockerfile).toContain('--uid 10001 rerun')
         expect(dockerfile).toContain('VOLUME /var/lib/rerun/profile')
-        for (const pkg of ['ca-certificates', 'chromium', 'fonts-liberation', 'openbox', 'python3', 'util-linux', 'x11vnc', 'xdotool', 'xvfb', 'maim']) {
+        for (const pkg of ['ca-certificates', 'chromium', 'fonts-liberation', 'openbox', 'python3', 'util-linux', 'x11vnc', 'xdotool', 'xvfb', 'maim', 'x11-utils', 'thunar', 'xfce4-terminal']) {
             expect(dockerfile).toContain(pkg)
         }
         const copies = dockerfile.split('\n').filter(line => line.startsWith('COPY'))
         expect(copies.join('\n')).not.toContain('Dockerfile')
-        for (const banned of ['EXPOSE', 'thunar', 'xfce4-terminal', 'tint2', 'hsetroot', 'docker.sock', 'FROM node', 'npm install']) {
+        for (const banned of ['EXPOSE', 'tint2', 'hsetroot', 'docker.sock', 'FROM node', 'npm install']) {
             expect(dockerfile).not.toContain(banned)
         }
     })

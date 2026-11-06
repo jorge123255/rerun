@@ -6,6 +6,9 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { desktopApp } from '../../desktop/policy.js'
 import { decideDesktopServiceRequestTurn } from '../../desktop/service-requests/admission.js'
+import { desktopSecretRequestGuardSchema, findDesktopSecretRequest, parseDesktopSecretReceiptSummary } from '@rerun/contracts'
+import { readDesktopSecretSource } from '../../desktop/secret-requests/source.js'
+import { hasDesktopToolGrant } from '../../desktop/tool-grants.js'
 import { resolveRunModel } from '../../agents/availability.js'
 import { getAgent } from '../../agents/registry.js'
 import { claimInstallSession } from '../../agents/setup.js'
@@ -30,9 +33,9 @@ const takeoverPendingMessage = 'Open and finish or skip the coworker’s browser
 const questionPendingMessage = 'Answer or dismiss the coworker’s questions before sending another message.'
 const approvalPendingMessage = 'Approve or decline the coworker’s proposed actions before sending another message.'
 const desktopFirstTurn = z.object({ sessionId: z.uuid(), runId: z.uuid() }).strict()
-const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional(), takeover: desktopTakeoverGuardSchema.optional(), service: desktopServiceRequestGuardSchema.optional() }).strict()
+const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional(), takeover: desktopTakeoverGuardSchema.optional(), service: desktopServiceRequestGuardSchema.optional(), secret: desktopSecretRequestGuardSchema.optional() }).strict()
     .refine(hasOneDesktopAttachmentField, 'Use one attachment field.')
-    .refine(turn => [turn.question, turn.approval, turn.takeover, turn.service].filter(Boolean).length <= 1, 'An answer can target only one pending request.')
+    .refine(turn => [turn.question, turn.approval, turn.takeover, turn.service, turn.secret].filter(Boolean).length <= 1, 'An answer can target only one pending request.')
 const desktopChatRequest = chatRequestSchema.extend({
     message: z.string().max(20_000),
     coworkerMentions: desktopCoworkerMentionsSchema.optional(),
@@ -137,7 +140,7 @@ chatRoutes.post('/chat', async c => {
             const session = await getSession(agentId, body.sessionId)
             if (session?.agentId === agentId && await getDesktopQueuedTurn(agentId, {
                 runId: queued.runId, sessionId: session.id, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions),
-                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service,
+                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service, secret: queued.secret,
             })) return identified(resumeStreamResponse(queued.runId), session.id, queued.runId)
         }
         throw agentDisabled()
@@ -177,7 +180,7 @@ chatRoutes.post('/chat', async c => {
         const queued = body.desktopQueuedTurn!
         const session = await getSession(agentId, body.sessionId!)
         if (!session || session.agentId !== agentId) throw new HttpError(404, 'Session not found for this agent')
-        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service }
+        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service, secret: queued.secret }
         if (await getDesktopQueuedTurn(agentId, turn)) return identified(resumeStreamResponse(turn.runId), session.id, turn.runId)
         if (await getRun(agentId, turn.runId)) throw new HttpError(409, 'This queued message ID is already in use.')
         // The bridge can reconcile a lost acknowledgement before re-reading a moved file or
@@ -200,6 +203,18 @@ chatRoutes.post('/chat', async c => {
             const pending = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
             const takeover = findDesktopTakeover(messages)
+            const secret = findDesktopSecretRequest(messages)
+            if (queued.secret) {
+                const expected = queued.secret
+                if (!secret || secret.sourceMessageId !== expected.sourceMessageId || secret.toolCallId !== expected.toolCallId || secret.fingerprint !== expected.fingerprint) throw new HttpError(409, 'This credential request is no longer waiting for a result.')
+                const source = await readDesktopSecretSource(agentId, session.id, expected)
+                if (!source || source.status !== 'done' || !hasDesktopToolGrant(currentAgent.config, 'requestSecret')) throw new HttpError(409, 'The credential source was stopped or its permission changed.')
+                const summary = parseDesktopSecretReceiptSummary(body.message)
+                if (!summary || JSON.stringify(summary.map(item => item.key)) !== JSON.stringify(secret.fields.map(item => item.key))) throw new HttpError(400, 'A credential result may contain only the requested variable names and their status.')
+            } else if (secret && ['running', 'done'].includes((await readDesktopSecretSource(agentId, session.id))?.status ?? '')) {
+                releaseSession(turn.runId)
+                return c.json({ error: 'Finish or skip the credential form before sending another message.', code: 'secret_pending' }, 409)
+            }
             const service = decideDesktopServiceRequestTurn({ rows: messages, queued })
             if (service.kind === 'reject' || service.kind === 'block') {
                 releaseSession(turn.runId)
@@ -257,6 +272,10 @@ chatRoutes.post('/chat', async c => {
             const question = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
             const takeover = findDesktopTakeover(messages)
+            if (findDesktopSecretRequest(messages) && ['running', 'done'].includes((await readDesktopSecretSource(agentId, session.id))?.status ?? '')) {
+                releaseSession(runId)
+                return c.json({ error: 'Finish or skip the credential form before sending another message.', code: 'secret_pending' }, 409)
+            }
             const service = decideDesktopServiceRequestTurn({ rows: messages })
             if (service.kind === 'block') {
                 releaseSession(runId)

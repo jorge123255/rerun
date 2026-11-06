@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { findDesktopApproval, findDesktopQuestion, type Message, type Session, type SessionSource } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, createDesktopSession, type DesktopAgent, type DesktopSession } from '@/lib/desktop/server/store'
@@ -10,6 +10,8 @@ import { readDesktopApproval } from '@/lib/desktop/server/approvals'
 import { readDesktopQuestion } from '@/lib/desktop/server/questions'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET } from './route'
+
+vi.mock('@/lib/desktop/server/secret-requests/binding', () => ({ readDesktopSecretRequestView: async () => ({ request: null }) }))
 
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent

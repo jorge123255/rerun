@@ -1,5 +1,5 @@
 import { parseServiceRegistryKey, serviceRegistryKey } from '@rerun/contracts'
-import { DESKTOP_SERVICE_ACCOUNT_LIMIT, DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_LIMIT, DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 
 const MASK = /^[•*·.]+$/
 

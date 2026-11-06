@@ -3,7 +3,7 @@ import { request as httpsRequest } from 'node:https'
 import { isIP } from 'node:net'
 import { Readable } from 'node:stream'
 import type { RequestOptions } from 'node:http'
-import { DESKTOP_MCP_SSE_LIMITS as L } from '../../../../../../packages/contracts/src/desktop-mcp-sse'
+import { DESKTOP_MCP_SSE_LIMITS as L } from '@rerun/contracts'
 import { SseFailure, deferred, wait } from './errors'
 import type { SseAuthority, SseNetwork, SseWireResponse } from './types'
 

@@ -1,5 +1,6 @@
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { readDesktopTurnRunning, stopDesktopTurn } from '@/lib/desktop/server/stop-turn'
+import { withDesktopSecretSessionTransition } from '@/lib/desktop/server/secret-requests/lifecycle'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,5 +13,8 @@ export async function GET(request: Request, { params }: Params): Promise<Respons
 
 // Cancel the engine run(s) generating a reply in this conversation.
 export async function POST(request: Request, { params }: Params): Promise<Response> {
-    return desktopRoute(request, async runtime => Response.json(await stopDesktopTurn(runtime, (await params).sessionId)))
+    return desktopRoute(request, async runtime => {
+        const sessionId = (await params).sessionId
+        return Response.json(await withDesktopSecretSessionTransition(runtime, sessionId, () => stopDesktopTurn(runtime, sessionId)))
+    })
 }

@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
-import type { DesktopServiceAccountView } from '../../../../../../packages/contracts/src/desktop-service-accounts'
+import type { DesktopServiceAccountView } from '@rerun/contracts'
 import type { ServiceAccountMethod } from '@/lib/desktop/service-accounts-client'
 import { DesktopServiceAccountForm } from './DesktopServiceAccountForm'
 
@@ -16,7 +16,7 @@ const method: ServiceAccountMethod = {
     kind: 'key',
     recommended: true,
     inputs: [
-        { key: 'WORKSPACE', label: 'Workspace', required: true },
+        { key: 'WORKSPACE', label: 'Workspace', type: 'text', secret: false, required: true },
         { key: 'TOKEN', label: 'Token', type: 'password', secret: true, required: true },
     ],
     requiresSecrets: true,
@@ -120,6 +120,7 @@ it('drops a late failure after the account identity changes', async () => {
     await act(async () => { reject(new Error('fixture-header-value failed')) })
     expect(view.host.querySelector('[role="alert"]')?.textContent ?? '').not.toContain('fixture-header-value')
     expect(view.host.querySelector('[data-account-key]')?.getAttribute('data-account-key')).toBe(second)
+    expect([...view.host.querySelectorAll('button')].find(button => button.textContent === 'Install')?.disabled).toBe(false)
 })
 
 it('does not offer hosted sign-in for an unsupported method', () => {

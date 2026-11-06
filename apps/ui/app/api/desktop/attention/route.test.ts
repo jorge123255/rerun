@@ -11,6 +11,8 @@ import { readDesktopQuestion } from '@/lib/desktop/server/questions'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { GET } from './route'
 
+vi.mock('@/lib/desktop/server/secret-requests/binding', () => ({ readDesktopSecretRequestView: async () => ({ request: null }) }))
+
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent
 let question: DesktopSession, approval: DesktopSession, acceptedQuestion: DesktopSession, acceptedApproval: DesktopSession, bobChat: DesktopSession

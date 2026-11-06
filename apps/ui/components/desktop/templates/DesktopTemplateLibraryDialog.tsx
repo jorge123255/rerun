@@ -15,7 +15,7 @@ import { DesktopTemplateDetailPanel } from './DesktopTemplateDetailPanel'
 import { DesktopTemplateLibraryBrowser } from './DesktopTemplateLibraryBrowser'
 import type { DesktopTemplateDetail, DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt, DesktopTemplateSummary } from './types'
 
-export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = null, resumeInstall = null, onOpenChange, onCreateFromScratch, onNewTemplate, onInstalled, onInstallAttempt, portableActions = null, onPickImport }: {
+export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = null, resumeInstall = null, onOpenChange, onCreateFromScratch, onNewTemplate, onInstalled, onInstallAttempt, portableActions = null, onPickImport, onSaveExport }: {
     open: boolean
     client: DesktopTemplatesClient
     initialTemplate?: DesktopTemplateIdentity | null
@@ -26,7 +26,8 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
     onInstalled: (receipt: DesktopTemplateInstallReceipt) => void
     onInstallAttempt?: (intent: DesktopTemplateInstallIntent | null) => void
     portableActions?: DesktopPortableTemplateActions | null
-    onPickImport?: () => Promise<{ uploadId: string } | null>
+    onPickImport?: () => Promise<{ uploadId: string; requestId?: string } | null>
+    onSaveExport?: (artifactId: string) => Promise<{ saved: boolean }>
 }) {
     const reduceMotion = useReducedMotion() ?? false
     const isMobile = useIsMobile()
@@ -43,6 +44,9 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
     const [interrupted, setInterrupted] = useState<DesktopTemplateInstallIntent | null>(resumeInstall)
     const [openCount, setOpenCount] = useState(0)
     const [wasOpen, setWasOpen] = useState(false)
+    const [importBusy, setImportBusy] = useState(false)
+    const [importError, setImportError] = useState<string | null>(null)
+    const importing = useRef(false)
     const listRequest = useRef(0)
     const currentlyOpen = useRef(open)
     currentlyOpen.current = open
@@ -128,6 +132,27 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
         listRef.current?.focus()
     }
 
+    async function importPackage() {
+        if (!onPickImport || !portableActions || importing.current) return
+        importing.current = true
+        setImportBusy(true)
+        setImportError(null)
+        try {
+            const picked = await onPickImport()
+            if (!picked || !currentlyOpen.current) return
+            const result = await portableActions.importPackage(picked)
+            if (!currentlyOpen.current) return
+            if (!result.ok) { setImportError(result.error); return }
+            if (result.result.status === 'uncertain') { setImportError(result.result.reason); return }
+            await refresh(true)
+            if (!currentlyOpen.current) return
+            setSelection({ templateId: result.result.templateId, revision: result.result.revision })
+            setView('detail')
+        } catch {
+            if (currentlyOpen.current) setImportError('Could not finish importing the package. Choose Import to recover this attempt.')
+        } finally { importing.current = false; setImportBusy(false) }
+    }
+
     const shown = detail ?? (selection ? null : lastDetail)
     const resume = interrupted && selection && interrupted.templateId === selection.templateId && interrupted.revision === selection.revision ? interrupted : null
 
@@ -159,11 +184,9 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
                         onScratch={onCreateFromScratch}
                         onNewTemplate={onNewTemplate}
                         onRetry={() => void refresh(true)}
-                        onImportPackage={onPickImport ? () => { void onPickImport().then(async picked => {
-                            if (!picked || !portableActions) return
-                            const result = await portableActions.importPackage({ uploadId: picked.uploadId })
-                            if (result.ok && result.result.status === 'imported') await refresh(true)
-                        }) } : undefined}
+                        onImportPackage={onPickImport && portableActions ? () => { void importPackage() } : undefined}
+                        importBusy={importBusy}
+                        importError={importError}
                     />
                 </div>
                 <div ref={detailRef} tabIndex={-1} inert={isMobile ? view === 'list' : !selection} className="flex w-full min-h-0 min-w-0 shrink-0 flex-col outline-none sm:w-auto sm:overflow-hidden">
@@ -182,6 +205,7 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
                                 resume={resume}
                                 portableActions={portableActions}
                                 onPickImport={onPickImport}
+                                onSaveExport={onSaveExport}
                                 onLibraryChanged={() => { void refresh(true); setSelection(null); setView('list') }}
                                 onInterrupted={intent => {
                                     setInterrupted(intent)

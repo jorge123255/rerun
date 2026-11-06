@@ -130,5 +130,40 @@ class StartupTests(unittest.TestCase):
                 launchers.check_directory('/home/rerun/workspace')
 
 
+class ForegroundTests(unittest.TestCase):
+    def manager(self):
+        return launchers.GuestComputerLaunchers('c'*64, lambda: {'DISPLAY': ':1', 'HOME': '/home/rerun'}, lambda _: False)
+
+    def test_foreground_requires_exact_live_process_and_class_not_just_a_window_name(self):
+        manager = self.manager()
+        manager._query = Mock(return_value=(0, '123\n'))
+        manager._window = Mock(side_effect=lambda window, app, client, deadline: {'windowId': window, 'pid': 42, 'start': '1234'} if app == 'terminal' else None)
+        self.assertEqual(manager.foreground(None), {'app': 'terminal', 'windowId': '123'})
+        manager._window = Mock(return_value=None)
+        self.assertEqual(manager.foreground(None), {'app': 'unknown', 'windowId': None})
+        manager._query = Mock(return_value=(0, 'not-a-window'))
+        self.assertEqual(manager.foreground(None), {'app': 'unknown', 'windowId': None})
+
+    def test_browser_focus_reuses_last_verified_window_and_never_spawns(self):
+        manager = self.manager()
+        windows = [{'windowId': '12', 'pid': 42, 'start': '11'}, {'windowId': '34', 'pid': 43, 'start': '12'}]
+        manager._windows = Mock(return_value=windows)
+        manager._activate = Mock()
+        with patch.object(launchers.subprocess, 'Popen') as spawn:
+            manager.focus_browser(None)
+            spawn.assert_not_called()
+        manager._activate.assert_called_once_with(windows[-1], 'browser', None, unittest.mock.ANY)
+        manager._windows.return_value = []
+        with self.assertRaises(launchers.LauncherError):
+            manager.focus_browser(None)
+
+    def test_capabilities_require_actual_guest_binaries_and_window_verification_tools(self):
+        manager = self.manager()
+        with patch.object(launchers.os.path, 'isfile', return_value=True), patch.object(launchers.os, 'access', side_effect=lambda path, mode: path != '/usr/bin/thunar'):
+            self.assertEqual(manager.capabilities(), {'terminal': True, 'files': False})
+        with patch.object(launchers.os.path, 'isfile', side_effect=lambda path: path != '/usr/bin/xprop'), patch.object(launchers.os, 'access', return_value=True):
+            self.assertEqual(manager.capabilities(), {'terminal': False, 'files': False})
+
+
 if __name__ == '__main__':
     unittest.main()

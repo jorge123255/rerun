@@ -1,4 +1,4 @@
-import type { ServiceManifest } from '@/lib/services/manifest'
+import { serviceManifestSchema, type ServiceManifest } from '@/lib/services/manifest'
 import { accountLifecycle, type AccountLifecycleDeps, type AccountSkillPort } from './lifecycle'
 import { canonical, memoryInstalls } from './installs'
 import { memoryHeaderSecrets } from './secret-store'
@@ -13,7 +13,7 @@ export function rfcUuid(n: number): string {
 }
 
 export function anonymousManifest(slug = 'fixture', extra: Record<string, unknown> = {}): ServiceManifest {
-    return {
+    return serviceManifestSchema.parse({
         slug,
         name: 'Fixture',
         category: 'dev',
@@ -23,11 +23,11 @@ export function anonymousManifest(slug = 'fixture', extra: Record<string, unknow
         skills: [],
         authMethods: [{ id: 'default', label: 'Default', kind: 'none', recommended: true, inputs: [], mcpServers: [{ name: 'fixture', transport: 'http', url: FIXTURE_URL }] }],
         ...extra,
-    } as ServiceManifest
+    })
 }
 
 export function bearerManifest(slug = 'fixture', extra: Record<string, unknown> = {}): ServiceManifest {
-    return {
+    return serviceManifestSchema.parse({
         slug,
         name: 'Fixture',
         category: 'dev',
@@ -44,7 +44,7 @@ export function bearerManifest(slug = 'fixture', extra: Record<string, unknown> 
             mcpServers: [{ name: 'fixture', transport: 'http', url: FIXTURE_URL, headers: { Authorization: 'Bearer ${input.TOKEN}' } }],
         }],
         ...extra,
-    } as ServiceManifest
+    })
 }
 
 export async function mcpResponse(_url: string, init: RequestInit): Promise<Response> {
@@ -75,7 +75,7 @@ export function accountHarness() {
     const skills: AccountSkillPort = {
         async create(_root, installationId, index) {
             const slug = `svc-${installationId.replaceAll('-', '').slice(0, 16)}-${index}`
-            return { slug, directoryIdentity: `dir:${slug}`, manifestVersion: '1' }
+            return { slug, directoryIdentity: `dir:${slug}`, contentHash: 'fixture-content-hash', manifestVersion: '1' }
         },
         async verify() {},
         async remove(_root, owned) {

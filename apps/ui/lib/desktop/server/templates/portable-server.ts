@@ -9,8 +9,11 @@ import {
     desktopPortableOperationSchema,
     desktopPortableReceiptSchema,
     type DesktopPortableOperation,
+    type DesktopPortableExportResult,
+    type DesktopPortableImportResult,
+    type DesktopPortableDeleteResult,
 } from '@rerun/contracts'
-import { DesktopHttpError } from '../../auth'
+import { DesktopHttpError } from '../auth'
 
 export type PortableEngineClient = {
     post: (path: string, body: unknown, signal?: AbortSignal) => Promise<unknown>
@@ -62,16 +65,29 @@ CREATE TABLE IF NOT EXISTS desktop_portable_template_artifacts (
     bytes INTEGER NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS desktop_portable_template_intents (
+    scope TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL UNIQUE,
+    operation TEXT NOT NULL
+);
 `
 
 export async function initializeDesktopPortableTemplates(db: Pick<Client, 'executeMultiple'>): Promise<void> {
     await db.executeMultiple(DESKTOP_PORTABLE_TEMPLATE_SCHEMA_SQL)
 }
 
+type Mutation = Exclude<DesktopPortableOperation, { operation: 'portable-receipt' }>
+type Result = DesktopPortableExportResult | DesktopPortableImportResult | DesktopPortableDeleteResult
+const activeRequests = new WeakMap<Client, Map<string, { fingerprint: string; work: Promise<Result> }>>()
+const liveClaims = new Map<string, Promise<Result>>()
+function processIsAlive(pid: number): boolean {
+    try { process.kill(pid, 0); return true }
+    catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH' }
+}
+
 export function createDesktopPortableTemplateServer(deps: PortableServerDeps) {
-    if (!deps.readImmutableUpload || !deps.publishDownloadArtifact) {
-        // Fail closed for mutating portable ops when root has not wired storage bridges.
-    }
+    const active = activeRequests.get(deps.db) ?? new Map<string, { fingerprint: string; work: Promise<Result> }>()
+    activeRequests.set(deps.db, active)
 
     async function row(requestId: string) {
         const result = await deps.db.execute({
@@ -83,7 +99,7 @@ export function createDesktopPortableTemplateServer(deps: PortableServerDeps) {
 
     async function insertReceipt(operation: Extract<DesktopPortableOperation, { requestId: string }>, fingerprint: string, payload: unknown) {
         const now = new Date().toISOString()
-        const receiptId = randomUUID()
+        const receiptId = operation.requestId
         try {
             await deps.db.execute({
                 sql: `INSERT INTO desktop_portable_template_requests
@@ -107,91 +123,145 @@ export function createDesktopPortableTemplateServer(deps: PortableServerDeps) {
         return (await row(operation.requestId))!
     }
 
-    async function save(requestId: string, fields: { status?: string; templateId?: string | null; revision?: string | null; payload?: unknown }) {
-        const now = new Date().toISOString()
-        await deps.db.execute({
-            sql: `UPDATE desktop_portable_template_requests
-                  SET status = COALESCE(?, status), template_id = COALESCE(?, template_id), revision = COALESCE(?, revision),
-                      payload = COALESCE(?, payload), updated_at = ?
-                  WHERE request_id = ?`,
-            args: [
-                fields.status ?? null,
-                fields.templateId ?? null,
-                fields.revision ?? null,
-                fields.payload === undefined ? null : JSON.stringify(fields.payload),
-                now,
-                requestId,
-            ],
-        })
+    function parseResult(operation: Mutation, value: unknown): Result {
+        const parsed = operation.operation === 'export' ? desktopPortableExportResultSchema.parse(value)
+            : operation.operation === 'import-package' ? desktopPortableImportResultSchema.parse(value)
+                : desktopPortableDeleteResultSchema.parse(value)
+        if (parsed.requestId !== operation.requestId || parsed.receiptId !== operation.requestId) throw new DesktopHttpError(502, 'Portable response belongs to another request')
+        if ('templateId' in operation && 'templateId' in parsed && (parsed.templateId !== operation.templateId || parsed.revision !== operation.revision)) throw new DesktopHttpError(502, 'Portable response belongs to another revision')
+        if (operation.operation === 'import-package' && parsed.status === 'imported' && parsed.provenance.uploadId !== operation.uploadId) throw new DesktopHttpError(502, 'Portable response belongs to another upload')
+        return parsed
     }
 
-    function engineFailure(error: unknown): never {
-        if (error instanceof DesktopHttpError) throw error
-        const status = typeof error === 'object' && error && 'status' in error ? Number((error as { status: unknown }).status) : 502
-        if (status === 400 || status === 404 || status === 409 || status === 413 || status === 503) {
-            throw new DesktopHttpError(status as 400 | 404 | 409 | 413 | 503, error instanceof Error ? error.message : 'Portable template request was refused')
+    const uncertain = (requestId: string, reason = 'Portable acknowledgement is unknown. Retry this same attempt.'): Result => ({ status: 'uncertain', requestId, receiptId: requestId, recoverable: true, reason })
+
+    async function execute(operation: Mutation, fingerprint: string, claimId: string): Promise<Result> {
+        const existing = await insertReceipt(operation, fingerprint, operation)
+        if (String(existing.status) === 'acknowledged') return parseResult(operation, JSON.parse(String(existing.payload)))
+        if (String(existing.status) === 'executing') {
+            const priorClaim = z.object({ claimId: z.uuid(), pid: z.number().int().positive() }).safeParse(JSON.parse(String(existing.payload)))
+            if (!priorClaim.success) return uncertain(operation.requestId, 'This attempt needs recovery before another change can start.')
+            const running = liveClaims.get(priorClaim.data.claimId)
+            if (running) return running
+            if (processIsAlive(priorClaim.data.pid)) return uncertain(operation.requestId, 'This portable attempt is still finishing. Retry the same attempt to recover its result.')
         }
-        throw new DesktopHttpError(502, 'Could not reach the local portable template engine')
+        const claim = JSON.stringify({ operation, claimId, pid: process.pid })
+        const claimed = await deps.db.execute({
+            sql: `UPDATE desktop_portable_template_requests SET status = 'executing', payload = ?, updated_at = ?
+                  WHERE request_id = ? AND fingerprint = ? AND status = ? AND payload = ? AND updated_at = ?`,
+            args: [claim, new Date().toISOString(), operation.requestId, fingerprint, String(existing.status), String(existing.payload), String(existing.updated_at)],
+        })
+        if (claimed.rowsAffected !== 1) {
+            const current = await row(operation.requestId)
+            return current?.status === 'acknowledged' ? parseResult(operation, JSON.parse(String(current.payload))) : uncertain(operation.requestId, 'This portable attempt is already finishing. Retry the same attempt to recover its result.')
+        }
+        try {
+            deps.signal?.throwIfAborted()
+            const path = operation.operation === 'import-package' ? '/desktop/templates/import-package'
+                : operation.operation === 'export' ? '/desktop/templates/export' : '/desktop/templates/delete'
+            const parsed = parseResult(operation, await deps.engine.post(path, operation, deps.signal))
+            const tx = await deps.db.transaction('write')
+            try {
+                const current = (await tx.execute({ sql: 'SELECT status, payload FROM desktop_portable_template_requests WHERE request_id = ?', args: [operation.requestId] })).rows[0]
+                if (current?.status === 'acknowledged') return parseResult(operation, JSON.parse(String(current.payload)))
+                if (current?.status !== 'executing' || current.payload !== claim) throw new DesktopHttpError(409, 'Portable recovery is owned by another attempt')
+                if (parsed.status === 'exported') {
+                    await tx.execute({
+                        sql: `INSERT INTO desktop_portable_template_artifacts
+                              (artifact_id, template_id, revision, file_name, content_digest, bytes, created_at)
+                              VALUES (?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO NOTHING`,
+                        args: [parsed.artifactId, parsed.templateId, parsed.revision, parsed.fileName, parsed.contentDigest, parsed.bytes, new Date().toISOString()],
+                    })
+                    const artifact = (await tx.execute({ sql: 'SELECT * FROM desktop_portable_template_artifacts WHERE artifact_id = ?', args: [parsed.artifactId] })).rows[0]
+                    if (!artifact || artifact.template_id !== parsed.templateId || artifact.revision !== parsed.revision || artifact.file_name !== parsed.fileName || artifact.content_digest !== parsed.contentDigest || Number(artifact.bytes) !== parsed.bytes) throw new DesktopHttpError(409, 'Download identity is already owned by another export')
+                }
+                await tx.execute({
+                    sql: `UPDATE desktop_portable_template_requests SET status = ?, template_id = COALESCE(?, template_id), revision = COALESCE(?, revision), payload = ?, updated_at = ?
+                          WHERE request_id = ? AND status = 'executing' AND payload = ?`,
+                    args: [parsed.status === 'uncertain' ? 'uncertain' : 'acknowledged', 'templateId' in parsed ? parsed.templateId : null, 'revision' in parsed ? parsed.revision : null, JSON.stringify(parsed), new Date().toISOString(), operation.requestId, claim],
+                })
+                await tx.commit()
+                return parsed
+            } catch (error) { await tx.rollback().catch(() => undefined); throw error }
+            finally { tx.close() }
+        } catch (error) {
+            const rejectedStatus = error && typeof error === 'object' && 'status' in error ? Number(error.status) : 0
+            if (rejectedStatus === 400 || rejectedStatus === 413) {
+                await deps.db.batch([
+                    { sql: `UPDATE desktop_portable_template_requests SET status = 'refused', updated_at = ? WHERE request_id = ? AND status = 'executing' AND payload = ?`, args: [new Date().toISOString(), operation.requestId, claim] },
+                    { sql: `DELETE FROM desktop_portable_template_intents WHERE request_id = ? AND EXISTS (SELECT 1 FROM desktop_portable_template_requests WHERE request_id = ? AND status = 'refused')`, args: [operation.requestId, operation.requestId] },
+                ], 'write')
+                throw new DesktopHttpError(rejectedStatus, 'This package could not be imported. Check the file and try again.')
+            }
+            const pending = uncertain(operation.requestId)
+            await deps.db.execute({
+                sql: `UPDATE desktop_portable_template_requests SET status = 'uncertain', payload = ?, updated_at = ? WHERE request_id = ? AND status = 'executing' AND payload = ?`,
+                args: [JSON.stringify(pending), new Date().toISOString(), operation.requestId, claim],
+            }).catch(() => undefined)
+            const current = await row(operation.requestId).catch(() => null)
+            return current?.status === 'acknowledged' ? parseResult(operation, JSON.parse(String(current.payload))) : pending
+        }
     }
 
     return {
+        async prepare(raw: unknown) {
+            const input = z.strictObject({ operation: desktopPortableOperationSchema }).safeParse(raw)
+            if (!input.success || input.data.operation.operation === 'portable-receipt') throw new DesktopHttpError(400, 'Invalid portable template attempt')
+            const operation = input.data.operation
+            const scope = operation.operation === 'import-package' ? 'import-package' : `${operation.operation}:${operation.templateId}:${operation.revision}`
+            const tx = await deps.db.transaction('write')
+            try {
+                const previous = (await tx.execute({ sql: 'SELECT request_id, operation FROM desktop_portable_template_intents WHERE scope = ?', args: [scope] })).rows[0]
+                if (previous) {
+                    const stored = desktopPortableOperationSchema.parse(JSON.parse(String(previous.operation)))
+                    const receipt = (await tx.execute({ sql: 'SELECT status FROM desktop_portable_template_requests WHERE request_id = ?', args: [String(previous.request_id)] })).rows[0]
+                    if (!receipt || receipt.status !== 'refused') {
+                        if (operation.operation === 'import-package' && stored.operation === 'import-package' && (operation.uploadId !== stored.uploadId || operation.title !== stored.title)) throw new DesktopHttpError(409, 'An earlier import needs recovery before importing a different package')
+                        return stored
+                    }
+                    await tx.execute({ sql: 'DELETE FROM desktop_portable_template_intents WHERE scope = ?', args: [scope] })
+                }
+                await tx.execute({ sql: 'INSERT INTO desktop_portable_template_intents(scope, request_id, operation) VALUES(?,?,?)', args: [scope, operation.requestId, JSON.stringify(operation)] })
+                await tx.commit()
+                return operation
+            } catch (error) { await tx.rollback().catch(() => undefined); throw error }
+            finally { tx.close() }
+        },
+
+        async pendingImport() {
+            const pending = (await deps.db.execute({ sql: "SELECT operation FROM desktop_portable_template_intents WHERE scope = 'import-package'", args: [] })).rows[0]
+            if (!pending) return null
+            const operation = desktopPortableOperationSchema.parse(JSON.parse(String(pending.operation)))
+            if (operation.operation !== 'import-package') throw new DesktopHttpError(409, 'Invalid pending import')
+            return operation
+        },
+
+        async acknowledge(requestId: unknown) {
+            if (!z.uuid().safeParse(requestId).success) throw new DesktopHttpError(400, 'Invalid portable request')
+            await deps.db.execute({
+                sql: `DELETE FROM desktop_portable_template_intents WHERE request_id = ? AND EXISTS
+                      (SELECT 1 FROM desktop_portable_template_requests WHERE request_id = ? AND status = 'acknowledged')`,
+                args: [String(requestId), String(requestId)],
+            })
+            return { ok: true as const }
+        },
+
         async handle(raw: unknown) {
             const operation = desktopPortableOperationSchema.parse(raw)
-            if (operation.operation === 'portable-receipt') {
-                return this.receipt(operation.requestId)
-            }
+            if (operation.operation === 'portable-receipt') return this.receipt(operation.requestId)
             const fingerprint = fingerprintOf(operation)
-            const existing = await insertReceipt(operation, fingerprint, operation)
-            if (String(existing.status) === 'acknowledged') {
-                const payload = JSON.parse(String(existing.payload))
-                if (operation.operation === 'export') return desktopPortableExportResultSchema.parse(payload)
-                if (operation.operation === 'import-package') return desktopPortableImportResultSchema.parse(payload)
-                return desktopPortableDeleteResultSchema.parse(payload)
+            const running = active.get(operation.requestId)
+            if (running) {
+                if (running.fingerprint !== fingerprint) throw new DesktopHttpError(409, 'This portable request already belongs to another change')
+                return running.work
             }
-            try {
-                if (operation.operation === 'export' && !deps.publishDownloadArtifact) {
-                    throw new DesktopHttpError(503, 'Owned download publication is not configured')
-                }
-                if (operation.operation === 'import-package' && !deps.readImmutableUpload) {
-                    throw new DesktopHttpError(503, 'Immutable upload intake is not configured')
-                }
-                const path = operation.operation === 'import-package' ? '/desktop/templates/import-package'
-                    : operation.operation === 'export' ? '/desktop/templates/export'
-                        : '/desktop/templates/delete'
-                const result = await deps.engine.post(path, operation, deps.signal)
-                const parsed = operation.operation === 'export'
-                    ? desktopPortableExportResultSchema.parse(result)
-                    : operation.operation === 'import-package'
-                        ? desktopPortableImportResultSchema.parse(result)
-                        : desktopPortableDeleteResultSchema.parse(result)
-                await save(operation.requestId, {
-                    status: parsed.status === 'uncertain' ? 'uncertain' : 'acknowledged',
-                    templateId: 'templateId' in parsed ? parsed.templateId : null,
-                    revision: 'revision' in parsed ? parsed.revision : null,
-                    payload: parsed,
-                })
-                if (parsed.status === 'exported') {
-                    await deps.db.execute({
-                        sql: `INSERT OR REPLACE INTO desktop_portable_template_artifacts
-                              (artifact_id, template_id, revision, file_name, content_digest, bytes, created_at)
-                              VALUES (?,?,?,?,?,?,?)`,
-                        args: [parsed.artifactId, parsed.templateId, parsed.revision, parsed.fileName, parsed.contentDigest, parsed.bytes, new Date().toISOString()],
-                    })
-                }
-                return parsed
-            } catch (error) {
-                await save(operation.requestId, {
-                    status: 'uncertain',
-                    payload: {
-                        status: 'uncertain',
-                        requestId: operation.requestId,
-                        receiptId: String(existing.receipt_id),
-                        recoverable: true,
-                        reason: error instanceof Error ? error.message.slice(0, 400) : 'Portable operation did not finish',
-                    },
-                })
-                engineFailure(error)
-            }
+            const claimId = randomUUID()
+            const work = Promise.resolve().then(() => execute(operation, fingerprint, claimId))
+            active.set(operation.requestId, { fingerprint, work })
+            liveClaims.set(claimId, work)
+            const done = () => { active.delete(operation.requestId); liveClaims.delete(claimId) }
+            void work.then(done, done)
+            return work
         },
 
         async receipt(requestId: string) {
@@ -207,7 +277,7 @@ export function createDesktopPortableTemplateServer(deps: PortableServerDeps) {
                 templateId: existing.template_id == null ? null : String(existing.template_id),
                 revision: existing.revision == null ? null : String(existing.revision),
                 artifactId: typeof payload.artifactId === 'string' ? payload.artifactId : null,
-                recoverable: String(existing.status) === 'uncertain',
+                recoverable: String(existing.status) !== 'acknowledged',
             })
         },
 
@@ -219,6 +289,8 @@ export function createDesktopPortableTemplateServer(deps: PortableServerDeps) {
         async openDownload(artifactId: string) {
             if (!deps.openOwnedDownload) throw new DesktopHttpError(503, 'Owned download opener is not configured')
             if (!/^[a-f0-9]{32}$/.test(artifactId)) throw new DesktopHttpError(400, 'Invalid download artifact')
+            const owned = await deps.db.execute({ sql: 'SELECT artifact_id FROM desktop_portable_template_artifacts WHERE artifact_id = ?', args: [artifactId] })
+            if (!owned.rows.length) throw new DesktopHttpError(404, 'Download artifact not found')
             await deps.openOwnedDownload(artifactId)
             return { ok: true as const }
         },

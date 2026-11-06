@@ -1,7 +1,7 @@
 import 'server-only'
 
 import { z } from 'zod'
-import { DESKTOP_VOICE_MAX_BYTES, type DesktopVoiceScope } from '../../../../../../packages/contracts/src/desktop-voice.ts'
+import { DESKTOP_VOICE_MAX_BYTES, desktopVoiceUploadSchema, desktopVoiceRevisionActionSchema, type DesktopVoiceScope } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { desktopRoute } from '../http'
 import type { DesktopVoiceService } from './service'
@@ -74,28 +74,36 @@ export function desktopVoiceApi(service: DesktopVoiceService) {
                 const scope = scopeOf(agentId, { tabUid, sessionId: url.searchParams.get('sessionId') ?? undefined })
                 if (attemptId && url.searchParams.get('view') === 'audio') {
                     const audio = await withDeadline(service.audio(scope, attemptId, signal), signal)
-                    return new Response(audio.bytes, { headers: { ...headers, 'Content-Type': audio.mimeType, 'Content-Length': String(audio.bytes.byteLength) } })
+                    return new Response(new Uint8Array(audio.bytes).buffer, { headers: { ...headers, 'Content-Type': audio.mimeType, 'Content-Length': String(audio.bytes.byteLength) } })
                 }
                 if (attemptId) return Response.json({ draft: await withDeadline(service.draft(scope, attemptId, signal), signal) }, { headers })
                 return Response.json({ drafts: await withDeadline(service.list(scope, signal), signal) }, { headers })
             }
             if (request.method !== 'POST') return Response.json({ error: 'Method unavailable.' }, { status: 405, headers })
             const body = await readJson(request, signal)
-            const scope = scopeOf(agentId, body)
-            switch (body.operation) {
+            const parsed = body.operation === 'upload' ? desktopVoiceUploadSchema.parse(body) : desktopVoiceRevisionActionSchema.parse(body)
+            if (parsed.agentId !== agentId) throw new DesktopHttpError(409, 'Voice recording belongs to another coworker.')
+            const scope = scopeOf(agentId, { tabUid: parsed.tabUid, sessionId: parsed.sessionId })
+            switch (parsed.operation) {
                 case 'upload': {
-                    const bytes = decodeAudio(body.audioBase64)
-                    const input = { ...body, audioBase64: undefined }
+                    const { operation: _operation, audioBase64, ...input } = parsed
+                    const bytes = decodeAudio(audioBase64)
                     const draft = await withDeadline(service.upload(scope, input, bytes, signal), signal)
                     return Response.json({ draft }, { headers })
                 }
-                case 'transcribe':
-                    return Response.json({ draft: await withDeadline(service.transcribe(scope, body, signal), signal) }, { headers })
-                case 'send':
-                    return Response.json(await withDeadline(service.send(scope, body, signal), signal), { headers })
-                case 'discard':
-                    await withDeadline(service.discard(scope, body, signal), signal)
+                case 'transcribe': {
+                    const { operation: _operation, ...input } = parsed
+                    return Response.json({ draft: await withDeadline(service.transcribe(scope, input, signal), signal) }, { headers })
+                }
+                case 'send': {
+                    const { operation: _operation, ...input } = parsed
+                    return Response.json(await withDeadline(service.send(scope, input, signal), signal), { headers })
+                }
+                case 'discard': {
+                    const { operation: _operation, ...input } = parsed
+                    await withDeadline(service.discard(scope, input, signal), signal)
                     return Response.json({ discarded: true }, { headers })
+                }
                 default:
                     throw new DesktopHttpError(400, 'Unknown voice operation.')
             }
@@ -108,6 +116,6 @@ export function desktopVoiceApi(service: DesktopVoiceService) {
 
 export function desktopVoiceHandlers(service: DesktopVoiceService) {
     const api = desktopVoiceApi(service)
-    const handler = async (request: Request, context: { params: Promise<{ agentId: string }> }) => desktopRoute(request, runtime => api(request, (await context.params).agentId))
+    const handler = async (request: Request, context: { params: Promise<{ agentId: string }> }) => desktopRoute(request, async () => api(request, (await context.params).agentId))
     return { GET: handler, POST: handler }
 }

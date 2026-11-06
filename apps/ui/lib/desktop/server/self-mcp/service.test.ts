@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { validInput, fingerprintOf, identity, makeAuthority, makeConfig, makeProbe, seedProposal, owner } from './test-support'
+import { decisionFor, validInput, fingerprintOf, identity, makeAuthority, makeConfig, makeProbe, seedProposal, owner } from './test-support'
 import { createSelfMcpMemoryStore } from './store'
 import { createSelfMcpService } from './service'
 
@@ -128,7 +128,7 @@ describe('self-mcp service — list and review', () => {
     it('leaves a live claimed row alone on list — that is an in-flight decision', async () => {
         const { store, service } = serviceOf()
         await seedProposal(store)
-        await store.claim('local-1', 'prop-1', 1)
+        await store.claim('local-1', 'prop-1', 1, decisionFor())
         const rows = await service.list('local-1')
         expect(rows[0].status).toBe('claimed')
     })
@@ -144,7 +144,7 @@ describe('self-mcp service — list and review', () => {
         expect(snapshot.configRevision).toBe(3)
     })
 
-    it('reports an already-configured server as connected and a replacement conflict', async () => {
+    it('reports configuration presence separately from verified connectivity', async () => {
         const config = makeConfig({ servers: [{ name: 'linear', transport: 'http', url: 'https://mcp.linear.app', command: undefined, args: [], env: {}, headers: {} }] })
         const { store, service } = serviceOf({ config })
         await seedProposal(store)
@@ -158,7 +158,7 @@ describe('self-mcp service — list and review', () => {
         await seedProposal(matchingStore)
         const matching = await matchingService.review('local-1', 'prop-1')
         expect(matching.alreadyConfigured).toBe(true)
-        expect(matching.connectivity).toBe('connected')
+        expect(matching.connectivity).toBe('unverified')
     })
 
     it('surfaces transport requirements on the snapshot (sse capability and stdio grant)', async () => {
@@ -175,5 +175,22 @@ describe('self-mcp service — list and review', () => {
     it('throws when the proposal does not exist', async () => {
         const { service } = serviceOf()
         await expect(service.review('local-1', 'missing')).rejects.toThrow('Proposal not found')
+    })
+
+    it('shows the passive exact-config credential state instead of calling saved servers connected', async () => {
+        const config = makeConfig({ servers: [{ ...validInput(), transport: 'http' }] })
+        config.connectivity = async () => 'needs_credentials'
+        const { store, service, probe } = serviceOf({ config })
+        await seedProposal(store)
+        expect((await service.review('local-1', 'prop-1')).connectivity).toBe('needs_credentials')
+        expect(probe.calls).toEqual([])
+    })
+
+    it('refuses a local-owner remap before reserving a model proposal', async () => {
+        const authority = makeAuthority({ ownerOfEngineId: async () => ({ agentId: 'remapped-owner' }), currentOwner: async () => owner() })
+        const { store, service } = serviceOf({ authority })
+        const result = await service.propose({ identity: identity(), fingerprint: fingerprintOf(validInput()), input: validInput() })
+        expect(result.outcome).toBe('refused')
+        expect(await store.list('remapped-owner')).toEqual([])
     })
 })

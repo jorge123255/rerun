@@ -2,9 +2,21 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createDesktopTemplatesClient, type DesktopTemplatesClient } from '@/lib/desktop/templates-client'
+import { createDesktopPortableTemplatesClient } from '@/lib/desktop/portable-template-client'
+import { createDesktopPortableTemplateActions, type DesktopPortableTemplateActions } from '@/lib/desktop/portable-template-actions'
 import { DesktopCreateTemplateDialog } from './DesktopCreateTemplateDialog'
 import { DesktopTemplateLibraryDialog } from './DesktopTemplateLibraryDialog'
 import type { DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt } from './types'
+
+type PortableBridge = {
+    pickImport: () => Promise<{ uploadId: string } | null>
+    saveArtifact: (input: { artifactId: string }) => Promise<{ saved: boolean }>
+}
+type PortableControls = {
+    actions: DesktopPortableTemplateActions
+    pick: () => Promise<{ uploadId: string; requestId?: string } | null>
+    save: (artifactId: string) => Promise<{ saved: boolean }>
+}
 
 export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, onInstallAttempt, resumeInstall = null, open, onOpenChange, onActiveChange }: {
     open: boolean
@@ -16,6 +28,7 @@ export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, on
     resumeInstall?: DesktopTemplateInstallIntent | null
 }) {
     const [client, setClient] = useState<DesktopTemplatesClient | null>(null)
+    const [portable, setPortable] = useState<PortableControls | null>(null)
     const libraryOpen = open
     const setLibraryOpen = onOpenChange
     const [createOpen, setCreateOpen] = useState(false)
@@ -28,8 +41,18 @@ export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, on
     // then reused permanently; each effect lifetime instead owns its own live client.
     useEffect(() => {
         const next = createDesktopTemplatesClient()
+        const packageClient = createDesktopPortableTemplatesClient()
+        const bridge = (window as Window & { desktopApp?: { templates?: PortableBridge } }).desktopApp?.templates
+        if (bridge) setPortable({
+            actions: createDesktopPortableTemplateActions(packageClient),
+            pick: async () => {
+                const pending = await packageClient.pendingImport()
+                return pending ? { uploadId: pending.uploadId, requestId: pending.requestId } : bridge.pickImport()
+            },
+            save: artifactId => bridge.saveArtifact({ artifactId }),
+        })
         setClient(next)
-        return () => next.dispose()
+        return () => { next.dispose(); packageClient.dispose() }
     }, [])
     useEffect(() => { onActiveChange?.(open || createOpen) }, [open, createOpen, onActiveChange])
     useEffect(() => () => activeCallback.current?.(false), [])
@@ -57,6 +80,9 @@ export function DesktopTemplateNavigation({ onCreateFromScratch, onInstalled, on
                 onInstalled(receipt)
             }}
             onInstallAttempt={onInstallAttempt}
+            portableActions={portable?.actions}
+            onPickImport={portable?.pick}
+            onSaveExport={portable?.save}
         />
         <DesktopCreateTemplateDialog
             open={createOpen}

@@ -21,6 +21,16 @@ INSERT OR IGNORE INTO desktop_pending_inbox_seen_v2 SELECT * FROM desktop_pendin
 `
 
 const initialized = new WeakMap<Client, Promise<void>>()
+export const DESKTOP_SECRET_PENDING_INBOX_SCHEMA = `
+CREATE TABLE IF NOT EXISTS desktop_pending_inbox_seen_v4 (
+    item_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('question','approval','takeover','service','secret')),
+    seen_at TEXT NOT NULL
+);
+INSERT OR IGNORE INTO desktop_pending_inbox_seen_v4 SELECT * FROM desktop_pending_inbox_seen_v3;
+`
 export async function initializeDesktopPendingInbox(db: Client): Promise<void> {
     let work = initialized.get(db)
     if (!work) {
@@ -33,7 +43,7 @@ export async function initializeDesktopPendingInbox(db: Client): Promise<void> {
                 seen_at TEXT NOT NULL
             );
             INSERT OR IGNORE INTO desktop_pending_inbox_seen_v3 SELECT * FROM desktop_pending_inbox_seen_v2;
-        `)
+        ` + DESKTOP_SECRET_PENDING_INBOX_SCHEMA)
         initialized.set(db, work)
     }
     await work

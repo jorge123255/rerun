@@ -1,4 +1,4 @@
-import type { DesktopMcpSseFailure } from '../../../../../../packages/contracts/src/desktop-mcp-sse'
+import type { DesktopMcpSseFailure } from '@rerun/contracts'
 
 const messages: Record<DesktopMcpSseFailure, string> = {
     'auth-needed': 'Sign-in needed. Use this server’s existing authentication flow.',

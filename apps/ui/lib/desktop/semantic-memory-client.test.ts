@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { desktopSemanticPanelRecall, desktopSemanticRecallRequestSchema, desktopSemanticRecallResultSchema, type DesktopSemanticRecallResult } from '../../../../packages/contracts/src/desktop-semantic-memory.ts'
+import { desktopSemanticPanelRecall, desktopSemanticRecallRequestSchema, desktopSemanticRecallResultSchema, type DesktopSemanticRecallResult } from '@rerun/contracts'
 import { createDesktopSemanticMemoryClient } from './semantic-memory-client'
 import { reduceSemanticMemoryPanel, semanticMemoryPanelState, semanticMemoryStatusCopy } from '@/components/desktop/semantic-memory/state'
 

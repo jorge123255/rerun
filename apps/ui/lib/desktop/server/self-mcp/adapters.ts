@@ -1,5 +1,5 @@
 import 'server-only'
-import type { SelfMcpServerInput, SelfMcpTransport } from '@rerun/contracts'
+import type { SelfMcpConnectivity, SelfMcpDecision, SelfMcpRunIdentity, SelfMcpServerInput, SelfMcpTransport } from '@rerun/contracts'
 
 /**
  * Typed adapters the decision service consumes. Root implements them over the
@@ -13,6 +13,7 @@ export type SelfMcpServerCandidate = SelfMcpServerInput & { transport: SelfMcpTr
 export type SelfMcpOwner = {
     agentId: string
     engineAgentId: string
+    launchEpoch: string
     enabled: boolean
     deleting: boolean
     selfImprovementEnabled: boolean
@@ -20,16 +21,27 @@ export type SelfMcpOwner = {
     selfMcpGranted: boolean
     /** The separate local-program execution grant required for stdio saves. */
     localMcpStdioGranted: boolean
+    remoteMcpGranted: boolean
 }
 
 export interface SelfMcpAuthority {
+    /** Current process/permission/Stop fence, independent of the persisted source epoch. */
+    watch?(agentId: string, identity: SelfMcpRunIdentity): (() => void) | Promise<() => void>
     /** Resolves the local coworker for an engine agent id; throws when none exists. */
     ownerOfEngineId(engineAgentId: string): Promise<{ agentId: string }>
-    /** Fresh owner snapshot; null when the owner is stopped/deleted — a late decision can never resurrect it. */
-    currentOwner(agentId: string): Promise<SelfMcpOwner | null>
+    /** Verifies exact local session/run/tool-call ownership, run Stop and launch epoch; a missing or replaced source returns null. */
+    currentOwner(agentId: string, identity: SelfMcpRunIdentity, expectedLaunchEpoch?: string): Promise<SelfMcpOwner | null>
 }
 
+export type SelfMcpEffectContext = { signal: AbortSignal; assertCurrent: () => Promise<void>; assertCommit?: () => void }
+export type SelfMcpApplyIdentity = { decision: SelfMcpDecision; launchEpoch: string }
+export type SelfMcpApplyResult = { outcome: 'applied' | 'applied_pending_credentials' | 'applied_unverified'; detail: string }
+export type SelfMcpApplyReceipt = SelfMcpApplyIdentity & SelfMcpApplyResult & { configRevision: number }
+export type SelfMcpApplyRecovery = { state: 'applied'; receipt: SelfMcpApplyReceipt } | { state: 'not_applied' } | { state: 'uncertain' }
+
 export interface SelfMcpConfigAdapter {
+    requirements?(server: SelfMcpServerCandidate): string[]
+    reviewRequirements?(owner: string, server: SelfMcpServerCandidate): Promise<string[]>
     /** Current trusted configuration revision (the CAS counter). */
     revision(agentId: string): Promise<number>
     /** Service-managed/protected server names that a model proposal can never replace. */
@@ -39,16 +51,20 @@ export interface SelfMcpConfigAdapter {
     /** Whether the trusted configuration already holds this exact server (same canonical input). */
     hasServer(agentId: string, server: SelfMcpServerCandidate): Promise<boolean>
     /**
-     * Upserts the server into the trusted configuration and returns the new
-     * revision. Must CAS on `expectedRevision`: when the configuration moved
-     * underneath, it throws instead of applying a second registration.
+     * Atomically upserts the server and seals this exact decision receipt,
+     * using decision.configRevision as the CAS. Recheck context at commit;
+     * an aborted or stale source must never commit a delayed write.
      */
-    apply(agentId: string, server: SelfMcpServerCandidate, expectedRevision: number): Promise<{ configRevision: number }>
+    apply(agentId: string, server: SelfMcpServerCandidate, identity: SelfMcpApplyIdentity, context: SelfMcpEffectContext, result: SelfMcpApplyResult): Promise<SelfMcpApplyReceipt>
+    /** Exact decision receipt, sealed atomically with the configuration CAS. Absence must never be inferred from current config equality. */
+    recover(agentId: string, identity: SelfMcpApplyIdentity): Promise<SelfMcpApplyRecovery>
+    /** Passive status for this exact config; reads never probe or launch programs. */
+    connectivity(agentId: string, server: SelfMcpServerCandidate): Promise<SelfMcpConnectivity>
 }
 
 export type SelfMcpProbeResult =
     | { ok: true; toolNames: string[] }
-    | { ok: false; needsCredentials: boolean; needsPermission: boolean; error: string }
+    | { ok: false; needsCredentials: boolean; needsPermission: boolean; credentialsRejected: boolean; error: string }
 
 export interface SelfMcpProbeAdapter {
     /** Transports this runtime can probe — and therefore enable. G owns sse. */
@@ -58,5 +74,5 @@ export interface SelfMcpProbeAdapter {
      * local program: stdio saves happen without a probe (applied_unverified).
      * No probe happens at proposal time, only after a human approves.
      */
-    probe(agentId: string, server: SelfMcpServerCandidate): Promise<SelfMcpProbeResult>
+    probe(agentId: string, server: SelfMcpServerCandidate, context: SelfMcpEffectContext): Promise<SelfMcpProbeResult>
 }

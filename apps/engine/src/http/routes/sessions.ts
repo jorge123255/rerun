@@ -1,8 +1,20 @@
 import { Hono } from 'hono'
 import { getSession, listSessions, sessionBelongsToAgent } from '../../db/repos/sessions.js'
 import { listMessages } from '../../db/repos/messages.js'
+import { desktopSecretRequestGuardSchema, desktopSecretSourceResponseSchema } from '@rerun/contracts'
+import { z } from 'zod'
+import { desktopApp } from '../../desktop/policy.js'
+import { readDesktopSecretSource } from '../../desktop/secret-requests/source.js'
 
 export const sessionRoutes = new Hono()
+
+sessionRoutes.post('/:sid/secret-request-source', async c => {
+    if (!desktopApp()) return c.json({ error: 'Not found' }, 404)
+    const agentId = c.req.param('id')!, sessionId = c.req.param('sid')
+    if (!(await sessionBelongsToAgent(sessionId, agentId))) return c.json({ error: 'session not found' }, 404)
+    const { source } = z.object({ source: desktopSecretRequestGuardSchema.optional() }).strict().parse(await c.req.json())
+    return c.json(desktopSecretSourceResponseSchema.parse({ agentId, sessionId, request: await readDesktopSecretSource(agentId, sessionId, source) }))
+})
 
 sessionRoutes.get('/', async c => {
     const agentId = c.req.param('id')!

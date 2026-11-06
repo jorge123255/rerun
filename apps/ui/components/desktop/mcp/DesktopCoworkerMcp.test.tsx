@@ -49,12 +49,12 @@ describe('MCP editor lifecycle',()=>{
         let finish!:(response:Response)=>void
         mockFetch(vi.fn((_url:string,init:RequestInit)=>init.method==='PUT' ? new Promise<Response>(r=>{finish=r}) : Promise.resolve(Response.json([]))))
         const panel=render(<DesktopCoworkerMcp agentId="a"/>)
-        fireEvent.click(await screen.findByRole('button',{name:'New HTTPS server'}))
+        fireEvent.click(await screen.findByRole('button',{name:'New MCP server'}))
         fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'old'}})
         fireEvent.change(screen.getByLabelText(/^URL/),{target:{value:'https://example.com/mcp'}})
         fireEvent.click(screen.getByRole('button',{name:'Save'}))
         panel.rerender(<DesktopCoworkerMcp agentId="b"/>)
-        fireEvent.click(await screen.findByRole('button',{name:'New HTTPS server'}))
+        fireEvent.click(await screen.findByRole('button',{name:'New MCP server'}))
         fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'new draft'}})
         await act(async()=>finish(Response.json([{name:'old',url:'https://example.com/mcp',revision:'1',hasBearer:false}])))
         expect((screen.getByLabelText(/^Name/) as HTMLInputElement).value).toBe('new draft')
@@ -85,7 +85,7 @@ for(const outcome of ['empty','failure'] as const)it(`keeps a saved list authori
  const saved={name:'saved',url:'https://example.com/mcp',revision:'1',hasBearer:false}
  mockFetch(vi.fn((_url:string,init:RequestInit)=>_url.endsWith('/oauth')?Promise.resolve(Response.json({state:'idle'})):init.method==='GET'?initial:Promise.resolve(Response.json([saved]))))
  render(<DesktopCoworkerMcp agentId="a"/>)
- fireEvent.click(screen.getByRole('button',{name:'New HTTPS server'}))
+ fireEvent.click(screen.getByRole('button',{name:'New MCP server'}))
  fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'saved'}})
  fireEvent.change(screen.getByLabelText(/^URL/),{target:{value:saved.url}})
  fireEvent.click(screen.getByRole('button',{name:'Save'}));await act(async()=>{})
@@ -100,7 +100,7 @@ for(const exit of ['cancel','failed-save'] as const)it(`retains the useful initi
  const initial=new Promise<Response>(resolve=>{finish=resolve})
  mockFetch(vi.fn((_url:string,init:RequestInit)=>init.method==='GET'?initial:Promise.resolve(Response.json({error:'save failed'},{status:400}))))
  render(<DesktopCoworkerMcp agentId="a"/>)
- fireEvent.click(screen.getByRole('button',{name:'New HTTPS server'}))
+ fireEvent.click(screen.getByRole('button',{name:'New MCP server'}))
  if(exit==='failed-save'){
   fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'draft'}})
   fireEvent.change(screen.getByLabelText(/^URL/),{target:{value:'https://example.com/mcp'}})
@@ -123,7 +123,8 @@ it('uses original argument lines and ignores an old local list after Save',async
   return Promise.resolve(Response.json([saved]))
  }))
  render(<DesktopCoworkerMcp agentId="a"/>);await act(async()=>{})
- fireEvent.click(screen.getByRole('button',{name:'New local program'}))
+ fireEvent.click(screen.getByRole('button',{name:'New MCP server'}))
+ fireEvent.click(screen.getByRole('button',{name:'stdio'}))
  fireEvent.change(screen.getByLabelText(/^Name/),{target:{value:'local'}})
  fireEvent.change(screen.getByLabelText(/^Executable/),{target:{value:saved.executable}})
  const textarea=screen.getByLabelText(/^Arguments/) as unknown as HTMLTextAreaElement
@@ -132,4 +133,19 @@ it('uses original argument lines and ignores an old local list after Save',async
  expect(requests[0]).toMatchObject({args:['first','literal argument']})
  await act(async()=>finish(Response.json([])))
  expect(screen.getByRole('button',{name:'local'})).toBeTruthy()
+})
+
+
+it('opens the original-style proposal review from the coworker MCP panel without changing a connection', async () => {
+ const writes: string[]=[]
+ mockFetch((url,init)=>{
+  if(url.endsWith('/self-mcp')){writes.push(String(init.body));return Promise.resolve(Response.json({proposals:[]}))}
+  return Promise.resolve(Response.json([]))
+ })
+ render(<DesktopCoworkerMcp agentId="review-owner"/>)
+ fireEvent.click(await screen.findByRole('button',{name:'Review proposals'}));await act(async()=>{})
+ expect(document.body.textContent).toContain('No MCP proposals')
+ expect(writes.every(body=>JSON.parse(body).action==='list')).toBe(true)
+ fireEvent.click(screen.getByRole('button',{name:'Back to MCP servers'}));await act(async()=>{})
+ expect(screen.getByRole('button',{name:'New MCP server'})).toBeTruthy()
 })

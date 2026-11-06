@@ -33,6 +33,7 @@ const proposal: SelfMcpProposal = {
     id: 'prop-1',
     revision: 1,
     agentId: 'agent-1',
+    launchEpoch: 'epoch-1',
     identity: { engineAgentId: 'engine-1', sessionId: 's', runId: 'r', toolCallId: 'call-1' },
     fingerprint: 'a'.repeat(64),
     input: { name: 'linear', transport: 'http', command: undefined, args: [], url: 'https://mcp.linear.app', env: {}, headers: {} },

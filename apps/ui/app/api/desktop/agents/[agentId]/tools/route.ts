@@ -9,6 +9,7 @@ import { findDesktopAgent } from '@/lib/desktop/server/store'
 import { EngineRequestError, getAgent, patchAgent } from '@/lib/engine/client'
 import type { EngineAgentConfigPatch } from '@/lib/engine/types'
 import { withDesktopMcpOwnerTransition } from '@/lib/desktop/server/mcp-binding'
+import { withDesktopSecretOwnerTransition } from '@/lib/desktop/server/secret-requests/lifecycle'
 
 type Context = { params: Promise<{ agentId: string }> }
 
@@ -21,12 +22,12 @@ function pausedReason(id: string, config: AgentConfig): string | undefined {
     if (id === 'sharedFilesRead' && config.tools.shared === false) return 'Shared files access is paused for this coworker.'
     if (id === 'memoryRecall' && !config.tools.memory) return 'Turn on Use saved memories in chat in Edit coworker.'
     if (id === 'memoryWrite' && (!config.selfImprovement.enabled || !config.selfImprovement.autoMemory)) return 'Memory learning is paused for this coworker.'
-    if ((id === 'selfInstruction' || id === 'verbositySet') && !config.selfImprovement.enabled) return 'Turn on Improve itself to change this permission.'
+    if ((id === 'selfInstruction' || id === 'verbositySet' || id === 'selfMcpRegister') && !config.selfImprovement.enabled) return 'Turn on Improve itself to change this permission.'
 }
 
 function toolPayload(patch: CoworkerToolPatch): EngineAgentConfigPatch {
     if (patch.group === 'rerun' && patch.id === 'self') return { selfImprovement: { enabled: patch.enabled } }
-    if (patch.group === 'rerun' && (patch.id === 'selfInstruction' || patch.id === 'verbositySet')) {
+    if (patch.group === 'rerun' && (patch.id === 'selfInstruction' || patch.id === 'verbositySet' || patch.id === 'selfMcpRegister')) {
         return { tools: { desktopToolGrants: { [patch.id]: patch.enabled } } }
     }
     return { tools: { [patch.group === 'codex' ? 'desktopCodexGrants' : 'desktopToolGrants']: { [patch.id]: patch.enabled } } }
@@ -47,7 +48,7 @@ async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToo
                 if ((patch.id === 'memoryRecall' || patch.id === 'memoryWrite') && pausedReason(patch.id, current.config)) {
                     throw new DesktopHttpError(400, 'Turn on this coworker’s memory preference first.')
                 }
-                if ((patch.id === 'selfInstruction' || patch.id === 'verbositySet') && !current.config.selfImprovement.enabled) {
+                if ((patch.id === 'selfInstruction' || patch.id === 'verbositySet' || patch.id === 'selfMcpRegister') && !current.config.selfImprovement.enabled) {
                     throw new DesktopHttpError(400, 'Turn on Improve itself to change this permission.')
                 }
             }
@@ -83,8 +84,9 @@ export function PATCH(request: Request, { params }: Context) {
         const agentId = (await params).agentId
         const write = () => toolsFor(runtime, agentId, patch.data)
         const transitionsLocalAuthority = patch.data.group === 'rerun'
-            ? ['mcp', 'privateFileWrite', 'localMcpStdio', 'nativeWriteback', 'services'].includes(patch.data.id)
+            ? ['self', 'selfMcpRegister', 'mcp', 'privateFileWrite', 'localMcpStdio', 'nativeWriteback', 'services'].includes(patch.data.id)
             : ['workspaceRead', 'workspaceWrite'].includes(patch.data.id)
+        if (patch.data.group === 'rerun' && patch.data.id === 'requestSecret') return withDesktopSecretOwnerTransition(runtime, agentId, write)
         return transitionsLocalAuthority ? withDesktopMcpOwnerTransition(runtime, agentId, write) : write()
     })
 }

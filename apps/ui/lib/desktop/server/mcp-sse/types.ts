@@ -1,4 +1,4 @@
-import type { DesktopMcpSseCall, DesktopMcpSseRef, DesktopMcpSseTool, DesktopMcpSseOutcome } from '../../../../../../packages/contracts/src/desktop-mcp-sse'
+import type { DesktopMcpSseCall, DesktopMcpSseRef, DesktopMcpSseTool, DesktopMcpSseOutcome } from '@rerun/contracts'
 import type { RemoteServer, RemoteTool } from '../mcp/model'
 import type { McpRunIdentity } from '../mcp/bridge'
 

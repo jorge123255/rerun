@@ -15,6 +15,8 @@ export const DESKTOP_TEMPLATE_LIMITS = {
     maxWalkEntries: 2_000,
 } as const
 
+export const DESKTOP_TEMPLATE_PORTABLE_MAX_FILES = 2_000
+
 export const desktopTemplateLimitsSchema = z.strictObject({
     maxCoworkers: z.literal(DESKTOP_TEMPLATE_LIMITS.maxCoworkers),
     maxFiles: z.literal(DESKTOP_TEMPLATE_LIMITS.maxFiles),
@@ -100,7 +102,7 @@ export const desktopTemplateSelectableSkillSchema = z.strictObject({
     name: z.string().max(200),
     description: z.string().max(2_000),
     sourceRevision: sourceRevisionSchema,
-    files: z.array(desktopTemplateSkillFileSchema).max(DESKTOP_TEMPLATE_LIMITS.maxFiles),
+    files: z.array(desktopTemplateSkillFileSchema).max(DESKTOP_TEMPLATE_PORTABLE_MAX_FILES),
 })
 
 export const desktopTemplateSetupViewSchema = z.strictObject({
@@ -116,7 +118,7 @@ export const desktopTemplateCoworkerPlanSchema = z.strictObject({
     sourceRevision: sourceRevisionSchema,
     setup: desktopTemplateSetupViewSchema,
     included: z.array(desktopTemplateIncludedFileSchema).max(8),
-    selectableFiles: z.array(desktopTemplateSelectableFileSchema).max(DESKTOP_TEMPLATE_LIMITS.maxFiles),
+    selectableFiles: z.array(desktopTemplateSelectableFileSchema).max(DESKTOP_TEMPLATE_PORTABLE_MAX_FILES),
     selectableSkills: z.array(desktopTemplateSelectableSkillSchema).max(100),
     exclusions: z.array(desktopTemplateExclusionSchema).max(500),
     redactions: z.array(desktopTemplateRedactionSchema).max(50),
@@ -144,7 +146,7 @@ export type DesktopTemplatePlan = z.infer<typeof desktopTemplatePlanSchema>
 
 export const desktopTemplateSelectionSchema = z.strictObject({
     agentId: z.uuid(),
-    files: z.array(desktopTemplateRelativePathSchema).max(DESKTOP_TEMPLATE_LIMITS.maxFiles),
+    files: z.array(desktopTemplateRelativePathSchema).max(DESKTOP_TEMPLATE_PORTABLE_MAX_FILES),
     skills: z.array(desktopTemplateSkillSlugSchema).max(100),
     setup: z.strictObject({ required: z.boolean(), prompt: z.string().max(DESKTOP_TEMPLATE_LIMITS.maxFileBytes) }).optional(),
 })
@@ -207,7 +209,7 @@ export const desktopTemplateDetailCoworkerSchema = z.strictObject({
     name: z.string().min(1).max(60),
     description: z.string().max(2_000),
     setup: desktopTemplateSetupViewSchema,
-    files: z.array(desktopTemplateDetailFileSchema).max(DESKTOP_TEMPLATE_LIMITS.maxFiles),
+    files: z.array(desktopTemplateDetailFileSchema).max(DESKTOP_TEMPLATE_PORTABLE_MAX_FILES),
     exclusions: z.array(desktopTemplateExclusionSchema).max(500),
     redactions: z.array(desktopTemplateRedactionSchema).max(50),
     strippedConfigKeys: z.array(z.string().min(1).max(200)).max(100),

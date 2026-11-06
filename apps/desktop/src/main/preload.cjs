@@ -17,6 +17,10 @@ ipcRenderer.on('desktop:before-quit', (_event, value) => {
 })
 
 contextBridge.exposeInMainWorld('desktopApp', {
+    templates: {
+        pickImport: () => ipcRenderer.invoke('desktop:template-pick'),
+        saveArtifact: value => ipcRenderer.invoke('desktop:template-save', { artifactId: value?.artifactId }),
+    },
     notifications: {
         notify: value => ipcRenderer.invoke('desktop:notify', value),
         onNotificationClick: listener => {

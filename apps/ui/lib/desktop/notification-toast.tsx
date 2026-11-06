@@ -23,7 +23,7 @@ export function desktopNotificationToastTarget(event: DesktopNotificationAdmissi
 export function showDesktopNotificationToast(event: DesktopNotificationAdmission, onOpenTarget?: (target: DesktopNotificationTarget) => void): void {
     const id = `desktop-notification:${event.key}`
     const scheduled = isScheduledSource(event.source)
-    const kind: NotificationKind = event.kind === 'takeover' ? 'question' : event.kind === 'service' ? 'connector' : event.kind
+    const kind: NotificationKind = event.kind === 'takeover' ? 'question' : event.kind === 'service' || event.kind === 'secret' ? 'connector' : event.kind
     const Icon = scheduled ? CalendarClock : event.kind === 'takeover' ? MonitorIcon : KIND_ICONS[kind]
     const iconColor = scheduled ? 'text-violet-400' : KIND_ICON_COLORS[kind]
     const beamTone = scheduled ? 'brand' : KIND_BEAM[kind]

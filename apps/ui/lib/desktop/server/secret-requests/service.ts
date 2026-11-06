@@ -1,5 +1,5 @@
 import 'server-only'
-import type { DesktopSecretRequestDecision, DesktopSecretRequestReceipt, DesktopSecretRequestSource, DesktopSecretRequestView } from '../../../../../../packages/contracts/src/desktop-secret-requests'
+import type { DesktopSecretRequestDecision, DesktopSecretRequestRecovery, DesktopSecretRequestReceipt, DesktopSecretRequestSource, DesktopSecretRequestView } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import type { DesktopSecretRequestAuthority, DesktopSecretRequestStore } from './store'
 
@@ -13,7 +13,7 @@ export type DesktopSecretFollowUpResponse = {
 }
 
 export type DesktopSecretContinuationPorts = {
-    send: (receipt: DesktopSecretRequestReceipt & { requestId: string }, source: DesktopSecretRequestSource, mode: 'send' | 'replay') => Promise<DesktopSecretFollowUpResponse>
+    send: (receipt: DesktopSecretRequestReceipt & { requestId: string }, source: DesktopSecretRequestSource, mode: 'send' | 'replay', authority: DesktopSecretRequestAuthority) => Promise<DesktopSecretFollowUpResponse>
 }
 
 function identified(receipt: DesktopSecretRequestReceipt & { requestId: string }, source: DesktopSecretRequestSource, response?: DesktopSecretFollowUpResponse): Response {
@@ -28,30 +28,38 @@ function identified(receipt: DesktopSecretRequestReceipt & { requestId: string }
 }
 
 export function createDesktopSecretRequestContinuation(store: DesktopSecretRequestStore, ports: DesktopSecretContinuationPorts) {
-    async function deliver(receipt: DesktopSecretRequestReceipt & { requestId: string }, source: DesktopSecretRequestSource): Promise<Response> {
-        if (receipt.accepted) return identified(receipt, source)
-        for (const mode of ['replay', 'send'] as const) {
+    async function deliver(receipt: DesktopSecretRequestReceipt & { requestId: string }, source: DesktopSecretRequestSource, authority: DesktopSecretRequestAuthority, replayOnly = false): Promise<Response> {
+        await authority.check()
+        if (receipt.accepted) {
+            await store.markAccepted(receipt.requestId, receipt.continuationRequestId, authority)
+            return identified(receipt, source)
+        }
+        const modes: Array<'replay' | 'send'> = replayOnly ? ['replay'] : ['replay', 'send']
+        for (const mode of modes) {
             let response: DesktopSecretFollowUpResponse
-            try { response = await ports.send(receipt, source, mode) }
+            await authority.check()
+            try { response = await ports.send(receipt, source, mode, authority) }
             catch { throw new DesktopHttpError(502, 'Could not confirm this credential result. Retry the same decision.') }
             if (response.status === 404 && response.code === 'queued_turn_not_found' && mode === 'replay') continue
             if (response.status === 403 || response.status === 409) throw new DesktopHttpError(response.status, 'This credential result could not be admitted. Reload the conversation and retry the saved decision.')
-            if ((response.status !== 200 && response.status !== 204) || response.sessionId !== source.sessionId || response.runId !== receipt.continuationRequestId) {
+            if ((response.status !== 200 && response.status !== 204) || (response.status === 200 && !response.body) || response.sessionId !== source.sessionId || response.runId !== receipt.continuationRequestId) {
                 throw new DesktopHttpError(502, 'Could not confirm this credential result. Retry the same decision.')
             }
-            await store.markAccepted(receipt.requestId, receipt.continuationRequestId)
+            await authority.check()
+            await store.markAccepted(receipt.requestId, receipt.continuationRequestId, authority)
             return identified(receipt, source, response)
         }
         throw new DesktopHttpError(502, 'Could not send this credential result. Retry the same decision.')
     }
     return {
-        async decide(input: DesktopSecretRequestDecision, authority: DesktopSecretRequestAuthority): Promise<Response> {
+        async decide(input: DesktopSecretRequestDecision, authority: DesktopSecretRequestAuthority, continuationAuthority = authority): Promise<Response> {
+            const existing = await store.read(input.requestId)
             const receipt = await store.decide(input, authority)
-            return deliver(receipt, input.source)
+            return deliver(receipt, input.source, continuationAuthority, !!existing?.receipt)
         },
-        async recover(input: DesktopSecretRequestDecision, authority: DesktopSecretRequestAuthority): Promise<Response> {
-            const receipt = await store.decide(input, authority)
-            return deliver(receipt, input.source)
+        async recover(input: DesktopSecretRequestRecovery, authority: DesktopSecretRequestAuthority, continuationAuthority = authority): Promise<Response> {
+            const recovered = await store.recover(input, authority)
+            return deliver(recovered.receipt, input.source, continuationAuthority, recovered.replayOnly)
         },
     }
 }

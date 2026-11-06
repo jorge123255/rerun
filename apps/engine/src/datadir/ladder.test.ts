@@ -189,6 +189,10 @@ describe('data-dir ladder', () => {
               4,
               "desktop-brain-and-native-review",
             ],
+            [
+              5,
+              "desktop-portable-templates-and-semantic-memory",
+            ],
           ]
         `)
     })

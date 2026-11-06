@@ -19,7 +19,13 @@ beforeEach(() => {
     Reflect.deleteProperty(globalThis, Symbol.for('rerun.desktop.remote-mcp.services.v1'))
     vi.stubEnv('RERUN_DESKTOP_SECRET_KEY', 'a'.repeat(64))
     mocks.open.mockReset().mockResolvedValue(db); mocks.schema.mockReset().mockResolvedValue(undefined); mocks.createStore.mockClear()
-    mocks.execute.mockReset().mockResolvedValue({ rows: [{ id: 'local-owner', engine_agent_id: 'engine-owner' }] })
+    mocks.execute.mockReset().mockImplementation(async (query: string | { sql: string }) => {
+        const sql = typeof query === 'string' ? query : query.sql
+        // This fixture has one coworker and no installed services or MCP servers.
+        // An owner row is not a valid result for startup's service-table scans.
+        if (/FROM desktop_agents a\b/.test(sql)) return { rows: [{ id: 'local-owner', engine_agent_id: 'engine-owner' }], rowsAffected: 0 }
+        return { rows: [], rowsAffected: /^SELECT\b/i.test(sql.trim()) ? 0 : 1 }
+    })
     mocks.access = undefined
 })
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); Reflect.deleteProperty(globalThis, Symbol.for('rerun.desktop.remote-mcp.services.v1')) })

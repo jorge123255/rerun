@@ -52,7 +52,7 @@ export function DesktopNeedsChats({ agentId, query, onSelect, busy = false, inbo
         </div>}
         {shown.map(item => <InboxRow key={item.id} item={{ id: item.id, agentId: item.agentId, agentName: item.agentName,
             title: item.title, message: item.summary || null, updatedAt: item.requestedAt ?? item.updatedAt,
-            status: item.kind === 'takeover' || item.kind === 'service' ? 'waiting_human' : item.kind === 'question' ? 'awaiting_question' : 'awaiting_approval' }}
+            status: item.kind === 'takeover' || item.kind === 'service' || item.kind === 'secret' ? 'waiting_human' : item.kind === 'question' ? 'awaiting_question' : 'awaiting_approval' }}
             onOpen={() => { void open(item) }} onMarkRead={() => { if (current(item)) inbox.markRead(item) }} />)}
         {inbox.status === 'loading' && <p role="status" className="px-3 py-6 text-center text-xs text-muted-foreground">Checking pending requests…</p>}
         {(unavailable || inbox.readError || notice) && <div role="status" className="space-y-2 p-3 text-xs text-muted-foreground">

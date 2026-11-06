@@ -1,6 +1,6 @@
 import 'server-only'
 import type { McpRunIdentity } from '../mcp/bridge'
-import { desktopMcpSseRequestSchema, type DesktopMcpSseRef, type DesktopMcpSseRequest, type DesktopMcpSseOutcome, type DesktopMcpSseSnapshot } from '../../../../../../packages/contracts/src/desktop-mcp-sse'
+import { desktopMcpSseRequestSchema, type DesktopMcpSseRef, type DesktopMcpSseRequest, type DesktopMcpSseOutcome, type DesktopMcpSseSnapshot } from '@rerun/contracts'
 import type { createSseRuntime } from './runtime'
 import { safeFailure } from './errors'
 

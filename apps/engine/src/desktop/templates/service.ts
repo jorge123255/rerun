@@ -8,6 +8,8 @@ import {
     DESKTOP_TEMPLATE_LIMITS,
     DESKTOP_TEMPLATE_PROSE_WARNING,
     desktopTemplateCoworkerPlanSchema,
+    desktopPortableRequirementSchema,
+    desktopPortablePackageManifestSchema,
     desktopTemplateIdSchema,
     desktopTemplatePlanSchema,
     desktopTemplateRevisionSchema,
@@ -22,6 +24,7 @@ import { writeExclusiveFile, ensurePrivateDir } from './files.js'
 import { canonicalJson, draftRevision, newTemplateId, sha256 } from './hash.js'
 import { inspectCoworker, type InspectedCoworker, type InspectedFile, type SkillOwnershipResolver } from './inspect.js'
 import { installManifest, publicDetail, readManifest, sealManifest, type TemplateManifest } from './install.js'
+import { withPortableLibraryLease } from './portable-lock.js'
 import { draftSchema, listTemplateIds, readOwnJson, replaceOwnJson, requestHome, templateHome, writeOwnJson, type TemplateDraft } from './store.js'
 
 export type TemplateRoots = { dataRoot: string; agentsRoot: string }
@@ -42,7 +45,7 @@ const bindingSchema = z.strictObject({
         path: z.string(),
         inodeRevision: desktopTemplateRevisionSchema,
         contentRevision: desktopTemplateRevisionSchema,
-    })).max(DESKTOP_TEMPLATE_LIMITS.maxFiles),
+    })).max(DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFiles),
 })
 const planFileSchema = z.strictObject({
     version: z.literal(1),
@@ -238,102 +241,104 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
         },
 
         async capture(input: { requestId: string; templateId: string; revision: string; planRevision: string; selections: z.infer<typeof desktopTemplateSelectionSchema>[] }): Promise<{ templateId: string; revision: string }> {
-            const fingerprint = sha256(canonicalJson(input))
-            const home = requestHome(roots.dataRoot)
-            const priorRaw = await readOwnJson(home, `capture-${input.requestId}.json`)
-            const prior = captureReceiptSchema.safeParse(priorRaw)
-            if (priorRaw && (!prior.success || prior.data.fingerprint !== fingerprint)) throw new TemplateRequestError(409, 'This capture request already belongs to another selection')
-            if(prior.success && prior.data.revision) {
-                await readManifest(roots.dataRoot, input.templateId, prior.data.revision)
-                return {templateId:input.templateId,revision:prior.data.revision}
-            }
-            const draft = await loadDraft(roots, input.templateId, input.revision)
-            const stored = planFileSchema.safeParse(await readOwnJson(templateHome(roots.dataRoot, input.templateId), `plans/${input.planRevision}.json`))
-            if (!stored.success || stored.data.planRevision !== input.planRevision || stored.data.revision !== input.revision) {
-                throw new TemplateRequestError(409, 'Capture plan is no longer current')
-            }
-            const locked = [...new Map(stored.data.bindings.map(binding => [binding.engineAgentId, binding])).values()].sort((a, b) => a.engineAgentId.localeCompare(b.engineAgentId))
-            const underLocks = <T>(index: number, work: () => Promise<T>): Promise<T> => index === locked.length ? work()
-                : withSkillReadLease(join(roots.agentsRoot, locked[index]!.engineAgentId, 'skills'), () => underLocks(index + 1, work))
-            return underLocks(0, async () => {
-            const selections = z.array(desktopTemplateSelectionSchema).parse(input.selections)
-            const expected = stored.data.coworkers.map(coworker => coworker.agentId)
-            const selectedIds = selections.map(selection => selection.agentId)
-            if (selectedIds.length !== new Set(selectedIds).size || canonicalJson([...selectedIds].sort()) !== canonicalJson([...expected].sort())) {
-                throw new TemplateRequestError(400, 'Capture must include every coworker in the plan')
-            }
-            const byId = new Map(selections.map(selection => [selection.agentId, selection]))
-            const fresh = []
-            for (const binding of stored.data.bindings) fresh.push(await inspectCoworker(roots.agentsRoot, binding.agentId, binding.engineAgentId, inspectOptions))
-            const rebuilt = fresh.map(publish)
-            if (canonicalJson(rebuilt) !== canonicalJson(stored.data.coworkers)) throw new TemplateRequestError(409, 'A planned coworker changed. Review the plan again.')
-            for (const binding of stored.data.bindings) {
-                const again = fresh.find(item => item.localAgentId === binding.agentId)!
-                const files = bindingsOf(again).files
-                if (canonicalJson(files) !== canonicalJson(binding.files)) throw new TemplateRequestError(409, 'A planned file changed. Review the plan again.')
-            }
-            const chosen = fresh.map((inspected, index) => choose(inspected, byId.get(inspected.localAgentId)!, `c${String(index).padStart(2, '0')}`))
-            const totalFiles = chosen.reduce((sum, coworker) => sum + coworker.files.length, 0)
-            const totalBytes = chosen.reduce((sum, coworker) => sum + coworker.files.reduce((inner, file) => inner + file.bytes, 0), 0)
-            if (totalFiles > captureLimits.maxFiles || totalBytes > captureLimits.maxTotalBytes) {
-                throw new TemplateRequestError(413, 'The selection exceeds the capture limit')
-            }
-            if (prior.success && (prior.data.templateId !== input.templateId || prior.data.planRevision !== input.planRevision)) {
-                throw new TemplateRequestError(409, 'This capture request already belongs to another plan')
-            }
-            const assertSelectedSkills = async () => {
-                for (const binding of stored.data.bindings) for (const slug of byId.get(binding.agentId)!.skills)
-                    await assertUserSkillOperation(join(roots.agentsRoot, binding.engineAgentId, 'workspace'), slug)
-            }
-            await assertSelectedSkills()
-            const capturedAt = prior.success ? prior.data.capturedAt : new Date().toISOString()
-            if (!prior.success) {
-                await writeOwnJson(home, `capture-${input.requestId}.json`, {
-                    version: 1, fingerprint, requestId: input.requestId, templateId: input.templateId, planRevision: input.planRevision, capturedAt,
-                })
-            }
-            const body: Omit<TemplateManifest, 'revision'> = {
-                version: 1 as const,
-                kind: 'desktop-local-template' as const,
-                templateId: input.templateId,
-                title: draft.title,
-                capturedAt,
-                planRevision: input.planRevision,
-                requestId: input.requestId,
-                proseWarning: includeBinary ? DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING : DESKTOP_TEMPLATE_PROSE_WARNING,
-                limits: DESKTOP_TEMPLATE_LIMITS,
-                engineCommit: null,
-                coworkers: chosen.map(({ bytes: _bytes, ...coworker }) => coworker),
-            }
-            const manifest = sealManifest(body)
-            const directory = join(templateHome(roots.dataRoot, input.templateId), 'revisions', manifest.revision)
-            const already = await readOwnJson(directory, 'manifest.json')
-            if (!already) {
-                for (const coworker of chosen) {
-                    for (const file of coworker.bytes) {
-                        await ensurePrivateDir(directory)
-                        await writeExclusiveFile(directory, `${coworker.agentKey}/${file.path}`, file.bytes)
-                    }
+            return withPortableLibraryLease(roots.dataRoot, async () => {
+                const fingerprint = sha256(canonicalJson(input))
+                const home = requestHome(roots.dataRoot)
+                const priorRaw = await readOwnJson(home, `capture-${input.requestId}.json`)
+                const prior = captureReceiptSchema.safeParse(priorRaw)
+                if (priorRaw && (!prior.success || prior.data.fingerprint !== fingerprint)) throw new TemplateRequestError(409, 'This capture request already belongs to another selection')
+                if(prior.success && prior.data.revision) {
+                    await readManifest(roots.dataRoot, input.templateId, prior.data.revision)
+                    return {templateId:input.templateId,revision:prior.data.revision}
+                }
+                const draft = await loadDraft(roots, input.templateId, input.revision)
+                const stored = planFileSchema.safeParse(await readOwnJson(templateHome(roots.dataRoot, input.templateId), `plans/${input.planRevision}.json`))
+                if (!stored.success || stored.data.planRevision !== input.planRevision || stored.data.revision !== input.revision) {
+                    throw new TemplateRequestError(409, 'Capture plan is no longer current')
+                }
+                const locked = [...new Map(stored.data.bindings.map(binding => [binding.engineAgentId, binding])).values()].sort((a, b) => a.engineAgentId.localeCompare(b.engineAgentId))
+                const underLocks = <T>(index: number, work: () => Promise<T>): Promise<T> => index === locked.length ? work()
+                    : withSkillReadLease(join(roots.agentsRoot, locked[index]!.engineAgentId, 'skills'), () => underLocks(index + 1, work))
+                return underLocks(0, async () => {
+                const selections = z.array(desktopTemplateSelectionSchema).parse(input.selections)
+                const expected = stored.data.coworkers.map(coworker => coworker.agentId)
+                const selectedIds = selections.map(selection => selection.agentId)
+                if (selectedIds.length !== new Set(selectedIds).size || canonicalJson([...selectedIds].sort()) !== canonicalJson([...expected].sort())) {
+                    throw new TemplateRequestError(400, 'Capture must include every coworker in the plan')
+                }
+                const byId = new Map(selections.map(selection => [selection.agentId, selection]))
+                const fresh = []
+                for (const binding of stored.data.bindings) fresh.push(await inspectCoworker(roots.agentsRoot, binding.agentId, binding.engineAgentId, inspectOptions))
+                const rebuilt = fresh.map(publish)
+                if (canonicalJson(rebuilt) !== canonicalJson(stored.data.coworkers)) throw new TemplateRequestError(409, 'A planned coworker changed. Review the plan again.')
+                for (const binding of stored.data.bindings) {
+                    const again = fresh.find(item => item.localAgentId === binding.agentId)!
+                    const files = bindingsOf(again).files
+                    if (canonicalJson(files) !== canonicalJson(binding.files)) throw new TemplateRequestError(409, 'A planned file changed. Review the plan again.')
+                }
+                const chosen = fresh.map((inspected, index) => choose(inspected, byId.get(inspected.localAgentId)!, `c${String(index).padStart(2, '0')}`))
+                const totalFiles = chosen.reduce((sum, coworker) => sum + coworker.files.length, 0)
+                const totalBytes = chosen.reduce((sum, coworker) => sum + coworker.files.reduce((inner, file) => inner + file.bytes, 0), 0)
+                if (totalFiles > captureLimits.maxFiles || totalBytes > captureLimits.maxTotalBytes) {
+                    throw new TemplateRequestError(413, 'The selection exceeds the capture limit')
+                }
+                if (prior.success && (prior.data.templateId !== input.templateId || prior.data.planRevision !== input.planRevision)) {
+                    throw new TemplateRequestError(409, 'This capture request already belongs to another plan')
+                }
+                const assertSelectedSkills = async () => {
+                    for (const binding of stored.data.bindings) for (const slug of byId.get(binding.agentId)!.skills)
+                        await assertUserSkillOperation(join(roots.agentsRoot, binding.engineAgentId, 'workspace'), slug)
                 }
                 await assertSelectedSkills()
-                await writeOwnJson(directory, 'manifest.json', manifest)
-                if (includeBinary) {
-                    await writeOwnJson(directory, 'portable-fidelity.json', {
-                        binaryAssets: true,
-                        userSkillTrees: true,
-                        sourceKind: 'portable-capture',
-                        notes: ['Captured with binary assets and user skill trees under portable bounds.'],
+                const capturedAt = prior.success ? prior.data.capturedAt : new Date().toISOString()
+                if (!prior.success) {
+                    await writeOwnJson(home, `capture-${input.requestId}.json`, {
+                        version: 1, fingerprint, requestId: input.requestId, templateId: input.templateId, planRevision: input.planRevision, capturedAt,
                     })
                 }
-            }
-            const confirmed = await readManifest(roots.dataRoot, input.templateId, manifest.revision)
-            if (canonicalJson(confirmed) !== canonicalJson(manifest)) throw new TemplateRequestError(409, 'Stored template bytes do not match this capture')
-            await assertSelectedSkills()
-            await replaceOwnJson(templateHome(roots.dataRoot, input.templateId), 'current.json', { revision: manifest.revision })
-            await replaceOwnJson(home, `capture-${input.requestId}.json`, {
-                version: 1, fingerprint, requestId: input.requestId, templateId: input.templateId, planRevision: input.planRevision, capturedAt, revision: manifest.revision,
-            })
-            return { templateId: input.templateId, revision: manifest.revision }
+                const body: Omit<TemplateManifest, 'revision'> = {
+                    version: 1 as const,
+                    kind: 'desktop-local-template' as const,
+                    templateId: input.templateId,
+                    title: draft.title,
+                    capturedAt,
+                    planRevision: input.planRevision,
+                    requestId: input.requestId,
+                    proseWarning: includeBinary ? DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING : DESKTOP_TEMPLATE_PROSE_WARNING,
+                    limits: DESKTOP_TEMPLATE_LIMITS,
+                    engineCommit: null,
+                    coworkers: chosen.map(({ bytes: _bytes, ...coworker }) => coworker),
+                }
+                const manifest = sealManifest(body)
+                const directory = join(templateHome(roots.dataRoot, input.templateId), 'revisions', manifest.revision)
+                const already = await readOwnJson(directory, 'manifest.json')
+                if (!already) {
+                    for (const coworker of chosen) {
+                        for (const file of coworker.bytes) {
+                            await ensurePrivateDir(directory)
+                            await writeExclusiveFile(directory, `${coworker.agentKey}/${file.path}`, file.bytes)
+                        }
+                    }
+                    await assertSelectedSkills()
+                    await writeOwnJson(directory, 'manifest.json', manifest)
+                    if (includeBinary) {
+                        await writeOwnJson(directory, 'portable-fidelity.json', {
+                            binaryAssets: true,
+                            userSkillTrees: true,
+                            sourceKind: 'portable-capture',
+                            notes: ['Captured with binary assets and user skill trees under portable bounds.'],
+                        })
+                    }
+                }
+                const confirmed = await readManifest(roots.dataRoot, input.templateId, manifest.revision)
+                if (canonicalJson(confirmed) !== canonicalJson(manifest)) throw new TemplateRequestError(409, 'Stored template bytes do not match this capture')
+                await assertSelectedSkills()
+                await replaceOwnJson(templateHome(roots.dataRoot, input.templateId), 'current.json', { revision: manifest.revision })
+                await replaceOwnJson(home, `capture-${input.requestId}.json`, {
+                    version: 1, fingerprint, requestId: input.requestId, templateId: input.templateId, planRevision: input.planRevision, capturedAt, revision: manifest.revision,
+                })
+                return { templateId: input.templateId, revision: manifest.revision }
+                })
             })
         },
 
@@ -384,10 +389,13 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
                 sourceContentDigest: z.string(),
                 sourceTitle: z.string(),
                 uploadId: z.string().optional(),
+                fidelity: desktopPortablePackageManifestSchema.shape.fidelity.optional(),
             }).safeParse(await readOwnJson(directory, 'portable-provenance.json'))
             return {
                 ...detail,
-                ...(fidelity.success ? { portable: fidelity.data } : {
+                ...(fidelity.success ? { portable: fidelity.data } : provenance.success && provenance.data.fidelity ? {
+                    portable: { ...provenance.data.fidelity, sourceKind: 'portable-import' as const },
+                } : {
                     portable: {
                         binaryAssets: manifest.coworkers.some(coworker => coworker.files.some(file => file.kind === 'binary' || file.binary === true)),
                         userSkillTrees: manifest.coworkers.some(coworker => coworker.files.some(file => file.kind === 'skill')),
@@ -472,7 +480,7 @@ function choose(inspected: InspectedCoworker, selection: z.infer<typeof desktopT
         exclusions: inspected.exclusions,
         redactions: inspected.redactions,
         strippedConfigKeys: inspected.strippedConfigKeys,
-        requirements: inspected.requirements,
+        requirements: z.array(desktopPortableRequirementSchema).parse(inspected.requirements),
         envKeys: inspected.envKeys,
         mcpAuth: inspected.mcpAuth,
         bytes: picked.map(file => ({ path: file.path, bytes: file.raw })),

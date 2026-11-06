@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
     DESKTOP_TEMPLATE_PROSE_WARNING,
+    DESKTOP_TEMPLATE_PORTABLE_MAX_FILES,
     desktopTemplateAgentKeySchema,
     desktopTemplateExclusionSchema,
     desktopTemplateIdSchema,
@@ -23,7 +24,7 @@ export const DESKTOP_PORTABLE_TEMPLATE_FORMAT_VERSION = 1 as const
 
 export const DESKTOP_PORTABLE_TEMPLATE_LIMITS = {
     maxCoworkers: 12,
-    maxFiles: 2_000,
+    maxFiles: DESKTOP_TEMPLATE_PORTABLE_MAX_FILES,
     maxFileBytes: 25 * 1024 * 1024,
     maxTotalBytes: 150 * 1024 * 1024,
     maxCompressedBytes: 160 * 1024 * 1024,

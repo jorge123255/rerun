@@ -1,6 +1,6 @@
 'use client'
 
-import { desktopSecretRequestDecisionSchema, desktopSecretRequestResponseSchema, type DesktopSecretRequestDecision, type DesktopSecretRequestView } from '../../../../packages/contracts/src/desktop-secret-requests'
+import { desktopSecretRequestActionSchema, desktopSecretRequestResponseSchema, type DesktopSecretRequestAction, type DesktopSecretRequestView } from '@rerun/contracts'
 
 const url = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/secret-requests`
 
@@ -11,11 +11,11 @@ export async function readDesktopSecretRequest(sessionId: string, options: { sig
     return desktopSecretRequestResponseSchema.parse(body).request
 }
 
-export async function submitDesktopSecretRequestDecision(sessionId: string, input: DesktopSecretRequestDecision, options: { signal?: AbortSignal } = {}): Promise<Response> {
+export async function submitDesktopSecretRequestDecision(sessionId: string, input: DesktopSecretRequestAction, options: { signal?: AbortSignal } = {}): Promise<Response> {
     const response = await fetch(url(sessionId), {
         method: 'POST', cache: 'no-store', signal: options.signal,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(desktopSecretRequestDecisionSchema.parse(input)),
+        body: JSON.stringify(desktopSecretRequestActionSchema.parse(input)),
     })
     if (!response.ok) {
         const body = await response.json().catch(() => null)

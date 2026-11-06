@@ -3,7 +3,7 @@ import {createComputerLaunchers} from './adapter.js'
 import {createLauncherAuthority,type LauncherLiveAuthority} from './authority.js'
 import {createLauncherAttemptStore,type LauncherTransaction} from './store.js'
 import type {LauncherAttempt,LauncherInvocation,LauncherPorts} from './ports.js'
-const target={engineAgentId:'engine-a',launchNonce:'launch',sessionGeneration:'a'.repeat(32)}
+const target={engineAgentId:'engine-a',launchNonce:'11111111-1111-4111-8111-111111111111',sessionGeneration:'a'.repeat(32)}
 const invocation:LauncherInvocation={agentId:'public-a',sessionId:'chat',runId:'run',requestId:'call-1',target}
 function fixture(){
     const rows=new Map<string,LauncherAttempt>(),modes:string[]=[]

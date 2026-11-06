@@ -1,4 +1,4 @@
-import { DESKTOP_MCP_SSE_LIMITS as L } from '../../../../../../packages/contracts/src/desktop-mcp-sse'
+import { DESKTOP_MCP_SSE_LIMITS as L } from '@rerun/contracts'
 import { SseFailure } from './errors'
 
 export type SseEvent = { event: 'endpoint' | 'message'; data: string }

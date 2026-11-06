@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { memoriesListSchema } from '@rerun/contracts'
+import { memoriesListSchema, desktopSemanticIndexStatusSchema, desktopSemanticRecallResultSchema, type DesktopSemanticIndexStatus } from '@rerun/contracts'
 import { MemoryRow } from '@/components/agent/MemoryRow'
 import { ClearMemoriesDialog } from '@/components/dialogs/ClearMemoriesDialog'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,7 @@ type Draft = { content: string; kind: string; tags: string }
 
 function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/memories`
+    const semanticUrl = `/api/desktop/coworkers/${encodeURIComponent(agent.id)}/semantic-memory`
     const [result, setResult] = useState<Result | null>(null)
     const [hasMemories, setHasMemories] = useState(false)
     const [revision, setRevision] = useState(0)
@@ -30,6 +31,21 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
     const [writing, setWriting] = useState(false)
     const [error, setError] = useState('')
     const [confirmClear, setConfirmClear] = useState(false)
+    const [indexStatus, setIndexStatus] = useState<DesktopSemanticIndexStatus | null>(null)
+    const [recallDetail, setRecallDetail] = useState('')
+    const [indexBusy, setIndexBusy] = useState(false)
+    const maintenance = useRef<AbortController | null>(null)
+
+    useEffect(() => () => maintenance.current?.abort(), [])
+    useEffect(() => {
+        const controller = new AbortController()
+        if (!activeQuery) void fetch(semanticUrl, { cache: 'no-store', signal: controller.signal }).then(async response => {
+            if (!response.ok) return
+            const status = desktopSemanticIndexStatusSchema.safeParse(await response.json())
+            if (status.success && !controller.signal.aborted) setIndexStatus(status.data)
+        }).catch(() => {})
+        return () => controller.abort()
+    }, [semanticUrl, revision, activeQuery])
 
     useEffect(() => {
         const controller = new AbortController()
@@ -37,12 +53,16 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
             try {
                 const options: RequestInit = { cache: 'no-store', signal: controller.signal }
                 const response = activeQuery
-                    ? await fetch(`${url}/recall`, { ...options, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: activeQuery }) })
+                    ? await fetch(semanticUrl, { ...options, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: activeQuery }) })
                     : await fetch(url, options)
                 if (!response.ok) throw new Error('Could not load coworker memories.')
-                const data = memoriesListSchema.parse(await response.json())
+                const raw = await response.json()
+                const semantic = activeQuery ? desktopSemanticRecallResultSchema.parse(raw) : null
+                const data = semantic ? { memories: semantic.memories } : memoriesListSchema.parse(raw)
                 if (!controller.signal.aborted) {
                     setResult(data)
+                    setRecallDetail(semantic?.detail ?? '')
+                    if (semantic) setIndexStatus(semantic.index)
                     // Like Rerun's separate memories/recall lists, an empty search does not hide
                     // clear-all when the unfiltered list already showed saved notes.
                     if (!activeQuery || data.memories.length > 0) setHasMemories(data.memories.length > 0)
@@ -53,7 +73,24 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
         }
         void load()
         return () => controller.abort()
-    }, [url, revision, activeQuery])
+    }, [url, semanticUrl, revision, activeQuery])
+
+    async function retryIndex() {
+        if (indexBusy) return
+        maintenance.current?.abort()
+        const controller = new AbortController()
+        maintenance.current = controller
+        setIndexBusy(true)
+        setError('')
+        try {
+            const response = await fetch(`${semanticUrl}/index`, { method: 'POST', cache: 'no-store', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'retry' }) })
+            if (!response.ok) throw new Error('Could not retry memory indexing.')
+            const status = desktopSemanticIndexStatusSchema.parse(await response.json())
+            if (!controller.signal.aborted) { setIndexStatus(status); refresh() }
+        } catch {
+            if (!controller.signal.aborted) setError('Could not retry memory indexing. Try again.')
+        } finally { if (!controller.signal.aborted) setIndexBusy(false) }
+    }
 
     function refresh() {
         setResult(null)
@@ -135,6 +172,10 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
                     </Button>
                 )}
             </form>
+            {indexStatus && <div className="flex flex-wrap items-center gap-2">
+                <p role="status" className="min-w-0 flex-1 text-xs text-muted-foreground">{recallDetail || indexStatus.detail}</p>
+                {indexStatus.backend && indexStatus.mode !== 'ready' && <Button type="button" size="sm" variant="outline" disabled={indexBusy} loading={indexBusy} onClick={() => void retryIndex()}>Retry indexing</Button>}
+            </div>}
             {draft ? <form onSubmit={create} className="space-y-3 rounded-lg border p-3">
                 <Textarea id="desktop-memory-content" label="Content" required value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })}
                     placeholder="The user prefers concise answers." className="min-h-20" />

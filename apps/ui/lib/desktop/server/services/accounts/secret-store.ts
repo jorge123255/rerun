@@ -1,7 +1,7 @@
 import 'server-only'
 
 import type { Client } from '@libsql/client'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 import { bundlesMatch, openStoredHeaderBundle, sealHeaderBundle, type HeaderSecretBundle } from './header-secret-codec'
 import { ensureDesktopServiceAccountSchema } from './schema'
 
@@ -109,6 +109,40 @@ export function sqliteHeaderSecrets(db: Client, keyReader: () => Buffer): Header
             if (row.revision !== revision) throw new Error(M.secretConflict)
             const result = await db.execute({ sql: 'DELETE FROM desktop_service_header_secrets WHERE owner=? AND installation_id=? AND revision=?', args: [owner, installationId, revision] })
             if (result.rowsAffected !== 1) throw new Error(M.secretConflict)
+        },
+    }
+}
+
+
+/** Read old bearer records in place until a reviewed reconfigure publishes a new bundle. */
+export function legacyCompatibleHeaderSecrets(store: import('../store').ServiceStore, headers: HeaderSecretPort): HeaderSecretPort {
+    const legacy = async (owner: string, installationId: string) => {
+        if (await headers.has(owner, installationId)) return null
+        const row = (await store.list(owner)).find(item => item.id === installationId)
+        return row && !('shape' in row.plan) && row.plan.secretInput && row.configured ? row : null
+    }
+    return {
+        ...headers,
+        async has(owner, installationId) {
+            return await headers.has(owner, installationId) || !!await legacy(owner, installationId)
+        },
+        async write(input) {
+            if (input.expectedRevision !== null && !await headers.has(input.owner, input.installationId)) {
+                const row = await legacy(input.owner, input.installationId)
+                if (!row || row.revision !== input.expectedRevision) throw new Error(M.secretConflict)
+                return headers.write({ ...input, expectedRevision: null })
+            }
+            return headers.write(input)
+        },
+        async read(owner, installationId, revision) {
+            const current = await headers.read(owner, installationId, revision)
+            if (current) return current
+            const row = await legacy(owner, installationId)
+            if (!row || row.revision !== revision) return null
+            const bearer = await store.credential(owner, installationId)
+            const latest = await store.read(owner, row.key)
+            if (!bearer || !latest || latest.id !== installationId || latest.revision !== revision || 'shape' in latest.plan) return null
+            return { headers: { Authorization: `Bearer ${bearer}` }, inputs: { [row.plan.secretInput!]: bearer } }
         },
     }
 }

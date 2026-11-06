@@ -1,4 +1,4 @@
-import type { DesktopSemanticRecallResult } from '../../../../../packages/contracts/src/desktop-semantic-memory.ts'
+import type { DesktopSemanticRecallResult } from '@rerun/contracts'
 
 // Recall state only. Drafts and the unfiltered note list stay in the memories panel.
 export type SemanticMemoryPanelState = {

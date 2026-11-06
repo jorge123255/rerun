@@ -3,8 +3,9 @@ import { mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { finished } from 'node:stream/promises'
-import { create } from 'tar'
-import { extract as tarExtract } from 'tar'
+import { Readable } from 'node:stream'
+import { createGunzip } from 'node:zlib'
+import { create, Header, Parser, type ReadEntry } from 'tar'
 import {
     DESKTOP_PORTABLE_COWORKER_PREFIX,
     DESKTOP_PORTABLE_MANIFEST_MEMBER,
@@ -12,6 +13,7 @@ import {
     DESKTOP_PORTABLE_TEMPLATE_FORMAT_VERSION,
     DESKTOP_PORTABLE_TEMPLATE_LIMITS,
     desktopPortablePackageManifestSchema,
+    isDesktopTemplateRelativePath,
     type DesktopPortableMember,
     type DesktopPortablePackageManifest,
 } from '@rerun/contracts'
@@ -49,9 +51,12 @@ export function sealPortableManifest(body: Omit<DesktopPortablePackageManifest, 
 export function validatePortableMembers(manifest: DesktopPortablePackageManifest, members: PortablePackageMemberBytes[]): void {
     const expected = new Map<string, DesktopPortableMember>()
     const paths: string[] = []
+    const coworkers = new Set<string>()
     let total = 0
     let count = 0
     for (const coworker of manifest.coworkers) {
+        if (coworkers.has(coworker.agentKey)) throw new TemplateRequestError(409, 'Portable package repeats a coworker')
+        coworkers.add(coworker.agentKey)
         for (const member of coworker.members) {
             const key = `${coworker.agentKey}:${member.path}`
             if (expected.has(key)) throw new TemplateRequestError(409, 'Portable package repeats a member path')
@@ -129,99 +134,158 @@ export async function readPortableArchive(archiveBytes: Buffer, startedAt = Date
     manifest: DesktopPortablePackageManifest
     members: PortablePackageMemberBytes[]
 }> {
-    if (archiveBytes.length > DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxCompressedBytes) {
-        throw new TemplateRequestError(413, 'Portable package exceeds the compressed size bound')
+    const limits = DESKTOP_PORTABLE_TEMPLATE_LIMITS
+    if (archiveBytes.length > limits.maxCompressedBytes) throw new TemplateRequestError(413, 'Portable package exceeds the compressed size bound')
+    if (archiveBytes[0] !== 0x1f || archiveBytes[1] !== 0x8b) throw new TemplateRequestError(400, 'Portable package is not a gzip archive')
+    const remaining = limits.maxElapsedMs - (Date.now() - startedAt)
+    if (remaining <= 0) throw new TemplateRequestError(413, 'Portable import exceeded the time bound')
+    const inventory = new Map<string, Buffer>()
+    const names = new Map<string, { name: string; directory: boolean }>()
+    let refusal: TemplateRequestError | null = null
+    let declaredBytes = 0
+    let memberBytes = 0
+    let headers = 0
+    let expandedBytes = 0
+    let nullBlocks = 0
+    let bodyRemaining = 0
+    let headerBytes = Buffer.alloc(0)
+    const refuse = (status: 400 | 409 | 413, message: string) => {
+        refusal ??= new TemplateRequestError(status, message)
+        return false
     }
-    const staging = await mkdtemp(join(tmpdir(), 'desktop-portable-import-'))
-    const archivePath = join(staging, 'upload.tar.gz')
-    try {
-        await writeFile(archivePath, archiveBytes, { mode: 0o600 })
-        let compressedSeen = 0
-        let memberCount = 0
-        let totalBytes = 0
-        const extracted = new Map<string, Buffer>()
-        await tarExtract({
-            file: archivePath,
-            cwd: staging,
-            strict: true,
-            preservePaths: false,
-            onentry(entry) {
-                compressedSeen += 1
-                if (compressedSeen > DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxMembers) {
-                    entry.resume()
-                    throw new TemplateRequestError(413, 'Portable package has too many members')
-                }
-                const name = entry.path.replace(/^\.\//, '')
-                if (name.includes('\\') || name.startsWith('/') || name.split('/').some(part => part === '..')) {
-                    entry.resume()
-                    throw new TemplateRequestError(400, 'Portable package path is not confined')
-                }
-                if (entry.type === 'SymbolicLink' || entry.type === 'Link' || entry.type === 'BlockDevice' || entry.type === 'CharacterDevice' || entry.type === 'FIFO') {
-                    entry.resume()
-                    throw new TemplateRequestError(400, 'Portable package contains an unsafe member type')
-                }
-                if (typeof entry.size === 'number' && entry.size > DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFileBytes) {
-                    entry.resume()
-                    throw new TemplateRequestError(413, 'Portable package member exceeds the per-file bound')
-                }
-            },
-            filter(path, entry) {
-                const name = path.replace(/^\.\//, '')
-                if (entry.type === 'Directory') return true
-                if (name !== DESKTOP_PORTABLE_MANIFEST_MEMBER && !name.startsWith(DESKTOP_PORTABLE_COWORKER_PREFIX)) {
-                    throw new TemplateRequestError(400, 'Portable package contains an unexpected member')
-                }
-                return true
-            },
-        })
-        if (Date.now() - startedAt > DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxElapsedMs) {
-            throw new TemplateRequestError(413, 'Portable import exceeded the time bound')
-        }
-        const manifestRaw = await readFile(join(staging, DESKTOP_PORTABLE_MANIFEST_MEMBER), 'utf8').catch(() => {
-            throw new TemplateRequestError(400, 'Portable package is missing its manifest')
-        })
-        let parsed: unknown
-        try { parsed = JSON.parse(manifestRaw) } catch { throw new TemplateRequestError(400, 'Portable package manifest is not JSON') }
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new TemplateRequestError(400, 'Portable package manifest is invalid')
-        const record = parsed as Record<string, unknown>
-        if (record.format !== DESKTOP_PORTABLE_TEMPLATE_FORMAT) throw new TemplateRequestError(400, 'This file is not a desktop portable template package')
-        if (record.formatVersion !== DESKTOP_PORTABLE_TEMPLATE_FORMAT_VERSION) {
-            throw new TemplateRequestError(400, `Unsupported portable template format version ${String(record.formatVersion)}`)
-        }
-        const manifest = desktopPortablePackageManifestSchema.safeParse(parsed)
-        if (!manifest.success) throw new TemplateRequestError(400, 'Portable package manifest failed validation')
-        const body = { ...manifest.data }
-        const digest = body.contentDigest
-        const withoutDigest = { ...body }
-        delete (withoutDigest as { contentDigest?: string }).contentDigest
-        if (portableContentDigest(withoutDigest as Omit<DesktopPortablePackageManifest, 'contentDigest'>) !== digest) {
-            throw new TemplateRequestError(409, 'Portable package content digest does not match')
-        }
-        const members: PortablePackageMemberBytes[] = []
-        for (const coworker of manifest.data.coworkers) {
-            for (const member of coworker.members) {
-                const relative = memberArchivePath(coworker.agentKey, member.path)
-                const bytes = await readFile(join(staging, relative)).catch(() => {
-                    throw new TemplateRequestError(409, 'Portable package is missing a declared member')
-                })
-                totalBytes += bytes.length
-                memberCount += 1
-                if (memberCount > DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFiles || totalBytes > DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxTotalBytes) {
-                    throw new TemplateRequestError(413, 'Portable package exceeds archive limits')
-                }
-                if (bytes.length !== member.bytes || sha256(bytes) !== member.contentDigest) {
-                    throw new TemplateRequestError(409, 'Portable package member digest does not match')
-                }
-                extracted.set(`${coworker.agentKey}:${member.path}`, bytes)
-                members.push({ agentKey: coworker.agentKey, path: member.path, bytes, digest: member.contentDigest })
+    const parser = new Parser({
+        strict: true,
+        maxMetaEntrySize: 64 * 1024,
+        filter(path, entry) {
+            if (refusal) return false
+            const type = 'type' in entry ? entry.type : 'File'
+            const directory = type === 'Directory'
+            if (!directory && type !== 'File') return refuse(400, 'Portable package contains an unsafe member type')
+            const name = path.replace(/^(?:\.\/)+/, '').replace(directory ? /\/+$/ : /$^/, '')
+            if (!isDesktopTemplateRelativePath(name)) return refuse(400, 'Portable package path is not confined')
+            if (directory ? name !== 'coworkers' && !name.startsWith(DESKTOP_PORTABLE_COWORKER_PREFIX)
+                : name !== DESKTOP_PORTABLE_MANIFEST_MEMBER && !name.startsWith(DESKTOP_PORTABLE_COWORKER_PREFIX)) {
+                return refuse(400, 'Portable package contains an unexpected member')
             }
+            if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > limits.maxFileBytes || directory && entry.size !== 0) return refuse(413, 'Portable package member exceeds the per-file bound')
+            if (!directory && name !== DESKTOP_PORTABLE_MANIFEST_MEMBER) {
+                memberBytes += entry.size
+                if (memberBytes > limits.maxTotalBytes) return refuse(413, 'Portable package exceeds archive limits')
+            }
+            const folded = name.normalize('NFKC').toLowerCase()
+            if (names.has(folded)) return refuse(409, 'Portable package repeats a member path')
+            for (const [key, previous] of names) {
+                if ((!previous.directory && folded.startsWith(`${key}/`)) || (!directory && key.startsWith(`${folded}/`))) return refuse(409, 'Portable package has a colliding member path')
+                const parts = name.split('/'), priorParts = previous.name.split('/')
+                for (let i = 0; i < Math.min(parts.length, priorParts.length); i += 1) {
+                    if (parts[i]!.normalize('NFKC').toLowerCase() !== priorParts[i]!.normalize('NFKC').toLowerCase()) break
+                    if (parts[i] !== priorParts[i]) return refuse(409, 'Portable package has a colliding member path')
+                }
+            }
+            names.set(folded, { name, directory })
+            if (!directory && inventory.size >= limits.maxFiles + 1) return refuse(413, 'Portable package has too many files')
+            return true
+        },
+    })
+    let parserError: Error | null = null
+    parser.on('error', (error: Error) => { parserError ??= error })
+    parser.on('entry', (entry: ReadEntry) => {
+        if (entry.type === 'Directory') { entry.resume(); return }
+        const name = entry.path.replace(/^(?:\.\/)+/, '')
+        const chunks: Buffer[] = []
+        let bytes = 0
+        entry.on('data', (chunk: Buffer) => {
+            bytes += chunk.length
+            if (bytes > entry.size || bytes > limits.maxFileBytes) { refuse(413, 'Portable package member exceeds the per-file bound'); return }
+            if (!refusal) chunks.push(chunk)
+        })
+        entry.on('end', () => {
+            if (bytes !== entry.size) refuse(400, 'Portable package member is truncated')
+            if (!refusal) inventory.set(name, Buffer.concat(chunks, bytes))
+        })
+        entry.resume()
+    })
+    // Inspect physical headers before handing expanded bytes to tar. This also bounds
+    // metadata and ignored headers, which tar does not pass through its entry filter.
+    const guard = (chunk: Buffer) => {
+        expandedBytes += chunk.length
+        if (expandedBytes > limits.maxTotalBytes + limits.maxFileBytes + (limits.maxMembers + 2) * 1024) throw new TemplateRequestError(413, 'Portable package exceeds archive limits')
+        let offset = 0
+        while (offset < chunk.length) {
+            if (bodyRemaining > 0) {
+                const bytes = Math.min(bodyRemaining, chunk.length - offset)
+                bodyRemaining -= bytes; offset += bytes
+                continue
+            }
+            const bytes = Math.min(512 - headerBytes.length, chunk.length - offset)
+            headerBytes = Buffer.concat([headerBytes, chunk.subarray(offset, offset + bytes)])
+            offset += bytes
+            if (headerBytes.length !== 512) continue
+            const header = new Header(headerBytes)
+            headerBytes = Buffer.alloc(0)
+            if (header.nullBlock) { nullBlocks += 1; continue }
+            if (nullBlocks >= 2) throw new TemplateRequestError(400, 'Portable package contains data after its end')
+            nullBlocks = 0
+            if (!header.cksumValid) throw new TemplateRequestError(400, 'Portable package has an invalid header')
+            headers += 1
+            if (headers > limits.maxMembers) throw new TemplateRequestError(413, 'Portable package has too many members')
+            const size = header.size ?? 0
+            if (!Number.isSafeInteger(size) || size < 0 || size > limits.maxFileBytes) throw new TemplateRequestError(413, 'Portable package member exceeds the per-file bound')
+            declaredBytes += size
+            if (declaredBytes > limits.maxTotalBytes + limits.maxFileBytes) throw new TemplateRequestError(413, 'Portable package exceeds archive limits')
+            bodyRemaining = Math.ceil(size / 512) * 512
         }
-        // Reject undeclared coworker files that survived the filter.
-        validatePortableMembers(manifest.data, members)
-        return { manifest: manifest.data, members }
-    } finally {
-        await rm(staging, { recursive: true, force: true })
     }
+    const source = Readable.from([archiveBytes])
+    const gunzip = createGunzip()
+    const timeout = setTimeout(() => gunzip.destroy(new TemplateRequestError(413, 'Portable import exceeded the time bound')), remaining)
+    try {
+        source.pipe(gunzip)
+        for await (const raw of gunzip) {
+            if (Date.now() - startedAt > limits.maxElapsedMs) throw new TemplateRequestError(413, 'Portable import exceeded the time bound')
+            const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw)
+            guard(chunk)
+            parser.write(chunk)
+            if (refusal) throw refusal
+            if (parserError) throw parserError
+        }
+        parser.end()
+        if (refusal) throw refusal
+        if (parserError) throw parserError
+        if (bodyRemaining || headerBytes.length) throw new TemplateRequestError(400, 'Portable package is truncated')
+    } catch (error) {
+        throw error instanceof TemplateRequestError ? error : new TemplateRequestError(400, 'Portable package could not be read')
+    } finally {
+        clearTimeout(timeout)
+        source.destroy()
+        gunzip.destroy()
+    }
+    const manifestBytes = inventory.get(DESKTOP_PORTABLE_MANIFEST_MEMBER)
+    if (!manifestBytes) throw new TemplateRequestError(400, 'Portable package is missing its manifest')
+    let parsed: unknown
+    try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(manifestBytes)) }
+    catch { throw new TemplateRequestError(400, 'Portable package manifest is not JSON') }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new TemplateRequestError(400, 'Portable package manifest is invalid')
+    const record = parsed as Record<string, unknown>
+    if (record.format !== DESKTOP_PORTABLE_TEMPLATE_FORMAT) throw new TemplateRequestError(400, 'This file is not a desktop portable template package')
+    if (record.formatVersion !== DESKTOP_PORTABLE_TEMPLATE_FORMAT_VERSION) throw new TemplateRequestError(400, 'Unsupported portable template format version')
+    const manifest = desktopPortablePackageManifestSchema.safeParse(parsed)
+    if (!manifest.success) throw new TemplateRequestError(400, 'Portable package manifest failed validation')
+    const { contentDigest, ...body } = manifest.data
+    if (portableContentDigest(body) !== contentDigest) throw new TemplateRequestError(409, 'Portable package content digest does not match')
+    const members: PortablePackageMemberBytes[] = []
+    for (const [name, bytes] of inventory) {
+        if (name === DESKTOP_PORTABLE_MANIFEST_MEMBER) continue
+        const match = /^coworkers\/(c[0-9]{2})\/(.+)$/.exec(name)
+        if (!match) throw new TemplateRequestError(409, 'Portable package contains an unexpected member')
+        members.push({ agentKey: match[1]!, path: match[2]!, bytes, digest: sha256(bytes) })
+    }
+    for (const { name, directory } of names.values()) {
+        if (directory && ![...inventory.keys()].some(file => file.startsWith(`${name}/`))) throw new TemplateRequestError(409, 'Portable package contains an undeclared directory')
+    }
+    validatePortableMembers(manifest.data, members)
+    if (Date.now() - startedAt > limits.maxElapsedMs) throw new TemplateRequestError(413, 'Portable import exceeded the time bound')
+    return { manifest: manifest.data, members }
 }
 
 export async function readImmutableUploadBytes(read: () => Promise<Buffer>, maxBytes = DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxCompressedBytes): Promise<Buffer> {

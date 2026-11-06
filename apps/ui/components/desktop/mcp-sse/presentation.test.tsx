@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { DesktopMcpSseEditor } from './DesktopMcpSseEditor'
 import { DesktopMcpSseConnection } from './DesktopMcpSseConnection'
 import type { SseEditorAttempt, SseEditorDriver } from './editor-state'
-import type { DesktopMcpSseRef, DesktopMcpSseSnapshot } from '../../../../../packages/contracts/src/desktop-mcp-sse'
+import type { DesktopMcpSseRef, DesktopMcpSseSnapshot } from '@rerun/contracts'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const roots: Root[] = []

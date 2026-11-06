@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ setup: vi.fn(), model: vi.fn(), question: vi.fn(), approval: vi.fn(), takeover: vi.fn(), service: vi.fn(), getSession: vi.fn() }))
+const mocks = vi.hoisted(() => ({ setup: vi.fn(), model: vi.fn(), question: vi.fn(), approval: vi.fn(), takeover: vi.fn(), service: vi.fn(), secret: vi.fn(), getSession: vi.fn() }))
 vi.mock('@/lib/engine/client', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/engine/client')>(), getSession: mocks.getSession }))
 vi.mock('../setup/service', () => ({ assertDesktopSetupChatAllowed: mocks.setup }))
 vi.mock('../chat-model', () => ({ resolveDesktopChatModel: mocks.model }))
@@ -11,6 +11,7 @@ vi.mock('../questions', () => ({ readDesktopQuestion: mocks.question }))
 vi.mock('../approvals', () => ({ readDesktopApproval: mocks.approval }))
 vi.mock('../takeover', () => ({ readDesktopTakeover: mocks.takeover }))
 vi.mock('../service-requests/view', () => ({ readPendingDesktopServiceToolCallView: mocks.service }))
+vi.mock('../secret-requests/binding', () => ({ readDesktopSecretRequestView: mocks.secret }))
 
 import { DesktopHttpError } from '../auth'
 import { closeDesktopDatabase, openDesktopDatabase } from '../database'
@@ -93,6 +94,7 @@ beforeEach(async () => {
     mocks.approval.mockResolvedValue({ approval: null })
     mocks.takeover.mockResolvedValue({ takeover: null })
     mocks.service.mockResolvedValue(null)
+    mocks.secret.mockResolvedValue({ request: null })
     mocks.getSession.mockResolvedValue(null)
 })
 

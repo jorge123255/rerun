@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createSseRuntime, createSsePoolState } from './runtime'
 import { SseFailure } from './errors'
 import type { SseDependencies, SseWireRequest, SseWireResponse } from './types'
-import type { DesktopMcpSseRef, DesktopMcpSseCall } from '../../../../../../packages/contracts/src/desktop-mcp-sse'
+import type { DesktopMcpSseRef, DesktopMcpSseCall } from '@rerun/contracts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { await Promise.allSettled(cleanups.splice(0).map(close => close())) })
@@ -22,7 +22,7 @@ function fixture() {
             const correctOwner = scope.ref.agentId === ref.agentId && scope.ref.serverId === ref.serverId || scope.ref.agentId === 'owner-b' && scope.ref.serverId === 'server-b'
             if (!allowed || !correctOwner || scope.ref.expectedRevision !== ref.expectedRevision
                 || scope.run && (scope.run.engineAgentId !== run.engineAgentId || scope.run.runId !== run.runId || scope.run.sessionId !== run.sessionId)) throw new SseFailure('changed')
-            return { server: { id: scope.ref.serverId, name: ref.name, revision: ref.expectedRevision, transport: 'sse', url: 'https://example.com/sse', hasBearer: true },
+            return { server: { id: scope.ref.serverId, name: ref.name, revision: ref.expectedRevision, transport: 'sse' as const, url: 'https://example.com/sse', hasBearer: true },
                 credentialGeneration: generation, credentialHandle: {}, check() {} }
         }),
         lifecycle: { admit(_agent, _name, controller) { tickets.push(controller); return { assertCurrent() { controller.signal.throwIfAborted() }, release: vi.fn() } } },
@@ -160,5 +160,63 @@ describe('owned legacy GET/endpoint/POST lifecycle (fixture network only)', () =
         await refused
         expect(close).toHaveBeenCalled()
         expect(f.effects()).toBe(0)
+    })
+})
+
+describe('separate chats sharing one coworker and SSE server', () => {
+    it.each(['abort', 'releaseRun'] as const)('%s stops only its own call and keeps the sibling chat reply', async stopKind => {
+        const f = fixture(), stop = new AbortController(), signal = new AbortController().signal
+        const siblingRun = { ...f.run, sessionId: 'sibling-session', runId: 'sibling-run' }
+        const authorize = f.deps.authorize
+        f.deps.authorize = (scope, currentSignal) => {
+            const sibling = scope.run?.engineAgentId === siblingRun.engineAgentId
+                && scope.run.sessionId === siblingRun.sessionId && scope.run.runId === siblingRun.runId
+            return authorize(sibling ? { ...scope, run: f.run } : scope, currentSignal)
+        }
+        f.hold()
+        const firstCall = { ...f.call(), arguments: { tag: 'stopped-chat' } }
+        const siblingCall = { ...f.call(), sessionId: siblingRun.sessionId, runId: siblingRun.runId, arguments: { tag: 'sibling-chat' } }
+        const first = f.runtime.call(firstCall, f.run, stop.signal)
+        const sibling = f.runtime.call(siblingCall, siblingRun, signal)
+        await vi.waitFor(() => expect(f.effects()).toBe(2))
+        if (stopKind === 'abort') stop.abort()
+        else await f.runtime.releaseRun(f.ref.agentId, f.run)
+        expect((await first).status).toBe('uncertain')
+
+        const siblingWire = f.wires.find(wire => {
+            if (!wire.body) return false
+            const request = JSON.parse(wire.body)
+            return request.method === 'tools/call' && request.params.arguments.tag === 'sibling-chat'
+        })!
+        const request = JSON.parse(siblingWire.body!)
+        const session = new URL(siblingWire.url).searchParams.get('sessionId')!
+        f.send(session, { jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'sibling reply survived' }] } })
+        expect(await sibling).toMatchObject({ status: 'completed', result: { content: [{ type: 'text', text: 'sibling reply survived' }] } })
+        expect((await f.runtime.call(firstCall, f.run, signal)).status).toBe('uncertain')
+        expect(f.effects()).toBe(2)
+    })
+
+    it('releasing a run that only discovered tools does not close another chat’s active call', async () => {
+        const f = fixture(), signal = new AbortController().signal
+        const siblingRun = { ...f.run, sessionId: 'sibling-session', runId: 'sibling-run' }
+        const authorize = f.deps.authorize
+        f.deps.authorize = (scope, currentSignal) => {
+            const sibling = scope.run?.engineAgentId === siblingRun.engineAgentId
+                && scope.run.sessionId === siblingRun.sessionId && scope.run.runId === siblingRun.runId
+            return authorize(sibling ? { ...scope, run: f.run } : scope, currentSignal)
+        }
+        await f.runtime.tools(f.ref, f.run, signal)
+        f.hold()
+        const call = { ...f.call(), sessionId: siblingRun.sessionId, runId: siblingRun.runId }
+        const sibling = f.runtime.call(call, siblingRun, signal)
+        await vi.waitFor(() => expect(f.effects()).toBe(1))
+        await f.runtime.releaseRun(f.ref.agentId, f.run)
+        const wire = f.wires.find(item => item.body && JSON.parse(item.body).method === 'tools/call')!
+        const request = JSON.parse(wire.body!)
+        f.send(new URL(wire.url).searchParams.get('sessionId')!, {
+            jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'active chat still owns its reply' }] },
+        })
+        expect(await sibling).toMatchObject({ status: 'completed', result: { content: [{ type: 'text', text: 'active chat still owns its reply' }] } })
+        expect(f.effects()).toBe(1)
     })
 })

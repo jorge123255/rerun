@@ -11,6 +11,7 @@ export async function remoteMcpTools(agent: string, store: RemoteMcpStore, runti
     const servers = await abortable(store.list(agent),AbortSignal.any([signal,AbortSignal.timeout(20_000)]))
     if (servers.length > 16) throw new Error('Too many MCP servers; limit is 16')
     for (const server of servers) {
+        if (server.transport === 'sse') continue
         const current=runtime.watch(agent,server.name)
         currentCatalog.push(current)
         validations.push(async()=>{current();await runtime.validate(agent,server.name,server.revision,signal);current()})

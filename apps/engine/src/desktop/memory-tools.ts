@@ -4,7 +4,8 @@ import { z } from 'zod'
 import { withAgentLock } from '../agents/lock.js'
 import { HttpError } from '../lib/errors.js'
 import type { RunContext } from '../runtime/context.js'
-import { addDesktopMemory, recallDesktopMemory, removeDesktopMemory, updateDesktopMemory } from './memory-store.js'
+import { addDesktopMemory, reinforceDesktopMemories, removeDesktopMemory, updateDesktopMemory } from './memory-store.js'
+import { recallSemanticDesktopMemory } from './semantic-memory/runtime.js'
 import { hasDesktopToolGrant, requireDesktopToolGrant } from './tool-grants.js'
 
 const noteId = z.string().regex(/^[a-zA-Z0-9_-]+$/).max(128)
@@ -28,10 +29,15 @@ export function desktopMemoryTools(ctx: RunContext): ToolSet {
     if (hasDesktopToolGrant(ctx.agent.config, 'memoryRecall')) tools.memory_recall = tool({
         description: 'Search this coworker’s own saved memories. Returns the note ID and current text.',
         inputSchema: z.object({ query: z.string().trim().min(1).max(512), limit: z.number().int().min(1).max(20).default(5), includeDormant: z.boolean().default(false) }),
-        execute: ({ query, limit, includeDormant }) => inMemoryGrant(ctx, 'memoryRecall', async () => {
-            const hits = await recallDesktopMemory(ctx.agent.id, query, limit, { includeDormant })
-            return hits.map(h => `- [${h.id}] (${h.kind}) ${h.content.slice(0, 8192)}`).join('\n').slice(0, 32768) || 'No relevant memories.'
-        }),
+        execute: async ({ query, limit, includeDormant }) => {
+            await requireDesktopToolGrant(ctx, 'memoryRecall')
+            const result = await recallSemanticDesktopMemory(ctx.agent.id, { query, limit, includeDormant, reinforce: 'none' }, ctx.abortSignal)
+            return inMemoryGrant(ctx, 'memoryRecall', async () => {
+                await reinforceDesktopMemories(ctx.agent.id, result.memories.map(note => note.id), 'full')
+                ctx.abortSignal?.throwIfAborted()
+                return result.memories.map(h => `- [${h.id}] (${h.kind}) ${h.content.slice(0, 8192)}`).join('\n').slice(0, 32768) || 'No relevant memories.'
+            })
+        },
     })
     if (hasDesktopToolGrant(ctx.agent.config, 'memoryWrite')) tools.memory_write = tool({
         description: 'Save a note for this coworker. To update one, pass its ID and the exact previous content.',

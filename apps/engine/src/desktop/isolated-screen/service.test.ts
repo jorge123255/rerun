@@ -40,6 +40,8 @@ class FakeDocker implements DockerClient {
     locationFails = false
     emptyShot = false
     badGeometry = false
+    foreground = { app: 'browser', windowId: '123' }
+    launchers: { terminal: boolean; files: boolean } | undefined
     failReason: unknown = undefined
     failRefusal = true
     holdOps = new Set<string>()
@@ -160,8 +162,10 @@ class FakeDocker implements DockerClient {
         }
         if (body.op === 'ping') {
             if (!this.pingReady) return encodeFailure('starting', true)
-            return encodeOk({ ready: true, width: this.width, height: this.height })
+            return encodeOk({ ready: true, width: this.width, height: this.height, ...(this.launchers ? { launchers: this.launchers } : {}) })
         }
+        if (body.op === 'foreground') return encodeOk(this.foreground)
+        if (body.op === 'focus-browser') { this.foreground = { app: 'browser', windowId: '123' }; return encodeOk({}) }
         if (body.op === 'screenshot') {
             if (this.badGeometry) return encodeOk({ width: 'wide' }, Buffer.from([1]))
             return encodeOk({ width: this.width, height: this.height }, this.emptyShot ? Buffer.alloc(0) : Buffer.from([1, 2, 3, 4]))
@@ -204,6 +208,7 @@ function harness(options: Partial<IsolatedScreenDeps> = {}): { docker: FakeDocke
     const encoded: Array<{ width: number; height: number }> = []
     const service = createIsolatedScreenService({
         docker,
+        authorizeInput: async () => {},
         encodeJpeg: async (_png, width, height) => {
             encoded.push({ width, height })
             return Buffer.from('jpeg')
@@ -243,7 +248,7 @@ describe('isolated screen prerequisites', () => {
         docker.imageKind = { kind: 'missing' }
         const signal = new AbortController().signal
         await expect(service.status(owner, signal)).resolves.toEqual({ available: false, prerequisite: 'image-missing', state: 'absent' })
-        await expect(service.ensure(owner, signal)).rejects.toMatchObject({ kind: 'prerequisite', message: 'The isolated screen image rerun-desktop-guest:round29 is not built.' })
+        await expect(service.ensure(owner, signal)).rejects.toMatchObject({ kind: 'prerequisite', message: 'The isolated screen image rerun-desktop-guest:round32 is not built.' })
         expect(docker.runs).toEqual([])
         expect(docker.createdVolumes).toEqual([])
     })
@@ -563,6 +568,7 @@ describe('isolated screen control', () => {
         const signal = new AbortController().signal
         service = createIsolatedScreenService({
             docker,
+            authorizeInput: async () => {},
             encodeJpeg: async () => Buffer.from('jpeg'),
             randomBytes: size => Buffer.alloc(size, 4),
             sleep: async ms => {
@@ -783,5 +789,77 @@ describe('root integration lifecycle regressions', () => {
         await expect(box.service.startTakeover(box.target,box.signal)).rejects.toMatchObject({kind:'stale'})
         await box.service.stop(box.target,box.signal)
         expect(box.docker.containers.size).toBe(0)
+    })
+})
+
+describe('concrete launcher and foreground admission', () => {
+    it('checks each actual foreground before model input and forwards its identity for a guest-side recheck', async () => {
+        const admitted: string[] = []
+        let allowed = 'browser'
+        const box = await boot(harness({ authorizeInput: async (_target, app) => { admitted.push(app); if (app !== allowed) throw new Error('permission off') } }))
+        box.docker.foreground = { app: 'terminal', windowId: '567' }
+        await expect(box.service.act(box.target, { action: 'key', text: 'Return' }, box.signal)).rejects.toThrow('permission off')
+        expect(box.docker.execs.some(call => call.body.op === 'input')).toBe(false)
+        allowed = 'terminal'
+        await box.service.act(box.target, { action: 'key', text: 'Return' }, box.signal)
+        expect(box.docker.execs.find(call => call.body.op === 'input')?.body.expectedForeground).toEqual({ app: 'terminal', windowId: '567' })
+        expect(admitted).toEqual(['terminal', 'terminal'])
+    })
+    it('refuses unverifiable or missing foreground authority without an input effect', async () => {
+        const box = await boot()
+        box.docker.foreground = { app: 'unknown', windowId: '123' }
+        await expect(box.service.act(box.target, { action: 'left_click', coordinate: [10, 20] }, box.signal)).rejects.toThrow('foreground app')
+        const unavailable = await boot(harness({ authorizeInput: undefined }))
+        await expect(unavailable.service.act(unavailable.target, { action: 'left_click', coordinate: [10, 20] }, unavailable.signal)).rejects.toThrow('authority')
+        expect(box.docker.execs.some(call => call.body.op === 'input')).toBe(false)
+        expect(unavailable.docker.execs.some(call => call.body.op === 'input')).toBe(false)
+    })
+    it('brings the existing browser back to the foreground after an isolated app and checks permission before focusing', async () => {
+        let allowed = false
+        const box = await boot(harness({ authorizeInput: async () => { if (!allowed) throw new Error('permission off') } }))
+        box.docker.foreground = { app: 'terminal', windowId: '567' }
+        await expect(box.service.openBrowser(box.target, box.signal)).rejects.toThrow('permission off')
+        expect(box.docker.execs.some(call => call.body.op === 'focus-browser')).toBe(false)
+        allowed = true
+        expect((await box.service.openBrowser(box.target, box.signal)).mediaType).toBe('image/jpeg')
+        expect(box.docker.foreground.app).toBe('browser')
+        expect(box.docker.runs).toHaveLength(1)
+    })
+    it('uses the existing generation/action lease for launcher RPC and never dispatches after takeover', async () => {
+        const box = await boot()
+        await box.service.withLauncherControl(box.target, box.signal, async (control, signal) => {
+            await control.guest({ op: 'computer-launcher', app: 'files', mode: 'launch', operationId: 'a'.repeat(64), fingerprint: 'b'.repeat(64) }, signal)
+            expect((await control.capture(signal)).mediaType).toBe('image/jpeg')
+        })
+        const count = box.docker.execs.filter(call => call.body.op === 'computer-launcher').length
+        const lease = await box.service.startTakeover(box.target, box.signal)
+        await expect(box.service.withLauncherControl(box.target, box.signal, async () => 1)).rejects.toThrow(HUMAN_DRIVING)
+        expect(box.docker.execs.filter(call => call.body.op === 'computer-launcher')).toHaveLength(count)
+        await box.service.finishTakeover(box.target, lease, box.signal)
+        await box.service.stop(box.target, box.signal)
+        await expect(box.service.withLauncherControl(box.target, box.signal, async () => 1)).rejects.toThrow('no longer current')
+    })
+    it('guards each human input under its exact lease with current foreground permission', async () => {
+        let permitted = true
+        const box = await boot(harness({ authorizeInput: async (_target, app) => { if (!permitted || app !== 'terminal') throw new Error('foreground denied') } }))
+        box.docker.foreground = { app: 'terminal', windowId: '567' }
+        await box.service.startTakeover(box.target, box.signal)
+        await box.service.withViewer(box.target, 'drive', box.signal, async stream => {
+            stream.on('error', () => {})
+            const write = (bytes: Buffer) => new Promise<void>((resolve, reject) => stream.write(bytes, error => error ? reject(error) : resolve()))
+            await write(Buffer.concat([Buffer.from('RFB 003.008\n'), Buffer.from([1, 1])]))
+            await write(Buffer.from([4, 1, 0, 0, 0, 0, 0, 65]))
+            permitted = false
+            await expect(write(Buffer.from([4, 1, 0, 0, 0, 0, 0, 66]))).rejects.toThrow('foreground denied')
+        })
+        expect(box.docker.execs.filter(call => call.body.op === 'foreground')).toHaveLength(2)
+        expect(box.docker.streams[0]?.duplex.destroyed).toBe(true)
+    })
+    it('reports only capabilities acknowledged by the running guest without creating another guest', async () => {
+        const box = await boot()
+        expect((await box.service.status(owner, box.signal)).launchers).toBeUndefined()
+        box.docker.launchers = { terminal: true, files: false }
+        expect((await box.service.status(owner, box.signal)).launchers).toEqual({ terminal: true, files: false })
+        expect(box.docker.runs).toHaveLength(1)
     })
 })

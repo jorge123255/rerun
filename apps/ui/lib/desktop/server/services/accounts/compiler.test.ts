@@ -6,7 +6,7 @@ import { accountMethodAvailability, additionalAccountVisible } from './availabil
 import { CATALOG_CUSTOM_HEADER_REASON, compileAccountService } from './compiler'
 import { isDisplayMask, nextAccountLabel, takenInstanceIds } from './identity'
 import { anonymousManifest, bearerManifest, FIXTURE_TOKEN } from './regression-harness'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 
 const target = { label: 'Fixture' }
 const ok = { id: 'token', supported: true as const }

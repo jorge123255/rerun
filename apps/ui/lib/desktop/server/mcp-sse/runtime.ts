@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import {
     DESKTOP_MCP_SSE_LIMITS as L, desktopMcpSseRefSchema, desktopMcpSseRequestSchema, desktopMcpSseCallSchema,
     type DesktopMcpSseRef, type DesktopMcpSseRequest, type DesktopMcpSseSnapshot, type DesktopMcpSseOutcome, type DesktopMcpSseCall, type DesktopMcpSseTool,
-} from '../../../../../../packages/contracts/src/desktop-mcp-sse'
+} from '@rerun/contracts'
 import type { McpRunIdentity } from '../mcp/bridge'
 import { endpoint } from '../mcp/model'
 import { createLegacySseConnection } from './connection'
@@ -67,7 +67,8 @@ export function createSseRuntime(deps: SseDependencies, pool: SsePoolState) {
         if (entry.authority && (current.server.url !== entry.authority.server.url || current.credentialGeneration !== entry.authority.credentialGeneration)) throw new SseFailure('changed')
         return current
     }
-    function begin(ref: DesktopMcpSseRef, scopeKey = slot(ref)) {
+    function begin(ref: DesktopMcpSseRef, scopeKey = slot(ref), run?: McpRunIdentity) {
+        run = run ? { ...run } : undefined
         ref = reference(ref)
         if (pool.closed || pool.entries.size + pool.retired.size >= L.connections) throw new SseFailure('unavailable')
         const controller = new AbortController(), ticket = deps.lifecycle.admit(ref.agentId, ref.name, controller)
@@ -75,12 +76,12 @@ export function createSseRuntime(deps: SseDependencies, pool: SsePoolState) {
         pool.entries.set(scopeKey, entry)
         entry.opening = Promise.resolve().then(async () => {
             const signal = AbortSignal.any([controller.signal, deps.shutdownSignal, AbortSignal.timeout(L.connectMs)])
-            const authority = await guard(entry, signal)
+            const authority = await guard(entry, signal, run)
             entry.authority = authority; entry.display = sseEndpointDisplay(authority.server.url)
-            const connection = createLegacySseConnection({ ref, authority, deps, signal: controller.signal, guard: stop => guard(entry, stop), onFailure: () => controller.abort() })
+            const connection = createLegacySseConnection({ ref, authority, deps, signal: controller.signal, guard: stop => guard(entry, stop, run), onFailure: () => controller.abort() })
             entry.connection = connection
             const tools = await connection.open(signal)
-            await guard(entry, signal); entry.tools = tools; entry.ready = true
+            await guard(entry, signal, run); entry.tools = tools; entry.ready = true
             return tools
         })
         controller.signal.addEventListener('abort', () => { void retire(entry).catch(() => {}) }, { once: true })
@@ -89,18 +90,19 @@ export function createSseRuntime(deps: SseDependencies, pool: SsePoolState) {
     }
     async function acquire(ref: DesktopMcpSseRef, signal: AbortSignal, run?: McpRunIdentity) {
         signal.throwIfAborted()
-        for (const old of [...pool.retired].filter(entry => slot(entry.ref) === slot(ref))) await retire(old)
+        const key = run ? JSON.stringify([slot(ref), 'run', runKey(run)]) : slot(ref)
+        for (const old of [...pool.retired].filter(entry => entry.key === key)) await retire(old)
         signal.throwIfAborted()
-        let entry = pool.entries.get(slot(ref))
+        let entry = pool.entries.get(key)
         if (entry && (entry.ref.name !== ref.name || entry.ref.expectedRevision !== ref.expectedRevision || entry.connection?.failure())) { await retire(entry); entry = undefined }
         if (entry?.authority) {
             const current = await authorize(reference(ref), run ? 'call' : 'use', signal, run)
             if (current.server.url !== entry.authority.server.url) { await retire(entry); throw new SseFailure('changed') }
             if (current.credentialGeneration !== entry.authority.credentialGeneration) { await retire(entry); entry = undefined }
         }
-        entry ??= begin(ref)
+        entry ??= begin(ref, key, run)
         if (run) entry.users.add(runKey(run))
-        try { await wait(entry.opening, signal); await guard(entry, signal); return entry }
+        try { await wait(entry.opening, signal); await guard(entry, signal, run); return entry }
         catch (error) { await retire(entry).catch(() => {}); throw error }
     }
     async function connect(input: DesktopMcpSseRequest, stop: AbortSignal): Promise<DesktopMcpSseSnapshot> {
@@ -113,7 +115,7 @@ export function createSseRuntime(deps: SseDependencies, pool: SsePoolState) {
     async function status(input: DesktopMcpSseRef, stop: AbortSignal): Promise<DesktopMcpSseSnapshot> {
         const ref = desktopMcpSseRefSchema.parse(input), signal = AbortSignal.any([stop, deps.shutdownSignal, AbortSignal.timeout(L.connectMs)])
         const authority = await authorize(ref, 'read', signal)
-        const entry = pool.entries.get(slot(ref)) ?? [...pool.retired].find(item => slot(item.ref) === slot(ref))
+        const entry = pool.entries.get(slot(ref)) ?? [...pool.entries.values(), ...pool.retired].find(item => slot(item.ref) === slot(ref))
         if (!entry) return { ...ref, transport: 'sse', endpointDisplay: sseEndpointDisplay(authority.server.url), state: 'unchecked', tools: [], observation: 'saved' }
         if (pool.retired.has(entry)) return snapshot(entry, 'closing', new SseFailure('close-unconfirmed'))
         if (entry.authority && (entry.authority.credentialGeneration !== authority.credentialGeneration || entry.ref.expectedRevision !== ref.expectedRevision || entry.authority.server.url !== authority.server.url)) {

@@ -1,10 +1,14 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
-import { afterEach, beforeEach, expect, test } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createDesktopSecretCrypto } from './crypto'
 import { ensureDesktopSecretRequestSchema } from './schema'
 import { createDesktopSecretRequestStore, type DesktopSecretRequestStore } from './store'
-import type { DesktopSecretRequestDecision, DesktopSecretRequestSource } from '../../../../../../packages/contracts/src/desktop-secret-requests'
+import type { DesktopSecretRequestDecision, DesktopSecretRequestRecovery, DesktopSecretRequestSource } from '@rerun/contracts'
 
+let directory: string
 let db: Client
 let store: DesktopSecretRequestStore
 const crypto = createDesktopSecretCrypto(() => Buffer.alloc(32, 7))
@@ -13,13 +17,14 @@ const fields = [{ key: 'EXAMPLE_API_KEY', label: 'Example API key' }, { key: 'OT
 const allow = { check: () => {} }
 
 beforeEach(async () => {
-    db = createClient({ url: ':memory:' })
-    await db.executeMultiple('CREATE TABLE desktop_agents (id TEXT PRIMARY KEY); CREATE TABLE desktop_sessions (id TEXT PRIMARY KEY, agent_id TEXT);')
+    directory = await mkdtemp(join(tmpdir(), 'rerun-secret-qa-'))
+    db = createClient({ url: `file:${join(directory, 'test.sqlite')}` })
+    await db.executeMultiple("CREATE TABLE desktop_agents (id TEXT PRIMARY KEY); CREATE TABLE desktop_sessions (id TEXT PRIMARY KEY, agent_id TEXT); INSERT INTO desktop_agents VALUES('agent'); INSERT INTO desktop_sessions VALUES('chat','agent');")
     await ensureDesktopSecretRequestSchema(db)
     store = createDesktopSecretRequestStore(db, crypto)
     await store.publish({ source, fields, reason: 'Use the API.' })
 })
-afterEach(() => db.close())
+afterEach(async () => { db.close(); await rm(directory, { recursive: true, force: true }) })
 
 const decision = (operation: DesktopSecretRequestDecision['operation'] = 'save'): DesktopSecretRequestDecision => ({
     operation, requestId: 'request', attemptId: 'attempt', expectedRevision: 'revision', source,
@@ -40,7 +45,7 @@ test('Save preserves exact bytes, seals at rest and returns only names/presence'
     const view = await store.read(input.requestId)
     expect(JSON.stringify(view)).not.toContain('exact bytes')
     expect(view?.fields).toEqual([{ ...fields[0], existing: true }, { ...fields[1], existing: false }])
-    const raw = await db.execute('SELECT sealed_value FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?', { args: [source.agentId, fields[0].key] })
+    const raw = await db.execute({ sql: 'SELECT sealed_value FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?', args: [source.agentId, fields[0].key] })
     expect(String(raw.rows[0]!.sealed_value)).not.toContain('exact bytes')
     const used = await store.useCredential(source.agentId, fields[0].key, allow, value => new TextDecoder().decode(value))
     expect(used).toBe('  exact bytes\r\n')
@@ -99,34 +104,34 @@ test('lost acknowledgement recovers the same continuation after restart and port
     const sealed = await store.decide(input, allow)
     const reopened = createDesktopSecretRequestStore(db, crypto)
     await expect(reopened.decide(input, allow)).resolves.toEqual(sealed)
-    await reopened.markAccepted(sealed.requestId, sealed.continuationRequestId)
-    await reopened.markAccepted(sealed.requestId, sealed.continuationRequestId)
+    await reopened.markAccepted(sealed.requestId, sealed.continuationRequestId, allow)
+    await reopened.markAccepted(sealed.requestId, sealed.continuationRequestId, allow)
     expect((await reopened.read(input.requestId))?.status).toBe('accepted')
-    await expect(reopened.markAccepted(sealed.requestId, 'different-run')).rejects.toMatchObject({ status: 409 })
+    await expect(reopened.markAccepted(sealed.requestId, 'different-run', allow)).rejects.toMatchObject({ status: 409 })
 })
 
 test('staged encrypted payload recovers without plaintext and definitive discard cleans only that attempt', async () => {
     const input = await publish()
     const staged = await store.stage(input, allow)
     expect(staged.receipt).toBeUndefined()
-    const raw = await db.execute('SELECT sealed_payload FROM desktop_secret_attempts WHERE attempt_id = ?', { args: [input.attemptId] })
+    const raw = await db.execute({ sql: 'SELECT sealed_payload FROM desktop_secret_attempts WHERE attempt_id = ?', args: [input.attemptId] })
     expect(String(raw.rows[0]!.sealed_payload)).not.toContain('exact bytes')
     const sealed = await store.sealStaged(input, allow)
     expect(sealed.providedKeys).toEqual(['EXAMPLE_API_KEY'])
-    expect((await db.execute('SELECT sealed_payload FROM desktop_secret_attempts WHERE attempt_id = ?', { args: [input.attemptId] })).rows[0]!.sealed_payload).toBeNull()
+    expect((await db.execute({ sql: 'SELECT sealed_payload FROM desktop_secret_attempts WHERE attempt_id = ?', args: [input.attemptId] })).rows[0]!.sealed_payload).toBeNull()
     const secondSource = { ...source, runId: 'discard-run', toolCallId: 'discard-tool', sourceMessageId: 'discard-message', fingerprint: 'discard-fingerprint' }
     const second = await store.publish({ source: secondSource, fields })
     const secondInput = { ...input, requestId: second.requestId, expectedRevision: second.revision, source: secondSource, attemptId: 'discard-me' }
     await store.stage(secondInput, allow)
-    await store.discard(secondInput)
-    expect((await db.execute('SELECT sealed_payload FROM desktop_secret_attempts WHERE attempt_id = ?', { args: [secondInput.attemptId] })).rows).toEqual([])
+    await store.discard(secondInput, allow)
+    expect((await db.execute({ sql: 'SELECT sealed_payload FROM desktop_secret_attempts WHERE attempt_id = ?', args: [secondInput.attemptId] })).rows).toEqual([])
 })
 
 test('a definitive refusal clears staging and cannot later become a Save', async () => {
     const input = await publish()
     await store.stage(input, allow)
-    await store.refuse(input)
-    expect((await db.execute('SELECT state,sealed_payload FROM desktop_secret_attempts WHERE attempt_id = ?', { args: [input.attemptId] })).rows[0]).toMatchObject({ state: 'refused', sealed_payload: null })
+    await store.refuse(input, allow)
+    expect((await db.execute({ sql: 'SELECT state,sealed_payload FROM desktop_secret_attempts WHERE attempt_id = ?', args: [input.attemptId] })).rows[0]).toMatchObject({ state: 'refused', sealed_payload: null })
     await expect(store.decide(input, allow)).rejects.toMatchObject({ status: 409 })
     expect((await db.execute('SELECT COUNT(*) AS count FROM desktop_secret_credentials')).rows[0]!.count).toBe(0)
 })
@@ -134,8 +139,90 @@ test('a definitive refusal clears staging and cannot later become a Save', async
 test('encryption context is bound to coworker/key/version and unauthorized consumers receive no bytes', async () => {
     const input = await publish()
     await store.decide(input, allow)
-    const raw = await db.execute('SELECT sealed_value FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?', { args: [source.agentId, fields[0].key] })
+    const raw = await db.execute({ sql: 'SELECT sealed_value FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?', args: [source.agentId, fields[0].key] })
     await expect(crypto.open({ domain: 'credential', agentId: 'other', key: fields[0].key, version: 1 }, String(raw.rows[0]!.sealed_value))).rejects.toThrow()
     const consumer = () => { throw new Error('must not run') }
     await expect(store.useCredential(source.agentId, fields[0].key, { check: () => { throw new Error('unauthorized') } }, consumer)).rejects.toThrow('unauthorized')
+})
+
+const recovery = (input: DesktopSecretRequestDecision): DesktopSecretRequestRecovery => ({
+    operation: 'recover', requestId: input.requestId, attemptId: input.attemptId, expectedRevision: input.expectedRevision, source: input.source,
+})
+
+test('a fresh store recovers staged and sealed decisions using metadata only', async () => {
+    const input = await publish()
+    await store.stage(input, allow)
+    const reopened = createDesktopSecretRequestStore(db, crypto)
+    const recovered = await reopened.recover(recovery(input), allow)
+    expect(recovered.replayOnly).toBe(false)
+    expect(recovered.receipt.providedKeys).toEqual(['EXAMPLE_API_KEY'])
+    const sealed = await createDesktopSecretRequestStore(db, crypto).recover(recovery(input), allow)
+    expect(sealed).toEqual({ receipt: recovered.receipt, replayOnly: true })
+    expect(JSON.stringify(sealed)).not.toContain('exact bytes')
+    await expect(reopened.recover({ ...recovery(input), source: { ...source, runId: 'replacement' } }, allow)).rejects.toMatchObject({ status: 409 })
+    await expect(reopened.recover({ ...recovery(input), expectedRevision: 'replacement' }, allow)).rejects.toMatchObject({ status: 409 })
+    await expect(reopened.recover({ ...recovery(input), attemptId: 'replacement' }, allow)).rejects.toMatchObject({ status: 409 })
+    expect((await db.execute('SELECT version FROM desktop_secret_credentials')).rows[0]?.version).toBe(1)
+})
+
+test('a different attempt cannot replace an encrypted staged decision', async () => {
+    const input = await publish()
+    await store.stage(input, allow)
+    await expect(store.stage({ ...input, attemptId: 'new-attempt', values: { EXAMPLE_API_KEY: 'replacement' } }, allow)).rejects.toMatchObject({ status: 409 })
+    expect((await store.read(input.requestId))?.pendingAttempt?.attemptId).toBe(input.attemptId)
+})
+
+test('credential consumption rechecks authority after decrypt and clears the temporary bytes', async () => {
+    const input = await publish()
+    await store.decide(input, allow)
+    let revoked = false
+    let plaintext: Uint8Array | undefined
+    const reader = createDesktopSecretRequestStore(db, {
+        ...crypto,
+        open: async (context, sealed) => {
+            plaintext = await crypto.open(context, sealed)
+            revoked = true
+            return plaintext
+        },
+    })
+    const use = vi.fn()
+    await expect(reader.useCredential(source.agentId, fields[0].key, { check: () => {
+        if (revoked) throw Object.assign(new Error('revoked'), { status: 403 })
+    } }, use)).rejects.toMatchObject({ status: 403 })
+    expect(use).not.toHaveBeenCalled()
+    expect(plaintext?.every(byte => byte === 0)).toBe(true)
+})
+
+test('accepted receipt and request state commit atomically and repair an old partial projection', async () => {
+    const input = await publish()
+    const sealed = await store.decide(input, allow)
+    const transaction = db.transaction.bind(db)
+    let failed = false
+    const spy = vi.spyOn(db, 'transaction').mockImplementation(async () => {
+        const tx = await transaction('write')
+        return new Proxy(tx, {
+            get(target, property) {
+                if (property === 'execute') return async (...args: Parameters<typeof tx.execute>) => {
+                    const sql = typeof args[0] === 'string' ? args[0] : args[0].sql
+                    if (!failed && sql.startsWith('UPDATE desktop_secret_requests')) {
+                        failed = true
+                        throw new Error('Simulated loss between acceptance writes')
+                    }
+                    return target.execute(...args)
+                }
+                const value = Reflect.get(target, property)
+                return typeof value === 'function' ? value.bind(target) : value
+            },
+        })
+    })
+    try {
+        await expect(store.markAccepted(sealed.requestId, sealed.continuationRequestId, allow)).rejects.toThrow('between acceptance writes')
+    } finally { spy.mockRestore() }
+    expect((await store.read(input.requestId))?.receipt?.accepted).toBe(false)
+    expect((await store.read(input.requestId))?.status).toBe('sealed')
+    await db.execute({ sql: 'UPDATE desktop_secret_receipts SET accepted = 1 WHERE request_id = ?', args: [input.requestId] })
+    await createDesktopSecretRequestStore(db, crypto).markAccepted(sealed.requestId, sealed.continuationRequestId, allow)
+    expect((await store.read(input.requestId))?.status).toBe('accepted')
+    expect((await store.read(input.requestId))?.receipt?.accepted).toBe(true)
+    expect((await db.execute({ sql: 'SELECT status FROM desktop_secret_requests WHERE request_id = ?', args: [input.requestId] })).rows[0]?.status).toBe('accepted')
 })

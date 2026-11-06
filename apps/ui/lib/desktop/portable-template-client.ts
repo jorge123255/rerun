@@ -58,30 +58,47 @@ export function createDesktopPortableTemplatesClient() {
         return request(operation)
     }
 
+    async function received<T extends { status: string; requestId: string }>(result: T): Promise<T> {
+        if (result.status !== 'uncertain') {
+            await fetchResponse(`${base}/portable/intent`, {
+                method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId: result.requestId }),
+            }).catch(() => undefined)
+        }
+        return result
+    }
+
     return {
+        async pendingImport() {
+            const result = await fetchResponse(`${base}/portable/intent`, { method: 'GET' })
+            if (!result || typeof result !== 'object' || !('pending' in result)) throw new DesktopTemplateRequestError(UNKNOWN, false)
+            if (result.pending === null) return null
+            const operation = desktopPortableOperationSchema.parse(result.pending)
+            if (operation.operation !== 'import-package') throw new DesktopTemplateRequestError(UNKNOWN, false)
+            return operation
+        },
         async exportTemplate(input: { templateId: string; revision: string; requestId?: string }): Promise<DesktopPortableExportResult> {
-            return desktopPortableExportResultSchema.parse(await mutate({
+            return received(desktopPortableExportResultSchema.parse(await mutate({
                 operation: 'export',
                 requestId: input.requestId ?? crypto.randomUUID(),
                 templateId: input.templateId,
                 revision: input.revision,
-            }))
+            })))
         },
         async importPackage(input: { uploadId: string; title?: string; requestId?: string }): Promise<DesktopPortableImportResult> {
-            return desktopPortableImportResultSchema.parse(await mutate({
+            return received(desktopPortableImportResultSchema.parse(await mutate({
                 operation: 'import-package',
                 requestId: input.requestId ?? crypto.randomUUID(),
                 uploadId: input.uploadId,
                 ...(input.title ? { title: input.title } : {}),
-            }))
+            })))
         },
         async deleteTemplate(input: { templateId: string; revision: string; requestId?: string }): Promise<DesktopPortableDeleteResult> {
-            return desktopPortableDeleteResultSchema.parse(await mutate({
+            return received(desktopPortableDeleteResultSchema.parse(await mutate({
                 operation: 'delete',
                 requestId: input.requestId ?? crypto.randomUUID(),
                 templateId: input.templateId,
                 revision: input.revision,
-            }))
+            })))
         },
         async receipt(requestId: string): Promise<DesktopPortableReceipt> {
             return desktopPortableReceiptSchema.parse(await fetchResponse(`${base}/portable/receipt?requestId=${encodeURIComponent(requestId)}`, { method: 'GET' }))

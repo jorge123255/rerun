@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'vitest'
 import {
     desktopSecretRequestDecisionSchema,
+    desktopSecretRequestRecoverySchema,
     desktopSecretRequestInputSchema,
     desktopSecretRequestViewSchema,
     parseDesktopSecretReceiptSummary,
     serializeDesktopSecretReceiptSummary,
-} from '../../../../../../packages/contracts/src/desktop-secret-requests'
+} from '@rerun/contracts'
 
 const fields = [{ key: 'EXAMPLE_API_KEY', label: 'Example API key', help: 'Create a test key.', docsUrl: 'https://example.com/keys' }]
 const source = { agentId: 'agent', sessionId: 'chat', runId: 'run', sourceMessageId: 'message', toolCallId: 'tool', fingerprint: 'source-fingerprint' }
@@ -40,6 +41,9 @@ test('view contracts contain names and presence only, never submitted values', (
 test('submit payload is the only contract that can carry exact credential strings', () => {
     const decision = { operation: 'save', requestId: 'request', attemptId: 'attempt', expectedRevision: 'revision', source, values: { EXAMPLE_API_KEY: '  exact bytes\r\n' } }
     expect(desktopSecretRequestDecisionSchema.parse(decision)).toEqual(decision)
+    const recovery = { operation: 'recover', requestId: 'request', attemptId: 'attempt', expectedRevision: 'revision', source }
+    expect(desktopSecretRequestRecoverySchema.parse(recovery)).toEqual(recovery)
+    expect(desktopSecretRequestRecoverySchema.safeParse({ ...recovery, values: decision.values }).success).toBe(false)
 })
 
 test('names-only summary has no shell/MCP substitution promise and parses exactly', () => {

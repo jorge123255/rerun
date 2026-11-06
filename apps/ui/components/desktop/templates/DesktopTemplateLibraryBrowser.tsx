@@ -14,7 +14,7 @@ import type { DesktopTemplateSummary } from './types'
 
 type LibraryView = { kind: 'all' } | { kind: 'category'; category: TemplateCategory }
 
-export function DesktopTemplateLibraryBrowser({ templates, loading, error, selected, onSelect, onScratch, onNewTemplate, onRetry, onImportPackage }: {
+export function DesktopTemplateLibraryBrowser({ templates, loading, error, selected, onSelect, onScratch, onNewTemplate, onRetry, onImportPackage, importBusy = false, importError = null }: {
     templates: DesktopTemplateSummary[]
     loading: boolean
     error: string | null
@@ -24,6 +24,8 @@ export function DesktopTemplateLibraryBrowser({ templates, loading, error, selec
     onNewTemplate: () => void
     onRetry: () => void
     onImportPackage?: () => void
+    importBusy?: boolean
+    importError?: string | null
 }) {
     const [view, setView] = useState<LibraryView>({ kind: 'all' })
     const [query, setQuery] = useState('')
@@ -59,7 +61,7 @@ export function DesktopTemplateLibraryBrowser({ templates, loading, error, selec
             </nav>
             <div className="flex flex-col gap-2 border-t p-3">
                 <Button type="button" variant="outline" onClick={onNewTemplate}><PlusIcon />New template</Button>
-                {onImportPackage && <Button type="button" variant="outline" onClick={onImportPackage}><UploadIcon />Import package</Button>}
+                {onImportPackage && <Button type="button" variant="outline" onClick={onImportPackage} disabled={importBusy} loading={importBusy}><UploadIcon />Import package</Button>}
                 <Button type="button" onClick={onScratch}><PlusIcon />Create New Coworker</Button>
             </div>
         </aside>
@@ -69,7 +71,7 @@ export function DesktopTemplateLibraryBrowser({ templates, loading, error, selec
                 <div className="flex flex-wrap items-center gap-2 pr-8">
                     <TemplateLibrarySearch value={query} onChange={setQuery} className="min-w-0 flex-1" />
                     <Button type="button" variant="outline" size="sm" onClick={onNewTemplate}><PlusIcon />New template</Button>
-                    {onImportPackage && <Button type="button" variant="outline" size="sm" onClick={onImportPackage}><UploadIcon />Import</Button>}
+                    {onImportPackage && <Button type="button" variant="outline" size="sm" onClick={onImportPackage} disabled={importBusy} loading={importBusy}><UploadIcon />Import</Button>}
                     <Button type="button" size="sm" onClick={onScratch}><PlusIcon />New coworker</Button>
                 </div>
                 <HScrollFade className="-mx-1 gap-1.5 px-1" fadeClassName="from-popover">
@@ -86,6 +88,7 @@ export function DesktopTemplateLibraryBrowser({ templates, loading, error, selec
                         <div><h2 className="font-heading text-2xl font-semibold tracking-tight">{query ? `Results for “${query.trim()}”` : view.kind === 'category' ? TEMPLATE_CATEGORY_LABELS[view.category] ?? TEMPLATE_CATEGORY_LABELS.other : 'My library'}</h2>
                             <p className="mt-1 text-sm text-muted-foreground">Private templates saved in this workspace.</p></div>
                     </header>
+                    {importError && <p role="alert" className="text-sm text-destructive">{importError}</p>}
                     {loading ? <TemplateGridSkeleton /> : error ? <EmptyState icon={HammerIcon} title="Templates unavailable" description={error} action={<Button variant="outline" size="sm" onClick={onRetry}>Try again</Button>} className="pt-8" /> : listed.length === 0 ? <EmptyState
                         icon={HammerIcon}
                         title={query || view.kind !== 'all' ? 'No template matches these filters' : 'No template here yet'}

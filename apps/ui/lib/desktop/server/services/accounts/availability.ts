@@ -1,7 +1,7 @@
 import 'server-only'
 
 import type { DesktopServiceMethodAvailability } from '@rerun/contracts'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 import type { ServiceManifest } from '@/lib/services/manifest'
 import { compileAccountService } from './compiler'
 

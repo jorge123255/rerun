@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { ExternalLinkIcon, LockIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import type { DesktopSecretRequestViewField } from '../../../../../../packages/contracts/src/desktop-secret-requests'
+import type { DesktopSecretRequestViewField } from '@rerun/contracts'
 
 export function DesktopSecretRequestForm({ fields, reason, ownerKey, onSubmit, onSkip, onDismiss, disabled, inline, className }: {
     fields: DesktopSecretRequestViewField[]
@@ -27,6 +27,14 @@ export function DesktopSecretRequestForm({ fields, reason, ownerKey, onSubmit, o
     const [submitted, setSubmitted] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const busyRef = useRef(false)
+    const current = useRef({ ownerKey, generation: 0, mounted: true, disabled })
+    if (current.current.ownerKey !== ownerKey || current.current.disabled !== disabled) {
+        current.current = { ownerKey, generation: current.current.generation + 1, mounted: true, disabled }
+    }
+    useEffect(() => {
+        current.current.mounted = true
+        return () => { current.current.mounted = false; current.current.generation += 1 }
+    }, [])
 
     useEffect(() => {
         busyRef.current = false
@@ -35,7 +43,7 @@ export function DesktopSecretRequestForm({ fields, reason, ownerKey, onSubmit, o
         setError(null)
         form.reset(blankValues)
         return () => { form.reset(blankValues) }
-    }, [ownerKey, form, blankValues])
+    }, [ownerKey, form, blankValues, disabled])
 
     const locked = disabled || pending !== null || submitted
     const filled = fields.filter(field => (values[field.key] ?? '').length > 0)
@@ -43,34 +51,42 @@ export function DesktopSecretRequestForm({ fields, reason, ownerKey, onSubmit, o
     const save = async () => {
         if (disabled || busyRef.current || !filled.length) return
         busyRef.current = true
+        const generation = ++current.current.generation
+        const isCurrent = () => current.current.mounted && current.current.ownerKey === ownerKey && current.current.generation === generation && !current.current.disabled
         setPending('save')
         setError(null)
         try {
             await onSubmit(Object.fromEntries(filled.map(field => [field.key, values[field.key]])))
+            if (!isCurrent()) return
             form.reset(blankValues)
             setSubmitted(true)
         } catch (cause) {
+            if (!isCurrent()) return
             busyRef.current = false
             setError(cause instanceof Error ? cause.message : 'Could not save the credentials. Retry the same decision.')
         } finally {
-            setPending(null)
+            if (isCurrent()) setPending(null)
         }
     }
 
     const close = async (operation: 'skip' | 'dismiss', handler?: () => Promise<void>) => {
         if (!handler || disabled || busyRef.current) return
         busyRef.current = true
+        const generation = ++current.current.generation
+        const isCurrent = () => current.current.mounted && current.current.ownerKey === ownerKey && current.current.generation === generation && !current.current.disabled
         setPending(operation)
         setError(null)
         try {
             await handler()
+            if (!isCurrent()) return
             form.reset(blankValues)
             setSubmitted(true)
         } catch (cause) {
+            if (!isCurrent()) return
             busyRef.current = false
             setError(cause instanceof Error ? cause.message : 'Could not confirm this decision. Retry it.')
         } finally {
-            setPending(null)
+            if (isCurrent()) setPending(null)
         }
     }
 

@@ -88,9 +88,9 @@ export function SelfMcpReviewEditor({
                 <p className="text-xs text-muted-foreground">Nothing is saved, connected or executed until you approve it here, behind the existing MCP and local-program permissions.</p>
             </PanelEditorBody>
             <PanelEditorFooter>
-                <Button disabled={busy} onClick={() => onDecide({ kind: 'approved' })}>Approve and save</Button>
-                <Button variant="outline" disabled={busy} onClick={() => onDecide({ kind: 'rejected', reason: 'Not needed.' })}>Reject</Button>
-                <Button variant="ghost" disabled={busy} onClick={onDismiss}>Cancel proposal</Button>
+                <Button disabled={busy || proposal.status !== 'pending' || requirements.length > 0 || !!conflict?.managed} onClick={() => onDecide({ kind: 'approved' })}>Approve and save</Button>
+                <Button variant="outline" disabled={busy || proposal.status !== 'pending'} onClick={() => onDecide({ kind: 'rejected', reason: 'Not needed.' })}>Reject</Button>
+                <Button variant="ghost" disabled={busy || proposal.status !== 'pending'} onClick={onDismiss}>Cancel proposal</Button>
             </PanelEditorFooter>
         </PanelEditorShell>
     )

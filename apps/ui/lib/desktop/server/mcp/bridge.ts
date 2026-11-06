@@ -15,7 +15,11 @@ export const desktopMcpBridgeRequest = z.discriminatedUnion('action', [
     z.object({ action: z.literal('shutdown') }).strict(),
 ])
 type RequestBody = z.infer<typeof desktopMcpBridgeRequest>
-type Definition = Awaited<ReturnType<typeof remoteMcpTools>>[number]
+type Definition = { name: string; description: string; inputSchema: Record<string, unknown>; execute(args: Record<string, unknown>, signal: AbortSignal, toolCallId: string): Promise<unknown> }
+export type DesktopMcpBridgeExtension = {
+    tools(owner: string, run: McpRunIdentity, signal: AbortSignal): Promise<Definition[]>
+    releaseRun(owner: string, run: McpRunIdentity): Promise<void>
+}
 type PublicTool = { capabilityId: string; name: string; description: string; inputSchema: Record<string, unknown> }
 type Catalog = {
     id: string; owner: string; identity: McpRunIdentity; controller: AbortController;
@@ -24,7 +28,7 @@ type Catalog = {
 
 /** HTTP only transports opaque capabilities. Configuration, credentials and the authoritative
  * lifecycle stay in the same UI service used by the management panel. */
-export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<typeof remoteMcpRuntime>, authorize: (identity: McpRunIdentity, signal: AbortSignal) => Promise<string>) {
+export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<typeof remoteMcpRuntime>, authorize: (identity: McpRunIdentity, signal: AbortSignal) => Promise<string>, extension?: DesktopMcpBridgeExtension) {
     const catalogs = new Map<string, Catalog>()
     const runs = new Map<string, AbortController>()
     const releasedRuns = new Set<string>()
@@ -39,6 +43,9 @@ export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<type
         releasedRuns.add(runKey(catalog.identity))
         catalogs.delete(catalog.id)
         if (runs.get(runKey(catalog.identity)) === catalog.controller) runs.delete(runKey(catalog.identity))
+        const drain = extension?.releaseRun(catalog.owner, catalog.identity) ?? Promise.resolve()
+        void drain.catch(() => {})
+        return drain
     }
     function shutdown() {
         closed = true; store.lifecycle.shutdown()
@@ -73,11 +80,14 @@ export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<type
                 }
                 catalog.expires.unref?.()
                 catalogs.set(catalog.id, catalog)
-                const definitions = await remoteMcpTools(owner, store, runtime, controller.signal)
+                const definitions: Definition[] = [...await remoteMcpTools(owner, store, runtime, controller.signal), ...await extension?.tools(owner, catalog.identity, controller.signal) ?? []]
                 current(catalog)
                 if (await authorize(body, controller.signal) !== owner) throw new Error('MCP owner changed')
                 current(catalog)
+                const names = new Set<string>()
                 for (const definition of definitions) {
+                    if (names.has(definition.name) || names.size >= 256) throw new Error('MCP tool name collision')
+                    names.add(definition.name)
                     const capabilityId = randomUUID()
                     catalog.tools.set(capabilityId, definition)
                     catalog.publicTools.push({ capabilityId, name: definition.name, description: definition.description, inputSchema: definition.inputSchema })
@@ -85,7 +95,7 @@ export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<type
                 if (Buffer.byteLength(JSON.stringify(catalog.publicTools)) > 1_048_576) throw new Error('MCP catalog exceeds limit')
                 return { catalogId: catalog.id, tools: catalog.publicTools }
             } catch (error) {
-                if (catalog) release(catalog)
+                if (catalog) await release(catalog)
                 else { controller.abort(); if (runs.get(key) === controller) runs.delete(key) }
                 throw error
             } finally { clearTimeout(deadline); signal.removeEventListener('abort', abort) }
@@ -94,12 +104,12 @@ export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<type
             const key = runKey(body), pending = runs.get(key)
             releasedRuns.add(key)
             pending?.abort(); runs.delete(key)
-            for (const catalog of catalogs.values()) if (runKey(catalog.identity) === key) release(catalog)
+            for (const catalog of catalogs.values()) if (runKey(catalog.identity) === key) await release(catalog)
             return { released: true }
         }
         const catalog = catalogs.get(body.catalogId!)
         if (!catalog || runKey(catalog.identity) !== runKey(body)) throw new Error('MCP capability belongs to another run')
-        if (body.action === 'release') { release(catalog); return { released: true } }
+        if (body.action === 'release') { await release(catalog); return { released: true } }
         current(catalog)
         const combined = AbortSignal.any([signal, catalog.controller.signal])
         if (await authorize(body, combined) !== catalog.owner) throw new Error('MCP owner changed')
@@ -109,7 +119,7 @@ export function desktopMcpBridge(store: RemoteMcpStore, runtime: ReturnType<type
         if (Buffer.byteLength(JSON.stringify(body.arguments)) > 65_536) throw new Error('MCP arguments exceed limit')
         // Never repeat a remote side effect after a lost response, even if the caller retries.
         catalog.calls.add(body.toolCallId)
-        const result = await definition.execute(body.arguments, combined)
+        const result = await definition.execute(body.arguments, combined, body.toolCallId)
         if (await authorize(body, combined) !== catalog.owner) throw new Error('MCP owner changed')
         current(catalog); combined.throwIfAborted()
         return { toolCallId: body.toolCallId, result }

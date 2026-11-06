@@ -17,7 +17,7 @@ function ports(patch: Partial<DesktopWebSearchPorts> = {}): DesktopWebSearchPort
             ] })),
         },
         authority: vi.fn(async () => ({ adapterGeneration: 'generation-1' })),
-        readiness: vi.fn(async () => ({ status: 'ready', message: 'Ready.', retryable: false }),
+        readiness: vi.fn(async () => ({ status: 'ready', message: 'Ready.', retryable: false })),
         outcomes: { begin: vi.fn(async () => 'execute'), complete: vi.fn(async () => {}) },
         ...patch,
     }
@@ -49,7 +49,7 @@ describe('desktop web_search tool', () => {
     })
 
     it('keeps unavailable and failure outcomes distinct from empty results', async () => {
-        await expect(execute({ query: 'x' }, ports({ adapter: null }))).resolves.toContain('Search failed: web search is unavailable')
+        await expect(execute({ query: 'x' }, ports({ adapter: null }))).resolves.toContain('Search failed: Web search is unavailable')
     })
 
     it('does not expose paid-data guidance in the Mac description', () => {
@@ -76,4 +76,16 @@ describe('desktop web_search tool', () => {
         controller.abort(new Error('Stopped'))
         await expect(execute({ query: 'x' }, injected, controller.signal)).rejects.toThrow()
     })
+    it.each(['context', 'tool'] as const)('honors cancellation from the %s signal when both are present', async source => {
+        const context = new AbortController(), invocation = new AbortController()
+        const injected = ports()
+        injected.adapter!.search = vi.fn(() => new Promise(() => {}))
+        const tools = desktopWebSearchTools(ctx(context.signal), injected).web_search as { execute: (input: unknown, options: { toolCallId: string; abortSignal: AbortSignal }) => Promise<string> }
+        const pending = tools.execute({ query: 'x' }, { toolCallId: 'tool-call', abortSignal: invocation.signal })
+        const result = expect(pending).rejects.toThrow('Search cancelled by run.')
+        await vi.waitFor(() => expect(injected.adapter!.search).toHaveBeenCalledOnce())
+        ;(source === 'context' ? context : invocation).abort()
+        await result
+    })
+
 })

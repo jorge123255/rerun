@@ -8,12 +8,12 @@ import { getDesktopServiceManifest, listDesktopServiceCatalog } from '../catalog
 import { serviceStore } from '../store'
 import { newServiceInstanceId } from '@/lib/services/instances'
 import { accountFeature, type AccountFeature } from './feature'
-import { serviceStoreInstalls } from './installs'
+import { serviceStoreInstalls, type AccountInstallPort } from './installs'
 import type { AccountAuthorityPort, AccountSkillPort, AccountToolGuard } from './lifecycle'
 import { sqliteReservations } from './reservations'
 import { ensureDesktopServiceAccountSchema } from './schema'
-import { sqliteHeaderSecrets } from './secret-store'
-import { accountTransport, type AccountNetwork } from './transport'
+import { legacyCompatibleHeaderSecrets, sqliteHeaderSecrets } from './secret-store'
+import { accountTransport, type AccountNetwork, type AccountTransportPort } from './transport'
 
 /**
  * Root calls this from the desktop service binding with the same key reader and
@@ -22,19 +22,21 @@ import { accountTransport, type AccountNetwork } from './transport'
  */
 export async function openDesktopServiceAccounts(
     runtime: DesktopRuntime,
-    deps: { keyReader: () => Buffer; authority: AccountAuthorityPort; skills?: AccountSkillPort; assertToolNames?: AccountToolGuard; network?: AccountNetwork },
+    deps: { keyReader: () => Buffer; authority: AccountAuthorityPort; skills?: AccountSkillPort; assertToolNames?: AccountToolGuard; network?: AccountNetwork; transport?: AccountTransportPort; decorateInstalls?: (installs: AccountInstallPort) => AccountInstallPort },
 ): Promise<AccountFeature> {
     const db = await openDesktopDatabase(runtime.dataRoot)
     await ensureDesktopServiceAccountSchema(db)
-    const installs = serviceStoreInstalls(serviceStore(db, deps.keyReader))
+    const canonicalStore = serviceStore(db, deps.keyReader)
+    const rawInstalls = serviceStoreInstalls(canonicalStore)
+    const installs = deps.decorateInstalls ? deps.decorateInstalls(rawInstalls) : rawInstalls
     return accountFeature({
         installs,
-        secrets: sqliteHeaderSecrets(db, deps.keyReader),
+        secrets: legacyCompatibleHeaderSecrets(canonicalStore, sqliteHeaderSecrets(db, deps.keyReader)),
         reservations: sqliteReservations(db),
         authority: deps.authority,
         skills: deps.skills,
         assertToolNames: deps.assertToolNames,
-        transport: accountTransport(deps.network ?? fetch),
+        transport: deps.transport ?? accountTransport(deps.network ?? fetch),
         ids: { uuid: () => randomUUID(), instanceId: taken => newServiceInstanceId(taken) },
         clock: { now: () => new Date().toISOString() },
         agent: async coworkerId => {

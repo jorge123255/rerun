@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, type ReactNode } from 'react'
+import { act, StrictMode, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const roots: { root: Root; host: HTMLElement }[] = []
@@ -39,6 +39,7 @@ const findByRole = async (role: string, options?: { name: string }) => {
 }
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 import type { SelfMcpProposal, SelfMcpReviewSnapshot } from '@rerun/contracts'
 
 // The review editor/panel never talks to the network directly; only sonner toasts need stubbing.
@@ -50,6 +51,7 @@ const proposal: SelfMcpProposal = {
     id: 'prop-1',
     revision: 1,
     agentId: 'agent-1',
+    launchEpoch: 'epoch-1',
     identity: { engineAgentId: 'engine-1', sessionId: 's', runId: 'r', toolCallId: 'call-1' },
     fingerprint: 'a'.repeat(64),
     input: { name: 'linear', transport: 'http', command: undefined, args: [], url: 'https://mcp.linear.app', env: {}, headers: { Authorization: 'Bearer ${LINEAR_API_KEY}' } },
@@ -74,6 +76,7 @@ type PanelFetchOptions = {
     decide?: unknown
     dismiss?: unknown
     decideDelay?: Promise<Response>
+    decideResponses?: Response[]
 }
 
 function mockPanelFetch(options: PanelFetchOptions = {}) {
@@ -83,7 +86,7 @@ function mockPanelFetch(options: PanelFetchOptions = {}) {
         requests.push(body)
         if (body.action === 'list') return Promise.resolve(Response.json(options.list ?? { proposals: [proposal] }))
         if (body.action === 'review') return Promise.resolve(Response.json(options.review ?? snapshot))
-        if (body.action === 'decide') return options.decideDelay ?? Promise.resolve(Response.json(options.decide ?? { outcome: 'applied', proposalId: 'prop-1', proposalRevision: 2, message: 'The server was saved and verified.', requirements: [] }))
+        if (body.action === 'decide') return options.decideDelay ?? Promise.resolve(options.decideResponses?.shift() ?? Response.json(options.decide ?? { outcome: 'applied', proposalId: 'prop-1', proposalRevision: 2, message: 'The server was saved and verified.', requirements: [] }))
         if (body.action === 'dismiss') return Promise.resolve(Response.json(options.dismiss ?? { outcome: 'cancelled', proposalId: 'prop-1', proposalRevision: 2, message: 'The proposal was cancelled without saving.', requirements: [] }))
         return Promise.resolve(Response.json({ error: 'unknown action' }, { status: 400 }))
     }))
@@ -96,6 +99,7 @@ afterEach(() => {
         host.remove()
     }
     vi.unstubAllGlobals()
+    vi.clearAllMocks()
 })
 
 describe('SelfMcpProposalsPanel', () => {
@@ -171,5 +175,47 @@ describe('SelfMcpProposalsPanel', () => {
         render(<SelfMcpProposalsPanel agentId="agent-1" />)
         fireEvent.click(await findByRole('button', { name: 'linear' }))
         await waitFor(() => expect(document.body.textContent).toContain('Local program execution requires the separate Local MCP programs permission.'))
+    })
+
+    it('retries an unknown acknowledgement with the same reviewed decision identity', async () => {
+        const requests = mockPanelFetch({ decideResponses: [Response.json({ error: 'Acknowledgement lost' }, { status: 503 })] })
+        render(<SelfMcpProposalsPanel agentId="agent-1" />)
+        fireEvent.click(await findByRole('button', { name: 'linear' }))
+        fireEvent.click(await findByRole('button', { name: 'Approve and save' }))
+        await waitFor(() => expect(document.body.textContent).toContain('The result could not be confirmed'))
+        fireEvent.click(screen.getByRole('button', { name: 'Approve and save' }))
+        await waitFor(() => expect(requests.filter(request => request.action === 'decide')).toHaveLength(2))
+        const attempts = requests.filter(request => request.action === 'decide')
+        expect(attempts[1].decision).toEqual(attempts[0].decision)
+    })
+
+    it('does not toast a failed save as success', async () => {
+        mockPanelFetch({ decide: { outcome: 'failed', proposalId: 'prop-1', proposalRevision: 3, message: 'Nothing was saved.', requirements: [] } })
+        render(<SelfMcpProposalsPanel agentId="agent-1" />)
+        fireEvent.click(await findByRole('button', { name: 'linear' }))
+        fireEvent.click(await findByRole('button', { name: 'Approve and save' }))
+        await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Nothing was saved.'))
+        expect(toast.success).not.toHaveBeenCalled()
+    })
+
+    it('suppresses the previous coworker late completion after switching owners', async () => {
+        let finish!: (response: Response) => void
+        mockPanelFetch({ decideDelay: new Promise<Response>(resolve => { finish = resolve }) })
+        const { rerender } = render(<SelfMcpProposalsPanel agentId="agent-1" />)
+        fireEvent.click(await findByRole('button', { name: 'linear' }))
+        fireEvent.click(await findByRole('button', { name: 'Approve and save' }))
+        rerender(<SelfMcpProposalsPanel agentId="agent-2" />)
+        await act(async () => finish(Response.json({ outcome: 'applied', proposalId: 'prop-1', proposalRevision: 3, message: 'Old owner saved.', requirements: [] })))
+        expect(toast.success).not.toHaveBeenCalled()
+        expect(toast.error).not.toHaveBeenCalled()
+        const calls = vi.mocked(fetch).mock.calls
+        expect(calls.some(([url, init]) => String(url).includes('/agent-2/') && JSON.parse(String(init?.body)).action === 'list')).toBe(true)
+    })
+
+    it('opens reviews after a strict-mode setup and cleanup cycle', async () => {
+        mockPanelFetch()
+        render(<StrictMode><SelfMcpProposalsPanel agentId="agent-1" /></StrictMode>)
+        fireEvent.click(await findByRole('button', { name: 'linear' }))
+        await findByRole('button', { name: 'Approve and save' })
     })
 })

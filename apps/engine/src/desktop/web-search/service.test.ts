@@ -103,7 +103,7 @@ describe('desktop web search service', () => {
         const service = createDesktopWebSearchService(portsOf(parts))
         const first = invoke(service, { query: 'same' })
         const second = invoke(service, { query: 'same' })
-        expect(parts.adapter!.search).toHaveBeenCalledTimes(1)
+        await vi.waitFor(() => expect(parts.adapter!.search).toHaveBeenCalledTimes(1))
         release({ provenance: { provider: 'fixture-search' }, results: [result()] })
         await expect(first).resolves.toEqual(success())
         await expect(second).resolves.toEqual(success())
@@ -142,4 +142,32 @@ describe('desktop web search service', () => {
         await Promise.resolve()
         expect(parts.outcomes.complete).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ status: 'success' }))
     })
+    it('bounds failed-outcome cleanup after Stop even when storage never settles', async () => {
+        const stop = new AbortController()
+        const parts = fixture({ complete: vi.fn(() => new Promise(() => {})) })
+        parts.adapter!.search = vi.fn(async () => { stop.abort(); throw new Error('stopped') })
+        const service = createDesktopWebSearchService(portsOf(parts), { deadlineMs: 100, settlementMs: 15 })
+        await expect(service.search(identity, { query: 'cancel' }, stop.signal)).resolves.toMatchObject({ status: 'cancelled' })
+        expect(parts.outcomes.complete).toHaveBeenCalledTimes(1)
+    })
+
+    it('never races an uncertain success write with a second completion and recovers its receipt', async () => {
+        let saved: DesktopWebSearchOutcome | undefined
+        let finish!: () => void
+        const parts = fixture({
+            begin: vi.fn(async () => saved ?? 'execute'),
+            complete: vi.fn((_identity, _fingerprint, outcome) => new Promise<void>(resolve => {
+                finish = () => { saved = outcome; resolve() }
+            })),
+        })
+        const service = createDesktopWebSearchService(portsOf(parts), { deadlineMs: 25, settlementMs: 10 })
+        await expect(invoke(service, { query: 'pending receipt' })).resolves.toMatchObject({ status: 'uncertain' })
+        expect(parts.outcomes.complete).toHaveBeenCalledTimes(1)
+        await expect(invoke(service, { query: 'pending receipt' })).resolves.toMatchObject({ status: 'uncertain' })
+        finish()
+        await expect(invoke(service, { query: 'pending receipt' })).resolves.toEqual(success())
+        expect(parts.adapter!.search).toHaveBeenCalledTimes(1)
+        expect(parts.outcomes.complete).toHaveBeenCalledTimes(1)
+    })
+
 })

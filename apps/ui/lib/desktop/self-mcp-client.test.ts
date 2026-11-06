@@ -4,6 +4,7 @@ import { createDesktopSelfMcpClient } from './self-mcp-client'
 const fetchMock = vi.fn()
 afterEach(() => {
     vi.unstubAllGlobals()
+    fetchMock.mockReset()
 })
 
 const proposal = {
@@ -32,7 +33,7 @@ describe('createDesktopSelfMcpClient', () => {
     })
 
     it('posts review, decide and dismiss envelopes', async () => {
-        vi.stubGlobal('fetch', fetchMock.mockResolvedValue(Response.json({})))
+        vi.stubGlobal('fetch', fetchMock.mockImplementation(async () => Response.json({})))
         const client = createDesktopSelfMcpClient('agent-1')
         await client.review('prop-1')
         await client.decide({ proposalId: 'prop-1', decisionId: 'dec-1', expectedProposalRevision: 1, expectedConfigRevision: 3, outcome: { kind: 'approved' } })

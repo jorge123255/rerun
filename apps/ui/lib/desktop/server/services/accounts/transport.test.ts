@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 import { accountTransport, type AccountNetwork } from './transport'
-import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '../../../../../../../packages/contracts/src/desktop-service-accounts'
+import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 import { mcpResponse } from './regression-harness'
 
 const url = 'https://example.com/mcp'

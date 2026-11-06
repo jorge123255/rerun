@@ -40,8 +40,10 @@ function messageOf(error: unknown, fallback: string): string {
     return (message || fallback).slice(0, 500)
 }
 
-export function createDesktopWebSearchService(ports: DesktopWebSearchPorts, options: { deadlineMs?: number } = {}) {
+export function createDesktopWebSearchService(ports: DesktopWebSearchPorts, options: { deadlineMs?: number; settlementMs?: number } = {}) {
     const deadlineMs = options.deadlineMs ?? DESKTOP_WEB_SEARCH_DEADLINE_MS
+    const settlementMs = options.settlementMs ?? 1000
+    const attempted = new Set<string>()
     const active = new Map<string, Promise<DesktopWebSearchOutcome>>()
     const settled = new Map<string, DesktopWebSearchOutcome>()
 
@@ -68,10 +70,13 @@ export function createDesktopWebSearchService(ports: DesktopWebSearchPorts, opti
                 try {
                     const existing = await abortable(ports.outcomes.begin(invocation, fingerprint), deadline.signal)
                     if (existing !== 'execute') return desktopWebSearchOutcomeSchema.parse(existing)
+                    if (attempted.has(fingerprint)) return { status: 'uncertain', message: 'Search acknowledgement is unavailable. The search was not repeated.' }
+                    attempted.add(fingerprint)
                     began = true
                     if (!ports.adapter || ports.adapter.generation !== authorization.adapterGeneration) {
                         const outcome: DesktopWebSearchOutcome = { status: 'unavailable', message: 'Web search is unavailable: no authorized search capability is configured.' }
-                        await abortable(ports.outcomes.complete(invocation, fingerprint, outcome), deadline.signal).catch(() => undefined)
+                        publishing = true
+                        await abortable(ports.outcomes.complete(invocation, fingerprint, outcome), deadline.signal)
                         return outcome
                     }
                     providerFailure = true
@@ -93,14 +98,16 @@ export function createDesktopWebSearchService(ports: DesktopWebSearchPorts, opti
                             : deadline.signal.aborted
                                 ? { status: 'cancelled', message: `Search timed out after ${Math.round(deadlineMs / 1000)} s.` }
                                 : { status: 'error', message: providerFailure ? 'Search provider failed.' : messageOf(error, 'Search is unavailable.') }
-                    if (began) await ports.outcomes.complete(invocation, fingerprint, outcome).catch(() => undefined)
+                    if (began && !publishing) {
+                        await abortable(ports.outcomes.complete(invocation, fingerprint, outcome), AbortSignal.timeout(settlementMs)).catch(() => undefined)
+                    }
                     return outcome
                 }
             })()
             active.set(fingerprint, work)
             try {
                 const outcome = await work
-                settled.set(fingerprint, outcome)
+                if (outcome.status !== 'uncertain') settled.set(fingerprint, outcome)
                 return outcome
             } finally { active.delete(fingerprint) }
         } catch (error) {

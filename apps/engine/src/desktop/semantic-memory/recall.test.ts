@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -279,7 +279,7 @@ describe('desktop semantic recall', () => {
 
     it('reloads a persisted index after the process restarts', async () => {
         const content = 'whiskered animal that lives indoors'
-        const directory = await mkdtemp(join(tmpdir(), 'semantic-memory-'))
+        const directory = await realpath(await mkdtemp(join(tmpdir(), 'semantic-memory-')))
         try {
             await initializeDesktopSemanticIndex(directory)
             const world = ports({ owner: [note('cat', content)] })

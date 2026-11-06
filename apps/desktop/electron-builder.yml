@@ -23,4 +23,5 @@ mac:
         - dir
     hardenedRuntime: false
     extendInfo:
+        NSMicrophoneUsageDescription: "Record a voice message for your coworker. Recordings are transcribed only when you choose Transcribe."
         NSLocalNetworkUsageDescription: "Rerun runs its AI coworkers on your Mac; they reach services on localhost and your local network that you connect."

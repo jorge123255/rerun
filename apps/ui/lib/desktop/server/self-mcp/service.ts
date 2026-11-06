@@ -14,7 +14,7 @@ import {
 import { selfMcpFingerprint } from './fingerprint'
 import type { SelfMcpAuthority, SelfMcpConfigAdapter, SelfMcpOwner, SelfMcpProbeAdapter } from './adapters'
 import type { SelfMcpStore } from './store'
-import { decideSelfMcpProposal, dismissSelfMcpProposal, reconcileSelfMcpProposals, selfMcpRequirements, type SelfMcpDecisionDeps } from './decision'
+import { currentSelfMcpOwner, decideSelfMcpProposal, dismissSelfMcpProposal, reconcileSelfMcpProposals, selfMcpRequirements, type SelfMcpDecisionDeps } from './decision'
 
 /**
  * The self-MCP review service: proposal admission, review snapshots and the
@@ -34,7 +34,7 @@ export interface SelfMcpService {
     propose(request: { identity: SelfMcpRunIdentity; fingerprint: string; input: unknown }): Promise<SelfMcpProposeResult>
     list(agentId: string): Promise<SelfMcpProposal[]>
     review(agentId: string, proposalId: string): Promise<SelfMcpReviewSnapshot>
-    decide(agentId: string, request: SelfMcpDecisionRequest): Promise<SelfMcpDecisionResult>
+    decide(agentId: string, request: SelfMcpDecisionRequest, signal?: AbortSignal): Promise<SelfMcpDecisionResult>
     dismiss(agentId: string, proposalId: string, expectedProposalRevision: number): Promise<SelfMcpDecisionResult>
 }
 
@@ -54,8 +54,8 @@ export function createSelfMcpService(deps: SelfMcpDependencies): SelfMcpService 
 
             const local = await deps.authority.ownerOfEngineId(request.identity.engineAgentId).catch(() => null)
             if (!local) return { outcome: 'refused', message: 'The coworker is unavailable.' }
-            const owner = await deps.authority.currentOwner(local.agentId).catch(() => null)
-            if (!owner || !ownerAdmissible(owner)) {
+            const owner = await deps.authority.currentOwner(local.agentId, request.identity).catch(() => null)
+            if (!owner || owner.agentId !== local.agentId || owner.engineAgentId !== request.identity.engineAgentId || !owner.launchEpoch || !ownerAdmissible(owner)) {
                 return { outcome: 'refused', message: 'The coworker is disabled or the self-MCP permission is off.' }
             }
 
@@ -69,17 +69,21 @@ export function createSelfMcpService(deps: SelfMcpDependencies): SelfMcpService 
             const computed = selfMcpFingerprint(parsed)
             if (computed !== request.fingerprint) return { outcome: 'refused', message: 'The proposal fingerprint does not match.' }
 
+            const watch = await deps.authority.watch?.(local.agentId, request.identity)
             const configRevision = await deps.config.revision(local.agentId)
+            try { await currentSelfMcpOwner(decisionDeps, { agentId: local.agentId, identity: request.identity, launchEpoch: owner.launchEpoch }) }
+            catch { return { outcome: 'refused', message: 'The source run was stopped or replaced before the proposal could be saved.' } }
             const reserved = await deps.store.reserve({
                 id: randomUUID(),
                 agentId: local.agentId,
                 identity: request.identity,
+                launchEpoch: owner.launchEpoch,
                 fingerprint: computed,
                 input: parsed,
                 transport: selfMcpResolvedTransport(parsed),
                 configRevision,
                 createdAt: new Date().toISOString(),
-            })
+            }, watch)
             if (reserved.outcome === 'conflict') {
                 return { outcome: 'conflict', message: 'A different proposal from this call already exists and cannot be replaced.' }
             }
@@ -99,7 +103,7 @@ export function createSelfMcpService(deps: SelfMcpDependencies): SelfMcpService 
             const proposal = await deps.store.get(agentId, proposalId)
             if (!proposal) throw new Error('Proposal not found')
             const [owner, configRevision, managed] = await Promise.all([
-                deps.authority.currentOwner(agentId).catch(() => null),
+                currentSelfMcpOwner(decisionDeps, proposal).catch(() => null),
                 deps.config.revision(agentId),
                 deps.config.managedNames(agentId),
             ])
@@ -109,10 +113,11 @@ export function createSelfMcpService(deps: SelfMcpDependencies): SelfMcpService 
                 deps.config.find(agentId, proposal.input.name),
             ])
             const requirements = owner ? selfMcpRequirements(decisionDeps, owner, proposal) : ['The coworker is unavailable for review.']
+            requirements.push(...await deps.config.reviewRequirements?.(agentId, server) ?? [])
             const snapshot: SelfMcpReviewSnapshot = {
                 proposal,
                 configRevision,
-                connectivity: alreadyConfigured ? 'connected' : 'unverified',
+                connectivity: alreadyConfigured ? await deps.config.connectivity(agentId, server).catch(() => 'unverified' as const) : 'unverified',
                 requirements,
                 conflict: { existing: !!existing, managed: managed.includes(proposal.input.name), ...(existing ? { replaces: existing.name } : {}) },
                 alreadyConfigured,
@@ -120,8 +125,8 @@ export function createSelfMcpService(deps: SelfMcpDependencies): SelfMcpService 
             return snapshot
         },
 
-        async decide(agentId, request) {
-            return decideSelfMcpProposal(decisionDeps, agentId, request)
+        async decide(agentId, request, signal) {
+            return decideSelfMcpProposal(decisionDeps, agentId, request, signal)
         },
 
         async dismiss(agentId, proposalId, expectedProposalRevision) {

@@ -1,15 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DesktopVoiceDraft, DesktopVoiceLifecycle, DesktopVoiceScope } from '../../../../../packages/contracts/src/desktop-voice.ts'
-import {
-    discardDesktopVoice,
-    listDesktopVoiceDrafts,
-    readDesktopVoiceDraft,
-    sendDesktopVoice,
-    transcribeDesktopVoice,
-    uploadDesktopVoice,
-} from './client'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { DesktopVoiceDraft, DesktopVoiceLifecycle, DesktopVoiceScope, DesktopVoiceSendReceipt, DesktopVoiceRevisionAction } from '@rerun/contracts'
+import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
+import { discardDesktopVoice, listDesktopVoiceDrafts, readDesktopVoiceDraft, sendDesktopVoice, transcribeDesktopVoice } from './client'
+import { canRetainVoiceRecording, retainVoiceRecording, retainedVoiceRecording, saveRetainedVoice, subscribeRetainedVoice, voiceScopeKey, type RetainedVoiceRecording } from './retained-recordings'
 import { useDesktopVoiceRecorder, type DesktopVoiceRecordingTake } from './useDesktopVoiceRecorder'
 
 type View = {
@@ -18,216 +13,257 @@ type View = {
     draft: DesktopVoiceDraft | null
     transcript: string
     error: string | null
+    attemptId: string | null
 }
-
-const initialView: View = { status: 'idle', take: null, draft: null, transcript: '', error: null }
-
+const initialView: View = { status: 'idle', take: null, draft: null, transcript: '', error: null, attemptId: null }
+const busy = (status: DesktopVoiceLifecycle) => ['starting', 'recording', 'uploading', 'transcribing', 'sending'].includes(status)
 function restoredStatus(draft: DesktopVoiceDraft): DesktopVoiceLifecycle {
-    if (draft.phase === 'ready') return 'ready'
-    if (draft.phase === 'sent') return 'sent'
-    if (draft.phase === 'failed') return 'failed'
-    if (draft.phase === 'unavailable') return 'unavailable'
-    return 'review'
+    return ['ready', 'sent', 'failed', 'unavailable'].includes(draft.phase) ? draft.phase : 'review'
+}
+function fromDraft(draft: DesktopVoiceDraft): View {
+    return { take: null, draft, attemptId: draft.attemptId, transcript: draft.transcript ?? '', status: restoredStatus(draft), error: draft.error }
+}
+function fromRetained(record: RetainedVoiceRecording): View {
+    return record.draft ? fromDraft(record.draft) : { take: record.take, draft: null, attemptId: record.attemptId, transcript: '', status: record.pending ? 'uploading' : 'failed', error: record.error }
 }
 
-export function useDesktopVoiceMessage({ agentId, tabUid, sessionId, onSent }: DesktopVoiceScope & {
-    onSent?: (result: { draft: DesktopVoiceDraft; text: string }) => void
+type Capture = { scope: DesktopVoiceScope; key: string; token: number }
+export function useDesktopVoiceMessage({ agentId, tabUid, sessionId, enabled = true, active = true, modelChoice, onSent }: DesktopVoiceScope & {
+    enabled?: boolean
+    active?: boolean
+    modelChoice?: DesktopVoiceRevisionAction['modelChoice']
+    onSent?: (result: DesktopVoiceSendReceipt & { text: string }) => void
 }) {
-    const scope = { agentId, tabUid, sessionId }
-    const scopeKey = JSON.stringify(scope)
+    const scope = useMemo(() => ({ agentId, tabUid, sessionId }), [agentId, tabUid, sessionId])
+    const scopeKey = voiceScopeKey(scope)
+    const enabledRef = useRef(enabled && active)
+    enabledRef.current = enabled && active
     const [view, setView] = useState<View>(initialView)
     const viewRef = useRef(view)
-    viewRef.current = view
     const latestScopeKey = useRef(scopeKey)
     latestScopeKey.current = scopeKey
     const mounted = useRef(true)
     const generation = useRef(0)
     const operation = useRef<AbortController | null>(null)
+    const capture = useRef<Capture | null>(null)
+    const finishing = useRef<Promise<void> | null>(null)
+    const raw = useRef<RetainedVoiceRecording | null>(null)
+    const modelChoiceRef = useRef(modelChoice)
+    modelChoiceRef.current = modelChoice
+    const sendAttempt = useRef<{ key: string; attemptId: string; modelChoice: DesktopVoiceRevisionAction['modelChoice'] } | null>(null)
     const onSentRef = useRef(onSent)
     onSentRef.current = onSent
-    const finishRef = useRef<() => void>(() => {})
+    const finishRef = useRef<() => Promise<void>>(async () => {})
+    const stopRef = useRef<() => void>(() => {})
+    const current = useCallback((key: string, token: number) => mounted.current && latestScopeKey.current === key && generation.current === token, [])
+    const publish = useCallback((next: View) => { viewRef.current = next; if (mounted.current) setView(next) }, [])
+    const cancelOperation = useCallback(() => { generation.current++; operation.current?.abort(); operation.current = null }, [])
 
-    const publish = useCallback((next: View) => {
-        if (mounted.current) setView(next)
-    }, [])
+    const recorder = useDesktopVoiceRecorder({
+        onError: error => {
+            const owner = capture.current
+            if (owner ? current(owner.key, owner.token) : mounted.current && latestScopeKey.current === scopeKey) publish({ ...viewRef.current, status: 'failed', error })
+        },
+        onLimitReached: () => { void finishRef.current() },
+        onDispose: () => {
+            if (finishing.current) return true
+            if (capture.current && viewRef.current.status === 'recording') { void finishRef.current(); return true }
+            return false
+        },
+    })
 
-    const cancelOperation = useCallback(() => {
-        generation.current++
-        operation.current?.abort()
-        operation.current = null
-    }, [])
+    const finish = useCallback((): Promise<void> => {
+        if (finishing.current) return finishing.current
+        const owner = capture.current
+        if (!owner || viewRef.current.status !== 'recording') return Promise.resolve()
+        capture.current = null
+        const retained = retainVoiceRecording(owner.scope, recorder.stop)
+        if (current(owner.key, owner.token)) { raw.current = retained; publish(fromRetained(retained)) }
+        const work = saveRetainedVoice(retained).then(() => {
+            if (current(owner.key, owner.token)) {
+                if (!retained.draft && !retained.pending && retainedVoiceRecording(retained.scope) !== retained) raw.current = null
+                publish(fromRetained(retained))
+            }
+        }).finally(() => { if (finishing.current === work) finishing.current = null })
+        finishing.current = work
+        return work
+    }, [current, publish, recorder.stop])
+    finishRef.current = finish
 
-    const current = useCallback((key: string, token: number) => mounted.current && scopeKey === key && generation.current === token, [scopeKey])
+    const stopCapture = useCallback(() => {
+        if (viewRef.current.status === 'recording') { void finishRef.current(); return }
+        if (viewRef.current.status === 'starting') {
+            capture.current = null
+            cancelOperation()
+            void recorder.cancel()
+            publish(initialView)
+        }
+    }, [cancelOperation, publish, recorder.cancel])
+    stopRef.current = stopCapture
+
+    const start = useCallback(async () => {
+        if (!enabledRef.current || finishing.current || retainedVoiceRecording(scope) || isDesktopQuitting() || document.visibilityState !== 'visible' || raw.current && !raw.current.draft || viewRef.current.draft || busy(viewRef.current.status)) return
+        if (!canRetainVoiceRecording()) { publish({ ...initialView, status: 'failed', error: 'Save or discard another pending voice recording before recording again.' }); return }
+        cancelOperation()
+        const owner = { scope: { ...scope }, key: scopeKey, token: generation.current }
+        capture.current = owner
+        publish({ ...initialView, status: 'starting' })
+        const started = await recorder.start()
+        const hidden = () => document.visibilityState !== 'visible'
+        if (!current(owner.key, owner.token) || !enabledRef.current || isDesktopQuitting() || hidden()) {
+            if (capture.current === owner) capture.current = null
+            if (started) await recorder.cancel()
+            return
+        }
+        if (started) publish({ ...initialView, status: 'recording' })
+        else capture.current = null
+    }, [cancelOperation, current, publish, recorder.start, recorder.cancel, scope, scopeKey])
 
     const reconcile = useCallback(async (attemptId: string, key = scopeKey, token = generation.current) => {
         try {
             const draft = await readDesktopVoiceDraft(scope, attemptId, operation.current?.signal)
-            if (!current(key, token) || !draft) return
-            publish({ take: viewRef.current.take, draft, transcript: draft.transcript ?? '', status: restoredStatus(draft), error: draft.error })
-        } catch { /* The visible retry retains the last acknowledged draft. */ }
+            if (current(key, token) && draft) publish(fromDraft(draft))
+        } catch {}
     }, [current, publish, scope, scopeKey])
-
-    const recorder = useDesktopVoiceRecorder({
-        onError: error => {
-            if (latestScopeKey.current === scopeKey) publish({ ...viewRef.current, status: 'failed', error })
-        },
-        onLimitReached: () => finishRef.current(),
-    })
-
-    const start = useCallback(async () => {
-        if (viewRef.current.draft || viewRef.current.take || ['recording', 'starting', 'uploading', 'transcribing', 'sending'].includes(viewRef.current.status)) return
-        cancelOperation()
-        const key = scopeKey
-        const token = generation.current
-        publish({ ...initialView, status: 'starting' })
-        const started = await recorder.start()
-        if (!current(key, token)) {
-            if (started) recorder.cancel()
-            return
-        }
-        if (started) publish({ ...initialView, status: 'recording' })
-    }, [cancelOperation, current, recorder, scopeKey])
-
-    const finish = useCallback(async () => {
-        if (viewRef.current.status !== 'recording') return
-        const key = scopeKey
-        const token = generation.current
-        publish({ ...viewRef.current, status: 'review', error: null })
-        const take = await recorder.stop()
-        if (!current(key, token)) return
-        if (!take) publish({ ...initialView, status: 'failed', error: 'Nothing was recorded.' })
-        else publish({ status: 'review', take, draft: null, transcript: '', error: null })
-    }, [current, publish, recorder, scopeKey])
-    finishRef.current = () => { void finish() }
 
     const transcribe = useCallback(async () => {
         const snapshot = viewRef.current
-        const take = snapshot.take
-        const existing = snapshot.draft
-        if (!take && !existing) return
+        if (!enabledRef.current || isDesktopQuitting() || busy(snapshot.status) || !snapshot.draft && !raw.current) return
         cancelOperation()
-        const key = scopeKey
-        const token = generation.current
-        const controller = new AbortController()
+        const key = scopeKey, token = generation.current, controller = new AbortController()
         operation.current = controller
-        const attemptId = existing?.attemptId ?? crypto.randomUUID()
+        const release = holdDraftAdmission()
+        let acknowledged = snapshot.draft
         try {
-            let draft = existing
-            if (take) {
+            if (!acknowledged && raw.current) {
+                const retained = raw.current
                 publish({ ...snapshot, status: 'uploading', error: null })
-                draft = await uploadDesktopVoice(scope, attemptId, take, controller.signal)
+                acknowledged = await saveRetainedVoice(retained)
                 if (!current(key, token)) return
+                if (!acknowledged) { publish(fromRetained(retained)); return }
             }
-            publish({ take, draft: draft!, transcript: '', status: 'transcribing', error: null })
-            draft = await transcribeDesktopVoice(scope, attemptId, draft!.revision, controller.signal)
-            if (!current(key, token)) return
-            publish({ take, draft, transcript: draft.transcript ?? '', status: restoredStatus(draft), error: draft.error })
+            if (!acknowledged || !current(key, token) || !enabledRef.current || isDesktopQuitting()) return
+            publish({ ...fromDraft(acknowledged), status: 'transcribing', error: null })
+            const next = await transcribeDesktopVoice(acknowledged.scope, acknowledged.attemptId, acknowledged.revision, controller.signal)
+            if (current(key, token)) publish(fromDraft(next))
         } catch (error) {
             if (!current(key, token)) return
-            publish({ take, draft: existing, transcript: existing?.transcript ?? '', status: 'failed', error: error instanceof Error ? error.message : 'Transcription failed. Retry the saved recording.' })
-            await reconcile(attemptId, key, token)
-        } finally {
-            if (generation.current === token) operation.current = null
-        }
+            publish({ ...snapshot, draft: acknowledged, status: 'failed', error: error instanceof Error ? error.message : 'Transcription failed. Retry the saved recording.' })
+            if (acknowledged) await reconcile(acknowledged.attemptId, key, token)
+        } finally { if (generation.current === token) operation.current = null; release() }
     }, [cancelOperation, current, publish, reconcile, scope, scopeKey])
 
     const send = useCallback(async () => {
-        const snapshot = viewRef.current
-        const draft = snapshot.draft
-        if (!draft || !snapshot.transcript.trim()) return
+        const snapshot = viewRef.current, draft = snapshot.draft
+        if (!enabledRef.current || isDesktopQuitting() || !draft || !snapshot.transcript.trim() || busy(snapshot.status)) return
         cancelOperation()
-        const key = scopeKey
-        const token = generation.current
-        const controller = new AbortController()
+        const key = scopeKey, token = generation.current, controller = new AbortController()
         operation.current = controller
+        const release = holdDraftAdmission()
         publish({ ...snapshot, status: 'sending', error: null })
         try {
-            const result = await sendDesktopVoice(scope, draft.attemptId, draft.revision, controller.signal)
-            if (!current(key, token)) return
-            if (!result.text) {
-                publish({ ...snapshot, draft: result.draft, status: 'review', error: result.draft.error })
-                return
+            if (!sendAttempt.current || sendAttempt.current.key !== key || sendAttempt.current.attemptId !== draft.attemptId) {
+                const savedChoice = draft.sendModelChoice
+                const choice = savedChoice === undefined ? modelChoiceRef.current : savedChoice ?? undefined
+                sendAttempt.current = { key, attemptId: draft.attemptId, modelChoice: choice ? { ...choice } : undefined }
             }
-            publish({ take: null, draft: result.draft, transcript: result.draft.transcript ?? '', status: 'sent', error: null })
-            onSentRef.current?.({ draft: result.draft, text: result.text })
+            const choice = sendAttempt.current.modelChoice
+            const result = choice ? await sendDesktopVoice(draft.scope, draft.attemptId, draft.revision, controller.signal, choice)
+                : await sendDesktopVoice(draft.scope, draft.attemptId, draft.revision, controller.signal)
+            if (!current(key, token)) return
+            if (!result.text) { publish(fromDraft(result.draft)); return }
+            raw.current = null
+            publish(fromDraft(result.draft))
+            onSentRef.current?.({ ...result, text: result.text })
         } catch (error) {
             if (!current(key, token)) return
             publish({ ...snapshot, status: 'failed', error: error instanceof Error ? error.message : 'Voice message acknowledgement is unknown. Retry the same attempt.' })
             await reconcile(draft.attemptId, key, token)
-        } finally {
-            if (generation.current === token) operation.current = null
-        }
+        } finally { if (generation.current === token) operation.current = null; release() }
     }, [cancelOperation, current, publish, reconcile, scope, scopeKey])
 
     const retry = useCallback(async () => {
-        if (!viewRef.current.take && !viewRef.current.draft) await start()
-        else if (viewRef.current.draft?.transcript || viewRef.current.transcript.trim()) await send()
-        else await transcribe()
+        if (viewRef.current.draft?.transcript || viewRef.current.transcript.trim()) await send()
+        else if (viewRef.current.draft || raw.current) await transcribe()
+        else await start()
     }, [send, start, transcribe])
 
     const discard = useCallback(async () => {
         const snapshot = viewRef.current
+        if (finishing.current || ['uploading', 'transcribing', 'sending'].includes(snapshot.status)) return false
         cancelOperation()
-        recorder.cancel()
-        const key = scopeKey
-        const token = generation.current
-        const draft = snapshot.draft
-        if (draft) {
-            try {
-                await discardDesktopVoice(scope, draft.attemptId, draft.revision)
-            } catch (error) {
-                publish({ ...snapshot, status: 'failed', error: error instanceof Error ? error.message : 'This recording is still referenced and cannot be discarded.' })
-                return false
-            }
-        }
+        const key = scopeKey, token = generation.current, controller = new AbortController()
+        operation.current = controller
+        capture.current = null
+        await recorder.cancel()
         if (!current(key, token)) return false
-        publish(initialView)
-        return true
-    }, [cancelOperation, current, publish, recorder, scope, scopeKey])
+        if (snapshot.draft?.phase === 'sent') { raw.current = null; publish(initialView); return true }
+        const release = holdDraftAdmission()
+        let draft = snapshot.draft
+        try {
+            if (!draft && raw.current) {
+                draft = await saveRetainedVoice(raw.current)
+                if (!current(key, token)) return false
+                if (!draft) throw new Error('Save this recording before discarding its exact saved attempt.')
+            }
+            if (draft) await discardDesktopVoice(draft.scope, draft.attemptId, draft.revision, controller.signal)
+            if (!current(key, token)) return false
+            raw.current = null
+            publish(initialView)
+            return true
+        } catch (error) {
+            if (current(key, token)) publish({ ...snapshot, draft, status: 'failed', error: error instanceof Error ? error.message : 'Could not discard this recording.' })
+            return false
+        } finally { if (generation.current === token) operation.current = null; release() }
+    }, [cancelOperation, current, publish, recorder.cancel, scope, scopeKey])
 
     const rerecord = useCallback(async () => {
-        if (await discard()) await start()
-    }, [discard, start])
+        const key = scopeKey, token = generation.current + 1
+        if (await discard() && current(key, token)) await start()
+    }, [current, discard, scopeKey, start])
 
     useEffect(() => {
         mounted.current = true
+        const visibility = () => { if (document.visibilityState !== 'visible') stopRef.current() }
+        document.addEventListener('visibilitychange', visibility)
+        const unsubscribe = subscribeDraftShutdown(() => { if (isDesktopQuitting()) stopRef.current() })
         return () => {
+            if (capture.current && viewRef.current.status === 'recording') void finishRef.current()
             mounted.current = false
             cancelOperation()
-            recorder.cancel()
+            if (!finishing.current) void recorder.cancel()
+            document.removeEventListener('visibilitychange', visibility)
+            unsubscribe()
         }
     }, [cancelOperation, recorder.cancel])
 
+    useEffect(() => { if (!active || !enabled) stopRef.current() }, [active, enabled])
+
     useEffect(() => {
+        if (capture.current && capture.current.key !== scopeKey && viewRef.current.status === 'recording') void finishRef.current()
         cancelOperation()
-        recorder.cancel()
-        publish(initialView)
-        const key = scopeKey
-        const token = generation.current
-        void (async () => {
+        if (!finishing.current) void recorder.cancel()
+        const retained = retainedVoiceRecording(scope)
+        raw.current = retained
+        publish(retained ? fromRetained(retained) : initialView)
+        const key = scopeKey, token = generation.current, controller = new AbortController()
+        const unsubscribe = subscribeRetainedVoice(record => {
+            if (!current(key, token) || voiceScopeKey(record.scope) !== key) return
+            raw.current = record.draft || record.pending || retainedVoiceRecording(record.scope) === record ? record : null
+            publish(fromRetained(record))
+        })
+        if (!retained) void (async () => {
             try {
-                const drafts = await listDesktopVoiceDrafts(scope)
-                if (!current(key, token)) return
-                const draft = drafts.at(-1) ?? null
-                publish({ take: null, draft, transcript: draft?.transcript ?? '', status: draft ? restoredStatus(draft) : 'idle', error: draft?.error ?? null })
+                const drafts = await listDesktopVoiceDrafts(scope, controller.signal)
+                if (!current(key, token) || raw.current) return
+                const draft = drafts.filter(item => item.phase !== 'sent').at(-1) ?? null
+                publish(draft ? fromDraft(draft) : initialView)
             } catch (error) {
                 if (current(key, token)) publish({ ...initialView, status: 'failed', error: error instanceof Error ? error.message : 'Could not restore the voice draft.' })
             }
         })()
-        return cancelOperation
-    }, [scopeKey])
+        return () => { controller.abort(); unsubscribe(); cancelOperation() }
+    }, [scopeKey, scope, cancelOperation, current, publish, recorder.cancel])
 
-    return {
-        ...view,
-        stream: recorder.stream,
-        getLiveState: recorder.getLiveState,
-        start,
-        finish,
-        transcribe,
-        send,
-        retry,
-        discard,
-        rerecord,
-        reconcile,
-    }
+    return { ...view, stream: recorder.stream, getLiveState: recorder.getLiveState, start, finish, transcribe, send, retry, discard, rerecord, reconcile }
 }
