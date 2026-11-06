@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { DesktopDocumentAttachment, DesktopDocumentScope } from '@rerun/contracts'
 import { useDesktopDocumentAttachments } from './useDesktopDocumentAttachments'
+import { queueTabWrite } from '@/lib/desktop/tab-writes'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
 const scope = { agentId: 'owner', tabUid: 'tab', sessionId: 'session' }
 const transport = vi.hoisted(() => ({ uploadDesktopDocument: vi.fn(), listDesktopDocuments: vi.fn(), convertDesktopDocument: vi.fn(), discardDesktopDocument: vi.fn(), detachDesktopDocument: vi.fn(), admitDesktopDocuments: vi.fn(), consumeDesktopDocuments: vi.fn(), cancelDesktopDocumentUpload: vi.fn() }))
@@ -84,4 +85,31 @@ it('removes a failed raw upload through its exact cancellation receipt without r
     expect(transport.uploadDesktopDocument).toHaveBeenCalledTimes(1)
     expect(api.attachments).toEqual([])
     expect(await flushDesktopDrafts()).toBe(true)
+})
+
+
+it('waits for a newly opened tab to be saved before asking for its attachments', async () => {
+    let finish!: () => void
+    const held = queueTabWrite(scope.agentId, () => new Promise<void>(resolve => { finish = resolve }))
+    await mount()
+    try {
+        expect(api.loaded).toBe(false)
+        expect(transport.listDesktopDocuments).not.toHaveBeenCalled()
+    } finally {
+        await act(async () => { finish(); await held })
+    }
+    expect(transport.listDesktopDocuments).toHaveBeenCalledWith(scope)
+    expect(api.loaded).toBe(true)
+    expect(api.error).toBeNull()
+})
+
+it('never reads an old tab after its pending save finishes on a different selected conversation', async () => {
+    let finish!: () => void
+    const held = queueTabWrite(scope.agentId, () => new Promise<void>(resolve => { finish = resolve }))
+    await mount()
+    const next = { ...scope, tabUid: 'newer-tab' }
+    await act(async () => root!.render(<Probe value={next} />))
+    await act(async () => { finish(); await held })
+    expect(transport.listDesktopDocuments.mock.calls.map(call => call[0])).toEqual([next])
+    expect(api.loaded).toBe(true)
 })

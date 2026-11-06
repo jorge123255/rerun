@@ -1,6 +1,7 @@
 'use client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DESKTOP_DOCUMENT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_FILES, DESKTOP_DOCUMENT_TOTAL_MAX_BYTES, type DesktopDocumentAttachment, type DesktopDocumentScope, type DesktopDocumentSelection, type DesktopDocumentSendSelection } from '@rerun/contracts'
+import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { admitDesktopDocuments, cancelDesktopDocumentUpload, consumeDesktopDocuments, convertDesktopDocument, discardDesktopDocument, detachDesktopDocument, listDesktopDocuments } from './client'
 import { canRetainDocuments, documentPlaceholder, documentScopeKey, forgetRetainedDocument, retainedDocument, retainedDocuments, retainDocument, saveRetainedDocument, subscribeRetainedDocuments } from './retained'
@@ -14,11 +15,16 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, enab
     const current = useCallback((key: string, token: number) => mounted.current && latest.current === key && generation.current === token, [])
     const update = useCallback((next: DesktopDocumentAttachment) => { setAttachments(old => { const found = old.some(a => a.attachmentId === next.attachmentId); return (found ? old.map(a => a.attachmentId === next.attachmentId ? next : a) : [...old, next]).sort((a, b) => a.position - b.position) }) }, [])
     const refresh = useCallback(async (key = scopeKey, token = generation.current) => {
+        for (let pending = pendingTabWrite(scope.agentId); pending; pending = pendingTabWrite(scope.agentId)) {
+            await pending
+            if (!current(key, token)) return
+        }
+        if (!current(key, token)) return
         const saved = await listDesktopDocuments(scope)
         if (!current(key, token)) return
         const raw = retainedDocuments(scope).map(documentPlaceholder)
         const merged = [...saved.filter(a => !raw.some(r => r.attachmentId === a.attachmentId)), ...raw].sort((a, b) => a.position - b.position)
-        rows.current = merged; setAttachments(merged); setLoaded(true)
+        rows.current = merged; setAttachments(merged); setLoaded(true); setError(null)
     }, [current, scope, scopeKey])
     useEffect(() => {
         mounted.current = true; generation.current++
