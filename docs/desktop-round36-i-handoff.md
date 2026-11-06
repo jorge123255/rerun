@@ -11,7 +11,7 @@
 | Worktree | `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round36-remaining-parity-audit` |
 | Machine | `e7d81f9b-15cc-4c7f-9416-cce93cafe692` |
 | Owned deliverables | `docs/desktop-round36-i-parity-audit.md`, `docs/desktop-round36-i-design-map.md`, `docs/desktop-round36-i-task-backlog.md`, this handoff |
-| Commit SHA (tip) | branch tip: run `git rev-parse HEAD` on `desktop/round36-remaining-parity-audit` (delivery tip recorded in parent handoff summary) |
+| Commit SHA (tip) | `b957f3f0b6e35c62799e8a79a86095856b844757` |
 | Package commit (four docs) | `7c551342113e9f42a863a1c42f1c575e7fcd04d9` |
 | Worktree status after commit | clean (owned docs only) |
 
@@ -104,9 +104,9 @@ Stamped after commit:
 
 ```
 PACKAGE_SHA=7c551342113e9f42a863a1c42f1c575e7fcd04d9
-TIP_SHA=see `git rev-parse HEAD` after final stamp commit on this branch
+TIP_SHA=b957f3f0b6e35c62799e8a79a86095856b844757
 PARENT=970415507e28824bb001f46c8537d20fd2636b1c
-STATUS=expect clean after this normalization commit
+STATUS=clean
 FILES=docs/desktop-round36-i-parity-audit.md
       docs/desktop-round36-i-design-map.md
       docs/desktop-round36-i-task-backlog.md
