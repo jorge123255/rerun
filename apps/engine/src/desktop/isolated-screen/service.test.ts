@@ -7,6 +7,9 @@ import { containerLabels, containerName, LABEL_GENERATION, volumeLabels, volumeN
 import { HUMAN_DRIVING } from './input.js'
 import { createIsolatedScreenService, type IsolatedScreenDeps } from './service.js'
 import type { IsolatedScreenService, ScreenOwner, ScreenTarget, ViewerMode } from './types.js'
+import { createDesktopGuestShellService } from '../guest-shell/service.js'
+import { createDesktopGuestShellTransport } from '../guest-shell/transport.js'
+import type { DesktopGuestShellReceipt } from '../guest-shell/types.js'
 
 const owner: ScreenOwner = { engineAgentId: 'coworker1', launchNonce: '11111111-1111-4111-8111-111111111111' }
 const otherOwner: ScreenOwner = { engineAgentId: 'coworker2', launchNonce: owner.launchNonce }
@@ -49,6 +52,7 @@ class FakeDocker implements DockerClient {
     beforeStream: ((command: readonly string[]) => Promise<void> | void) | null = null
     afterRun: ((name: string) => void) | null = null
     execHook: ((body: Record<string, unknown>) => void) | null = null
+    guestShellCancelReply: Record<string, unknown> | undefined
     bytes = 0
 
     version(signal: AbortSignal): Promise<DockerVersion> {
@@ -175,7 +179,7 @@ class FakeDocker implements DockerClient {
             return encodeOk({ pageOptionsVersion: 1, status: 200, finalUrl: url, text: 'Hello', html: '<p>secret</p>', truncated: false, links: body.links ? [{ href: 'https://example.com/a', text: 'A' }] : [], linksTruncated: false, htmlBytes: 0, screenshotBytes: 0, screenshotWidth: 0, screenshotHeight: 0, exportErrors: [] })
         }
         if (body.op === 'guest-shell' || body.op === 'guest-shell-inspect') return encodeOk({ requestId: body.commandId, status: 'done', stdout: 'ok', stderr: '', exitCode: 0, durationMs: 1 })
-        if (body.op === 'guest-shell-cancel') return encodeOk({ requestId: body.commandId, drained: true })
+        if (body.op === 'guest-shell-cancel') return encodeOk(this.guestShellCancelReply ?? { requestId: body.commandId, drained: true })
         if (body.op === 'location') {
             if (this.locationFails) return encodeFailure('no tab', false)
             return encodeOk({ url: this.locationUrl })
@@ -905,7 +909,7 @@ describe('isolated command native authority and drain', () => {
         expect(calls[0].body.commandId).toBe(calls[1].body.commandId)
         expect(calls[0].body.requestId).not.toBe(calls[1].body.requestId)
     })
-    it('inspection bypasses only the mutation lock, and Stop drains exactly the submitted guest', async () => {
+    it('inspection bypasses only the mutation lock, and confirmed Stop keeps the command receipt reachable', async () => {
         const box = await boot(), controller = new AbortController()
         box.docker.holdOps.add('guest-shell')
         let submitted!: () => void
@@ -914,8 +918,54 @@ describe('isolated command native authority and drain', () => {
         await started
         expect((await box.service.guestShell(box.target, { op: 'guest-shell-inspect', commandId: command.commandId, workspaceFingerprint: command.workspaceFingerprint }, box.signal, async () => {})).requestId).toBe(command.commandId)
         controller.abort(); await expect(task).rejects.toThrow()
-        expect(box.docker.removedContainers).toContain(containerName(owner.engineAgentId))
-        expect(box.docker.removedContainers).not.toContain(containerName(otherOwner.engineAgentId))
+        expect(box.docker.execs.filter(item => item.body.op === 'guest-shell-cancel')).toHaveLength(1)
+        expect(box.docker.removedContainers).toEqual([])
+        expect((await box.service.running(owner, box.signal)).target).toEqual(box.target)
+    })
+    it.each([true, false])('records Stop across the real host/native transport boundary only when command drain is acknowledged: %s', async acknowledged => {
+        const box = await boot(), controller = new AbortController()
+        const requestId = '11111111-1111-4111-8111-111111111111'
+        const base = { agentId: owner.engineAgentId, sessionId: 'shell-session', runId: 'shell-run', toolCallId: 'shell-call', requestId }
+        const guest = { ...box.target, workspaceFingerprint: command.workspaceFingerprint }
+        const receipts = new Map<string, DesktopGuestShellReceipt>()
+        const deps = {
+            authority: async () => guest,
+            store: {
+                read: async (id: string) => receipts.get(id) ?? null,
+                begin: async (_request: unknown, receipt: DesktopGuestShellReceipt) => { receipts.set(receipt.requestId, receipt); return 'execute' as const },
+                complete: async (_identity: unknown, receipt: DesktopGuestShellReceipt) => { receipts.set(receipt.requestId, receipt) },
+            },
+            transport: createDesktopGuestShellTransport((identity, body, signal) => box.service.guestShell(identity.guest, body, signal, async () => {})),
+        }
+        const shell = createDesktopGuestShellService(deps)
+        box.docker.holdOps.add('guest-shell')
+        if (!acknowledged) box.docker.guestShellCancelReply = { requestId: requestId.replaceAll('-', ''), drained: false }
+        let submitted!: () => void
+        const started = new Promise<void>(resolve => { submitted = resolve }); box.docker.onHold = submitted
+        const pending = shell.execute(base, { command: 'sleep 30', timeoutMs: 60000, cwd: '' }, controller.signal)
+        await started
+        expect(receipts.get(requestId)?.status).toBe('interrupted')
+        controller.abort()
+        const receipt = await pending
+        expect(receipt.status).toBe(acknowledged ? 'cancelled' : 'interrupted')
+        expect(receipts.get(requestId)).toEqual(receipt)
+        expect(box.docker.execs.filter(item => item.body.op === 'guest-shell')).toHaveLength(1)
+        if (acknowledged) {
+            expect(box.docker.removedContainers).toEqual([])
+            const cancellations = box.docker.execs.filter(item => item.body.op === 'guest-shell-cancel')
+            expect(cancellations).toHaveLength(2) // Native drain, then host receipt confirmation.
+            for (const call of cancellations) expect(call.body.commandId).toBe(requestId.replaceAll('-', ''))
+            // Reopening the host service must read its confirmed receipt without restarting a guest.
+            await box.service.stop(box.target, box.signal)
+            const calls = box.docker.execs.length, starts = box.docker.runs.length
+            const reopened = createDesktopGuestShellService({ ...deps, authority: async () => { throw new Error('Guest is stopped') } })
+            expect(await reopened.inspect(base, box.signal)).toEqual(receipt)
+            expect(box.docker.execs).toHaveLength(calls)
+            expect(box.docker.runs).toHaveLength(starts)
+        } else {
+            expect(box.docker.removedContainers).toContain(containerName(owner.engineAgentId))
+            expect(box.docker.removedContainers).not.toContain(containerName(otherOwner.engineAgentId))
+        }
     })
     it('rejects a stale target before cancellation can reach a replacement guest', async () => {
         const box = await boot(); await box.service.stop(box.target, box.signal)

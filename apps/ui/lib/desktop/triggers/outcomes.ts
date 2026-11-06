@@ -21,6 +21,7 @@ export const triggerOutcomeKey = (slug: string) => `trigger:${slug}`
  */
 export function latestTriggerOutcomes(items: DesktopTriggerHistoryItem[]): Record<string, DesktopTriggerOutcome> {
     const outcomes: Record<string, DesktopTriggerOutcome> = {}
+    const selectedAt = new Map<string, string>()
     for (const item of items) {
         if (!item.slug) continue
         let status: DesktopTriggerOutcomeStatus | null = null
@@ -33,13 +34,14 @@ export function latestTriggerOutcomes(items: DesktopTriggerHistoryItem[]): Recor
         const finishedAt = item.finishedAt ?? (status === 'running' || status === 'needs-input' ? null : item.receivedAt)
         const key = triggerOutcomeKey(item.slug)
         const existing = outcomes[key]
-        // Prefer a real finished/error over a live running marker; otherwise keep newest receivedAt.
+        // An unresolved human request takes priority over an older result. Otherwise
+        // preserve Rerun's last-ended outcome over a live running marker.
         if (existing) {
             const existingRank = rank(existing.status)
             const nextRank = rank(status)
             if (nextRank < existingRank) continue
             if (nextRank === existingRank) {
-                const existingAt = existing.finishedAt ?? ''
+                const existingAt = selectedAt.get(key) ?? ''
                 const nextAt = finishedAt ?? item.receivedAt
                 if (existingAt >= nextAt) continue
             }
@@ -53,12 +55,13 @@ export function latestTriggerOutcomes(items: DesktopTriggerHistoryItem[]): Recor
             capturedPayload: item.capturedPayload,
             liveOnly: item.liveOnly,
         }
+        selectedAt.set(key, finishedAt ?? item.receivedAt)
     }
     return outcomes
 }
 
 function rank(status: DesktopTriggerOutcomeStatus): number {
+    if (status === 'needs-input') return 3
     if (status === 'done' || status === 'error') return 2
-    if (status === 'needs-input') return 1
     return 0
 }

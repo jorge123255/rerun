@@ -247,15 +247,17 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
     async function guestShell(target: ScreenTarget, body: Record<string, unknown>, signal: AbortSignal, authorize: (signal: AbortSignal) => Promise<void>) {
         const op = body.op
         if (!['guest-shell', 'guest-shell-inspect', 'guest-shell-cancel'].includes(String(op)) || !/^[a-f0-9]{32}$/.test(String(body.commandId)) || !/^[a-f0-9]{64}$/.test(String(body.workspaceFingerprint))) throw new IsolatedScreenRefusal('Invalid guest command identity.', 'refused')
-        if (op === 'guest-shell-cancel') {
+        const cancelCommand = async (cancelSignal: AbortSignal) => {
             // Cleanup uses the saved exact target and a fresh signal after Stop/revoke. It cannot start another guest.
-            try {
-                current(target); throwIfAborted(signal)
-                const result = (await guest(containerName(target.engineAgentId), body, signal)).value
-                if (result.requestId !== body.commandId || result.drained !== true) throw new IsolatedScreenRefusal('Command cancellation was not acknowledged.', 'closed')
-                current(target); throwIfAborted(signal)
-                return result
-            } catch (error) {
+            current(target); throwIfAborted(cancelSignal)
+            const result = (await guest(containerName(target.engineAgentId), { op: 'guest-shell-cancel', commandId: body.commandId, workspaceFingerprint: body.workspaceFingerprint }, cancelSignal)).value
+            if (result.requestId !== body.commandId || result.drained !== true) throw new IsolatedScreenRefusal('Command cancellation was not acknowledged.', 'closed')
+            current(target); throwIfAborted(cancelSignal)
+            return result
+        }
+        if (op === 'guest-shell-cancel') {
+            try { return await cancelCommand(signal) }
+            catch (error) {
                 // A lost cancel acknowledgement is not success; drain this generation before returning uncertainty.
                 await stop(target, AbortSignal.timeout(20000))
                 throw error
@@ -269,18 +271,37 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
             return result
         }
         if (typeof body.command !== 'string' || !body.command || body.command.length > 16000 || body.command.includes('\0') || !Number.isInteger(body.timeoutMs) || Number(body.timeoutMs) < 1 || Number(body.timeoutMs) > 600000 || !/^[a-f0-9]{64}$/.test(String(body.fingerprint))) throw new IsolatedScreenRefusal('Invalid guest command.', 'refused')
-        let submitted = false
+        let submitted = false, cancellationAttempted = false, cancellationConfirmed = false
         try {
             return await action(target, signal, async (_live, active) => {
                 await authorize(active); current(target); throwIfAborted(active)
                 submitted = true
-                const result = (await guestCall(target, body, active)).value
-                if (result.requestId !== body.commandId || !['done', 'failed', 'timeout', 'cancelled'].includes(String(result.status))) throw new IsolatedScreenRefusal('Guest command drain is uncertain.', 'closed')
-                return result
+                try {
+                    const result = (await guestCall(target, body, active)).value
+                    if (result.requestId !== body.commandId || !['done', 'failed', 'timeout', 'cancelled'].includes(String(result.status))) throw new IsolatedScreenRefusal('Guest command drain is uncertain.', 'closed')
+                    return result
+                } catch (error) {
+                    if (active.aborted) {
+                        // The RPC envelope cancellation only acknowledges its handler. Confirm
+                        // this command's descendant drain while still holding the action lock.
+                        // Keep its guest alive so the outer receipt service can confirm the same
+                        // command again and durably record cancelled, rather than a stale target.
+                        cancellationAttempted = true
+                        await cancelCommand(AbortSignal.timeout(25000))
+                        cancellationConfirmed = true
+                    }
+                    throw error
+                }
             })
         } catch (error) {
             // Arbitrary commands may detach descendants. On uncertain execution, stop the exact owned guest.
-            if (submitted) await stop(target, AbortSignal.timeout(20000))
+            if (submitted && !cancellationConfirmed) {
+                // Stop can arrive after the guest reply, during action's final owner check.
+                if (signal.aborted && !cancellationAttempted) {
+                    try { await cancelCommand(AbortSignal.timeout(25000)) }
+                    catch (cancelError) { await stop(target, AbortSignal.timeout(20000)); throw cancelError }
+                } else await stop(target, AbortSignal.timeout(20000))
+            }
             throw error
         }
     }

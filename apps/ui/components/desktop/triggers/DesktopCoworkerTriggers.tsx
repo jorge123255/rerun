@@ -302,7 +302,9 @@ function TriggerRuns({
                                 }}
                                 title={new Date(item.receivedAt).toLocaleString()}
                                 description={[item.capturedPayload ? 'captured payload' : 'live-only', item.error].filter(Boolean).join(' · ')}
-                                meta={opening === item.eventId ? <Loader2Icon className="size-3.5 animate-spin text-muted-foreground" /> : <RunStatusBadge status={item.status === 'finished' ? 'done' : item.status === 'needs-input' || item.status === 'accepted' ? 'running' : item.status === 'refused' || item.status === 'uncertain' ? 'error' : item.status} />}
+                                meta={opening === item.eventId ? <Loader2Icon className="size-3.5 animate-spin text-muted-foreground" /> : item.status === 'needs-input'
+                                    ? <Badge size="xs" tone="orange" glow={false}>Needs input</Badge>
+                                    : <RunStatusBadge status={item.status === 'finished' ? 'done' : item.status === 'accepted' ? 'running' : item.status === 'refused' || item.status === 'uncertain' ? 'error' : item.status} />}
                             />
                         ))}
                     </PanelList>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { latestTriggerOutcomes, triggerOutcomeKey } from './outcomes'
+import type { DesktopTriggerHistoryItem } from '@rerun/contracts'
 
 describe('latestTriggerOutcomes', () => {
     it('does not invent results and prefers ended over running', () => {
@@ -22,5 +23,16 @@ describe('latestTriggerOutcomes', () => {
         expect(outcomes[triggerOutcomeKey('hook')].localSessionId).toBe('l0')
         expect(outcomes[triggerOutcomeKey('other')].status).toBe('needs-input')
         expect(outcomes[triggerOutcomeKey('other')].liveOnly).toBe(true)
+    })
+
+    it.each([false, true])('keeps the newest waiting chat visible ahead of old Done results (reverse=%s)', reverse => {
+        const base = { slug: 'hook', triggerName: 'Hook', finishedAt: null, error: null, capturedPayload: true, liveOnly: false }
+        const items: DesktopTriggerHistoryItem[] = [
+            { ...base, eventId: 'new-question', status: 'needs-input', receivedAt: '2026-11-06T03:00:00.000Z', localSessionId: 'new-chat', runId: 'new-run' },
+            { ...base, eventId: 'old-question', status: 'needs-input', receivedAt: '2026-11-06T02:00:00.000Z', localSessionId: 'older-chat', runId: 'older-run' },
+            { ...base, eventId: 'completed', status: 'finished', receivedAt: '2026-11-06T01:00:00.000Z', finishedAt: '2026-11-06T01:01:00.000Z', localSessionId: 'done-chat', runId: 'done-run' },
+        ]
+        const result = latestTriggerOutcomes(reverse ? items.reverse() : items)[triggerOutcomeKey('hook')]
+        expect(result).toMatchObject({ status: 'needs-input', localSessionId: 'new-chat', runId: 'new-run' })
     })
 })
