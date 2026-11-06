@@ -2,13 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useChat } from '@ai-sdk/react'
+import { useRunReconnect } from '@/hooks/useRunReconnect'
+import { isLongMessage } from '@/lib/composer'
+import { replayedRunFailure } from '@/lib/desktop/chat-resume'
 import { DefaultChatTransport, readUIMessageStream, type UIMessage, type FileUIPart } from 'ai'
 import { AgentBuddy } from '@rerun/ui/iso-grid'
 import { Message, MessageContent } from '@rerun/ui/chat'
 import { FloatingPill } from '@/components/agent/sheet/floating'
 import { Conversation, ConversationContent } from '@/components/ai-elements/conversation'
 import { USER_BUBBLE_INK, USER_BUBBLE_SHAPE } from '@/components/chat/bubble-styles'
-import { ArrowUpIcon, ChevronDownIcon, PlusIcon, SquareIcon, UploadIcon, UserRoundIcon, XIcon } from '@/lib/icons'
+import { ArrowUpIcon, ChevronDownIcon, Maximize2Icon, PlusIcon, SendIcon, SquareIcon, UploadIcon, UserRoundIcon, XIcon } from '@/lib/icons'
+import { MarkdownEditorDialog } from '@/components/ui/markdown-editor-dialog'
+import { DesktopConversationFind } from './DesktopConversationFind'
 import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
 import { useDesktopReplyFeedback } from '@/lib/desktop/reply-feedback'
 import { DesktopComputerPanel } from './computer-panel/DesktopComputerPanel'
@@ -140,12 +145,19 @@ async function questionFor(sessionId: string, signal: AbortSignal) {
     return desktopQuestionViewSchema.parse(body).question
 }
 
-async function historyFor(sessionId: string, signal: AbortSignal): Promise<UIMessage[]> {
+type DesktopHistoryRead = { messages: UIMessage[]; lastError: string | null; activeRunId: string | null; runsUnavailable: boolean }
+
+async function historyFor(sessionId: string, signal: AbortSignal): Promise<DesktopHistoryRead> {
     const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/messages`, { signal })
     const body = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not load conversation history')
     if (!Array.isArray(body.messages)) throw new Error('Could not load conversation history')
-    return body.messages as UIMessage[]
+    return {
+        messages: body.messages as UIMessage[],
+        lastError: typeof body.lastError === 'string' ? body.lastError : null,
+        activeRunId: typeof body.activeRunId === 'string' ? body.activeRunId : null,
+        runsUnavailable: body.runsUnavailable === true,
+    }
 }
 
 const stopUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(sessionId)}/stop`
@@ -382,7 +394,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         })
         batchUpload.current = work
     }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion, documents.add, tabUid])
-    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; mcpSignIn?: DesktopMcpSignInResponse | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null, mcpSignIn: null })
+    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; mcpSignIn?: DesktopMcpSignInResponse | null; error?: string; loadedGeneration?: number; lastError?: string | null; activeRunId?: string | null; runsUnavailable?: boolean }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null, mcpSignIn: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer | DesktopTakeoverTerminal; onAccepted?: () => void; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
     const quickReplyIds = useRef(new Map<string, string>())
@@ -391,7 +403,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const [quickReplyRetry, setQuickReplyRetry] = useState<string | null>(null)
     const [attempt, setAttempt] = useState(0)
     // An engine run still generating for this conversation (e.g. after reopening it mid-reply).
-    const [engineRunning, setEngineRunning] = useState<{ id: string | null; running: boolean; runId?: string | null; failedRunId?: string | null }>({ id: null, running: false })
+    const [engineRunning, setEngineRunning] = useState<{ id: string | null; running: boolean; runId?: string | null; failedRunId?: string | null; failedRunError?: string | null }>({ id: null, running: false })
     const [stopping, setStopping] = useState(false)
     const [stopError, setStopError] = useState<string>()
     const [liveSessionId, setLiveSessionId] = useState<string | null>(null)
@@ -409,6 +421,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const conversationChoice = useRef<{ session: string | null; pick?: DesktopModelPick } | null>(null)
     const rememberModel = useCallback((pick: DesktopModelPick | undefined) => { conversationChoice.current = { session: sessionId, pick } }, [sessionId])
 
+    const resumeTarget = useRef<{ sessionId: string; runId: string } | null>(null)
+    const completedRef = useRef(false)
     const sendToEngine = useCallback<typeof fetch>(async (url, init) => {
         const pending = pendingAttachment.current
         const alternate = regenerating.current
@@ -495,16 +509,68 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         prepareSendMessagesRequest: ({ body, messages, trigger, messageId }) => ({
             body: trigger === 'regenerate-message' ? { ...body, regenerateMessageId: messageId } : { ...body, text: lastUserText(messages) },
         }),
-        fetch: sendToEngine,
+        prepareReconnectToStreamRequest: () => {
+            const target = resumeTarget.current
+            if (!target) return { api: 'desktop-resume:unavailable' }
+            return { api: `/api/desktop/sessions/${encodeURIComponent(target.sessionId)}/resume?runId=${encodeURIComponent(target.runId)}` }
+        },
+        fetch: async (url, init) => {
+            const href = url instanceof Request ? url.url : String(url)
+            if (href === 'desktop-resume:unavailable' || href.includes('/resume')) {
+                if (href === 'desktop-resume:unavailable') throw new Error('This reply cannot be resumed. Nothing was sent again.')
+                const response = await fetch(url, init)
+                if (response.status === 204 || response.headers.get('x-rerun-resume') === 'unavailable') throw new Error('This reply cannot be resumed. Nothing was sent again.')
+                if (!response.ok) {
+                    const body = await response.json().catch(() => null)
+                    throw new Error(typeof body?.error === 'string' ? body.error : 'This reply’s status is unavailable. Try again.')
+                }
+                return response
+            }
+            return sendToEngine(url, init)
+        },
     }), [sendToEngine])
 
-    const { messages, setMessages, sendMessage, regenerate, stop, status, error, clearError } = useChat({
+    const { messages, setMessages, sendMessage, regenerate, stop, status, error, clearError, resumeStream } = useChat({
         id: tabUid ? `desktop-${agent.id}-${tabUid}` : `desktop-${agent.id}`,
         transport,
         experimental_throttle: 60,
+        onFinish: ({ isAbort, isDisconnect, isError }) => {
+            if (!isAbort && !isDisconnect && !isError) completedRef.current = true
+        },
     })
 
     const busy = serviceStreaming || status === 'submitted' || status === 'streaming'
+    const resumeSession = useRef(sessionId)
+    const resumeRun = useRef<string | null>(null)
+    resumeSession.current = sessionId
+    resumeRun.current = liveRunId ?? (engineRunning.id === sessionId ? engineRunning.runId ?? null : null)
+    const [reconnectNote, setReconnectNote] = useState<string | null>(null)
+    const reconnecting = useRunReconnect({
+        error,
+        completedRef,
+        start: () => {
+            const currentSession = resumeSession.current
+            const runId = resumeRun.current
+            if (!currentSession || !runId) return null
+            return {
+                runId,
+                getRun: async () => {
+                    const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(currentSession)}/stop`, { cache: 'no-store' })
+                    const body = await response.json().catch(() => null)
+                    if (!response.ok || !body) return null
+                    if (body.running === true) return { status: 'running' }
+                    if (typeof body.failedRunError === 'string' && body.failedRunError) return { status: 'error', error: body.failedRunError }
+                    if (typeof body.failedRunId === 'string') return { status: 'error', error: null }
+                    return { status: 'done' }
+                },
+                fetchMessages: async () => (await historyFor(currentSession, AbortSignal.timeout(15000))).messages,
+                onSettled: ({ errored, errorText }) => { if (errored && errorText) setReconnectNote(errorText) },
+            }
+        },
+        resumeStream,
+        setMessages: setMessages as (messages: never[]) => void,
+        clearError,
+    })
     const inactive = agent.enabled === false
     // A matching session ID may still hold the snapshot from before a run or reload.
     // Only a complete snapshot from this read generation can acknowledge a finished reply.
@@ -582,6 +648,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
     const historyError = history.id === sessionId ? history.error : undefined
+    const savedFailure = history.id === sessionId ? replayedRunFailure(history.transcript ?? [], history.lastError ?? engineRunning.failedRunError ?? null) : null
+    const stopBanner = reconnectNote || savedFailure || (!reconnecting ? error?.message : undefined)
     // The SDK throttles message updates. Show the verified snapshot immediately when switching,
     // even if its subscription still holds the previous chat's messages.
     const showSaved = ready && (!busy || regenerationSource === sessionId && !!sessionId)
@@ -611,12 +679,13 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     useEffect(() => {
         if (busy) return
         const controller = new AbortController()
-        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal), approvalFor(sessionId, controller.signal), takeoverFor(sessionId, controller.signal), serviceRequestFor(sessionId, controller.signal), secretRequestFor(sessionId, controller.signal), readDesktopMcpSignIn(sessionId, { signal: controller.signal })]) : Promise.resolve([[], null, null, null, null, null, null] as [UIMessage[], null, null, null, null, null, null])
+        const emptyHistory: DesktopHistoryRead = { messages: [], lastError: null, activeRunId: null, runsUnavailable: false }
+        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal), approvalFor(sessionId, controller.signal), takeoverFor(sessionId, controller.signal), serviceRequestFor(sessionId, controller.signal), secretRequestFor(sessionId, controller.signal), readDesktopMcpSignIn(sessionId, { signal: controller.signal })]) : Promise.resolve([emptyHistory, null, null, null, null, null, null] as [DesktopHistoryRead, null, null, null, null, null, null])
         void read.then(([result, pending, approval, takeover, serviceRequest, secretRequest, mcpSignIn]) => {
             if (controller.signal.aborted) return
             if ([pending, approval, takeover, serviceRequest, secretRequest?.receipt ? null : secretRequest, mcpSignIn?.request?.receipt ? null : mcpSignIn?.request].filter(Boolean).length > 1) throw new Error('This conversation changed while loading. Reload it to see the current request.')
-            setMessages(result)
-            setHistory({ id: sessionId, transcript: result, question: pending, approval, takeover, serviceRequest, secretRequest, mcpSignIn, loadedGeneration: historyGeneration })
+            setMessages(result.messages)
+            setHistory({ id: sessionId, transcript: result.messages, question: pending, approval, takeover, serviceRequest, secretRequest, mcpSignIn, loadedGeneration: historyGeneration, lastError: result.lastError, activeRunId: result.activeRunId, runsUnavailable: result.runsUnavailable })
         }).catch(cause => {
             if (!controller.signal.aborted) setHistory({ id: sessionId, error: cause instanceof Error ? cause.message : 'Could not load history' })
         })
@@ -636,7 +705,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 if (cancelled) return
                 if (!response.ok) throw new Error('Run status unavailable')
                 const running = body.running === true
-                setEngineRunning({ id: sessionId, running, runId: running && typeof body.runId === 'string' ? body.runId : null, failedRunId: typeof body.failedRunId === 'string' ? body.failedRunId : null })
+                setEngineRunning({ id: sessionId, running, runId: running && typeof body.runId === 'string' ? body.runId : null, failedRunId: typeof body.failedRunId === 'string' ? body.failedRunId : null, failedRunError: typeof body.failedRunError === 'string' ? body.failedRunError : null })
                 if (running) {
                     wasRunning = true
                     timer = setTimeout(check, RUN_POLL_MS)
@@ -651,6 +720,23 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         void check()
         return () => { cancelled = true; clearTimeout(timer) }
     }, [sessionId, busy, ready, attempt])
+
+    const resumedRun = useRef<string | null>(null)
+    const wasActive = useRef(active)
+    useEffect(() => {
+        if (wasActive.current && !active) resumedRun.current = null
+        wasActive.current = active
+    }, [active])
+    useEffect(() => {
+        if (!active || busy || stopping || !sessionId || history.id !== sessionId || history.runsUnavailable || !history.activeRunId) return
+        const key = `${sessionId}:${history.activeRunId}`
+        if (resumedRun.current === key) return
+        resumedRun.current = key
+        resumeTarget.current = { sessionId, runId: history.activeRunId }
+        completedRef.current = false
+        setReconnectNote(null)
+        void resumeStream()
+    }, [active, busy, stopping, sessionId, history.id, history.runsUnavailable, history.activeRunId, resumeStream])
 
     async function handleStop(): Promise<boolean> {
         const id = stopTarget
@@ -689,7 +775,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
 
     async function submit(event: React.FormEvent) {
         event.preventDefault()
-        const text = input.trim()
+        const text = composer.current.text.trim()
         if (!active || !draft.loaded || draft.error || isDesktopQuitting() || preparingSubmit.current || (requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || (!text && !attachmentPaths.length && !documents.attachments.length && !uploadsBusy()) || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current || pendingAttachment.current) return
         const intent = submissionScope.current
         const currentIntent = () => submissionMounted.current && submissionScope.current === intent && submissionCurrent.current.active && !isDesktopQuitting()
@@ -1027,6 +1113,16 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     uploadGate.current = uploadDisabled
     const composerForm = useRef<HTMLFormElement>(null)
     const uploadFileInput = useRef<HTMLInputElement>(null)
+    const [findOpen, setFindOpen] = useState(false)
+    const [editorOpen, setEditorOpen] = useState(false)
+    const [editorSession, setEditorSession] = useState(0)
+    const expandable = isLongMessage(input)
+    useEffect(() => {
+        if (!active) return
+        const openFind = () => setFindOpen(true)
+        window.addEventListener('rerun-desktop-conversation-find', openFind)
+        return () => window.removeEventListener('rerun-desktop-conversation-find', openFind)
+    }, [active])
     const [uploadDragOver, setUploadDragOver] = useState(false)
     useEffect(() => {
         const form = composerForm.current
@@ -1139,6 +1235,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
 
             <Conversation key={sessionId ?? 'new'} className="min-h-0" aria-label="Chat messages">
                 <ConversationContent className="gap-4 px-3.5 py-4">
+                    <DesktopConversationFind open={findOpen && active} onOpenChange={setFindOpen} />
                     {!ready && !historyError && !busy && <p role="status" className="text-sm text-muted-foreground">Loading conversation…</p>}
                     {ready && transcript.length === 0 && !busy && (
                         <div className="py-16 text-center">
@@ -1200,8 +1297,10 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     }} />}
                     {generating && (sessionId ? <DesktopComputerPanel key={sessionId} agentId={agent.id} sessionId={sessionId} active={active} takeoverPending={!!takeover} fullViewerOpen={screenOpen !== null} onOpen={() => setScreenOpen('manual')} fallback={<div className="text-sm text-muted-foreground">{agent.name} is working…</div>} /> : <div className="text-sm text-muted-foreground">{agent.name} is working…</div>)}
                     {stopError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopError}</div>}
-                    {(error || historyError) && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
-                        {historyError || error?.message}
+                    {(history.id === sessionId && history.runsUnavailable) && <p role="status" className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">This reply’s status is unavailable. Nothing was sent again.</p>}
+                    {reconnecting && <p role="status" className="text-sm text-muted-foreground">Reconnecting to this reply…</p>}
+                    {(stopBanner || historyError) && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+                        {historyError || stopBanner}
                         {historyError && <Button type="button" size="sm" variant="outline" className="ml-2" onClick={() => {
                             setHistory({ id: undefined })
                             setAttempt(n => n + 1)
@@ -1255,6 +1354,14 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 {question && !webhookOwns('question', question.id) && <DesktopQuestionCard key={question.id} question={question} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
                 {approval && !webhookOwns('approval', approval.id) && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
                 {documentPreview && <DesktopDocumentLightbox {...documentPreview} onIndexChange={index => setDocumentPreview(value => value ? { ...value, index } : null)} onClose={() => setDocumentPreview(null)} />}
+                <MarkdownEditorDialog key={editorSession} open={editorOpen} onOpenChange={setEditorOpen} initialValue={input} title="Write your message" description="Room to structure a long message. Enter starts a new line." hint="Send with Cmd + Enter" closeLabel="Cancel" submitLabel="Send" submitIcon={<SendIcon className="size-4" />} submitting={preparingSend || stopping}
+                    onClose={markdown => { setInput(markdown); queueMicrotask(() => composerForm.current?.querySelector('textarea')?.focus()) }}
+                    onSubmit={markdown => {
+                        setInput(markdown)
+                        setEditorOpen(false)
+                        if (inactive || generating || stopping || draft.quitting || !ready || uploadsActive || preparingSend || !!pendingRequest) return
+                        composerForm.current?.requestSubmit()
+                    }} />
                 <form ref={composerForm} onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>
                     {uploadDragOver && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] border border-dashed border-brand bg-background/85">
                         <span className="flex items-center gap-2 text-sm font-medium text-brand"><UploadIcon className="size-4" />Drop files to attach</span>
@@ -1287,11 +1394,13 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         enabled={active && !inactive && draft.loaded && !draft.error && !draft.quitting && !regenerationSource && !detailPanel}
                         refreshKey={`${status}:${lastMessage?.id ?? ''}`}>
                     {mention => <>
+                    <div className="relative">
+                    {expandable && draft.loaded && !draft.error && <button type="button" aria-label="Open the full editor" title="Open the full editor" className="absolute top-1.5 right-1.5 z-10 rounded-md p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground" onClick={() => { setEditorSession(value => value + 1); setEditorOpen(true) }}><Maximize2Icon className="size-3.5" /></button>}
                     <Textarea
                         ref={mention.inputRef}
                         id={composerId}
                         rows={2}
-                        className="min-h-12 w-full resize-none rounded-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
+                        className={cn('min-h-12 w-full resize-none rounded-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent', expandable && 'pr-9')}
                         maxLength={20_000}
                         disabled={inactive || !draft.loaded || !!draft.error || draft.quitting}
                         readOnly={!!regenerationSource || !!attachmentPaths.length && status === 'submitted'}
@@ -1305,6 +1414,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             beginUpload(files)
                         }}
                     />
+                    </div>
                     {mention.menu}
                     {mention.targetError && /(?:^|\s)@\S*$/.test(input) && <div role="status" className="flex items-center gap-2 px-2.5 pb-2 text-xs text-muted-foreground"><span>{mention.targetError}</span><Button type="button" variant="ghost" size="xs" onClick={mention.retryTargets}>Retry coworkers</Button></div>}
                     {mention.error && /(?:^|\s)\/\S*$/.test(input) && <div role="status" className="flex items-center gap-2 px-2.5 pb-2 text-xs text-muted-foreground">
