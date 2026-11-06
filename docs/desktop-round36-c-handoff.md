@@ -99,3 +99,10 @@ const tools = createLocalExternalReadTools(canonicalExternalLiveCheck)
 `canonicalExternalLiveCheck` must call B's actual `getExternalMcpService().recheck` over that same internal authority, selecting only the exact live-check fields (B's strict schema rejects spreading extra principal fields). No speculative URL, key format, auth header or standalone listener was invented. B continues to own request receipts for effects; this package adds no mutation store/migration and performs no effect calls. No root registration should occur until this missing bridge is concretely implemented and checked. The new factory is a partial read adapter, not finished W4.
 
 Root still owns activation, all checks and native/restart acceptance. Further domain work must preserve canonical domain revisions/review/setup gates; the five read adapters do not authorize writes or imply missing domains are supported.
+
+
+### B bridge confirmation and scope correction
+
+B confirmed no cross-process dispatch/recheck contract is published. Root owns that binding; do not reuse another domain route or invent a URL/body/header. Existing custody helpers are engine `desktop/internal-client.ts:desktopInternalJson` and UI `server/auth.ts:authenticateDesktopEngineRequest`; these are transport custody primitives, not an external-tools bridge contract.
+
+B live recheck compares the full scope set for equality. Both owned adapters now explicitly require `mcp:read` and pass the principal's complete scope set to recheck, so keys with additional write scopes can still use authorized reads. They do not reduce or expand the key grant. Additional regression sources exercise mixed-scope preservation and denial without mcp:read. No checks executed; activation/full catalog remains blocked on root's canonical bridge.

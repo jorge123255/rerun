@@ -23,7 +23,8 @@ export function createLocalExternalReadTools(recheck: (input: ExternalMcpLiveChe
     async function checkpoint(context: ExternalMcpCallContext, signal: AbortSignal) {
         signal.throwIfAborted()
         const p = context.principal
-        const result = await recheck({ keyId: p.keyId, workspaceId: p.workspaceId, keyRevision: p.keyRevision, installId: p.installId, launchNonce: p.launchNonce, requestId: context.requestId, scopes: ['mcp:read'] })
+        if (!p.scopes.includes('mcp:read')) throw new Error('Read scope is required.')
+        const result = await recheck({ keyId: p.keyId, workspaceId: p.workspaceId, keyRevision: p.keyRevision, installId: p.installId, launchNonce: p.launchNonce, requestId: context.requestId, scopes: [...p.scopes] })
         signal.throwIfAborted()
         if (!result.ok) throw new Error('External authority changed.')
     }

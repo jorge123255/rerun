@@ -11,7 +11,8 @@ export function createExternalReadDispatch(binding: ExternalReadBinding): Extern
     const check = async (principal: ExternalMcpPrincipal, requestId: string, signal: AbortSignal) => {
         signal.throwIfAborted()
         const { keyId, workspaceId, keyRevision, installId, launchNonce } = externalMcpPrincipalSchema.parse(principal)
-        const result = await binding.recheck({ keyId, workspaceId, keyRevision, installId, launchNonce, requestId, scopes: ['mcp:read'] })
+        if (!principal.scopes.includes('mcp:read')) throw new Error('Read scope is required.')
+        const result = await binding.recheck({ keyId, workspaceId, keyRevision, installId, launchNonce, requestId, scopes: [...principal.scopes] })
         signal.throwIfAborted()
         if (!result.ok) throw new Error('External MCP authority is no longer current.')
     }
