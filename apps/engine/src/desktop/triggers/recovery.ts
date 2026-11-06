@@ -32,6 +32,18 @@ export async function recoverDesktopTriggerOwner(input: {
             uncertain++
             continue
         }
+        if (event.stopRequestId) {
+            // A crash can happen after the durable Stop marker but before its
+            // completion receipt. Reads do not retry Stop or revive its form.
+            if (run.status === 'cancelled') {
+                await store.updateEvent(engineAgentId, event.eventId, { status: 'cancelled', pendingToolCallId: null })
+                cancelled++
+            } else {
+                await store.updateEvent(engineAgentId, event.eventId, { status: 'uncertain', pendingToolCallId: null, error: 'The saved Stop needs confirmation. Retry that same Stop.' })
+                uncertain++
+            }
+            continue
+        }
         if (run.status === 'running') {
             // Leave as uncertain for UI honesty — do not resume the provider call.
             await store.updateEvent(engineAgentId, event.eventId, { status: 'uncertain', runId: run.id, engineSessionId: run.sessionId, error: 'App restarted while the trigger run was active' })

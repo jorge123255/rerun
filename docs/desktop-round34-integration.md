@@ -34,4 +34,12 @@ A model-created disposable POST webhook accepted one delivery and recognized its
 
 Private template capture preserved a synthetic PNG and Markdown note, with exact byte hashes visible in the original review/detail UI. Full-Box installation refused without creating a copy. It also exposed a design gap: installation always selected the first Box. The original board placement flow is being ported before template acceptance.
 
-Eight temporary permissions on the disposable QA copy remain to be restored after final testing. Claude's account approval has not been supplied, so live Claude reply/login persistence is not accepted. These are partial acceptance results, not closure of all 21 remaining capability groups.
+The documentation server is disconnected. Terminal, Files, Request credentials, Custom MCP servers and Propose MCP servers are restored off. Guest commands, Triggers and Ask the user remain temporarily on for the final repaired-build checks. Claude's account approval has not been supplied, so live Claude reply/login persistence is not accepted. These are partial acceptance results, not closure of all 21 remaining capability groups.
+
+## Final source repairs before rebuilt acceptance
+
+The Stop adapter now reads the exact command's saved terminal result after confirmed drain. It preserves a known completed result when Stop arrives too late, instead of equating drain with cancellation. Unknown or malformed cleanup still quarantines the exact guest and retains uncertainty. The final guest suites pass 4 files/80 checks.
+
+Webhook history no longer holds the engine agent lock across UI chat adoption. Original Stop reserves/finalizes under the shared lock and drains outside it; late initial-run callbacks cannot overwrite a Stop or a later human turn. Restart preserves unconfirmed Stop markers without reviving their forms. The full trigger/trigger-tool suites pass 14 files/80 checks, including lock ordering and late-settlement regressions.
+
+Templates now use the pinned original board placement pattern: Place N coworkers, visible ghosts, first-drop Box ownership, final-drop submission, Cancel without reservation, and exact saved-destination recovery. The board and application suites pass 13 files/93 checks. UI and engine type checks pass; targeted UI lint has zero errors and 23 warnings. These totals are separate latest suites, not sums added to overlapping earlier checks. Rebuilt Mac acceptance remains the final gate.

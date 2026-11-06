@@ -3,8 +3,31 @@ import { DESKTOP_TRIGGER_SLUG_RE, desktopTriggerFireInputSchema, type DesktopTri
 import { buildDesktopTriggerMessage } from './message.js'
 import { hashPayloadFingerprint } from './state.js'
 import { desktopTriggerDefinitionRevision } from './lifecycle.js'
+import { withAgentLock } from '../../agents/lock.js'
 import { tokenMatches } from './token.js'
 import type { DesktopTriggerAuthority, DesktopTriggerStore } from './types.js'
+
+/** A late initial-run callback has no authority over Stop or a newer human turn. */
+export async function settleDesktopTriggerOutcome(input: {
+    authority: DesktopTriggerAuthority; store: DesktopTriggerStore; engineAgentId: string
+    localAgentId: string; eventId: string; sessionId: string; runId: string; slug: string; revision: string
+    outcome: { kind: 'done' | 'error' | 'cancelled'; pendingToolCallId?: string } | null
+}): Promise<void> {
+    const { authority, store, engineAgentId: id, outcome } = input
+    await withAgentLock(id, async () => {
+        authority.assertActive()
+        const owner = await authority.resolveOwnerByEngineId(id), event = await store.getEvent(id, input.eventId)
+        if (owner.engineAgentId !== id || owner.localAgentId !== input.localAgentId || owner.deleting || !event || event.localAgentId !== input.localAgentId || event.engineAgentId !== id || event.engineSessionId !== input.sessionId || event.runId !== input.runId || event.slug !== input.slug || event.revision !== input.revision || event.stopRequestId || !['accepted', 'running', 'uncertain'].includes(event.status)) return
+        if (!store.listHumanAdmissions || (await store.listHumanAdmissions(id, input.eventId, input.sessionId)).length) return
+        const run = await authority.readRun(id, input.runId)
+        if (!run || run.id !== input.runId || run.agentId !== id || run.sessionId !== input.sessionId || run.triggerSource !== 'trigger' || run.triggerSlug !== input.slug || outcome && run.status !== outcome.kind) return
+        await store.updateEvent(id, input.eventId, outcome ? {
+            status: outcome.kind === 'cancelled' ? 'cancelled' : outcome.kind === 'error' ? 'error' : outcome.pendingToolCallId ? 'needs-input' : 'finished',
+            pendingToolCallId: outcome.pendingToolCallId ?? null,
+            error: outcome.kind === 'error' ? 'The trigger run failed. Open its chat for details.' : null,
+        } : { status: 'uncertain', error: 'Could not save the trigger outcome. Refresh its history.' })
+    })
+}
 
 export type DesktopTriggerDispatchResult =
     | { status: 202; eventId: string; runId: string; sessionId: string; localSessionId: string | null; replay: boolean }
@@ -80,9 +103,9 @@ export async function dispatchDesktopTriggerFire(input: { authority: DesktopTrig
         await store.updateEvent(id, eventId, { status: 'running', capturedPayload: true })
         await authority.markFired(id, slug, receivedAt).catch(() => {})
         if (!started.settled) throw new Error('Trigger settlement is unavailable')
-        void started.settled.then(async outcome => {
-            await store.updateEvent(id, eventId, { status: outcome.kind === 'cancelled' ? 'cancelled' : outcome.kind === 'error' ? 'error' : outcome.pendingToolCallId ? 'needs-input' : 'finished', pendingToolCallId: outcome.pendingToolCallId ?? null, error: outcome.kind === 'error' ? 'The trigger run failed. Open its chat for details.' : null })
-        }).catch(async () => { await store.updateEvent(id, eventId, { status: 'uncertain', error: 'Could not save the trigger outcome. Refresh its history.' }).catch(() => {}) })
+        const source = { authority, store, engineAgentId: id, localAgentId: owner.localAgentId, eventId, sessionId: started.sessionId, runId: started.runId, slug, revision }
+        void started.settled.then(outcome => settleDesktopTriggerOutcome({ ...source, outcome }))
+            .catch(() => settleDesktopTriggerOutcome({ ...source, outcome: null })).catch(() => {})
         return { status: 202, eventId, runId, sessionId, localSessionId, replay: false }
     } catch {
         let stopped = runId === null

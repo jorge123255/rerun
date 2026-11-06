@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { bindDesktopTriggers } from './binding.js'
 import { desktopTriggerHistory } from './history.js'
 import type { DesktopTriggerAuthority } from './types.js'
+import { withAgentLock } from '../../agents/lock.js'
+import { withKeyedLock } from '../../lib/lock.js'
+import { settleDesktopTriggerOutcome } from './dispatch.js'
+import { stopDesktopTriggerRun } from './stop.js'
 
 const disk = vi.hoisted(() => ({ client: null as Client | null }))
 vi.mock('../../db/systemDb.js', () => ({
@@ -81,6 +85,47 @@ async function saveForm(kind: 'question' | 'approval', runId = 'original') {
 }
 
 describe('webhook history from durable human-request transcripts', () => {
+    it('allows a roster mutation to reach the agent lock while chat adoption waits for the roster', async () => {
+        await disk.client!.execute('UPDATE desktop_trigger_events SET local_session_id=NULL')
+        let entered!: () => void, held!: () => void
+        const adoptionEntered = new Promise<void>(resolve => { entered = resolve })
+        const rosterHeld = new Promise<void>(resolve => { held = resolve })
+        const roster = withKeyedLock('trigger-history-test-roster', async () => {
+            held()
+            await adoptionEntered
+            await withAgentLock('engine', async () => {})
+        })
+        await rosterHeld
+        const adopt = vi.fn<DesktopTriggerAuthority['adoptTriggerSession']>(async input => {
+            entered()
+            return withKeyedLock('trigger-history-test-roster', async () => ({ agentId: input.localAgentId, engineAgentId: input.engineAgentId,
+                sessionId: 'adopted-chat', engineSessionId: input.engineSessionId, runId: input.runId, tabUid: 'adopted-tab', title: 'Hook' }))
+        })
+        const binding = bindDesktopTriggers({ getSystemClient: async () => disk.client!, authority: { ...authority, adoptTriggerSession: adopt } })
+        await Promise.all([desktopTriggerHistory(binding, 'engine'), roster])
+        expect((await binding.store.getEvent('engine', 'event'))?.localSessionId).toBe('adopted-chat')
+        expect(adopt).toHaveBeenCalledTimes(1)
+    })
+
+    it.each(['owner', 'run', 'stop'] as const)('does not attach a returned chat after its %s changes during adoption', async changed => {
+        await disk.client!.execute('UPDATE desktop_trigger_events SET local_session_id=NULL')
+        let localAgentId = 'local'
+        const binding = bindDesktopTriggers({ getSystemClient: async () => disk.client!, authority: { ...authority,
+            resolveOwnerByEngineId: async () => ({ engineAgentId: 'engine', localAgentId, enabled: true, deleting: false }),
+            adoptTriggerSession: async input => {
+                await withAgentLock('engine', async () => {
+                    if (changed === 'owner') localAgentId = 'replacement-owner'
+                    else if (changed === 'run') await disk.client!.execute("UPDATE desktop_trigger_events SET run_id='replacement-run'")
+                    else await disk.client!.execute("UPDATE desktop_trigger_events SET stop_request_id='saved-stop'")
+                })
+                return { agentId: input.localAgentId, engineAgentId: input.engineAgentId, sessionId: 'late-chat', engineSessionId: input.engineSessionId,
+                    runId: input.runId, tabUid: 'late-tab', title: 'Hook' }
+            },
+        } })
+        await desktopTriggerHistory(binding, 'engine')
+        expect((await binding.store.getEvent('engine', 'event'))?.localSessionId).toBeNull()
+    })
+
     it.each(['question', 'approval'] as const)('restores an unanswered %s after the first settlement acknowledgement was lost', async kind => {
         await saveForm(kind)
         const restarted = reopen()
@@ -165,5 +210,54 @@ describe('webhook history from durable human-request transcripts', () => {
         expect(history.items[0]?.status).toBe('cancelled')
         expect(history.pending).toEqual([])
         expect(cancelExactRun).not.toHaveBeenCalled()
+    })
+
+    it.each(['running', 'uncertain'] as const)('preserves an unfinished Stop across restart from %s without republishing its form', async status => {
+        await saveForm('question')
+        await disk.client!.execute({ sql: "UPDATE desktop_trigger_events SET status=?,stop_request_id='saved-stop',pending_tool_call_id='human-call'", args: [status] })
+        const binding = reopen()
+        await binding.recoverOwner('engine')
+        expect(await binding.store.getEvent('engine', 'event')).toMatchObject({ status: 'uncertain', stopRequestId: 'saved-stop', pendingToolCallId: null })
+        const history = await desktopTriggerHistory(binding, 'engine')
+        expect(history.items[0]?.status).toBe('uncertain')
+        expect(history.pending).toEqual([])
+        expect(cancelExactRun).not.toHaveBeenCalled()
+        expect(startTriggerRun).not.toHaveBeenCalled()
+    })
+
+    it.each(['stop', 'continuation', 'source-run'] as const)('ignores late initial completion and failure after %s supersedes it', async newer => {
+        const binding = reopen()
+        if (newer === 'stop') await disk.client!.execute("UPDATE desktop_trigger_events SET status='uncertain',stop_request_id='saved-stop'")
+        if (newer === 'continuation') await disk.client!.execute("INSERT INTO desktop_trigger_human_admissions VALUES('source','event','session','original','message','call','question','later-run')")
+        if (newer === 'source-run') await disk.client!.execute("UPDATE desktop_trigger_events SET run_id='replacement-run'")
+        const before = await binding.store.getEvent('engine', 'event')
+        const source = { authority, store: binding.store, engineAgentId: 'engine', localAgentId: 'local', eventId: 'event', sessionId: 'session', runId: 'original', slug: 'hook', revision: 'revision' }
+        await settleDesktopTriggerOutcome({ ...source, outcome: { kind: 'done', pendingToolCallId: 'stale-call' } })
+        await settleDesktopTriggerOutcome({ ...source, outcome: null })
+        expect(await binding.store.getEvent('engine', 'event')).toEqual(before)
+    })
+
+    it('settles the exact original run when no Stop or continuation supersedes it', async () => {
+        const binding = reopen()
+        await settleDesktopTriggerOutcome({ authority, store: binding.store, engineAgentId: 'engine', localAgentId: 'local', eventId: 'event',
+            sessionId: 'session', runId: 'original', slug: 'hook', revision: 'revision', outcome: { kind: 'done', pendingToolCallId: 'human-call' } })
+        expect(await binding.store.getEvent('engine', 'event')).toMatchObject({ status: 'needs-input', pendingToolCallId: 'human-call', runId: 'original' })
+    })
+
+    it('reserves Stop under the agent lock but releases it while the exact run drains', async () => {
+        await disk.client!.execute("UPDATE runs SET status='running'")
+        const binding = reopen()
+        const cancel = vi.fn<DesktopTriggerAuthority['cancelExactRun']>(async () => {
+            // A cancelled tool can acquire the agent lock while it unwinds.
+            await withAgentLock('engine', async () => { await disk.client!.execute("UPDATE runs SET status='cancelled'") })
+            await settleDesktopTriggerOutcome({ authority, store: binding.store, engineAgentId: 'engine', localAgentId: 'local', eventId: 'event',
+                sessionId: 'session', runId: 'original', slug: 'hook', revision: 'revision', outcome: { kind: 'cancelled' } })
+        })
+        const request = { requestId: crypto.randomUUID(), localSessionId: 'local-session', runId: 'original', expectedEventId: 'event' }
+        const stop = () => stopDesktopTriggerRun({ authority: { ...authority, cancelExactRun: cancel }, store: binding.store, engineAgentId: 'engine', localAgentId: 'local', body: request })
+        expect(await stop()).toMatchObject({ canceled: true, alreadyFinished: false, eventId: 'event' })
+        expect(await stop()).toMatchObject({ canceled: true, alreadyFinished: false, eventId: 'event' })
+        expect(cancel).toHaveBeenCalledTimes(1)
+        expect(await binding.store.getEvent('engine', 'event')).toMatchObject({ status: 'cancelled', stopRequestId: request.requestId })
     })
 })

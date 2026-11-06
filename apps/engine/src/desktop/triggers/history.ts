@@ -30,21 +30,32 @@ export async function readDesktopTriggerPendingTool(agentId: string, sessionId: 
 }
 /** Reconcile known identities only. A history read never launches provider work. */
 export async function desktopTriggerHistory(binding: DesktopTriggerEngineBinding, id: string, slug?: string) {
+    // The UI adoption callback takes its roster lock, whose mutation paths can
+    // call back into the engine agent lock. Never hold the latter across it.
+    const owner = await binding.authority.resolveOwnerByEngineId(id)
+    for (const event of await binding.store.listEvents(id, slug, 200)) {
+        if (owner.engineAgentId !== id || owner.deleting || event.localAgentId !== owner.localAgentId || event.localSessionId || !event.engineSessionId || event.stopRequestId) continue
+        try {
+            const chat = await binding.authority.adoptTriggerSession({ localAgentId: owner.localAgentId, engineAgentId: id, engineSessionId: event.engineSessionId, runId: event.runId, title: event.triggerName })
+            if (chat.agentId !== owner.localAgentId || chat.engineAgentId !== id || chat.engineSessionId !== event.engineSessionId || chat.runId !== event.runId || !chat.sessionId) continue
+            await withAgentLock(id, async () => {
+                const currentOwner = await binding.authority.resolveOwnerByEngineId(id)
+                const current = await binding.store.getEvent(id, event.eventId)
+                if (currentOwner.engineAgentId !== id || currentOwner.localAgentId !== owner.localAgentId || currentOwner.deleting || !current || current.localAgentId !== owner.localAgentId || current.engineAgentId !== id || current.engineSessionId !== event.engineSessionId || current.runId !== event.runId || current.slug !== event.slug || current.revision !== event.revision || current.stopRequestId || current.localSessionId) return
+                await binding.store.updateEvent(id, event.eventId, { localSessionId: chat.sessionId })
+            })
+        } catch { /* Keep the event visible without attaching an unverified chat. */ }
+    }
     // Human admission and Stop share this lock. A verified terminal projection must
     // not overwrite a Stop or a newly admitted continuation while it is being saved.
     return withAgentLock(id, () => reconcileDesktopTriggerHistory(binding, id, slug))
 }
 async function reconcileDesktopTriggerHistory(binding: DesktopTriggerEngineBinding, id: string, slug?: string) {
     const owner = await binding.authority.resolveOwnerByEngineId(id)
+    if (owner.engineAgentId !== id || owner.deleting) throw new Error('Webhook coworker ownership changed')
     const events = await binding.store.listEvents(id, slug, 200)
     for (const event of events) {
         if (event.localAgentId !== owner.localAgentId || event.stopRequestId) continue
-        if (!event.localSessionId && event.engineSessionId) {
-            try {
-                const chat = await binding.authority.adoptTriggerSession({ localAgentId: owner.localAgentId, engineAgentId: id, engineSessionId: event.engineSessionId, runId: event.runId, title: event.triggerName })
-                await binding.store.updateEvent(id, event.eventId, { localSessionId: chat.sessionId })
-            } catch { /* The event remains visible without an unverified chat link. */ }
-        }
         if (event.runId && event.engineSessionId && ['accepted', 'running', 'uncertain'].includes(event.status)) {
             const run = await binding.authority.readRun(id, event.runId)
             if (!run || run.id !== event.runId || run.agentId !== id || run.sessionId !== event.engineSessionId || run.triggerSource !== 'trigger' || run.triggerSlug !== event.slug || run.status === 'running') continue
@@ -60,6 +71,12 @@ async function reconcileDesktopTriggerHistory(binding: DesktopTriggerEngineBindi
     }
     const current = await binding.store.listEvents(id, slug, 200)
     const items = await binding.lifecycle.history(id, slug)
+    for (const event of current) {
+        if (event.stopRequestId && ['accepted', 'running', 'uncertain', 'needs-input'].includes(event.status)) {
+            const item = items.find(row => row.eventId === event.eventId)
+            if (item) { item.status = 'uncertain'; item.error = 'The saved Stop needs confirmation. Retry that same Stop.' }
+        }
+    }
     const pending = current.filter(row => row.pendingToolCallId && row.localSessionId && !row.stopRequestId && row.status !== 'cancelled').map(row => ({ eventId: row.eventId, localSessionId: row.localSessionId, engineSessionId: row.engineSessionId, toolCallId: row.pendingToolCallId }))
     for (const event of current) {
         if (event.localAgentId !== owner.localAgentId || !event.runId || !event.engineSessionId || !event.localSessionId || event.stopRequestId || event.status === 'cancelled') continue

@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto'
 import { desktopTriggerStopSchema } from '@rerun/contracts'
 import { withKeyedLock } from '../../lib/lock.js'
+import { withAgentLock } from '../../agents/lock.js'
 import type { DesktopTriggerAuthority, DesktopTriggerStore } from './types.js'
 export class DesktopTriggerStopError extends Error { constructor(readonly status: number, message: string) { super(message); this.name = 'DesktopTriggerStopError' } }
 export async function stopDesktopTriggerRun(input: { authority: DesktopTriggerAuthority; store: DesktopTriggerStore; engineAgentId: string; localAgentId: string; body: unknown }): Promise<{ canceled: boolean; alreadyFinished: boolean; eventId: string | null }> {
     const body = desktopTriggerStopSchema.parse(input.body), id = input.engineAgentId
     return withKeyedLock(`desktop-trigger-stop:${id}`, async () => {
+        const prepared = await withAgentLock(id, async () => {
         input.authority.assertActive()
         const owner = await input.authority.resolveOwnerByEngineId(id)
         if (owner.localAgentId !== input.localAgentId || owner.engineAgentId !== id || owner.deleting) throw new DesktopTriggerStopError(409, 'Coworker identity changed')
@@ -14,7 +16,7 @@ export async function stopDesktopTriggerRun(input: { authority: DesktopTriggerAu
         const fingerprint = createHash('sha256').update(JSON.stringify({ id, eventId: match.eventId, runId: body.runId, session: body.localSessionId })).digest('hex')
         let receipt = await input.store.findIntent(id, body.requestId)
         if (receipt && (receipt.kind !== 'stop' || receipt.fingerprint !== fingerprint)) throw new DesktopTriggerStopError(409, 'This Stop request belongs to another run')
-        if (receipt?.resultJson) return JSON.parse(receipt.resultJson)
+        if (receipt?.resultJson) return { kind: 'replay' as const, result: JSON.parse(receipt.resultJson) as { canceled: boolean; alreadyFinished: boolean; eventId: string | null } }
         if (!receipt) {
             receipt = { requestId: body.requestId, fingerprint, kind: 'stop', slug: `stop:${match.eventId}`, before: null, after: null, revision: match.revision, resultJson: null }
             const pending = await input.store.findPendingIntent(id, receipt.slug)
@@ -26,17 +28,32 @@ export async function stopDesktopTriggerRun(input: { authority: DesktopTriggerAu
             }
         }
         const run = await input.authority.readRun(id, body.runId)
-        if (!run || run.agentId !== id || run.sessionId !== match.engineSessionId || run.triggerSource !== 'trigger' || run.triggerSlug !== match.slug) throw new DesktopTriggerStopError(409, 'Run belongs to another conversation')
+        if (!run || run.id !== body.runId || run.agentId !== id || run.sessionId !== match.engineSessionId || run.triggerSource !== 'trigger' || run.triggerSlug !== match.slug) throw new DesktopTriggerStopError(409, 'Run belongs to another conversation')
+        if (match.stopRequestId && match.stopRequestId !== receipt.requestId) throw new DesktopTriggerStopError(409, 'Another Stop owns this delivery')
         if (run.status === 'running') {
             await input.store.updateEvent(id, match.eventId, { stopRequestId: receipt.requestId })
-            await input.authority.cancelExactRun(id, run.id)
         }
+        return { kind: 'stop' as const, run, match, receipt }
+        })
+        if (prepared.kind === 'replay') return prepared.result
+        const { run, match, receipt } = prepared
+        // Drain outside the agent lock: a cancelling tool may need that same lock
+        // to settle. Its durable Stop marker already blocks new continuation work.
+        if (run.status === 'running') await input.authority.cancelExactRun(id, run.id)
+        return withAgentLock(id, async () => {
+        const owner = await input.authority.resolveOwnerByEngineId(id)
+        const current = await input.store.getEvent(id, match.eventId)
+        if (owner.engineAgentId !== id || owner.localAgentId !== input.localAgentId || owner.deleting || !current || current.localAgentId !== owner.localAgentId || current.runId !== run.id || current.engineSessionId !== match.engineSessionId || current.localSessionId !== match.localSessionId || current.slug !== match.slug || (current.stopRequestId && current.stopRequestId !== receipt.requestId)) throw new DesktopTriggerStopError(409, 'Trigger ownership changed while stopping')
         const final = await input.authority.readRun(id, run.id)
-        if (!final || final.status === 'running') throw new DesktopTriggerStopError(503, 'Trigger run has not finished stopping. Retry Stop.')
-        const status = final.status === 'cancelled' ? 'cancelled' : final.status === 'error' ? 'error' : match.status === 'needs-input' ? 'needs-input' : 'finished'
-        await input.store.updateEvent(id, match.eventId, { status })
+        if (!final || final.id !== run.id || final.agentId !== id || final.sessionId !== match.engineSessionId || final.triggerSource !== 'trigger' || final.triggerSlug !== match.slug || !['done', 'cancelled', 'error'].includes(final.status)) throw new DesktopTriggerStopError(503, 'Trigger run has not finished stopping. Retry Stop.')
+        const status = final.status === 'cancelled' ? 'cancelled' : final.status === 'error' ? 'error' : !current.stopRequestId && current.status === 'needs-input' ? 'needs-input' : 'finished'
+        const continued = (await input.store.listHumanAdmissions?.(id, match.eventId, match.engineSessionId!) ?? []).length > 0
+        // A Stop for the original already-finished run must not replace its newer
+        // human continuation's projection.
+        if (!continued) await input.store.updateEvent(id, match.eventId, { status, ...(current.stopRequestId ? { pendingToolCallId: null } : {}) })
         const result = { canceled: status === 'cancelled', alreadyFinished: run.status !== 'running', eventId: match.eventId }
         await input.store.completeIntent(id, receipt.requestId, JSON.stringify(result))
         return result
+        })
     })
 }
