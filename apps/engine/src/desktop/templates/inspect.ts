@@ -14,7 +14,7 @@ import {
 } from '@rerun/contracts'
 import { TemplateRequestError } from './errors.ts'
 import { desktopSkillAuthorityRequired, trustedSkillOwners } from '../service-skills/authority.ts'
-import { collidingRelativePaths, readConfined, readConfinedBytes, walkConfined } from './files.ts'
+import { collidingRelativePaths, isReservedTemplateWorkspacePath, readConfined, readConfinedBytes, walkConfined } from './files.ts'
 import { templateMediaType, normalizeTemplateRequirements } from './fidelity.ts'
 import { readEnvironmentKeyNames } from './files.ts'
 import { canonicalJson, sha256 } from './hash.ts'
@@ -286,10 +286,10 @@ export async function inspectCoworker(
 
     const selectableFiles: InspectedFile[] = []
     if ((await existsKind(resolve(folder, 'workspace'))) === 'link') exclusions.push({ path: 'workspace', reason: 'link' })
-    const workspace = await walkConfined(folder, 'workspace', maxWalkEntries)
+    const workspace = await walkConfined(folder, 'workspace', maxWalkEntries, path => !isReservedTemplateWorkspacePath(path))
     if (workspace.truncated) blocked = blocked ?? 'This coworker has too many files to capture'
     for (const entry of workspace.entries) {
-        if (entry.path === 'workspace/.rerun' || entry.path.startsWith('workspace/.rerun/')) continue
+        if (isReservedTemplateWorkspacePath(entry.path)) continue
         if (entry.kind !== 'file') {
             exclusions.push({ path: entry.path, reason: entry.kind === 'link' ? 'link' : 'unsupported' })
             continue

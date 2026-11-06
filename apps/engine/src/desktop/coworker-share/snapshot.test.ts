@@ -57,3 +57,19 @@ test('archive round-trip validates byte fidelity and manifest tampering', async 
     tampered[20] ^= 255
     await expect(readPortableArchive(tampered)).rejects.toThrow()
 })
+
+test('internal workspace rows never enter snapshot members or archive bytes while ordinary hidden files remain portable', async () => {
+    const current = source()
+    const reserved = ['workspace/.rerun-backup-old','workspace/.rerun-skill-lock','workspace/docs/.rerun-publish-id.json','workspace/docs/.rerun-backup-dir/old.md','workspace/.RERUN-edit-alias']
+    const hidden = ['workspace/.notes.md','workspace/docs/.keep','workspace/.user-folder/guide.txt']
+    for (const path of [...reserved,...hidden]) current.members.push({ path,bytes: Buffer.from(reserved.includes(path) ? 'OLD_PRIVATE_BACKUP_SENTINEL' : 'Hidden user content'),kind: 'text',binary: false,textScanned: true,flagged: [],ownership: 'user' })
+    const snapshot = await createDesktopCoworkerSnapshot(current,{ memories: false,database: false,files: true })
+    const restored = await readPortableArchive(snapshot.archiveBytes)
+    const paths = restored.members.map(member => member.path)
+    expect(paths).toEqual(expect.arrayContaining(['SOUL.md','INSTALL.md','config.json','skills/user/SKILL.md',...hidden]))
+    for (const path of reserved) {
+        expect(paths).not.toContain(path)
+        expect(snapshot.manifest.coworkers[0]!.members.some(member => member.path === path)).toBe(false)
+    }
+    expect(restored.members.some(member => member.bytes.includes(Buffer.from('OLD_PRIVATE_BACKUP_SENTINEL')))).toBe(false)
+})

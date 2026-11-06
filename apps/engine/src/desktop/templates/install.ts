@@ -17,7 +17,7 @@ import {
 } from '@rerun/contracts'
 import { withPortableLibraryLease } from './portable-lock.ts'
 import { TemplateRequestError } from './errors.ts'
-import { readConfined, writeExclusiveFile } from './files.ts'
+import { isReservedTemplateWorkspacePath, readConfined, writeExclusiveFile } from './files.ts'
 import { canonicalJson, sha256 } from './hash.ts'
 import { renameSkillEntry } from '../skill-publication-native.ts'
 import { readOwnJson, replaceOwnJson, templateHome, writeOwnJson, requestHome } from './store.ts'
@@ -81,8 +81,8 @@ const importReceiptSchema = z.strictObject({
 })
 type ImportReceipt = z.infer<typeof importReceiptSchema>
 
-const ALLOWED = /^(?:SOUL\.md|INSTALL\.md|config\.json|workspace\/(?!\.rerun(?:\/|$)).+|skills\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\/.+)$/
-export const isTemplateManifestPath = (path: string): boolean => ALLOWED.test(path)
+const ALLOWED = /^(?:SOUL\.md|INSTALL\.md|config\.json|workspace\/.+|skills\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\/.+)$/
+export const isTemplateManifestPath = (path: string): boolean => ALLOWED.test(path) && !isReservedTemplateWorkspacePath(path)
 
 export function manifestBody(manifest: TemplateManifest): Omit<TemplateManifest, 'revision'> {
     const { revision, ...body } = manifest
@@ -109,7 +109,7 @@ export async function readManifest(dataRoot: string, templateId: string, revisio
         seen.add(coworker.agentKey)
         const paths = new Set<string>()
         for (const file of coworker.files) {
-            if (!ALLOWED.test(file.path) || paths.has(file.path)) throw new TemplateRequestError(409, 'Template manifest has an unsupported path')
+            if (!isTemplateManifestPath(file.path) || paths.has(file.path)) throw new TemplateRequestError(409, 'Template manifest has an unsupported path')
             paths.add(file.path)
             total += file.bytes
             const reader = file.binary || file.kind === 'binary'

@@ -168,8 +168,14 @@ export async function writeExclusiveFile(directory: string, relativeName: string
 
 export type WalkEntry = { path: string; kind: 'file' | 'link' | 'other' }
 
+/** Workspace journals, backups, locks and service metadata are never portable user files. */
+export function isReservedTemplateWorkspacePath(path: string): boolean {
+    const parts = path.split('/')
+    return parts[0] === 'workspace' && parts.slice(1).some(part => part.normalize('NFKC').toLowerCase().startsWith('.rerun'))
+}
+
 // Directory links are recorded and not entered. The walk stops at maxEntries.
-export async function walkConfined(root: string, directory: string, maxEntries: number): Promise<{ entries: WalkEntry[]; truncated: boolean }> {
+export async function walkConfined(root: string, directory: string, maxEntries: number, include?: (path: string) => boolean): Promise<{ entries: WalkEntry[]; truncated: boolean }> {
     const entries: WalkEntry[] = []
     let truncated = false
     let visited = 0
@@ -180,8 +186,9 @@ export async function walkConfined(root: string, directory: string, maxEntries: 
         if (!info || info.isSymbolicLink() || !info.isDirectory()) return
         const children = await readdir(full, { withFileTypes: true })
         for (const child of children.sort((left, right) => left.name.localeCompare(right.name))) {
-            if (++visited > maxEntries) { truncated = true; return }
             const path = relativeDir ? `${relativeDir}/${child.name}` : child.name
+            if (include && !include(path)) continue
+            if (++visited > maxEntries) { truncated = true; return }
             if (!isDesktopTemplateRelativePath(path)) { entries.push({ path: child.name || path, kind: 'other' }); continue }
             if (child.isSymbolicLink()) entries.push({ path, kind: 'link' })
             else if (child.isDirectory()) await visit(path)
