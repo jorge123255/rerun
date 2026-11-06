@@ -1351,4 +1351,3 @@ exports[`sqlite ladders > system.db v9 produces the schema it shipped with 1`] =
   ],
 }
 `;
-
