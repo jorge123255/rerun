@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS desktop_foreman_intake_completions (
 );
 CREATE INDEX IF NOT EXISTS desktop_foreman_intake_completions_chat
   ON desktop_foreman_intake_completions(workspace_id, chat_id, updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS desktop_foreman_intake_completion_reserved_chat
+  ON desktop_foreman_intake_completions(workspace_id, chat_id)
+  WHERE state IN ('pending', 'uncertain', 'acknowledged');
 `
 
 export async function ensureDesktopForemanIntakeSchema(db: Client): Promise<void> {

@@ -29,5 +29,6 @@ export {
     skipDesktopIntakeWebsite,
     type DesktopIntakeMachineState,
 } from './machine'
-export { createMemoryDesktopForemanIntakeClientPorts, type DesktopForemanIntakeClientPorts } from './ports'
+export { createMemoryDesktopForemanIntakeClientPorts, DesktopForemanIntakeClientConflictError, type DesktopForemanIntakeClientPorts, type DesktopIntakeSiteObservation } from './ports'
 export { useDesktopForemanIntake, type DesktopForemanIntakeController } from './use-desktop-foreman-intake'
+export { flushDesktopForemanIntakeWrites } from './writes'

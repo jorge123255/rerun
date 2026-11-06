@@ -41,7 +41,7 @@ export async function authenticateDesktopRequest(request: Request): Promise<Desk
     if (desktopWorkspaceFrozen(runtime) && ['POST','PUT','PATCH','DELETE'].includes(request.method)) {
         const path = new URL(request.url).pathname
         const draft = /\/agents\/[^/]+\/draft$/.test(path) || /^\/api\/desktop\/brain\/(?:pages(?:\/|$)|ui-state$)/.test(path) || path === '/api/desktop/recent-coworkers' || path === '/api/desktop/foreman' || path === '/api/desktop/foreman/voice' || path === '/api/desktop/foreman/company'
-        if (!draft) throw new DesktopHttpError(409, 'This workspace is switching. Wait for it to finish.')
+        if (!draft && path !== '/api/desktop/foreman/intake') throw new DesktopHttpError(409, 'This workspace is switching. Wait for it to finish.')
     }
     return runtime
 }

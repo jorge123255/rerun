@@ -3,11 +3,13 @@ import type { Client } from '@libsql/client'
 import { DESKTOP_COMPANY_DISCOVERY_SCHEMA_STATEMENTS } from './company-discovery/store'
 import { FOREMAN_VOICE_SCHEMA_SQL } from './foreman-voice/store'
 import { desktopForemanDocsSchemaSql } from './foreman-docs/store'
+import { DESKTOP_FOREMAN_INTAKE_SCHEMA_SQL } from './foreman-intake/schema'
 export async function initializeDesktopRound35(db: Client) {
     const steps = [
         { version: 27, id: 'public-company-discovery', sql: DESKTOP_COMPANY_DISCOVERY_SCHEMA_STATEMENTS.join(';') },
         { version: 28, id: 'foreman-voice-attempts', sql: FOREMAN_VOICE_SCHEMA_SQL },
         { version: 29, id: 'foreman-docs-receipts', sql: desktopForemanDocsSchemaSql },
+        { version: 30, id: 'foreman-company-intake', sql: DESKTOP_FOREMAN_INTAKE_SCHEMA_SQL },
     ]
     for (const step of steps) {
         const tx = await db.transaction('write')

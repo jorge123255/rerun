@@ -11,12 +11,13 @@ import { DesktopIntakeField } from './DesktopIntakeField'
 type Props = {
     draft: IntakeDraft
     disabled?: boolean
+    autoFocus?: boolean
     onChange: (patch: Partial<IntakeDraft>) => void
     onChoose: (industry: TemplateCategory) => void
     onEnter: () => void
 }
 
-export function DesktopIntakeIndustryStep({ draft, disabled, onChange, onChoose, onEnter }: Props) {
+export function DesktopIntakeIndustryStep({ draft, disabled, autoFocus = true, onChange, onChoose, onEnter }: Props) {
     const [custom, setCustom] = useState(!!draft.industryLabel)
 
     return (
@@ -39,6 +40,7 @@ export function DesktopIntakeIndustryStep({ draft, disabled, onChange, onChoose,
                     <CustomOptionRow
                         open={custom}
                         onOpen={() => {
+                            if (disabled) return
                             setCustom(true)
                             onChange({ industry: null })
                         }}
@@ -46,7 +48,7 @@ export function DesktopIntakeIndustryStep({ draft, disabled, onChange, onChoose,
                         className="col-span-2 max-sm:col-span-1"
                     >
                         <DesktopIntakeField
-                            autoFocus
+                            autoFocus={autoFocus}
                             value={draft.industryLabel}
                             disabled={disabled}
                             placeholder="Bakery, dental practice, gym…"

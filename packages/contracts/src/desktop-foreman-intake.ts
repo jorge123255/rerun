@@ -80,7 +80,7 @@ export const desktopForemanIntakeSaveInputSchema = z.strictObject({
 })
 export type DesktopForemanIntakeSaveInput = z.infer<typeof desktopForemanIntakeSaveInputSchema>
 
-export const DESKTOP_FOREMAN_INTAKE_COMPLETION_STATES = ['pending', 'acknowledged', 'failed', 'unavailable'] as const
+export const DESKTOP_FOREMAN_INTAKE_COMPLETION_STATES = ['pending', 'uncertain', 'acknowledged', 'failed', 'unavailable'] as const
 export const desktopForemanIntakeCompletionStateSchema = z.enum(DESKTOP_FOREMAN_INTAKE_COMPLETION_STATES)
 export type DesktopForemanIntakeCompletionState = z.infer<typeof desktopForemanIntakeCompletionStateSchema>
 
@@ -160,7 +160,12 @@ export function publishDesktopForemanIntakeCompletion(
     }
 }
 
-/** Root-bound authority that writes the profile and opens Foreman discovery/plan. */
+/**
+ * Root-bound authority that writes the profile and opens Foreman discovery/plan.
+ * Both effects must be idempotent for the complete workspace/chat/request/fingerprint identity.
+ * `null` from lookup means definitely absent; an unknown outcome must throw. A retry uses the
+ * same reserved request and answers after restart, and never authorizes a second conversation.
+ */
 export type DesktopForemanIntakeCompletionAuthority = {
     deliver(input: {
         chat: DesktopForemanChatRef
@@ -172,7 +177,9 @@ export type DesktopForemanIntakeCompletionAuthority = {
         runId: string | null
         industry: TemplateCategory | null
     }>
-    lookup(requestId: string): Promise<{
+    lookup(input: { chat: DesktopForemanChatRef; requestId: string; fingerprint: string }): Promise<{
+        chat: DesktopForemanChatRef
+        requestId: string
         fingerprint: string
         conversationId: string | null
         runId: string | null

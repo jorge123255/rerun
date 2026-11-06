@@ -13,8 +13,6 @@ import {
     createMemoryDesktopForemanIntakeStore,
     createSqliteDesktopForemanIntakeStore,
     DesktopForemanIntakeConflictError,
-    DesktopForemanIntakeRefusal,
-    fingerprintIntakeAnswers,
 } from './store'
 
 const chat = { workspaceId: 'ws-1', chatId: 'fmc_intakechat01' }
@@ -84,9 +82,9 @@ describe('memory desktop foreman intake store', () => {
                 delivers += 1
                 return { conversationId: 'conv-1', runId: null, industry: 'saas' }
             },
-            async lookup(requestId) {
+            async lookup(identity) {
                 return delivers > 0
-                    ? { fingerprint: fingerprintIntakeAnswers({ companyUrl: 'acme.com', industry: null, decidedIndustry: null, industryLabel: null, position: 'Founder', firstName: 'Ada' }), conversationId: 'conv-1', runId: null, industry: 'saas' }
+                    ? { ...identity, conversationId: 'conv-1', runId: null, industry: 'saas' }
                     : null
             },
         }
@@ -108,12 +106,12 @@ describe('memory desktop foreman intake store', () => {
                 },
                 authority,
             ),
-        ).rejects.toBeInstanceOf(DesktopForemanIntakeRefusal)
+        ).rejects.toBeInstanceOf(DesktopForemanIntakeConflictError)
     })
 
     it('reports unavailable when completion authority is missing — never pretend success', async () => {
         const store = createMemoryDesktopForemanIntakeStore()
-        const saved = await store.save(saveInput({ requestId: '00000000-0000-4000-8000-000000000051' }))
+        const saved = await store.save(saveInput({ requestId: '00000000-0000-4000-8000-000000000051', draft: { ...EMPTY_DRAFT, companyUrl: 'acme.com', position: 'Founder', firstName: 'Ada' } }))
         const receipt = await store.complete(
             {
                 chat,

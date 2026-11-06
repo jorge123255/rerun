@@ -14,6 +14,8 @@ import { ForemanVoiceSlot } from '@/components/desktop/foreman-voice/ForemanVoic
 import { registerForemanVoiceQuit } from '@/lib/desktop/foreman-voice/quit'
 import { DesktopCompanyResearch } from './company-brief/DesktopCompanyResearch'
 import { DesktopForemanColumn } from './DesktopForemanColumn'
+import { useDesktopForemanIntake } from '@/lib/desktop/foreman-intake'
+import { createDesktopForemanIntakeClient } from '@/lib/desktop/foreman-intake/client'
 
 export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; signal: AbortSignal; settle: (error?: Error) => void }
 export type DesktopForemanPanelProps = {
@@ -55,6 +57,10 @@ export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
 }
 function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { initial: DesktopForemanClientState }) {
     const [state, setState] = useState(initial)
+    const intakePorts = useMemo(() => createDesktopForemanIntakeClient(), [])
+    const intake = useDesktopForemanIntake({ chat: initial.chat, ports: intakePorts, active: !!props.controlledOpen && !props.hidden })
+    const intakeEligible = initial.messages.length === 0 || intake.hasSavedProgress
+    const intakeOpen = intakeEligible && !intake.finished
     const projectFeed = useMemo(() => createClientDockFeed(initial.chat), [initial.chat.workspaceId, initial.chat.chatId])
     const [dockFeed, setDockFeed] = useState(() => projectFeed(initial))
     const [voiceSlot, setVoiceSlot] = useState<ReactNode>(null)
@@ -109,28 +115,29 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const [focusRequest, setFocusRequest] = useState<string>()
     useEffect(() => {
         const command = props.command
-        if (!client || !command || consumed.current.has(command.id)) return
+        if (!client || !command || consumed.current.has(command.id) || intakeEligible && !intake.restored) return
         consumed.current.add(command.id)
         const signal = command.signal
         void (async () => {
             signal.throwIfAborted()
             if (command.chat.chatId !== initial.chat.chatId || command.chat.workspaceId !== initial.chat.workspaceId) throw new Error('Foreman conversation changed.')
+            if (intakeOpen && command.text.trim()) throw new Error('Finish the company questions before asking the Foreman to plan your team.')
             if (command.text.trim() && !await client.ports.conversation.sendMessage(command.text.trim(), signal)) throw new Error('Foreman did not accept this message.')
             if (!command.text.trim()) signal.throwIfAborted()
             setFocusRequest(command.id)
             command.settle()
         })().catch(error => command.settle(error instanceof Error ? error : new Error('Could not ask Foreman.')))
-    }, [client, props.command, initial.chat.chatId, initial.chat.workspaceId])
+    }, [client, props.command, initial.chat.chatId, initial.chat.workspaceId, intakeOpen, intakeEligible, intake.restored])
     const close = useCallback(() => { if (active.current) current.current.onClose() }, [])
     if (!client) return <div role="status" className={props.className}>Opening Foreman…</div>
     return <>
     {(props.modelChoice ?? state.model ?? props.workspaceModelChoice) && <ForemanVoiceOwner target={{ chat: state.chat, model: (props.modelChoice ?? state.model ?? props.workspaceModelChoice)! }}
-        active={!props.hidden && !state.view.live} engage={() => {}}
+        active={!props.hidden && !state.view.live && !intakeOpen} engage={() => {}}
         accepted={() => { void client.refresh() }} onSlot={setVoiceSlot} onSettings={props.onOpenTranscriptionSettings} />}
-    <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />
+    {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
     <DesktopForemanColumn
         controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
-        dockFeed={dockFeed} voiceSlot={voiceSlot}        focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
+        dockFeed={dockFeed} voiceSlot={voiceSlot} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={error ? <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span> : undefined}

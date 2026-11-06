@@ -1,348 +1,133 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type {
-    DesktopForemanChatRef,
-    DesktopForemanIntakeCompletionReceipt,
-    IntakeDraft,
-    IntakeStep,
-    TemplateCategory,
-} from '@rerun/contracts'
-import { furthestReachable, rolesForIndustry, stepAnswered, toIntake } from '@rerun/contracts'
-
-import {
-    answersFromDesktopIntake,
-    canAdvanceDesktopIntake,
-    chooseDesktopIntakeIndustry,
-    chooseDesktopIntakeRole,
-    desktopIntakeStepsOf,
-    goToDesktopIntakeStep,
-    hydrateDesktopIntakeMachine,
-    initialDesktopIntakeMachine,
-    nextDesktopIntakeStep,
-    patchDesktopIntakeDraft,
-    siteLooksReadable,
-    skipDesktopIntakeWebsite,
-    type DesktopIntakeMachineState,
-} from './machine'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { furthestReachable, rolesForIndustry, stepAnswered, type DesktopForemanChatRef, type DesktopForemanIntakeCompletionReceipt, type IntakeDraft, type IntakeStep, type TemplateCategory } from '@rerun/contracts'
+import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
+import { answersFromDesktopIntake, canAdvanceDesktopIntake, chooseDesktopIntakeIndustry, chooseDesktopIntakeRole, desktopIntakeStepsOf, goToDesktopIntakeStep, nextDesktopIntakeStep, patchDesktopIntakeDraft, siteLooksReadable, skipDesktopIntakeWebsite } from './machine'
 import type { DesktopForemanIntakeClientPorts } from './ports'
+import { changeIntake, intakeLocked, intakeRecord, mayEditIntake, publishIntake, requestIntakeHint, restoreIntake, saveIntake, submitIntake } from './writes'
 
 const TYPING_PAUSE_MS = 350
 
 export type DesktopForemanIntakeController = {
-    steps: IntakeStep[]
-    step: IntakeStep
-    index: number
-    last: boolean
-    answered: boolean[]
-    reachable: number
-    canAdvance: boolean
-    draft: IntakeDraft
-    industry: TemplateCategory | null
-    deciding: boolean
-    siteRead: 'reading' | 'ready' | null
-    submitting: boolean
-    restored: boolean
-    revision: number
-    error: string | null
-    completion: DesktopForemanIntakeCompletionReceipt | null
-    /** True once an acknowledged completion exists — card must not reopen effects. */
-    finished: boolean
-    set: (patch: Partial<IntakeDraft>) => void
-    chooseIndustry: (industry: TemplateCategory) => void
-    chooseRole: (position: string) => void
-    skipWebsite: () => void
-    goTo: (index: number) => void
-    back: () => void
-    next: () => void
-    roles: string[]
+    steps: IntakeStep[]; step: IntakeStep; index: number; last: boolean; answered: boolean[]; reachable: number; canAdvance: boolean
+    draft: IntakeDraft; industry: TemplateCategory | null; deciding: boolean; siteRead: 'reading' | 'ready' | null
+    submitting: boolean; restored: boolean; revision: number; error: string | null; completion: DesktopForemanIntakeCompletionReceipt | null; finished: boolean
+    locked: boolean; quitting: boolean; canRetry: boolean; saveFailed: boolean; conflicted: boolean; hasSavedProgress: boolean
+    set(patch: Partial<IntakeDraft>): void; chooseIndustry(industry: TemplateCategory): void; chooseRole(position: string): void
+    skipWebsite(): void; goTo(index: number): void; back(): void; next(): void; roles: string[]
+    retryRestore(): void; retrySave(): void; reloadSaved(): void
 }
 
-/**
- * Desktop port of useForemanIntake.
- * Local adaptations vs original:
- * - Persists draft/step to the chat-scoped store with revision CAS (original wrote nothing until submit).
- * - Completion is one idempotent request; restore/read never delivers.
- * - Industry/site authorities are optional and fail closed.
- */
-export function useDesktopForemanIntake(options: {
+/** Original intake questions with a chat-scoped draft writer; restore never starts effects. */
+export function useDesktopForemanIntake({ chat, ports, autoPersist = true, active = true }: {
     chat: DesktopForemanChatRef
     ports: DesktopForemanIntakeClientPorts
-    /** When false, autofocus is suppressed (lab / multi-card pages). */
+    /** Labs may defer draft writes until an explicit submit. */
     autoPersist?: boolean
+    /** Hidden/closed intake cannot start classification or a site request. */
+    active?: boolean
 }): DesktopForemanIntakeController {
-    const { chat, ports, autoPersist = true } = options
-    const [machine, setMachine] = useState<DesktopIntakeMachineState>(() => initialDesktopIntakeMachine(null))
-    const [deciding, setDeciding] = useState(false)
-    const [readFor, setReadFor] = useState<string | null>(null)
-    const [restored, setRestored] = useState(false)
-    const [completion, setCompletion] = useState<DesktopForemanIntakeCompletionReceipt | null>(null)
-    const race = useRef(0)
-    const sent = useRef<string | null>(null)
-    const portsRef = useRef(ports)
-    const chatRef = useRef(chat)
-    const persistChain = useRef(Promise.resolve())
-    const completionRequestId = useRef<string | null>(null)
-    const revisionRef = useRef(0)
-    const machineRef = useRef(machine)
+    const record = useMemo(() => intakeRecord(chat, ports), [chat.workspaceId, chat.chatId])
+    const subscribe = useCallback((listener: () => void) => { record.listeners.add(listener); return () => { record.listeners.delete(listener) } }, [record])
+    const snapshot = useSyncExternalStore(subscribe, () => record.snapshot, () => record.snapshot)
+    const [quitting, setQuitting] = useState(isDesktopQuitting)
+    const [observation, setObservation] = useState<{ record: typeof record; intent: object; deciding: boolean; siteRead: 'reading' | 'ready' | null } | null>(null)
+
+    useEffect(() => { record.ports = ports }, [record, ports])
     useEffect(() => {
-        machineRef.current = machine
-        revisionRef.current = machine.revision
-    }, [machine])
+        void restoreIntake(record)
+        return () => { record.read?.controller.abort(); requestIntakeHint(record, null) }
+    }, [record])
+    useEffect(() => subscribeDraftShutdown(() => {
+        const closing = isDesktopQuitting()
+        setQuitting(closing)
+        if (closing) { record.read?.controller.abort(); requestIntakeHint(record, null) }
+        else if (!record.snapshot.restored) void restoreIntake(record)
+    }), [record])
 
+    const intent = snapshot.intent
+    const locked = intakeLocked(record)
     useEffect(() => {
-        portsRef.current = ports
-    }, [ports])
-    useEffect(() => {
-        chatRef.current = chat
-    }, [chat])
-
-    // Hydrate once per chat identity. Read-only: never completes.
-    useEffect(() => {
-        let cancelled = false
-        setRestored(false)
-        setCompletion(null)
-        completionRequestId.current = null
-        sent.current = null
-        race.current += 1
-        void portsRef.current.read(chat).then(view => {
-            if (cancelled) return
-            if (view.session.chat.workspaceId !== chat.workspaceId || view.session.chat.chatId !== chat.chatId) return
-            const hydrated = hydrateDesktopIntakeMachine({
-                draft: view.session.draft,
-                stepIndex: view.session.stepIndex,
-                decidedIndustry: view.session.decidedIndustry,
-                knownFirstName: view.session.knownFirstName,
-                revision: view.session.revision,
-            })
-            revisionRef.current = hydrated.revision
-            machineRef.current = hydrated
-            setMachine(hydrated)
-            setCompletion(view.completion)
-            setRestored(true)
-        })
-        return () => {
-            cancelled = true
-        }
-    }, [chat.workspaceId, chat.chatId])
-
-    const persist = useCallback((next: DesktopIntakeMachineState) => {
-        if (!autoPersist || !restored) return
-        machineRef.current = next
-        persistChain.current = persistChain.current.then(async () => {
-            const latest = machineRef.current
-            const requestId = crypto.randomUUID()
-            const payload = {
-                chat: chatRef.current,
-                requestId,
-                baseRevision: revisionRef.current,
-                stepIndex: latest.index,
-                draft: latest.draft,
-                decidedIndustry: latest.decided,
-                knownFirstName: latest.knownFirstName,
-            }
-            try {
-                const view = await portsRef.current.save(payload)
-                if (view.session.chat.chatId !== chatRef.current.chatId) return
-                revisionRef.current = view.session.revision
-                setMachine(current => ({
-                    ...current,
-                    revision: view.session.revision,
-                }))
-                setCompletion(view.completion)
-            } catch (error) {
-                const message = error instanceof Error ? error.message : 'We could not save that. Try again.'
-                setMachine(current => ({ ...current, error: message }))
-            }
-        })
-    }, [autoPersist, restored])
-
-    const steps = useMemo(() => desktopIntakeStepsOf(machine), [machine])
-    const industry = machine.draft.industry ?? machine.decided
-    const reachable = furthestReachable(steps, machine.draft)
-    const canAdvance = canAdvanceDesktopIntake(machine)
-    const readable = siteLooksReadable(machine.draft.companyUrl)
-    const picked = !!machine.draft.industry
-
-    const decide = useCallback((input: string) => {
-        if (!portsRef.current.decideIndustry) return
-        if (sent.current === input) return
-        sent.current = input
-        const token = (race.current += 1)
-        setDeciding(true)
-        void portsRef.current
-            .decideIndustry(input)
-            .then(found => {
-                if (race.current !== token) return
-                setMachine(current => {
-                    const next = { ...current, decided: found }
-                    persist(next)
-                    return next
-                })
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (race.current !== token) return
-                setDeciding(false)
-                setReadFor(input)
-            })
-    }, [persist])
-
-    useEffect(() => {
-        if (!readable || picked || (!portsRef.current.analyzeSite && !portsRef.current.decideIndustry)) return
+        if (!active || quitting) { if (intent) requestIntakeHint(record, null); return }
+        if (!intent || !snapshot.restored || intakeLocked(record) || snapshot.machine.submitting) return
+        const controller = new AbortController()
+        const capturedPorts = ports
+        const current = () => !controller.signal.aborted && !isDesktopQuitting() && record.snapshot.intent === intent && !intakeLocked(record) && !record.snapshot.machine.submitting
         const timer = setTimeout(() => {
-            portsRef.current.analyzeSite?.(readable)
-            decide(readable)
+            if (!current()) return
+            const site = siteLooksReadable(intent.input)
+            setObservation({ record, intent, deciding: !!capturedPorts.decideIndustry, siteRead: site && capturedPorts.analyzeSite ? 'reading' : null })
+            if (capturedPorts.decideIndustry) {
+                void Promise.resolve().then(() => current() ? capturedPorts.decideIndustry!(intent.input, controller.signal) : null).then(found => {
+                    if (!current()) return
+                    changeIntake(record, { ...record.snapshot.machine, decided: found }, autoPersist)
+                }).catch(() => {
+                    if (current()) publishIntake(record, { machine: { ...record.snapshot.machine, error: 'We could not identify the industry. You can continue.' } })
+                }).finally(() => {
+                    if (current()) setObservation(value => value?.record === record && value.intent === intent ? { ...value, deciding: false } : value)
+                })
+            }
+            if (site && capturedPorts.analyzeSite) {
+                void Promise.resolve().then(() => current() ? capturedPorts.analyzeSite!(site, controller.signal) : undefined).then(result => {
+                    if (current()) setObservation(value => value?.record === record && value.intent === intent ? { ...value, siteRead: result?.state === 'ready' ? 'ready' : null } : value)
+                }).catch(() => {
+                    if (!current()) return
+                    setObservation(value => value?.record === record && value.intent === intent ? { ...value, siteRead: null } : value)
+                    publishIntake(record, { machine: { ...record.snapshot.machine, error: 'We could not read the website. You can continue.' } })
+                })
+            }
         }, TYPING_PAUSE_MS)
-        return () => clearTimeout(timer)
-    }, [readable, picked, decide])
+        return () => { clearTimeout(timer); controller.abort() }
+    }, [record, ports, intent, snapshot.restored, snapshot.machine.submitting, locked, active, quitting, autoPersist])
 
-    const set = useCallback(
-        (patch: Partial<IntakeDraft>) => {
-            setMachine(current => {
-                const next = patchDesktopIntakeDraft(current, patch)
-                persist(next)
-                return next
-            })
-        },
-        [persist],
-    )
-
+    const set = useCallback((patch: Partial<IntakeDraft>) => {
+        if (!active || !mayEditIntake(record)) return
+        const next = patchDesktopIntakeDraft(record.snapshot.machine, patch)
+        changeIntake(record, next, autoPersist)
+        if (patch.companyUrl !== undefined) requestIntakeHint(record, siteLooksReadable(next.draft.companyUrl))
+    }, [record, autoPersist, active])
+    const chooseIndustry = useCallback((industry: TemplateCategory) => {
+        if (!active || !mayEditIntake(record)) return
+        requestIntakeHint(record, null)
+        changeIntake(record, chooseDesktopIntakeIndustry(record.snapshot.machine, industry), autoPersist)
+    }, [record, autoPersist, active])
+    const chooseRole = useCallback((position: string) => {
+        if (!active || !mayEditIntake(record)) return
+        const next = chooseDesktopIntakeRole(record.snapshot.machine, position)
+        changeIntake(record, next.state, autoPersist)
+        if (next.shouldSubmit) void submitIntake(record)
+    }, [record, autoPersist, active])
     const skipWebsite = useCallback(() => {
-        setMachine(current => {
-            if (current.submitting) return current
-            race.current += 1
-            sent.current = null
-            setDeciding(false)
-            const next = skipDesktopIntakeWebsite(current)
-            persist(next)
-            return next
-        })
-    }, [persist])
-
-    const chooseIndustry = useCallback(
-        (pickedIndustry: TemplateCategory) => {
-            setMachine(current => {
-                const next = chooseDesktopIntakeIndustry(current, pickedIndustry)
-                persist(next)
-                return next
-            })
-        },
-        [persist],
-    )
-
-    const submit = useCallback(async (state: DesktopIntakeMachineState) => {
-        if (state.submitting) return
-        const requestId = completionRequestId.current ?? crypto.randomUUID()
-        completionRequestId.current = requestId
-        setMachine(current => ({ ...current, submitting: true, error: null }))
-        try {
-            // Flush any in-flight draft saves so expectedRevision matches durable state.
-            await persistChain.current
-            const latest = await portsRef.current.read(chatRef.current)
-            if (latest.completion?.state === 'acknowledged') {
-                setCompletion(latest.completion)
-                setMachine(current => ({ ...current, submitting: false, revision: latest.session.revision }))
-                return
-            }
-            const answers = toIntake(state.draft, state.knownFirstName, state.decided)
-            let receipt = await portsRef.current.complete({
-                chat: chatRef.current,
-                requestId,
-                expectedRevision: latest.session.revision,
-                answers,
-            })
-            if (receipt.state === 'failed' || receipt.state === 'pending') {
-                // Lost-ACK recovery: same request id, never a second conversation.
-                const recovered = await portsRef.current.lookupCompletion(requestId)
-                if (recovered) receipt = recovered
-            }
-            setCompletion(receipt)
-            if (receipt.state === 'failed' || receipt.state === 'unavailable') {
-                setMachine(current => ({
-                    ...current,
-                    submitting: false,
-                    error: receipt.error ?? (receipt.missingAuthority ? 'Intake completion is not available yet.' : 'We could not save that. Try again.'),
-                }))
-                return
-            }
-            setMachine(current => ({ ...current, submitting: false }))
-        } catch (error) {
-            setMachine(current => ({
-                ...current,
-                submitting: false,
-                error: error instanceof Error ? error.message : 'We could not save that. Try again.',
-            }))
-        }
-    }, [])
-
-    const chooseRole = useCallback(
-        (position: string) => {
-            setMachine(current => {
-                const { state: next, shouldSubmit } = chooseDesktopIntakeRole(current, position)
-                if (!shouldSubmit) persist(next)
-                else void submit(next)
-                return shouldSubmit ? { ...next, submitting: true } : next
-            })
-        },
-        [persist, submit],
-    )
-
-    const goTo = useCallback(
-        (target: number) => {
-            setMachine(current => {
-                const next = goToDesktopIntakeStep(current, target)
-                persist(next)
-                return next
-            })
-        },
-        [persist],
-    )
-
+        if (!active || !mayEditIntake(record)) return
+        requestIntakeHint(record, null)
+        changeIntake(record, skipDesktopIntakeWebsite(record.snapshot.machine), autoPersist)
+    }, [record, autoPersist, active])
+    const goTo = useCallback((target: number) => {
+        if (active && mayEditIntake(record)) changeIntake(record, goToDesktopIntakeStep(record.snapshot.machine, target), autoPersist)
+    }, [record, autoPersist, active])
     const next = useCallback(() => {
-        setMachine(current => {
-            const { state: advanced, shouldSubmit, hint } = nextDesktopIntakeStep(current)
-            if (hint) {
-                if (siteLooksReadable(hint)) portsRef.current.analyzeSite?.(hint)
-                decide(hint)
-            }
-            if (!shouldSubmit) {
-                persist(advanced)
-                return advanced
-            }
-            void submit(advanced)
-            return { ...advanced, submitting: true }
-        })
-    }, [decide, persist, submit])
+        if (!active) return
+        if (record.completionAttempt && !record.snapshot.machine.submitting && !isDesktopQuitting()) { void submitIntake(record); return }
+        if (!mayEditIntake(record)) return
+        const next = nextDesktopIntakeStep(record.snapshot.machine)
+        changeIntake(record, next.state, autoPersist)
+        if (next.shouldSubmit) void submitIntake(record)
+        else if (next.hint) requestIntakeHint(record, next.hint)
+    }, [record, autoPersist, active])
 
-    const finished = completion?.state === 'acknowledged'
-
+    const { machine } = snapshot
+    const steps = desktopIntakeStepsOf(machine)
+    const industry = machine.draft.industry ?? machine.decided
+    const visibleObservation = observation?.record === record && observation.intent === intent ? observation : null
     return {
-        steps,
-        step: steps[machine.index] ?? 'company',
-        index: machine.index,
-        last: machine.index === steps.length - 1,
-        answered: steps.map(step => stepAnswered(step, machine.draft)),
-        reachable,
-        canAdvance,
-        draft: machine.draft,
-        industry,
-        deciding,
-        siteRead: !readable || picked ? null : readFor === readable ? 'ready' : ports.decideIndustry || ports.analyzeSite ? 'reading' : null,
-        submitting: machine.submitting,
-        restored,
-        revision: machine.revision,
-        error: machine.error,
-        completion,
-        finished,
-        set,
-        chooseIndustry,
-        chooseRole,
-        skipWebsite,
-        goTo,
-        back: () => goTo(machine.index - 1),
-        next,
-        roles: rolesForIndustry(industry),
+        steps, step: steps[machine.index] ?? 'company', index: machine.index, last: machine.index === steps.length - 1,
+        answered: steps.map(step => stepAnswered(step, machine.draft)), reachable: furthestReachable(steps, machine.draft), canAdvance: canAdvanceDesktopIntake(machine),
+        draft: machine.draft, industry, deciding: visibleObservation?.deciding ?? false, siteRead: visibleObservation?.siteRead ?? null,
+        submitting: machine.submitting, restored: snapshot.restored, revision: machine.revision, error: machine.error, completion: snapshot.completion,
+        finished: snapshot.completion?.state === 'acknowledged', locked, quitting, canRetry: !!record.completionAttempt && snapshot.completion?.state !== 'acknowledged', saveFailed: snapshot.saveFailed, conflicted: snapshot.conflicted, hasSavedProgress: record.savedRevision > 0 || snapshot.completion !== null,
+        set, chooseIndustry, chooseRole, skipWebsite, goTo, back: () => goTo(record.snapshot.machine.index - 1), next, roles: rolesForIndustry(industry),
+        retryRestore: () => { if (active) void restoreIntake(record) }, retrySave: () => { if (active) void saveIntake(record) }, reloadSaved: () => { if (active) void restoreIntake(record, true) },
     }
 }
 

@@ -1,13 +1,19 @@
 import { createHash } from 'node:crypto'
 
-import type { Client } from '@libsql/client'
+import type { Client, Transaction } from '@libsql/client'
 import {
     DESKTOP_FOREMAN_INTAKE_MISSING,
     desktopForemanIntakeCompletionReceiptSchema,
+    desktopForemanIntakeCompleteInputSchema,
+    desktopForemanIntakeAnswersSchema,
     desktopForemanIntakeDraftSchema,
+    desktopForemanIntakeSaveInputSchema,
     desktopForemanIntakeSessionSchema,
     desktopForemanIntakeViewSchema,
     EMPTY_DRAFT,
+    intakeSteps,
+    stepAnswered,
+    toIntake,
     type DesktopForemanChatRef,
     type DesktopForemanIntakeCompletionAuthority,
     type DesktopForemanIntakeCompletionReceipt,
@@ -58,7 +64,7 @@ export type DesktopForemanIntakeStore = {
         authority: DesktopForemanIntakeCompletionAuthority | null,
         now?: () => Date,
     ): Promise<DesktopForemanIntakeCompletionReceipt>
-    lookupCompletion(requestId: string): Promise<DesktopForemanIntakeCompletionReceipt | null>
+    lookupCompletion(chat: DesktopForemanChatRef, requestId: string): Promise<DesktopForemanIntakeCompletionReceipt | null>
 }
 
 const sameChat = (a: DesktopForemanChatRef, b: DesktopForemanChatRef) => a.workspaceId === b.workspaceId && a.chatId === b.chatId
@@ -79,8 +85,51 @@ function fingerprintSave(input: DesktopForemanIntakeSaveInput): string {
         .digest('hex')
 }
 
-export function fingerprintIntakeAnswers(answers: DesktopForemanIntakeCompleteInput['answers']): string {
-    return createHash('sha256').update(JSON.stringify(['desktop-foreman-intake-complete-v1', answers])).digest('hex')
+export function fingerprintIntakeAnswers(answers: DesktopForemanIntakeCompleteInput['answers'], chat: DesktopForemanChatRef, requestId: string): string {
+    return createHash('sha256').update(JSON.stringify(['desktop-foreman-intake-complete-v1', chat.workspaceId, chat.chatId, requestId, desktopForemanIntakeAnswersSchema.parse(answers)])).digest('hex')
+}
+
+// The earlier source package called ambiguous delivery exceptions "failed". Keep those legacy
+// identities reserved too; only unavailable proves that no authority was invoked.
+const activeCompletion = (receipt: DesktopForemanIntakeCompletionReceipt) => receipt.state !== 'unavailable'
+const completionPriority = (receipt: DesktopForemanIntakeCompletionReceipt) => receipt.state === 'acknowledged' ? 2 : activeCompletion(receipt) ? 1 : 0
+const COMPLETION_FLIGHTS = Symbol.for('rerun.desktop.foreman.intake.flights.v1')
+const completionFlights = () => ((globalThis as unknown as Record<symbol, WeakMap<object, Map<string, Promise<DesktopForemanIntakeCompletionReceipt>>>>)[COMPLETION_FLIGHTS] ??= new WeakMap())
+const SQLITE_WRITES = Symbol.for('rerun.desktop.foreman.intake.sqlite-writes.v2')
+const sqliteWrites = () => ((globalThis as unknown as Record<symbol, { tail: Promise<unknown> }>)[SQLITE_WRITES] ??= { tail: Promise.resolve() })
+type SqliteExecutor = Pick<Transaction, 'execute'>
+
+// Native SQLite BEGIN may synchronously wait for another connection's write lock. Two Clients
+// on the same local file must not block the JavaScript continuation that commits the first one.
+// Share a short process-wide queue for schema/transactions; authority work is never enqueued.
+// Other processes remain fenced by SQLite transactions and the durable unique/CAS constraints.
+function serializeSqliteIntakeWrite<T>(work: () => Promise<T>): Promise<T> {
+    const queue = sqliteWrites()
+    const result = queue.tail.catch(() => {}).then(work)
+    queue.tail = result.catch(() => {})
+    return result
+}
+
+function completionFromRow(row: Record<string, unknown>): DesktopForemanIntakeCompletionReceipt {
+    try {
+        const receipt = desktopForemanIntakeCompletionReceiptSchema.parse(JSON.parse(String(row.body)))
+        if (receipt.requestId !== String(row.request_id) || receipt.chat.workspaceId !== String(row.workspace_id) || receipt.chat.chatId !== String(row.chat_id)
+            || receipt.fingerprint !== String(row.fingerprint) || receipt.state !== String(row.state)
+            || receipt.createdAt !== String(row.created_at) || receipt.updatedAt !== String(row.updated_at)
+            || fingerprintIntakeAnswers(receipt.answers, receipt.chat, receipt.requestId) !== receipt.fingerprint) throw new Error('Identity mismatch')
+        return receipt
+    } catch { throw new DesktopForemanIntakeRefusal(503, 'The saved intake completion identity could not be confirmed.') }
+}
+
+function deliverOnce(key: object, receipt: DesktopForemanIntakeCompletionReceipt, work: () => Promise<DesktopForemanIntakeCompletionReceipt>) {
+    let flights = completionFlights().get(key)
+    if (!flights) { flights = new Map(); completionFlights().set(key, flights) }
+    const current = flights.get(receipt.requestId)
+    if (current) return current
+    const result = work()
+    flights.set(receipt.requestId, result)
+    void result.then(() => { if (flights!.get(receipt.requestId) === result) flights!.delete(receipt.requestId) }, () => { if (flights!.get(receipt.requestId) === result) flights!.delete(receipt.requestId) })
+    return result
 }
 
 function emptySession(chat: DesktopForemanChatRef, knownFirstName: string | null, now: string): DesktopForemanIntakeSession {
@@ -109,7 +158,8 @@ export function createMemoryDesktopForemanIntakeStore(options?: {
     const sessions = new Map<string, SessionRow>()
     const writes = new Map<string, WriteRow>()
     const completions = new Map<string, DesktopForemanIntakeCompletionReceipt>()
-    const keyOf = (chat: DesktopForemanChatRef) => `${chat.workspaceId}::${chat.chatId}`
+    const keyOf = (chat: DesktopForemanChatRef) => JSON.stringify([chat.workspaceId, chat.chatId])
+    const coordinationKey = {}
     const stamp = () => (options?.now ?? (() => new Date()))().toISOString()
     let chain = Promise.resolve()
 
@@ -130,7 +180,7 @@ export function createMemoryDesktopForemanIntakeStore(options?: {
 
     const latestCompletionFor = (chat: DesktopForemanChatRef): DesktopForemanIntakeCompletionReceipt | null => {
         const matches = [...completions.values()].filter(entry => sameChat(entry.chat, chat))
-        matches.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+        matches.sort((a, b) => completionPriority(a) - completionPriority(b) || a.updatedAt.localeCompare(b.updatedAt))
         return matches.at(-1) ?? null
     }
 
@@ -145,6 +195,7 @@ export function createMemoryDesktopForemanIntakeStore(options?: {
         },
         save(input) {
             return run(async () => {
+                input = desktopForemanIntakeSaveInputSchema.parse(input)
                 const parsed = desktopForemanIntakeDraftSchema.parse(input.draft)
                 const current = readSession(input.chat)
                 const hash = fingerprintSave({ ...input, draft: parsed })
@@ -162,8 +213,8 @@ export function createMemoryDesktopForemanIntakeStore(options?: {
                     throw new DesktopForemanIntakeConflictError(viewOf(current, latestCompletionFor(input.chat)))
                 }
                 const completed = latestCompletionFor(input.chat)
-                if (completed?.state === 'acknowledged') {
-                    throw new DesktopForemanIntakeRefusal(409, 'This Foreman intake is already finished for this chat.')
+                if (completed && activeCompletion(completed)) {
+                    throw new DesktopForemanIntakeConflictError(viewOf(current, completed), 'This intake already has a reserved completion. Resolve the same request before editing answers.')
                 }
                 const now = stamp()
                 const next = desktopForemanIntakeSessionSchema.parse({
@@ -185,11 +236,12 @@ export function createMemoryDesktopForemanIntakeStore(options?: {
                 return viewOf(next, completed)
             })
         },
-        complete(input, authority, now = () => new Date()) {
-            return run(async () =>
-                completeIntake({
+        async complete(input, authority, now = () => new Date()) {
+            input = desktopForemanIntakeCompleteInputSchema.parse(input)
+            const receipt = await run(async () =>
+                reserveIntakeCompletion({
                     input,
-                    authority,
+                    authorityAvailable: !!authority,
                     now,
                     readSession,
                     latestCompletionFor,
@@ -199,99 +251,91 @@ export function createMemoryDesktopForemanIntakeStore(options?: {
                     getCompletion: id => completions.get(id) ?? null,
                 }),
             )
+            if (receipt.state === 'acknowledged' || receipt.state === 'unavailable') return receipt
+            return deliverOnce(coordinationKey, receipt, () => deliverReservedCompletion(receipt, authority, now, next => run(() => {
+                const existing = completions.get(next.requestId)
+                if (!existing || !sameChat(existing.chat, next.chat) || existing.fingerprint !== next.fingerprint) throw new DesktopForemanIntakeRefusal(409, 'This intake completion identity changed.')
+                if (existing.state === 'acknowledged') return existing
+                completions.set(next.requestId, next)
+                return next
+            })))
         },
-        lookupCompletion(requestId) {
-            return run(async () => completions.get(requestId) ?? null)
+        lookupCompletion(chat, requestId) {
+            return run(async () => {
+                const receipt = completions.get(requestId)
+                return receipt && sameChat(receipt.chat, chat) ? receipt : null
+            })
         },
     }
 }
 
-async function completeIntake(args: {
+async function reserveIntakeCompletion(args: {
     input: DesktopForemanIntakeCompleteInput
-    authority: DesktopForemanIntakeCompletionAuthority | null
+    authorityAvailable: boolean
     now: () => Date
     readSession: (chat: DesktopForemanChatRef) => Promise<DesktopForemanIntakeSession> | DesktopForemanIntakeSession
     latestCompletionFor: (chat: DesktopForemanChatRef) => Promise<DesktopForemanIntakeCompletionReceipt | null> | DesktopForemanIntakeCompletionReceipt | null
     putCompletion: (receipt: DesktopForemanIntakeCompletionReceipt) => Promise<void> | void
     getCompletion: (requestId: string) => Promise<DesktopForemanIntakeCompletionReceipt | null> | DesktopForemanIntakeCompletionReceipt | null
 }): Promise<DesktopForemanIntakeCompletionReceipt> {
-    const { input, authority, now } = args
-    const fingerprint = fingerprintIntakeAnswers(input.answers)
+    const { input, authorityAvailable, now } = args
+    const fingerprint = fingerprintIntakeAnswers(input.answers, input.chat, input.requestId)
     const existing = await args.getCompletion(input.requestId)
     if (existing) {
         if (!sameChat(existing.chat, input.chat) || existing.fingerprint !== fingerprint) {
             throw new DesktopForemanIntakeRefusal(409, 'That intake completion request was already used for different answers.')
         }
         if (existing.state === 'acknowledged') return existing
-        // Lost ACK / pending / failed / previously-unavailable: re-check the same request id (never mint a new one).
     }
 
     const session = await args.readSession(input.chat)
-    if (input.expectedRevision !== session.revision) {
-        throw new DesktopForemanIntakeConflictError(viewOf(session, await args.latestCompletionFor(input.chat)), 'This intake draft changed before it could be submitted.')
-    }
-
     const latest = await args.latestCompletionFor(input.chat)
-    if (latest && latest.requestId !== input.requestId && latest.state === 'acknowledged') {
-        throw new DesktopForemanIntakeRefusal(409, 'This Foreman intake is already finished for this chat.')
+    if (latest && latest.requestId !== input.requestId && activeCompletion(latest)) {
+        throw new DesktopForemanIntakeConflictError(viewOf(session, latest), 'This chat already has a reserved intake completion. Retry its original request.')
+    }
+    if (existing && activeCompletion(existing)) return existing
+    if (input.expectedRevision !== session.revision) {
+        throw new DesktopForemanIntakeConflictError(viewOf(session, latest), 'This intake draft changed before it could be submitted.')
     }
 
+    const steps = intakeSteps(session.knownFirstName, session.draft.websiteSkipped)
+    if (!steps.every(step => stepAnswered(step, session.draft))) throw new DesktopForemanIntakeRefusal(422, 'Answer each intake question before continuing.')
+    const answers = desktopForemanIntakeAnswersSchema.parse(toIntake(session.draft, session.knownFirstName, session.decidedIndustry))
+    if (fingerprintIntakeAnswers(answers, input.chat, input.requestId) !== fingerprint) {
+        throw new DesktopForemanIntakeConflictError(viewOf(session, latest), 'These answers do not match the saved intake draft. Save and review the current answers first.')
+    }
     const createdAt = existing?.createdAt ?? now().toISOString()
-    if (!authority) {
-        const unavailable = desktopForemanIntakeCompletionReceiptSchema.parse({
-            requestId: input.requestId,
-            chat: input.chat,
-            fingerprint,
-            state: 'unavailable',
-            answers: input.answers,
-            followUp: null,
-            error: 'Foreman intake completion is not wired yet.',
-            missingAuthority: DESKTOP_FOREMAN_INTAKE_MISSING.completion,
-            createdAt,
-            updatedAt: now().toISOString(),
-        })
-        await args.putCompletion(unavailable)
-        return unavailable
-    }
+    const reserved = desktopForemanIntakeCompletionReceiptSchema.parse({
+        requestId: input.requestId,
+        chat: input.chat,
+        fingerprint,
+        state: authorityAvailable ? 'pending' : 'unavailable',
+        answers,
+        followUp: null,
+        error: authorityAvailable ? null : 'Foreman intake completion is not wired yet.',
+        missingAuthority: authorityAvailable ? null : DESKTOP_FOREMAN_INTAKE_MISSING.completion,
+        createdAt,
+        updatedAt: now().toISOString(),
+    })
+    await args.putCompletion(reserved)
+    return reserved
+}
 
-    const lookedUp = await authority.lookup(input.requestId)
-    if (lookedUp) {
-        if (lookedUp.fingerprint !== fingerprint) {
-            throw new DesktopForemanIntakeRefusal(409, 'A different intake completion already used this request.')
-        }
-        const recovered = desktopForemanIntakeCompletionReceiptSchema.parse({
-            requestId: input.requestId,
-            chat: input.chat,
-            fingerprint,
-            state: 'acknowledged',
-            answers: input.answers,
-            followUp: {
-                conversationId: lookedUp.conversationId,
-                runId: lookedUp.runId,
-                industry: lookedUp.industry,
-            },
-            error: null,
-            missingAuthority: null,
-            createdAt,
-            updatedAt: now().toISOString(),
-        })
-        await args.putCompletion(recovered)
-        return recovered
-    }
-
+async function deliverReservedCompletion(
+    reserved: DesktopForemanIntakeCompletionReceipt,
+    authority: DesktopForemanIntakeCompletionAuthority | null,
+    now: () => Date,
+    settle: (receipt: DesktopForemanIntakeCompletionReceipt) => Promise<DesktopForemanIntakeCompletionReceipt>,
+): Promise<DesktopForemanIntakeCompletionReceipt> {
     try {
-        const delivered = await authority.deliver({
-            chat: input.chat,
-            requestId: input.requestId,
-            fingerprint,
-            answers: input.answers,
-        })
+        if (!authority) throw new Error('Completion authority is unavailable during recovery')
+        const identity = { chat: reserved.chat, requestId: reserved.requestId, fingerprint: reserved.fingerprint }
+        const recovered = await authority.lookup(identity)
+        if (recovered && (!sameChat(recovered.chat, reserved.chat) || recovered.requestId !== reserved.requestId || recovered.fingerprint !== reserved.fingerprint)) throw new Error('Intake authority identity mismatch')
+        const delivered = recovered ?? await authority.deliver({ ...identity, answers: reserved.answers })
         const acknowledged = desktopForemanIntakeCompletionReceiptSchema.parse({
-            requestId: input.requestId,
-            chat: input.chat,
-            fingerprint,
+            ...reserved,
             state: 'acknowledged',
-            answers: input.answers,
             followUp: {
                 conversationId: delivered.conversationId,
                 runId: delivered.runId,
@@ -299,40 +343,45 @@ async function completeIntake(args: {
             },
             error: null,
             missingAuthority: null,
-            createdAt,
             updatedAt: now().toISOString(),
         })
-        await args.putCompletion(acknowledged)
-        return acknowledged
-    } catch (error) {
-        const failed = desktopForemanIntakeCompletionReceiptSchema.parse({
-            requestId: input.requestId,
-            chat: input.chat,
-            fingerprint,
-            state: 'failed',
-            answers: input.answers,
+        return await settle(acknowledged)
+    } catch {
+        // The effect or even its final receipt may have succeeded. Preserve the reserved identity;
+        // raw provider/error bodies must never leak into durable public receipts.
+        return settle(desktopForemanIntakeCompletionReceiptSchema.parse({
+            ...reserved,
+            state: 'uncertain',
             followUp: null,
-            error: error instanceof Error ? error.message : 'We could not save that. Try again.',
+            error: 'Foreman intake delivery is not confirmed. Retry this same intake before changing answers.',
             missingAuthority: null,
-            createdAt,
             updatedAt: now().toISOString(),
-        })
-        await args.putCompletion(failed)
-        return failed
+        }))
     }
 }
 
 /** SQLite-backed store. Root must apply ensureDesktopForemanIntakeSchema before first use. */
 export function createSqliteDesktopForemanIntakeStore(
     db: Client,
-    options?: { knownFirstName?: string | null; now?: () => Date },
+    options?: { knownFirstName?: string | null; now?: () => Date; schemaReady?: boolean },
 ): DesktopForemanIntakeStore {
     const stamp = () => (options?.now ?? (() => new Date()))().toISOString()
-    let ready: Promise<void> | null = null
-    const ensure = () => (ready ??= ensureDesktopForemanIntakeSchema(db))
+    // Production root applies migration 30 once while opening its database. Standalone fixtures
+    // retain additive setup, coordinated with transactions across all local Client handles.
+    let ready: Promise<void> | null = options?.schemaReady ? Promise.resolve() : null
+    const ensure = () => (ready ??= serializeSqliteIntakeWrite(() => ensureDesktopForemanIntakeSchema(db)))
 
-    const readSession = async (chat: DesktopForemanChatRef): Promise<DesktopForemanIntakeSession> => {
-        const found = await db.execute({
+    const write = <T>(work: (tx: Transaction) => Promise<T>): Promise<T> => {
+        return serializeSqliteIntakeWrite(async () => {
+            const tx = await db.transaction('write')
+            try { const value = await work(tx); await tx.commit(); return value }
+            catch (error) { await tx.rollback().catch(() => {}); throw error }
+            finally { tx.close() }
+        })
+    }
+
+    const readSession = async (chat: DesktopForemanChatRef, executor: SqliteExecutor = db): Promise<DesktopForemanIntakeSession> => {
+        const found = await executor.execute({
             sql: 'SELECT revision, step_index, draft, decided_industry, known_first_name, updated_at FROM desktop_foreman_intake_sessions WHERE workspace_id=? AND chat_id=?',
             args: [chat.workspaceId, chat.chatId],
         })
@@ -349,26 +398,31 @@ export function createSqliteDesktopForemanIntakeStore(
         })
     }
 
-    const readCompletion = async (requestId: string): Promise<DesktopForemanIntakeCompletionReceipt | null> => {
-        const found = await db.execute({ sql: 'SELECT body FROM desktop_foreman_intake_completions WHERE request_id=?', args: [requestId] })
+    const readCompletion = async (requestId: string, executor: SqliteExecutor = db): Promise<DesktopForemanIntakeCompletionReceipt | null> => {
+        const found = await executor.execute({ sql: 'SELECT request_id,workspace_id,chat_id,fingerprint,state,body,created_at,updated_at FROM desktop_foreman_intake_completions WHERE request_id=?', args: [requestId] })
         const row = found.rows[0]
-        return row ? desktopForemanIntakeCompletionReceiptSchema.parse(JSON.parse(String(row.body))) : null
+        return row ? completionFromRow(row) : null
     }
 
-    const latestCompletionFor = async (chat: DesktopForemanChatRef): Promise<DesktopForemanIntakeCompletionReceipt | null> => {
-        const found = await db.execute({
-            sql: 'SELECT body FROM desktop_foreman_intake_completions WHERE workspace_id=? AND chat_id=? ORDER BY updated_at DESC LIMIT 1',
+    const latestCompletionFor = async (chat: DesktopForemanChatRef, executor: SqliteExecutor = db): Promise<DesktopForemanIntakeCompletionReceipt | null> => {
+        const found = await executor.execute({
+            sql: `SELECT request_id,workspace_id,chat_id,fingerprint,state,body,created_at,updated_at FROM desktop_foreman_intake_completions WHERE workspace_id=? AND chat_id=?
+                  ORDER BY CASE state WHEN 'acknowledged' THEN 2 WHEN 'pending' THEN 1 WHEN 'uncertain' THEN 1 WHEN 'failed' THEN 1 ELSE 0 END DESC, updated_at DESC, rowid DESC LIMIT 1`,
             args: [chat.workspaceId, chat.chatId],
         })
         const row = found.rows[0]
-        return row ? desktopForemanIntakeCompletionReceiptSchema.parse(JSON.parse(String(row.body))) : null
+        return row ? completionFromRow(row) : null
     }
 
-    const putCompletion = async (receipt: DesktopForemanIntakeCompletionReceipt) => {
-        await db.execute({
+    const putCompletion = async (receipt: DesktopForemanIntakeCompletionReceipt, executor: SqliteExecutor) => {
+        const result = await executor.execute({
             sql: `INSERT INTO desktop_foreman_intake_completions(request_id, workspace_id, chat_id, fingerprint, state, body, created_at, updated_at)
                   VALUES(?,?,?,?,?,?,?,?)
-                  ON CONFLICT(request_id) DO UPDATE SET state=excluded.state, body=excluded.body, updated_at=excluded.updated_at`,
+                  ON CONFLICT(request_id) DO UPDATE SET state=excluded.state, body=excluded.body, updated_at=excluded.updated_at
+                  WHERE desktop_foreman_intake_completions.workspace_id=excluded.workspace_id
+                    AND desktop_foreman_intake_completions.chat_id=excluded.chat_id
+                    AND desktop_foreman_intake_completions.fingerprint=excluded.fingerprint
+                    AND desktop_foreman_intake_completions.state<>'acknowledged'`,
             args: [
                 receipt.requestId,
                 receipt.chat.workspaceId,
@@ -380,6 +434,7 @@ export function createSqliteDesktopForemanIntakeStore(
                 receipt.updatedAt,
             ],
         })
+        if (result.rowsAffected !== 1) throw new DesktopForemanIntakeRefusal(503, 'The intake completion changed before its receipt could be saved.')
     }
 
     return {
@@ -389,10 +444,10 @@ export function createSqliteDesktopForemanIntakeStore(
         },
         async save(input) {
             await ensure()
+            input = desktopForemanIntakeSaveInputSchema.parse(input)
             const parsed = desktopForemanIntakeDraftSchema.parse(input.draft)
             const hash = fingerprintSave({ ...input, draft: parsed })
-            const tx = await db.transaction('write')
-            try {
+            return write(async tx => {
                 const currentFound = await tx.execute({
                     sql: 'SELECT revision, step_index, draft, decided_industry, known_first_name, updated_at FROM desktop_foreman_intake_sessions WHERE workspace_id=? AND chat_id=?',
                     args: [input.chat.workspaceId, input.chat.chatId],
@@ -416,25 +471,21 @@ export function createSqliteDesktopForemanIntakeStore(
                 if (prior.rows[0]) {
                     const row = prior.rows[0]
                     if (String(row.workspace_id) !== input.chat.workspaceId || String(row.chat_id) !== input.chat.chatId || String(row.fingerprint) !== hash) {
-                        await tx.commit()
                         throw new DesktopForemanIntakeConflictError(
-                            viewOf(current, await latestCompletionFor(input.chat)),
+                            viewOf(current, await latestCompletionFor(input.chat, tx)),
                             'That intake save request was already used for a different change.',
                         )
                     }
-                    await tx.commit()
-                    return viewOf(await readSession(input.chat), await latestCompletionFor(input.chat))
+                    return viewOf(current, await latestCompletionFor(input.chat, tx))
                 }
 
                 if (input.baseRevision !== current.revision) {
-                    await tx.commit()
-                    throw new DesktopForemanIntakeConflictError(viewOf(current, await latestCompletionFor(input.chat)))
+                    throw new DesktopForemanIntakeConflictError(viewOf(current, await latestCompletionFor(input.chat, tx)))
                 }
 
-                const completed = await latestCompletionFor(input.chat)
-                if (completed?.state === 'acknowledged') {
-                    await tx.commit()
-                    throw new DesktopForemanIntakeRefusal(409, 'This Foreman intake is already finished for this chat.')
+                const completed = await latestCompletionFor(input.chat, tx)
+                if (completed && activeCompletion(completed)) {
+                    throw new DesktopForemanIntakeConflictError(viewOf(current, completed), 'This intake already has a reserved completion. Resolve the same request before editing answers.')
                 }
 
                 const now = stamp()
@@ -472,30 +523,36 @@ export function createSqliteDesktopForemanIntakeStore(
                     sql: 'INSERT INTO desktop_foreman_intake_writes(request_id, workspace_id, chat_id, fingerprint, result_revision, created_at) VALUES(?,?,?,?,?,?)',
                     args: [input.requestId, input.chat.workspaceId, input.chat.chatId, hash, next.revision, now],
                 })
-                await tx.commit()
                 return viewOf(next, completed)
-            } catch (error) {
-                await tx.rollback().catch(() => {})
-                throw error
-            } finally {
-                tx.close()
-            }
+            })
         },
         async complete(input, authority, clock = () => new Date()) {
             await ensure()
-            return completeIntake({
+            input = desktopForemanIntakeCompleteInputSchema.parse(input)
+            // Commit a chat-scoped reservation before any authority or network operation. The
+            // transaction sees the same session and receipt snapshot; a fresh nonce cannot bypass it.
+            const receipt = await write(tx => reserveIntakeCompletion({
                 input,
-                authority,
+                authorityAvailable: !!authority,
                 now: clock,
-                readSession: chat => readSession(chat),
-                latestCompletionFor: chat => latestCompletionFor(chat),
-                putCompletion,
-                getCompletion: id => readCompletion(id),
-            })
+                readSession: chat => readSession(chat, tx),
+                latestCompletionFor: chat => latestCompletionFor(chat, tx),
+                putCompletion: receipt => putCompletion(receipt, tx),
+                getCompletion: id => readCompletion(id, tx),
+            }))
+            if (receipt.state === 'acknowledged' || receipt.state === 'unavailable') return receipt
+            return deliverOnce(db, receipt, () => deliverReservedCompletion(receipt, authority, clock, next => write(async tx => {
+                const existing = await readCompletion(next.requestId, tx)
+                if (!existing || !sameChat(existing.chat, next.chat) || existing.fingerprint !== next.fingerprint) throw new DesktopForemanIntakeRefusal(409, 'This intake completion identity changed.')
+                if (existing.state === 'acknowledged') return existing
+                await putCompletion(next, tx)
+                return (await readCompletion(next.requestId, tx))!
+            })))
         },
-        async lookupCompletion(requestId) {
+        async lookupCompletion(chat, requestId) {
             await ensure()
-            return readCompletion(requestId)
+            const receipt = await readCompletion(requestId)
+            return receipt && sameChat(receipt.chat, chat) ? receipt : null
         },
     }
 }

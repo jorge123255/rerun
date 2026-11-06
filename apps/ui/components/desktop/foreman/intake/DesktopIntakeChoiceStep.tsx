@@ -13,12 +13,13 @@ type Props = {
     value: string
     placeholder: string
     disabled?: boolean
+    autoFocus?: boolean
     onChange: (value: string) => void
     onChoose: (value: string) => void
     onEnter: () => void
 }
 
-export function DesktopIntakeChoiceStep({ label, options, value, placeholder, disabled, onChange, onChoose, onEnter }: Props) {
+export function DesktopIntakeChoiceStep({ label, options, value, placeholder, disabled, autoFocus = true, onChange, onChoose, onEnter }: Props) {
     const [custom, setCustom] = useState(!!value && !options.includes(value))
 
     return (
@@ -41,11 +42,12 @@ export function DesktopIntakeChoiceStep({ label, options, value, placeholder, di
                     <CustomOptionRow
                         open={custom}
                         onOpen={() => {
+                            if (disabled) return
                             setCustom(true)
                             onChange('')
                         }}
                     >
-                        <DesktopIntakeField autoFocus value={value} disabled={disabled} placeholder={placeholder} onChange={onChange} onEnter={onEnter} />
+                        <DesktopIntakeField autoFocus={autoFocus} value={value} disabled={disabled} placeholder={placeholder} onChange={onChange} onEnter={onEnter} />
                     </CustomOptionRow>
                 </div>
             </ScrollFade>

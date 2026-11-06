@@ -23,6 +23,7 @@ import type { ForemanPlacement } from '@/lib/foreman-layout'
 import { DesktopForemanDock } from './foreman/DesktopForemanDock'
 import { DesktopForemanPanel, type DesktopForemanCommand } from './foreman/DesktopForemanPanel'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
+import { flushDesktopForemanIntakeWrites } from '@/lib/desktop/foreman-intake'
 import { flushDesktopBrainDrafts } from '@/lib/desktop/use-brain-page-draft'
 import { createDesktopBrainPagesActions } from '@/lib/desktop/brain-pages'
 import { countDesktopBrainProposals } from '@/lib/desktop/brain-proposals'
@@ -118,8 +119,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             // notify cancellation listeners again before the user can retry or stay.
             if (!dockReady || !voiceReady) return false
             setQuitting(true)
-            const [chatReady, brainReady, foremanReady] = await Promise.all([flushDesktopDrafts(), flushDesktopBrainDrafts(), flushDesktopForemanUiSaves(), flushDesktopRecentCoworkers()])
-            const ready = dockReady && voiceReady && chatReady && brainReady && foremanReady
+            const [chatReady, brainReady, foremanReady, intakeReady] = await Promise.all([flushDesktopDrafts(), flushDesktopBrainDrafts(), flushDesktopForemanUiSaves(), flushDesktopForemanIntakeWrites(), flushDesktopRecentCoworkers()])
+            const ready = dockReady && voiceReady && chatReady && brainReady && foremanReady && intakeReady
             if (!ready) setQuitting(false)
             return ready
         })

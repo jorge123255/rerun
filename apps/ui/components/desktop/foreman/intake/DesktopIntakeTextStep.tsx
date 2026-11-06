@@ -10,6 +10,7 @@ export function DesktopIntakeTextStep({
     value,
     placeholder,
     disabled,
+    autoFocus = true,
     onChange,
     onEnter,
 }: {
@@ -17,6 +18,7 @@ export function DesktopIntakeTextStep({
     value: string
     placeholder: string
     disabled?: boolean
+    autoFocus?: boolean
     onChange: (value: string) => void
     onEnter: () => void
 }) {
@@ -24,7 +26,7 @@ export function DesktopIntakeTextStep({
     return (
         <Field label={label} htmlFor={id}>
             <div className="flex items-center gap-2.5 rounded-md border border-border bg-background px-2.5 py-2">
-                <DesktopIntakeField id={id} autoFocus value={value} disabled={disabled} placeholder={placeholder} onChange={onChange} onEnter={onEnter} />
+                <DesktopIntakeField id={id} autoFocus={autoFocus} value={value} disabled={disabled} placeholder={placeholder} onChange={onChange} onEnter={onEnter} />
             </div>
         </Field>
     )

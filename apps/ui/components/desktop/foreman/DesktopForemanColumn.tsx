@@ -18,6 +18,8 @@ import { useMemo } from 'react'
 import { DesktopPlanBoardPreview } from './plan/DesktopPlanBoardPreview'
 import { projectPlanCard } from '@/lib/desktop/foreman-client'
 import { useDesktopForemanUi } from './useDesktopForemanUi'
+import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
+import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader } from './intake'
 
 function anchorOf(placement: DesktopForemanPlacement): ForemanAnchor {
     if (placement.mode === 'float') return 'float'
@@ -46,6 +48,7 @@ export type DesktopForemanColumnProps = {
     centerOpen?: boolean
     dockFeed?: ExactDockFeed | null
     voiceSlot?: ReactNode
+    intake?: DesktopForemanIntakeController
     onOpenChange?: (open: boolean) => void
     onLayout?: (layout: { scope: string; open: boolean; placement: ForemanPlacement; dragging: boolean; mobile: boolean }) => void
 }
@@ -64,7 +67,7 @@ export function DesktopForemanColumn({
     orbState = 'idle',
     headerActions,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
     const opened = useRef(false)
@@ -94,14 +97,14 @@ export function DesktopForemanColumn({
         if (ui.tab !== 'assistant') { foreman.setTab('assistant'); return }
         let focused = false
         const focus = () => {
-            const target = column.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message the Foreman"]')
+            const target = column.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>(intake ? '[data-foreman-intake] input:not([disabled])' : 'textarea[aria-label="Message the Foreman"]')
             if (!focused && target?.isConnected && !target.disabled && !target.closest('[inert]')) { focused = true; consumedFocus.current = focusRequest; target.focus({ preventScroll: true }); observer.disconnect() }
         }
         const observer = new MutationObserver(focus)
         observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['inert'] })
         queueMicrotask(focus)
         return () => { focused = true; observer.disconnect() }
-    }, [focusRequest, foreman.restored, ui.open, ui.tab, foreman.setOpen, foreman.setTab, changeOpen])
+    }, [focusRequest, foreman.restored, ui.open, ui.tab, foreman.setOpen, foreman.setTab, changeOpen, intake?.restored])
     const routinesClient = useMemo(() => createDesktopWorkspaceRoutinesClient(), [])
     const onRoutines = ui.tab === 'routines'
     const plan = projectPlanCard(foreman.planSnapshot)
@@ -123,6 +126,12 @@ export function DesktopForemanColumn({
                     actions={headerActions}
                 />
                 <div className={onRoutines ? 'hidden' : 'contents'}>
+                    {intake ? <>
+                        <div className="flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-3 py-6">
+                            <DesktopForemanIntakeHeader intake={intake} />
+                        </div>
+                        <div className="shrink-0 px-3 pb-3"><DesktopForemanIntakeCard intake={intake} autoFocus={ui.open && !hidden} /></div>
+                    </> : <>
                     <DesktopForemanChatLayer
                         messages={messages}
                         streaming={streaming}
@@ -156,6 +165,7 @@ export function DesktopForemanColumn({
                         onSend={text => { void foreman.sendMessage(text) }}
                         onStop={() => void foreman.stop()}
                     />
+                    </>}
                 </div>
                 {onRoutines && (
                     <DesktopWorkspaceRoutines

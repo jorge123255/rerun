@@ -24,7 +24,7 @@ export function DesktopForemanIntakeHeader({
         transition: still ? { duration: 0 } : { duration: 0.38, ease: EASE, delay },
     })
 
-    if (intake.finished) return null
+    if (intake.finished || !intake.restored) return null
 
     return (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center justify-end gap-5 px-8 pb-6 text-center max-sm:gap-3 max-sm:px-4 max-sm:pb-4">

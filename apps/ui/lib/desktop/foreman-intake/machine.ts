@@ -45,6 +45,7 @@ export function patchDesktopIntakeDraft(state: DesktopIntakeMachineState, patch:
     return {
         ...state,
         error: null,
+        decided: patch.companyUrl !== undefined && patch.companyUrl.trim() !== state.draft.companyUrl.trim() ? null : state.decided,
         draft: { ...state.draft, ...patch, ...bySite },
     }
 }
