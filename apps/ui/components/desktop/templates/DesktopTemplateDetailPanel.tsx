@@ -10,9 +10,10 @@ import { ShieldCheck } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DesktopTemplatesClient } from '@/lib/desktop/templates-client'
 import { DesktopTemplateDetailAgentCard } from './DesktopTemplateDetailAgentCard'
-import type { DesktopTemplateDetail, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt } from './types'
+import type { DesktopTemplateDetail, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt, DesktopTemplateLibraryChange } from './types'
 import type { DesktopPortableTemplateActions } from '@/lib/desktop/portable-template-actions'
 import { DesktopTemplatePortableActions } from './DesktopTemplatePortableActions'
+import { DesktopTemplateFidelityReview } from './DesktopTemplateFidelityReview'
 import { useDesktopTemplateInstall } from './useDesktopTemplateInstall'
 
 export function DesktopTemplateDetailPanel({ client, template, resume = null, onInstalled, onInterrupted, portableActions = null, onLibraryChanged, onPickImport, onSaveExport }: {
@@ -22,7 +23,7 @@ export function DesktopTemplateDetailPanel({ client, template, resume = null, on
     onInstalled: (receipt: DesktopTemplateInstallReceipt) => void
     onInterrupted?: (intent: DesktopTemplateInstallIntent | null) => void
     portableActions?: DesktopPortableTemplateActions | null
-    onLibraryChanged?: () => void
+    onLibraryChanged?: (change?: DesktopTemplateLibraryChange) => void
     onPickImport?: () => Promise<{ uploadId: string; requestId?: string } | null>
     onSaveExport?: (artifactId: string) => Promise<{ saved: boolean }>
 }) {
@@ -48,6 +49,7 @@ export function DesktopTemplateDetailPanel({ client, template, resume = null, on
                         {template.agents.map(agent => <DesktopTemplateDetailAgentCard key={agent.key} agent={agent} />)}
                     </CardCarousel>
                 </Section>}
+                {template.fidelityCoworkers && <DesktopTemplateFidelityReview coworkers={template.fidelityCoworkers} />}
                 <SavedIssues title="Excluded from capture" issues={template.exclusions} />
                 <SavedIssues title="Unsupported entries" issues={template.unsupportedEntries} />
                 <Alert variant="warning" stripes className="grid-cols-[auto_1fr] gap-x-3 gap-y-0">

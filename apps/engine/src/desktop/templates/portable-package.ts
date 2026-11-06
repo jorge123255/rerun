@@ -1,8 +1,6 @@
-import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { finished } from 'node:stream/promises'
+import { join, dirname, basename } from 'node:path'
 import { Readable } from 'node:stream'
 import { createGunzip } from 'node:zlib'
 import { create, Header, Parser, type ReadEntry } from 'tar'
@@ -12,13 +10,13 @@ import {
     DESKTOP_PORTABLE_TEMPLATE_FORMAT,
     DESKTOP_PORTABLE_TEMPLATE_FORMAT_VERSION,
     DESKTOP_PORTABLE_TEMPLATE_LIMITS,
-    desktopPortablePackageManifestSchema,
+    desktopTemplateFidelityManifestSchema as desktopPortablePackageManifestSchema,
     isDesktopTemplateRelativePath,
-    type DesktopPortableMember,
-    type DesktopPortablePackageManifest,
+    type DesktopTemplateFidelityMember as DesktopPortableMember,
+    type DesktopTemplateFidelityManifest as DesktopPortablePackageManifest,
 } from '@rerun/contracts'
 import { TemplateRequestError } from './errors.js'
-import { collidingRelativePaths } from './files.js'
+import { collidingRelativePaths, readConfinedBytes, writeExclusiveFile } from './files.js'
 import { canonicalJson, sha256 } from './hash.js'
 
 export type PortablePackageMemberBytes = {
@@ -99,7 +97,7 @@ export async function writePortableArchive(input: {
     const archivePath = join(staging, 'package.tar.gz')
     try {
         await writeFile(join(staging, DESKTOP_PORTABLE_MANIFEST_MEMBER), `${JSON.stringify(input.manifest, null, 2)}\n`, { mode: 0o600 })
-        for (const member of input.members) {
+        for (const member of [...input.members].sort((a,b) => memberArchivePath(a.agentKey, a.path).localeCompare(memberArchivePath(b.agentKey, b.path), 'en'))) {
             const relative = memberArchivePath(member.agentKey, member.path)
             const full = join(staging, relative)
             const parent = join(full, '..')
@@ -108,7 +106,7 @@ export async function writePortableArchive(input: {
             await mkdir(parent, { recursive: true, mode: 0o700 })
             await writeFile(full, member.bytes, { mode: 0o600 })
         }
-        const entries = [DESKTOP_PORTABLE_MANIFEST_MEMBER, ...input.members.map(member => memberArchivePath(member.agentKey, member.path))]
+        const entries = [DESKTOP_PORTABLE_MANIFEST_MEMBER, ...input.members.map(member => memberArchivePath(member.agentKey, member.path)).sort()]
         await create({ gzip: true, cwd: staging, portable: true, file: archivePath, noMtime: true }, entries)
         const info = await stat(archivePath)
         if (info.size > DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxCompressedBytes) {
@@ -302,15 +300,10 @@ export async function writeOwnedDownloadArtifact(write: (bytes: Buffer, fileName
     return { artifactId: result.artifactId, fileName: built.fileName, bytes: built.archiveBytes.length }
 }
 
-// Keep stream helpers available for root-owned download/upload bridges.
+// Root supplies private artifact paths; capture and renderer APIs never accept them.
 export async function copyBoundedFile(source: string, destination: string, maxBytes: number): Promise<number> {
-    const handle = await open(source, 'r')
-    try {
-        const info = await handle.stat()
-        if (!info.isFile() || info.size > maxBytes) throw new TemplateRequestError(413, 'File exceeds the portable bound')
-        await finished(createReadStream(source).pipe(createWriteStream(destination, { mode: 0o600 })))
-        return info.size
-    } finally {
-        await handle.close()
-    }
+    const read = await readConfinedBytes(dirname(source), basename(source), maxBytes)
+    if (!read.ok) throw new TemplateRequestError(409, 'Portable copy requires unchanged owned bytes')
+    await writeExclusiveFile(dirname(destination), basename(destination), read.bytes)
+    return read.bytes.length
 }

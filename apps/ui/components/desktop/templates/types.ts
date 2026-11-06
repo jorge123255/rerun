@@ -31,6 +31,7 @@ export type DesktopCaptureIssue = {
 }
 
 export type DesktopAgentCapturePlan = {
+    requirements?: import('@rerun/contracts').DesktopTemplateRequirement[]
     agentRowId: string
     name: string
     displayName: string
@@ -66,6 +67,7 @@ export type DesktopTemplateSummary = DesktopTemplateIdentity & {
 }
 
 export type DesktopTemplateDetail = DesktopTemplateSummary & {
+    fidelityCoworkers?: (Pick<import('@rerun/contracts').DesktopTemplateDetail['coworkers'][number], 'agentKey'|'name'|'files'|'envKeys'|'mcpAuth'> & { requirements: import('@rerun/contracts').DesktopTemplateRequirement[] })[]
     description: string
     capturedAt: string | null
     exclusions: DesktopCaptureIssue[]
@@ -97,3 +99,5 @@ export type DesktopTemplateInstallReceipt = {
 export type DesktopTemplateInstallIntent = DesktopTemplateIdentity & {
     requestId: string
 }
+
+export type DesktopTemplateLibraryChange = { operation:'export'|'import'|'delete'; templateId:string }

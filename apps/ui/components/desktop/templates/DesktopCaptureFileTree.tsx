@@ -65,7 +65,7 @@ export function DesktopCaptureFileTree({ files, excluded, disabled = false, onTo
 }) {
     const tree = React.useMemo(() => buildTree(files), [files])
     const [open, setOpen] = React.useState<Set<string>>(() => pathsToFlagged(tree))
-    return <div className="rounded-md border border-border/60 p-1">
+    return <div className="min-w-0 rounded-md border border-border/60 p-1">
         {tree.map(node => <TreeRow key={node.path} node={node} depth={0} open={open} setOpen={setOpen} excluded={excluded} disabled={disabled} onToggle={onToggle} />)}
     </div>
 }
@@ -94,14 +94,14 @@ function TreeRow({ node, depth, open, setOpen, excluded, disabled, onToggle }: {
     }
 
     return <>
-        <div className="flex items-center gap-2 rounded py-1 pr-1 hover:bg-muted/40" style={{ paddingLeft: `${depth * 0.875 + 0.25}rem` }}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2 rounded py-1 pr-1 hover:bg-muted/40" style={{ paddingLeft: `${Math.min(depth, 8) * 0.875 + 0.25}rem` }}>
             <Checkbox size="sm" checked={checked} disabled={disabled} onCheckedChange={() => onToggle(leaves.map(file => file.path), checked !== true)} />
             {node.file ? <span className="w-3.5 shrink-0" /> : <button type="button" onClick={toggleOpen} className="shrink-0 text-muted-foreground" aria-label={isOpen ? 'Collapse' : 'Expand'}>
                 <ChevronRight className={cn('size-3.5 transition-transform', isOpen && 'rotate-90')} />
             </button>}
             <span className={cn('min-w-0 flex-1 truncate font-mono text-xs', node.file ? '' : 'text-muted-foreground')}>{node.name}{node.file ? '' : '/'}</span>
-            {node.file?.note && !node.file.flagged.length && <span className="shrink-0 text-[0.65rem] text-muted-foreground">{node.file.note}</span>}
-            {flaggedCount > 0 && <span className="shrink-0 text-[0.65rem] text-destructive">{node.file ? node.file.flagged.join(', ') : `${flaggedCount} flagged`}</span>}
+            {node.file?.note && !node.file.flagged.length && <span className="max-w-[45%] break-words text-[0.65rem] text-muted-foreground">{node.file.note}</span>}
+            {flaggedCount > 0 && <span className="max-w-[45%] break-words text-[0.65rem] text-destructive">{node.file ? node.file.flagged.join(', ') : `${flaggedCount} flagged`}</span>}
             <span className="w-14 shrink-0 text-right text-[0.65rem] text-muted-foreground">{formatBytes(node.bytes)}</span>
         </div>
         {!node.file && isOpen && node.children.map(child => <TreeRow key={child.path} node={child} depth={depth + 1} open={open} setOpen={setOpen} excluded={excluded} disabled={disabled} onToggle={onToggle} />)}

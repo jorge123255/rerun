@@ -20,7 +20,7 @@ export async function readOwnJson(directory: string, relativeName: string): Prom
     const read = await readConfined(directory, relativeName, jsonLimit)
     if (!read.ok) {
         if (read.reason === 'unsupported') {
-            const missing = await lstat(join(directory, relativeName)).then(() => false, () => true)
+            const missing = await lstat(join(directory, relativeName)).then(() => false, (error:NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return true; throw error })
             if (missing) return null
         }
         throw new TemplateRequestError(409, 'A template record is not a plain file')
@@ -55,7 +55,7 @@ export type TemplateDraft = z.infer<typeof draftSchema>
 
 export async function listTemplateIds(dataRoot: string): Promise<string[]> {
     const root = join(dataRoot, 'desktop-templates')
-    const info = await lstat(root).catch(() => null)
+    const info = await lstat(root).catch((error:NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw new TemplateRequestError(503, 'Local template storage is unavailable') })
     if (!info) return []
     if (!info.isDirectory() || info.isSymbolicLink()) throw new TemplateRequestError(409, 'Template storage is not a directory')
     const entries = await readdir(root, { withFileTypes: true })

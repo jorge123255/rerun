@@ -65,9 +65,11 @@ export async function readConfined(root: string, path: string, maxBytes: number)
         }
         if (offset !== size) return { ok: false, reason: 'collision' }
         const after = await handle.stat({ bigint: true })
-        if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.nlink !== 1n || after.mtimeNs !== before.mtimeNs) {
+        if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.nlink !== 1n || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
             return { ok: false, reason: 'collision' }
         }
+        const named = await lstat(full, { bigint: true })
+        if (named.dev !== before.dev || named.ino !== before.ino || named.nlink !== 1n) return { ok: false, reason: 'collision' }
         const rootReal = await realpath(root)
         const fileReal = await realpath(full)
         if (fileReal !== resolve(rootReal, path)) return { ok: false, reason: 'alias' }
@@ -170,6 +172,7 @@ export type WalkEntry = { path: string; kind: 'file' | 'link' | 'other' }
 export async function walkConfined(root: string, directory: string, maxEntries: number): Promise<{ entries: WalkEntry[]; truncated: boolean }> {
     const entries: WalkEntry[] = []
     let truncated = false
+    let visited = 0
     const visit = async (relativeDir: string): Promise<void> => {
         if (truncated) return
         const full = relativeDir ? confinedFile(root, relativeDir) : root
@@ -177,7 +180,7 @@ export async function walkConfined(root: string, directory: string, maxEntries: 
         if (!info || info.isSymbolicLink() || !info.isDirectory()) return
         const children = await readdir(full, { withFileTypes: true })
         for (const child of children.sort((left, right) => left.name.localeCompare(right.name))) {
-            if (entries.length >= maxEntries) { truncated = true; return }
+            if (++visited > maxEntries) { truncated = true; return }
             const path = relativeDir ? `${relativeDir}/${child.name}` : child.name
             if (!isDesktopTemplateRelativePath(path)) { entries.push({ path: child.name || path, kind: 'other' }); continue }
             if (child.isSymbolicLink()) entries.push({ path, kind: 'link' })
@@ -243,9 +246,11 @@ export async function readConfinedBytes(root: string, path: string, maxBytes: nu
         }
         if (offset !== size) return { ok: false, reason: 'collision' }
         const after = await handle.stat({ bigint: true })
-        if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.nlink !== 1n || after.mtimeNs !== before.mtimeNs) {
+        if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.nlink !== 1n || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
             return { ok: false, reason: 'collision' }
         }
+        const named = await lstat(full, { bigint: true })
+        if (named.dev !== before.dev || named.ino !== before.ino || named.nlink !== 1n) return { ok: false, reason: 'collision' }
         const rootReal = await realpath(root)
         const fileReal = await realpath(full)
         if (fileReal !== resolve(rootReal, path)) return { ok: false, reason: 'alias' }
@@ -282,4 +287,28 @@ export async function readConfinedBytes(root: string, path: string, maxBytes: nu
 
 export async function writeExclusiveBytes(directory: string, relativeName: string, bytes: Buffer): Promise<'created' | 'same'> {
     return writeExclusiveFile(directory, relativeName, bytes)
+}
+
+// Reads key names only. Values never leave this helper or enter plans/receipts.
+export async function readEnvironmentKeyNames(root: string): Promise<string[]> {
+    const full = confinedFile(root, '.env')
+    let handle
+    try { handle = await openWithoutLinks(full) }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw new TemplateRequestError(409, 'Environment names cannot be read from a linked file') }
+    try {
+        const before = await handle.stat({ bigint: true })
+        if (!before.isFile() || before.nlink !== 1n || before.size > 65536n || typeof process.getuid === 'function' && before.uid !== BigInt(process.getuid())) throw new TemplateRequestError(409, 'Environment names require a bounded owned file')
+        const bytes = Buffer.alloc(Number(before.size)); let offset = 0
+        while (offset < bytes.length) { const read = await handle.read(bytes, offset, bytes.length - offset, offset); if (!read.bytesRead) break; offset += read.bytesRead }
+        const after = await handle.stat({ bigint: true }), current = await lstat(full, { bigint: true })
+        if (offset !== bytes.length || before.dev !== after.dev || before.ino !== after.ino || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || before.size !== after.size || after.nlink !== 1n || current.dev !== before.dev || current.ino !== before.ino) throw new TemplateRequestError(409, 'Environment file changed during name capture')
+        const names = new Set<string>()
+        try {
+            const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+            for (const line of text.split(/\r?\n/)) { const match = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]{0,127})\s*=/.exec(line); if (match) names.add(match[1]) }
+        } catch { throw new TemplateRequestError(409, 'Environment names are not UTF-8') }
+        finally { bytes.fill(0) }
+        if (names.size > 100) throw new TemplateRequestError(413, 'Too many environment requirements')
+        return [...names].sort()
+    } finally { await handle.close() }
 }

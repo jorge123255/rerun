@@ -206,7 +206,7 @@ export function DesktopTemplateLibraryDialog({ open, client, initialTemplate = n
                                 portableActions={portableActions}
                                 onPickImport={onPickImport}
                                 onSaveExport={onSaveExport}
-                                onLibraryChanged={() => { void refresh(true); setSelection(null); setView('list') }}
+                                onLibraryChanged={change => { if (change?.operation !== 'export') void refresh(false); if (change?.operation === 'delete' && change.templateId === shown.templateId) { setSelection(null); setView('list') } }}
                                 onInterrupted={intent => {
                                     setInterrupted(intent)
                                     onInstallAttempt?.(intent)

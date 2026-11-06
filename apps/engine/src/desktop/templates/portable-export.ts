@@ -5,10 +5,10 @@ import {
     DESKTOP_PORTABLE_TEMPLATE_LIMITS,
     DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING,
     DESKTOP_TEMPLATE_PROSE_WARNING,
-    desktopPortablePackageManifestSchema,
+    desktopTemplateFidelityManifestSchema as desktopPortablePackageManifestSchema,
     type DesktopPortableExportResult,
-    type DesktopPortableMember,
-    type DesktopPortablePackageManifest,
+    type DesktopTemplateFidelityMember as DesktopPortableMember,
+    type DesktopTemplateFidelityManifest as DesktopPortablePackageManifest,
 } from '@rerun/contracts'
 import { TemplateRequestError } from './errors.js'
 import { readConfined, readConfinedBytes } from './files.js'
@@ -17,6 +17,7 @@ import { readManifest, type TemplateManifest } from './install.js'
 import { readOwnJson, requestHome, templateHome, writeOwnJson, replaceOwnJson } from './store.js'
 import { sealPortableManifest, writeOwnedDownloadArtifact, writePortableArchive, type PortablePackageMemberBytes } from './portable-package.js'
 import { z } from 'zod'
+import { templateMediaType } from './fidelity.js'
 import { withPortableLibraryLease } from './portable-lock.js'
 import { desktopTemplateRevisionSchema } from '@rerun/contracts'
 
@@ -100,6 +101,7 @@ function toPortableMembers(manifest: TemplateManifest, dataRoot: string): Promis
                     flagged: file.flagged,
                     binary,
                     textScanned: file.textScanned ?? !binary,
+                    mediaType: file.mediaType ?? templateMediaType(file.path, read.bytes, binary),
                 })
             }
             coworkers.push({
@@ -232,7 +234,7 @@ async function exportUnlocked(input: {
             requestId: input.requestId,
             receiptId: input.requestId,
             recoverable: true,
-            reason: error instanceof Error ? error.message.slice(0, 400) : 'Portable export did not finish',
+            reason: 'The local portable operation did not finish. Retry the same request.',
         }
     }
 }

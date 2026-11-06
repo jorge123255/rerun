@@ -7,7 +7,7 @@ import { renameSkillEntry } from '../skill-publication-native.js'
 import { TemplateRequestError } from './errors.js'
 import { canonicalJson, sha256 } from './hash.js'
 import { removePortableQuarantinedDirectory, withPortableLibraryLease } from './portable-lock.js'
-import { readOwnJson, replaceOwnJson, requestHome, templateHome, writeOwnJson } from './store.js'
+import { draftSchema, readOwnJson, replaceOwnJson, requestHome, templateHome, writeOwnJson } from './store.js'
 
 const deleteReceiptSchema = z.strictObject({
     version: z.literal(1), requestId: z.uuid(), templateId: desktopTemplateIdSchema,
@@ -33,6 +33,14 @@ const deletedResult = (row: z.infer<typeof deleteReceiptSchema>): DesktopPortabl
     templateId: row.templateId, revision: row.revision, tombstoneId: row.tombstoneId!,
 })
 
+async function deletionRevision(directory: string, templateId: string) {
+    const currentRaw = await readOwnJson(directory, 'current.json')
+    if (currentRaw) return z.strictObject({ revision:desktopTemplateRevisionSchema }).parse(currentRaw).revision
+    const draft = draftSchema.parse(await readOwnJson(directory, 'draft.json'))
+    if (draft.templateId !== templateId) throw new TemplateRequestError(409, 'Draft identity changed before deletion')
+    return draft.revision
+}
+
 async function deleteUnlocked(input: DeleteInput): Promise<DesktopPortableDeleteResult> {
     const fingerprint = sha256(canonicalJson({ operation: 'delete', requestId: input.requestId, templateId: input.templateId, revision: input.revision }))
     const home = requestHome(input.deps.dataRoot)
@@ -51,8 +59,8 @@ async function deleteUnlocked(input: DeleteInput): Promise<DesktopPortableDelete
             const info = await infoAt(directory)
             if (!info) throw new TemplateRequestError(404, 'Template not found')
             if (!info.isDirectory() || info.isSymbolicLink()) throw new TemplateRequestError(409, 'Template is not an owned library directory')
-            const current = z.strictObject({ revision: desktopTemplateRevisionSchema }).safeParse(await readOwnJson(directory, 'current.json'))
-            if (!current.success || current.data.revision !== input.revision) throw new TemplateRequestError(409, 'Delete expected a different template revision')
+            const current = await deletionRevision(directory, input.templateId)
+            if (current !== input.revision) throw new TemplateRequestError(409, 'Delete expected a different template revision')
             if (await input.deps.hasOwnedArtifactReference?.({ templateId: input.templateId, revision: input.revision })) throw new TemplateRequestError(409, 'An owned export artifact still references this revision')
             receipt = {
                 version: 1, requestId: input.requestId, templateId: input.templateId, revision: input.revision,
@@ -68,8 +76,8 @@ async function deleteUnlocked(input: DeleteInput): Promise<DesktopPortableDelete
         if (!quarantined && receipt.phase === 'reserved') {
             const source = await infoAt(directory)
             if (!source || !source.isDirectory() || source.isSymbolicLink() || !same(source, target)) throw new TemplateRequestError(409, 'The template changed before deletion')
-            const current = z.strictObject({ revision: desktopTemplateRevisionSchema }).safeParse(await readOwnJson(directory, 'current.json'))
-            if (!current.success || current.data.revision !== receipt.revision) throw new TemplateRequestError(409, 'The template revision changed before deletion')
+            const current = await deletionRevision(directory, input.templateId)
+            if (current !== receipt.revision) throw new TemplateRequestError(409, 'The template revision changed before deletion')
             if (await input.deps.hasOwnedArtifactReference?.({ templateId: input.templateId, revision: input.revision })) throw new TemplateRequestError(409, 'An owned export artifact still references this revision')
             await renameSkillEntry(parent, await lstat(parent, { bigint: true }), input.templateId, { dev: BigInt(target.dev), ino: BigInt(target.ino) }, quarantineName)
             quarantined = await infoAt(quarantine)
@@ -90,7 +98,7 @@ async function deleteUnlocked(input: DeleteInput): Promise<DesktopPortableDelete
     } catch (error) {
         if (error instanceof TemplateRequestError) throw error
         return { status: 'uncertain', requestId: input.requestId, receiptId: input.requestId, recoverable: true,
-            reason: error instanceof Error ? error.message.slice(0, 400) : 'Portable delete did not finish' }
+            reason: 'The local portable operation did not finish. Retry the same request.' }
     }
 }
 

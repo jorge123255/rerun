@@ -1,5 +1,7 @@
 'use client'
 
+import { DesktopTemplateRequirements } from './DesktopTemplateFidelityReview'
+
 import { isSetupAnswered } from '@rerun/contracts'
 import { CaptureReviewChips, CaptureReviewGroup, CaptureReviewRow } from '@/components/templates/capture/CaptureReviewGroup'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -61,6 +63,7 @@ function DesktopCaptureAgentReview({ plan, excluded, approved, setup, soloAgent,
             </span>
         </div>
 
+        <DesktopTemplateRequirements requirements={plan.requirements ?? []} />
         {plan.blocked && <p role="alert" className="text-xs text-destructive">{plan.blocked}</p>}
         {plan.included?.map(file => <details key={file.path} className="rounded border border-border/60 p-2">
             <summary className="cursor-pointer text-xs">{file.path} · included</summary>

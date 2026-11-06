@@ -15,6 +15,8 @@ import {
 import { TemplateRequestError } from './errors.js'
 import { desktopSkillAuthorityRequired, trustedSkillOwners } from '../service-skills/authority.js'
 import { collidingRelativePaths, readConfined, readConfinedBytes, walkConfined } from './files.js'
+import { templateMediaType, normalizeTemplateRequirements } from './fidelity.js'
+import { readEnvironmentKeyNames } from './files.js'
 import { canonicalJson, sha256 } from './hash.js'
 
 const VERBOSITY = new Set(['minimal', 'concise', 'normal', 'detailed'])
@@ -36,6 +38,7 @@ export type InspectedFile = {
     bytes: number
     text: string | null
     raw: Buffer
+    mediaType: string
     inodeRevision: string
     contentRevision: string
     flagged: string[]
@@ -67,7 +70,7 @@ export type InspectedCoworker = {
     exclusions: DesktopTemplateExclusion[]
     redactions: { path: string; reason: string }[]
     blocked: string | null
-    requirements: { kind: string; name: string; detail?: string }[]
+    requirements: import('@rerun/contracts').DesktopTemplateRequirement[]
     envKeys: string[]
     mcpAuth: { server: string; kind: 'oauth' | 'managed' | 'device' | 'unknown' }[]
 }
@@ -77,6 +80,7 @@ export type SkillOwnershipResolver = (
 ) => Promise<DesktopSkillOwnershipKind> | DesktopSkillOwnershipKind
 
 export type InspectOptions = {
+    requirementNames?: (engineAgentId: string) => Promise<import('@rerun/contracts').DesktopTemplateRequirement[]>
     skillOwnership?: SkillOwnershipResolver | null
     includeBinary?: boolean
     maxFileBytes?: number
@@ -136,7 +140,7 @@ export function scrubConfig(raw: unknown, fallbackName: string): { text: string;
         name: typeof source.name === 'string' && source.name.trim() ? source.name.trim().slice(0, 128) : name,
         kind: 'user',
         ephemeral: false,
-        enabled: true,
+        enabled: source.enabled !== false,
         displayName: name,
         description,
         connectionId: null,
@@ -148,7 +152,8 @@ export function scrubConfig(raw: unknown, fallbackName: string): { text: string;
         selfImprovement,
         setup: { required: null, completedAt: null, sessionId: null },
     }
-    const stripped: string[] = []
+    const retained = new Set(['name','kind','ephemeral','enabled','displayName','description','verbosity','setup'])
+    const stripped: string[] = Object.keys(source).filter(key => !retained.has(key)).map(key => /^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/.test(key) ? key : 'unsupported-field').slice(0, 100)
     const requirements: InspectedCoworker['requirements'] = []
     const mcpAuth: InspectedCoworker['mcpAuth'] = []
     if (source.connectionId) {
@@ -169,7 +174,7 @@ export function scrubConfig(raw: unknown, fallbackName: string): { text: string;
             if (!entry || typeof entry !== 'object') continue
             const server = entry as Record<string, unknown>
             const serverName = typeof server.name === 'string' ? server.name.trim().slice(0, 200) : ''
-            if (!serverName) continue
+            if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(serverName)) continue
             mcpAuth.push({ server: serverName, kind: 'unknown' })
             requirements.push({ kind: 'mcp-reconnect', name: serverName, detail: 'Reconnect without copied tokens or headers.' })
         }
@@ -187,6 +192,7 @@ function asInspected(path: string, read: Extract<Awaited<ReturnType<typeof readC
         bytes: read.bytes.length,
         text: read.text,
         raw: read.bytes,
+        mediaType: templateMediaType(path, read.bytes, read.binary),
         inodeRevision: read.inodeRevision,
         contentRevision: read.contentRevision,
         flagged: flagged(read.text),
@@ -259,6 +265,7 @@ export async function inspectCoworker(
                 const bytes = Buffer.from(text, 'utf8')
                 config = {
                     path: 'config.json',
+                    mediaType: 'application/json',
                     bytes: bytes.length,
                     text,
                     raw: bytes,
@@ -296,6 +303,8 @@ export async function inspectCoworker(
         selectableFiles.push(asInspected(entry.path, read))
     }
 
+    const workspaceCollision = collidingRelativePaths(selectableFiles.map(file => file.path))
+    if (workspaceCollision) { exclusions.push({ path:workspaceCollision, reason:'collision' }); blocked = blocked ?? 'Workspace files have colliding names' }
     const selectableSkills: InspectedSkill[] = []
     if ((await existsKind(resolve(folder, 'skills'))) === 'link') exclusions.push({ path: 'skills', reason: 'link' })
     const ownershipFallback = options.skillOwnership ? null : await connectorOwners(folder, exclusions)
@@ -373,7 +382,13 @@ export async function inspectCoworker(
         selectableSkills.push({ slug, name: meta.name, description: meta.description, sourceRevision, files })
     }
 
+    let envKeys: string[] = []
+    try { envKeys = await readEnvironmentKeyNames(folder) } catch { exclusions.push({ path: '.env', reason: 'unsupported' }); blocked = blocked ?? 'Environment requirement names could not be captured safely' }
+    if (options.requirementNames) requirements.push(...await options.requirementNames(engineAgentId))
+    requirements.push(...envKeys.map(name => ({ kind: 'environment-key' as const, name })))
+    const normalizedRequirements = normalizeTemplateRequirements(requirements)
     const identity = [
+        ['requirements', sha256(canonicalJson(normalizedRequirements))],
         ['SOUL.md', soul?.contentRevision ?? ''],
         ['INSTALL.md', install?.contentRevision ?? ''],
         ['config.json', config?.contentRevision ?? ''],
@@ -384,7 +399,7 @@ export async function inspectCoworker(
         engineAgentId, localAgentId, name, description,
         sourceRevision: sha256(canonicalJson(identity)),
         setup, soul, install, config, strippedConfigKeys, selectableFiles, selectableSkills,
-        exclusions, redactions, blocked, requirements, envKeys: [], mcpAuth,
+        exclusions, redactions, blocked, requirements: normalizedRequirements, envKeys, mcpAuth,
     }
 }
 

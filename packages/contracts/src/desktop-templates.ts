@@ -39,7 +39,7 @@ export type DesktopTemplatePosition = z.infer<typeof desktopTemplatePositionSche
 
 export function isDesktopTemplateRelativePath(path: string): boolean {
     if (path.length < 1 || path.length > 512) return false
-    if (path.startsWith('/') || path.includes('\\') || path.includes('\0')) return false
+    if (path.startsWith('/') || path.includes('\\') || /[\p{Cc}]/u.test(path)) return false
     return path.split('/').every(part => part.length > 0 && part !== '.' && part !== '..')
 }
 
@@ -85,6 +85,7 @@ export const desktopTemplateSelectableFileSchema = z.strictObject({
     flagged: flaggedSchema,
     binary: z.boolean().default(false),
     textScanned: z.boolean().default(true),
+    mediaType: z.string().max(127).regex(/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/).optional(),
 })
 
 export const desktopTemplateSkillFileSchema = z.strictObject({
@@ -95,6 +96,7 @@ export const desktopTemplateSkillFileSchema = z.strictObject({
     flagged: flaggedSchema,
     binary: z.boolean().default(false),
     textScanned: z.boolean().default(true),
+    mediaType: z.string().max(127).regex(/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/).optional(),
 })
 
 export const desktopTemplateSelectableSkillSchema = z.strictObject({
@@ -111,6 +113,11 @@ export const desktopTemplateSetupViewSchema = z.strictObject({
     answered: z.boolean(),
 })
 
+const templateRequirementListSchema = z.array(z.strictObject({
+        kind: z.enum(['environment-key', 'credential-name', 'mcp-reconnect', 'service-reconnect', 'model-rebind', 'connection-rebind', 'schedule-inactive', 'trigger-inactive']),
+        name: z.string().min(1).max(200), detail: z.string().max(400).optional(),
+    })).max(200)
+
 export const desktopTemplateCoworkerPlanSchema = z.strictObject({
     agentId: z.uuid(),
     name: z.string().min(1).max(60),
@@ -124,6 +131,7 @@ export const desktopTemplateCoworkerPlanSchema = z.strictObject({
     redactions: z.array(desktopTemplateRedactionSchema).max(50),
     strippedConfigKeys: z.array(z.string().min(1).max(200)).max(100),
     blocked: z.string().max(400).nullable(),
+    requirements: templateRequirementListSchema.optional(),
 })
 export type DesktopTemplateCoworkerPlan = z.infer<typeof desktopTemplateCoworkerPlanSchema>
 
@@ -187,6 +195,7 @@ export const desktopTemplateListItemSchema = z.strictObject({
     title: z.string(),
     revision: desktopTemplateRevisionSchema.nullable(),
     status: z.enum(['draft', 'captured']),
+    draftRevision: desktopTemplateRevisionSchema.optional(),
     capturedAt: z.string().nullable(),
     coworkerCount: z.number().int().nonnegative(),
 })
@@ -203,6 +212,7 @@ export const desktopTemplateDetailFileSchema = z.strictObject({
     flagged: flaggedSchema,
     binary: z.boolean().optional(),
     textScanned: z.boolean().optional(),
+    mediaType: z.string().max(127).regex(/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/).optional(),
 })
 export const desktopTemplateDetailCoworkerSchema = z.strictObject({
     agentKey: desktopTemplateAgentKeySchema,
@@ -213,6 +223,7 @@ export const desktopTemplateDetailCoworkerSchema = z.strictObject({
     exclusions: z.array(desktopTemplateExclusionSchema).max(500),
     redactions: z.array(desktopTemplateRedactionSchema).max(50),
     strippedConfigKeys: z.array(z.string().min(1).max(200)).max(100),
+    requirements: templateRequirementListSchema.optional(),
     // Name-only requirements may appear on portable imports. Live values never travel.
     envKeys: z.array(z.string().min(1).max(200)).max(100),
     mcpAuth: z.array(z.strictObject({

@@ -1,4 +1,5 @@
 import 'server-only'
+import { importedTemplateSetup } from './requirements'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import { z } from 'zod'
@@ -195,8 +196,7 @@ export function createDesktopTemplateServer(input: {
                     agentKey: coworker.agentKey,
                     name: coworker.name,
                     description: coworker.description,
-                    prompt: coworker.setup.prompt,
-                    required: coworker.setup.required === true,
+                    ...importedTemplateSetup(coworker.setup, coworker.requirements),
                     phase: 'reserved' as const,
                     position: operation.positions[index]!,
                 })),

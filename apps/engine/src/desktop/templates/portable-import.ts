@@ -7,12 +7,13 @@ import {
     DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING,
     desktopTemplateIdSchema,
     desktopTemplateRevisionSchema,
-    desktopPortablePackageManifestSchema,
+    desktopTemplateFidelityManifestSchema as desktopPortablePackageManifestSchema,
     desktopPortableRequirementSchema,
     scanPathForSecrets,
     type DesktopPortableImportResult,
     type DesktopPortableProvenance,
 } from '@rerun/contracts'
+import { normalizeTemplateRequirements, templateMediaType } from './fidelity.js'
 import { TemplateRequestError } from './errors.js'
 import { writeExclusiveFile, ensurePrivateDir } from './files.js'
 import { canonicalJson, draftRevision, newTemplateId, sha256 } from './hash.js'
@@ -89,6 +90,13 @@ async function importUnlocked(input: {
         }
 
         for (const coworker of manifest.coworkers) {
+            coworker.requirements = normalizeTemplateRequirements(coworker.requirements)
+            if (coworker.envKeys.some(key => !/^[A-Z_][A-Z0-9_]{0,127}$/.test(key)) || coworker.mcpAuth.some(auth => !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(auth.server))) throw new TemplateRequestError(400, 'Portable requirement names are not supported')
+            for (const member of coworker.members) {
+                const bytes = members.find(item => item.agentKey === coworker.agentKey && item.path === member.path)!
+                const inferred = templateMediaType(member.path, bytes.bytes, member.binary)
+                if (member.mediaType && member.mediaType !== inferred) throw new TemplateRequestError(409, 'Portable member media type does not match its bytes')
+            }
             const config = members.find(member => member.agentKey === coworker.agentKey && member.path === 'config.json')
             if (!config) throw new TemplateRequestError(400, 'Portable coworker is missing config.json')
             let raw: unknown
@@ -122,6 +130,7 @@ async function importUnlocked(input: {
                     flagged: member.flagged,
                     binary: member.path === 'config.json' ? false : member.binary,
                     textScanned: member.path === 'config.json' ? true : member.textScanned,
+                    mediaType: templateMediaType(member.path, bytes.bytes, member.binary),
                 }
             }),
             exclusions: coworker.exclusions,
@@ -199,7 +208,7 @@ async function importUnlocked(input: {
             requestId: input.requestId,
             receiptId: input.requestId,
             recoverable: true,
-            reason: error instanceof Error ? error.message.slice(0, 400) : 'Portable import did not finish',
+            reason: 'The local portable operation did not finish. Retry the same request.',
         }
     }
 }

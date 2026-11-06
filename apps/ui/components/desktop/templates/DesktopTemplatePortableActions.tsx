@@ -6,11 +6,11 @@ import { Button } from '@/components/ui/button'
 import { DownloadIcon, EllipsisIcon, Trash2Icon, UploadIcon } from '@/lib/icons'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { DesktopPortableTemplateActions } from '@/lib/desktop/portable-template-actions'
-import type { DesktopTemplateDetail } from './types'
+import type { DesktopTemplateDetail, DesktopTemplateLibraryChange } from './types'
 
 type Attempt = { requestId: string; uploadId?: string }
 
-export function DesktopTemplatePortableActions({
+function PortableActions({
     template,
     actions,
     onLibraryChanged,
@@ -19,7 +19,7 @@ export function DesktopTemplatePortableActions({
 }: {
     template: DesktopTemplateDetail
     actions: DesktopPortableTemplateActions
-    onLibraryChanged: () => void
+    onLibraryChanged: (change?: DesktopTemplateLibraryChange) => void
     onPickImport?: () => Promise<{ uploadId: string; requestId?: string } | null>
     onSaveExport?: (artifactId: string) => Promise<{ saved: boolean }>
 }) {
@@ -67,16 +67,19 @@ export function DesktopTemplatePortableActions({
                 setError(result.result.reason)
                 return
             }
+            if (result.result.templateId !== template.templateId || result.result.revision !== template.revision) { setError('Template acknowledgement identity changed.'); return }
             forget('export')
             if (onSaveExport) {
                 const saved = await onSaveExport(result.result.artifactId)
+                if (!mounted.current) return
                 setNote(saved.saved ? 'Template package saved.' : 'Export ready. Choose Export to save the package.')
             } else setNote(`Exported ${result.result.fileName}.`)
+            onLibraryChanged({ operation: 'export', templateId: template.templateId })
         } catch {
-            setError('Could not confirm the export. Try again to recover this attempt.')
+            if (mounted.current) setError('Could not confirm the export. Try again to recover this attempt.')
         } finally {
             running.current = false
-            setBusy(null)
+            if (mounted.current) setBusy(null)
         }
     }
 
@@ -89,7 +92,7 @@ export function DesktopTemplatePortableActions({
         try {
             const previous = savedAttempt('import')
             const picked = previous?.uploadId ? { uploadId: previous.uploadId, requestId: previous.requestId } : await onPickImport()
-            if (!picked) return
+            if (!picked || !mounted.current) return
             const attempt = remember('import', previous?.uploadId ? previous : { requestId: picked.requestId ?? crypto.randomUUID(), uploadId: picked.uploadId })
             const result = await actions.importPackage({ uploadId: picked.uploadId, requestId: attempt.requestId })
             if (!mounted.current) return
@@ -104,12 +107,12 @@ export function DesktopTemplatePortableActions({
             }
             forget('import')
             setNote(`Imported “${result.result.provenance.sourceTitle}” into your library.`)
-            onLibraryChanged()
+            onLibraryChanged({ operation: 'import', templateId: result.result.templateId })
         } catch {
-            setError('Could not confirm the import. Try again to recover this attempt.')
+            if (mounted.current) setError('Could not confirm the import. Try again to recover this attempt.')
         } finally {
             running.current = false
-            setBusy(null)
+            if (mounted.current) setBusy(null)
         }
     }
 
@@ -132,15 +135,16 @@ export function DesktopTemplatePortableActions({
                 setError(result.result.reason)
                 return
             }
+            if (result.result.templateId !== template.templateId || result.result.revision !== template.revision) { setError('Template acknowledgement identity changed.'); return }
             forget('delete')
             setNote('Removed from the library. Your installed coworkers and their chats are still available.')
-            onLibraryChanged()
+            onLibraryChanged({ operation: 'delete', templateId: template.templateId })
         } catch {
-            setError('Could not confirm the deletion. Try again to recover this attempt.')
+            if (mounted.current) setError('Could not confirm the deletion. Try again to recover this attempt.')
         } finally {
             running.current = false
-            setBusy(null)
-            setDeleteOpen(false)
+            if (mounted.current) setBusy(null)
+            if (mounted.current) setDeleteOpen(false)
         }
     }
 
@@ -187,4 +191,8 @@ export function DesktopTemplatePortableActions({
             {template.portable.notes[0] ? ` ${template.portable.notes[0]}` : ''}
         </p>}
     </div>
+}
+
+export function DesktopTemplatePortableActions(props: Parameters<typeof PortableActions>[0]) {
+    return <PortableActions key={`${props.template.templateId}:${props.template.revision}`} {...props} />
 }

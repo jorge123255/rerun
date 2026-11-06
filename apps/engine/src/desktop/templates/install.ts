@@ -12,8 +12,10 @@ import {
     desktopTemplateRelativePathSchema,
     desktopTemplateRevisionSchema,
     desktopPortableCoworkerSchema,
+    desktopTemplateMediaTypeSchema,
     type DesktopTemplateDetail,
 } from '@rerun/contracts'
+import { withPortableLibraryLease } from './portable-lock.js'
 import { TemplateRequestError } from './errors.js'
 import { readConfined, writeExclusiveFile } from './files.js'
 import { canonicalJson, sha256 } from './hash.js'
@@ -28,6 +30,7 @@ const fileSchema = z.strictObject({
     flagged: z.array(z.string().min(1).max(80)).max(20),
     binary: z.boolean().optional(),
     textScanned: z.boolean().optional(),
+    mediaType: desktopTemplateMediaTypeSchema.optional(),
 })
 const coworkerSchema = z.strictObject({
     agentKey: desktopTemplateAgentKeySchema,
@@ -147,6 +150,7 @@ export function publicDetail(manifest: TemplateManifest): DesktopTemplateDetail 
             exclusions: coworker.exclusions,
             redactions: coworker.redactions,
             strippedConfigKeys: coworker.strippedConfigKeys,
+            requirements: coworker.requirements ?? [],
             envKeys: coworker.envKeys ?? [],
             mcpAuth: coworker.mcpAuth ?? [],
         })),
@@ -169,7 +173,7 @@ async function readReceipt(folder: string): Promise<ImportReceipt | null> {
     return parsed.success ? parsed.data : null
 }
 
-export async function installManifest(input: {
+async function installManifestUnlocked(input: {
     foremanDisabled?: true
     dataRoot: string
     agentsRoot: string
@@ -256,6 +260,7 @@ export async function installManifest(input: {
             phases.push({ engineAgentId, agentKey: coworker.agentKey, name: coworker.name, description: coworker.description, phase: 'partial' })
             continue
         }
+        await writeOwnJson(folder, '.desktop-template-requirements.json', { version: 1, importReceiptId: input.importReceiptId, requirements: coworker.requirements ?? [] })
         if (receipt.phase === 'bound') await replaceOwnJson(folder, '.desktop-template-import.json', { ...receipt, phase: 'files' })
         try {
             const indexed = await input.readIndex(engineAgentId)
@@ -290,4 +295,8 @@ export async function readForemanTemplateImport(agentsRoot: string, engineAgentI
     if (!receipt || !receipt.foremanDisabled || receipt.engineAgentId !== engineAgentId || receipt.importReceiptId !== importReceiptId || receipt.folder?.dev !== String(before.dev) || receipt.folder.ino !== String(before.ino) || before.dev !== after.dev || before.ino !== after.ino) return {state:'replaced' as const}
     if (receipt.phase !== 'indexed') return {state:'unknown' as const}
     return {state:'present' as const,engineAgentId,importReceiptId,templateId:receipt.templateId,revision:receipt.revision}
+}
+
+export function installManifest(input: Parameters<typeof installManifestUnlocked>[0]): ReturnType<typeof installManifestUnlocked> {
+    return withPortableLibraryLease(input.dataRoot, () => installManifestUnlocked(input))
 }

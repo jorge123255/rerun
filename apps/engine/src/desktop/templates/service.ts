@@ -19,6 +19,7 @@ import {
     type DesktopTemplateList,
     type DesktopTemplatePlan,
 } from '@rerun/contracts'
+import { withPortableLibraryLease } from './portable-lock.js'
 import { TemplateRequestError } from './errors.js'
 import { writeExclusiveFile, ensurePrivateDir } from './files.js'
 import { canonicalJson, draftRevision, newTemplateId, sha256 } from './hash.js'
@@ -33,6 +34,7 @@ export type TemplateIndex = {
     insert: (id: string, name: string) => Promise<void>
 }
 export type TemplateEngineOptions = {
+    requirementNames?: (engineAgentId: string) => Promise<import('@rerun/contracts').DesktopTemplateRequirement[]>
     skillOwnership?: SkillOwnershipResolver | null
     includeBinary?: boolean
     requireTrustedOwnership?: boolean
@@ -92,6 +94,7 @@ function publish(inspected: InspectedCoworker): DesktopTemplateCoworkerPlan {
             flagged: file.flagged,
             binary: file.binary,
             textScanned: file.textScanned,
+            mediaType: file.mediaType,
         })),
         selectableSkills: inspected.selectableSkills.map(skill => ({
             slug: skill.slug, name: skill.name, description: skill.description, sourceRevision: skill.sourceRevision,
@@ -103,12 +106,14 @@ function publish(inspected: InspectedCoworker): DesktopTemplateCoworkerPlan {
                 flagged: file.flagged,
                 binary: file.binary,
                 textScanned: file.textScanned,
+                mediaType: file.mediaType,
             })),
         })),
         exclusions: inspected.exclusions,
         redactions: inspected.redactions,
         strippedConfigKeys: inspected.strippedConfigKeys,
         blocked: inspected.blocked,
+        requirements: inspected.requirements,
     })
 }
 
@@ -135,6 +140,7 @@ async function loadDraft(roots: TemplateRoots, templateId: string, revision: str
 }
 
 async function ensureDraft(roots: TemplateRoots, record: TemplateDraft): Promise<void> {
+    if (await readOwnJson(requestHome(roots.dataRoot), `tombstone-${record.templateId}.json`)) throw new TemplateRequestError(409, 'This template was deleted; a prior draft cannot recreate it')
     const directory = templateHome(roots.dataRoot, record.templateId)
     const draft = await readOwnJson(directory, 'draft.json')
     if (!draft) {
@@ -151,6 +157,7 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
     const includeBinary = options.includeBinary === true
     const inspectOptions = {
         skillOwnership: options.skillOwnership ?? null,
+        requirementNames: options.requirementNames,
         includeBinary,
         maxFileBytes: includeBinary ? DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxFileBytes : DESKTOP_TEMPLATE_LIMITS.maxFileBytes,
         maxWalkEntries: includeBinary ? DESKTOP_PORTABLE_TEMPLATE_LIMITS.maxWalkEntries : DESKTOP_TEMPLATE_LIMITS.maxWalkEntries,
@@ -177,7 +184,7 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
         },
     }
 
-    return {
+    const engine = {
         async createDraft(requestId: string, title: string): Promise<{ requestId: string; templateId: string; revision: string }> {
             const trimmed = title.trim()
             if (!z.uuid().safeParse(requestId).success) throw new TemplateRequestError(400, 'Invalid template request')
@@ -360,7 +367,7 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
                     } catch { published = null }
                 }
                 templates.push({
-                    templateId, title: draft.data.title, revision: published,
+                    templateId, title: draft.data.title, revision: published, draftRevision: draft.data.revision,
                     status: published ? 'captured' as const : 'draft' as const, capturedAt, coworkerCount,
                 })
             }
@@ -418,6 +425,10 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             return installManifest({ ...input, dataRoot: roots.dataRoot, agentsRoot: roots.agentsRoot, insertIndex: indexes.insert, readIndex: indexes.get })
         },
     }
+    return { ...engine,
+        createDraft: (...args: Parameters<typeof engine.createDraft>) => withPortableLibraryLease(roots.dataRoot, () => engine.createDraft(...args)),
+        capture: (input: Parameters<typeof engine.capture>[0]) => withPortableLibraryLease(roots.dataRoot, () => engine.capture(input)),
+    }
 }
 
 function choose(inspected: InspectedCoworker, selection: z.infer<typeof desktopTemplateSelectionSchema>, agentKey: string) {
@@ -453,7 +464,7 @@ function choose(inspected: InspectedCoworker, selection: z.infer<typeof desktopT
             const revision = sha256(raw)
             picked.push({
                 path: 'INSTALL.md', text, raw, bytes: raw.length, inodeRevision: revision, contentRevision: revision,
-                flagged: [], binary: false, textScanned: true, kind: 'instruction',
+                flagged: [], binary: false, textScanned: true, mediaType: 'text/markdown', kind: 'instruction',
             })
         }
     }
@@ -476,6 +487,7 @@ function choose(inspected: InspectedCoworker, selection: z.infer<typeof desktopT
             flagged: file.flagged,
             binary: file.binary,
             textScanned: file.textScanned,
+            mediaType: file.mediaType,
         })),
         exclusions: inspected.exclusions,
         redactions: inspected.redactions,
