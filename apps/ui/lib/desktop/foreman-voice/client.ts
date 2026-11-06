@@ -2,7 +2,7 @@
 import {
     foremanVoiceSnapshotSchema, sameForemanVoiceTarget,
     type ForemanVoiceRequest, type ForemanVoiceTarget,
-} from '../../../../../packages/contracts/src/desktop-foreman-voice'
+} from '@rerun/contracts'
 export function createForemanVoiceClient(fetcher: typeof fetch = fetch) {
     return {
         async request(input: ForemanVoiceRequest, signal: AbortSignal) {

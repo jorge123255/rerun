@@ -1,7 +1,7 @@
 import 'server-only'
 import {
     foremanVoiceRequestSchema, foremanVoiceTargetSchema,
-} from '../../../../../../packages/contracts/src/desktop-foreman-voice'
+} from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { readDesktopRuntime } from '../runtime'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'

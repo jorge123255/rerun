@@ -1,7 +1,7 @@
 import 'server-only'
 import type { Client, Row } from '@libsql/client'
 import { desktopVoiceDraftSchema } from '@rerun/contracts'
-import type { ForemanVoiceTarget } from '../../../../../../packages/contracts/src/desktop-foreman-voice'
+import type { ForemanVoiceTarget } from '@rerun/contracts'
 import type { DesktopVoiceStore, DesktopVoiceBlobStore, DesktopVoiceAttemptRecord } from '../voice/types'
 import { createHash } from 'node:crypto'
 import { DesktopHttpError } from '../auth'

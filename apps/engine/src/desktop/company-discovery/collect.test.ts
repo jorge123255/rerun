@@ -1,8 +1,8 @@
 import { applyCompanyDiscoveryEvent, emptyCompanyDiscoverySnapshot, type CompanyDiscoveryEvent } from '@rerun/contracts'
 import { expect, test } from 'vitest'
-import { runCompanyCollectors } from './collect.js'
-import { readDnsRecords } from './parse.js'
-import type { DnsLookup, PublicPageReader } from './ports.js'
+import { runCompanyCollectors } from './collect.ts'
+import { readDnsRecords } from './parse.ts'
+import type { DnsLookup, PublicPageReader } from './ports.ts'
 
 const now = () => new Date('2026-11-05T12:00:00.000Z')
 const url = 'https://acme.example/'

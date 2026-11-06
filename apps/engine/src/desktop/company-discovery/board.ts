@@ -1,6 +1,6 @@
 import { DESKTOP_COMPANY_DISCOVERY_LIMITS, type CompanyFinding, type CompanyDiscoveryAttribution, type CompanyDiscoverySource } from '@rerun/contracts'
-import type { DnsFindings } from './parse.js'
-import { SOCIAL_NETWORKS, type SocialNetwork } from './parse.js'
+import type { DnsFindings } from './parse.ts'
+import { SOCIAL_NETWORKS, type SocialNetwork } from './parse.ts'
 
 // How one collector adds to the board. Port of findingsForCollector for the collectors that can
 // run locally. Icons stay null: the hosted services catalog is not on this computer.

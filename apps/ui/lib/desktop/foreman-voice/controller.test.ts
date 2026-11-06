@@ -1,7 +1,7 @@
 import { expect, test, vi } from 'vitest'
 import { createForemanVoiceController } from './controller'
 import type { PendingAudio } from './journal'
-import type { ForemanVoiceRequest, ForemanVoiceSnapshot } from '../../../../../packages/contracts/src/desktop-foreman-voice'
+import type { ForemanVoiceRequest, ForemanVoiceSnapshot } from '@rerun/contracts'
 const id='00000000-0000-4000-8000-000000000001'
 const target={chat:{workspaceId:'1',chatId:'fmc_00000000-0000-4000-8000-000000000002'},model:{connectionId:'connection',model:'model'}}
 const take={blob:new Blob(['test'],{type:'audio/webm'}),format:{mimeType:'audio/webm',extension:'webm',transcriptionFormat:'webm'},durationMs:900,levels:[0.2]}

@@ -2,7 +2,7 @@
 import {
     foremanVoicePendingSchema, sameForemanVoiceTarget,
     type ForemanVoicePending, type ForemanVoiceTarget,
-} from '../../../../../packages/contracts/src/desktop-foreman-voice'
+} from '@rerun/contracts'
 export type PendingAudio = ForemanVoicePending & { blob: Blob | null }
 export type ForemanAudioJournal = {
     read(target: ForemanVoiceTarget): Promise<PendingAudio | null>

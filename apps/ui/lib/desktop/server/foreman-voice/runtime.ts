@@ -5,7 +5,7 @@ import { desktopVoiceDraftSchema } from '@rerun/contracts'
 import {
     FOREMAN_VOICE_MIN_MS, foremanVoiceRequestSchema, foremanVoiceSnapshotSchema, sameForemanVoiceTarget,
     type ForemanVoiceTarget, type ForemanVoiceRequest, type ForemanVoiceSnapshot,
-} from '../../../../../../packages/contracts/src/desktop-foreman-voice'
+} from '@rerun/contracts'
 import { createDesktopVoiceService } from '../voice/service'
 import { desktopForeman } from '../foreman/binding'
 import { ownedForemanChat, foremanTurn, type ForemanTurn } from '../foreman/chat-store'

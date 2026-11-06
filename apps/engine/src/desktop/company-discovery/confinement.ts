@@ -1,8 +1,8 @@
 import { Resolver } from 'node:dns/promises'
 import { DESKTOP_COMPANY_DISCOVERY_LIMITS } from '@rerun/contracts'
-import { abortable, readPublicPage } from '../web-fetch/transport.js'
-import { publicDestination, publicUrl } from '../web-fetch/public-url.js'
-import { classifyPublicFailure, type DnsLookup, type PublicPageReader } from './ports.js'
+import { abortable, readPublicPage } from '../web-fetch/transport.ts'
+import { publicDestination, publicUrl } from '../web-fetch/public-url.ts'
+import { classifyPublicFailure, type DnsLookup, type PublicPageReader } from './ports.ts'
 
 // Production readers. Every hop uses the accepted public-fetch confinement: no cookies, no
 // credential jar, no browser profile, and a second DNS check before the connection.

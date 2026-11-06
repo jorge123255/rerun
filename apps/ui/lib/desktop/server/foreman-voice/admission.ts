@@ -3,7 +3,7 @@ import type { Client } from '@libsql/client'
 import { desktopVoiceDraftSchema } from '@rerun/contracts'
 import {
     foremanVoiceTargetSchema, sameForemanVoiceTarget, type ForemanVoiceTarget,
-} from '../../../../../../packages/contracts/src/desktop-foreman-voice'
+} from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import type { ForemanTurn } from '../foreman/chat-store'
 

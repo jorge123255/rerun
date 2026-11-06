@@ -9,9 +9,9 @@ import {
     type CompanyPayload,
     type CompanyProvenance,
 } from '@rerun/contracts'
-import { emptyDraft, findingsForDns, findingsForRegistry, findingsForSite, findingsForStack } from './board.js'
-import { detectTechnologies, findSiren, hrefsOf, htmlToText, pickPages, productUrlsOf, readDnsRecords, readPageMeta, readProductPage, readRegistryCompany, readShopifyProducts, readWooProducts, sliceHtml, socialProfiles } from './parse.js'
-import type { DnsLookup, PublicPageReader, PublicRead } from './ports.js'
+import { emptyDraft, findingsForDns, findingsForRegistry, findingsForSite, findingsForStack } from './board.ts'
+import { detectTechnologies, findSiren, hrefsOf, htmlToText, pickPages, productUrlsOf, readDnsRecords, readPageMeta, readProductPage, readRegistryCompany, readShopifyProducts, readWooProducts, sliceHtml, socialProfiles } from './parse.ts'
+import type { DnsLookup, PublicPageReader, PublicRead } from './ports.ts'
 
 export type CompanyCollectorInput = {
     url: string

@@ -1,7 +1,7 @@
 import {
     FOREMAN_VOICE_MIN_MS, sameForemanVoiceTarget,
     type ForemanVoiceTarget, type ForemanVoiceSnapshot, type ForemanVoiceAccepted,
-} from '../../../../../packages/contracts/src/desktop-foreman-voice'
+} from '@rerun/contracts'
 import type { DesktopVoiceRecordingTake } from '../voice/useDesktopVoiceRecorder'
 import type { ForemanAudioJournal, PendingAudio } from './journal'
 import { audioBase64, type createForemanVoiceClient } from './client'

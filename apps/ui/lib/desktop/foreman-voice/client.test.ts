@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { foremanVoiceRequestSchema, foremanVoiceSnapshotSchema } from '../../../../../packages/contracts/src/desktop-foreman-voice'
+import { foremanVoiceRequestSchema, foremanVoiceSnapshotSchema } from '@rerun/contracts'
 import { createForemanVoiceClient } from './client'
 const id = '00000000-0000-4000-8000-000000000001'
 const target = { chat: { workspaceId: '1', chatId: 'fmc_00000000-0000-4000-8000-000000000002' }, model: { connectionId: 'connection', model: 'model' } }

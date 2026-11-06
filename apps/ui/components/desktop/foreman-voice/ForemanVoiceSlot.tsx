@@ -7,7 +7,7 @@ import { DesktopVoiceWaveform } from '@/components/desktop/voice/DesktopVoiceWav
 import { useDesktopVoicePlayback } from '@/lib/desktop/voice/useDesktopVoicePlayback'
 import { foremanVoiceAudioUrl } from '@/lib/desktop/foreman-voice/client'
 import type { ForemanVoiceSlotController } from '@/lib/desktop/foreman-voice/useForemanVoiceSlot'
-import { FOREMAN_VOICE_HOLD_MS } from '../../../../../packages/contracts/src/desktop-foreman-voice'
+import { FOREMAN_VOICE_HOLD_MS } from '@rerun/contracts'
 
 export type ForemanVoiceSlotProps = { voice: ForemanVoiceSlotController; onOpenTranscriptionSettings(): void }
 export function ForemanVoiceSlot({ voice, onOpenTranscriptionSettings }: ForemanVoiceSlotProps) {
