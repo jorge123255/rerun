@@ -560,10 +560,11 @@ function CoworkerChat({ agent, requested, requestedPanel, onPanelRequestHandled,
     const [sessions, setSessions] = useState<DesktopSessionView[] | null>(null)
     const [bootstrap, setBootstrap] = useState<{ layout: DesktopTabLayout | null } | null>(null)
     const [error, setError] = useState<string | null>(null)
+    const [checkedRequest, setCheckedRequest] = useState<DesktopChatRequest | null>(null)
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/sessions`
     const sessionRead = useRef<AbortController | null>(null)
 
-    const readSessions = useCallback(async (restoreTabs = false) => {
+    const readSessions = useCallback(async (restoreTabs = false, checking?: DesktopChatRequest) => {
         sessionRead.current?.abort()
         const controller = new AbortController()
         sessionRead.current = controller
@@ -576,6 +577,8 @@ function CoworkerChat({ agent, requested, requestedPanel, onPanelRequestHandled,
             setError(null)
         } catch (cause) {
             if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load conversations')
+        } finally {
+            if (checking && !controller.signal.aborted) setCheckedRequest(checking)
         }
     }, [agent.id, url])
 
@@ -587,16 +590,24 @@ function CoworkerChat({ agent, requested, requestedPanel, onPanelRequestHandled,
     }, [readSessions])
 
     const missing = !!requested && 'id' in requested && !!sessions && !sessions.some(s => s.id === requested.id)
+    useEffect(() => {
+        // Webhooks, routines and coworker calls can add a chat after this panel loaded.
+        // Refresh its owner-scoped list while preserving the live tab/draft instances.
+        // readSessions changes state only after its asynchronous read.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        if (bootstrap && missing && requested && checkedRequest !== requested) void readSessions(false, requested)
+    }, [bootstrap, missing, requested, checkedRequest, readSessions])
     const dismiss = <Button type="button" variant="ghost" size="icon-sm" aria-label="Close panel" className="absolute right-3 top-3" onClick={onClosePanel}><X /></Button>
     const reload = () => { setBootstrap(null); void readSessions(true) }
     return <>
-        {(error || missing) && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
+        {(error || (missing && checkedRequest === requested)) && <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-sm text-destructive">
             {error ?? 'This conversation is no longer available for this coworker.'}
             <Button type="button" size="sm" variant="outline" onClick={reload}>Retry conversations</Button>
         </div>}
+        {missing && checkedRequest !== requested && !error && <p role="status" className="px-5 py-2 text-sm text-muted-foreground">Opening conversation…</p>}
         {!error && !bootstrap && <p role="status" className="p-5 text-sm text-muted-foreground">Opening {agent.name}…</p>}
-        {missing || !bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
-            agent={agent} selected={selected} requested={requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} sessions={sessions} initialLayout={bootstrap.layout}
+        {!bootstrap || !sessions ? dismiss : <DesktopChatTabs onOpenCoworkerChat={onOpenCoworkerChat}
+            agent={agent} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
             refreshSessions={readSessions} reload={reload} modelLabel={modelLabel} onOpenModelSettings={onOpenModelSettings} onClosePanel={onClosePanel} />}
     </>

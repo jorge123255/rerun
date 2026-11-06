@@ -114,7 +114,8 @@ async function openCoworker(name = 'Alice') {
     await until(() => composer())
 }
 
-async function mount(completed: DesktopCompletionItem[] = []) {
+async function mount(completed: DesktopCompletionItem[] = [], lateShared = false) {
+    let sharedAvailable = !lateShared
     const drafts = createDesktopDraftFixture()
     const agents = [agent('alice', 'Alice'), agent('bob', 'Bob')]
     const layouts = new Map<string, DesktopTabLayout>()
@@ -128,7 +129,7 @@ async function mount(completed: DesktopCompletionItem[] = []) {
     }
     const sessionsFor = (id: string) => agents.some(owner => owner.id === id) && id !== 'casey' ? [
         { id: `${id}-draft`, agentId: id, title: 'Draft chat', createdAt: date, updatedAt: date },
-        { id: `${id}-shared`, agentId: id, title: 'Shared plan', createdAt: date, updatedAt: date },
+        ...(sharedAvailable ? [{ id: `${id}-shared`, agentId: id, title: 'Shared plan', createdAt: date, updatedAt: date }] : []),
     ] : []
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const raw = typeof input === 'string' || input instanceof URL ? String(input) : input.url
@@ -203,8 +204,48 @@ async function mount(completed: DesktopCompletionItem[] = []) {
     const root = createRoot(container)
     roots.push(root)
     await act(async () => { root.render(<DesktopApp initialData={{ ...providers, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Fixture workspace' }, agents: [...agents] }} />) })
-    return { container, layouts, reads, created, fileWrites, fetcher, marked }
+    return { container, layouts, reads, created, fileWrites, fetcher, marked, publishShared: () => { sharedAvailable = true } }
 }
+
+test('opening a newly adopted background chat refreshes sessions without remounting tabs or losing a newer draft', async () => {
+    const app = await mount([], true)
+    await openCoworker('Alice')
+    await enterText(composer(), 'Keep the original draft')
+    const original = composer()
+    await shortcut('k', composer())
+    await enterText(composer(), 'Keep the newer unsent tab')
+    const blank = composer()
+    const blankUid = app.layouts.get('alice')!.tabs.find(tab => tab.id === null)!.uid
+    const revision = app.layouts.get('alice')!.revision
+    app.publishShared()
+    await shortcut('f'); await query('Shared'); await pick('conversations-conversation-alice-shared')
+    await until(() => activeChat()?.textContent?.includes('Reply for alice-shared'))
+    expect(original.isConnected).toBe(true)
+    expect(blank.isConnected).toBe(true)
+    expect(blank.value).toBe('Keep the newer unsent tab')
+    expect(app.layouts.get('alice')!.revision).toBeGreaterThan(revision)
+    expect(app.layouts.get('alice')!.tabs.some(tab => tab.uid === blankUid && tab.id === null)).toBe(true)
+    expect(app.container.textContent).not.toContain('no longer available')
+    await click('Draft chat', app.container.querySelector('[aria-label="Open conversations"]')!)
+    expect(composer()).toBe(original)
+    expect(composer().value).toBe('Keep the original draft')
+})
+
+test('an unavailable saved target reports the refreshed result without discarding the current draft or looping', async () => {
+    const app = await mount([], true)
+    await openCoworker('Alice')
+    await enterText(composer(), 'Keep this chat when the search result is stale')
+    const original = composer()
+    await shortcut('f'); await query('Shared'); await pick('conversations-conversation-alice-shared')
+    await until(() => app.container.textContent?.includes('This conversation is no longer available'))
+    expect(original.isConnected).toBe(true)
+    expect(original.value).toBe('Keep this chat when the search result is stale')
+    const reads = () => app.fetcher.mock.calls.filter(([input]) => String(input) === '/api/desktop/agents/alice/sessions').length
+    expect(reads()).toBe(2)
+    await settle(30)
+    expect(reads()).toBe(2)
+    expect(app.layouts.get('alice')!.tabs.map(tab => tab.id)).toEqual(['alice-draft'])
+})
 
 test('the actual visible saved tab acknowledges only its completions while the inbox is closed, and a Done row opens its own coworker', async () => {
     const completion = (owner: string): DesktopCompletionItem => ({ id: `done:${owner}-draft`, agentId: owner, agentName: owner === 'alice' ? 'Alice' : 'Bob', agentEnabled: true,
