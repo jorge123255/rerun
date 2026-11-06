@@ -12,3 +12,6 @@ Worktree: `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round38-master-c
 | 3–9 | RD38 C–I | isolated agent branches from `6f6ad959…` | base (no master stack required) | E needs A+B seam; G needs F | **RESERVED** — seven agents |
 
 Publication: local commits only until root approves exact head. No push from this agent. No cloud packages active.
+
+| — | RD42 RC preparation docs | `desktop/round42-rc-preparation` | A+B tip | A/B delivered; C–I/RD39–41 pending | committing |
+
