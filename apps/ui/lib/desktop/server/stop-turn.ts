@@ -1,4 +1,5 @@
 import 'server-only'
+import { desktopRunRecovery } from '../chat-resume'
 import { cancelRun, EngineRequestError, listRuns } from '@/lib/engine/client'
 import { DesktopHttpError } from './auth'
 import { openDesktopDatabase } from './database'
@@ -28,12 +29,13 @@ async function runningRuns({ conn, engineAgentId, engineSessionId }: Target) {
     }
 }
 
-export async function readDesktopTurnRunning(runtime: DesktopRuntime, sessionId: string): Promise<{ running: boolean; runId: string | null; failedRunId: string | null }> {
+export async function readDesktopTurnRunning(runtime: DesktopRuntime, sessionId: string): Promise<{ running: boolean; runId: string | null; failedRunId: string | null; failedRunError: string | null }> {
     const target = await targetOf(runtime, sessionId)
     try {
         const owned = (await listRuns(target.conn, target.engineAgentId, { sessionId: target.engineSessionId })).filter(run => run.sessionId === target.engineSessionId && run.agentId === target.engineAgentId)
-        const running = owned.find(run => run.status === 'running')
-        return { running: !!running, runId: running?.id ?? null, failedRunId: owned[0]?.status === 'error' ? owned[0].id : null }
+        const recovery = desktopRunRecovery(owned, target.engineAgentId, target.engineSessionId)
+        const latest = [...owned].sort((left, right) => right.startedAt.localeCompare(left.startedAt) || right.id.localeCompare(left.id))[0]
+        return { running: !!recovery.activeRunId, runId: recovery.activeRunId, failedRunId: latest?.status === 'error' ? latest.id : null, failedRunError: recovery.lastError }
     } catch { throw new DesktopHttpError(502, 'Could not read this reply’s status. Try again.') }
 }
 

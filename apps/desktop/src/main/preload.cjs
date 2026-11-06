@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
             return () => ipcRenderer.removeListener('desktop:notification-click', handler)
         },
     },
+    findInPage: input => ipcRenderer.invoke('desktop:find-in-page', { action: input?.action, query: typeof input?.query === 'string' ? input.query : '' }),
     getStatus: () => ipcRenderer.invoke('desktop:status'),
     retry: () => ipcRenderer.invoke('desktop:retry'),
     quit: () => ipcRenderer.invoke('desktop:quit'),

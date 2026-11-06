@@ -14,6 +14,7 @@ import { createNativeRemoteMachines } from './remote-machines/binding.mjs'
 import { createRemoteMachineIpc } from './remote-machines/ipc.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createDesktopResultFileSave } from './result-files.mjs'
+import { handleFindInPage } from './find-in-page.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -164,6 +165,7 @@ async function launch() {
         return runWorkspaceTransition(() => workspaces.recoverSwitch(input))
     })
     ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
+    ipcMain.handle('desktop:find-in-page', (event, input) => { trusted(event); return handleFindInPage(event.sender, input) })
     ipcMain.handle('desktop:remote-machines-actor', event => remoteMachineIpc.actor(event))
     ipcMain.handle('desktop:remote-machines-execute', (event, command) => remoteMachineIpc.execute(event, command))
     ipcMain.handle('desktop:coworker-share-pick', event => { trusted(event); return coworkerShareFiles.pickImport() })
