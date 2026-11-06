@@ -30,9 +30,9 @@ export function DesktopClaudePlanSteps({ runtime, onOpenAuthorization, onDone, l
     const [name, setName] = useState(initialName)
     const [saving, setSaving] = useState(false)
     const [nameError, setNameError] = useState<string | null>(null)
-    const linked = oauth.phase === 'connected'
+    const linked = oauth.linked
     const opened = oauth.phase !== 'idle'
-    const busy = oauth.phase === 'checking'
+    const busy = oauth.phase === 'checking' || oauth.attemptPhase === 'checking'
     const finish = async () => {
         if (!linked || saving || !name.trim()) return
         setSaving(true)
@@ -59,7 +59,7 @@ export function DesktopClaudePlanSteps({ runtime, onOpenAuthorization, onDone, l
             },
             { title: 'Paste the code', body: <div className="space-y-2"><CodeInput oauth={oauth} />
                 {oauth.phase === 'error' && <Button type="button" size="sm" variant="outline" onClick={() => void oauth.reconcile()}>Check saved state</Button>}
-                {(oauth.phase === 'waiting' || oauth.phase === 'checking') && <Button type="button" size="sm" variant="ghost" onClick={() => void oauth.cancel()}>Cancel sign-in</Button>}
+                {(oauth.attemptPhase === 'waiting' || oauth.attemptPhase === 'checking' || oauth.phase === 'waiting' || oauth.phase === 'checking') && <Button type="button" size="sm" variant="ghost" onClick={() => void oauth.cancel()}>Cancel sign-in</Button>}
             </div> },
             last,
         ]}
@@ -70,8 +70,8 @@ function CodeInput({ oauth }: { oauth: ReturnType<typeof useDesktopClaudePlan> }
     const [value, setValue] = useState('')
     const [pasteRefused, setPasteRefused] = useState(false)
     const field = useRef<HTMLInputElement>(null)
-    const busy = oauth.phase === 'checking'
-    const linked = oauth.phase === 'connected'
+    const busy = oauth.phase === 'checking' || oauth.attemptPhase === 'checking'
+    const linked = oauth.linked
     const submit = async (text: string) => { if (await oauth.submit(text)) setValue('') }
 
     const pasteIntoField = (event: ClipboardEvent<HTMLInputElement>) => {

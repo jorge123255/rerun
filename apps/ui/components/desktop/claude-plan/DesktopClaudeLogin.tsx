@@ -17,7 +17,8 @@ export function DesktopClaudeLogin({ connected, rejected, onProviders }: { conne
         try {
             const signal = AbortSignal.timeout(35_000)
             const snapshot = await runtime.reconcile(null, signal)
-            if (snapshot.phase === 'waiting' || snapshot.phase === 'checking') throw new Error('Cancel the pending sign-in before disconnecting.')
+            const pending = snapshot.pendingAttempt?.phase ?? snapshot.phase
+            if (pending === 'waiting' || pending === 'checking') throw new Error('Cancel the pending sign-in before disconnecting.')
             await runtime.disconnect!(snapshot.attemptId, signal)
         } catch { setError('Could not disconnect Claude. Check its saved state and try again.') }
         finally { setPending(false) }

@@ -62,7 +62,8 @@ export function createDesktopClaudePlanClient(onProviders: (providers: Connectio
             // Fetching a newer revision is safe only for the exact attempt captured by the caller.
             // Never discover a different latest attempt and cancel it when an old dialog closes.
             const snapshot = await read(signal)
-            if (snapshot.attemptId !== attemptId || !['waiting', 'checking'].includes(snapshot.phase)) return snapshot
+            const pendingPhase = snapshot.pendingAttempt?.phase ?? snapshot.phase
+            if (snapshot.attemptId !== attemptId || !['waiting', 'checking'].includes(pendingPhase)) return snapshot
             return send('cancel', attemptId, signal)
         },
     }

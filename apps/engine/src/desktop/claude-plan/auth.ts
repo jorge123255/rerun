@@ -33,13 +33,65 @@ export type ClaudeAuthPorts = {
     now(): number
     launchNonce: string
 }
-const publicState = (state: State | null, env: Record<string, string>, now: number, launch: string): DesktopClaudePlanSnapshot => ({
-    connectionId: ID, attemptId: state?.attemptId ?? null, revision: state?.revision ?? '0',
-    phase: state?.phase === 'waiting' && state.expires <= now ? 'expired' : state?.phase === 'checking' && state.launchNonce !== launch ? 'error' : state?.phase ?? (env[TOKEN] ? 'connected' : 'idle'),
-    ...(state?.phase === 'waiting' && state.expires > now && state.authorizeUrl ? { authorizeUrl: state.authorizeUrl } : {}),
-    ...(state?.phase === 'checking' && state.launchNonce !== launch ? { error: 'Sign-in was interrupted. Start a new attempt.' } : state?.phase === 'error' ? { error: 'Claude sign-in could not be confirmed. Start a new attempt.' } : {}),
-    ...(env[TOKEN] ? { credentialRevision: env[GENERATION] ?? '0' } : {}),
-})
+/** Attempt phase after passive expiry / interrupted-checking rules. */
+function attemptPhaseOf(state: State, now: number, launch: string): State['phase'] {
+    if (state.phase === 'waiting' && state.expires <= now) return 'expired'
+    if (state.phase === 'checking' && state.launchNonce !== launch) return 'error'
+    return state.phase
+}
+
+/**
+ * Project durable credential generation separately from any in-flight replacement.
+ * A still-executable token always publishes phase `connected` + credentialRevision;
+ * start/cancel/failure of a replacement must not hide that generation.
+ */
+export function projectDesktopClaudePlanSnapshot(state: State | null, env: Record<string, string>, now: number, launch: string): DesktopClaudePlanSnapshot {
+    const hasCredential = Boolean(env[TOKEN])
+    const credentialRevision = hasCredential ? (env[GENERATION] ?? '0') : undefined
+    if (!state) {
+        return {
+            connectionId: ID, attemptId: null, revision: '0',
+            phase: hasCredential ? 'connected' : 'idle',
+            ...(credentialRevision ? { credentialRevision } : {}),
+        }
+    }
+    const attemptPhase = attemptPhaseOf(state, now, launch)
+    if (hasCredential) {
+        const pending = (attemptPhase === 'waiting' || attemptPhase === 'checking')
+            ? {
+                attemptId: state.attemptId,
+                phase: attemptPhase,
+                ...(attemptPhase === 'waiting' && state.expires > now && state.authorizeUrl ? { authorizeUrl: state.authorizeUrl } : {}),
+                ...(attemptPhase === 'checking' && state.launchNonce !== launch ? { error: 'Sign-in was interrupted. Start a new attempt.' } : {}),
+            }
+            : undefined
+        const replacementError = !pending && (attemptPhase === 'error' || (state.phase === 'checking' && state.launchNonce !== launch))
+            ? (attemptPhase === 'error' && state.phase === 'error'
+                ? 'Claude sign-in could not be confirmed. Start a new attempt.'
+                : 'Sign-in was interrupted. Start a new attempt.')
+            : undefined
+        return {
+            connectionId: ID,
+            attemptId: pending?.attemptId ?? null,
+            revision: state.revision,
+            phase: 'connected',
+            credentialRevision: credentialRevision!,
+            ...(pending?.authorizeUrl ? { authorizeUrl: pending.authorizeUrl } : {}),
+            ...(pending ? { pendingAttempt: { attemptId: pending.attemptId, phase: pending.phase, ...(pending.authorizeUrl ? { authorizeUrl: pending.authorizeUrl } : {}), ...(pending.error ? { error: pending.error } : {}) } } : {}),
+            ...(replacementError ? { error: replacementError } : {}),
+        }
+    }
+    return {
+        connectionId: ID, attemptId: state.attemptId, revision: state.revision,
+        phase: attemptPhase === 'connected' ? 'connected' : attemptPhase === 'disconnected' ? 'disconnected' : attemptPhase === 'cancelled' ? 'cancelled' : attemptPhase === 'expired' ? 'expired' : attemptPhase === 'error' ? 'error' : attemptPhase === 'checking' ? 'checking' : attemptPhase === 'waiting' ? 'waiting' : 'idle',
+        ...(attemptPhase === 'waiting' && state.expires > now && state.authorizeUrl ? { authorizeUrl: state.authorizeUrl } : {}),
+        ...(attemptPhase === 'error' || (state.phase === 'checking' && state.launchNonce !== launch)
+            ? { error: state.phase === 'checking' && state.launchNonce !== launch ? 'Sign-in was interrupted. Start a new attempt.' : 'Claude sign-in could not be confirmed. Start a new attempt.' }
+            : {}),
+    }
+}
+
+const publicState = projectDesktopClaudePlanSnapshot
 function load(env: Record<string, string>): State | null { return env[AUTH] ? stateSchema.parse(JSON.parse(env[AUTH])) : null }
 const next = (state: State, patch: Partial<State>): State => ({ ...state, ...patch, revision: String(BigInt(state.revision) + 1n) })
 const same = (state: State | null, action: DesktopClaudePlanAction) => (state?.attemptId ?? null) === action.attemptId && (state?.revision ?? '0') === action.expectedRevision
@@ -76,7 +128,12 @@ export function createDesktopClaudePlanAuth(ports: ClaudeAuthPorts) {
             if (input.operation === 'cancel') {
                 if (!current || !['waiting', 'checking'].includes(current.phase)) return publicState(current, env, ports.now(), ports.launchNonce)
                 exchanges.get(current.attemptId)?.abort()
-                const cancelled = next(current, { phase: 'cancelled', verifier: undefined, state: undefined, authorizeUrl: undefined, requestId: input.requestId, fingerprint: ports.fingerprint(JSON.stringify(input)) })
+                // Durable token stays executable: end the pending attempt without publishing cancelled over connected.
+                const cancelled = next(current, {
+                    phase: env[TOKEN] ? 'connected' : 'cancelled',
+                    verifier: undefined, state: undefined, authorizeUrl: undefined,
+                    requestId: input.requestId, fingerprint: ports.fingerprint(JSON.stringify(input)),
+                })
                 await ports.write({ ...env, [AUTH]: JSON.stringify(cancelled) })
                 return publicState(cancelled, env, ports.now(), ports.launchNonce)
             }
@@ -127,6 +184,8 @@ export function createDesktopClaudePlanAuth(ports: ClaudeAuthPorts) {
             await ports.lock(async () => {
                 const env = await ports.read(), current = load(env)
                 if (!current || current.attemptId !== pending.state.attemptId || current.revision !== pending.state.revision || current.phase !== 'checking') return
+                // Never delete TOKEN here. AUTH records error; public projection stays connected when a
+                // durable credential remains, with an explicit error for the failed replacement.
                 const failed = next(current, { phase: 'error', verifier: undefined, state: undefined, authorizeUrl: undefined })
                 await ports.write({ ...env, [AUTH]: JSON.stringify(failed) })
             })

@@ -33,7 +33,8 @@ export function useDesktopClaudePlan({ runtime, onOpenAuthorization }: {
     const apply = (attempt: DesktopClaudePlanAttempt, generation: number) => {
         if (!owner.mounted || latest.current !== owner || generation !== owner.generation) return false
         owner.snapshot = attempt
-        setView({ owner, phase: phaseOf(attempt.phase), error: attempt.error ?? (attempt.phase === 'expired' ? 'This code expired. Open Claude again.' : null), opening: false })
+        const viewPhase = attempt.pendingAttempt ? phaseOf(attempt.pendingAttempt.phase) : phaseOf(attempt.phase)
+        setView({ owner, phase: viewPhase === 'idle' && attempt.phase === 'connected' ? 'connected' : viewPhase, error: attempt.error ?? (attempt.phase === 'expired' ? 'This code expired. Open Claude again.' : null), opening: false })
         return true
     }
     const run = async (operation: (signal: AbortSignal) => Promise<DesktopClaudePlanAttempt>, opening = false, checking = false) => {
@@ -57,14 +58,16 @@ export function useDesktopClaudePlan({ runtime, onOpenAuthorization }: {
         void runtime.reconcile(null, controller.signal).then(attempt => {
             if (!owner.mounted || latest.current !== owner || generation !== owner.generation) return
             owner.snapshot = attempt
-            setView({ owner, phase: phaseOf(attempt.phase), error: attempt.error ?? null, opening: false })
+            const projected = attempt.pendingAttempt ? phaseOf(attempt.pendingAttempt.phase) : phaseOf(attempt.phase)
+            setView({ owner, phase: projected === 'idle' && attempt.phase === 'connected' ? 'connected' : projected, error: attempt.error ?? null, opening: false })
         }).catch(() => {
             if (owner.mounted && latest.current === owner && generation === owner.generation) setView({ owner, phase: 'error', error: 'Could not read Claude sign-in. Check its saved state.', opening: false })
         })
         return () => {
             owner.mounted = false; owner.generation++; owner.controller?.abort()
             const captured = owner.snapshot
-            if (captured?.attemptId && ['waiting', 'checking'].includes(captured.phase)) void runtime.cancel(captured.attemptId, AbortSignal.timeout(10_000)).catch(() => {})
+            const pendingPhase = captured?.pendingAttempt?.phase ?? captured?.phase
+            if (captured?.attemptId && pendingPhase && ['waiting', 'checking'].includes(pendingPhase)) void runtime.cancel(captured.attemptId, AbortSignal.timeout(10_000)).catch(() => {})
         }
     }, [owner, runtime])
     const start = async () => {
@@ -77,7 +80,8 @@ export function useDesktopClaudePlan({ runtime, onOpenAuthorization }: {
     const submit = async (raw: string) => {
         const id = owner.snapshot?.attemptId, code = raw.trim()
         if (code.startsWith('sk-ant') && runtime.token) return !!await token(code)
-        if (!id || !code || owner.snapshot?.phase !== 'waiting') return false
+        const waiting = owner.snapshot?.pendingAttempt?.phase === 'waiting' || owner.snapshot?.phase === 'waiting'
+        if (!id || !code || !waiting) return false
         return (await run(signal => runtime.submit(id, code, signal), false, true))?.phase === 'connected'
     }
     const cancel = async () => {
@@ -89,5 +93,7 @@ export function useDesktopClaudePlan({ runtime, onOpenAuthorization }: {
     const reconcile = () => run(signal => runtime.reconcile(owner.snapshot?.attemptId ?? null, signal))
     const token = async (value: string) => runtime.token && (await run(signal => runtime.token!(owner.snapshot?.attemptId ?? null, value, signal), false, true))?.phase === 'connected'
     const disconnect = () => runtime.disconnect ? run(signal => runtime.disconnect!(owner.snapshot?.attemptId ?? null, signal)) : Promise.resolve(null)
-    return { attemptId: owner.snapshot?.attemptId ?? null, phase: shown.phase, error: shown.error, opening: shown.opening, start, submit, cancel, reconcile, token, disconnect }
+    const linked = shown.phase === 'connected' || Boolean(owner.snapshot?.credentialRevision)
+    const attemptPhase = owner.snapshot?.pendingAttempt?.phase ?? shown.phase
+    return { attemptId: owner.snapshot?.attemptId ?? null, phase: shown.phase, attemptPhase, linked, credentialRevision: owner.snapshot?.credentialRevision, error: shown.error, opening: shown.opening, start, submit, cancel, reconcile, token, disconnect }
 }

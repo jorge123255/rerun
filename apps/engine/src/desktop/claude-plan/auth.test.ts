@@ -71,17 +71,26 @@ describe('canonical desktop Claude sign-in', () => {
         expect(f.saved[TOKEN]).toBeUndefined()
     })
     it('does not replace existing credentials if old workers cannot be drained', async () => {
-        const f = fixture(); f.seed({ [TOKEN]: 'existing-access' })
+        const f = fixture(); f.seed({ [TOKEN]: 'existing-access', RERUN_CLAUDE_CREDENTIAL_REVISION: '3' })
         f.parts.beforeCredentialChange = vi.fn(async () => { throw new Error('still running') })
         const auth = createDesktopClaudePlanAuth(f.parts), waiting = await auth.action(action('start', await auth.status()), signal())
-        expect((await auth.action(finish(waiting), signal())).phase).toBe('error')
+        const failed = await auth.action(finish(waiting), signal())
+        // Durable generation stays linked; replacement failure is explicit without deleting the token.
+        expect(failed.phase).toBe('connected')
+        expect(failed.credentialRevision).toBe('3')
+        expect(failed.error).toMatch(/could not be confirmed/)
         expect(f.saved[TOKEN]).toBe('existing-access')
+        expect(f.parts.beforeCredentialChange).toHaveBeenCalled()
     })
     it('expires on a passive read, preserving an existing credential without exchanging', async () => {
-        const f = fixture(); f.seed({ [TOKEN]: 'existing-access' })
+        const f = fixture(); f.seed({ [TOKEN]: 'existing-access', RERUN_CLAUDE_CREDENTIAL_REVISION: '2' })
         const auth = createDesktopClaudePlanAuth(f.parts)
         await auth.action(action('start', await auth.status()), signal()); f.advance()
-        expect((await auth.status()).phase).toBe('expired')
+        const snapshot = await auth.status()
+        // Expired replacement attempt must not hide the still-executable generation.
+        expect(snapshot.phase).toBe('connected')
+        expect(snapshot.credentialRevision).toBe('2')
+        expect(snapshot.pendingAttempt).toBeUndefined()
         expect(f.parts.exchange).not.toHaveBeenCalled(); expect(f.saved[TOKEN]).toBe('existing-access')
     })
     it('accepts an explicit setup token, clears refresh material and disconnects with CAS', async () => {
@@ -93,4 +102,90 @@ describe('canonical desktop Claude sign-in', () => {
         expect(disconnected.phase).toBe('disconnected'); expect(f.saved[TOKEN]).toBeUndefined()
         expect(f.parts.beforeCredentialChange).toHaveBeenCalledTimes(2)
     })
+
+    it('start/cancel of a replacement keep the active generation connected and do not delete the token', async () => {
+        const f = fixture(); f.seed({ [TOKEN]: 'live-access', RERUN_CLAUDE_CREDENTIAL_REVISION: '7' })
+        const auth = createDesktopClaudePlanAuth(f.parts)
+        const waiting = await auth.action(action('start', await auth.status()), signal())
+        expect(waiting.phase).toBe('connected')
+        expect(waiting.credentialRevision).toBe('7')
+        expect(waiting.pendingAttempt).toMatchObject({ phase: 'waiting', attemptId: waiting.attemptId })
+        expect(waiting.authorizeUrl).toMatch(/^https:\/\/claude\.ai\/oauth\/authorize/)
+        expect(f.saved[TOKEN]).toBe('live-access')
+        for (const privateValue of ['live-access', 'verifier']) expect(JSON.stringify(waiting)).not.toContain(privateValue)
+
+        const cancelled = await auth.action(action('cancel', waiting), signal())
+        expect(cancelled.phase).toBe('connected')
+        expect(cancelled.credentialRevision).toBe('7')
+        expect(cancelled.pendingAttempt).toBeUndefined()
+        expect(cancelled.error).toBeUndefined()
+        expect(f.saved[TOKEN]).toBe('live-access')
+    })
+
+    it('failed replacement exchange leaves the prior token and reports connected with an error', async () => {
+        const f = fixture(); f.seed({ [TOKEN]: 'live-access', RERUN_CLAUDE_CREDENTIAL_REVISION: '4' })
+        f.parts.exchange = vi.fn(async () => { throw new Error('provider rejected') })
+        const auth = createDesktopClaudePlanAuth(f.parts)
+        const waiting = await auth.action(action('start', await auth.status()), signal())
+        const failed = await auth.action(finish(waiting), signal())
+        expect(failed.phase).toBe('connected')
+        expect(failed.credentialRevision).toBe('4')
+        expect(failed.error).toMatch(/could not be confirmed/)
+        expect(f.saved[TOKEN]).toBe('live-access')
+        expect(f.parts.beforeCredentialChange).not.toHaveBeenCalled()
+    })
+
+    it('successful replacement drains workers before swapping the token and bumps generation', async () => {
+        const f = fixture(); f.seed({ [TOKEN]: 'old-access', RERUN_CLAUDE_CREDENTIAL_REVISION: '1' })
+        const order: string[] = []
+        f.parts.beforeCredentialChange = vi.fn(async () => { order.push('drain') })
+        const originalWrite = f.parts.write
+        f.parts.write = vi.fn(async value => { order.push('write'); await originalWrite(value) })
+        const auth = createDesktopClaudePlanAuth(f.parts)
+        const waiting = await auth.action(action('start', await auth.status()), signal())
+        const connected = await auth.action(finish(waiting), signal())
+        expect(connected.phase).toBe('connected')
+        expect(connected.credentialRevision).toBe('2')
+        expect(connected.pendingAttempt).toBeUndefined()
+        expect(f.saved[TOKEN]).toBe('fresh-access')
+        expect(order.indexOf('drain')).toBeGreaterThan(-1)
+        expect(order.indexOf('write')).toBeGreaterThan(order.indexOf('drain'))
+    })
+
+    it('disconnect drains then deletes the active token; late exchange cannot restore it', async () => {
+        const f = fixture(); f.seed({ [TOKEN]: 'live-access', RERUN_CLAUDE_CREDENTIAL_REVISION: '5' })
+        let complete!: (value: { accessToken: string }) => void, entered!: () => void
+        const started = new Promise<void>(resolve => { entered = resolve })
+        f.parts.exchange = vi.fn(() => { entered(); return new Promise(resolve => { complete = resolve }) })
+        const auth = createDesktopClaudePlanAuth(f.parts)
+        const waiting = await auth.action(action('start', await auth.status()), signal())
+        const pending = auth.action(finish(waiting), signal())
+        await started
+        await expect(auth.action(action('disconnect', await auth.status()), signal())).rejects.toThrow(/Cancel this sign-in/)
+        const cancelled = await auth.action(action('cancel', await auth.status()), signal())
+        expect(cancelled.phase).toBe('connected')
+        expect(f.saved[TOKEN]).toBe('live-access')
+        const gone = await auth.action(action('disconnect', cancelled), signal())
+        expect(gone.phase).toBe('disconnected')
+        expect(gone.credentialRevision).toBeUndefined()
+        expect(f.saved[TOKEN]).toBeUndefined()
+        expect(f.parts.beforeCredentialChange).toHaveBeenCalled()
+        complete({ accessToken: 'stale-should-not-land' })
+        expect((await pending).phase).toBe('disconnected')
+        expect(f.saved[TOKEN]).toBeUndefined()
+    })
+
+    it('projectDesktopClaudePlanSnapshot keeps no-token waiting and redacts secrets', async () => {
+        const { projectDesktopClaudePlanSnapshot } = await import('./auth')
+        const waitingOnly = projectDesktopClaudePlanSnapshot({
+            attemptId: '11111111-1111-4111-8111-111111111111', revision: '1', phase: 'waiting', startId: '22222222-2222-4222-8222-222222222222',
+            expires: 50_000, verifier: 'secret-verifier', state: 'secret-state', authorizeUrl: 'https://claude.ai/oauth/authorize?x=1',
+            predecessor: '0', launchNonce: 'launch-a',
+        }, {}, 1_000, 'launch-a')
+        expect(waitingOnly.phase).toBe('waiting')
+        expect(waitingOnly.credentialRevision).toBeUndefined()
+        expect(JSON.stringify(waitingOnly)).not.toContain('secret-verifier')
+        expect(projectDesktopClaudePlanSnapshot(null, {}, 1_000, 'launch-a')).toMatchObject({ phase: 'idle', attemptId: null })
+    })
+
 })
