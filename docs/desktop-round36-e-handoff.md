@@ -138,7 +138,7 @@ Keep canonical workspace identity and template storage ownership. The snapshotâ€
 ## Persistence and recovery semantics
 
 - Snapshot/archive/manifest are immutable. Replaying the same source revision/include reuses the snapshot; changed content requires fresh review.
-- Archive reads require active state. Revocation removes the archive but not the manifest/receipt and cannot recall an exported file.
+- Archive reads require active state. Revocation removes the archive but not the manifest/receipt and cannot recall an exported file. `store.revoke` records the supplied `requestId`; replaying that request or another request for the same snapshot/expectedRevision returns the existing receipt, while request reuse for a different identity refuses with 409.
 - Import is deduped per snapshot and target workspace. Another workspace receives a separate fresh disconnected identity.
 - Partial/unknown import returns `uncertain` with `recoverable:true`; rollback writes a receipt rather than claiming success. Optional root recovery reconciles the exact package without replaying it.
 - Source revisions, expected digests and member hashes are rechecked before preview/import. No automatic effect occurs on manifest/history reads.
@@ -146,7 +146,7 @@ Keep canonical workspace identity and template storage ownership. The snapshotâ€
 ## Regression sources authored, all unrun
 
 - `apps/engine/src/desktop/coworker-share/snapshot.test.ts`: selected content, opt-in buckets, binary fidelity, disconnected import plan and archive tamper rejection.
-- `apps/ui/lib/desktop/server/coworker-share/store.test.ts`: snapshot replay, withdrawal, duplicate/cross-workspace imports and rollback receipts.
+- `apps/ui/lib/desktop/server/coworker-share/store.test.ts`: snapshot replay, request-bound revoke replay/identity refusal, duplicate/cross-workspace imports and rollback receipts.
 - `apps/ui/lib/desktop/server/coworker-share/service.test.ts`: replay versus source changes, duplicate install and uncertain acknowledgement.
 - `apps/ui/lib/desktop/server/coworker-share/review.test.ts`: non-persisting review result/identity, exact prepared-byte export, lost-ACK restart replay and wrong-identity refusal.
 

@@ -95,7 +95,7 @@ export function createDesktopCoworkerShareService(store: DesktopCoworkerShareSto
 
         async revoke(input: Parameters<typeof desktopCoworkerShareRevokeInputSchema.parse>[0]): Promise<DesktopCoworkerShareReceipt> {
             const parsed = desktopCoworkerShareRevokeInputSchema.parse(input)
-            return store.revoke(parsed.snapshotId, parsed.expectedRevision)
+            return store.revoke(parsed.snapshotId, parsed.expectedRevision, parsed.requestId)
         },
     }
 }

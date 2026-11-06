@@ -43,11 +43,20 @@ export function createDesktopCoworkerShareStore(db: Client) {
             if (!row?.archive_blob) refusal(409, 'This local share is no longer available.')
             return { bytes: Buffer.from(row.archive_blob), sha256: String(row.archive_sha256) }
         },
-        async revoke(snapshotId: string, expectedRevision: string): Promise<DesktopCoworkerShareReceipt> {
+        async revoke(snapshotId: string, expectedRevision: string, requestId = `revoke:${snapshotId}`): Promise<DesktopCoworkerShareReceipt> {
+            if (requestId) {
+                const prior = await receipt(requestId)
+                if (prior) {
+                    if (prior.operation !== 'revoke' || prior.snapshotId !== snapshotId) refusal(409, 'This revoke request was already used for another identity.')
+                    return prior
+                }
+            }
+            const existing = (await db.execute({ sql: 'SELECT * FROM desktop_coworker_share_receipts WHERE operation = ? AND snapshot_id = ?', args: ['revoke', snapshotId] })).rows[0]
+            if (existing) return receiptOf(existing)
             const row = (await db.execute({ sql: 'SELECT source_revision FROM desktop_coworker_shares WHERE snapshot_id = ? AND status = ?', args: [snapshotId, 'active'] })).rows[0]
             if (!row || String(row.source_revision) !== expectedRevision) refusal(409, 'This share changed or is already withdrawn.')
             await db.execute({ sql: 'UPDATE desktop_coworker_shares SET status = ?, archive_blob = NULL, updated_at = ? WHERE snapshot_id = ?', args: ['revoked', new Date().toISOString(), snapshotId] })
-            return record(`revoke:${snapshotId}`, 'revoke', 'revoked', snapshotId, false)
+            return record(requestId, 'revoke', 'revoked', snapshotId, false)
         },
         async markImported(snapshotId: string, targetWorkspaceId: number, requestId: string, importedAgentId: string): Promise<{ importedAgentId: string; status: 'imported' | 'rolled_back' }> {
             await db.execute({ sql: 'INSERT INTO desktop_coworker_share_imports(snapshot_id,target_workspace_id,request_id,imported_agent_id,status,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(snapshot_id,target_workspace_id) DO NOTHING', args: [snapshotId, targetWorkspaceId, requestId, importedAgentId, 'imported', new Date().toISOString()] })
