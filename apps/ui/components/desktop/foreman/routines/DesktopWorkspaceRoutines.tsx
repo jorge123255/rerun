@@ -25,7 +25,7 @@ function useNow(intervalMs: number): number {
     return now
 }
 
-export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, onOpenRoutine, docked, className, active = true, refreshKey, workingSessions = '' }: {
+export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, docked, className, active = true, refreshKey, workingSessions = '' }: {
     client: DesktopWorkspaceRoutinesClient
     agentNameOf: (agentId: string) => string
     onOpenChat: (chat: DesktopWorkspaceRoutineChat) => void
@@ -156,8 +156,7 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, onOp
     const openEditor = (routine: DesktopWorkspaceRoutine) => setEditing({ routine, externalChange: false, generation: 0 })
     const openResult = (routine: DesktopWorkspaceRoutine) => {
         if (routine.lastResult?.chat) onOpenChat(routine.lastResult.chat)
-        else if (onOpenRoutine) onOpenRoutine(routine)
-        else openEditor(routine)
+        else toast.error('No result chat is available for this routine yet.')
     }
     const saveEdit = async (input: DesktopScheduleEditInput) => {
         if (!editing || editing.externalChange) return
@@ -209,7 +208,7 @@ function RoutineMenu({ routine, canRename, onRename, onEdit, onRunNow, onOpenRes
         <DropdownMenuContent align="end" onCloseAutoFocus={event => event.preventDefault()}>
             {canRename && <DropdownMenuItem onSelect={onRename}>Rename</DropdownMenuItem>}
             <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>
-            <DropdownMenuItem onSelect={onOpenResult}>Open result chat</DropdownMenuItem>
+            <DropdownMenuItem disabled={!routine.lastResult?.chat} onSelect={onOpenResult}>Open result chat</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={routine.setupPending && !routine.enabled} onSelect={onRunNow}>Run now</DropdownMenuItem>
         </DropdownMenuContent>

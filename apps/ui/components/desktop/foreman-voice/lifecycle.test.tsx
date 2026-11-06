@@ -3,10 +3,10 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { useForemanVoiceSlot, type ForemanVoiceSlotController } from '@/lib/desktop/foreman-voice/useForemanVoiceSlot'
-const fake = vi.hoisted(() => ({ start: vi.fn(async () => true), stop: vi.fn(async () => null), cancel: vi.fn(async () => {}), read: vi.fn(async () => null), request: vi.fn() }))
+const fake = vi.hoisted(() => ({ start: vi.fn(async () => true), stop: vi.fn(async () => null), cancel: vi.fn(async () => {}), read: vi.fn(async () => null), request: vi.fn(), recover: vi.fn(async (target: unknown) => ({ target, attempt: null, receipt: null, setup: null })) }))
 vi.mock('@/lib/desktop/voice/useDesktopVoiceRecorder', () => ({ useDesktopVoiceRecorder: () => ({ ...fake, stream: null }) }))
 vi.mock('@/lib/desktop/foreman-voice/journal', () => ({ createForemanAudioJournal: () => ({ read: fake.read, put: vi.fn(), clear: vi.fn() }) }))
-vi.mock('@/lib/desktop/foreman-voice/client', () => ({ createForemanVoiceClient: () => ({ request: fake.request }), audioBase64: vi.fn() }))
+vi.mock('@/lib/desktop/foreman-voice/client', () => ({ createForemanVoiceClient: () => ({ request: fake.request, recover: fake.recover }), audioBase64: vi.fn() }))
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const target = { chat: { workspaceId: '1', chatId: 'fmc_00000000-0000-4000-8000-000000000002' }, model: { connectionId: 'connection', model: 'model' } }
 let dispose: (() => Promise<void>) | undefined

@@ -10,5 +10,6 @@ export async function POST(request: Request) { return desktopRoute(request, asyn
 }) }
 export async function GET(request: Request) { return desktopRoute(request, async runtime => {
     const app = await desktopForeman(runtime)
-    return foremanVoiceHandlers(await desktopForemanVoice(runtime, app.voiceShutdownSignal)).audio(request)
+    const handlers = foremanVoiceHandlers(await desktopForemanVoice(runtime, app.voiceShutdownSignal))
+    return new URL(request.url).searchParams.get('view') === 'pending' ? handlers.pending(request) : handlers.audio(request)
 }) }

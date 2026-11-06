@@ -1,5 +1,5 @@
 import {
-    FOREMAN_VOICE_MIN_MS, sameForemanVoiceTarget,
+    FOREMAN_VOICE_MIN_MS, foremanVoicePendingSchema, sameForemanVoiceTarget,
     type ForemanVoiceTarget, type ForemanVoiceSnapshot, type ForemanVoiceAccepted,
 } from '@rerun/contracts'
 import type { DesktopVoiceRecordingTake } from '../voice/useDesktopVoiceRecorder'
@@ -97,9 +97,30 @@ export function createForemanVoiceController(target: ForemanVoiceTarget, ports: 
             const { e, signal } = begin()
             publish({ phase: 'restoring' })
             try {
-                const pending = await ports.journal.read(target)
+                let pending: PendingAudio | null = null, journalUnavailable = false
+                try { pending = await ports.journal.read(target) } catch { journalUnavailable = true }
                 if (!isCurrent(e)) return
-                if (!pending) { publish({ phase: 'idle', restored: true }); return }
+                if (!pending) {
+                    // Electron chooses a fresh loopback port on restart, so IndexedDB can be
+                    // empty even though the exact chat/model still owns durable server audio.
+                    const result = await ports.client.recover(target, signal)
+                    if (!isCurrent(e)) return
+                    if (!sameForemanVoiceTarget(target, result.target)) throw Error('Recording owner changed.')
+                    const recording = result.attempt?.recording
+                    if (!recording) {
+                        // An unreadable journal may still own bytes from an uncertain upload.
+                        // Do not silently discard that custody or admit a replacement capture.
+                        if (journalUnavailable) throw Error('Local recording custody is unavailable.')
+                        publish({ phase: 'idle', pending: null, snapshot: result, error: null, restored: true }); return
+                    }
+                    pending = { ...foremanVoicePendingSchema.parse({
+                        target, attemptId: result.attempt!.attemptId,
+                        format: { mimeType: recording.mimeType, extension: recording.extension, transcriptionFormat: recording.transcriptionFormat },
+                        durationMs: recording.durationMs, levels: recording.levels,
+                    }), blob: null }
+                    publish({ pending, snapshot: result, phase: result.receipt ? 'sent' : 'review', error: result.attempt?.error ?? null, restored: true })
+                    return
+                }
                 if (!sameForemanVoiceTarget(target, pending.target)) throw Error('Recording owner changed.')
                 publish({ pending, phase: 'review', restored: true })
                 const result = await request('read', e, signal)

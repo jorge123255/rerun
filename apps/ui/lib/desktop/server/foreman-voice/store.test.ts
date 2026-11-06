@@ -19,7 +19,16 @@ test('durable Foreman audio refuses target substitution and cancelled epochs wit
   await db.execute({sql:'UPDATE desktop_foreman_voice_attempts SET cancelled=1,epoch=epoch+1 WHERE attempt_id=?',args:[id]})
   await expect(storage.store.save(record,record.draft.revision)).rejects.toThrow()
   db.close()
-  const reopened=createClient({url});try{const restored=foremanVoiceStore(reopened,target);expect((await restored.row(id))?.fingerprint).toBe('immutable');expect(await restored.blobs.read(voiceScope(target),record.draft.recording,new AbortController().signal)).toEqual(bytes)}finally{reopened.close()}
+  const reopened=createClient({url});try{
+   const restored=foremanVoiceStore(reopened,target)
+   expect((await restored.row(id))?.fingerprint).toBe('immutable');expect(await restored.blobs.read(voiceScope(target),record.draft.recording,new AbortController().signal)).toEqual(bytes)
+   expect((await restored.pending())?.draft.attemptId).toBe(id)
+   expect(await foremanVoiceStore(reopened,{...target,model:{...target.model,connectionId:'another-connection'}}).pending()).toBeNull()
+   await reopened.execute({sql:'UPDATE desktop_foreman_voice_attempts SET accepted_run=? WHERE attempt_id=?',args:[id,id]})
+   expect(await restored.pending()).toBeNull()
+   await reopened.execute({sql:"UPDATE desktop_foreman_voice_attempts SET accepted_run=NULL,record=json_set(record,'$.deletion','complete') WHERE attempt_id=?",args:[id]})
+   expect(await restored.pending()).toBeNull()
+  }finally{reopened.close()}
  }finally{db.close();await rm(directory,{recursive:true,force:true})}
 })
 test('unpatched canonical send authority refuses instead of falling back to a late unguarded turn',async()=>{

@@ -18,9 +18,11 @@ export async function candidatePort() {
 }
 
 export class RuntimeSupervisor extends EventEmitter {
-    constructor({ bundle, root, identity, launch = spawn, fetcher = fetch, port = candidatePort, startupTimeout = 60000, stopTimeout = 10000 }) {
+    constructor({ bundle, root, identity, launch = spawn, fetcher = fetch, port = candidatePort, startupTimeout = 60000, stopTimeout = 35000 }) {
         super()
         Object.assign(this, { bundle, root, identity, launch, fetcher, port, startupTimeout, stopTimeout })
+        // Engine drains include a 25-second isolated-screen close plus final worker cleanup.
+        // Wait for their acknowledgement without treating a legitimate drain as a failure.
         this.children = new Set()
         this.status = publicStatus('stopped')
         this.operation = null

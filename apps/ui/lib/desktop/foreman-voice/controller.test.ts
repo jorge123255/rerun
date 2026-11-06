@@ -10,7 +10,7 @@ function harness(){
  const snapshot=(request:ForemanVoiceRequest):ForemanVoiceSnapshot=>({target,attempt:{attemptId:id,revision:'00000000-0000-4000-8000-000000000003',phase:request.action==='send'?'sent':request.action==='transcribe'?'ready':'review',recording:{attemptId:id,sha256:'a'.repeat(64),byteLength:4,mimeType:'audio/webm',extension:'webm',transcriptionFormat:'webm',durationMs:900,levels:[0.2]},transcript:['transcribe','send'].includes(request.action)?'Only voice words':null,error:null,messageId:null,updatedAt:'now'},receipt:request.action==='send'?{target,attemptId:id,requestId:id,runId:id,accepted:true}:null,setup:null})
  const recorder={start:vi.fn(async()=>true),stop:vi.fn(async()=>take),cancel:vi.fn(async()=>{})}
  const journal={read:vi.fn(async()=>saved),put:vi.fn(async(p:PendingAudio)=>{saved=p}),clear:vi.fn(async()=>{saved=null})}
- const client={request:vi.fn(async(r:ForemanVoiceRequest)=>{calls.push(r);return snapshot(r)})}
+ const client={request:vi.fn(async(r:ForemanVoiceRequest)=>{calls.push(r);return snapshot(r)}),recover:vi.fn(async()=>({target,attempt:null,receipt:null,setup:null} as ForemanVoiceSnapshot))}
  const ports={recorder,journal,client,uuid:()=>id,current:()=>live,onAccepted:accepted,releasePolicy:'send' as const}
  return{ports,client,recorder,journal,calls,accepted,setLive:(v:boolean)=>{live=v},saved:()=>saved,controller:createForemanVoiceController(target,ports),snapshot}
 }
@@ -78,4 +78,36 @@ test('Done clears only the acknowledged pending audio and allows the next human 
  const h=harness();await h.controller.restore();await h.controller.start();await h.controller.release();await h.controller.done()
  expect(h.controller.getSnapshot().pending).toBeNull();expect(h.journal.clear).toHaveBeenCalledWith(id)
  await h.controller.start();expect(h.recorder.start).toHaveBeenCalledTimes(2)
+})
+test('an empty origin journal discovers the canonical saved take without microphone, transcription or send work',async()=>{
+ const h=harness();h.client.recover.mockResolvedValue({...h.snapshot({action:'read',target,attemptId:id}),setup:'transcription'})
+ await h.controller.restore()
+ expect(h.controller.getSnapshot()).toMatchObject({phase:'review',restored:true,pending:{target,attemptId:id,blob:null},snapshot:{setup:'transcription'}})
+ expect(h.client.recover).toHaveBeenCalledOnce();expect(h.calls).toEqual([]);expect(h.recorder.start).not.toHaveBeenCalled();expect(h.accepted).not.toHaveBeenCalled();expect(h.journal.put).not.toHaveBeenCalled()
+ await h.controller.start();expect(h.recorder.start).not.toHaveBeenCalled()
+})
+test('an uncertain upload keeps the original local bytes even when its canonical read is still empty',async()=>{
+ const h=harness();h.client.request.mockImplementation(async r=>{h.calls.push(r);throw Error('upload ACK lost')})
+ await h.controller.restore();await h.controller.start();await h.controller.release(true)
+ const retained=h.saved();expect(retained?.blob).toBe(take.blob)
+ h.client.recover.mockClear();h.calls.length=0
+ h.client.request.mockImplementation(async r=>{h.calls.push(r);return{target,attempt:null,receipt:null,setup:null}})
+ const reopened=createForemanVoiceController(target,h.ports);await reopened.restore()
+ expect(h.client.recover).not.toHaveBeenCalled();expect(h.calls.map(r=>r.action)).toEqual(['read'])
+ expect(reopened.getSnapshot().pending?.blob).toBe(take.blob)
+ h.client.request.mockImplementation(async r=>{h.calls.push(r);return h.snapshot(r)})
+ await reopened.retrySave()
+ expect(h.calls.map(r=>r.action)).toEqual(['read','upload']);expect(h.calls.at(-1)).toMatchObject({attemptId:id,audioBase64:btoa('test')})
+})
+test('late discovery cannot attach a saved take to a different active model or workspace',async()=>{
+ const h=harness();let reply!:(value:ForemanVoiceSnapshot)=>void
+ h.client.recover.mockImplementation(()=>new Promise(resolve=>{reply=resolve}))
+ const restoring=h.controller.restore();await Promise.resolve();h.setLive(false)
+ reply(h.snapshot({action:'read',target,attemptId:id}));await restoring
+ expect(h.controller.getSnapshot().pending).toBeNull();expect(h.calls).toEqual([])
+})
+test('an unreadable local journal and empty server status do not silently abandon uncertain bytes',async()=>{
+ const h=harness();h.journal.read.mockRejectedValue(Error('journal unavailable'))
+ await h.controller.restore();expect(h.controller.getSnapshot()).toMatchObject({phase:'error',restored:false,pending:null})
+ await h.controller.start();expect(h.recorder.start).not.toHaveBeenCalled();expect(h.journal.clear).not.toHaveBeenCalled()
 })

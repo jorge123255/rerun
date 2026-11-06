@@ -179,6 +179,13 @@ export function createForemanVoiceRuntime(runtime: DesktopRuntime, db: Client, p
             return work
         },
         read: snapshot,
+        async pending(target: ForemanVoiceTarget, signal: AbortSignal) {
+            await owner(target, signal, false)
+            const record = await foremanVoiceStore(db, target).pending()
+            if (record) return snapshot(target, record.draft.attemptId, signal)
+            await owner(target, signal, false)
+            return foremanVoiceSnapshotSchema.parse({ target, attempt: null, receipt: null, setup: null })
+        },
         assertAdmission: (turn: ForemanTurn, signal: AbortSignal) => assertForemanVoiceAdmission(db, turn, async t => {
             await owner(t, signal)
             if ((await ownedForemanChat(db, t.chat)).sessionId !== turn.sessionId) throw changed()

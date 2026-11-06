@@ -11,6 +11,15 @@ import type { createForemanVoiceRuntime } from './runtime'
 /** Mount only inside desktopRoute, after its existing local session/origin checks. */
 export function foremanVoiceHandlers(voice: ReturnType<typeof createForemanVoiceRuntime>) {
     return {
+        async pending(request: Request) {
+            try {
+                const q = new URL(request.url).searchParams
+                const target = foremanVoiceTargetSchema.parse({ chat: { workspaceId: q.get('workspaceId'), chatId: q.get('chatId') }, model: { connectionId: q.get('connectionId'), model: q.get('model') } })
+                return Response.json(await voice.pending(target, request.signal), { headers: { 'cache-control': 'no-store' } })
+            } catch (error) {
+                return Response.json({ error: 'Saved Foreman recording status is unavailable.' }, { status: error instanceof DesktopHttpError ? error.status : 503, headers: { 'cache-control': 'no-store' } })
+            }
+        },
         async post(request: Request) {
             try {
                 const parsed = foremanVoiceRequestSchema.safeParse(await readDesktopJson(request, 3 * 1024 * 1024))

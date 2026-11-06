@@ -23,7 +23,7 @@ function blobBytes(value: unknown): Uint8Array {
     throw changed()
 }
 export function foremanVoiceStore(db: Client, target: ForemanVoiceTarget, epoch?: number): {
-    store: DesktopVoiceStore; blobs: DesktopVoiceBlobStore; row(id: string): Promise<Row | null>
+    store: DesktopVoiceStore; blobs: DesktopVoiceBlobStore; row(id: string): Promise<Row | null>; pending(): Promise<DesktopVoiceAttemptRecord | null>
 } {
     const targetJson = voiceTargetJson(target)
     async function row(id: string) {
@@ -107,5 +107,23 @@ export function foremanVoiceStore(db: Client, target: ForemanVoiceTarget, epoch?
             if (result.rowsAffected !== 1) throw changed()
         },
     }
-    return { store, blobs, row }
+    return {
+        store, blobs, row,
+        async pending() {
+            // The server record is canonical across loopback-port/origin changes. Never pick a
+            // different chat/model, a completed deletion, or a turn already accepted by Foreman.
+            const rows = await db.execute({
+                sql: `SELECT * FROM desktop_foreman_voice_attempts WHERE target=? AND accepted_run IS NULL
+                    AND COALESCE(json_extract(record,'$.deletion'),'')!='complete'
+                    AND json_extract(record,'$.draft.phase')!='sent' ORDER BY rowid DESC LIMIT 1`,
+                args: [targetJson],
+            })
+            if (!rows.rows[0]) return null
+            const record = decode(rows.rows[0])
+            if (rows.rows[0].chat_id !== target.chat.chatId || record.draft.attemptId !== rows.rows[0].attempt_id || record.draft.recording.attemptId !== record.draft.attemptId
+                || record.draft.scope.agentId !== 'foreman' || record.draft.scope.tabUid !== target.chat.chatId
+                || record.draft.scope.sessionId !== target.chat.workspaceId) throw changed()
+            return record
+        },
+    }
 }

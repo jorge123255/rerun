@@ -33,3 +33,14 @@ it('replays one run identity but permits a later explicit run under a new reques
     expect((await call({ ...original, requestId: '00000000-0000-4000-8000-000000000002' })).ok).toBe(true)
     expect(state.runs).toBe(2)
 })
+it('retains exact run/session identity in the receipt and refuses an old incomplete receipt without launching again', async () => {
+    const original = { action: 'run', agentId: 'local-a', slug: 'daily', expectedRevision: revision(), requestId: id }
+    const first = await call(original)
+    expect(await first.json()).toMatchObject({ result: { run: { runId: 'run-1', sessionId: 'session-1' } } })
+    const replay = await call(original, 'read')
+    expect(await replay.json()).toMatchObject({ result: { run: { runId: 'run-1', sessionId: 'session-1' } } })
+    const saved = state.rows.get(`${id}.json`) as { result: { run?: unknown } }
+    delete saved.result.run
+    expect((await call(original)).ok).toBe(false)
+    expect(state.runs).toBe(1)
+})

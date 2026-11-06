@@ -1,7 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
 import { request as engineRequest, EngineRequestError, getAgent, listRuns } from '@/lib/engine/client'
-import { desktopScheduleRecordSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { desktopScheduleRecordSchema, desktopWorkspaceRoutineChatSchema, type DesktopWorkspaceRoutineMutation, type DesktopWorkspaceRoutineMutationResult } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
 import { openDesktopDatabase } from '../database'
 import { findDesktopAgent, listDesktopAgents } from '../store'
 import { engineOf } from '../settings'
@@ -13,6 +13,12 @@ import { createDesktopWorkspaceRoutinesReader, type DesktopWorkspaceRoutinesAuth
 import type { DesktopWorkspaceRoutinesMutationAuthority } from './mutations'
 
 const wire = z.object({ fingerprint: z.string(), reserved: z.boolean().optional(), result: z.object({ schedule: z.object({ slug: z.string() }).passthrough(), revision: z.string(), run: z.object({ runId: z.string(), sessionId: z.string() }).optional() }).nullable() })
+function routineChat(chat: Awaited<ReturnType<typeof adoptDesktopScheduledSession>>) {
+    // The adoption helper retains engine ownership metadata. This public DTO has
+    // an explicit, strict local navigation shape shared by GET and Run now.
+    return desktopWorkspaceRoutineChatSchema.parse({ agentId: chat.agentId, sessionId: chat.sessionId, engineSessionId: chat.engineSessionId,
+        tabUid: chat.tabUid, title: chat.title, runId: chat.runId })
+}
 export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime): Promise<DesktopWorkspaceRoutinesAuthority & DesktopWorkspaceRoutinesMutationAuthority> {
     const db = await openDesktopDatabase(runtime.dataRoot), engine = engineOf(runtime)
     async function owner(id: string) { const row = await findDesktopAgent(db, id); if (!row) throw new DesktopHttpError(404, 'Coworker not found'); return row }
@@ -38,7 +44,7 @@ export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime)
         },
         listSchedules: (owner, signal) => records(owner.agentId, signal),
         async listRuns(owner, signal) { return (await listRuns(engine, owner.engineAgentId, { limit: 100 }, { signal })).map(run => ({ id: run.id, agentId: owner.agentId, sessionId: run.sessionId, triggerSource: run.triggerSource ?? 'chat', triggerSlug: run.triggerSlug ?? null, status: run.status, startedAt: run.startedAt })) },
-        adopt: (owner, run, signal) => adoptDesktopScheduledSession(db, engine, { agentId: owner.agentId, engineAgentId: owner.engineAgentId, engineSessionId: run.sessionId, runId: run.id }, { signal }),
+        adopt: async (owner, run, signal) => routineChat(await adoptDesktopScheduledSession(db, engine, { agentId: owner.agentId, engineAgentId: owner.engineAgentId, engineSessionId: run.sessionId, runId: run.id }, { signal })),
         canRename: async () => true,
     }
     async function command(input: DesktopWorkspaceRoutineMutation, operation: 'read' | 'mutate', signal?: AbortSignal) {
@@ -62,10 +68,11 @@ export async function desktopWorkspaceRoutinesAuthority(runtime: DesktopRuntime)
         signal?.throwIfAborted()
         if ((await owner(input.agentId)).engineAgentId !== o.engineAgentId) throw new DesktopHttpError(409, 'Coworker changed')
         if (!result.result) return result.reserved ? { fingerprint: result.fingerprint, result: null, reserved: true } : null
+        if (input.action === 'run' && !result.result.run) throw new DesktopHttpError(503, 'The routine result conversation was not confirmed. Retry this same request.')
         const current = (await createDesktopWorkspaceRoutinesReader(read).list(signal)).routines.find(row => row.agentId === input.agentId && row.slug === input.slug)
         if (!current) throw new DesktopHttpError(409, 'Routine is no longer available')
         const response: DesktopWorkspaceRoutineMutationResult = { routine: current }
-        if (result.result.run) response.chat = await adoptDesktopScheduledSession(db, engine, { agentId: o.id, engineAgentId: o.engineAgentId, engineSessionId: result.result.run.sessionId, runId: result.result.run.runId }, { signal })
+        if (result.result.run) response.chat = routineChat(await adoptDesktopScheduledSession(db, engine, { agentId: o.id, engineAgentId: o.engineAgentId, engineSessionId: result.result.run.sessionId, runId: result.result.run.runId }, { signal }))
         return { fingerprint: result.fingerprint, result: response }
     }
     return { ...read,

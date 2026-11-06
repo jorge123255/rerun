@@ -50,7 +50,10 @@ export function createDesktopWorkspaceRoutineRouter() {
             const raw = await readOwnJson(directory(), name)
             const saved = raw ? savedSchema.parse(raw) as unknown as Saved : null
             if (saved && (saved.fingerprint !== fingerprint || saved.engineAgentId !== engineAgentId)) throw new HttpError(409, 'Routine request identity changed')
-            if (saved?.result) { await check(); return c.json({ fingerprint, result: saved.result }) }
+            if (saved?.result) {
+                if (input.action === 'run' && !saved.result.run) throw new HttpError(503, 'Routine result identity was not confirmed; retain this request for review')
+                await check(); return c.json({ fingerprint, result: saved.result })
+            }
             if (body.operation === 'read') return c.json({ fingerprint, result: null, reserved: saved !== null })
             const files = desktopScheduleFiles(), current = await files.read(engineAgentId, input.slug)
             if (!current) throw new HttpError(404, 'Routine not found')
@@ -70,6 +73,7 @@ export function createDesktopWorkspaceRoutineRouter() {
                 if (desktopScheduleDefinitionRevision(current) !== desktopScheduleDefinitionRevision(old)) throw new HttpError(409, 'Routine changed; original run outcome must be reviewed')
                 // Scheduler's durable manualId owns the occurrence through lost acknowledgements.
                 run = await fireSchedule(engineAgentId, current, { markFired: false, ignoreBudgetLatch: true, manualId: input.requestId })
+                if (!run?.runId || !run.sessionId) throw new HttpError(503, 'Routine result identity was not confirmed; retry this same request')
             } else if (desktopScheduleDefinitionRevision(current) !== desktopScheduleDefinitionRevision(desired)) {
                 if (desktopScheduleDefinitionRevision(current) !== desktopScheduleDefinitionRevision(old)) throw new HttpError(409, 'Routine changed; original change is uncertain')
                 schedule = (await files.replace(engineAgentId, input.slug, old, desired, check))!

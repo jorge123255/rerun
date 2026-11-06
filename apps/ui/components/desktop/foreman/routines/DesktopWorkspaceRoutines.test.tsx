@@ -58,6 +58,18 @@ test('Run now opens the exact adopted result chat and never a guessed session', 
     expect(onOpenChat).toHaveBeenCalledWith(routine.lastResult!.chat)
 })
 
+test('a routine without a result disables its result link instead of opening the editor', async () => {
+    const { lastResult: _lastResult, ...unrun } = routine
+    const { onOpenChat, onOpenRoutine } = await mount(client([unrun]))
+    await click('Daily options')
+    const result = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent?.trim() === 'Open result chat')!
+    expect(result.getAttribute('aria-disabled')).toBe('true')
+    await act(async () => result.click())
+    expect(onOpenChat).not.toHaveBeenCalled()
+    expect(onOpenRoutine).not.toHaveBeenCalled()
+    expect(document.querySelector('input[aria-label="Name"]')).toBeNull()
+})
+
 test('pause failure restores the previous enabled state and keeps the held row visible', async () => {
     const api = client()
     api.mutate = vi.fn(async () => { throw new Error('revision changed') })

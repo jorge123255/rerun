@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { COMPANY_BRIEF_SECTION_PAGES, foremanChatRefSchema, type DesktopCompanyDiscoverySnapshot } from '@rerun/contracts'
+import { COMPANY_BRIEF_SECTION_PAGES, brainPageResponseSchema, foremanChatRefSchema, type DesktopCompanyDiscoverySnapshot } from '@rerun/contracts'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { assertDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-admission'
@@ -9,8 +9,7 @@ import { ownedForemanChat } from '@/lib/desktop/server/foreman/chat-store'
 import { companyBriefSourceRevision } from '@/lib/desktop/server/company-brief/revision'
 import { resolveForemanCompanyBriefModel } from '@/lib/desktop/server/company-brief/model'
 import { readCompanyBriefHandoff, readCompanyBrief, synthesizeCompanyBrief, observeCompanyBrief, cancelCompanyBrief, editCompanyBrief, dismissCompanyBrief, retryCompanyBrief, handoffCompanyBrief } from '@/lib/desktop/server/company-brief/client'
-import { EngineRequestError, readBrainPage } from '@/lib/engine/client'
-import { engineOf } from '@/lib/desktop/server/settings'
+import { desktopBrainPagesRequest } from '@/lib/desktop/server/brain-pages'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 
 export const runtime = 'nodejs'
@@ -35,11 +34,14 @@ async function own(runtime: DesktopRuntime, chat: z.infer<typeof foremanChatRefS
     await ownedForemanChat(app.db, chat)
     return app
 }
-async function pageHashes(runtime: DesktopRuntime) {
+async function pageHashes(runtime: DesktopRuntime, signal: AbortSignal) {
     return Promise.all([...new Set(Object.values(COMPANY_BRIEF_SECTION_PAGES).map(page => page.slug))].map(async slug => {
-        try { return { slug, expectedPageHash: (await readBrainPage(engineOf(runtime), slug)).page.hash } }
+        try {
+            const response = await desktopBrainPagesRequest(runtime, new Request(`${runtime.app.origin}/api/desktop/brain/pages/${encodeURIComponent(slug)}`, { signal }), [slug])
+            return { slug, expectedPageHash: brainPageResponseSchema.parse(await response.json()).page.hash }
+        }
         catch (error) {
-            if (error instanceof EngineRequestError && error.status === 404) return { slug, expectedPageHash: null }
+            if (error instanceof DesktopHttpError && error.status === 404) return { slug, expectedPageHash: null }
             throw error
         }
     }))
@@ -58,7 +60,7 @@ export async function GET(request: Request) {
         const discovery = await app.companyDiscovery.read(chat)
         const snapshot = discovery.state === 'present' ? discovery.snapshot : null
         const result = await readCompanyBrief(runtime, chat.workspaceId, chat.chatId, { signal: request.signal })
-        return Response.json({ discovery, snapshot, sourceRevision: snapshot ? companyBriefSourceRevision(snapshot) : null, attempt: result.attempt, expectedPages: await pageHashes(runtime) }, { headers: { 'cache-control': 'no-store' } })
+        return Response.json({ discovery, snapshot, sourceRevision: snapshot ? companyBriefSourceRevision(snapshot) : null, attempt: result.attempt, expectedPages: await pageHashes(runtime, request.signal) }, { headers: { 'cache-control': 'no-store' } })
     })
 }
 export async function POST(request: Request) {
@@ -86,7 +88,7 @@ export async function POST(request: Request) {
         const settled = requireRevision(snapshot, input.sourceRevision)
         await observeCompanyBrief(runtime, { ...chat, sourceRevision: input.sourceRevision, active: true }, access)
         if (input.action === 'handoff') {
-            const current = await pageHashes(runtime)
+            const current = await pageHashes(runtime, request.signal)
             for (const expected of input.expectedPages) {
                 if (!current.some(page => page.slug === expected.slug && page.expectedPageHash === expected.expectedPageHash)) throw new DesktopHttpError(409, 'A Company Brain page changed. Review the proposal again.')
             }
