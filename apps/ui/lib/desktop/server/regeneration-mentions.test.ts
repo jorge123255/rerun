@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { desktopCoworkerMentionContextParts } from '@rerun/contracts'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-const mocks = vi.hoisted(() => ({ chat: vi.fn(), messages: vi.fn(), model: vi.fn(), targets: vi.fn() }))
-vi.mock('@/lib/engine/client', async original => ({ ...await original<typeof import('@/lib/engine/client')>(), chat: mocks.chat, getSessionMessages: mocks.messages }))
+const mocks = vi.hoisted(() => ({ chat: vi.fn(), messages: vi.fn(), model: vi.fn(), targets: vi.fn(), owner: vi.fn() }))
+vi.mock('@/lib/engine/client', async original => ({ ...await original<typeof import('@/lib/engine/client')>(), chat: mocks.chat, getSessionMessages: mocks.messages, getAgent: mocks.owner }))
 vi.mock('./chat-model', () => ({ resolveDesktopChatModel: mocks.model, savedChoice: () => null }))
 vi.mock('./setup/service', () => ({ assertDesktopSetupChatAllowed: async () => {} }))
 vi.mock('./coworker-calls/targets', () => ({ desktopCoworkerCallTargets: mocks.targets }))
@@ -23,6 +23,7 @@ const replayResponse = () => new Response(null, { status: 204, headers: { 'x-ses
 
 beforeEach(async () => {
     vi.resetAllMocks(); accepted = null; loseResponse = false; executions = 0
+    mocks.owner.mockResolvedValue({ id: 'engine-owner', config: { enabled: true } })
     root = await mkdtemp(join(tmpdir(), 'rerun-regeneration-mentions-'))
     runtime = { protocolVersion: 1, workspaceId: 1, dataRoot: root, launchNonce: 'test', buildId: 'test',
         app: { origin: 'http://127.0.0.1:3001', sessionToken: 'fixture-only' }, engine: { origin: 'http://127.0.0.1:9', apiKey: 'unused' } }

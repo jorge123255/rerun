@@ -14,7 +14,7 @@ import { resolveDesktopChatModel, savedChoice } from './chat-model'
 import type { DesktopModelPick } from '../chat-model'
 import { changeDesktopSettings, desktopModel, engineOf, readDesktopProviders } from './settings'
 import { DesktopHttpError } from './auth'
-import { disabledCoworkerMessage } from './coworker-enabled'
+import { assertDesktopCoworkerEnabled, disabledCoworkerMessage } from './coworker-enabled'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { assertDesktopCreationSettled, desktopCreationPendingMessage } from './creation-guard'
 import { readCoworkerFile } from './coworker-files'
@@ -128,7 +128,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     await assertDesktopSetupChatAllowed(runtime, input.agentId, input.sessionId)
     const regenerate = 'regenerateMessageId' in input
     // Reject a disabled canonical coworker before reserving an alternate or probing its history.
-    const regenerationModel = regenerate ? await resolveDesktopChatModel(runtime, agent, existing) : undefined
+    if (regenerate) await assertDesktopCoworkerEnabled(engineOf(runtime), agent)
     const mentions = regenerate ? [] : checkedDesktopCoworkerMentions(input.text, input.coworkerMentions)
     const mentionFields = desktopCoworkerMentionFieldsOf(mentions)
     const attachmentPaths = regenerate ? [] : desktopAttachmentSelectionsOf(input)
@@ -176,7 +176,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     }
     // Existing chats resolve their own saved model. Only a first send carries an unsaved choice.
     const firstChoice = !regenerate && !existing ? input.modelChoice : undefined
-    const { connectionId, model } = replay ? {} : regenerationModel ?? await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
+    const { connectionId, model } = replay ? {} : await resolveDesktopChatModel(runtime, agent, existing, firstChoice)
     const images = attachmentPaths.filter((item): item is Exclude<typeof item, string> => typeof item !== 'string')
     if (!replay && images.length) {
         const { connections } = await readDesktopProviders(runtime)

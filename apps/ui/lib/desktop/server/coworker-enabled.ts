@@ -11,6 +11,17 @@ import { findDesktopAgent, listDesktopAgents, type DesktopAgent } from './store'
 export const disabledCoworkerMessage = 'This coworker is switched off. Enable it from the board to send a message.'
 const unavailable = 'Could not confirm whether this coworker is enabled. Try again.'
 
+export async function assertDesktopCoworkerEnabled(engine: EngineConnection, agent: DesktopAgent) {
+    let detail
+    try { detail = await getAgent(engine, agent.engineAgentId) }
+    catch (error) {
+        if (error instanceof EngineRequestError && error.status === 404) throw new DesktopHttpError(404, 'Coworker not found')
+        throw new DesktopHttpError(502, unavailable)
+    }
+    if (detail.id !== agent.engineAgentId) throw new DesktopHttpError(502, unavailable)
+    if (!detail.config.enabled) throw new DesktopHttpError(403, disabledCoworkerMessage)
+}
+
 async function saveEnabled(db: Client, agent: DesktopAgent, enabled: boolean) {
     if (agent.enabled !== enabled) await db.execute({
         sql: 'UPDATE desktop_agents SET enabled = ?, updated_at = ? WHERE id = ? AND workspace_id = 1',
