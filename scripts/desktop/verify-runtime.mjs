@@ -58,7 +58,7 @@ try {
     const requireEngine = createRequire(join(engineDir, 'package.json'))
     const requireAdapter = createRequire(requireEngine.resolve('ai-sdk-provider-claude-code'))
     const sdk = JSON.parse(await readFile(join(dirname(requireAdapter.resolve('@anthropic-ai/claude-agent-sdk')), 'package.json'), 'utf8'))
-    const version = await output('/usr/bin/sandbox-exec', ['-D', `PROFILE=${claudeProbe}`, '-D', `BINARY=${resolved.claudePath}`, '-f', resolved.claudeSandboxPath, resolved.claudePath, '--version'], { env: { PATH: '/usr/bin:/bin', HOME: claudeProbe, CLAUDE_CONFIG_DIR: claudeProbe, TMPDIR: join(claudeProbe, 'tmp') }, timeout: 15000 }).catch(() => '')
+    const version = await output('/usr/bin/sandbox-exec', ['-D', `PROFILE=${claudeProbe}`, '-D', `BINARY=${resolved.claudePath}`, '-f', resolved.claudeSandboxPath, resolved.claudePath, '--version'], { cwd: claudeProbe, env: { PATH: '/usr/bin:/bin', HOME: claudeProbe, CLAUDE_CONFIG_DIR: claudeProbe, TMPDIR: join(claudeProbe, 'tmp') }, timeout: 15000 }).catch(() => '')
     check(version === `${sdk.claudeCodeVersion} (Claude Code)`, 'isolated bundled Claude CLI matches the locked SDK')
 } finally { await rm(claudeProbe, { recursive: true, force: true }) }
 const uiDir = join(resourcesDir, 'runtime', 'ui')
