@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import {
     CONNECTION_TOKEN_KEY,
     desktopApiCanonicalJson,
@@ -66,16 +66,39 @@ type MutationInput = {
     reconcile: (previous: DesktopApiConnectionReceiptRecord) => Promise<Applied | null>
 }
 
-const fingerprint = (input: unknown) => createHash('sha256').update(desktopApiCanonicalJson(input)).digest('hex')
 const allowed = new Set(['anthropic', 'openai', 'google', 'openrouter'])
 
-export function createDesktopApiConnectionService({ authority, store, connectionId, revision, now }: {
+function publicInput(input: unknown): { body: unknown; secret: string | null } {
+    if (!input || typeof input !== 'object' || Array.isArray(input) || !('secret' in input)) return { body: input, secret: null }
+    const record = input as Record<string, unknown>
+    const secret = record.secret
+    const body = { ...record }
+    delete body.secret
+    return { body, secret: typeof secret === 'string' && secret.length > 0 ? secret : null }
+}
+
+/** HMAC under the desktop custody key. The stored digest is not a naked hash of the secret. */
+export function desktopApiConnectionFingerprint(input: unknown, key: Buffer | null): string {
+    const { body, secret } = publicInput(input)
+    const canonical = desktopApiCanonicalJson(body)
+    if (secret !== null) {
+        if (!key || key.length !== 32) throw new DesktopApiConnectionRefusal('Credential custody is unavailable.')
+        const secretTerm = createHmac('sha256', key).update('desktop-api-connection-secret-v1\0').update(secret).digest()
+        return createHmac('sha256', key).update('desktop-api-connection-request-v1\0').update(canonical).update(secretTerm).digest('hex')
+    }
+    if (key && key.length === 32) return createHmac('sha256', key).update('desktop-api-connection-request-v1\0').update(canonical).digest('hex')
+    return createHash('sha256').update(canonical).digest('hex')
+}
+
+export function createDesktopApiConnectionService({ authority, store, connectionId, revision, now, custodyKey }: {
     authority: DesktopApiConnectionAuthority
     store: DesktopApiConnectionStore
     connectionId: () => string
     revision: () => string
     now: () => Date
+    custodyKey?: () => Buffer | null
 }) {
+    const fingerprint = (input: unknown) => desktopApiConnectionFingerprint(input, custodyKey ? custodyKey() : null)
     const view = async (connection: LoadedConnection): Promise<DesktopApiConnectionView> => ({
         version: 1,
         workspaceId: authority.workspaceId,
@@ -125,8 +148,32 @@ export function createDesktopApiConnectionService({ authority, store, connection
     }
     const uncertain = (input: MutationInput, recovered: boolean): Promise<Applied> => result(input.kind, 'uncertain', input.workspaceId, input.connectionId, input.revision, input.requestId, input.input, input.initial ?? { connection: null }, recovered)
 
+    function refusedUnstored(input: MutationInput): DesktopApiMutationResult {
+        const { body } = publicInput(input.input)
+        const currentReceipt = desktopApiMutationReceiptSchema.parse({
+            version: 1,
+            requestId: input.requestId,
+            kind: input.kind,
+            status: 'refused',
+            workspaceId: input.workspaceId,
+            connectionId: input.connectionId,
+            connectionRevision: input.revision,
+            fingerprint: createHash('sha256').update(desktopApiCanonicalJson(body)).digest('hex'),
+            message: 'Credential custody is unavailable. Nothing was saved.',
+            createdAt: now().toISOString(),
+            updatedAt: now().toISOString(),
+        })
+        return desktopApiMutationResultSchema.parse({ status: 'refused', recovered: false, receipt: currentReceipt, connection: null })
+    }
+
     async function mutate(input: MutationInput): Promise<DesktopApiMutationResult> {
-        const initialReceipt = receipt(input.kind, 'uncertain', input.workspaceId, input.connectionId, input.revision, input.requestId, input.input)
+        let initialReceipt: DesktopApiMutationReceipt
+        try {
+            initialReceipt = receipt(input.kind, 'uncertain', input.workspaceId, input.connectionId, input.revision, input.requestId, input.input)
+        } catch (error) {
+            if (error instanceof DesktopApiConnectionRefusal) return refusedUnstored(input)
+            throw error
+        }
         const { created } = await store.reserve(initialReceipt, null)
         if (!created) {
             const previous = await store.read(input.requestId)

@@ -34,7 +34,7 @@ export async function readDesktopWorkspace(runtime: DesktopRuntime) {
         }),
         readDesktopProviders(runtime),
     ])
-    return { ...bootstrap, ...providers, runtimeWorkspaceId: runtime.workspaceId, agents: bootstrap.agents.map(desktopAgentView) }
+    return { ...bootstrap, ...providers, runtimeWorkspaceId: runtime.workspaceId, runtimeLaunchNonce: runtime.launchNonce, agents: bootstrap.agents.map(desktopAgentView) }
 }
 
 export async function desktopModel(runtime: DesktopRuntime) {

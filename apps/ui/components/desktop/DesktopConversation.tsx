@@ -14,6 +14,8 @@ import { USER_BUBBLE_INK, USER_BUBBLE_SHAPE } from '@/components/chat/bubble-sty
 import { ArrowUpIcon, ChevronDownIcon, Maximize2Icon, PlusIcon, SendIcon, SquareIcon, UploadIcon, UserRoundIcon, XIcon } from '@/lib/icons'
 import { MarkdownEditorDialog } from '@/components/ui/markdown-editor-dialog'
 import { DesktopConversationFind } from './DesktopConversationFind'
+import { DesktopProviderErrorNotice } from './chat/recovery/DesktopProviderErrorNotice'
+import { useDesktopChatRecovery } from '@/lib/desktop/chat-recovery/use-desktop-chat-recovery'
 import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
 import { useDesktopReplyFeedback } from '@/lib/desktop/reply-feedback'
 import { DesktopComputerPanel } from './computer-panel/DesktopComputerPanel'
@@ -383,7 +385,11 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 const group: File[] = []
                 while (index < files.length && kindOf(files[index]) === kind) group.push(files[index++])
                 if (kind === 'image') await imageUploads.start(group)
-                else if (kind === 'document') { if (!tabUid) throw new Error('Open a saved chat tab before adding documents.'); documents.add(group) }
+                else if (kind === 'document') {
+                    if (!tabUid) throw new Error('Open a saved chat tab before adding documents.')
+                    const added = await Promise.resolve(documents.add(group))
+                    for (const outcome of added.outcomes) if (outcome.status === 'rejected') reportUploadNotice(outcome.message)
+                }
                 else await textUploads.start(group)
             }
             return failures[0] === textUploads.failureVersion() && failures[1] === imageUploads.failureVersion()
@@ -404,6 +410,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const [attempt, setAttempt] = useState(0)
     // An engine run still generating for this conversation (e.g. after reopening it mid-reply).
     const [engineRunning, setEngineRunning] = useState<{ id: string | null; running: boolean; runId?: string | null; failedRunId?: string | null; failedRunError?: string | null }>({ id: null, running: false })
+    const [modelRevision, setModelRevision] = useState(0)
     const [stopping, setStopping] = useState(false)
     const [stopError, setStopError] = useState<string>()
     const [liveSessionId, setLiveSessionId] = useState<string | null>(null)
@@ -419,7 +426,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const draftQueues = useRef(new Set<string>())
     const pendingQueue = useRef<{ item: DesktopQueuedMessage; sessionId: string; acknowledge: () => Promise<unknown> } | null>(null)
     const conversationChoice = useRef<{ session: string | null; pick?: DesktopModelPick } | null>(null)
-    const rememberModel = useCallback((pick: DesktopModelPick | undefined) => { conversationChoice.current = { session: sessionId, pick } }, [sessionId])
+    const rememberModel = useCallback((pick: DesktopModelPick | undefined) => { conversationChoice.current = { session: sessionId, pick }; setModelRevision(value => value + 1) }, [sessionId])
 
     const resumeTarget = useRef<{ sessionId: string; runId: string } | null>(null)
     const completedRef = useRef(false)
@@ -1163,6 +1170,28 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         unknownUploads ? `${unknownUploads} attachment${unknownUploads > 1 ? 's' : ''} may already be in this coworker’s Files. Check Files, then dismiss ${unknownUploads > 1 ? 'these upload statuses' : 'this upload status'} before sending.` : '',
     ].filter(Boolean).join(' ')
 
+    const recovery = useDesktopChatRecovery({
+        scope: { agentId: agent.id, tabUid: tabUid ?? null, sessionId, liveSessionId: liveSessionId ?? sessionId, runId: engineRunning.id === sessionId ? engineRunning.runId ?? null : null, requestId: null, modelRevision },
+        error: reconnecting ? null : error?.message ?? null,
+        failedRun: engineRunning.id === sessionId && engineRunning.failedRunId ? { runId: engineRunning.failedRunId, error: engineRunning.failedRunError ?? null } : null,
+        canRetry: transcript.some(message => message.role === 'user'),
+        active,
+        ports: {
+            retryLastTurn: () => {
+                const assistant = [...transcript].reverse().find(message => message.role === 'assistant' && message.id.startsWith('engine-'))
+                if (canRegenerate && assistant) void regenerateReply(assistant.id)
+                else {
+                    const text = lastUserText(transcript)
+                    if (text && sessionId) void sendMessage({ text }, { body: { agentId: agent.id, sessionId } })
+                }
+            },
+            continueRun: () => { if (sessionId) void sendMessage({ text: 'Continue where you left off.' }, { body: { agentId: agent.id, sessionId } }) },
+            stopRun: () => { void handleStop() },
+            newConversation: () => onSelectSession(null, 'New conversation'),
+            switchModel: () => {},
+            reconnectProvider: () => onOpenModelSettings?.(),
+        },
+    })
     const composerId = !active && tabUid ? `desktop-message-${tabUid}` : 'desktop-message'
     const currentTitle = sessions.find(session => session.id === sessionId)?.title ?? 'New conversation'
     return (
@@ -1299,13 +1328,28 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     {stopError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopError}</div>}
                     {(history.id === sessionId && history.runsUnavailable) && <p role="status" className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">This reply’s status is unavailable. Nothing was sent again.</p>}
                     {reconnecting && <p role="status" className="text-sm text-muted-foreground">Reconnecting to this reply…</p>}
-                    {(stopBanner || historyError) && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
-                        {historyError || stopBanner}
-                        {historyError && <Button type="button" size="sm" variant="outline" className="ml-2" onClick={() => {
+                    {historyError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+                        {historyError}
+                        <Button type="button" size="sm" variant="outline" className="ml-2" onClick={() => {
                             setHistory({ id: undefined })
                             setAttempt(n => n + 1)
-                        }}>Retry conversation</Button>}
+                        }}>Retry conversation</Button>
                     </div>}
+                    {!recovery.notice && stopBanner && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopBanner}</div>}
+                    {recovery.notice && <DesktopProviderErrorNotice
+                        kind={recovery.notice.kind}
+                        message={recovery.notice.message}
+                        agentId={agent.id}
+                        sessionId={sessionId}
+                        onRetry={() => recovery.act('retry')}
+                        onContinue={() => recovery.act('continue')}
+                        onStopRun={() => recovery.act('stop')}
+                        onNewConversation={() => recovery.act('new-conversation')}
+                        onReconnect={() => recovery.act('reconnect')}
+                        onConversationChoice={pick => rememberModel(pick)}
+                        onOpenModelSettings={onOpenModelSettings}
+                        onModelSaved={() => setModelRevision(value => value + 1)}
+                    />}
                 </ConversationContent>
             </Conversation>
 

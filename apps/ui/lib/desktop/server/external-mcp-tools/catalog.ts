@@ -45,6 +45,25 @@ export const EXTERNAL_MCP_TOOL_SCOPES = {
 export type ExternalMcpBoundToolName = keyof typeof EXTERNAL_MCP_TOOL_SCOPES
 
 const READ_ONLY_OFFSET_NOTE = ' Local adapter accepts offset 0 only.'
+const AUTHORITY_ADVERTISED = ['tools', 'selfImprovement', 'mcpServers', 'desktopToolGrants', 'desktopCodexGrants', 'desktopWorkspaceRead'] as const
+
+function projectedInputSchema(name: string, schema: { properties?: Record<string, unknown>; required?: readonly string[] }) {
+    if (name !== 'create_agent' && name !== 'update_agent') return { ...schema, additionalProperties: false }
+    const properties = { ...(schema.properties ?? {}) }
+    for (const key of AUTHORITY_ADVERTISED) delete properties[key]
+    const required = (schema.required ?? []).filter(key => !AUTHORITY_ADVERTISED.includes(key as typeof AUTHORITY_ADVERTISED[number]))
+    return { ...schema, properties, required, additionalProperties: false }
+}
+
+export function assertExternalMcpCatalogOmitsAuthorityFields(registrations: ExternalMcpToolRegistration[] = externalMcpToolRegistrations()): void {
+    for (const registration of registrations) {
+        if (registration.name !== 'create_agent' && registration.name !== 'update_agent') continue
+        const properties = (registration.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}
+        for (const key of AUTHORITY_ADVERTISED) {
+            if (Object.prototype.hasOwnProperty.call(properties, key)) throw new Error(`External catalog still advertises ${key} on ${registration.name}. No changes were applied.`)
+        }
+    }
+}
 
 export function externalMcpBoundToolNames(): ExternalMcpBoundToolName[] {
     return Object.keys(EXTERNAL_MCP_TOOL_SCOPES) as ExternalMcpBoundToolName[]
@@ -58,12 +77,14 @@ export function externalMcpToolRegistrations(options?: { servicesBound?: boolean
         const scope = EXTERNAL_MCP_TOOL_SCOPES[def.name as ExternalMcpBoundToolName]
         const effect = scope !== 'mcp:read'
         const description = def.name === 'read_skill_file' ? def.description + READ_ONLY_OFFSET_NOTE
-            : def.name === 'create_agent' ? def.description + ' Local creation starts its first chat and additionally requires runs:send. Creation uses workspace defaults; model and reply settings can be changed afterward with update_agent; tool grants and self-improvement stay on the Mac Tools panel.' : def.description
+            : def.name === 'create_agent' ? 'Create a coworker from its name and soul. Local creation uses workspace defaults and also requires runs:send. Tool grants and self-improvement are not accepted on this call; they stay on the Mac Tools panel.'
+            : def.name === 'update_agent' ? 'Update a coworker’s name, description, soul, handle, Box, verbosity, or model. Tool grants and self-improvement are not accepted on this call.'
+            : def.description
         const inputSchema = def.name === 'attach_connector'
             ? { ...def.inputSchema, properties: { ...def.inputSchema.properties, authMethodId: { type: 'string', description: 'Exact locally supported authentication method ID.' }, values: { type: 'object', additionalProperties: { type: 'string' }, description: 'Explicit setup values; never reads an existing stored secret.' } }, additionalProperties: false }
             : def.name === 'read_skill_file'
             ? { ...def.inputSchema, properties: { ...def.inputSchema.properties, offset: { type: 'integer', const: 0 } }, additionalProperties: false }
-            : { ...def.inputSchema, additionalProperties: false }
+            : projectedInputSchema(def.name, def.inputSchema)
         return { name: def.name, description, inputSchema, scope, effect }
     })
 }

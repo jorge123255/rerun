@@ -64,6 +64,7 @@ export type DesktopBootstrap = ConnectionsList & {
     profile: { id: number; displayName: string }
     workspace: { id: number; name: string }
     runtimeWorkspaceId?: number
+    runtimeLaunchNonce?: string
     iconCatalogId?: string | null
     iconUploadId?: string | null
     agents: DesktopAgentView[]
@@ -651,7 +652,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 <div className="border-b px-4 py-2">
                     <Button type="button" variant="ghost" size="sm" onClick={() => setSettings(false)}><ArrowLeft />{panelOpen ? 'Back to chat' : 'Team board'}</Button>
                 </div>
-                <DesktopSettings key={settingsTab} initialTab={settingsTab} providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} />
+                <DesktopSettings key={settingsTab} initialTab={settingsTab} providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} workspaceId={runtimeWorkspaceId} onConnectionsChanged={() => { void refreshProviders() }} />
             </div>}
             <DesktopTemplateNavigation open={templatesOpen} onOpenChange={setTemplatesOpen} onActiveChange={setTemplateFlowActive} onCreateFromScratch={() => showBoard(true)}
                 requestedTemplate={templateToReview} onPlaceTemplate={beginTemplatePlacement} onInstalled={receipt => {
@@ -706,7 +707,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <DesktopControlCenter activity={boardActivity} onRefreshActivity={boardActivity.refresh} coworkers={agents} selectedCoworkerId={panelOpen ? selectedAgentId : null} initialRecent={initialData.recentCoworkers}
                 open={controlCenterOpen} onOpenChange={setControlCenterOpen} disabled={controlCenterDisabled}
                 board={boardState.board}
-                runtimeWorkspaceId={runtimeWorkspaceId ?? undefined} onExternalMcp={openExternalMcp} onServers={openServers}
+                runtimeWorkspaceId={runtimeWorkspaceId ?? undefined} runtimeLaunchNonce={initialData.runtimeLaunchNonce} onExternalMcp={openExternalMcp} onServers={openServers}
                 onAddBox={initialData.board && !boardState.error ? () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setNewBoxSignal(signal => signal + 1) } : undefined}
                 onMoveCoworker={initialData.board && !boardState.error ? (agentId, spaceId) => {
                     if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting() && currentAgents.current.some(agent => agent.id === agentId))

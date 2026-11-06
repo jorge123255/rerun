@@ -1,3 +1,4 @@
+import { desktopApiConnectionIdSchema } from '@rerun/contracts'
 import { listConnections, findConnection } from '../../connections/registry.js'
 import { createConnection, patchConnection, updateConnectionKeys, deleteConnection } from '../../connections/store.js'
 import { connectionUsage, releaseConnection } from '../../connections/release.js'
@@ -12,7 +13,7 @@ export function canonicalDesktopApiConnectionAuthority({ workspaceId, pendingRun
 }): DesktopApiConnectionAuthority {
     return {
         workspaceId,
-        list: listConnections,
+        list: async () => (await listConnections()).filter(connection => desktopApiConnectionIdSchema.safeParse(connection.id).success),
         get: findConnection,
         create: createConnection,
         patch: patchConnection,

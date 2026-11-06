@@ -79,7 +79,7 @@ export type DesktopControlCenterProps = DesktopParityCallbacks & {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, onOpenDesktop, onAskAssistant, open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant, open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -141,7 +141,7 @@ export function DesktopControlCenter({ onTemplates, onExternalMcp, onServers, ru
         setOpen(false)
     }
 
-    const parity = useDesktopControlParity({ open, scope: selectionScope, page: page.kind === 'coworker' || page.kind === 'move' ? { kind: page.kind, agentId: page.coworkerId } : page, query, agents: coworkers, board, disabled, darkTheme, close, onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, onOpenDesktop, onAskAssistant })
+    const parity = useDesktopControlParity({ open, scope: selectionScope, page: page.kind === 'coworker' || page.kind === 'move' ? { kind: page.kind, agentId: page.coworkerId } : page, query, agents: coworkers, board, disabled, darkTheme, close, onTemplates, onExternalMcp, onServers, runtimeWorkspaceId, runtimeLaunchNonce, onOpenDesktop, onAskAssistant })
 
     const drill = (next: Page) => () => {
         const current = latest.current

@@ -1,6 +1,7 @@
 import { z } from 'zod'
+import { foremanAgentFileCatalogEntries } from './desktop-foreman-agent-files'
 
-export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate'] as const
+export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate', 'foremanAgentFilesRead', 'foremanAgentFilesWrite'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -75,6 +76,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('localMcpStdio', 'Local MCP programs', 'Run explicitly configured programs as your Mac user. These programs can access your Mac files and network. Saving a connection does not enable this permission.'),
     supported('nativeWriteback', 'Review temporary file changes', 'Keep proposed text and Markdown changes from native Codex edits for your review. Each file requires approval before it changes this coworker’s Files.'),
     pending('foreman', 'Foreman', 'Build a team and work across coworkers.', 'Requires the board’s Foreman runtime and workspace authorization.'),
+    ...foremanAgentFileCatalogEntries,
 ]
 
 export const desktopCodexToolCatalog: DesktopToolCatalogEntry[] = [

@@ -15,6 +15,8 @@ import { DesktopSetupCompleteCard } from './setup/DesktopSetupEventCards'
 import { DesktopToolInstallCard } from './tool-install/DesktopToolInstallCard'
 import { desktopToolInstallReferenceOf } from '@/lib/desktop/tool-install-reference'
 import { DesktopToolStep } from './DesktopToolStep'
+import { DesktopHistoricalCardView, selectDesktopHistoricalCard } from './tool-presentations'
+import { projectDesktopToolStatus } from './tool-presentations/status'
 import { DesktopTableResult } from './DesktopTableResult'
 import { desktopTableCardOf } from '@/lib/desktop/table-card'
 import type { DesktopAgentView } from './DesktopApp'
@@ -212,6 +214,12 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
                     continue
                 }
             }
+            const historical = selectDesktopHistoricalCard(part, { ownerId: agentId })
+            if (historical) {
+                blocks.push(<DesktopHistoricalCardView key={part.toolCallId} card={historical} onOpenBrain={historical.kind === 'brain-change' && historical.showOpen ? () => window.dispatchEvent(new Event('rerun-desktop-open-brain')) : undefined} />)
+                continue
+            }
+            if (toolName === 'notify_user' && (projectDesktopToolStatus(part, { ownerId: agentId }) === 'failed' || projectDesktopToolStatus(part, { ownerId: agentId }) === 'unknown')) continue
             blocks.push(<DesktopToolStep key={part.toolCallId} part={part} restored={message.id.startsWith('engine-')} />)
         } else if (part.type === 'data-compaction') {
             const step = compactions.get(index)

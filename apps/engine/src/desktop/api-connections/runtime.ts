@@ -12,7 +12,13 @@ export async function initializeDesktopApiConnections(database: Client = raw()) 
     return sqliteDesktopApiConnectionStore(database)
 }
 
-export async function createDesktopApiConnectionRuntime({ workspaceId, database = raw(), pendingRuns, stopAndDrain, connectionId, revision, now }: {
+export function desktopApiConnectionCustodyKey(): Buffer | null {
+    const hex = process.env.RERUN_DESKTOP_SECRET_KEY ?? ''
+    if (!/^[a-f0-9]{64}$/.test(hex)) return null
+    return Buffer.from(hex, 'hex')
+}
+
+export async function createDesktopApiConnectionRuntime({ workspaceId, database = raw(), pendingRuns, stopAndDrain, connectionId, revision, now, custodyKey = desktopApiConnectionCustodyKey }: {
     workspaceId: number
     database?: Client
     pendingRuns: DesktopApiConnectionAuthority['pendingRuns']
@@ -20,6 +26,7 @@ export async function createDesktopApiConnectionRuntime({ workspaceId, database 
     connectionId?: () => string
     revision?: () => string
     now?: () => Date
+    custodyKey?: () => Buffer | null
 }) {
     const store = await initializeDesktopApiConnections(database)
     return createDesktopApiConnectionService({
@@ -28,5 +35,6 @@ export async function createDesktopApiConnectionRuntime({ workspaceId, database 
         connectionId: connectionId ?? (() => `cnx_${newId()}`),
         revision: revision ?? (() => `rev_${newId()}`),
         now: now ?? (() => new Date()),
+        custodyKey,
     })
 }

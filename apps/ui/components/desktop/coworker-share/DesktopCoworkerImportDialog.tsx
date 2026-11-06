@@ -37,7 +37,7 @@ function Body({ client, attempts, targetWorkspaceId, snapshotId, onOpenCoworker,
         </div>
         <div className="max-h-[55dvh] overflow-y-auto px-6 py-4">
             {flow.importedAgentId ? <div className="flex flex-col gap-4">
-                <DesktopCoworkerShareSafety />
+                <DesktopCoworkerShareSafety exclusions={flow.manifest?.coworkers[0]?.exclusions ?? null} />
                 <p role="status" className="text-xs text-muted-foreground">Fresh coworker ID <code>{flow.importedAgentId}</code>. No source chat or unsent draft was changed.</p>
             </div> : flow.manifest ? <div className="flex flex-col gap-4">
                 <DesktopCoworkerManifestReview manifest={flow.manifest} approved={flow.approved} onApprovedChange={flow.setApproved} disabled={flow.busy} />

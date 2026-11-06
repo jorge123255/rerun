@@ -57,7 +57,7 @@ function authority(): DesktopApiConnectionAuthority {
 function harness() {
     const store = memoryDesktopApiConnectionStore()
     const authorityValue = authority()
-    const service = createDesktopApiConnectionService({ authority: authorityValue, store, connectionId: ids, revision: revisions, now })
+    const service = createDesktopApiConnectionService({ authority: authorityValue, store, connectionId: ids, revision: revisions, now, custodyKey: () => Buffer.alloc(32, 9) })
     return { service, store, authority: authorityValue }
 }
 const createInput = (name: string, secret: string, requestId = crypto.randomUUID()) => ({ requestId, workspaceId: 1, provider: 'openai' as const, name, models: ['gpt-5'], extraModels: [], secret })

@@ -50,7 +50,7 @@ it('exposes API keys & MCP through a bound callback in runtime workspace two aft
 
 it('shows Servers only when bound and refuses a retained selection after the palette closes', async () => {
     const servers = vi.fn()
-    const render = (open: boolean) => act(async () => root.render(<DesktopControlCenter open={open} runtimeWorkspaceId={1} coworkers={[agent]} board={board} runtimeWorkspaceId={2} selectedCoworkerId={null} onOpenConversation={() => {}} onAddCoworker={() => {}} onModelSettings={() => {}} onBackToBoard={() => {}} onServers={servers} />))
+    const render = (open: boolean) => act(async () => root.render(<DesktopControlCenter open={open} coworkers={[agent]} board={board} runtimeWorkspaceId={2} selectedCoworkerId={null} onOpenConversation={() => {}} onAddCoworker={() => {}} onModelSettings={() => {}} onBackToBoard={() => {}} onServers={servers} />))
     await render(true)
     const button = [...host.querySelectorAll('button')].find(button => button.textContent === 'Servers')!
     expect(button).toBeTruthy()

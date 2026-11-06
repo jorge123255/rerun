@@ -93,6 +93,8 @@ function identified(response: Response, sessionId: string, runId: string) {
 function streamChat(agent: LoadedAgent, sessionId: string, runId: string, message: string, override: ModelOverride, meta: { provider: string; model: string }, trigger: RunTrigger) {
     return identified(toResumableStreamResponse(runId, async writer => {
         try {
+            const { admitDesktopApiConnectionRun } = await import('../../desktop/api-connections/run-authority.js')
+            await admitDesktopApiConnectionRun({ connectionId: override.connectionId, runId, sessionId, agentId: agent.id })
             const run = await runAgent(agent, sessionId, message, override, writer, runId, trigger)
             mergeRunStream(writer, run, meta)
         } catch (err) {
