@@ -7,12 +7,13 @@ Source only. Not validated. No tests, typecheck, lint, build, install, provider 
 | | |
 |---|---|
 | Base | `8297fe6404caa114dcb0c2cd6006291a8abb2038` on `desktop/finish-cloud-base-20261106-8297fe64` |
+| Implementation | `e7e2286e2f43d4bfed69e2925f28b0aaed2341b5` |
 | Branch | `cursor/whatsapp-status-up03-8cc8` |
 | Original | `ab3def9bfcf545cc9548f99c63c2b011ca094023` `apps/ui/lib/apps/whatsapp/tools.ts` tool `post_status` |
 | Linkup operation | category `content`, action `create`, client path `POST /v2/content` on `https://api.linkupapi.com` (`apps/ui/lib/apps/linkup/client.ts` `runAction` at that pin) |
 | Model name | `whatsapp_pro_post_status` |
 
-The tip SHA is the head of `cursor/whatsapp-status-up03-8cc8` after this handoff commit. It is not `main` or `dev`.
+`e7e2286e2f43d4bfed69e2925f28b0aaed2341b5` contains the adapter, contract, presenter, unrun test, and the first copy of this handoff. Any later commit on this branch that only records that SHA is documentation. The branch is not `main` or `dev`.
 
 ## What landed
 
