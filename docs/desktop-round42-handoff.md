@@ -6,6 +6,7 @@
 **W4 impl SHA:** `73b6855e6d227011fcd6198ce3ee71f1d640a94c`  
 **RD39 E3 paste SHA:** `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0`  
 **RD39 C3 documents SHA:** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb`  
+**RD40 D4 clear wipe SHA:** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16`  
 **Parent tip before W4 impl:** `92dc02509cd9a3069bb588b39da6f3e6f6184bba`  
 **Branch:** `desktop/round38-master-completion`  
 **No checks executed. No installed acceptance. No push/PR. Canonical checklist not mutated.**
@@ -29,7 +30,7 @@
 | RD38 A/B | Source delivered; product binding still `unavailable.*` |
 | RD38 C–I | **PENDING** seven-agent exclusive trees |
 | RD39 | E3+C3 doc-add **SOURCE-REPAIRED**; >14 + C7 **pending**; handoffs `desktop-round39-*-handoff.md` |
-| RD40 | Audit reconciled; **W4 source repaired** (`73b6855e…`); **4 candidates unrepaired**; not accepted/tested |
+| RD40 | W4 + **D4 clear wipe SOURCE-REPAIRED** (`d0b2a79834261ad34e04abd4e9ce20e1f79cdc16`); Claude/nontext/search still open; not accepted/tested |
 | RD41 | Audit reconciled; **3 defects unrepaired** + Duplicate grants discrepancy vs t18u; no runtime edits |
 | RD42 | Preparation / inventory only — **not** RC complete |
 
@@ -47,7 +48,8 @@
 | # | Action |
 |---|---|
 | 1 W4 grants | **Repaired source** in `external-mcp-tools/operations.ts` only — see W4 handoff |
-| 2–5 | Docs-only proposed fragments; owners D3/E2/D4 |
+| 4 D4 clear wipe | **SOURCE-REPAIRED** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` — `docs/desktop-round40-memory-clear-handoff.md` |
+| 2,3,5 | Still open — Claude relogin / native nontext / search rotated |
 
 ## RD41 outcome
 

@@ -1,7 +1,7 @@
 # RD42 source-only release readiness notes (preparation)
 
 **Not a distribution, store, or notarization claim.** No version bump, signing, update-feed, or publication action is authorized here.  
-**Referenced tip:** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb` · base `6f6ad959a09abaf1947950b6f82413c94407e22a`
+**Referenced tip:** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` · base `6f6ad959a09abaf1947950b6f82413c94407e22a`
 
 ## Supported local features (source present on this branch / prior accepted slices)
 
@@ -46,7 +46,7 @@ Frozen-base audit `bc-1e95582a-a658-55d3-8480-85f654b18cc8` reconciled. **SOURCE
 
 ## RD40 / RD41 audit intake (not acceptance)
 
-- **RD40:** Five candidates. **W4 grant-bypass:** source repaired at `73b6855e…` (external operations adapter only; unrun regressions authored; **not tested / not accepted**). Candidates 2–5 (Claude relogin truthfulness, native nontext receipt, clear-all vector residue, search rotated-key classification) remain open for owners. Handoff: `docs/desktop-round40-w4-grant-guard-handoff.md`.
+- **RD40:** **W4** repaired `73b6855e…`. **D4 clear wipe** SOURCE-REPAIRED `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` (handoff `docs/desktop-round40-memory-clear-handoff.md`; **not tested / not accepted**). Still open: Claude relogin truthfulness, native nontext receipt, search rotated-key classification. W4 handoff unchanged.
 - **RD41:** Three confirmed unrepaired defects (share plan credential count/label; board camera persistence; five loading skeletons — no UI edits here). Same-box Duplicate **inherits grants today**; portable import forces grants off. **User t18u forbids inherited grants on copies/imports** — recorded as discrepancy for root authority, not accepted as settled product decision. Root separately decides `.env`/`mcp`/credential **file** copy semantics. Preserve `.rerun*` / `.rerun-skill-*` exclusion and ordinary hidden files.
 - **RD39** four defects still unrepaired; C7 native notify channel decision preserved.
 - All cloud audits (RD39/40/41) returned; **none** of RD39/40/41 are implementation-complete. C–I still PENDING.

@@ -131,3 +131,9 @@ No critical blocker found that prevents RD38 A. Memories remain correctly fail-c
 - C3 document add: `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb` — `docs/desktop-round39-document-attachments-handoff.md` (SOURCE-REPAIRED hook; INTEGRATION-PENDING conversation >14/await).
 - C7: do not remove native notification channel.
 
+## RD40 D4 clear wipe (master)
+
+- Impl `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` — `docs/desktop-round40-memory-clear-handoff.md`.
+- After memory lock, bound `notesCleared` must accept before clear success; clear event skips swallowed reconcile.
+- SOURCE-REPAIRED / ROOT-UNVERIFIED. Preserves A portable memory + Brain separation.
+

@@ -1,7 +1,7 @@
 # RD42 source inventory (preparation — not complete)
 
 **Status:** independent RD42 preparation checkpoint only. Does **not** claim release-candidate completion, Mac acceptance, or that RD39–41 / C–I are done.  
-**Worktree tip at inventory authorship:** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb` on `desktop/round38-master-completion` (RD39 E3+C3 source repairs; docs tip may follow)  
+**Worktree tip at inventory authorship:** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` on `desktop/round38-master-completion` (RD40 D4 clear wipe; docs tip may follow)  
 **Prepared base:** `6f6ad959a09abaf1947950b6f82413c94407e22a` (`desktop/rd38-cloud-base`)  
 **Original comparison pin:** `2a57fa6dd53311f763bfc9abde85997b7f7e5309` (historical `a6d63a4b542674ddd002e51b39ba0df6e0807bcc` secondary)  
 **Seam:** A/B/E `abe-1` in `docs/desktop-round38-a-transfer-seam.md`  
@@ -23,6 +23,8 @@
 | 9 | `ddbcd349017f42665d0760f58721cc23e40940e9` | RD40 W4 handoff + RD40/RD41 → RD42 docs |
 | 10 | `d7dc1685e2b2648c7a61c29ade8fa8a7b95992d0` | **RD39 E3** non-Latin guest paste Unicode keysym path |
 | 11 | `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb` | **RD39 C3** per-file document attach outcomes |
+| 12 | `47ad3bb11c19cdf3903b3d58815e9a18a888d78e` | RD39 E3/C3 → RD42 docs |
+| 13 | `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` | **RD40 D4** private memory clear → semantic index wipe |
 
 ## Delivered on this branch (source only)
 
@@ -73,7 +75,7 @@ export * from './desktop-coworker-share-database.js'
 | RD38 **H** packaging/startup readiness source | PENDING — seven-agent isolated tree |
 | RD38 **I** remote gateway transitions source | PENDING — seven-agent isolated tree |
 | **RD39** local journey audits/fixes | **E3 paste + C3 document add SOURCE-REPAIRED**; D2 >14 + D4 C7 receipt **INTEGRATION/ROOT pending**; not complete / not accepted |
-| **RD40** providers/recall/Foreman/W4 | **W4 grant-bypass source repaired** at `73b6855e…` (not accepted/not tested); candidates 2–5 **unrepaired**; not complete |
+| **RD40** providers/recall/Foreman/W4/D4 | **W4** repaired `73b6855e…`; **D4 clear wipe** SOURCE-REPAIRED `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` (not accepted/not tested); candidates Claude relogin / native nontext / search rotated **unrepaired**; not complete |
 | **RD41** whole-product design/state audit | **audit reconciled** — 3 confirmed defects + Duplicate-grants discrepancy **unrepaired** (root); not complete |
 | **RD42** RC repair + root acceptance | **this doc is preparation only** — not finished |
 | RD43 remote host acceptance | product/host gate |
@@ -163,7 +165,7 @@ C–I seven-agent packages still PENDING. RD39 D1+D3 source-repaired (paste + do
 | 1 | External `update_agent` grant bypass (`tools` / `selfImprovement` / grant aliases → engine merge without Tools consent) | **Source repaired** in external operations adapter only — `73b6855e6d227011fcd6198ce3ee71f1d640a94c`. Handoff: `docs/desktop-round40-w4-grant-guard-handoff.md`. **Not accepted / not tested.** Engine routes, scopes, defaults unchanged. | W4 adapter (done source); root live key verify later |
 | 2 | Claude re-login `publicState` hides still-active token | **Confirmed unrepaired** — `apps/engine/src/desktop/claude-plan/auth.ts` `publicState` / `start` / `cancel` / failed `complete`; UI `DesktopClaudePlanSteps` `linked = phase === 'connected'`; runner still injects env token | D3; root fixture + optional live sign-in |
 | 3 | Native non-text scratch writes vanish without unsupported receipt | **Confirmed unrepaired** — `native-worker` / `native-writeback/capture.ts` `allowedTextPath` drops non-`.txt`/`.md`; finish deletes scratch with no unsupported row | E2 native writeback |
-| 4 | Clear-all private semantic vectors residue (async observer) | **Confirmed unrepaired** — `clearDesktopMemories` does not call `notesCleared` inside lock; observer `reconcile` best-effort / swallowed | D4 private memory (not RD38 A portable) |
+| 4 | Clear-all private semantic vectors residue (async observer) | **SOURCE-REPAIRED** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` — after-lock bound `notesCleared`; clear mode skips swallowed reconcile; handoff `docs/desktop-round40-memory-clear-handoff.md`. **ROOT-UNVERIFIED.** | D4 private memory (not RD38 A portable) |
 | 5 | Search rotated-key stale/uncertain receipt classification | **Confirmed unrepaired** — changed-credential error mapped to generic “Search provider failed.” | E2 search binding |
 
 **Preserved decisions:** RD39 C7 keep native `bridge.notify` (receipt from native result). W4 repair rejects whole mixed authority patch; metadata/Box/model fields remain.
@@ -172,7 +174,7 @@ C–I seven-agent packages still PENDING. RD39 D1+D3 source-repaired (paste + do
 
 - **D3:** While current credential generation’s token exists, snapshot stays `connected`; replacement is separate `pendingAttempt`; cancel/failed complete leave generation untouched; only disconnect or committed complete/token replace.
 - **E2 nontext:** Capture non-text added/changed paths as `unsupported` review rows (`binary-or-non-text`), no payload/apply, return to run; keep text digest/conflict behavior.
-- **D4:** Inside clear lock after files/rows gone, call `notesCleared` and do not succeed until index wipe commits; surface wipe failure; keep best-effort reconcile for single-note edits.
+- **D4:** **Applied outside lock** at `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` (deadlock avoided). See handoff. Keep best-effort reconcile for non-clear edits.
 - **E2 search:** Map pre-accept changed-credential to `{ status:'error', message:'Search capability changed.' }`; if request already started keep `uncertain`; never “Search provider failed.” for that case.
 
 ## RD41 frozen-base audit reconciliation (source review only — no runtime edits)
