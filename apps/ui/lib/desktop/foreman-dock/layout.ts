@@ -13,7 +13,7 @@ export function boundedPlacement(placement: ForemanPlacement, viewport: Viewport
     return { ...placement, width: Math.min(size.width, Math.max(1, v.width - 32)), height: Math.min(size.height, Math.max(1, v.height - 32)), dockWidth: Math.min(clampForemanDockWidth(finite(placement.dockWidth, 480), v.width), Math.max(1, v.width - 32)) }
 }
 export function dropPlacement(pointer: { x: number; y: number }, center: { x: number; y: number }, placement: ForemanPlacement, viewport: Viewport) {
-    return resolveDropTarget({ pointer, panelCenter: center, size: placement, viewport: viewportSize(viewport) })
+    return resolveDropTarget({ pointer, panelCenter: center, size: { width: placement.width, height: placement.height, dockWidth: placement.dockWidth }, viewport: viewportSize(viewport) })
 }
 export function sheetHeight(detent: DockExtras['sheetDetent'], height: number) {
     return Math.max(1, Math.min(height - 16, height * (detent === 'medium' ? 0.5 : 0.96)))

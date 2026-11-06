@@ -35,7 +35,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate }: {
+export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate }: {
     activitySnapshot?: BoardActivitySnapshot
     agents: DesktopAgentView[]
     workspaceName: string
@@ -43,6 +43,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     selectedAgentId?: string | null
     visibleSessionId?: string | null
     panelInsetRight?: number
+    panelInsetLeft?: number
     recenterSignal?: number
     newBoxSignal?: number
     focusRequest?: { tileId: string; nonce: number; insetRight: number } | null
@@ -376,7 +377,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                     placementContainerId={templatePlacement?.spaceId ?? newCoworker?.spaceId ?? null}
                     onConfirmPlacement={placement && !placement.position && !gridBlocked ? placeCopy : undefined}
                     selectedTileId={selectedAgentId}
-                    frameInset={{ left: 0, right: panelInsetRight }}
+                    frameInset={{ left: panelInsetLeft, right: panelInsetRight }}
                     recenterSignal={recenterSignal}
                     focusRequest={focusRequest}
                     fitToContent

@@ -14,7 +14,7 @@ const owners = [
 test('aggregates exact owners/revisions, running/last results, setup state and ordering without granting mutations', async () => {
     const authority: DesktopWorkspaceRoutinesAuthority = {
         listOwners: vi.fn(async () => owners),
-        listSchedules: vi.fn(async (owner: { agentId: string }) => owner.agentId === 'agent-a' ? [schedule('agent-a', 'daily')] : [schedule('agent-b', 'weekly', { nextRunAt: null })]),
+        listSchedules: vi.fn(async (owner: { agentId: string }) => owner.agentId === 'agent-a' ? [schedule('agent-a', 'daily')] : [schedule('agent-b', 'weekly', { enabled: false })]),
         listRuns: vi.fn(async (owner: { agentId: string }) => owner.agentId === 'agent-a' ? [run('agent-a', 'daily')] : []),
         adopt: vi.fn(async (_owner, run) => ({ agentId: run.agentId, sessionId: run.sessionId, engineSessionId: run.sessionId, tabUid: `schedule:${run.sessionId}`, title: 'Daily result', runId: run.id })),
         canRename: vi.fn(async () => true),
@@ -30,7 +30,7 @@ test('aggregates exact owners/revisions, running/last results, setup state and o
     expect(authority.adopt).toHaveBeenCalledTimes(1)
 })
 
-test('a failed owner drops out without emptying the workspace or inventing history', async () => {
+test('a failed owner reports an unavailable snapshot instead of silently hiding routines', async () => {
     const authority: DesktopWorkspaceRoutinesAuthority = {
         listOwners: vi.fn(async () => owners),
         listSchedules: vi.fn(async (owner: { agentId: string }) => { if (owner.agentId === 'agent-a') throw new Error('offline'); return [schedule('agent-b', 'weekly', { lastRunAt: null })] }),
@@ -38,7 +38,6 @@ test('a failed owner drops out without emptying the workspace or inventing histo
         adopt: vi.fn(),
         canRename: vi.fn(async () => false),
     }
-    const result = await createDesktopWorkspaceRoutinesReader(authority).list()
-    expect(result.routines.map(routine => routine.slug)).toEqual(['weekly'])
-    expect(result.routines[0]?.lastResult).toBeUndefined()
+    await expect(createDesktopWorkspaceRoutinesReader(authority).list()).rejects.toThrow('Some coworker routines could not be read')
+    expect(authority.adopt).not.toHaveBeenCalled()
 })

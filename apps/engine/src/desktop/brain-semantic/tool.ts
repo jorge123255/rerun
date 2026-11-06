@@ -5,7 +5,9 @@ import { readAgentConfig } from '../../agents/loader.js'
 import type { RunContext } from '../../runtime/context.js'
 import { assertDesktopAgentNotDeleted, beginDesktopAgentWork } from '../agent-lifecycle.js'
 import { desktopBrainToolsAllowed } from '../brain-tools.js'
-import { createDesktopBrainSemanticIndex, type createDesktopBrainSemanticIndex as IndexFactory } from './service.js'
+import { createDesktopBrainSemanticIndex } from './service.js'
+import { desktopBrainSemanticIndex } from './runtime.js'
+import { getDesktopBrainStore } from '../brain-pages-router.js'
 
 const EXCERPT_CHARS = 600
 const TURNED_OFF = 'This tool is turned off for this coworker.'
@@ -14,9 +16,9 @@ function excerpt(text: string): string {
     return text.length > EXCERPT_CHARS ? `${text.slice(0, EXCERPT_CHARS - 3)}...` : text
 }
 
-export function desktopBrainSemanticTools(ctx: RunContext, ports: Parameters<IndexFactory>[0]): ToolSet {
+export function desktopBrainSemanticTools(ctx: RunContext, ports?: Parameters<typeof createDesktopBrainSemanticIndex>[0]): ToolSet {
     if (!desktopBrainToolsAllowed(ctx.agent.config)) return {}
-    const service = createDesktopBrainSemanticIndex(ports)
+    const service = ports ? createDesktopBrainSemanticIndex(ports) : null
 
     async function requireBrain(signal?: AbortSignal) {
         signal?.throwIfAborted()
@@ -35,12 +37,16 @@ export function desktopBrainSemanticTools(ctx: RunContext, ports: Parameters<Ind
             execute: async ({ query, limit }, options) => {
                 const release = beginDesktopAgentWork(ctx.agent.id)
                 try {
-                    const signal = ctx.abortSignal ?? options.abortSignal
+                    const signal = AbortSignal.any([...(ctx.abortSignal ? [ctx.abortSignal] : []), ...(options.abortSignal ? [options.abortSignal] : [])])
                     await requireBrain(signal)
-                    const result: DesktopBrainSemanticSearchResult = await service.search({ query, limit: limit ?? 5 })
+                    const result: DesktopBrainSemanticSearchResult = await (service ?? await desktopBrainSemanticIndex(ctx.agent.id, signal)).search({ query, limit: limit ?? 5 }, signal)
                     await requireBrain(signal)
                     if (result.hits.length === 0) return `Nothing in the company brain matches. It may simply not be written down yet.\n\nSearch mode: ${result.index.mode}; indexing: ${result.index.message}`
-                    const pages = await Promise.all(result.hits.map(async hit => (await ports.pages.read(hit.slug))))
+                    const pages = await Promise.all(result.hits.map(async hit => {
+                        if (ports) return ports.pages.read(hit.slug)
+                        return (await (await getDesktopBrainStore()).readPage(hit.slug)).page
+                    }))
+                    await requireBrain(signal)
                     const blocks = result.hits.map((hit, index) => {
                         const unconfirmed = new Set(pages[index]?.unconfirmed ?? [])
                         const passages = hit.passages.map(passage => `  > ${passage.heading}${unconfirmed.has(passage.heading) ? ' (unconfirmed)' : ''}: ${excerpt(passage.content)}`)

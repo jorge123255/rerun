@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { COMPANY_BRIEF_NO_SOURCES, type CompanyBriefModelRef, type CompanyBriefSynthesizeInput, type DesktopForemanDiscoveryRun } from '@rerun/contracts'
+import { emptyCompanyDiscoverySnapshot, COMPANY_BRIEF_NO_SOURCES, type CompanyBriefModelRef, type CompanyBriefSynthesizeInput, type DesktopCompanyDiscoverySnapshot } from '@rerun/contracts'
 import type { CompanyBriefBrain } from './brain.js'
 import { createDesktopCompanyBriefRouter } from './router.js'
 import { companyBriefSourceRevision } from './revision.js'
@@ -15,20 +15,20 @@ const workspaceId = 'workspace-1'
 const chatId = 'fmc_chat0001'
 const otherChat = 'fmc_chat0002'
 
-const identity: DesktopForemanDiscoveryRun['findings'][number] = {
-    kind: 'identity', source: 'site', attribution: { url: 'https://acme.example', fetchedAt: '2026-01-01T00:00:00.000Z' },
+const identity: DesktopCompanyDiscoverySnapshot['findings'][number] = {
+    kind: 'identity', source: 'site', attribution: { url: 'https://acme.example', fetchedAt: '2026-01-01T00:00:00.000Z', via: 'public-fetch' },
     name: 'Acme', oneLiner: 'Acme sells widgets.', logoUrl: null, domain: 'acme.example',
 }
 
-function snapshot(patch: Partial<DesktopForemanDiscoveryRun> = {}): DesktopForemanDiscoveryRun {
+function snapshot(patch: Partial<DesktopCompanyDiscoverySnapshot> = {}): DesktopCompanyDiscoverySnapshot {
     return {
-        discoveryId: 'fmx_disc0001', chat: { workspaceId, chatId }, runId: 'run-1', url: 'https://acme.example',
+        ...emptyCompanyDiscoverySnapshot({ discoveryId: 'fmx_disc0001', workspaceId, chatId, runId: 'run-1', url: 'https://acme.example', domain: 'acme.example', startedAt: '2026-01-01T00:00:00.000Z' }),
         status: 'done', pending: [], unavailable: ['search', 'registry', 'linkedinCompany'], findings: [identity], ...patch,
     }
 }
 
-function input(run: DesktopForemanDiscoveryRun = snapshot(), requestId = randomUUID()): CompanyBriefSynthesizeInput {
-    return { requestId, workspaceId: run.chat.workspaceId, chatId: run.chat.chatId, sourceRevision: companyBriefSourceRevision(run), model, snapshot: run }
+function input(run: DesktopCompanyDiscoverySnapshot = snapshot(), requestId = randomUUID()): CompanyBriefSynthesizeInput {
+    return { requestId, workspaceId: run.workspaceId, chatId: run.chatId, sourceRevision: companyBriefSourceRevision(run), model, snapshot: run }
 }
 
 const grounded = JSON.stringify({
@@ -87,7 +87,7 @@ it('keeps snapshot-backed claims and turns unsupported sources into unknowns', a
 
 it('rejects a request id reused for another chat and does not read across chats', async () => {
     const made = await service.synthesize(input(), new AbortController().signal)
-    const other = snapshot({ chat: { workspaceId, chatId: otherChat } })
+    const other = snapshot({ workspaceId, chatId: otherChat })
     await expect(service.synthesize(input(other, made.attempt.requestId), new AbortController().signal)).rejects.toMatchObject({ status: 409 })
     expect(await service.read(workspaceId, otherChat)).toBeNull()
     expect(calls).toHaveLength(1)
@@ -187,7 +187,7 @@ it('proposes selected findings and will not overwrite a changed or deleted page'
     const claimId = made.attempt.result!.claims[0]!.id
     pages.set('company', { hash: 'b'.repeat(32), title: 'Acme', content: 'Kept by the user.' })
     const wrong = await service.handoff({
-        requestId: made.attempt.requestId, handoffRequestId: randomUUID(), workspaceId, chatId,
+        requestId: made.attempt.requestId, expectedDraftRevision: 0, handoffRequestId: randomUUID(), workspaceId, chatId,
         sourceRevision: made.attempt.sourceRevision, selectedClaimIds: [claimId], includeDraft: false,
         expectedPages: [{ slug: 'company', expectedPageHash: 'a'.repeat(32) }],
     })
@@ -195,14 +195,14 @@ it('proposes selected findings and will not overwrite a changed or deleted page'
     expect(proposeCalls).toBe(0)
     expect(pages.get('company')?.content).toBe('Kept by the user.')
     const missing = await service.handoff({
-        requestId: made.attempt.requestId, handoffRequestId: randomUUID(), workspaceId, chatId,
+        requestId: made.attempt.requestId, expectedDraftRevision: 0, handoffRequestId: randomUUID(), workspaceId, chatId,
         sourceRevision: made.attempt.sourceRevision, selectedClaimIds: [claimId], includeDraft: false,
         expectedPages: [{ slug: 'company', expectedPageHash: null }],
     })
     expect(missing.outcomes[0]?.code).toBe('page_changed')
     expect(proposeCalls).toBe(0)
     const recorded = await service.handoff({
-        requestId: made.attempt.requestId, handoffRequestId: randomUUID(), workspaceId, chatId,
+        requestId: made.attempt.requestId, expectedDraftRevision: 0, handoffRequestId: randomUUID(), workspaceId, chatId,
         sourceRevision: made.attempt.sourceRevision, selectedClaimIds: [claimId], includeDraft: false,
         expectedPages: [{ slug: 'company', expectedPageHash: 'b'.repeat(32) }],
     })
@@ -211,7 +211,7 @@ it('proposes selected findings and will not overwrite a changed or deleted page'
     expect(pages.get('company')?.content).toBe('Kept by the user.')
     expect(proposeCalls).toBe(1)
     const replay = await service.handoff({
-        requestId: made.attempt.requestId, handoffRequestId: recorded.handoffRequestId, workspaceId, chatId,
+        requestId: made.attempt.requestId, expectedDraftRevision: 0, handoffRequestId: recorded.handoffRequestId, workspaceId, chatId,
         sourceRevision: made.attempt.sourceRevision, selectedClaimIds: [claimId], includeDraft: false,
         expectedPages: [{ slug: 'company', expectedPageHash: 'b'.repeat(32) }],
     })
@@ -241,4 +241,74 @@ it('does not synthesize when the review route is only read', async () => {
     expect(response.status).toBe(200)
     expect((await response.json()).attempt.requestId).toBe(made.attempt.requestId)
     expect(calls).toHaveLength(1)
+})
+
+
+it('rejects request identity reuse with another saved model or canonical source revision', async () => {
+    const request = input()
+    await service.synthesize(request, new AbortController().signal)
+    await expect(service.synthesize({ ...request, model: { ...model, model: 'changed' } }, new AbortController().signal)).rejects.toMatchObject({ status: 409 })
+    const changed = snapshot({ url: 'https://other.example/' })
+    await expect(service.synthesize({ ...request, snapshot: changed, sourceRevision: companyBriefSourceRevision(changed) }, new AbortController().signal)).rejects.toMatchObject({ status: 409 })
+    expect(calls).toHaveLength(1)
+})
+
+it('does not call the model when cancellation happened during reservation', async () => {
+    const stop = new AbortController(); let admitted = false
+    const wrapper = new Proxy(db, { get(target, key) {
+        if (key === 'execute') return async (stmt: Parameters<Client['execute']>[0]) => {
+            const result = await db.execute(stmt)
+            const sql = typeof stmt === 'string' ? stmt : stmt.sql
+            if (/INSERT INTO desktop_company_briefs\(/.test(sql) && !admitted) { admitted = true; stop.abort() }
+            return result
+        }
+        const value = Reflect.get(target, key, target)
+        return typeof value === 'function' ? value.bind(target) : value
+    } })
+    const guarded = createCompanyBriefService(async () => wrapper, { model: { confirm: async () => true, complete: async () => { calls.push('wrong'); return grounded } }, brain })
+    await guarded.initialize()
+    const result = await guarded.synthesize(input(), stop.signal)
+    expect(result.attempt.status).toBe('cancelled')
+    expect(result.modelCalled).toBe(false)
+    expect(calls).toEqual([])
+})
+
+
+it('refuses a handoff ID reused with another brief or changed selected effect', async () => {
+    const made = await service.synthesize(input(), new AbortController().signal)
+    const command = { requestId: made.attempt.requestId, handoffRequestId: randomUUID(), workspaceId, chatId, sourceRevision: made.attempt.sourceRevision, expectedDraftRevision: 0, selectedClaimIds: [made.attempt.result!.claims[0]!.id], includeDraft: false, expectedPages: [{ slug: 'company', expectedPageHash: null }] }
+    await service.handoff(command)
+    await expect(service.handoff({ ...command, includeDraft: true })).rejects.toMatchObject({ status: 409 })
+    const sibling = await service.synthesize(input(snapshot({ chatId: otherChat })), new AbortController().signal)
+    await expect(service.handoff({ ...command, chatId: otherChat, requestId: sibling.attempt.requestId, sourceRevision: sibling.attempt.sourceRevision })).rejects.toMatchObject({ status: 409 })
+    expect(proposeCalls).toBe(1)
+})
+
+
+it('drains the exact pending conversation when the global Foreman Stop cancels research', async () => {
+    let started!: () => void
+    const gate = new Promise<void>(resolve => { started = resolve })
+    const live = createCompanyBriefService(async () => db, { model: { confirm: async () => true, complete: async ({ signal }) => {
+        started()
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+        return grounded
+    } }, brain })
+    await live.initialize()
+    const pending = live.synthesize(input(), new AbortController().signal)
+    await gate
+    await live.cancelChat(workspaceId, chatId)
+    expect((await pending).attempt.status).toBe('cancelled')
+    expect((await live.read(workspaceId, chatId))?.result).toBeNull()
+})
+
+
+it('recovers an exact committed handoff even after source context and Brain page hashes change', async () => {
+    const made = await service.synthesize(input(), new AbortController().signal)
+    const command = { requestId: made.attempt.requestId, handoffRequestId: randomUUID(), workspaceId, chatId, sourceRevision: made.attempt.sourceRevision, expectedDraftRevision: 0, selectedClaimIds: [made.attempt.result!.claims[0]!.id], includeDraft: false, expectedPages: [{ slug: 'company', expectedPageHash: null }] }
+    const saved = await service.handoff(command)
+    pages.set('company', { hash: 'c'.repeat(32), title: 'Changed', content: 'New page' })
+    await service.observe({ workspaceId, chatId, sourceRevision: 'b'.repeat(64), active: false })
+    const recovered = await service.handoff(command)
+    expect(recovered).toEqual({ ...saved, recovered: true })
+    expect(proposeCalls).toBe(1)
 })

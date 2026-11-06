@@ -94,7 +94,7 @@ export const desktopBrainSemanticSearchInputSchema = z.strictObject({
 export type DesktopBrainSemanticSearchInput = z.infer<typeof desktopBrainSemanticSearchInputSchema>
 
 export type DesktopBrainSemanticEmbedding = {
-    identity(): DesktopBrainSemanticBackend | null
+    identity(): DesktopBrainSemanticBackend | null | Promise<DesktopBrainSemanticBackend | null>
     embed(texts: readonly string[], signal: AbortSignal, revision?: string): Promise<number[][]>
 }
 export type DesktopBrainSemanticPages = {

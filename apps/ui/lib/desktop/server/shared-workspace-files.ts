@@ -1,3 +1,4 @@
+import { canonicalDesktopEngineRoot } from './runtime'
 import 'server-only'
 import { DesktopHttpError } from './auth'
 import type { DesktopRuntime } from './runtime'
@@ -6,7 +7,7 @@ import {
     importSharedText,
     listSharedDirectory,
     readSharedText,
-    resolveDesktopSharedDirectory,
+    resolveEngineSharedDirectory,
     SharedWorkspaceFileError,
     type SharedDirectoryListing,
     type SharedFileAccess,
@@ -14,7 +15,7 @@ import {
     type SharedTextPage,
 } from '../../../../engine/src/desktop/shared-workspace-files'
 
-// Workspace shared text. The root is always `<dataRoot>/workspaces/1/engine/shared`.
+// Shared text stays in the assigned engine context; legacy workspace 1 retains its path.
 // Requests cannot choose a root, an engine id, or a private workspace.
 
 function isAbort(error: unknown): boolean {
@@ -30,7 +31,7 @@ function failure(error: unknown): never {
 }
 
 async function sharedDirectory(runtime: DesktopRuntime, signal?: AbortSignal): Promise<string> {
-    try { return await resolveDesktopSharedDirectory(runtime.dataRoot, signal) }
+    try { return await resolveEngineSharedDirectory(await canonicalDesktopEngineRoot(runtime), signal) }
     catch (error) { failure(error) }
 }
 

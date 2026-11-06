@@ -90,3 +90,15 @@ Settings/status uses `status()` and reports `backend`, `indexed`, `pending`, `om
 - `tool.test.ts`: empty-result/index-mode distinction and existing Brain grant refusal.
 
 No tests, typecheck, lint, builds, installs, servers, Docker, provider calls, browser/native UI, microphone, Keychain or restart checks were executed. The installed Next.js documentation directory was absent. Root runs every check and repair. No checklist completion or installed acceptance is claimed.
+
+## Root review repair implementation
+
+The handoff had parse errors, missing chunk slugs, a nonexistent UI page-store import, asynchronous credential misuse, unstable pending IDs, read-time DDL and missing cancellation guards. The repaired implementation keeps canonical pages and the derived index in the engine. `initializeDesktopBrainSemanticStore` adds its schema to the existing Brain DB once in datadir migration 6. Reads never execute DDL. Chunk IDs bind page hash, slug, ordinal, text hash and backend revision; pending retry counts survive reconciliation.
+
+Concrete engine runtime uses `getDesktopBrainStore` and the existing authenticated `/api/desktop/internal/semantic-memory` configuration/embed callback. Credentials stay in the existing encrypted app auxiliary store. `brain_search` is mounted in the desktop registry over the previous keyword-only search, retaining `brain_read` and `brain_propose`. Current Brain grant/deletion checks and caller Stop surround all result publication; late ignored embedding responses cannot write vectors.
+
+Engine routes under `/desktop/brain/semantic/:engineAgentId`: GET `status`, POST `search` `{query,limit}`, POST `index` `{embed:boolean}`. A maintenance request embeds at most 16 pending chunks; later explicit requests advance the remaining queue. Status/restart/search do not automatically index page batches. Search embeds only the explicit query when current indexed passages exist, merges keyword ranking, rechecks current passage content and returns both outgoing and incoming one-hop links.
+
+UI `createDesktopBrainSemanticServer(runtime, authority)` now proxies these authenticated engine routes. Its methods are `status(engineId,signal)`, `reconcile(engineId,embed,signal)` and `search(engineId,query,limit,signal)`. The old app-SQL index store is no longer the production authority; its pure store regressions initialize their schema explicitly. No E app-database migration is required.
+
+Additional authored regressions cover pending identity/retry retention, changed/deleted pages, backend rotation, offline keyword fallback, backlinks and ignored Stop responses. All remain unexecuted by this helper. Root owns checks and native acceptance.

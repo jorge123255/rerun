@@ -157,6 +157,7 @@ export function createForemanVoiceRuntime(runtime: DesktopRuntime, db: Client, p
             if (bytes.toString('base64') !== request.audioBase64) throw new DesktopHttpError(400, 'Voice upload is not canonical audio bytes.')
             await service.upload(scope, { ...scope, attemptId: id, format: request.format, durationMs: request.durationMs, levels: request.levels }, bytes, signal)
         } else {
+            if (!('expectedRevision' in request)) throw changed()
             const action = { ...scope, attemptId: id, expectedRevision: request.expectedRevision }
             if (request.action === 'transcribe') await service.transcribe(scope, action, signal)
             else if (request.action === 'send') await service.send(scope, action, signal)

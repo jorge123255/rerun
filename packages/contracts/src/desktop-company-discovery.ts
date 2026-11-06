@@ -9,6 +9,7 @@ import { foremanDiscoveryEventSchema } from './desktop-foreman.js'
 export const DESKTOP_COMPANY_DISCOVERY_CONTRACT_VERSION = 1 as const
 
 export const DESKTOP_COMPANY_DISCOVERY_LIMITS = {
+    maxRetries: 20,
     maxPages: 4,
     maxProductReads: 4,
     maxProducts: 25,
@@ -19,6 +20,7 @@ export const DESKTOP_COMPANY_DISCOVERY_LIMITS = {
     maxConcurrent: 2,
     maxProvenance: 8,
     maxHtmlChars: 200_000,
+    maxPageTextChars: 8_000,
     maxOfficers: 3,
     pageDeadlineMs: 8_000,
     runDeadlineMs: 45_000,
@@ -66,7 +68,7 @@ export const COMPANY_DISCOVERY_TEASERS: Record<CompanyDiscoverySource, (subject:
     stack: ({ domain }) => `Peeking under the hood of ${domain}…`,
     dns: () => 'Checking how you run email…',
     registry: () => 'Looking you up in the public registry…',
-    site: ({ domain }) => `Reading every page of ${domain}…`,
+    site: ({ domain }) => `Reading pages from ${domain}…`,
     search: ({ name }) => `Searching the web for ${name}…`,
     linkedinPerson: () => 'Looking for you on LinkedIn…',
     linkedinCompany: ({ name }) => `Finding ${name} on LinkedIn…`,
@@ -133,7 +135,7 @@ const stackPayloadSchema = z.strictObject({
 })
 const sitePayloadSchema = z.strictObject({
     truncated: z.boolean(),
-    pages: z.array(z.strictObject({ category: z.string().max(20), url: z.string().max(2048), title: z.string().max(300).nullable() })).max(8),
+    pages: z.array(z.strictObject({ category: z.string().max(20), url: z.string().max(2048), title: z.string().max(300).nullable(), text: z.string().max(DESKTOP_COMPANY_DISCOVERY_LIMITS.maxPageTextChars).optional() })).max(8),
     productUrls: z.array(z.string().max(2048)).max(20),
     social: z.array(z.string().max(40)).max(9),
     colors: z.array(z.string().max(20)).max(5),

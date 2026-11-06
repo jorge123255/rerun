@@ -8,6 +8,9 @@ import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { desktopForeman } from '@/lib/desktop/server/foreman/binding'
 import { ownedForemanChat, withForemanChatWrite } from '@/lib/desktop/server/foreman/chat-store'
 import { ForemanError } from '@/lib/desktop/server/foreman/runtime'
+import { cancelCompanyBriefChat } from '@/lib/desktop/server/company-brief/client'
+import { desktopForemanVoice } from '@/lib/desktop/server/foreman-voice/binding'
+import { assertDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-admission'
 export const runtime = 'nodejs'
 const inputSchema = z.discriminatedUnion('action', [
     z.strictObject({ action: z.literal('send'), chat: foremanChatRefSchema, requestId: z.uuid(), text: z.string().trim().min(1).max(20_000), modelChoice: foremanModelRefSchema.optional() }),
@@ -32,9 +35,10 @@ export async function POST(request: Request) {
         const chat = 'chat' in input ? input.chat : input.input.chat
         if (chat.workspaceId !== String(runtime.workspaceId)) throw new DesktopHttpError(404, 'Conversation not found.')
         await ownedForemanChat(app.db, chat)
+        if (input.action !== 'ui' && input.action !== 'stop') await assertDesktopWorkspaceAdmission(runtime)
         try {
             if (input.action === 'send') return Response.json(await app.send(input.chat, input.requestId, input.text, input.modelChoice))
-            if (input.action === 'stop') { await app.stop(input.chat); return Response.json({ ok: true }) }
+            if (input.action === 'stop') { await cancelCompanyBriefChat(runtime, input.chat); await (await desktopForemanVoice(runtime, app.voiceShutdownSignal)).cancelChat(input.chat); await app.stop(input.chat); return Response.json({ ok: true }) }
             if (input.action === 'decision') return Response.json(await app.core.decide(input.input))
             if (input.action === 'recover') return Response.json(await app.core.recoverDecision(input.chat, input.requestId))
             if (input.action === 'build') return Response.json(await app.core.buildAction(input.input))

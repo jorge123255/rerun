@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopBrainSemanticPorts } from '@rerun/contracts'
 
-const config = vi.hoisted(() => ({ current: { enabled: true, tools: { brain: true, desktopToolGrants: { brain: true } } }))
+const config = vi.hoisted(() => ({ current: { enabled: true, tools: { brain: true, desktopToolGrants: { brain: true } } } }))
 vi.mock('../../agents/loader.js', () => ({ readAgentConfig: vi.fn(async () => config.current) }))
 vi.mock('../agent-lifecycle.js', () => ({ beginDesktopAgentWork: () => () => {}, assertDesktopAgentNotDeleted: vi.fn() }))
 

@@ -156,3 +156,11 @@ No tests, typecheck, lint, builds, installs, servers, provider calls, UI actions
 - `docs/desktop-round35-d-handoff.md`
 
 There is no separate dependent-agent contract revision. Scheduler/adoption interfaces were read at assignment base `5c0f589b51a8129d097f2b97fc420a8acf859b51`.
+
+## Root review repair implementation
+
+Root's integration helper repaired the full routine DTO, explicit editor refresh versus Keep-draft revision adoption, periodic read refresh, per-payload request IDs, fresh acknowledged Run-now attempts and exact retry of unknown attempts. `desktopWorkspaceRoutinesAuthority(runtime)` is now concrete and `/api/desktop/workspace/routines` is mounted.
+
+Engine `/desktop/workspace-routines/:engineAgentId` GET returns current definition revisions without a model-management grant. POST accepts `{operation:'read'|'mutate',input}`. The exact request/owner/payload fingerprint and old/desired definitions are retained under the engine's private `desktop-workspace-routine-requests` directory; datadir migration 6 initializes it. Existing `desktopScheduleFiles.replace` supplies the shared schedule CAS lock, and the existing scheduler's `manualId` supplies occurrence replay. A reserved landed mutation reconciles its original receipt, rather than applying a stale revision again. No additional app-DB migration or second scheduler is introduced.
+
+Additional authored regressions cover changed-payload replay refusal, lost-ACK landed mutation, new versus uncertain Run-now identity, and Keep/Refresh editor behavior. All remain unexecuted by this helper. Root owns checks and native acceptance.

@@ -1,185 +1,158 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import {
-    DESKTOP_BRAIN_SEMANTIC_BATCH_MAX,
-    DESKTOP_BRAIN_SEMANTIC_PASSAGES_PER_PAGE,
-    DESKTOP_BRAIN_SEMANTIC_RELATED_MAX,
-    DESKTOP_BRAIN_SEMANTIC_RRF_K,
+    DESKTOP_BRAIN_SEMANTIC_BATCH_MAX, DESKTOP_BRAIN_SEMANTIC_PASSAGES_PER_PAGE,
+    DESKTOP_BRAIN_SEMANTIC_RELATED_MAX, DESKTOP_BRAIN_SEMANTIC_RRF_K,
     desktopBrainSemanticSearchInputSchema,
-    type DesktopBrainSemanticBackend,
-    type DesktopBrainSemanticHit,
-    type DesktopBrainSemanticIndexEntry,
-    type DesktopBrainSemanticIndexStatus,
-    type DesktopBrainSemanticPending,
-    type DesktopBrainSemanticPage,
-    type DesktopBrainSemanticPorts,
-    type DesktopBrainSemanticSearchResult,
+    type DesktopBrainSemanticBackend, type DesktopBrainSemanticHit,
+    type DesktopBrainSemanticIndexEntry, type DesktopBrainSemanticIndexStatus,
+    type DesktopBrainSemanticPending, type DesktopBrainSemanticPage,
+    type DesktopBrainSemanticPorts, type DesktopBrainSemanticSearchResult,
 } from '@rerun/contracts'
 import { chunkPage } from '../../brain/chunks.js'
 import { desktopSemanticCosine, desktopSemanticVector } from '../semantic-memory/vectors.js'
 
-function fingerprint(backend: DesktopBrainSemanticBackend): string {
-    return createHash('sha256').update(JSON.stringify(backend)).digest('hex')
+function waitFor<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason ?? new Error('Brain search cancelled')) }
+        signal.addEventListener('abort', abort, { once: true })
+        work.then(value => { signal.removeEventListener('abort', abort); if (signal.aborted) abort(); else resolve(value) }, error => { signal.removeEventListener('abort', abort); reject(error) })
+        if (signal.aborted) abort()
+    })
 }
-
-function addRanked(scores: Map<string, number>, ids: readonly string[]): void {
-    ids.forEach((id, rank) => scores.set(id, (scores.get(id) ?? 0) + 1 / (DESKTOP_BRAIN_SEMANTIC_RRF_K + rank + 1))
-}
-
-function statusOf(entries: readonly DesktopBrainSemanticIndexEntry[], pending: readonly DesktopBrainSemanticPending[], backend: DesktopBrainSemanticBackend | null, message: string, omitted = 0): DesktopBrainSemanticIndexStatus {
-    return {
-        mode: !backend ? 'keyword-only' : message ? 'partial' : pending.length ? 'partial' : 'ready',
-        backend,
-        indexed: entries.length,
-        pending: pending.length,
-        omitted,
-        message: message || (backend ? 'Semantic index is ready.' : 'Keyword search is available; no embedding service is configured.'),
-    }
+const MAX_CHUNKS = 8192
+const fingerprint = (value: DesktopBrainSemanticBackend) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+const passageKey = (slug: string, heading: string, content: string) => JSON.stringify([slug, heading, content])
+function chunkId(page: DesktopBrainSemanticPage, ordinal: number, textHash: string, backend: DesktopBrainSemanticBackend) {
+    const h = createHash('sha256').update(JSON.stringify([page.slug, page.hash, ordinal, textHash, fingerprint(backend)])).digest('hex')
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`
 }
 
 export function createDesktopBrainSemanticIndex(ports: DesktopBrainSemanticPorts) {
-    async function currentEntries(backend: DesktopBrainSemanticBackend | null): Promise<DesktopBrainSemanticIndexEntry[]> {
-        if (!backend) return []
-        const current = fingerprint(backend)
-        return (await ports.store.list()).filter(entry => entry.backendFingerprint === current && desktopSemanticVector(entry.vector, backend.dimensions))
+    async function authorize(signal: AbortSignal) { signal.throwIfAborted(); await ports.authority(signal); signal.throwIfAborted() }
+    async function backendIs(backend: DesktopBrainSemanticBackend, signal: AbortSignal) {
+        await authorize(signal)
+        const next = await ports.embedding.identity()
+        signal.throwIfAborted()
+        return next !== null && fingerprint(next) === fingerprint(backend)
     }
-
-    async function desired(page: DesktopBrainSemanticPage, backend: DesktopBrainSemanticBackend, existing: readonly DesktopBrainSemanticIndexEntry[]): Promise<DesktopBrainSemanticPending[]> {
-        const current = fingerprint(backend)
-        return chunkPage(page).map(chunk => ({
-            chunk: {
-                id: existing.find(entry => entry.chunk.slug === chunk.slug && entry.chunk.ordinal === chunk.ordinal && entry.chunk.textHash === chunk.textHash)?.chunk.id ?? randomUUID(),
-                slug: chunk.slug,
-                heading: chunk.heading,
-                ordinal: chunk.ordinal,
-                content: chunk.content,
-                textHash: chunk.textHash,
-                text: chunk.text,
-            },
-            pageHash: page.hash,
-            backendFingerprint: current,
-            attempts: 0,
-        }))
-    }
-
-    async function reconcile(embed = false): Promise<DesktopBrainSemanticIndexStatus> {
-        await ports.authority(new AbortController().signal)
-        const backend = ports.embedding.identity()
+    async function current(signal: AbortSignal) {
+        await authorize(signal)
+        let backend: DesktopBrainSemanticBackend | null = null, identityError = false
+        try { backend = await ports.embedding.identity() } catch { signal.throwIfAborted(); await authorize(signal); identityError = true }
         const pages = await ports.pages.list()
-        const existing = await ports.store.list()
-        const pending = await ports.store.pending()
-        const wanted = backend ? await Promise.all(pages.map(page => desired(page, backend, existing)) : []
-        const wantedIds = new Set(wanted.flat().map(item => item.chunk.id)
-        const stale = [...new Set([
-            ...existing.filter(entry => !wantedIds.has(entry.chunk.id)).map(entry => entry.chunk.id),
-            ...pending.filter(item => !wantedIds.has(item.chunk.id)).map(item => item.chunk.id),
-        ])]
-        if (stale.length) {
-            await ports.store.remove(stale)
-            await ports.store.removePending(stale)
-        }
-        if (!backend) return statusOf([], [], null, '', stale.length)
-        const queued = wanted.flat().filter(item => !existing.some(entry => entry.chunk.id === item.chunk.id && entry.pageHash === item.pageHash && entry.chunk.textHash === item.chunk.textHash && entry.backendFingerprint === item.backendFingerprint))
-        for (const item of queued) await ports.store.queue(item)
-        if (embed) await embedPending(backend)
-        return statusOf(await currentEntries(backend), await ports.store.pending(), backend, '', stale.length + queued.length)
+        await authorize(signal)
+        const all = await ports.store.list(), pending = await ports.store.pending()
+        const bySlug = new Map(pages.map(page => [page.slug, page]))
+        const entries = backend ? all.filter(entry => {
+            const page = bySlug.get(entry.chunk.slug)
+            if (!page || page.hash !== entry.pageHash) return false
+            return entry.backendFingerprint === fingerprint(backend!)
+                && desktopSemanticVector(entry.vector, backend!.dimensions) !== null
+                && chunkPage(page).some(chunk => chunk.ordinal === entry.chunk.ordinal && chunk.textHash === entry.chunk.textHash)
+        }) : []
+        return { backend, pages, all, entries, pending, identityError }
     }
-
-    async function embedPending(backend: DesktopBrainSemanticBackend): Promise<void> {
-        for (;;) {
-            await ports.authority(new AbortController().signal)
-            const pending = (await ports.store.pending()).filter(item => item.backendFingerprint === fingerprint(backend) && item.attempts < 3)
-            if (!pending.length) return
-            const batch = pending.slice(0, DESKTOP_BRAIN_SEMANTIC_BATCH_MAX)
-            const vectors = await ports.embedding.embed(batch.map(item => item.chunk.text), new AbortController().signal, backend.revision)
-            for (const [index, item] of batch.entries()) {
-                const page = await ports.pages.read(item.chunk.slug)
-                const vector = desktopSemanticVector(vectors[index], backend.dimensions)
-                if (!page || page.hash !== item.pageHash || !vector) {
-                    await ports.store.queue({ ...item, attempts: item.attempts + 1 })
-                    continue
-                }
-                await ports.store.write({ chunk: item.chunk, pageHash: item.pageHash, backendFingerprint: item.backendFingerprint, vector })
-                await ports.store.removePending([item.chunk.id])
+    function report(state: Awaited<ReturnType<typeof current>>, message = ''): DesktopBrainSemanticIndexStatus {
+        const chunks = state.pages.reduce((n, page) => n + chunkPage(page).length, 0)
+        const missing = Math.max(0, Math.min(chunks, MAX_CHUNKS) - state.entries.length)
+        const pending = state.backend ? state.pending.filter(p => p.backendFingerprint === fingerprint(state.backend!)).length : 0
+        return { mode: state.identityError ? 'unavailable' : !state.backend ? 'keyword-only' : message || missing || pending ? 'partial' : 'ready', backend: state.backend,
+            indexed: state.entries.length, pending: state.backend ? Math.max(pending, missing) : 0, omitted: Math.max(0, chunks - MAX_CHUNKS),
+            message: message || (state.identityError ? 'Embedding configuration is unavailable. Keyword results remain available.' : !state.backend ? 'Keyword search is available; no embedding service is configured.' : missing || pending ? 'Semantic indexing is incomplete. Keyword results remain available.' : 'Semantic index is ready.') }
+    }
+    async function reconcile(embed = false, signal: AbortSignal = new AbortController().signal): Promise<DesktopBrainSemanticIndexStatus> {
+        const state = await current(signal)
+        const { backend } = state
+        if (state.identityError) return report(state)
+        const wanted: DesktopBrainSemanticPending[] = []
+        if (backend) for (const page of state.pages) for (const chunk of chunkPage(page)) {
+            if (wanted.length >= MAX_CHUNKS) break
+            const id = chunkId(page, chunk.ordinal, chunk.textHash, backend)
+            wanted.push({ chunk: { ...chunk, id, slug: page.slug }, pageHash: page.hash, backendFingerprint: fingerprint(backend), attempts: state.pending.find(p => p.chunk.id === id)?.attempts ?? 0 })
+        }
+        const ids = new Set(wanted.map(p => p.chunk.id))
+        const stale = [...new Set([...state.all, ...state.pending].filter(p => !ids.has(p.chunk.id)).map(p => p.chunk.id))]
+        await authorize(signal)
+        if (stale.length) { await ports.store.remove(stale); await ports.store.removePending(stale) }
+        if (!backend) return report(await current(signal))
+        if (!await backendIs(backend, signal)) return report(await current(signal), 'Embedding configuration changed. Keyword results remain available.')
+        for (const item of wanted) {
+            if (!state.entries.some(entry => entry.chunk.id === item.chunk.id) && !state.pending.some(p => p.chunk.id === item.chunk.id)) {
+                await authorize(signal); await ports.store.queue(item)
             }
-            if (vectors.length !== batch.length) return
         }
-    }
-
-    async function invalidate(slug: string, expectedHash?: string): Promise<void> {
-        if (expectedHash) {
-            const page = await ports.pages.read(slug)
-            if (!page || page.hash !== expectedHash) throw new Error('Brain page changed during indexing.')
-        }
-        await ports.store.removePage(slug)
-        await ports.store.removePending((await ports.store.pending()).filter(item => item.chunk.slug === slug).map(item => item.chunk.id))
-    }
-
-    async function status(): Promise<DesktopBrainSemanticIndexStatus> {
-        const backend = ports.embedding.identity()
-        return statusOf(await currentEntries(backend), await ports.store.pending(), backend, '')
-    }
-
-    async function search(raw: unknown): Promise<DesktopBrainSemanticSearchResult> {
-        const input = desktopBrainSemanticSearchInputSchema.parse(raw)
-        await ports.authority(new AbortController().signal)
-        const backend = ports.embedding.identity()
-        const keyword = await ports.pages.search(input.query, input.limit)
-        const entries = await currentEntries(backend)
-        const scores = new Map<string, number>()
-        const semanticPassages = new Map<string, { heading: string; content: string }>()
         let message = ''
-        if (backend && entries.length) {
-            try {
-                const [queryVector] = await ports.embedding.embed([input.query], new AbortController().signal, backend.revision)
-                const vector = desktopSemanticVector(queryVector, backend.dimensions)
-                if (!vector) message = 'The embedding response was invalid. Keyword results are shown.'
-                else {
-                    const ranked = entries.filter(entry => desktopSemanticCosine(vector, entry.vector) !== null).sort((a, b) => (desktopSemanticCosine(vector, b.vector) ?? 0) - (desktopSemanticCosine(vector, a.vector) ?? 0))
-                    addRanked(scores, ranked.map(entry => `${entry.chunk.slug}:${entry.chunk.heading}:${entry.chunk.content}`)
-                    for (const entry of ranked) semanticPassages.set(`${entry.chunk.slug}:${entry.chunk.heading}:${entry.chunk.content}`, { heading: entry.chunk.heading, content: entry.chunk.content })
+        if (embed) {
+            const batch = (await ports.store.pending()).filter(p => p.backendFingerprint === fingerprint(backend) && p.attempts < 3).slice(0, DESKTOP_BRAIN_SEMANTIC_BATCH_MAX)
+            if (batch.length) try {
+                if (!await backendIs(backend, signal)) throw new Error('backend changed')
+                const vectors = await waitFor(ports.embedding.embed(batch.map(p => p.chunk.text), signal, backend.revision), signal)
+                await authorize(signal)
+                if (!await backendIs(backend, signal)) throw new Error('backend changed')
+                for (const [index, item] of batch.entries()) {
+                    const page = await ports.pages.read(item.chunk.slug), vector = desktopSemanticVector(vectors[index], backend.dimensions)
+                    await authorize(signal)
+                    if (!page || page.hash !== item.pageHash) { await ports.store.removePending([item.chunk.id]); continue }
+                    if (!vector || vectors.length !== batch.length) { await ports.store.queue({ ...item, attempts: item.attempts + 1 }); message = 'The embedding response was invalid. Keyword results remain available.'; continue }
+                    if (!await backendIs(backend, signal)) throw new Error('backend changed')
+                    await ports.store.write({ chunk: item.chunk, pageHash: item.pageHash, backendFingerprint: item.backendFingerprint, vector })
+                    await ports.store.removePending([item.chunk.id])
                 }
             } catch {
-                message = 'The embedding service is unavailable. Keyword results are shown.'
+                signal.throwIfAborted(); await authorize(signal)
+                message = 'The embedding service is unavailable or changed. Keyword results remain available.'
+                for (const item of batch) await ports.store.queue({ ...item, attempts: Math.min(3, item.attempts + 1) })
             }
         }
-        const byChunk = new Map<string, number>()
-        for (const hit of keyword.hits) for (const passage of hit.passages) byChunk.set(`${hit.slug}:${passage.heading}:${passage.content}`, Math.max(byChunk.get(`${hit.slug}:${passage.heading}:${passage.content}`) ?? 0, hit.score)
-        for (const [index, id] of [...byChunk.keys()].entries()) scores.set(id, (scores.get(id) ?? 0) + 1 / (DESKTOP_BRAIN_SEMANTIC_RRF_K + index + 1))
-        const pageBySlug = new Map(keyword.hits.map(hit => [hit.slug, hit]))
-        const hits: DesktopBrainSemanticHit[] = []
-        for (const [id, score] of [...scores.entries()].sort((a, b) => b[1] - a[1])) {
-            const semanticEntry = entries.find(entry => `${entry.chunk.slug}:${entry.chunk.heading}:${entry.chunk.content}` === id)
-            const keywordHit = [...keyword.hits].find(hit => hit.passages.some(passage => `${hit.slug}:${passage.heading}:${passage.content}` === id)
-            const slug = semanticEntry?.chunk.slug ?? keywordHit?.slug
-            if (!slug) continue
-            const page = await ports.pages.read(slug)
-            if (!page || (semanticEntry && page.hash !== semanticEntry.pageHash) continue
-            const passages = [...(semanticEntry ? [semanticPassages.get(id)!] : []), ...(keywordHit?.passages ?? [])]
-            const existing = hits.find(hit => hit.slug === slug)
-            if (existing) {
-                existing.score = Math.max(existing.score, score)
-                existing.passages.push(...passages.filter(passage => !existing.passages.some(current => current.heading === passage.heading && current.content === passage.content))
-            } else {
-                const keywordPage = pageBySlug.get(slug)
-                hits.push({ slug, title: keywordPage?.title ?? page.title, type: keywordPage?.type ?? page.type, passages, score })
-            }
-            if (hits.length >= input.limit) break
-        }
-        for (const hit of hits) hit.passages = hit.passages.slice(0, DESKTOP_BRAIN_SEMANTIC_PASSAGES_PER_PAGE)
-        const related = new Map<string, { slug: string; title: string }>()
-        for (const item of keyword.related) {
-            const page = await ports.pages.read(item.slug)
-            if (page) related.set(item.slug, { slug: item.slug, title: page.title })
-        }
-        for (const hit of hits) {
-            for (const slug of (await ports.pages.read(hit.slug))?.links ?? []) {
-                if (hits.some(item => item.slug === slug) || related.has(slug) || related.size >= DESKTOP_BRAIN_SEMANTIC_RELATED_MAX) continue
-                const page = await ports.pages.read(slug)
-                if (page) related.set(slug, { slug, title: page.title })
-            }
-        }
-        return { hits, related: [...related.values()], index: statusOf(entries, await ports.store.pending(), backend, message) }
+        return report(await current(signal), message)
     }
-
+    async function invalidate(slug: string, expectedHash?: string, signal: AbortSignal = new AbortController().signal) {
+        await authorize(signal)
+        if (expectedHash && (await ports.pages.read(slug))?.hash !== expectedHash) throw new Error('Brain page changed during indexing.')
+        await authorize(signal)
+        await ports.store.removePage(slug)
+        await ports.store.removePending((await ports.store.pending()).filter(p => p.chunk.slug === slug).map(p => p.chunk.id))
+    }
+    async function status(signal: AbortSignal = new AbortController().signal) { return report(await current(signal)) }
+    async function search(raw: unknown, signal: AbortSignal = new AbortController().signal): Promise<DesktopBrainSemanticSearchResult> {
+        const input = desktopBrainSemanticSearchInputSchema.parse(raw), state = await current(signal)
+        const keyword = await ports.pages.search(input.query, 10)
+        await authorize(signal)
+        const scores = new Map<string, number>(), passages = new Map<string, { slug: string; heading: string; content: string }>()
+        const add = (slug: string, heading: string, content: string, rank: number) => {
+            const key = passageKey(slug, heading, content)
+            passages.set(key, { slug, heading, content }); scores.set(key, (scores.get(key) ?? 0) + 1 / (DESKTOP_BRAIN_SEMANTIC_RRF_K + rank + 1))
+        }
+        let message = ''
+        if (state.backend && state.entries.length) try {
+            const [rawVector] = await waitFor(ports.embedding.embed([input.query], signal, state.backend.revision), signal)
+            await authorize(signal)
+            const vector = desktopSemanticVector(rawVector, state.backend.dimensions)
+            if (!vector || !await backendIs(state.backend, signal)) throw new Error('invalid or changed')
+            state.entries.map(entry => ({ entry, score: desktopSemanticCosine(vector, entry.vector) })).filter(v => v.score !== null)
+                .sort((a, b) => b.score! - a.score!).slice(0, input.limit * 4).forEach(({ entry }, rank) => add(entry.chunk.slug, entry.chunk.heading, entry.chunk.content, rank))
+        } catch {
+            signal.throwIfAborted(); await authorize(signal)
+            message = 'The embedding service is unavailable or changed. Keyword results are shown.'
+        }
+        let rank = 0
+        for (const hit of keyword.hits) for (const p of hit.passages) add(hit.slug, p.heading, p.content, rank++)
+        const hits: DesktopBrainSemanticHit[] = []
+        for (const [key, score] of [...scores].sort((a, b) => b[1] - a[1])) {
+            const passage = passages.get(key)!, page = await ports.pages.read(passage.slug)
+            await authorize(signal)
+            if (!page || !chunkPage(page).some(c => c.heading === passage.heading && c.content === passage.content)) continue
+            let hit = hits.find(h => h.slug === page.slug)
+            if (!hit) { if (hits.length >= input.limit) continue; hit = { slug: page.slug, title: page.title, type: page.type, score, passages: [] }; hits.push(hit) }
+            if (hit.passages.length < DESKTOP_BRAIN_SEMANTIC_PASSAGES_PER_PAGE) hit.passages.push({ heading: passage.heading, content: passage.content })
+        }
+        const selected = new Set(hits.map(h => h.slug)), related = new Map<string, { slug: string; title: string }>()
+        for (const page of await ports.pages.list()) {
+            if (selected.has(page.slug)) continue
+            if (page.links.some(slug => selected.has(slug)) || state.pages.some(source => selected.has(source.slug) && source.links.includes(page.slug))) related.set(page.slug, { slug: page.slug, title: page.title })
+        }
+        await authorize(signal)
+        return { hits, related: [...related.values()].sort((a, b) => a.title.localeCompare(b.title)).slice(0, DESKTOP_BRAIN_SEMANTIC_RELATED_MAX), index: report(await current(signal), message) }
+    }
     return { reconcile, search, status, invalidate }
 }

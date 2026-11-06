@@ -6,6 +6,13 @@ import { Button } from '@/components/ui/button'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
 import { createDesktopForemanClient, desktopForemanMessages, readDesktopForemanState, type DesktopForemanClientState } from '@/lib/desktop/foreman-client/runtime-client'
+import { createClientDockFeed } from '@/lib/desktop/foreman-dock/feed'
+import { useMemo } from 'react'
+import type { ForemanPlacement } from '@/lib/foreman-layout'
+import { useForemanVoiceSlot } from '@/lib/desktop/foreman-voice/useForemanVoiceSlot'
+import { ForemanVoiceSlot } from '@/components/desktop/foreman-voice/ForemanVoiceSlot'
+import { registerForemanVoiceQuit } from '@/lib/desktop/foreman-voice/quit'
+import { DesktopCompanyResearch } from './company-brief/DesktopCompanyResearch'
 import { DesktopForemanColumn } from './DesktopForemanColumn'
 
 export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; signal: AbortSignal; settle: (error?: Error) => void }
@@ -17,7 +24,14 @@ export type DesktopForemanPanelProps = {
     agentNameOf: (agentId: string) => string
     workspaceModel?: string
     modelChoice?: DesktopForemanModelRef
+    workspaceModelChoice?: DesktopForemanModelRef
     composerTrailing?: ReactNode
+    controlledOpen?: boolean
+    hidden?: boolean
+    centerOpen?: boolean
+    onOpenChange?: (open: boolean) => void
+    onOpenTranscriptionSettings?: () => void
+    onLayout?: (layout: { scope: string; open: boolean; placement: ForemanPlacement; dragging: boolean; mobile: boolean }) => void
     className?: string
 }
 /** Real local Foreman conversation in the original docked column; the board remains mounted. */
@@ -41,6 +55,9 @@ export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
 }
 function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { initial: DesktopForemanClientState }) {
     const [state, setState] = useState(initial)
+    const projectFeed = useMemo(() => createClientDockFeed(initial.chat), [initial.chat.workspaceId, initial.chat.chatId])
+    const [dockFeed, setDockFeed] = useState(() => projectFeed(initial))
+    const [voiceSlot, setVoiceSlot] = useState<ReactNode>(null)
     const [error, setError] = useState<string | null>(null)
     const current = useRef(props)
     current.current = props
@@ -48,7 +65,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const [client, setClient] = useState<ReturnType<typeof createDesktopForemanClient> | null>(null)
     useEffect(() => {
         const client = createDesktopForemanClient(initial, {
-            onState: next => { if (active.current) { setState(next); setError(null) } },
+            onState: next => { if (active.current) { setState(next); setDockFeed(projectFeed(next)); setError(null) } },
             onError: message => { if (active.current) setError(message) },
             onOpenCoworker: target => { if (active.current && !isDesktopQuitting()) return current.current.onOpenCoworker(target) },
             onOpenBox: spaceId => { if (active.current && !isDesktopQuitting()) return current.current.onOpenBox(spaceId) },
@@ -89,11 +106,27 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     }, [client, props.command, initial.chat.chatId, initial.chat.workspaceId])
     const close = useCallback(() => { if (active.current) current.current.onClose() }, [])
     if (!client) return <div role="status" className={props.className}>Opening Foreman…</div>
-    return <DesktopForemanColumn
-        focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
+    return <>
+    {(props.modelChoice ?? state.model ?? props.workspaceModelChoice) && <ForemanVoiceOwner target={{ chat: state.chat, model: (props.modelChoice ?? state.model ?? props.workspaceModelChoice)! }}
+        active={!props.hidden && !state.view.live} engage={() => {}}
+        accepted={() => { void client.refresh() }} onSlot={setVoiceSlot} onSettings={props.onOpenTranscriptionSettings} />}
+    <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />
+    <DesktopForemanColumn
+        controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
+        dockFeed={dockFeed} voiceSlot={voiceSlot}        focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf}
-        className={props.className} onClose={close} openOnMount refreshKey={JSON.stringify(state.view)}
+        className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
         headerActions={error ? <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span> : undefined}
         composerTrailing={props.composerTrailing ?? <span className="truncate text-xs text-muted-foreground">{state.model?.model ?? props.workspaceModel ?? 'Workspace default'}</span>}
-    />
+    /></>
+}
+
+function ForemanVoiceOwner({ target, active, engage, accepted, onSlot, onSettings }: {
+    target: import('@rerun/contracts').ForemanVoiceTarget; active: boolean; engage(): void; accepted(): void
+    onSlot(slot: ReactNode): void; onSettings?: () => void
+}) {
+    const voice = useForemanVoiceSlot({ target, active, onEngage: engage, onAccepted: accepted, releasePolicy: 'send' })
+    useEffect(() => registerForemanVoiceQuit(() => voice.controller.prepareForQuit()), [voice.controller])
+    useEffect(() => { onSlot(<ForemanVoiceSlot voice={voice} onOpenTranscriptionSettings={onSettings ?? (() => {})} />); return () => onSlot(null) }, [voice.view, voice.stream, voice.active, voice.controller, onSettings, onSlot])
+    return null
 }

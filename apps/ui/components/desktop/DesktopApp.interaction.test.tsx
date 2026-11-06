@@ -422,3 +422,38 @@ test('applying a new appearance keeps the saved choice active', async () => {
         document.documentElement.classList.remove('dark', 'light')
     }
 })
+
+
+test('freezes before the first awaited quit drain and leaves failed voice custody visible without a second cancel notification', async () => {
+    const { registerDockQuitFlush } = await import('@/lib/desktop/foreman-dock/persistence')
+    const { registerForemanVoiceQuit } = await import('@/lib/desktop/foreman-voice/quit')
+    const { isDesktopQuitting, cancelDraftShutdown, subscribeDraftShutdown } = await import('@/lib/desktop/draft-writes')
+    cancelDraftShutdown()
+    let quit!: () => Promise<boolean>, cancelled!: () => void, finishDock!: (ready: boolean) => void
+    const desktopWindow = window as Window & { desktopApp?: {
+        onBeforeQuit(listener: () => Promise<boolean>): () => void
+        onQuitCancelled(listener: () => void): () => void
+    } }
+    const previous = desktopWindow.desktopApp
+    desktopWindow.desktopApp = { onBeforeQuit: listener => { quit = listener; return () => {} }, onQuitCancelled: listener => { cancelled = listener; return () => {} } }
+    const notify = vi.fn(), voice = vi.fn(async () => false)
+    const unlisten = subscribeDraftShutdown(notify)
+    const undock = registerDockQuitFlush(() => new Promise(resolve => { finishDock = resolve }))
+    const unvoice = registerForemanVoiceQuit(voice)
+    mockDesktopFetch(url => url === settingsUrl ? Response.json(disconnected) : undefined)
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    try {
+        await act(async () => { root.render(<DesktopApp initialData={{ ...disconnected, theme: 'system', profile: { id: 1, displayName: 'Local' }, workspace: { id: 1, name: 'Studio' }, agents: [] }} />) })
+        let pending!: Promise<boolean>
+        act(() => { pending = quit() })
+        expect(isDesktopQuitting()).toBe(true)
+        expect(notify).not.toHaveBeenCalled()
+        let ready = true
+        await act(async () => { finishDock(true); ready = await pending })
+        expect(ready).toBe(false)
+        expect(voice).toHaveBeenCalledTimes(1)
+        expect(notify).not.toHaveBeenCalled()
+        act(() => cancelled())
+        expect(isDesktopQuitting()).toBe(false)
+    } finally { unlisten(); undock(); unvoice(); cancelDraftShutdown(); await act(async () => root.unmount()); desktopWindow.desktopApp = previous }
+})

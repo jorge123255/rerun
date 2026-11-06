@@ -1,12 +1,18 @@
 import 'server-only'
+import { createHash } from 'node:crypto'
+import { desktopWorkspaceRoutineMutationSchema } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
 import type { DesktopScheduleRecord, DesktopWorkspaceRoutineMutation, DesktopWorkspaceRoutineMutationResult } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
 import { DesktopHttpError } from '../auth'
 
 export type DesktopWorkspaceRoutinesMutationAuthority = {
     current: (agentId: string, slug: string, signal?: AbortSignal) => Promise<DesktopScheduleRecord>
     authorize: (agentId: string, signal?: AbortSignal) => Promise<void>
-    receipt: (requestId: string, signal?: AbortSignal) => Promise<DesktopWorkspaceRoutineMutationResult | null>
+    receipt: (input: DesktopWorkspaceRoutineMutation, signal?: AbortSignal) => Promise<{ fingerprint: string; result: DesktopWorkspaceRoutineMutationResult | null; reserved?: boolean } | null>
     mutate: (input: DesktopWorkspaceRoutineMutation, signal?: AbortSignal) => Promise<DesktopWorkspaceRoutineMutationResult>
+}
+
+export function desktopWorkspaceRoutineFingerprint(input: DesktopWorkspaceRoutineMutation) {
+    return createHash('sha256').update(JSON.stringify(desktopWorkspaceRoutineMutationSchema.parse(input))).digest('hex')
 }
 
 export function createDesktopWorkspaceRoutinesMutator(authority: DesktopWorkspaceRoutinesMutationAuthority) {
@@ -22,8 +28,12 @@ export function createDesktopWorkspaceRoutinesMutator(authority: DesktopWorkspac
     }
 
     async function perform(input: DesktopWorkspaceRoutineMutation, signal?: AbortSignal): Promise<DesktopWorkspaceRoutineMutationResult> {
-        const existing = await authority.receipt(input.requestId, signal)
-        if (existing) return existing
+        const existing = await authority.receipt(input, signal)
+        if (existing) {
+            if (existing.fingerprint !== desktopWorkspaceRoutineFingerprint(input)) throw new DesktopHttpError(409, 'This request belongs to another routine change.')
+            if (existing.result) return existing.result
+            if (existing.reserved) return authority.mutate(input, signal)
+        }
         await validate(input, signal)
         const result = await authority.mutate(input, signal)
         if (input.action === 'rename' && result.routine.name !== input.name.trim()) throw new DesktopHttpError(409, 'Update this coworker to rename its routines.')

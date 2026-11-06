@@ -3,6 +3,7 @@
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { DesktopWorkspaceSwitcher } from './DesktopWorkspaceSwitcher'
 import type { DesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import type { DesktopWorkspaceListResult, DesktopWorkspaceRecord } from '@rerun/contracts'
@@ -51,6 +52,16 @@ function mount(node: ReactNode) {
     return host
 }
 
+async function openMenu(trigger: HTMLElement) {
+    await act(async () => {
+        trigger.focus()
+        trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
+    })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)) })
+    expect(document.querySelector('[role="menu"]')).toBeTruthy()
+}
+const menuItem = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === label)
+
 test('lists local workspaces and New workspace entry', async () => {
     const workspaces = [workspace(1, 'My workspace'), workspace(2, 'Acme')]
     const client: DesktopWorkspaceClient = {
@@ -64,10 +75,10 @@ test('lists local workspaces and New workspace entry', async () => {
     expect(client.list).toHaveBeenCalled()
     const trigger = document.querySelector<HTMLButtonElement>('[aria-label^="Workspace menu"]')
     expect(trigger).toBeTruthy()
-    await act(async () => { trigger!.click() })
+    await openMenu(trigger!)
     expect(document.body.textContent).toContain('My workspace')
-    expect(document.body.textContent).toContain('Acme')
-    expect(document.body.textContent).toContain('New workspace')
+    expect(menuItem('Acme')).toBeTruthy()
+    expect(menuItem('New workspace')).toBeTruthy()
 })
 
 test('blocked open receipt explains busy switch in product language', async () => {
@@ -95,7 +106,22 @@ test('blocked open receipt explains busy switch in product language', async () =
     mount(<DesktopWorkspaceSwitcher client={client} />)
     await act(async () => { await Promise.resolve() })
     const trigger = document.querySelector<HTMLButtonElement>('[aria-label^="Workspace menu"]')!
-    await act(async () => { trigger.click() })
+    await openMenu(trigger)
     expect(document.body.textContent).toMatch(/workspace switch is already in progress/i)
+    expect(menuItem('Acme')?.getAttribute('aria-disabled')).toBe('true')
+    await act(async () => { menuItem('Acme')!.click() })
     expect(switchTo).not.toHaveBeenCalled()
+})
+
+test('active saved metadata and the existing menu actions remain visible while the native catalog is unavailable', async () => {
+    const onBoard = vi.fn()
+    const client: DesktopWorkspaceClient = { list: vi.fn(async () => { throw new Error('unavailable') }), create: vi.fn(), rename: vi.fn(), switchTo: vi.fn() }
+    mount(<DesktopWorkspaceSwitcher client={client} activeDisplay={{ name: 'Saved legacy name', iconCatalogId: null, iconUploadId: null }} menuItems={<DropdownMenuItem onSelect={onBoard}>Existing team board</DropdownMenuItem>} />)
+    await act(async () => { await Promise.resolve() })
+    const trigger = document.querySelector<HTMLButtonElement>('[aria-label="Workspace menu, Saved legacy name"]')
+    expect(trigger).toBeTruthy()
+    await openMenu(trigger!)
+    expect(document.body.textContent).toContain('Existing team board')
+    await act(async () => { menuItem('Existing team board')!.click() })
+    expect(onBoard).toHaveBeenCalledOnce()
 })

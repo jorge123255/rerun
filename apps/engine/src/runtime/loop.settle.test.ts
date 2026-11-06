@@ -5,6 +5,9 @@ import { vi } from 'vitest'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-settle-'))
 
+const admission = vi.hoisted(() => ({ frozen: false, providers: 0 }))
+vi.mock('../desktop/workspace-admission.js', () => ({ assertDesktopRunAdmission: () => { if (admission.frozen) throw new Error('Workspace switching'); return 0 } }))
+
 // Captured instead of sent: the assertions are about what the hub is told, which is the only thing
 // that moves a conversation off "working".
 const { sent, stream, partial, proposal } = vi.hoisted(() => ({
@@ -38,7 +41,7 @@ vi.mock('../agents/providers.js', async importOriginal => {
     const { MockLanguageModelV3 } = await import('ai/test')
     return {
         ...actual,
-        resolveModel: () => ({
+        resolveModel: () => { admission.providers++; return ({
             model: new MockLanguageModelV3({
                 doStream: async () => ({
                     stream: new ReadableStream({
@@ -52,7 +55,7 @@ vi.mock('../agents/providers.js', async importOriginal => {
                 }),
             }),
             close: async () => {},
-        }),
+        }) },
     }
 })
 
@@ -100,6 +103,28 @@ describe('a run always reaches a terminal state', () => {
         stream.hang = false
         partial.push = false
         proposal.push = false
+        admission.frozen = false
+        admission.providers = 0
+    })
+
+    it('settles a pre-reserved chat row if workspace freeze wins before runAgent entry', async () => {
+        const { startRun } = await import('../db/repos/runs.js')
+        const session = await createSession(id, 'Reserved immediately before switch')
+        const row = await startRun(id, session.id)
+        claimSession(session.id, row.id)
+        admission.frozen = true
+        const result = await runAgent(await getAgent(id), session.id, 'Do not start', undefined, undefined, row.id).catch(error => error)
+        expect(result).toBeInstanceOf(Error)
+        expect((await getRun(id, row.id))?.status).toBe('error')
+        expect(sessionClaim(session.id)).toBeNull()
+        expect(admission.providers).toBe(0)
+    })
+
+    it('refuses a fresh frozen run without creating a provider', async () => {
+        const session = await createSession(id, 'Frozen before admission')
+        admission.frozen = true
+        await expect(runAgent(await getAgent(id), session.id, 'Do not reserve')).rejects.toThrow('Workspace switching')
+        expect(admission.providers).toBe(0)
     })
 
     it('consumes the atomically saved first user row without appending a second copy', async () => {

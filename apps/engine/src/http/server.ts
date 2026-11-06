@@ -1,3 +1,8 @@
+import { createDesktopWorkspaceAdmissionRouter } from '../desktop/workspace-admission.js'
+import { createDesktopWorkspaceRoutineRouter } from '../desktop/workspace-routines/router.js'
+import { createDesktopBrainSemanticRouter } from '../desktop/brain-semantic/router.js'
+import { createDesktopCompanyBriefRouter } from '../desktop/company-brief/router.js'
+import { getCompanyBriefService } from '../desktop/company-brief/runtime.js'
 import { desktopSetupRoutes } from '../desktop/setup/routes.js'
 import { desktopTemplateRoutes } from '../desktop/templates/router.js'
 import { Hono } from 'hono'
@@ -116,6 +121,10 @@ export function createServer(): Hono {
     }) : createDataRouter(() => getSharedDb(), SHARED_HIDDEN_TABLES))
     api.route('/brain', brainRoutes)
     if (desktopApp()) {
+        api.route('/desktop/workspace-admission', createDesktopWorkspaceAdmissionRouter())
+        api.route('/desktop/workspace-routines', createDesktopWorkspaceRoutineRouter())
+        api.route('/desktop/brain/semantic', createDesktopBrainSemanticRouter())
+        api.route('/desktop/company-brief', createDesktopCompanyBriefRouter(getCompanyBriefService))
         api.route('/desktop/brain/pages', createDesktopBrainPagesRouter())
         api.route('/desktop/brain/proposals', createDesktopBrainProposalsRouter())
     }

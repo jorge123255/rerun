@@ -7,6 +7,7 @@ export type CompanyDiscoveryOwner = 'active' | 'deleted' | 'disabled' | 'replace
 export type CompanyDiscoveryAuthority = {
     currentWorkspaceId(): Promise<string>
     // Must not read browsing history, account cookies or ambient credentials.
+    assertRun(input: { workspaceId: string; chatId: string; runId: string; discoveryId: string }, signal: AbortSignal): Promise<void>
     owner(input: { workspaceId: string; chatId: string }): Promise<CompanyDiscoveryOwner>
 }
 
@@ -14,6 +15,7 @@ export type CompanyDiscoveryRunner = (input: {
     url: string
     signal: AbortSignal
     now: () => Date
+    assertCurrent(): Promise<void>
     revisions: Partial<Record<CompanyDiscoverySource, number>>
     emit: (event: CompanyDiscoveryEvent) => void
 }) => Promise<void>

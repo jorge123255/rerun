@@ -1,4 +1,5 @@
 import 'server-only'
+import { desktopWorkspaceFrozen } from './workspace-admission'
 import { timingSafeEqual } from 'node:crypto'
 import { readDesktopRuntime, type DesktopRuntime } from './runtime'
 
@@ -36,6 +37,11 @@ export async function authenticateDesktopRequest(request: Request): Promise<Desk
     }
     if (!sameSecret(sessionCookie(request.headers.get('cookie')), runtime.app.sessionToken)) {
         throw new DesktopHttpError(401, 'Unauthorized')
+    }
+    if (desktopWorkspaceFrozen(runtime) && ['POST','PUT','PATCH','DELETE'].includes(request.method)) {
+        const path = new URL(request.url).pathname
+        const draft = /\/agents\/[^/]+\/draft$/.test(path) || /^\/api\/desktop\/brain\/(?:pages(?:\/|$)|ui-state$)/.test(path) || path === '/api/desktop/recent-coworkers' || path === '/api/desktop/foreman' || path === '/api/desktop/foreman/voice' || path === '/api/desktop/foreman/company'
+        if (!draft) throw new DesktopHttpError(409, 'This workspace is switching. Wait for it to finish.')
     }
     return runtime
 }

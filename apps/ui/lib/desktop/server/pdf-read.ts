@@ -1,3 +1,4 @@
+import { canonicalDesktopEngineRoot } from './runtime'
 import 'server-only'
 import { constants } from 'node:fs'
 import { lstat, open, realpath, type FileHandle } from 'node:fs/promises'
@@ -189,7 +190,7 @@ async function coworkerWorkspace(runtime: DesktopRuntime, agentId: string): Prom
     const coworker = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), agentId)
     if (!coworker) throw new DesktopHttpError(404, 'Coworker not found')
     if (!SAFE_ENGINE_ID.test(coworker.engineAgentId)) throw new DesktopHttpError(400, 'This coworker has no readable workspace.')
-    return resolve(await realpath(runtime.dataRoot), 'workspaces', '1', 'engine', 'agents', coworker.engineAgentId, 'workspace')
+    return resolve(await canonicalDesktopEngineRoot(runtime), 'agents', coworker.engineAgentId, 'workspace')
 }
 
 async function containedPath(workspace: string, path: string): Promise<{ root: string | null; target: string | null; rel: string }> {

@@ -3,7 +3,7 @@ const runtime = { protocolVersion: 1, launchNonce: 'c1111111-1111-4111-8111-1111
 const mocks = vi.hoisted(() => ({
     read: vi.fn(), serve: vi.fn(), prepare: vi.fn(), reconcile: vi.fn(), bind: vi.fn(), start: vi.fn(), abort: vi.fn(), mcp: vi.fn(), closeMcp: vi.fn(),
     send: vi.fn(), exit: vi.fn(), close: vi.fn(), drain: vi.fn(), stop: vi.fn(), bindingClose: vi.fn(), events: new Map<string, (...args: unknown[]) => void>(),
-    brain: vi.fn(), recover: vi.fn(), nativeDrain: vi.fn(),
+    engineDir: '/desktop-test/workspaces/1/engine', brain: vi.fn(), brief: vi.fn(), recover: vi.fn(), nativeDrain: vi.fn(),
 }))
 vi.mock('../../agents/foreman.js', () => ({ ensureForeman: vi.fn(async () => {}) }))
 vi.mock('../../desktop/claude-plan/auth.js', () => ({ bindDesktopClaudePlanAuth: () => ({ status: vi.fn(), action: vi.fn(), stop: vi.fn() }) }))
@@ -17,7 +17,7 @@ vi.mock('../../desktop/trigger-tools/runtime.js', () => ({ createDesktopTriggerT
 vi.mock('../../desktop/schedule-tools/runtime.js', () => ({ createDesktopScheduleToolRuntime: vi.fn(async () => ({ close: vi.fn(async () => {}) })) }))
 vi.mock('node:fs/promises', () => ({ readFile: mocks.read, realpath: async (path: string) => path }))
 vi.mock('@hono/node-server', () => ({ serve: mocks.serve }))
-vi.mock('../../config/env.js', () => ({ env: () => ({ RERUN_HOST: '127.0.0.1', RERUN_PORT: 3222, RERUN_HUB_BASE_URL: 'http://127.0.0.1:3210', RERUN_API_KEY: 'b'.repeat(64), RERUN_DATA_DIR: '/desktop-test/workspaces/1/engine' }) }))
+vi.mock('../../config/env.js', () => ({ env: () => ({ RERUN_HOST: '127.0.0.1', RERUN_PORT: 3222, RERUN_HUB_BASE_URL: 'http://127.0.0.1:3210', RERUN_API_KEY: 'b'.repeat(64), RERUN_DATA_DIR: mocks.engineDir }) }))
 vi.mock('../../desktop/isolated-screen/binding.js', async () => { const { Hono } = await import('hono'); return { bindIsolatedScreen: () => ({ routes: new Hono(), attach: vi.fn(), close: vi.fn(async () => {}) }) } })
 vi.mock('../../desktop/isolated-screen/index.js', () => ({ reconcileIsolatedScreens: vi.fn(async () => {}), shutdownIsolatedScreens: vi.fn(async () => {}) }))
 vi.mock('../../desktop/delegation/binding.js', async () => { const { Hono } = await import('hono'); return { bindDesktopDelegation: () => ({ routes: new Hono(), initialize: vi.fn(async () => {}), close: vi.fn(async () => {}) }), installDesktopDelegation: vi.fn() } })
@@ -32,6 +32,7 @@ vi.mock('../../runtime/run-control.js', () => ({ abortAllRuns: mocks.abort }))
 vi.mock('../../tools/mcp-pool.js', () => ({ closeAllMcp: mocks.closeMcp }))
 vi.mock('../../desktop/mcp-tools.js', () => ({ stopDesktopMcp: mocks.mcp }))
 vi.mock('../../desktop/brain-pages-router.js',()=>({initializeDesktopBrainStore:mocks.brain}))
+vi.mock('../../desktop/company-brief/runtime.js',()=>({initializeDesktopCompanyBriefStore:mocks.brief}))
 vi.mock('../../desktop/native-writeback/outbox.js',()=>({recoverNativeWritebackOutbox:mocks.recover}))
 vi.mock('../../desktop/native-writeback/client.js',()=>({sendNativeWriteback:vi.fn()}))
 vi.mock('../../desktop/native-worker.js',()=>({stopAllDesktopNativeWorkers:mocks.nativeDrain}))
@@ -50,9 +51,9 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 let listener: () => void
 let fetchApp: (request: Request) => Response | Promise<Response>
 beforeEach(() => {
-    vi.clearAllMocks(); mocks.events.clear()
-    mocks.read.mockResolvedValue(JSON.stringify(runtime))
-    mocks.brain.mockResolvedValue(undefined);mocks.recover.mockResolvedValue({recovered:[],retained:[]});mocks.nativeDrain.mockResolvedValue(undefined)
+    vi.clearAllMocks(); mocks.events.clear(); mocks.engineDir = '/desktop-test/workspaces/1/engine'
+    mocks.read.mockImplementation(async (path: string) => String(path).endsWith('desktop-owner.json') ? JSON.stringify({ installId: 'd1111111-1111-4111-8111-111111111111', workspaceId: 1 }) : JSON.stringify(runtime))
+    mocks.brain.mockResolvedValue(undefined);mocks.brief.mockResolvedValue(undefined);mocks.recover.mockResolvedValue({recovered:[],retained:[]});mocks.nativeDrain.mockResolvedValue(undefined)
     mocks.reconcile.mockResolvedValue(undefined); mocks.bind.mockResolvedValue({ close: mocks.bindingClose })
     mocks.start.mockImplementation(() => Object.assign(mocks.stop, { drain: mocks.drain }))
     mocks.abort.mockResolvedValue(undefined); mocks.drain.mockResolvedValue(undefined); mocks.bindingClose.mockResolvedValue(undefined); mocks.mcp.mockResolvedValue(undefined)
@@ -123,4 +124,38 @@ test('a lost terminal schedule notification does not prevent confirmed process c
     mocks.events.get('message')!({ type: 'stop' })
     await vi.waitFor(() => expect(mocks.exit).toHaveBeenCalledWith(0))
     expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'stopped' }))
+})
+
+
+test('binds company brief before readiness on each launch of an already migrated workspace', async () => {
+    const secondBinding = deferred<void>()
+    await desktopRunCommand()
+    expect(mocks.brief).toHaveBeenCalledOnce()
+    listener()
+    await vi.waitFor(() => expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'ready' })))
+    mocks.events.get('message')!({ type: 'stop' })
+    await vi.waitFor(() => expect(mocks.exit).toHaveBeenCalledWith(0))
+    mocks.send.mockClear(); mocks.serve.mockClear()
+    // prepareDataDir is already current and does not rerun any migration binding.
+    mocks.prepare.mockResolvedValue(undefined)
+    mocks.brief.mockImplementationOnce(() => secondBinding.promise)
+    const reopened = desktopRunCommand()
+    await vi.waitFor(() => expect(mocks.brief).toHaveBeenCalledTimes(2))
+    expect(mocks.serve).not.toHaveBeenCalled()
+    expect(mocks.send).not.toHaveBeenCalled()
+    secondBinding.resolve()
+    await reopened; listener()
+    await vi.waitFor(() => expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'ready' })))
+})
+
+
+test('refuses a nonlegacy workspace without its install identity before bootstrap', async () => {
+    const target = { ...runtime, workspaceId: 2, dataRoot: '/desktop-test/workspaces/2', installRoot: '/desktop-test', engineRoot: '/desktop-test/workspaces/2/engine' }
+    mocks.engineDir = target.engineRoot
+    process.env.RERUN_DESKTOP_WORKSPACE_ID = '2'
+    process.env.RERUN_DESKTOP_INSTALL_DIR = '/desktop-test'
+    mocks.read.mockResolvedValue(JSON.stringify(target))
+    await expect(desktopRunCommand()).rejects.toThrow('install identity is missing')
+    expect(mocks.prepare).not.toHaveBeenCalled()
+    expect(mocks.brief).not.toHaveBeenCalled()
 })

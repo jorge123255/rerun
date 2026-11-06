@@ -1,5 +1,6 @@
 'use client'
 
+import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
@@ -177,6 +178,7 @@ function WorkspaceIconForm({ workspaceName, onSaved, onCancel, onSaving, quittin
             const result = desktopIconSaved.safeParse(await response.json())
             if (!result.success) throw new Error('Could not read the saved workspace settings. Reopen settings to check the saved name and logo.')
             const saved = result.data
+            await flushDesktopWorkspaceMetadata().catch(() => {})
             if (mounted.current) {
                 onSaving(false)
                 onSaved({ name: saved.name, iconCatalogId: saved.catalogId, iconUploadId: saved.uploadId ?? null })

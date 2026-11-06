@@ -1,6 +1,6 @@
-import { resolveMx, resolveTxt } from 'node:dns/promises'
+import { Resolver } from 'node:dns/promises'
 import { DESKTOP_COMPANY_DISCOVERY_LIMITS } from '@rerun/contracts'
-import { readPublicPage } from '../web-fetch/transport.js'
+import { abortable, readPublicPage } from '../web-fetch/transport.js'
 import { publicDestination, publicUrl } from '../web-fetch/public-url.js'
 import { classifyPublicFailure, type DnsLookup, type PublicPageReader } from './ports.js'
 
@@ -29,9 +29,9 @@ export function confinedCompanyReader(assertPermission: () => Promise<void>): Pu
     }
 }
 
-async function records(host: string, signal: AbortSignal): Promise<string[]> {
+async function records(resolver: Resolver, host: string, signal: AbortSignal): Promise<string[]> {
     try {
-        const rows = await resolveTxt(host)
+        const rows = await resolver.resolveTxt(host)
         signal.throwIfAborted()
         return rows.map(chunks => chunks.join('')).slice(0, 40)
     } catch (error) {
@@ -41,23 +41,29 @@ async function records(host: string, signal: AbortSignal): Promise<string[]> {
     }
 }
 
-export function confinedCompanyDns(): DnsLookup {
+export function confinedCompanyDns(assertPermission: () => Promise<void>): DnsLookup {
     return async (domain, parent) => {
         const { signal, timedOut } = childSignal(parent)
+        const resolver = new Resolver()
+        const cancel = () => resolver.cancel()
+        signal.addEventListener('abort', cancel, { once: true })
         try {
+            await abortable(assertPermission(), signal)
             const url = publicUrl(`https://${domain}/`)
-            await publicDestination(url)
+            await abortable(publicDestination(url), signal)
             signal.throwIfAborted()
+            await abortable(assertPermission(), signal)
             const [mx, txt, dmarc] = await Promise.all([
-                resolveMx(domain).then(rows => rows.sort((a, b) => a.priority - b.priority).map(row => row.exchange).slice(0, 20)).catch(error => {
+                resolver.resolveMx(domain).then(rows => rows.sort((a, b) => a.priority - b.priority).map(row => row.exchange).slice(0, 20)).catch(error => {
                     const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
                     if (code === 'ENOTFOUND' || code === 'ENODATA') return [] as string[]
                     throw error
                 }),
-                records(domain, signal),
-                records(`_dmarc.${domain}`, signal),
+                records(resolver, domain, signal),
+                records(resolver, `_dmarc.${domain}`, signal),
             ])
             signal.throwIfAborted()
+            await abortable(assertPermission(), signal)
             return { ok: true, records: { mx, txt, dmarc } }
         } catch (error) {
             if (timedOut()) return { ok: false, reason: 'timeout' }
@@ -65,6 +71,6 @@ export function confinedCompanyDns(): DnsLookup {
             if (reason === 'private') return { ok: false, reason: 'private' }
             if (parent.aborted) return { ok: false, reason: 'cancelled' }
             return { ok: false, reason: reason === 'malformed' ? 'failed' : reason === 'oversized' ? 'failed' : reason }
-        }
+        } finally { signal.removeEventListener('abort', cancel); resolver.cancel() }
     }
 }

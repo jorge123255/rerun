@@ -1,3 +1,4 @@
+import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
 import { automationModel } from '../agents/availability.js'
 import { listAgentIdsOnDisk } from '../agents/loader.js'
 import { getAgent } from '../agents/registry.js'
@@ -39,13 +40,15 @@ const TICK_MS = 30_000
 const inFlight = new Map<string, Promise<{ runId: string; sessionId: string }>>()
 
 export function fireSchedule(agentId: string, schedule: Schedule, opts?: FireOptions): Promise<{ runId: string; sessionId: string }> {
+    let admission: number
+    try { admission = assertDesktopRunAdmission() } catch (error) { return Promise.reject(error) }
     const key = `${agentId}/${schedule.slug}`
     if(stopped)return Promise.reject(new Error('Scheduler stopped'))
     const existing = inFlight.get(key)
     if (existing) {
         if (!desktopApp()) return existing
         const epoch=generation
-        const check=()=>{if(stopped || generation!==epoch)throw new Error('Scheduler stopped');opts?.assertActive?.()}
+        const check=()=>{assertDesktopRunAdmission(admission);if(stopped || generation!==epoch)throw new Error('Scheduler stopped');opts?.assertActive?.()}
         const replay=async()=>{
             check()
             if(opts?.markFired===false && opts.manualId) {
@@ -66,7 +69,7 @@ export function fireSchedule(agentId: string, schedule: Schedule, opts?: FireOpt
     // Admission is reserved before the first await, so a manual run and a due run arriving together
     // queue on the same in-flight launch instead of both racing past this check mid-preparation.
     const epoch=generation
-    const assertActive=()=>{if(stopped || generation!==epoch)throw new Error('Scheduler stopped');opts?.assertActive?.()}
+    const assertActive=()=>{assertDesktopRunAdmission(admission);if(stopped || generation!==epoch)throw new Error('Scheduler stopped');opts?.assertActive?.()}
     // Defer preparation until AFTER the reservation, including synchronous/mocked dependency paths.
     const started = Promise.resolve().then(()=>launchScheduledRun(agentId, schedule, key, {...opts,assertActive}))
     preparing.add(started)

@@ -8,7 +8,7 @@ export default defineConfig({
         // `server-only` is a Next marker package with no Node entry point, so any module carrying it
         // fails at import time here rather than on an assertion. Stubbed to nothing, which is
         // exactly what it does at runtime once the bundler has checked where it is imported from.
-        alias: { '@': path.resolve(import.meta.dirname, '.'), 'server-only': path.resolve(import.meta.dirname, 'test/server-only-stub.ts') },
+        alias: { '@rerun/contracts': path.resolve(import.meta.dirname, '../../packages/contracts/dist/index.js'), '@': path.resolve(import.meta.dirname, '.'), 'server-only': path.resolve(import.meta.dirname, 'test/server-only-stub.ts') },
     },
     test: {
         setupFiles: ['test/setup-env.ts'],

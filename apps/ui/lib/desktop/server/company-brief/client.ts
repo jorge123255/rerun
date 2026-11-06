@@ -82,3 +82,13 @@ export function retryCompanyBrief(runtime: DesktopRuntime, body: CompanyBriefSyn
 export function handoffCompanyBrief(runtime: DesktopRuntime, body: CompanyBriefHandoffInput, access?: Access): Promise<CompanyBriefHandoffResult> {
     return request(runtime, '/handoff', companyBriefHandoffResultSchema, access, body)
 }
+
+
+export function cancelCompanyBriefChat(runtime: DesktopRuntime, body: { workspaceId: string; chatId: string }, access?: Access) {
+    return request(runtime, '/cancel-chat', z.object({ ok: z.literal(true) }), access, body)
+}
+
+
+export function readCompanyBriefHandoff(runtime: DesktopRuntime, body: CompanyBriefHandoffInput, access?: Access) {
+    return request(runtime, '/handoff-receipt', z.object({ receipt: companyBriefHandoffResultSchema.nullable() }), access, body)
+}

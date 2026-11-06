@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import { z } from 'zod'
 import {
     COMPANY_BRIEF_NO_SOURCES,
     COMPANY_BRIEF_SECTIONS,
     companyBriefAttemptSchema,
+    companyBriefCanonicalRequest,
     companyBriefEvidence,
     companyBriefHandoffResultSchema,
     companyBriefResultSchema,
@@ -13,7 +15,7 @@ import {
     type CompanyBriefModelRef,
     type CompanyBriefResult,
     type CompanyBriefSynthesizeInput,
-    type DesktopForemanDiscoveryRun,
+    type DesktopCompanyDiscoverySnapshot,
 } from '@rerun/contracts'
 import { HttpError } from '../../lib/errors.js'
 import type { CompanyBriefBrain } from './brain.js'
@@ -21,7 +23,7 @@ import { companyBriefProposalDraft } from './brain.js'
 import { companyBriefPrompt, emptySkippedResult, groundCompanyBrief, planCompanyBriefPages } from './ground.js'
 import type { CompanyBriefModel } from './model.js'
 import { companyBriefSourceRevision } from './revision.js'
-import { DESKTOP_COMPANY_BRIEF_SCHEMA_SQL } from './schema.js'
+import { DESKTOP_COMPANY_BRIEF_SCHEMA_SQL, DESKTOP_COMPANY_BRIEF_REQUEST_SCHEMA_SQL } from './schema.js'
 
 const modelOutputSchema = z.object({
     claims: z.array(z.object({
@@ -44,6 +46,7 @@ const STORAGE = 'Company brief storage is not initialized.'
 export function createCompanyBriefService(getDatabase: () => Promise<Client>, deps: Deps) {
     let ready = false
     const controllers = new Map<string, AbortController>()
+    const activeWork = new Map<string, Promise<CompanyBriefSynthesizeResult>>()
     const now = () => deps.now?.() ?? new Date().toISOString()
 
     async function db(): Promise<Client> {
@@ -53,7 +56,7 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
 
     async function initialize(): Promise<void> {
         const client = await getDatabase()
-        await client.executeMultiple(DESKTOP_COMPANY_BRIEF_SCHEMA_SQL)
+        await client.executeMultiple(DESKTOP_COMPANY_BRIEF_SCHEMA_SQL + DESKTOP_COMPANY_BRIEF_REQUEST_SCHEMA_SQL)
         await client.execute({ sql: `UPDATE desktop_company_briefs SET status = 'stopped', error_code = 'stopped', error_message = 'Company research stopped when the app restarted.', updated_at = ? WHERE status = 'pending'`, args: [now()] })
         for (const controller of controllers.values()) controller.abort()
         ready = true
@@ -105,8 +108,18 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
         return Number(changed.rowsAffected) > 0
     }
 
+    async function reserveIdentity(id: string, kind: 'synthesize' | 'handoff', body: unknown): Promise<boolean> {
+        const fingerprint = createHash('sha256').update(companyBriefCanonicalRequest(body)).digest('hex')
+        const client = await db()
+        const added = await client.execute({ sql: 'INSERT INTO desktop_company_brief_requests(request_id,kind,fingerprint) VALUES(?,?,?) ON CONFLICT(request_id) DO NOTHING', args: [id, kind, fingerprint] })
+        const saved = (await client.execute({ sql: 'SELECT kind,fingerprint FROM desktop_company_brief_requests WHERE request_id=?', args: [id] })).rows[0]
+        if (!saved || saved.kind !== kind || saved.fingerprint !== fingerprint) throw new HttpError(409, 'This request ID belongs to different company research.')
+        return Number(added.rowsAffected) === 1
+    }
+
     async function synthesize(input: CompanyBriefSynthesizeInput, signal: AbortSignal, gate: Gate = { draft: null, draftRevision: 0 }): Promise<CompanyBriefSynthesizeResult> {
         assertSnapshot(input)
+        const fresh = await reserveIdentity(input.requestId, 'synthesize', { input, gate })
         const existing = await row(input.requestId).catch(error => {
             if (error instanceof HttpError && error.status === 503) throw error
             throw error
@@ -115,19 +128,24 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
             requireChat(existing, input.workspaceId, input.chatId)
             return { attempt: existing, modelCalled: false }
         }
+        if (!fresh) throw new HttpError(409, 'Company research admission is uncertain. Inspect this request before retrying.')
         const client = await db()
         await client.execute({
             sql: `INSERT INTO desktop_company_briefs(request_id, workspace_id, chat_id, discovery_id, run_id, source_revision, model_json, snapshot_json, status, result_json, draft_text, draft_revision, error_code, error_message, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, NULL, NULL, ?, ?)`,
             args: [input.requestId, input.workspaceId, input.chatId, input.snapshot.discoveryId, input.snapshot.runId, input.sourceRevision, JSON.stringify(input.model), JSON.stringify(input.snapshot), gate.draft, gate.draftRevision, now(), now()],
-        })
+        }).catch(error => { if (/UNIQUE|constraint/i.test(String(error))) throw new HttpError(409, 'Company research is already running in this conversation.'); throw error })
         const controller = new AbortController()
         controllers.set(input.requestId, controller)
         const stop = () => controller.abort()
         signal.addEventListener('abort', stop, { once: true })
+        if (signal.aborted) controller.abort()
         try {
-            return await finish(input, controller.signal)
+            const work = finish(input, controller.signal)
+            activeWork.set(input.requestId, work)
+            return await work
         } finally {
+            activeWork.delete(input.requestId)
             signal.removeEventListener('abort', stop)
             controllers.delete(input.requestId)
         }
@@ -171,7 +189,12 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
             await mark(input.requestId, 'failed', { code: 'ungrounded', message: 'The model reply was not a grounded company brief.' })
             return { attempt: (await row(input.requestId))!, modelCalled: true }
         }
-        const grounded = groundCompanyBrief(input.snapshot, parsed)
+        let grounded: CompanyBriefResult
+        try { grounded = groundCompanyBrief(input.snapshot, parsed) }
+        catch {
+            await mark(input.requestId, 'failed', { code: 'ungrounded', message: 'The model reply exceeded the company brief limits.' })
+            return { attempt: (await row(input.requestId))!, modelCalled: true }
+        }
         if (await blocked()) {
             await mark(input.requestId, 'stale', { code: 'stale_source', message: STALE })
             return { attempt: (await row(input.requestId))!, modelCalled: true }
@@ -180,12 +203,22 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
         return { attempt: (await row(input.requestId))!, modelCalled: true }
     }
 
+    async function drain(requestId: string) {
+        const work = activeWork.get(requestId)
+        if (!work) return
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+            await Promise.race([work.then(() => {}, () => {}), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new HttpError(409, 'Company research cancellation is not confirmed. Retry Stop.')), 25_000); timer.unref?.() })])
+        } finally { if (timer) clearTimeout(timer) }
+    }
+
     async function cancel(requestId: string, workspaceId: string, chatId: string): Promise<CompanyBriefAttempt> {
         const attempt = await required(requestId, workspaceId, chatId)
-        if (attempt.status === 'cancelled') return attempt
+        if (attempt.status === 'cancelled') { await drain(requestId); return attempt }
         if (attempt.status !== 'pending') throw new HttpError(409, FINISHED)
         controllers.get(requestId)?.abort()
         await mark(requestId, 'cancelled', { code: 'cancelled', message: 'Company research was stopped.' })
+        await drain(requestId)
         return (await row(requestId))!
     }
 
@@ -221,14 +254,33 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
         return synthesize(input, signal, { draft: previous.draft, draftRevision: previous.draftRevision })
     }
 
+    async function readHandoff(input: CompanyBriefHandoffInput): Promise<CompanyBriefHandoffResult | null> {
+        await required(input.requestId, input.workspaceId, input.chatId)
+        const saved = (await (await db()).execute({ sql: 'SELECT kind,fingerprint FROM desktop_company_brief_requests WHERE request_id=?', args: [input.handoffRequestId] })).rows[0]
+        if (!saved) return null
+        const fingerprint = createHash('sha256').update(companyBriefCanonicalRequest(input)).digest('hex')
+        if (saved.kind !== 'handoff' || saved.fingerprint !== fingerprint) throw new HttpError(409, 'This handoff ID belongs to different company research.')
+        const result = await handoffRow(input.handoffRequestId)
+        if (!result || result.requestId !== input.requestId) throw new HttpError(409, 'This handoff is not confirmed. Review existing Brain proposals.')
+        return { ...result, recovered: true }
+    }
+
     async function handoff(input: CompanyBriefHandoffInput): Promise<CompanyBriefHandoffResult> {
+        const recovered = await readHandoff(input)
+        if (recovered) return recovered
         const attempt = await required(input.requestId, input.workspaceId, input.chatId)
         if (attempt.sourceRevision !== input.sourceRevision) throw new HttpError(409, STALE)
         if (attempt.status !== 'accepted' && attempt.status !== 'handed') throw new HttpError(409, FINISHED)
         if (!attempt.result) throw new HttpError(409, FINISHED)
         if (await contextBlocks(attempt.workspaceId, attempt.chatId, attempt.sourceRevision)) throw new HttpError(409, STALE)
+        const fresh = await reserveIdentity(input.handoffRequestId, 'handoff', input)
         const stored = await handoffRow(input.handoffRequestId)
-        if (stored) return { ...stored, recovered: true }
+        if (stored) {
+            if (stored.requestId !== input.requestId) throw new HttpError(409, OTHER_CHAT)
+            return { ...stored, recovered: true }
+        }
+        if (!fresh) throw new HttpError(409, 'Company Brain handoff is uncertain. Review existing proposals before retrying.')
+        if (input.expectedDraftRevision !== attempt.draftRevision) throw new HttpError(409, 'The company brief draft changed. Review it again.')
         const snapshot = snapshotOf(input.requestId)
         const reserved = await (await db()).execute({
             sql: 'INSERT INTO desktop_company_brief_handoffs(handoff_request_id, request_id, result_json, created_at) VALUES (?, ?, ?, ?)',
@@ -264,6 +316,7 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
             for (const page of plan.pages) {
                 const expected = input.expectedPages.find(item => item.slug === page.slug)!
                 try {
+                    if (await contextBlocks(attempt.workspaceId, attempt.chatId, attempt.sourceRevision)) throw new HttpError(409, STALE)
                     const proposed = await deps.brain.propose(companyBriefProposalDraft(page, { chatId: input.chatId, baseHash: expected.expectedPageHash }))
                     outcomes.push({ slug: page.slug, status: proposed.status, proposalId: proposed.id, code: null })
                 } catch (error) {
@@ -292,10 +345,10 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
         return parsed.data
     }
 
-    async function snapshotOf(requestId: string): Promise<DesktopForemanDiscoveryRun> {
+    async function snapshotOf(requestId: string): Promise<DesktopCompanyDiscoverySnapshot> {
         const found = (await (await db()).execute({ sql: 'SELECT snapshot_json FROM desktop_company_briefs WHERE request_id = ?', args: [requestId] })).rows[0]
         if (!found) throw new HttpError(404, 'Company brief not found')
-        return JSON.parse(String(found.snapshot_json)) as DesktopForemanDiscoveryRun
+        return JSON.parse(String(found.snapshot_json)) as DesktopCompanyDiscoverySnapshot
     }
 
     async function required(requestId: string, workspaceId: string, chatId: string): Promise<CompanyBriefAttempt> {
@@ -305,13 +358,23 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
         return attempt
     }
 
-    return { initialize, read, observe, synthesize, cancel, edit, dismiss, retry, handoff }
+    async function cancelChat(workspaceId: string, chatId: string): Promise<void> {
+        const pending = (await (await db()).execute({ sql: "SELECT request_id FROM desktop_company_briefs WHERE workspace_id=? AND chat_id=? AND status='pending'", args: [workspaceId, chatId] })).rows
+        const requests = new Set(pending.map(item => String(item.request_id)))
+        for (const requestId of activeWork.keys()) {
+            const attempt = await row(requestId)
+            if (attempt?.workspaceId === workspaceId && attempt.chatId === chatId) requests.add(requestId)
+        }
+        for (const requestId of requests) await cancel(requestId, workspaceId, chatId)
+    }
+
+    return { readHandoff, cancelChat, initialize, read, observe, synthesize, cancel, edit, dismiss, retry, handoff }
 }
 
 export type CompanyBriefService = ReturnType<typeof createCompanyBriefService>
 
 function assertSnapshot(input: CompanyBriefSynthesizeInput): void {
-    if (input.snapshot.chat.workspaceId !== input.workspaceId || input.snapshot.chat.chatId !== input.chatId) throw new HttpError(409, OTHER_CHAT)
+    if (input.snapshot.workspaceId !== input.workspaceId || input.snapshot.chatId !== input.chatId) throw new HttpError(409, OTHER_CHAT)
     if (!input.snapshot.discoveryId.startsWith('fmx_') || !input.snapshot.runId.trim()) throw new HttpError(400, 'Invalid discovery snapshot.')
     if (companyBriefSourceRevision(input.snapshot) !== input.sourceRevision) throw new HttpError(409, STALE)
     if (input.snapshot.status === 'running') throw new HttpError(409, 'Discovery is still running. A brief waits until the snapshot is settled.')

@@ -193,6 +193,10 @@ describe('data-dir ladder', () => {
               5,
               "desktop-portable-templates-and-semantic-memory",
             ],
+            [
+              6,
+              "desktop-company-brief-brain-semantic-and-workspace-routines",
+            ],
           ]
         `)
     })

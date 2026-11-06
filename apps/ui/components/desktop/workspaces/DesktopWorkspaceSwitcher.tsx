@@ -14,7 +14,7 @@ import {
 } from '@/lib/desktop/workspaces'
 import { desktopWorkspaceIconSelectionUrl } from '@/lib/desktop/icon-catalog'
 import { cn } from '@/lib/utils'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode, type ComponentProps } from 'react'
 import type { DesktopWorkspaceListResult, DesktopWorkspaceRecord } from '@rerun/contracts'
 import { toast } from 'sonner'
 
@@ -26,11 +26,16 @@ import { toast } from 'sonner'
 export function DesktopWorkspaceSwitcher({
     client,
     profileLabel = 'Rerun Local',
-    className,
+    className, menuItems, activeDisplay, disabled = false, onCloseAutoFocus, onRenameActive,
 }: {
     client: DesktopWorkspaceClient
     profileLabel?: string
     className?: string
+    menuItems?: ReactNode
+    activeDisplay?: { name: string; iconCatalogId?: string | null; iconUploadId?: string | null }
+    disabled?: boolean
+    onRenameActive?: () => void
+    onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>['onCloseAutoFocus']
 }) {
     const [snapshot, setSnapshot] = useState<DesktopWorkspaceListResult | null>(null)
     const [busy, setBusy] = useState(false)
@@ -60,7 +65,7 @@ export function DesktopWorkspaceSwitcher({
     const switchBlocked = Boolean(openReceipt && openReceipt.phase !== 'published' && openReceipt.phase !== 'cancelled' && openReceipt.phase !== 'rolled_back' && openReceipt.phase !== 'failed_before_drain')
 
     const handleSwitch = async (workspace: DesktopWorkspaceRecord) => {
-        if (busy || !active || workspace.workspaceId === active.workspaceId) return
+        if (busy || disabled || !active || workspace.workspaceId === active?.workspaceId) return
         if (switchBlocked) {
             toast.error(DESKTOP_WORKSPACE_UI_COPY.busySwitch)
             return
@@ -78,7 +83,7 @@ export function DesktopWorkspaceSwitcher({
         try {
             const result = await client.switchTo({ requestId: crypto.randomUUID(), workspaceId: workspace.workspaceId })
             if (result.ok) {
-                enterDesktopActiveWorkspace()
+                if (!client.native) enterDesktopActiveWorkspace()
                 return
             }
             abortDesktopWorkspaceSwitch()
@@ -98,61 +103,55 @@ export function DesktopWorkspaceSwitcher({
         if (created) await handleSwitch(created)
     }
 
-    if (!active) {
-        return (
-            <div className={cn('min-w-0', className)}>
-                <WorkspacePill name="Workspace" iconUrl="/pricing/solo.png" aria-label="Workspace menu" />
-                {loadError && <p className="sr-only">{loadError}</p>}
-            </div>
-        )
-    }
-
     const iconUrl = desktopWorkspaceIconSelectionUrl({
-        iconCatalogId: active.iconCatalogId,
-        iconUploadId: null,
+        iconCatalogId: activeDisplay ? activeDisplay.iconCatalogId ?? null : active?.iconCatalogId ?? null,
+        iconUploadId: activeDisplay?.iconUploadId ?? null,
     }) ?? '/pricing/solo.png'
-
+    const name = activeDisplay?.name || active?.name || 'Workspace'
     return (
         <div className={cn('min-w-0', className)}>
             <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                     <WorkspacePill
-                        name={active.name || 'Workspace'}
+                        name={name}
                         iconUrl={iconUrl}
-                        aria-label={`Workspace menu, ${active.name || 'Workspace'}`}
+                        aria-label={`Workspace menu, ${name}`}
                         aria-busy={busy || undefined}
                     />
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="bottom" className="w-64 max-h-[calc(100dvh-5rem)] overflow-y-auto">
+                <DropdownMenuContent align="start" side="bottom" className="w-64 max-h-[calc(100dvh-5rem)] overflow-y-auto" onCloseAutoFocus={onCloseAutoFocus}>
                     <DropdownMenuLabel className="truncate text-xs font-normal text-muted-foreground">{profileLabel}</DropdownMenuLabel>
+                    {menuItems}
+                    <DropdownMenuSeparator />
                     {sorted.map(workspace => {
-                        const isActive = workspace.workspaceId === active.workspaceId
+                        const isActive = workspace.workspaceId === active?.workspaceId
                         return (
                             <DropdownMenuItem
                                 key={workspace.workspaceId}
-                                disabled={busy || switchBlocked}
+                                disabled={disabled || busy || switchBlocked || !snapshot}
                                 onSelect={() => { void handleSwitch(workspace) }}
                                 className={cn('gap-2', !isActive && 'text-muted-foreground')}
                             >
                                 <img
-                                    src={desktopWorkspaceIconSelectionUrl({ iconCatalogId: workspace.iconCatalogId, iconUploadId: null }) ?? '/pricing/solo.png'}
+                                    src={isActive && activeDisplay ? iconUrl : desktopWorkspaceIconSelectionUrl({ iconCatalogId: workspace.iconCatalogId, iconUploadId: null }) ?? '/pricing/solo.png'}
                                     alt=""
                                     className="size-5 shrink-0 rounded-full object-cover"
                                 />
-                                <span className="flex-1 truncate">{workspace.name || 'Workspace'}</span>
+                                <span className="flex-1 truncate">{isActive ? name : workspace.name || 'Workspace'}</span>
                                 {busy && isActive ? <Loader2Icon className="size-4 animate-spin" /> : isActive ? <CheckIcon className="size-4" /> : null}
                             </DropdownMenuItem>
                         )
                     })}
-                    <DropdownMenuItem disabled={busy || switchBlocked} onSelect={() => setCreateOpen(true)} className="gap-2 text-muted-foreground">
+                    <DropdownMenuItem disabled={disabled || busy || switchBlocked || !snapshot} onSelect={() => setCreateOpen(true)} className="gap-2 text-muted-foreground">
                         <PlusIcon className="size-4" />
                         {DESKTOP_WORKSPACE_UI_COPY.newWorkspace}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem disabled={busy} onSelect={() => setRenameOpen(true)} className="gap-2 text-muted-foreground">
+                    <DropdownMenuItem disabled={disabled || busy || !active || switchBlocked} onSelect={() => onRenameActive ? onRenameActive() : setRenameOpen(true)} className="gap-2 text-muted-foreground">
                         <SettingsIcon className="size-4" />
                         {DESKTOP_WORKSPACE_UI_COPY.renameTitle}
                     </DropdownMenuItem>
+                    {loadError && <p role="status" className="px-2 py-1.5 text-xs text-muted-foreground">{loadError}</p>}
                     {switchBlocked && (
                         <p className="px-2 py-1.5 text-xs text-muted-foreground">{DESKTOP_WORKSPACE_UI_COPY.busySwitch}</p>
                     )}

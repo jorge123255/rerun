@@ -1,5 +1,5 @@
 import { desktopToolInstallReferenceOf } from '@/lib/desktop/tool-install-reference'
-import { desktopStoredDocumentReferences, type DesktopDocumentReference } from '@rerun/contracts'
+import { DESKTOP_FOREMAN_DOCS_LIMITS, RERUN_PUBLIC_DOCS_CORPUS, desktopForemanDocsResultSchema, desktopStoredDocumentReferences, type DesktopDocumentReference } from '@rerun/contracts'
 import { desktopStoredCoworkerMentions, desktopCoworkerMentionFieldsOf, type DesktopCoworkerMentionFields } from '@rerun/contracts'
 import { desktopQuickReplyInputOf } from '@/lib/desktop/quick-replies'
 import type { EngineMessage } from '@/lib/engine/types'
@@ -165,6 +165,24 @@ function toolPartOf(call: unknown, toolResults?: Map<string, unknown>): ToolInvo
     return { type: `tool-${toolName}`, toolCallId, toolName, state: 'input-available', input }
 }
 
+function publicForemanDocsResult(output: unknown) {
+    let value = output
+    // Stored AI SDK results may carry a transport wrapper. Only its value is presentation
+    // data; request bindings, headers and any extra fields never cross this boundary.
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const wrapper = value as { type?: unknown; value?: unknown }
+        if (wrapper.type === 'json' || wrapper.type === 'text') value = wrapper.value
+    }
+    if (typeof value === 'string') {
+        if (value.length > DESKTOP_FOREMAN_DOCS_LIMITS.maxResponseBytes) return null
+        try { value = JSON.parse(value) } catch { return null }
+    }
+    const result = desktopForemanDocsResultSchema.safeParse(value)
+    if (!result.success || result.data.documentation !== RERUN_PUBLIC_DOCS_CORPUS.documentation) return null
+    if (result.data.source && (result.data.source.corpusId !== RERUN_PUBLIC_DOCS_CORPUS.id || result.data.source.sourceUrl !== RERUN_PUBLIC_DOCS_CORPUS.exportUrl)) return null
+    return result.data
+}
+
 // Only presentation data leaves the engine-history adapter for a Mac chat. This is after
 // HITL folding. The stored ModelMessages and subsequent provider inputs remain untouched.
 export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage[] {
@@ -188,6 +206,14 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
                     type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
                     state: part.state, input: {},
                     ...(proposalId && { output: JSON.stringify({ status: 'shown', proposalId }) }),
+                }
+            }
+            if (toolName === 'search_docs' && part.state === 'output-available') {
+                const result = publicForemanDocsResult(part.output)
+                const view = desktopToolPresentation(part.toolName, part.input, undefined)
+                return {
+                    type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                    state: 'output-available' as const, input: view.input ?? {}, ...(result && { output: JSON.stringify(result) }),
                 }
             }
             // A saved file card is itself the public result: keep only its validated path metadata so

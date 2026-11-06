@@ -1,21 +1,22 @@
 import { z } from 'zod'
-import { foremanBindingSchema, type DesktopForemanBinding, type ForemanBrief } from '@rerun/contracts'
-export type ForemanRuntime = { launchNonce: string; app: { origin: string }; engine: { apiKey: string } }
+import { foremanBindingSchema, type DesktopForemanChatRef, type CompanyBriefModelRef, type DesktopForemanBinding, type ForemanBrief } from '@rerun/contracts'
+export type ForemanRuntime = { workspaceId?: number | string; launchNonce: string; app: { origin: string }; engine: { apiKey: string } }
 export type ForemanIdentity = { engineAgentId: 'foreman'; sessionId: string; runId: string }
 export type ForemanTurn = { binding: DesktopForemanBinding; sessionId: string; text: string; brief: ForemanBrief }
 export type ForemanBridgeBody =
+    | { action: 'brief_model'; chat: DesktopForemanChatRef; model: CompanyBriefModelRef }
     | { action: 'binding'; identity: ForemanIdentity }
     | { action: 'admit'; turn: ForemanTurn }
     | { action: 'show_plan'; binding: DesktopForemanBinding; toolCallId: string; input: unknown }
     | { action: 'navigate'; binding: DesktopForemanBinding; eventId: string; intent: unknown }
     | { action: 'discover'; binding: DesktopForemanBinding; url: string }
-const bindingResponse = z.strictObject({ binding: foremanBindingSchema, discovery: z.literal(false) })
+const bindingResponse = z.strictObject({ binding: foremanBindingSchema, discovery: z.boolean() })
 export function createDesktopForemanBridge(runtime: ForemanRuntime, network: typeof fetch = fetch) {
     const origin = new URL(runtime.app.origin)
     if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port || origin.origin !== runtime.app.origin || !/^[a-f0-9]{64}$/.test(runtime.engine.apiKey) || !z.uuid().safeParse(runtime.launchNonce).success) throw new Error('Desktop Foreman callback is unavailable.')
     const closed = new AbortController()
     async function request(body: ForemanBridgeBody, stop?: AbortSignal): Promise<unknown> {
-        const signal = AbortSignal.any([closed.signal, ...(stop ? [stop] : []), AbortSignal.timeout(20_000)])
+        const signal = AbortSignal.any([closed.signal, ...(stop ? [stop] : []), AbortSignal.timeout(body.action === 'discover' ? 60_000 : 20_000)])
         signal.throwIfAborted()
         const encoded = JSON.stringify({ ...body, launchNonce: runtime.launchNonce })
         if (Buffer.byteLength(encoded) > 32 * 1024) throw new Error('Foreman request exceeds limit.')
@@ -39,6 +40,7 @@ export function createDesktopForemanBridge(runtime: ForemanRuntime, network: typ
     }
     return {
         request,
+        workspaceId: String(runtime.workspaceId ?? '1'),
         async binding(identity: ForemanIdentity, signal?: AbortSignal) { return bindingResponse.parse(await request({ action: 'binding', identity }, signal)) },
         async admit(turn: ForemanTurn, signal: AbortSignal) { z.object({ ok: z.literal(true) }).parse(await request({ action: 'admit', turn }, signal)) },
         close() { closed.abort() },

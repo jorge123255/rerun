@@ -64,7 +64,7 @@ export type ForemanSetupAuthority = {
 
 export type ForemanEventSink = { publish(event: DesktopForemanLiveEvent): void }
 
-export type ForemanDiscoveryCollector = (input: { url: string; signal: AbortSignal; emit: (event: DesktopForemanDiscoveryEvent) => void }) => Promise<void>
+export type ForemanDiscoveryCollector = (input: { binding: DesktopForemanBinding; discoveryId: string; url: string; signal: AbortSignal; emit: (event: DesktopForemanDiscoveryEvent) => void }) => Promise<void>
 
 export type ForemanAuthorities = {
     run: ForemanRunAuthority

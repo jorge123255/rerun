@@ -17,6 +17,9 @@ import { DesktopNotificationDelivery } from './DesktopNotificationDelivery'
 import { DesktopSharedData } from './DesktopSharedData'
 import { DesktopBrainDialog } from './brain/pages/DesktopBrainDialog'
 import { DesktopBrainProposalsPanel } from './brain/proposals/DesktopBrainProposalsPanel'
+import { flushForemanDockPlacements } from '@/lib/desktop/foreman-dock'
+import { flushForemanVoicesForQuit } from '@/lib/desktop/foreman-voice/quit'
+import type { ForemanPlacement } from '@/lib/foreman-layout'
 import { DesktopForemanDock } from './foreman/DesktopForemanDock'
 import { DesktopForemanPanel, type DesktopForemanCommand } from './foreman/DesktopForemanPanel'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
@@ -43,7 +46,7 @@ import { Button } from '@/components/ui/button'
 import { DesktopChatTabs } from './DesktopChatTabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
-import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { cancelDraftShutdown, freezeDesktopAdmissions, flushDesktopDrafts, forgetCoworkerDrafts, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { flushDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 import type { DesktopOpenChat } from '@/lib/desktop/control-center-chats'
@@ -102,15 +105,21 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             onQuitCancelled?: (listener: () => void) => () => void
         } }).desktopApp
         const stop = bridge?.onBeforeQuit?.(async () => {
-            setQuitting(true)
+            freezeDesktopAdmissions()
             setControlCenterOpen(false)
             setShortcutsOpen(false)
             setNotificationsTarget(null)
             setSharedDataOpen(false)
             // Freeze chat admissions synchronously, then let best-effort navigation history
             // settle alongside the existing durable draft handshake.
+            const dockReady = await flushForemanDockPlacements()
+            const voiceReady = await flushForemanVoicesForQuit()
+            // A failed voice custody drain must remain visible. Do not hide its owner or
+            // notify cancellation listeners again before the user can retry or stay.
+            if (!dockReady || !voiceReady) return false
+            setQuitting(true)
             const [chatReady, brainReady, foremanReady] = await Promise.all([flushDesktopDrafts(), flushDesktopBrainDrafts(), flushDesktopForemanUiSaves(), flushDesktopRecentCoworkers()])
-            const ready = chatReady && brainReady && foremanReady
+            const ready = dockReady && voiceReady && chatReady && brainReady && foremanReady
             if (!ready) setQuitting(false)
             return ready
         })
@@ -155,6 +164,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [savedIcon, setSavedIcon] = useState({ iconCatalogId: initialData.iconCatalogId ?? null, iconUploadId: initialData.iconUploadId ?? null })
     const [workspaceSettings, setWorkspaceSettings] = useState(false)
     const [settings, setSettings] = useState(false)
+    const [settingsTab, setSettingsTab] = useState<'AI providers' | 'Tool services'>('AI providers')
     const [templatesOpen, setTemplatesOpen] = useState(false)
     const [templateFlowActive, setTemplateFlowActive] = useState(false)
     const [templateToReview, setTemplateToReview] = useState<DesktopTemplateIdentity | null>(null)
@@ -177,6 +187,12 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     selectedAgentRef.current = selectedAgentId
     const [panelOpen, setPanelOpen] = useState(false)
     const [foremanOpen, setForemanOpen] = useState(false)
+    const [foremanEngaged, setForemanEngaged] = useState(false)
+    const [foremanLayout, setForemanLayout] = useState<{ scope: string; open: boolean; placement: ForemanPlacement; dragging: boolean; mobile: boolean } | null>(null)
+    const engageForeman = useCallback(() => { if (!isDesktopQuitting()) { setForemanEngaged(true); setForemanOpen(true) } }, [])
+    const reportForemanLayout = useCallback((layout: NonNullable<typeof foremanLayout>) => setForemanLayout(old => JSON.stringify(old) === JSON.stringify(layout) ? old : layout), [])
+    const foremanLeftTrack = foremanLayout?.open && !foremanLayout.dragging && !foremanLayout.mobile && foremanLayout.placement.mode === 'dock' && foremanLayout.placement.side === 'left' ? foremanLayout.placement.dockWidth : 0
+    const foremanRightTrack = foremanLayout?.open && !foremanLayout.dragging && !foremanLayout.mobile && foremanLayout.placement.mode === 'dock' && foremanLayout.placement.side === 'right' ? foremanLayout.placement.dockWidth : 0
     const [foremanCommand, setForemanCommand] = useState<DesktopForemanCommand | null>(null)
     const [visibleSession, setVisibleSession] = useState<{ agentId: string; sessionId: string | null } | null>(null)
     const reportVisibleSession = useCallback((agentId: string, sessionId: string | null) => {
@@ -444,7 +460,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             }
             const abort = () => settle(new Error('Ask Rerun was cancelled.'))
             signal.addEventListener('abort', abort, { once: true })
-            setForemanCommand({ id, chat, text, signal, settle }); setForemanOpen(true)
+            setForemanCommand({ id, chat, text, signal, settle }); engageForeman()
         })
     }, [])
 
@@ -520,13 +536,16 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     boardDisabled={templatesActive || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
                     onBoardInteractionChange={setBoardInteraction}
                     visibleSessionId={panelOpen && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
-                    selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : foremanOpen ? 420 : 0} onOpen={selectCoworker}
+                    selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetLeft={panelOpen ? 0 : foremanLeftTrack} panelInsetRight={panelOpen ? panelInsetRight : foremanRightTrack} onOpen={selectCoworker}
                     onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
-                {!controlCenterDisabled && !controlCenterOpen && !panelOpen && <DesktopForemanDock open={foremanOpen} onToggle={() => { if (!isDesktopQuitting()) setForemanOpen(true) }} />}
-                {foremanOpen && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0 grid-cols-[minmax(0,1fr)] md:grid-cols-[420px_minmax(0,1fr)_420px]" inert={controlCenterDisabled || controlCenterOpen || undefined}>
-                    <DesktopForemanPanel command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('Foreman was closed.')); setForemanOpen(false) }}
-                        onOpenCoworker={openForemanCoworker} onOpenBox={openForemanBox} workspaceModel={modelLabel}
+                {!controlCenterDisabled && !controlCenterOpen && !panelOpen && !foremanEngaged && <DesktopForemanDock open={foremanOpen} onToggle={engageForeman} />}
+                {foremanEngaged && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0" style={{ gridTemplateColumns: `${foremanLeftTrack}px minmax(0,1fr) ${foremanRightTrack}px` }}>
+
+                    <DesktopForemanPanel controlledOpen={foremanOpen} onOpenChange={setForemanOpen} onLayout={reportForemanLayout}
+                        hidden={controlCenterDisabled || controlCenterOpen || panelOpen || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || quitting}
+                        centerOpen={controlCenterOpen} onOpenTranscriptionSettings={() => { setSettingsTab('Tool services'); setSettings(true) }} command={foremanCommand} className="pointer-events-auto h-full min-h-0" onClose={() => { foremanCommand?.settle(new Error('Foreman was closed.')); setForemanOpen(false) }}
+                        onOpenCoworker={openForemanCoworker} onOpenBox={openForemanBox} workspaceModel={modelLabel} workspaceModelChoice={defaultProvider && providers.default ? { connectionId: defaultProvider.id, model: providers.default.model } : undefined}
                         agentNameOf={id => currentAgents.current.find(agent => agent.id === id)?.name ?? 'Coworker'} />
                 </div>}
                 {selectedAgent && <div inert={!panelOpen || boardInteraction} aria-hidden={!panelOpen || boardInteraction || undefined}>
@@ -550,7 +569,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                 <div className="border-b px-4 py-2">
                     <Button type="button" variant="ghost" size="sm" onClick={() => setSettings(false)}><ArrowLeft />{panelOpen ? 'Back to chat' : 'Team board'}</Button>
                 </div>
-                <DesktopSettings providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} />
+                <DesktopSettings key={settingsTab} initialTab={settingsTab} providers={providers} workspaceName={workspaceName} onSave={saveSettings} onProviders={applyProviders} />
             </div>}
             <DesktopTemplateNavigation open={templatesOpen} onOpenChange={setTemplatesOpen} onActiveChange={setTemplateFlowActive} onCreateFromScratch={() => showBoard(true)}
                 requestedTemplate={templateToReview} onPlaceTemplate={beginTemplatePlacement} onInstalled={receipt => {

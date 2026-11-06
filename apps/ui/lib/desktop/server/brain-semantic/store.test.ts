@@ -1,6 +1,7 @@
 import { createClient } from '@libsql/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DesktopBrainSemanticIndexEntry, DesktopBrainSemanticPending } from '@rerun/contracts'
+import { desktopBrainSemanticSchema } from './schema'
 import { desktopBrainSemanticStore } from './store'
 
 const dbs: ReturnType<typeof createClient>[] = []
@@ -16,6 +17,7 @@ describe('desktop Brain semantic store', () => {
     it('persists derived entries and pending work with exact identities', async () => {
         const db = createClient({ url: 'file::memory:' })
         dbs.push(db)
+        await db.executeMultiple(desktopBrainSemanticSchema)
         const store = desktopBrainSemanticStore(db)
         await store.queue(pending)
         expect(await store.pending()).toEqual([pending])
@@ -30,6 +32,7 @@ describe('desktop Brain semantic store', () => {
     it('removes a whole page and its pending work without touching another slug', async () => {
         const db = createClient({ url: 'file::memory:' })
         dbs.push(db)
+        await db.executeMultiple(desktopBrainSemanticSchema)
         const store = desktopBrainSemanticStore(db)
         await store.queue(pending)
         await store.write(entry)

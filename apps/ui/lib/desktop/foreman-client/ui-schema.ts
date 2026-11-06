@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { desktopForemanDockExtrasSchema } from '@/lib/desktop/foreman-dock/schema'
 import { foremanChatRefSchema, foremanModelRefSchema, foremanDecisionInputSchema, foremanRevisionIdSchema } from '@rerun/contracts'
 import { sameForemanChat } from './identity'
 
@@ -21,4 +22,5 @@ export const desktopForemanSavedUiSchema = z.strictObject({
     // Plans, build and discoveries always come from the canonical current conversation view.
     build: z.unknown().transform(() => null), discoveries: z.unknown().transform(() => null),
     pendingSend: pendingSendSchema.optional(),
+    dock: desktopForemanDockExtrasSchema.optional(),
 }).refine(value => value.decision.status === 'idle' || sameForemanChat(value, value.decision.request.chat), 'Saved decision belongs to another chat.')

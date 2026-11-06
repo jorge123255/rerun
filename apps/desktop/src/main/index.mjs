@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, 
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { mkdir } from 'node:fs/promises'
+import { createWorkspaceCoordinator, seedLegacyCatalog, getWorkspace } from './workspaces/index.mjs'
 import { loadBundle, loadIdentity } from './runtime.mjs'
 import { RuntimeSupervisor } from './supervisor.mjs'
 import { createDesktopNotifications } from './notifications.mjs'
@@ -15,25 +16,30 @@ const startup = resolve(directory, 'startup.html')
 let window
 let supervisor
 let runtime
+let workspaces
+let activeSession
+let activeWorkspaceId
+let transitioning = false
 let quitting = false
 let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const draftQuit = new BeforeQuitDrafts()
 const saveResultFile = createDesktopResultFileSave({ dialog, context: () => {
-    if (quitting || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
+    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { runtime, window }
 } })
 const templateFiles = createDesktopTemplateFiles({ dialog, context: () => {
-    if (quitting || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
+    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { runtime, window }
 } })
-const desktopNotifications = createDesktopNotifications({ Notification, onClick: target => {
-    if (quitting || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return
+let desktopNotifications = createNotices()
+function createNotices() { return createDesktopNotifications({ Notification, onClick: target => {
+    if (quitting || transitioning || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return
     if (window.isMinimized()) window.restore()
     window.show(); window.focus()
     window.webContents.send('desktop:notification-click', target)
-} })
+} }) }
 
 if (!app.requestSingleInstanceLock()) app.quit()
 else {
@@ -43,7 +49,7 @@ else {
     app.on('before-quit', event => {
         if (quittingNow) return
         event.preventDefault()
-        if (quitting) return
+        if (quitting || transitioning) return
         quitting = true
         void completeDesktopQuit({
             flush: () => {
@@ -69,7 +75,8 @@ else {
     })
     app.whenReady().then(launch).catch(() => {
         bootStatus = { state: 'error', message: 'Desktop setup failed. Check that this app has a complete bundled runtime and access to Mac secure storage.' }
-        window?.webContents.send('desktop:status', bootStatus)
+        if (supervisor) supervisor.publish('error', 'Workspace state could not be verified. Restore the workspace state before retrying.')
+        else window?.webContents.send('desktop:status', bootStatus)
     })
 }
 
@@ -101,17 +108,110 @@ async function launch() {
     const dataRoot = resolve(app.getPath('appData'), 'Rerun Desktop Preview')
     await mkdir(dataRoot, { recursive: true, mode: 0o700 })
     app.setPath('userData', dataRoot)
-    const desktopSession = session.fromPartition(profile)
+    await prepareWorkspaceWindow(1, false)
+    ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
+    ipcMain.handle('desktop:retry', async event => {
+        trusted(event)
+        if (transitioning || quitting) return false
+        if (!supervisor) { app.relaunch(); app.quit(); return true }
+        if (!workspaces) return false
+        if (['starting', 'stopping'].includes(supervisor.status.state)) return false
+        const pending = (await workspaces.reconcile()).openReceipt
+        if (pending) return runWorkspaceTransition(() => workspaces.recoverSwitch({ requestId: pending.requestId, workspaceId: pending.toWorkspaceId }))
+        runtime = null
+        await window.loadFile(startup)
+        await supervisor.stop()
+        await startWorkspace()
+        return true
+    })
+    ipcMain.handle('desktop:workspaces-list', event => { trusted(event); return workspaces.list() })
+    ipcMain.handle('desktop:workspaces-reconcile', event => { trusted(event); return workspaces.reconcile() })
+    for (const [channel, operation] of [['desktop:workspaces-create', 'create'], ['desktop:workspaces-rename', 'rename']]) {
+        ipcMain.handle(channel, (event, input) => {
+            trusted(event)
+            if (quitting || transitioning || !isDesktopPage(event.senderFrame.url)) return { ok: false, code: 'busy', message: 'Wait for this workspace change to finish.' }
+            return workspaces[operation](input)
+        })
+    }
+    ipcMain.handle('desktop:workspaces-switch', (event, input) => {
+        trusted(event)
+        if (quitting || transitioning || !isDesktopPage(event.senderFrame.url)) return { ok: false, code: 'busy', message: 'Wait for this workspace change to finish.' }
+        return runWorkspaceTransition(() => workspaces.switchTo(input))
+    })
+    ipcMain.handle('desktop:workspaces-recover', (event, input) => {
+        trusted(event)
+        if (quitting || transitioning) return { ok: false, code: 'busy', message: 'Wait for this workspace change to finish.' }
+        return runWorkspaceTransition(() => workspaces.recoverSwitch(input))
+    })
+    ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
+    ipcMain.handle('desktop:template-pick', event => { trusted(event); return templateFiles.pickImport() })
+    ipcMain.handle('desktop:template-save', (event, value) => { trusted(event); return templateFiles.saveArtifact(value) })
+    ipcMain.handle('desktop:result-save', (event, value) => { trusted(event); return saveResultFile(value) })
+    ipcMain.handle('desktop:notify', (event, value) => {
+        trusted(event)
+        if (quitting || transitioning || !isDesktopPage(event.senderFrame.url)) return { status: 'unavailable' }
+        return desktopNotifications.notify(value)
+    })
+    for (const [channel, handle] of [
+        ['desktop:drafts-ready', value => draftQuit.register(value?.registrationId)],
+        ['desktop:drafts-unready', value => draftQuit.unregister(value?.registrationId)],
+        ['desktop:drafts-flushed', value => draftQuit.acknowledge(value)],
+    ]) ipcMain.on(channel, (event, value) => {
+        // Event handlers must ignore untrusted frames rather than throw in the main process.
+        try { trusted(event); if (isDesktopPage(event.senderFrame.url)) handle(value) } catch {}
+    })
+    await window.loadFile(startup)
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('Mac secure storage is unavailable')
+    const identity = await loadIdentity(dataRoot, { encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value) })
+    const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
+    const bundle = await loadBundle(resources)
+    supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity })
+    supervisor.on('status', status => {
+        if (!window?.isDestroyed()) window.webContents.send('desktop:status', status)
+        if (status.state === 'error') { runtime = null; void window.loadFile(startup) }
+    })
+    await seedLegacyCatalog(dataRoot, identity.installId)
+    workspaces = createWorkspaceCoordinator({ dataRoot, installId: identity.installId, ports: {
+        isQuitInProgress: () => quitting,
+        freezeAdmissions: context => supervisor.admissions('freeze', context.requestId),
+        unfreezeAdmissions: async context => {
+            await supervisor.admissions('unfreeze', context.requestId)
+            if (runtime === supervisor.runtime) resumeAfterCancelledQuit()
+        },
+        flushDrafts: async () => {
+            if (!runtime || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return { saved: true }
+            if (!draftQuit.ready) return { saved: false }
+            return { saved: await draftQuit.request(value => window.webContents.send('desktop:before-quit', value)) }
+        },
+        stopAndDrain: () => supervisor.stop(),
+        bindAndStart: async workspaceId => {
+            const { workspace } = await getWorkspace(dataRoot, identity.installId, workspaceId)
+            if (!workspace) throw new Error('Workspace no longer exists')
+            return supervisor.startFor(workspaceId, { ...workspace, frozen: true })
+        },
+        verifyRuntimeIdentity: async workspaceId => supervisor.status.state === 'ready' && supervisor.runtime?.workspaceId === workspaceId,
+    } })
+    await startWorkspace()
+}
+
+async function prepareWorkspaceWindow(workspaceId, load = true) {
+    const partition = workspaceId === 1 ? profile : `persist:rerun-desktop-workspace-${workspaceId}`
+    const desktopSession = session.fromPartition(partition)
     const microphone = desktopMicrophonePermissions({
-        context: () => !quitting && window && !window.isDestroyed() && window.isVisible() ? window : null,
+        context: () => !quitting && !transitioning && window && !window.isDestroyed() && window.isVisible() ? window : null,
         isDesktopPage,
     })
     desktopSession.setPermissionRequestHandler(microphone.request)
     desktopSession.setPermissionCheckHandler(microphone.check)
+    const old = window
+    const bounds = old && !old.isDestroyed() ? old.getBounds() : null
+    if (old && !old.isDestroyed()) old.destroy()
+    desktopNotifications.close()
+    desktopNotifications = createNotices()
     window = new BrowserWindow({
-        width: 1220, height: 820, minWidth: 720, minHeight: 520, show: false,
+        ...(bounds || { width: 1220, height: 820 }), minWidth: 720, minHeight: 520, show: false,
         title: 'Rerun Desktop Preview', backgroundColor: '#101214',
-        webPreferences: { preload: resolve(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, partition: profile },
+        webPreferences: { preload: resolve(directory, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, partition },
     })
     window.once('ready-to-show', () => window.show())
     window.on('close', event => {
@@ -136,53 +236,49 @@ async function launch() {
         } catch {}
         return { action: 'deny' }
     })
-    ipcMain.handle('desktop:status', event => { trusted(event); return supervisor?.status ?? bootStatus })
-    ipcMain.handle('desktop:retry', async event => {
-        trusted(event)
-        if (!supervisor) { app.relaunch(); app.quit(); return true }
-        if (['starting', 'stopping'].includes(supervisor.status.state)) return false
-        runtime = null
-        await window.loadFile(startup)
-        await supervisor.stop()
-        await startWorkspace(desktopSession)
-        return true
-    })
-    ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
-    ipcMain.handle('desktop:template-pick', event => { trusted(event); return templateFiles.pickImport() })
-    ipcMain.handle('desktop:template-save', (event, value) => { trusted(event); return templateFiles.saveArtifact(value) })
-    ipcMain.handle('desktop:result-save', (event, value) => { trusted(event); return saveResultFile(value) })
-    ipcMain.handle('desktop:notify', (event, value) => {
-        trusted(event)
-        if (quitting || !isDesktopPage(event.senderFrame.url)) return { status: 'unavailable' }
-        return desktopNotifications.notify(value)
-    })
-    for (const [channel, handle] of [
-        ['desktop:drafts-ready', value => draftQuit.register(value?.registrationId)],
-        ['desktop:drafts-unready', value => draftQuit.unregister(value?.registrationId)],
-        ['desktop:drafts-flushed', value => draftQuit.acknowledge(value)],
-    ]) ipcMain.on(channel, (event, value) => {
-        // Event handlers must ignore untrusted frames rather than throw in the main process.
-        try { trusted(event); if (isDesktopPage(event.senderFrame.url)) handle(value) } catch {}
-    })
-    await window.loadFile(startup)
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('Mac secure storage is unavailable')
-    const identity = await loadIdentity(dataRoot, { encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value) })
-    const resources = app.isPackaged ? process.resourcesPath : resolve(directory, '../../resources')
-    const bundle = await loadBundle(resources)
-    supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity })
-    supervisor.on('status', status => {
-        if (!window?.isDestroyed()) window.webContents.send('desktop:status', status)
-        if (status.state === 'error') { runtime = null; void window.loadFile(startup) }
-    })
-    await startWorkspace(desktopSession)
+    activeSession = desktopSession
+    activeWorkspaceId = workspaceId
+    if (load) await window.loadFile(startup)
 }
 
-async function startWorkspace(desktopSession) {
+async function displayWorkspace() {
+    const current = supervisor.runtime
+    if (!current || supervisor.status.state !== 'ready') throw new Error('Workspace is not ready')
+    runtime = current
+    if (activeWorkspaceId !== current.workspaceId) await prepareWorkspaceWindow(current.workspaceId)
+    await activeSession.cookies.set({ url: current.app.origin, name: 'rerun-desktop-session', value: current.app.sessionToken, httpOnly: true, sameSite: 'strict', path: '/' })
+    await window.loadURL(`${current.app.origin}/desktop`)
+}
+async function startWorkspace() {
     try {
-        runtime = await supervisor.start()
-        await desktopSession.cookies.set({ url: runtime.app.origin, name: 'rerun-desktop-session', value: runtime.app.sessionToken, httpOnly: true, sameSite: 'strict', path: '/' })
-        await window.loadURL(`${runtime.app.origin}/desktop`)
+        const selected = await workspaces.coldLaunchTarget()
+        if (!selected.ok) {
+            supervisor.publish('error', 'A workspace switch needs recovery. Choose Retry to recover the same workspace.')
+            return
+        }
+        await supervisor.startFor(selected.workspaceId, selected.workspace)
+        await displayWorkspace()
     } catch {
-        window.webContents.send('desktop:status', supervisor.status)
+        supervisor.publish('error', 'This workspace could not open safely. Choose Retry to try again.')
     }
+}
+async function runWorkspaceTransition(operation) {
+    if (transitioning) return { ok: false, code: 'busy', message: 'A workspace change is already in progress.' }
+    transitioning = true
+    const previous = supervisor.runtime
+    try {
+        const result = await operation()
+        if (result.ok) await displayWorkspace()
+        else if (supervisor.runtime !== previous || (await workspaces.reconcile()).requiresManualRecovery) {
+            runtime = null
+            await window.loadFile(startup)
+            supervisor.publish('error', 'A workspace switch needs recovery. Choose Retry to recover the same workspace.')
+        }
+        return result
+    } catch {
+        runtime = null
+        await window.loadFile(startup)
+        supervisor.publish('error', 'Workspace state needs recovery. Choose Retry to try again.')
+        return { ok: false, code: 'path_corrupt', message: 'Workspace state needs recovery before continuing.' }
+    } finally { transitioning = false }
 }

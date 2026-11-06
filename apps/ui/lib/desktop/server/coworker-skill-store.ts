@@ -1,3 +1,4 @@
+import { desktopEngineRoot } from './runtime'
 import 'server-only'
 import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -64,7 +65,7 @@ export async function assertCoworkerSkillIdentity(runtime: DesktopRuntime, agent
 export async function readSkillOwnersRegistry(runtime: DesktopRuntime, agentId: string, expectedEngineId?: string): Promise<ServiceRegistry> {
     try {
         const coworker = await assertCoworkerSkillIdentity(runtime, agentId, expectedEngineId)
-        const owners = await ownersInWorkspace(join(runtime.dataRoot, 'workspaces', '1', 'engine', 'agents', coworker.engineAgentId, 'workspace'))
+        const owners = await ownersInWorkspace(join(desktopEngineRoot(runtime), 'agents', coworker.engineAgentId, 'workspace'))
         await assertCoworkerSkillIdentity(runtime, agentId, coworker.engineAgentId)
         const services: ServiceRegistry['services'] = Object.create(null)
         for (const [slug, service] of owners) {
@@ -82,7 +83,7 @@ export async function readSkillOwnersRegistry(runtime: DesktopRuntime, agentId: 
 function withSkillStore<T>(runtime: DesktopRuntime, agentId: string, action: (skillsRoot: string) => Promise<T>, expectedEngineId?: string): Promise<T> {
     return withRosterWrite(async () => {
         const coworker = await assertCoworkerSkillIdentity(runtime, agentId, expectedEngineId)
-        return action(join(runtime.dataRoot, 'workspaces', '1', 'engine', 'agents', coworker.engineAgentId, 'skills'))
+        return action(join(desktopEngineRoot(runtime), 'agents', coworker.engineAgentId, 'skills'))
     })
 }
 

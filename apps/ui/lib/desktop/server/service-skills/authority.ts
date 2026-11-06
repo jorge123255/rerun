@@ -1,3 +1,4 @@
+import { canonicalDesktopEngineRoot, desktopEngineParts } from '../runtime'
 import 'server-only'
 import { lstat, realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -20,8 +21,9 @@ async function resolveScope(runtime: DesktopRuntime, engineId: string, signal: A
         return String(rows[0].id)
     }
     const owner = await resolveOwner(), data = await abortable(realpath(/* turbopackIgnore: true */ runtime.dataRoot), signal)
-    const agentRoot = join(/* turbopackIgnore: true */ data, 'workspaces', '1', 'engine', 'agents', engineId)
-    for (const path of [data, join(/* turbopackIgnore: true */ data, 'workspaces'), join(/* turbopackIgnore: true */ data, 'workspaces', '1'), join(/* turbopackIgnore: true */ data, 'workspaces', '1', 'engine'), dirname(agentRoot), agentRoot]) {
+    const engineRoot = await canonicalDesktopEngineRoot(runtime)
+    const agentRoot = join(/* turbopackIgnore: true */ engineRoot, 'agents', engineId)
+    for (const path of [data, ...desktopEngineParts(runtime).map((_, i, parts) => join(/* turbopackIgnore: true */ data, ...parts.slice(0, i + 1))), dirname(agentRoot), agentRoot]) {
         const info = await abortable(lstat(/* turbopackIgnore: true */ path), signal)
         if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.() || await abortable(realpath(/* turbopackIgnore: true */ path), signal) !== path) throw new Error('Coworker storage changed')
     }
@@ -48,7 +50,7 @@ export async function readDesktopServiceSkillOwners(runtime: DesktopRuntime, eng
 export function bindDesktopServiceSkillOwners(runtime: DesktopRuntime): void {
     bindDesktopSkillOwnerReader(async (workspace, signal) => {
         const engineId = basename(dirname(workspace))
-        if (resolve(/* turbopackIgnore: true */ workspace) !== join(/* turbopackIgnore: true */ resolve(/* turbopackIgnore: true */ runtime.dataRoot), 'workspaces', '1', 'engine', 'agents', engineId, 'workspace')) throw new Error('Coworker storage mismatch')
+        if (resolve(/* turbopackIgnore: true */ workspace) !== join(/* turbopackIgnore: true */ await canonicalDesktopEngineRoot(runtime), 'agents', engineId, 'workspace')) throw new Error('Coworker storage mismatch')
         return readDesktopServiceSkillOwners(runtime, engineId, signal)
     })
 }

@@ -18,7 +18,7 @@ test('trusted server binding exposes only reviewed tools and ignores renderer-st
     connect(network)
     const ctx = { ...context(), binding: { ...binding, chatId: 'forged-chat' } }
     const tools = await desktopForemanTools(ctx)
-    expect(Object.keys(tools.tools)).toEqual(['show_plan', 'open_panel'])
+    expect(Object.keys(tools.tools)).toEqual(['show_plan', 'open_panel', 'search_docs'])
     await tools.tools.show_plan!.execute!({ title: 'A team', boxes: [], items: [] } as never, { toolCallId: 'call-exact', messages: [] })
     expect(actions[1]).toMatchObject({ action: 'show_plan', binding, toolCallId: 'call-exact', launchNonce: runtime.launchNonce })
 })

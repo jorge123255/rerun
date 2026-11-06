@@ -1,85 +1,49 @@
 import { readdir } from 'node:fs/promises'
-import {
-    CONTRACT_VERSION,
-    atomicPrivateJSON,
-    ensureWorkspacesLayout,
-    pathExists,
-    readJSON,
-    switchReceiptPath,
-    switchesRoot,
-} from './paths.mjs'
-
-const TERMINAL = new Set(['published', 'failed_before_drain', 'failed_after_drain', 'rolled_back', 'cancelled'])
-const AFTER_DRAIN = new Set(['old_runtime_closed', 'target_starting', 'identity_verified', 'failed_after_drain', 'published'])
-
-export function isTerminalPhase(phase) {
-    return TERMINAL.has(phase)
+import { createHash } from 'node:crypto'
+import { CONTRACT_VERSION, atomicPrivateJSON, inspectWorkspacesLayout, pathExists, readJSON, switchReceiptPath, switchesRoot, UUID, validWorkspaceId, persistenceError } from './paths.mjs'
+const TERMINAL = new Set(['published', 'failed_before_drain', 'rolled_back', 'cancelled'])
+const AFTER_DRAIN = new Set(['old_runtime_closing', 'work_drained', 'old_runtime_closed', 'target_starting', 'identity_verified', 'failed_after_drain', 'published'])
+const PHASES = new Set(['accepted', 'admissions_frozen', 'drafts_flushed', ...TERMINAL, ...AFTER_DRAIN])
+export const isTerminalPhase = phase => TERMINAL.has(phase)
+export const isAfterDrainPhase = phase => AFTER_DRAIN.has(phase)
+export function switchFingerprint(receipt) { return createHash('sha256').update(JSON.stringify(['switch', receipt.installId, receipt.requestId, receipt.fromWorkspaceId, receipt.toWorkspaceId])).digest('hex') }
+function validate(receipt, installId) {
+    if (!receipt || receipt.version !== CONTRACT_VERSION || !UUID.test(receipt.receiptId) || !UUID.test(receipt.requestId) || !UUID.test(receipt.installId)
+        || (installId && receipt.installId !== installId) || !validWorkspaceId(receipt.fromWorkspaceId) || !validWorkspaceId(receipt.toWorkspaceId)
+        || !PHASES.has(receipt.phase) || !Number.isFinite(Date.parse(receipt.createdAt)) || !Number.isFinite(Date.parse(receipt.updatedAt))
+        || typeof receipt.admissionsFrozen !== 'boolean' || typeof receipt.oldRuntimeClosed !== 'boolean'
+        || (receipt.reason !== null && (typeof receipt.reason !== 'string' || receipt.reason.length > 400))
+        || receipt.fingerprint !== switchFingerprint(receipt)) throw persistenceError('Workspace transition needs recovery.')
+    return receipt
 }
-
-export function isAfterDrainPhase(phase) {
-    return AFTER_DRAIN.has(phase)
-}
-
+export function publicReceipt(receipt) { const { fingerprint: _fingerprint, ...result } = receipt; return result }
 export async function writeReceipt(dataRoot, receipt) {
-    await ensureWorkspacesLayout(dataRoot)
-    await atomicPrivateJSON(switchReceiptPath(dataRoot, receipt.receiptId), {
-        version: CONTRACT_VERSION,
-        receiptId: receipt.receiptId,
-        requestId: receipt.requestId,
-        fromWorkspaceId: Number(receipt.fromWorkspaceId),
-        toWorkspaceId: Number(receipt.toWorkspaceId),
-        phase: receipt.phase,
-        installId: receipt.installId,
-        createdAt: receipt.createdAt,
-        updatedAt: receipt.updatedAt,
-        reason: receipt.reason ?? null,
-        admissionsFrozen: Boolean(receipt.admissionsFrozen),
-        oldRuntimeClosed: Boolean(receipt.oldRuntimeClosed),
-    })
+    const saved = validate({ ...receipt, fingerprint: receipt.fingerprint ?? switchFingerprint(receipt) }, receipt.installId)
+    await atomicPrivateJSON(switchReceiptPath(dataRoot, saved.receiptId), saved)
 }
-
-export async function readReceipt(dataRoot, receiptId) {
+export async function readReceipt(dataRoot, receiptId, installId) {
+    if (!await inspectWorkspacesLayout(dataRoot)) throw persistenceError()
     const path = switchReceiptPath(dataRoot, receiptId)
-    if (!(await pathExists(path))) return null
-    return readJSON(path)
+    if (!await pathExists(path)) return null
+    return validate(await readJSON(path), installId)
 }
-
-export async function listReceipts(dataRoot) {
-    await ensureWorkspacesLayout(dataRoot)
-    const names = await readdir(switchesRoot(dataRoot))
-    const receipts = []
+export async function listReceipts(dataRoot, installId) {
+    if (!await inspectWorkspacesLayout(dataRoot)) throw persistenceError()
+    const names = await readdir(switchesRoot(dataRoot)), receipts = [], requests = new Set()
     for (const name of names) {
         if (!name.endsWith('.json')) continue
         try {
-            receipts.push(await readJSON(switchReceiptPath(dataRoot, name.slice(0, -5))))
-        } catch {
-            // Corrupt receipt files are reported by reconciliation; skip unreadable names.
-        }
+            const receipt = validate(await readJSON(switchReceiptPath(dataRoot, name.slice(0, -5))), installId)
+            if (`${receipt.receiptId}.json` !== name || requests.has(receipt.requestId)) throw persistenceError()
+            requests.add(receipt.requestId); receipts.push(receipt)
+        } catch { throw persistenceError('Workspace transition records could not be verified.') }
     }
-    return receipts.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    return receipts.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.receiptId.localeCompare(b.receiptId))
 }
-
-/** Non-effectful: returns the newest non-terminal receipt, if any. */
-export async function findOpenReceipt(dataRoot) {
-    const receipts = await listReceipts(dataRoot)
-    for (let i = receipts.length - 1; i >= 0; i--) {
-        if (!isTerminalPhase(receipts[i].phase)) return receipts[i]
-    }
-    return null
+export async function findOpenReceipt(dataRoot, installId) {
+    const pending = (await listReceipts(dataRoot, installId)).filter(receipt => !isTerminalPhase(receipt.phase))
+    if (pending.length > 1) throw persistenceError('More than one workspace transition needs recovery.')
+    return pending[0] ?? null
 }
-
-export async function findReceiptByRequestId(dataRoot, requestId) {
-    const receipts = await listReceipts(dataRoot)
-    return receipts.find(r => r.requestId === requestId) ?? null
-}
-
-export function touchReceipt(receipt, phase, patch = {}) {
-    return {
-        ...receipt,
-        ...patch,
-        phase,
-        updatedAt: new Date().toISOString(),
-        admissionsFrozen: patch.admissionsFrozen ?? receipt.admissionsFrozen ?? false,
-        oldRuntimeClosed: patch.oldRuntimeClosed ?? receipt.oldRuntimeClosed ?? false,
-    }
-}
+export async function findReceiptByRequestId(dataRoot, requestId, installId) { return (await listReceipts(dataRoot, installId)).find(receipt => receipt.requestId === requestId) ?? null }
+export function touchReceipt(receipt, phase, patch = {}) { return { ...receipt, ...patch, phase, updatedAt: new Date().toISOString(), admissionsFrozen: patch.admissionsFrozen ?? receipt.admissionsFrozen ?? false, oldRuntimeClosed: patch.oldRuntimeClosed ?? receipt.oldRuntimeClosed ?? false } }

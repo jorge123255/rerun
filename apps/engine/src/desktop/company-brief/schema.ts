@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS desktop_company_briefs (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS desktop_company_briefs_pending_chat_idx ON desktop_company_briefs(workspace_id,chat_id) WHERE status='pending';
 CREATE INDEX IF NOT EXISTS desktop_company_briefs_chat_idx ON desktop_company_briefs(workspace_id, chat_id, updated_at);
 CREATE TABLE IF NOT EXISTS desktop_company_brief_context (
     workspace_id TEXT NOT NULL,
@@ -35,3 +36,10 @@ CREATE TABLE IF NOT EXISTS desktop_company_brief_handoffs (
     created_at TEXT NOT NULL
 );
 `
+
+export const DESKTOP_COMPANY_BRIEF_REQUEST_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS desktop_company_brief_requests (
+    request_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('synthesize','handoff')),
+    fingerprint TEXT NOT NULL
+);`

@@ -138,13 +138,13 @@ async function settlePages(
     const siteSocial = Object.keys(socialProfiles([...links, ...extras.flatMap(page => page.url ? [page.url] : [])]))
     const siteFindings = findingsForSite({ social: siteSocial, colors }, draft, target.domain, attribution)
     publish({
-        type: 'settled', source: 'site', revision: next('site'), status: siteFindings.length || extras.length ? 'found' : 'omitted', reason: siteFindings.length || extras.length ? 'found' : 'empty',
+        type: 'settled', source: 'site', revision: next('site'), status: siteFindings.length || extras.length || texts[0] ? 'found' : 'omitted', reason: siteFindings.length || extras.length || texts[0] ? 'found' : 'empty',
         fetchedAt, provenance,
         payload: {
             kind: 'site',
             site: {
                 truncated,
-                pages: [{ category: 'home', url: home.url, title: meta.title }, ...extras.filter(page => !page.reason).map(page => ({ category: page.category, url: page.url, title: page.title }))].slice(0, 8),
+                pages: [{ category: 'home', url: home.url, title: meta.title, text: texts[0].slice(0, DESKTOP_COMPANY_DISCOVERY_LIMITS.maxPageTextChars) }, ...extras.filter(page => !page.reason).map(page => ({ category: page.category, url: page.url, title: page.title, text: page.text.slice(0, DESKTOP_COMPANY_DISCOVERY_LIMITS.maxPageTextChars) }))].slice(0, 8),
                 productUrls: productUrlsOf(links, home.url),
                 social: siteSocial,
                 colors,

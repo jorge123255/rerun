@@ -1,3 +1,4 @@
+import { canonicalDesktopEngineRoot } from './runtime'
 import 'server-only'
 import { DESKTOP_ATTACHMENT_MAX_BYTES, isDesktopAttachmentPath } from '@rerun/contracts'
 import { constants } from 'node:fs'
@@ -39,7 +40,7 @@ async function coworkerWorkspace(runtime: DesktopRuntime, agentId: string): Prom
     const coworker = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), agentId)
     if (!coworker) throw new DesktopHttpError(404, 'Coworker not found')
     if (!SAFE_ENGINE_ID.test(coworker.engineAgentId)) throw new DesktopHttpError(400, 'This coworker has no readable workspace.')
-    return resolve(await realpath(runtime.dataRoot), 'workspaces', '1', 'engine', 'agents', coworker.engineAgentId, 'workspace')
+    return resolve(await canonicalDesktopEngineRoot(runtime), 'agents', coworker.engineAgentId, 'workspace')
 }
 
 /** Relative paths only; the result's real location (after following every symlink) must stay inside the workspace's real location. */

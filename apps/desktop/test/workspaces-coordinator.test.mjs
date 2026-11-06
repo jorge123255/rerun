@@ -120,8 +120,8 @@ test('reconcile is non-effectful and reports after-drain recovery', async () => 
     assert.equal(failed.code, 'runtime_start_failed')
     assert.equal(started, 1)
     const receipt = await findOpenReceipt(dataRoot)
-    // failed_after_drain is terminal — open receipt should be null
-    assert.equal(receipt, null)
+    assert.equal(receipt.phase, 'failed_after_drain')
+    assert.equal((await coordinator.coldLaunchTarget()).ok, false)
     const before = started
     const reconciled = await coordinator.reconcile()
     assert.equal(started, before)
@@ -156,10 +156,62 @@ test('concurrent second switch is refused while busy', async () => {
     // Allow the first switch to acquire the serialize gate and write accepted receipt.
     await new Promise(r => setTimeout(r, 20))
     const blocked = await coordinator.switchTo({ requestId: randomUUID(), workspaceId: secondId })
-    // Depending on serialize timing, either busy from open receipt or queued after — both must not double-start.
+    assert.equal(blocked.ok, false)
+    assert.equal(blocked.code, 'busy')
     release()
     const done = await first
     assert.equal(done.ok, true)
     assert.ok(blocked.ok === false || blocked.receipt?.phase === 'published')
     await rm(dataRoot, { recursive: true, force: true })
+})
+
+test('a lost freeze ACK confirms exact-request rollback before allowing the original workspace to continue', async t => {
+    const { dataRoot, installId, secondId } = await setup()
+    t.after(() => rm(dataRoot, { recursive: true, force: true }))
+    const requestId = randomUUID(), calls = []
+    let frozen = false
+    const coordinator = createWorkspaceCoordinator({ dataRoot, installId, ports: portsStub({
+        freezeAdmissions: async context => { calls.push(['freeze', context.requestId]); frozen = true; throw new Error('ACK lost after freeze committed') },
+        unfreezeAdmissions: async context => { calls.push(['unfreeze', context.requestId]); frozen = false },
+        flushDrafts: async () => { assert.fail('No draft flush before freeze confirmation') },
+        stopAndDrain: async () => { assert.fail('No close before freeze confirmation') },
+    }) })
+    assert.equal((await coordinator.switchTo({ requestId, workspaceId: secondId })).ok, false)
+    assert.equal(frozen, false)
+    assert.deepEqual(calls, [['freeze', requestId], ['unfreeze', requestId]])
+    assert.equal((await coordinator.list()).openReceipt, null)
+    assert.equal((await coordinator.coldLaunchTarget()).workspaceId, 1)
+})
+
+test('a lost cleanup ACK retains exact recovery across coordinator recreation even if unfreeze really happened', async t => {
+    const { dataRoot, installId, secondId } = await setup()
+    t.after(() => rm(dataRoot, { recursive: true, force: true }))
+    const requestId = randomUUID()
+    let frozen = false
+    const coordinator = createWorkspaceCoordinator({ dataRoot, installId, ports: portsStub({
+        freezeAdmissions: async () => { frozen = true; throw new Error('Lost freeze ACK') },
+        unfreezeAdmissions: async () => { frozen = false; throw new Error('Lost cleanup ACK') },
+    }) })
+    assert.equal((await coordinator.switchTo({ requestId, workspaceId: secondId })).ok, false)
+    assert.equal(frozen, false)
+    const resumed = createWorkspaceCoordinator({ dataRoot, installId, ports: portsStub() })
+    const blocked = await resumed.coldLaunchTarget()
+    assert.equal(blocked.ok, false); assert.equal(blocked.receipt.requestId, requestId)
+    assert.equal(blocked.receipt.phase, 'admissions_frozen')
+    assert.equal((await resumed.switchTo({ requestId: randomUUID(), workspaceId: 1 })).code, 'busy')
+    const recovered = await resumed.recoverSwitch({ requestId, workspaceId: secondId })
+    assert.equal(recovered.ok, true); assert.equal(recovered.receipt.requestId, requestId)
+})
+
+test('a failed close never uses before-drain rollback to reopen admissions', async t => {
+    const { dataRoot, installId, secondId } = await setup()
+    t.after(() => rm(dataRoot, { recursive: true, force: true }))
+    let unfreezes = 0
+    const coordinator = createWorkspaceCoordinator({ dataRoot, installId, ports: portsStub({
+        stopAndDrain: async () => { throw new Error('Partial close') },
+        unfreezeAdmissions: async () => { unfreezes++ },
+    }) })
+    assert.equal((await coordinator.switchTo({ requestId: randomUUID(), workspaceId: secondId })).ok, false)
+    assert.equal(unfreezes, 0)
+    assert.equal((await coordinator.coldLaunchTarget()).receipt.phase, 'failed_after_drain')
 })

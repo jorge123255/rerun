@@ -1,5 +1,6 @@
 import 'server-only'
 import { desktopWorkspaceRoutineMutationSchema, desktopWorkspaceRoutinesViewSchema } from '../../../../../../packages/contracts/src/desktop-workspace-routines'
+import { boundedText } from '../mcp/remote'
 import { DesktopHttpError } from '../auth'
 import type { DesktopWorkspaceRoutinesAuthority } from './reader'
 import { createDesktopWorkspaceRoutinesReader } from './reader'
@@ -14,7 +15,7 @@ export function createDesktopWorkspaceRoutinesApi(authority: DesktopWorkspaceRou
             return Response.json(desktopWorkspaceRoutinesViewSchema.parse(view), { headers: { 'Cache-Control': 'no-store' } })
         },
         async POST(request: Request): Promise<Response> {
-            const text = await request.text()
+            const text = await boundedText(new Response(request.body), AbortSignal.any([request.signal, AbortSignal.timeout(10000)]), 80_000)
             if (Buffer.byteLength(text, 'utf8') > 80_000) throw new DesktopHttpError(413, 'Routine decision is too large.')
             const input = desktopWorkspaceRoutineMutationSchema.parse(JSON.parse(text))
             const result = input.action === 'rename' ? await mutator.rename(input, request.signal)

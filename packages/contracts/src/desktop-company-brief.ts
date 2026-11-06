@@ -2,16 +2,13 @@ import { z } from 'zod'
 import { brainPageTypeSchema, brainSlugSchema } from './brain.js'
 import {
     foremanChatIdSchema,
-    foremanDiscoveryRunSchema,
+    foremanChatRefSchema,
     foremanWorkspaceIdSchema,
-    type DesktopForemanDiscoveryRun,
-    type DesktopForemanFinding,
 } from './desktop-foreman.js'
+import { companyDiscoverySnapshotSchema, type DesktopCompanyDiscoverySnapshot, type CompanyFinding } from './desktop-company-discovery.js'
 
-// Company research synthesis (E11 / D8). The immutable input is the published Foreman discovery
-// run. This file does not define a second discovery record. Agent A's company-discovery branch
-// had not published a further snapshot contract at base 5c0f589b51a8129d097f2b97fc420a8acf859b51.
-export const DESKTOP_COMPANY_BRIEF_CONTRACT_VERSION = 1 as const
+// Company synthesis consumes the canonical immutable company-discovery snapshot; no parallel discovery record.
+export const DESKTOP_COMPANY_BRIEF_CONTRACT_VERSION = 2 as const
 
 // Original brief sections (apps/ui/lib/company/explore/synthesize.ts).
 export const COMPANY_BRIEF_SECTIONS = ['Overview', 'Offering', 'Customers & market', 'Team', 'Presence & reputation', 'Tools', 'Open questions'] as const
@@ -35,15 +32,15 @@ export const COMPANY_BRIEF_AGENT_ID = 'company-brief'
 export const COMPANY_BRIEF_AGENT_NAME = 'Company research'
 export const COMPANY_BRIEF_PROPOSAL_REASON = 'Approved from the company brief review.'
 
-// Providers the desktop can call with the user's own connected key. `rerun`, `claude` and `codex`
-// are not a fallback for this brief.
-export const COMPANY_BRIEF_MODEL_PROVIDERS = ['openai', 'anthropic', 'google', 'openrouter'] as const
+// Exact connected providers; subscription calls use the existing isolated one-shot runner. No fallback.
+export const COMPANY_BRIEF_MODEL_PROVIDERS = ['openai', 'anthropic', 'google', 'openrouter', 'codex', 'claude'] as const
 export const companyBriefModelSchema = z.strictObject({
     connectionId: z.string().min(1).max(256),
     provider: z.enum(COMPANY_BRIEF_MODEL_PROVIDERS),
     model: z.string().min(1).max(512),
     source: z.enum(['workspace', 'coworker', 'conversation']),
     agentId: z.string().min(1).max(128).nullable(),
+    foremanChat: foremanChatRefSchema.optional(),
 })
 export type CompanyBriefModelRef = z.infer<typeof companyBriefModelSchema>
 
@@ -112,7 +109,7 @@ export const companyBriefSynthesizeSchema = z.strictObject({
     chatId: foremanChatIdSchema,
     sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
     model: companyBriefModelSchema,
-    snapshot: foremanDiscoveryRunSchema,
+    snapshot: companyDiscoverySnapshotSchema,
 })
 export type CompanyBriefSynthesizeInput = z.infer<typeof companyBriefSynthesizeSchema>
 
@@ -151,6 +148,7 @@ export const companyBriefHandoffSchema = z.strictObject({
     sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
     selectedClaimIds: z.array(z.string().min(1).max(80)).min(1).max(40),
     includeDraft: z.boolean(),
+    expectedDraftRevision: z.number().int().nonnegative(),
     expectedPages: z.array(z.strictObject({
         slug: brainSlugSchema,
         expectedPageHash: z.string().regex(/^[a-f0-9]{32}$/).nullable(),
@@ -188,7 +186,7 @@ export function companyBriefSourceTags(text: string): string[] {
 }
 
 // `synthesis` is the brief itself, never evidence for a claim.
-export function companyBriefSourceTag(finding: DesktopForemanFinding): string | null {
+export function companyBriefSourceTag(finding: Pick<CompanyFinding, 'source' | 'kind'>): string | null {
     switch (finding.source) {
         case 'linkedinPerson': return 'linkedin:person'
         case 'linkedinCompany': return 'linkedin:company'
@@ -206,7 +204,7 @@ export function companyBriefSourceTag(finding: DesktopForemanFinding): string | 
 
 export type CompanyBriefEvidence = { tag: string; url: string }
 
-export function companyBriefEvidence(snapshot: DesktopForemanDiscoveryRun): CompanyBriefEvidence[] {
+export function companyBriefEvidence(snapshot: DesktopCompanyDiscoverySnapshot): CompanyBriefEvidence[] {
     const seen = new Set<string>()
     const evidence: CompanyBriefEvidence[] = []
     for (const finding of snapshot.findings) {
@@ -217,20 +215,33 @@ export function companyBriefEvidence(snapshot: DesktopForemanDiscoveryRun): Comp
         seen.add(key)
         evidence.push({ tag, url: finding.attribution.url })
     }
+    for (const source of snapshot.sources) {
+        if (source.status !== 'found') continue
+        const tag = companyBriefSourceTag({ source: source.source, kind: 'identity' })
+        if (!tag) continue
+        for (const item of source.provenance) {
+            let url: URL
+            try { url = new URL(item.url) } catch { continue }
+            if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) continue
+            const key = `${tag}\n${url.href}`
+            if (seen.has(key)) continue
+            seen.add(key); evidence.push({ tag, url: url.href })
+        }
+    }
     return evidence
 }
 
-function stable(value: unknown): string {
-    if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`
+export function companyBriefCanonicalRequest(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(companyBriefCanonicalRequest).join(',')}]`
     if (value && typeof value === 'object') {
         const record = value as Record<string, unknown>
-        return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${stable(record[key])}`).join(',')}}`
+        return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${companyBriefCanonicalRequest(record[key])}`).join(',')}}`
     }
     return JSON.stringify(value)
 }
 
 // UTF-8 SHA-256 of this string is the source revision. Computed beside the contract so the
 // engine and the desktop server hash the same bytes.
-export function companyBriefCanonicalSnapshot(snapshot: DesktopForemanDiscoveryRun): string {
-    return stable(snapshot)
+export function companyBriefCanonicalSnapshot(snapshot: DesktopCompanyDiscoverySnapshot): string {
+    return companyBriefCanonicalRequest(snapshot)
 }

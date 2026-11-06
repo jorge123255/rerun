@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { ZodError } from 'zod'
+import { z, ZodError } from 'zod'
 import {
     companyBriefCancelSchema,
     companyBriefEditSchema,
@@ -13,6 +13,8 @@ import {
 import { HttpError } from '../../lib/errors.js'
 import { desktopApp } from '../policy.js'
 import type { CompanyBriefService } from './service.js'
+
+const zBriefChat = z.strictObject({ workspaceId: foremanWorkspaceIdSchema, chatId: foremanChatIdSchema })
 
 export function createDesktopCompanyBriefRouter(getService: () => CompanyBriefService | Promise<CompanyBriefService>): Hono {
     const app = new Hono()
@@ -37,6 +39,11 @@ export function createDesktopCompanyBriefRouter(getService: () => CompanyBriefSe
         return c.json({ ok: true })
     })
     app.post('/synthesize', async c => c.json(await (await getService()).synthesize(companyBriefSynthesizeSchema.parse(await readBody(c.req.raw)), c.req.raw.signal)))
+    app.post('/cancel-chat', async c => {
+        const input = zBriefChat.parse(await readBody(c.req.raw))
+        await (await getService()).cancelChat(input.workspaceId, input.chatId)
+        return c.json({ ok: true })
+    })
     app.post('/cancel', async c => {
         const input = companyBriefCancelSchema.parse(await readBody(c.req.raw))
         return c.json({ attempt: await (await getService()).cancel(input.requestId, input.workspaceId, input.chatId) })
@@ -47,6 +54,7 @@ export function createDesktopCompanyBriefRouter(getService: () => CompanyBriefSe
         return c.json({ attempt: await (await getService()).dismiss(input.requestId, input.workspaceId, input.chatId) })
     })
     app.post('/retry', async c => c.json(await (await getService()).retry(companyBriefRetrySchema.parse(await readBody(c.req.raw)), c.req.raw.signal)))
+    app.post('/handoff-receipt', async c => c.json({ receipt: await (await getService()).readHandoff(companyBriefHandoffSchema.parse(await readBody(c.req.raw))) }))
     app.post('/handoff', async c => c.json(await (await getService()).handoff(companyBriefHandoffSchema.parse(await readBody(c.req.raw)))))
     return app
 }

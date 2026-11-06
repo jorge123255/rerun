@@ -54,3 +54,14 @@ test('rebound workspace cannot recover or read another owner’s upload or artif
     await expect(store.findDownloadArtifact(source)).rejects.toThrow(/another workspace/)
     await expect(store.download(published.artifactId)).rejects.toThrow(/another workspace/)
 })
+
+
+test('portable receipts remain bound to a non-legacy workspace across restart', async () => {
+    const installId = randomUUID()
+    await writeFile(join(root, 'desktop-owner.json'), JSON.stringify({ installId, workspaceId: 7 }))
+    const uploadId = randomUUID()
+    await createDesktopPortableFileStore(root).upload(uploadId, bytes, 'Team.tar.gz')
+    expect(await createDesktopPortableFileStore(root).readImmutableUpload(uploadId)).toEqual(bytes)
+    await writeFile(join(root, 'desktop-owner.json'), JSON.stringify({ installId, workspaceId: 8 }))
+    await expect(createDesktopPortableFileStore(root).readImmutableUpload(uploadId)).rejects.toThrow('another workspace')
+})

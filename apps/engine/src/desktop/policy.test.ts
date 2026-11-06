@@ -148,3 +148,14 @@ test('computer panel permits only authenticated control dispatch at its exact bo
     for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, '/desktop/computer-panel/control')).toBe(false)
     for (const path of ['/desktop/computer-panel', '/desktop/computer-panel/control/more', '/desktop/computer-panel/launch']) expect(desktopRouteAllowed('POST', path)).toBe(false)
 })
+
+
+test('admits the exact company shutdown route without exposing arbitrary workspace actions', () => {
+    expect(desktopRouteAllowed('POST', '/desktop/company-brief/cancel-chat')).toBe(true)
+    expect(desktopRouteAllowed('GET', '/desktop/company-brief/cancel-chat')).toBe(false)
+    expect(desktopRouteAllowed('POST', '/desktop/company-brief/handoff-receipt')).toBe(true)
+    expect(desktopRouteAllowed('GET', '/desktop/company-brief/handoff-receipt')).toBe(false)
+    expect(desktopRouteAllowed('POST', '/desktop/company-brief/erase')).toBe(false)
+    expect(desktopRouteAllowed('POST', '/desktop/workspace-admission')).toBe(true)
+    expect(desktopRouteAllowed('GET', '/desktop/workspace-admission')).toBe(false)
+})

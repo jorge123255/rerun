@@ -25,7 +25,7 @@ export function desktopForemanDocsTools(ports: DesktopForemanDocsToolPorts): Too
             inputSchema: desktopForemanDocsQuerySchema,
             execute: async ({ query }, options) => {
                 await ports.assertCurrent()
-                const result = await search({ binding, toolCallId: options.toolCallId, query, corpus: ports.corpus }, options.signal)
+                const result = await search({ binding, toolCallId: options.toolCallId, query, corpus: ports.corpus }, options.abortSignal)
                 await ports.assertCurrent()
                 return result
             },

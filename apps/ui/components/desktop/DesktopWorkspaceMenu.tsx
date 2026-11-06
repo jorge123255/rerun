@@ -1,12 +1,14 @@
 'use client'
 
-import { WorkspacePill } from '@rerun/ui/chrome'
 import { Brain, Database, Folder, Package, Keyboard, LayoutGrid, Search, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import type { DesktopAgentView } from './DesktopApp'
-import { useRef } from 'react'
-import { desktopWorkspaceIconSelectionUrl } from '@/lib/desktop/icon-catalog'
+import { useEffect, useMemo, useRef } from 'react'
+import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
+import { createDesktopWorkspaceClient } from '@/lib/desktop/workspaces'
+import { DesktopWorkspaceSwitcher } from './workspaces/DesktopWorkspaceSwitcher'
+import { DesktopWorkspaceSwitchLoader } from './workspaces/DesktopWorkspaceSwitchLoader'
 
 export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, agents, selected, providerLabel, modelLabel, onBoard, onCoworker, onSettings, onWorkspaceSettings, onControlCenter, onShortcuts, onSharedData, onSharedFiles, onBrain, onTemplates, navigationDisabled = false, settingsDisabled = false }: {
     workspaceName: string
@@ -31,16 +33,15 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     settingsDisabled?: boolean
 }) {
     const openingControlCenter = useRef(false)
+    const workspaceClient = useMemo(() => createDesktopWorkspaceClient(), [])
+    useEffect(() => { void flushDesktopWorkspaceMetadata().catch(() => {}) }, [workspaceName, iconCatalogId, iconUploadId])
     return <nav aria-label="Workspace" className="flex min-w-0 flex-wrap items-center gap-1.5">
-        <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-                <WorkspacePill name={workspaceName} iconUrl={desktopWorkspaceIconSelectionUrl({ iconCatalogId: iconCatalogId ?? null, iconUploadId: iconUploadId ?? null }) ?? '/pricing/solo.png'} aria-label={`Workspace menu, ${workspaceName}`} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-64" onCloseAutoFocus={event => {
+        <DesktopWorkspaceSwitcher client={workspaceClient} profileLabel={`${profileName} · Rerun Local`} activeDisplay={{ name: workspaceName, iconCatalogId, iconUploadId }} disabled={navigationDisabled}
+            onRenameActive={onWorkspaceSettings ? () => { openingControlCenter.current = true; onWorkspaceSettings() } : undefined}
+            onCloseAutoFocus={event => {
                 if (openingControlCenter.current) event.preventDefault()
                 openingControlCenter.current = false
-            }}>
-                <DropdownMenuLabel>{profileName} · Rerun Local</DropdownMenuLabel>
+            }} menuItems={<>
                 <DropdownMenuItem onSelect={onBoard}><LayoutGrid /> Team board</DropdownMenuItem>
                 {onSharedData && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedData() }}><Database /> Shared database</DropdownMenuItem>}
                 {onSharedFiles && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onSharedFiles() }}><Folder /> Shared files</DropdownMenuItem>}
@@ -54,8 +55,8 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 {agents.map(agent => <DropdownMenuItem key={agent.id} disabled={navigationDisabled} aria-current={selected === agent.id ? 'true' : undefined} onSelect={() => onCoworker(agent.id)}>
                     <span className="truncate">{agent.name}</span>
                 </DropdownMenuItem>)}
-            </DropdownMenuContent>
-        </DropdownMenu>
+            </>} />
+        <DesktopWorkspaceSwitchLoader />
         <Button type="button" variant="outline" size="sm" disabled={settingsDisabled} onClick={onSettings} aria-keyshortcuts="Meta+," title="Open model settings"
             className="h-8 rounded-full bg-background/90 px-2.5 text-xs backdrop-blur-xl">
             {providerLabel ? <span role="status" className="flex min-w-0 items-center gap-1.5">

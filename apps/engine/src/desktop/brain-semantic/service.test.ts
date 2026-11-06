@@ -1,126 +1,88 @@
-import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import type { DesktopBrainSemanticBackend, DesktopBrainSemanticIndexEntry, DesktopBrainSemanticPage, DesktopBrainSemanticPending, DesktopBrainSemanticPorts } from '@rerun/contracts'
-import { createDesktopBrainSemanticIndex } from './service'
-
-const backend: DesktopBrainSemanticBackend = { model: 'openai/text-embedding-3-small', version: '1', dimensions: 2, revision: crypto.randomUUID() }
-const backendFingerprint = createHash('sha256').update(JSON.stringify(backend)).digest('hex')
-const page = (patch: Partial<DesktopBrainSemanticPage> = {}): DesktopBrainSemanticPage => ({
-    slug: 'pricing', title: 'Pricing', type: 'offering', hash: 'a'.repeat(32), content: '# Overview\n\nOur pricing is public.\n\n# Details\n\nContact sales for the current plan.',
-    sources: [], unconfirmed: [], links: [], updatedAt: '2026-11-05T10:00:00.000Z', updatedBy: 'user', ...patch,
-})
-
-function entryOf(slug = 'pricing', vector = [1, 0]): DesktopBrainSemanticIndexEntry {
-    return {
-        chunk: { id: crypto.randomUUID(), slug, heading: 'Overview', ordinal: 0, content: 'Our pricing is public.', textHash: 'b'.repeat(32), text: 'Pricing (offering) > Overview\n\nOur pricing is public.' },
-        pageHash: 'a'.repeat(32), backendFingerprint, vector,
-    }
-}
-
-function fixture(pages: DesktopBrainSemanticPage[], vectors: number[][] = [[1, 0]]) {
-    const entries: DesktopBrainSemanticIndexEntry[] = []
-    const pending: DesktopBrainSemanticPending[] = []
-    const store = {
-        list: vi.fn(async () => entries),
-        write: vi.fn(async (entry: DesktopBrainSemanticIndexEntry) => { entries.push(entry) }),
-        remove: vi.fn(async (ids: readonly string[]) => {
-            for (const id of ids) {
-                const index = entries.findIndex(entry => entry.chunk.id === id)
-                if (index >= 0) entries.splice(index, 1)
-            }
-        }),
-        removePage: vi.fn(async (slug: string) => {
-            for (const [index, entry] of entries.entries()) if (entry.chunk.slug === slug) entries.splice(index, 1)
-        }),
-        pending: vi.fn(async () => pending),
-        queue: vi.fn(async (job: DesktopBrainSemanticPending) => {
-            const existing = pending.findIndex(item => item.chunk.id === job.chunk.id)
-            if (existing >= 0) pending[existing] = job
-            else pending.push(job)
-        }),
-        removePending: vi.fn(async (ids: readonly string[]) => {
-            for (const id of ids) {
-                const index = pending.findIndex(item => item.chunk.id === id)
-                if (index >= 0) pending.splice(index, 1)
-            }
-        }),
-    }
-    const backendPort = {
-        identity: vi.fn(() => backend),
-        embed: vi.fn(async () => vectors),
-    }
+import { createDesktopBrainSemanticIndex } from './service.js'
+const page = (patch: Partial<DesktopBrainSemanticPage> = {}): DesktopBrainSemanticPage => ({ slug: 'pricing', title: 'Pricing', type: 'offering', hash: 'a'.repeat(32), content: '## Overview\n\nOur pricing is public.', sources: [], unconfirmed: [], links: [], updatedAt: '', updatedBy: 'user', ...patch })
+function fixture(initial = [page()]) {
+    let backend: DesktopBrainSemanticBackend | null = { model: 'embedding', version: '1', dimensions: 2, revision: crypto.randomUUID() }
+    let pages = initial
+    const entries = new Map<string, DesktopBrainSemanticIndexEntry>(), pending = new Map<string, DesktopBrainSemanticPending>()
+    const embedding = { identity: vi.fn(() => backend), embed: vi.fn(async (texts: readonly string[]) => texts.map(() => [1, 0])) }
     const ports: DesktopBrainSemanticPorts = {
-        pages: {
-            list: vi.fn(async () => pages),
-            read: vi.fn(async (slug: string) => pages.find(page => page.slug === slug) ?? null),
-            search: vi.fn(async () => ({ hits: [], related: [] })),
+        authority: vi.fn(async () => {}), embedding,
+        pages: { list: vi.fn(async () => pages), read: vi.fn(async slug => pages.find(p => p.slug === slug) ?? null), search: vi.fn(async () => ({ hits: [], related: [] })) },
+        store: {
+            list: async () => [...entries.values()], pending: async () => [...pending.values()],
+            write: async value => { entries.set(value.chunk.id, value) }, queue: async value => { pending.set(value.chunk.id, value) },
+            remove: async ids => { for (const id of ids) entries.delete(id) }, removePending: async ids => { for (const id of ids) pending.delete(id) },
+            removePage: async slug => { for (const [id, value] of entries) if (value.chunk.slug === slug) entries.delete(id) },
         },
-        embedding: backendPort,
-        store,
-        authority: vi.fn(async () => {}),
     }
-    return { ports, entries, pending, backendPort, store }
+    return { ports, entries, pending, embedding, setPages: (value: DesktopBrainSemanticPage[]) => { pages = value }, setBackend: (value: DesktopBrainSemanticBackend | null) => { backend = value } }
 }
-
-describe('desktop Brain semantic index and search', () => {
-    it('returns semantic-only matches with original passages and no keyword padding', async () => {
-        const { ports, backendPort } = fixture([page()])
-        const service = createDesktopBrainSemanticIndex(ports)
+describe('desktop Brain semantic authority and derived index', () => {
+    it('returns semantic passages without shared keywords after explicit maintenance', async () => {
+        const f = fixture(), service = createDesktopBrainSemanticIndex(f.ports)
+        expect((await service.status()).mode).toBe('partial')
+        expect(f.embedding.embed).not.toHaveBeenCalled()
         await service.reconcile(true)
-        const result = await service.search({ query: 'pricing transparency' })
-        expect(result.hits).toHaveLength(1)
-        expect(result.hits[0].passages[0].content).toContain('pricing is public')
-        expect(backendPort.embed).toHaveBeenCalled()
+        const result = await service.search({ query: 'commercial transparency' })
+        expect(result.hits[0]).toMatchObject({ slug: 'pricing', passages: [{ heading: 'Overview', content: 'Our pricing is public.' }] })
         expect(result.index.mode).toBe('ready')
     })
-
-    it('uses honest keyword fallback when the embedding service is offline', async () => {
-        const { ports, backendPort } = fixture([page()])
-        backendPort.embed = vi.fn(async () => { throw new Error('offline') })
-        ports.pages.search = vi.fn(async () => ({ hits: [{ slug: 'pricing', title: 'Pricing', type: 'offering', score: 1, passages: [{ heading: 'Overview', content: 'Our pricing is public.' }] }], related: [] }))
-        const service = createDesktopBrainSemanticIndex(ports)
+    it('keeps keyword results while the configured provider is offline', async () => {
+        const f = fixture(), service = createDesktopBrainSemanticIndex(f.ports)
+        await service.reconcile(true)
+        f.embedding.embed.mockRejectedValue(new Error('offline'))
+        f.ports.pages.search = vi.fn(async () => ({ hits: [{ slug: 'pricing', title: 'Pricing', type: 'offering', score: 1, passages: [{ heading: 'Overview', content: 'Our pricing is public.' }] }], related: [] }))
         const result = await service.search({ query: 'pricing' })
         expect(result.hits).toHaveLength(1)
-        expect(result.index.mode).not.toBe('ready')
+        expect(result.index.mode).toBe('partial')
         expect(result.index.message).toContain('unavailable')
     })
-
-    it('does not publish a vector if the page changes during embedding', async () => {
-        const { ports, entries } = fixture([page()])
-        ports.pages.read = vi.fn(async () => ({ ...page(), hash: 'd'.repeat(32) })
-        const service = createDesktopBrainSemanticIndex(ports)
+    it('does not publish changed-page vectors and queues the current page on the next maintenance', async () => {
+        const f = fixture(), service = createDesktopBrainSemanticIndex(f.ports)
+        f.embedding.embed.mockImplementation(async texts => { f.setPages([page({ hash: 'd'.repeat(32), content: '## Overview\n\nNew pricing.' })]); return texts.map(() => [1, 0]) })
         await service.reconcile(true)
-        expect(entries).toHaveLength(0)
-        expect(await ports.store.pending()).toHaveLength(1)
-    })
-
-    it('removes deleted pages and does not publish restored stale content', async () => {
-        const { ports, entries } = fixture([page()])
-        entries.push(entryOf())
-        ports.pages.list = vi.fn(async () => [])
-        const service = createDesktopBrainSemanticIndex(ports)
+        expect(f.entries.size).toBe(0)
         await service.reconcile(false)
-        expect(entries).toHaveLength(0)
-        await service.invalidate('pricing', 'a'.repeat(32))
-        expect(ports.store.removePage).toHaveBeenCalledWith('pricing')
+        expect([...f.pending.values()].map(p => p.pageHash)).toEqual(['d'.repeat(32)])
     })
-
-    it('excludes an old provider model from semantic ranking after a provider change', async () => {
-        const { ports, backendPort } = fixture([page()])
-        const changedRevision = crypto.randomUUID()
-        backendPort.identity = vi.fn(() => ({ ...backend, revision: changedRevision })
-        const service = createDesktopBrainSemanticIndex(ports)
+    it('retains exact pending identities and retry counts across reconciliation', async () => {
+        const f = fixture(), service = createDesktopBrainSemanticIndex(f.ports)
+        await service.reconcile(false)
+        const old = [...f.pending.values()][0]
+        f.pending.set(old.chunk.id, { ...old, attempts: 2 })
+        await service.reconcile(false)
+        expect([...f.pending.values()]).toEqual([{ ...old, attempts: 2 }])
+        expect(f.embedding.embed).not.toHaveBeenCalled()
+    })
+    it('refuses late publication after Stop even if embedding ignores cancellation', async () => {
+        const f = fixture(), service = createDesktopBrainSemanticIndex(f.ports), stop = new AbortController()
+        let resolve!: (vectors: number[][]) => void, entered!: () => void
+        const started = new Promise<void>(r => { entered = r })
+        f.embedding.embed.mockImplementation(() => new Promise(r => { resolve = r; entered() }))
+        const work = service.reconcile(true, stop.signal)
+        await started; stop.abort(new Error('Stopped'))
+        await expect(work).rejects.toThrow('Stopped')
+        resolve([[1, 0]]); await Promise.resolve()
+        expect(f.entries.size).toBe(0)
+    })
+    it('does not publish vectors under a rotated credential identity', async () => {
+        const f = fixture(), service = createDesktopBrainSemanticIndex(f.ports)
+        f.embedding.embed.mockImplementation(async texts => { f.setBackend({ model: 'other', version: '1', dimensions: 2, revision: crypto.randomUUID() }); return texts.map(() => [1, 0]) })
         await service.reconcile(true)
-        const result = await service.search({ query: 'pricing' })
-        expect(result.index.backend?.revision).toBe(changedRevision)
-        expect(backendPort.embed).toHaveBeenCalled()
+        expect(f.entries.size).toBe(0)
     })
-
-    it('does not expose another workspace page during search', async () => {
-        const { ports, entries } = fixture([page()])
-        entries.push(entryOf('other-workspace')
-        const service = createDesktopBrainSemanticIndex(ports)
-        const result = await service.search({ query: 'pricing' })
-        expect(result.hits.every(hit => hit.slug === 'pricing')).toBe(true)
+    it('removes deleted pages and excludes them from search', async () => {
+        const f = fixture(), service = createDesktopBrainSemanticIndex(f.ports)
+        await service.reconcile(true); f.setPages([])
+        expect((await service.search({ query: 'pricing' })).hits).toEqual([])
+        await service.reconcile(false)
+        expect(f.entries.size).toBe(0)
+    })
+    it('includes one-hop backlinks as well as outgoing links', async () => {
+        const f = fixture([page(), page({ slug: 'customer', title: 'Customer', hash: 'b'.repeat(32), content: '', links: ['pricing'] })])
+        const service = createDesktopBrainSemanticIndex(f.ports); await service.reconcile(true)
+        expect((await service.search({ query: 'pricing' })).related).toEqual([{ slug: 'customer', title: 'Customer' }])
     })
 })

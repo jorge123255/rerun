@@ -1,3 +1,4 @@
+import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
 import { desktopDocumentContextParts } from '@rerun/contracts'
 import { streamText, type LanguageModelUsage, type ModelMessage, type StepResult, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
 import { RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
@@ -210,8 +211,15 @@ async function recordStepTelemetry(agentId: string, sessionId: string, runId: st
 }
 
 export async function runAgent(agent: LoadedAgent, sessionId: string, userText: string, override?: ModelOverride, writer?: UIMessageStreamWriter, runId?: string, trigger: RunTrigger = { source: 'chat' }): Promise<AgentRun> {
+    let admission: number | null = null
+    try { admission = assertDesktopRunAdmission() }
+    catch (error) {
+        // Chat/headless admission may already have durably reserved this row.
+        // Let the canonical settlement close it without ever starting a provider.
+        if (!runId) throw error
+    }
     const release = beginDesktopAgentWork(agent.id)
-    try { return await runTurn(agent, sessionId, userText, override, writer, runId, trigger, release) }
+    try { return await runTurn(agent, sessionId, userText, override, writer, runId, trigger, release, admission) }
     catch (error) { release(); throw error }
 }
 
@@ -222,7 +230,7 @@ type Settlement =
     | { kind: 'error'; error: unknown; errorCode?: RunErrorCode | null; messages?: ModelMessage[] }
     | { kind: 'cancelled' }
 
-async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: string, override: ModelOverride | undefined, writer: UIMessageStreamWriter | undefined, runId: string | undefined, trigger: RunTrigger, releaseAgentWork: () => void): Promise<AgentRun> {
+async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: string, override: ModelOverride | undefined, writer: UIMessageStreamWriter | undefined, runId: string | undefined, trigger: RunTrigger, releaseAgentWork: () => void, admission: number | null): Promise<AgentRun> {
     // The run row and its abort controller exist before any preparation step can throw: for chat
     // and headless callers the row was already inserted, and a throw in `resolveRunModel` or the
     // tool/MCP setup would otherwise leave it `running` forever with no terminal event for the hub.
@@ -430,16 +438,19 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     })
 
     try {
+        if (admission === null) throw new Error('This workspace is switching. The reserved run did not start.')
         // Prepare recall alongside the turn. A failed lookup simply contributes no context.
         const memoriesP = savedUser ? Promise.resolve([]) : recallMemories(baseAgent, userText)
         // An override can name a different box connection than the agent's default, so the run works
         // off a view of the agent bound to the connection it will actually bill. The connection object
         // itself stays the shared instance, so a token refreshed here is refreshed for everyone.
+        assertDesktopRunAdmission(admission)
         const resolved = await resolveRunModel(baseAgent, override)
         agent = resolved === baseAgent.resolved ? baseAgent : { ...baseAgent, resolved }
         ;({ connection, provider, model } = resolved)
         assertDesktopProvider(provider, resolved.connection?.id)
         if (desktopApp() && provider === 'codex') {
+            assertDesktopRunAdmission(admission)
             const config = await beginDesktopCodexRun(agent.id, run.id, controller.signal)
             if (!agent.config.selfImprovement.enabled) config.selfImprovement = { ...config.selfImprovement, enabled: false }
             agent = { ...agent, config }
@@ -527,6 +538,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         spawnToken = claudeTokenOf(connection)
         controller.signal.throwIfAborted()
         if (provider === 'codex' && desktopApp() && (agent.config.tools.desktopCodexGrants?.shell || agent.config.tools.desktopCodexGrants?.workspaceWrite)) {
+            assertDesktopRunAdmission(admission)
             nativeWorker = await createDesktopNativeWorker(ctx, agent.config.tools.desktopToolGrants?.nativeWriteback ? {
                 authorizeCapture: async current => {
                     await requireDesktopToolGrant(current, 'nativeWriteback')
@@ -537,6 +549,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                 persist: bundle => persistNativeWriteback(bundle, controller.signal),
             } : undefined)
         }
+        assertDesktopRunAdmission(admission)
         const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker)
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage
@@ -546,6 +559,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
 
         let lastStepAt = Date.now()
         let runCostMicros: number | null = null
+        assertDesktopRunAdmission(admission)
         const result = streamText({
             model: languageModel,
             system: cached.system,

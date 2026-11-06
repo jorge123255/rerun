@@ -5,7 +5,8 @@ import { withAgentLock } from '../../agents/lock.js'
 import { getAgent } from '../../agents/registry.js'
 import { resolveRunModel } from '../../agents/availability.js'
 import { getSession } from '../../db/repos/sessions.js'
-import { getRun } from '../../db/repos/runs.js'
+import { getRun, cancelRun } from '../../db/repos/runs.js'
+import { assertDesktopRunAdmission } from '../workspace-admission.js'
 import { getDesktopQueuedTurn, reserveDesktopQueuedTurn } from '../../db/repos/desktop-queued-turns.js'
 import { HttpError } from '../../lib/errors.js'
 import { claimSession, releaseSession, sessionClaim } from '../../runtime/run-control.js'
@@ -16,7 +17,7 @@ import { assertDesktopProvider, desktopApp } from '../policy.js'
 import { readDesktopForemanBinding } from './binding.js'
 import type { createDesktopForemanBridge } from './bridge.js'
 export const desktopForemanChatSchema = z.strictObject({
-    binding: foremanBindingSchema.extend({ workspaceId: z.literal('1'), runId: z.uuid() }), sessionId: z.uuid(),
+    binding: foremanBindingSchema.extend({ runId: z.uuid() }), sessionId: z.uuid(),
     text: z.string().min(1).max(20_000).refine(value => !!value.trim()),
     brief: foremanBriefSchema.extend({ instructions: z.string().min(1).max(12_000), tools: z.array(z.never()).max(0), hubToken: z.never().optional() }).strict(),
     replayOnly: z.boolean().optional(),
@@ -42,6 +43,7 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                 }
                 if (body.replayOnly) return Response.json({ code: 'queued_turn_not_found' }, { status: 404 })
                 if (run) throw new HttpError(409, 'This Foreman message ID is already used.')
+                assertDesktopRunAdmission()
                 const bridge = readBinding()
                 if (!bridge) throw new HttpError(503, 'The Foreman is not connected to this app launch.')
                 const exact = { binding: body.binding, sessionId: body.sessionId, text: body.text, brief: body.brief }
@@ -61,8 +63,13 @@ export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof 
                     const queuedUser = await reserveDesktopQueuedTurn(FOREMAN_AGENT_ID, turn, undefined, undefined, undefined, !session)
                     const view = { ...agent, brief: body.brief }
                     return identified(toResumableStreamResponse(turn.runId, async writer => {
-                        try { const result = await runAgent(view, turn.sessionId, turn.message, override, writer, turn.runId, { source: 'chat', queuedUser }); mergeRunStream(writer, result, { provider: model.provider, model: model.model }) }
-                        catch (error) { releaseSession(turn.runId); throw error }
+                        try {
+                            await bridge.admit(exact, signal)
+                            signal.throwIfAborted()
+                            assertDesktopRunAdmission()
+                            if (readBinding() !== bridge) throw new HttpError(409, 'Foreman app launch changed.')
+                            const result = await runAgent(view, turn.sessionId, turn.message, override, writer, turn.runId, { source: 'chat', queuedUser }); mergeRunStream(writer, result, { provider: model.provider, model: model.model }) }
+                        catch (error) { await cancelRun(FOREMAN_AGENT_ID, turn.runId); releaseSession(turn.runId); throw error }
                     }), turn.sessionId, turn.runId)
                 } catch (error) { releaseSession(turn.runId); throw error }
             })

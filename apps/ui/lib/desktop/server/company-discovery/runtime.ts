@@ -1,5 +1,6 @@
 import {
     applyCompanyDiscoveryEvent,
+    DESKTOP_COMPANY_DISCOVERY_LIMITS,
     companyChatIdSchema,
     companyDiscoveryEventSchema,
     companyDiscoveryIdSchema,
@@ -36,6 +37,7 @@ type Deps = {
     store: CompanyDiscoveryStore
     authority: CompanyDiscoveryAuthority | null
     run: CompanyDiscoveryRunner | null
+    published?: (snapshot: DesktopCompanyDiscoverySnapshot, signal: AbortSignal) => Promise<void>
     now?: () => Date
 }
 
@@ -66,21 +68,34 @@ export function createCompanyDiscoveryRuntime(deps: Deps) {
         return { workspaceId, chatId }
     }
 
-    async function apply(snapshot: DesktopCompanyDiscoverySnapshot, event: CompanyDiscoveryEvent): Promise<boolean> {
+    async function assertCurrent(snapshot: DesktopCompanyDiscoverySnapshot, signal: AbortSignal) {
+        signal.throwIfAborted()
+        await assertCaller(snapshot)
+        await deps.authority!.assertRun(snapshot, signal)
+        signal.throwIfAborted()
+    }
+
+    async function apply(snapshot: DesktopCompanyDiscoverySnapshot, event: CompanyDiscoveryEvent, signal: AbortSignal): Promise<boolean> {
+        await assertCurrent(snapshot, signal)
         const parsed = companyDiscoveryEventSchema.parse(event)
-        return deps.store.transaction(async tx => {
+        const applied = await deps.store.transaction(async tx => {
             const row = await tx.byId(snapshot.workspaceId, snapshot.chatId, snapshot.discoveryId)
             const current = present(row)
-            if (!current || current.status !== 'running') return false
+            if (!current || current.status !== 'running') return null
             const next = applyCompanyDiscoveryEvent(current, parsed, now())
-            if (!next) return false
+            if (!next) return null
             if (parsed.type === 'settled') {
                 const inserted = await tx.insertRevision(snapshot.discoveryId, parsed.source, parsed.revision, { status: parsed.status, reason: parsed.reason, payload: parsed.payload, provenance: parsed.provenance })
-                if (!inserted) return false
+                if (!inserted) return null
             }
+            await assertCurrent(snapshot, signal)
             await tx.put(next)
-            return true
+            return next
         })
+        if (!applied) return false
+        await assertCurrent(snapshot, signal)
+        await deps.published?.(applied, signal)
+        return true
     }
 
     async function finish(snapshot: DesktopCompanyDiscoverySnapshot, status: 'stopped' | 'failed') {
@@ -106,17 +121,20 @@ export function createCompanyDiscoveryRuntime(deps: Deps) {
         let queue = Promise.resolve()
         const work = (async () => {
             try {
+                await assertCurrent(snapshot, signal)
                 await deps.run!({
+                    assertCurrent: () => assertCurrent(snapshot, signal),
                     url: snapshot.url,
                     signal,
                     now: deps.now ?? (() => new Date()),
                     revisions,
                     emit: event => {
-                        queue = queue.then(() => apply(snapshot, event)).then(applied => {
+                        queue = queue.then(() => apply(snapshot, event, signal)).then(applied => {
                             if (!applied || signal.aborted || !emitForeman) return
                             const projected = toForemanDiscoveryEvent(event)
                             if (projected) emitForeman(projected)
                         })
+                        void queue.catch(() => {})
                     },
                 })
                 await queue
@@ -155,9 +173,13 @@ export function createCompanyDiscoveryRuntime(deps: Deps) {
             if (row) return row
         }
         const created = await deps.store.transaction(async tx => {
+            await deps.authority!.assertRun({ workspaceId, chatId, runId, discoveryId }, input.signal ?? new AbortController().signal)
             const byRun = await tx.byRun(workspaceId, chatId, runId)
             if (byRun?.state === 'unknown') throw new CompanyDiscoveryError('conflict', 'The saved discovery for this run cannot be read.')
-            if (byRun?.state === 'present') return { snapshot: byRun.snapshot, fresh: false }
+            if (byRun?.state === 'present') {
+                if (byRun.snapshot.discoveryId !== discoveryId || byRun.snapshot.url !== target.url) throw new CompanyDiscoveryError('conflict', 'That run belongs to another discovery request.')
+                return { snapshot: byRun.snapshot, fresh: false }
+            }
             const byId = await tx.byId(workspaceId, chatId, discoveryId)
             if (byId) throw new CompanyDiscoveryError('stale_run', 'That discovery belongs to another run.')
             const snapshot = companyDiscoverySnapshotSchema.parse(emptyCompanyDiscoverySnapshot({ discoveryId, workspaceId, chatId, runId, url: target.url, domain: target.domain, startedAt: now() }))
@@ -213,8 +235,10 @@ export function createCompanyDiscoveryRuntime(deps: Deps) {
                 if (row.state === 'unknown') throw new CompanyDiscoveryError('conflict', 'That discovery cannot be read.')
                 if (row.snapshot.runId !== runId) throw new CompanyDiscoveryError('stale_run', 'That discovery belongs to another run.')
                 if (row.snapshot.retries.includes(input.requestId)) return { snapshot: row.snapshot, fresh: false }
+                if (row.snapshot.retries.length >= DESKTOP_COMPANY_DISCOVERY_LIMITS.maxRetries) throw new CompanyDiscoveryError('conflict', 'This discovery reached its retry limit. Start a new discovery.')
+                await assertCurrent(row.snapshot, input.signal ?? new AbortController().signal)
                 if (row.snapshot.status === 'running' || inflight.has(discoveryId)) throw new CompanyDiscoveryError('conflict', 'Discovery is already running.')
-                const snapshot: DesktopCompanyDiscoverySnapshot = { ...row.snapshot, status: 'running', attempt: row.snapshot.attempt + 1, retries: [...row.snapshot.retries, input.requestId].slice(-20), updatedAt: now() }
+                const snapshot: DesktopCompanyDiscoverySnapshot = { ...row.snapshot, status: 'running', attempt: row.snapshot.attempt + 1, retries: [...row.snapshot.retries, input.requestId], updatedAt: now() }
                 await tx.put(snapshot)
                 return { snapshot, fresh: true }
             })

@@ -3,6 +3,8 @@
 import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { DesktopForemanDocsTool } from './docs/DesktopForemanDocsTool'
+import type { UIMessage } from 'ai'
 import {
     type DesktopForemanBuildProgressView,
     type DesktopForemanNextStep,
@@ -20,6 +22,7 @@ export type DesktopForemanMessage = {
     id: string
     role: 'user' | 'assistant' | 'system'
     text: string
+    docs?: UIMessage['parts']
 }
 
 export function DesktopForemanChatLayer({
@@ -96,6 +99,7 @@ export function DesktopForemanChatLayer({
                             )}
                         >
                             {message.text}
+                            {message.docs?.map((part, index) => <DesktopForemanDocsTool key={index} part={part as import('ai').ToolUIPart} restored={restored} />)}
                         </div>
                     ))}
                     {plan.view && plan.revisionId && (

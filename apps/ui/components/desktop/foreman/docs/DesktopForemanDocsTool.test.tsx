@@ -17,9 +17,12 @@ const output = {
 }
 
 it('renders saved citations and metadata without a fresh documentation or model request', async () => {
-    const part = { toolCallId: 'call-1', state: 'output-available', input: { query: 'webhook token' }, output }
+    const part = { type: 'tool-search_docs', toolCallId: 'call-1', state: 'output-available', input: { query: 'webhook token' }, output }
     root = createRoot(document.body.appendChild(document.createElement('div')))
     await act(async () => root!.render(<DesktopForemanDocsTool part={part as never} restored />))
+    const sources = [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Used 1 source'))
+    expect(sources).toBeDefined()
+    await act(async () => sources!.click())
     const link = document.querySelector<HTMLAnchorElement>('a[href*="webhook-triggers"]')
     expect(link?.target).toBe('_blank')
     expect(link?.rel).toContain('noopener')
@@ -29,7 +32,7 @@ it('renders saved citations and metadata without a fresh documentation or model 
 })
 
 it('keeps an honest unavailable result and never renders a foreign citation', async () => {
-    const part = { toolCallId: 'call-2', state: 'output-available', input: { query: 'billing' }, output: { ...output, passages: [{ ...output.passages[0], url: 'https://example.com/private' }] } }
+    const part = { type: 'tool-search_docs', toolCallId: 'call-2', state: 'output-available', input: { query: 'billing' }, output: { ...output, passages: [{ ...output.passages[0], url: 'https://example.com/private' }] } }
     root = createRoot(document.body.appendChild(document.createElement('div')))
     await act(async () => root!.render(<DesktopForemanDocsTool part={part as never} restored />))
     expect(document.querySelector('a[href*="example.com"]')).toBeNull()

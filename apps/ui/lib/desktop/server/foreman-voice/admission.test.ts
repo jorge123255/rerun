@@ -9,6 +9,7 @@ test('the engine callback fence refuses a cancelled, substituted or concurrently
     const db = createClient({ url: ':memory:' })
     try {
         await db.executeMultiple('CREATE TABLE desktop_foreman_chats(chat_id TEXT PRIMARY KEY);' + FOREMAN_VOICE_SCHEMA_SQL)
+        await db.execute({ sql: 'INSERT INTO desktop_foreman_chats VALUES(?)', args: [target.chat.chatId] })
         const record = { draft: { attemptId: id, scope: voiceScope(target), revision: id, phase: 'sending', transcript: turn.text, error: null, messageId: null, updatedAt: 'now', recording: { attemptId: id, sha256: 'a'.repeat(64), byteLength: 1, mimeType: 'audio/webm', extension: 'webm', transcriptionFormat: 'webm', durationMs: 900, levels: [] } } }
         await db.execute({ sql: 'INSERT INTO desktop_foreman_voice_attempts(attempt_id,chat_id,target,record,fingerprint,send_requested) VALUES(?,?,?,?,?,1)', args: [id, target.chat.chatId, voiceTargetJson(target), JSON.stringify(record), 'fingerprint'] })
         const owner = vi.fn(async () => {})

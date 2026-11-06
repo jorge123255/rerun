@@ -1,3 +1,4 @@
+import { canonicalDesktopEngineRoot } from '../runtime'
 import 'server-only'
 import { join } from 'node:path'
 import { realpath } from 'node:fs/promises'
@@ -45,7 +46,7 @@ export function createDesktopBrowserExports(runtime: DesktopRuntime, db: Client)
             const status = await request(conn, `${prefix}/screen/status?launchNonce=${encodeURIComponent(runtime.launchNonce)}`, { signal }, value => z.object({ running: z.literal(true), driving: z.literal(false), sessionGeneration: z.string() }).passthrough().parse(value))
             if (status.sessionGeneration !== call.target.sessionGeneration) throw denied()
         }
-        const root = join(/* turbopackIgnore: true */ await realpath(/* turbopackIgnore: true */ runtime.dataRoot), 'workspaces', '1', 'engine', 'agents', call.engineAgentId, 'workspace')
+        const root = join(/* turbopackIgnore: true */ await canonicalDesktopEngineRoot(runtime), 'agents', call.engineAgentId, 'workspace')
         const workspaceIdentity = await browserWorkspaceIdentity(root)
         const current = (await db.execute({ sql: 'SELECT engine_agent_id,enabled FROM desktop_agents WHERE id=?', args: [ownerId] })).rows[0]
         if (!current || current.engine_agent_id !== call.engineAgentId || !Number(current.enabled)) throw denied()

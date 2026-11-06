@@ -8,7 +8,7 @@ import { DESKTOP_WORKSPACE_ICONS } from '@/lib/desktop/icon-catalog'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { cn } from '@/lib/utils'
 import { CheckIcon, Loader2Icon } from '@/lib/icons'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 type Step = 0 | 1
 
@@ -33,14 +33,15 @@ export function CreateDesktopWorkspaceDialog({
     const [iconCatalogId, setIconCatalogId] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const attempt = useRef<{ requestId: string; name: string; iconCatalogId: string | null } | null>(null)
 
     useEffect(() => {
         if (!open) return
-        setStep(0)
-        setName('')
+        setStep(attempt.current ? 1 : 0)
+        setName(attempt.current?.name ?? '')
         setError(null)
         setBusy(false)
-        setIconCatalogId(icons[0]?.id ?? null)
+        setIconCatalogId(attempt.current ? attempt.current.iconCatalogId : icons[0]?.id ?? null)
     }, [open, icons])
 
     const close = () => {
@@ -59,20 +60,19 @@ export function CreateDesktopWorkspaceDialog({
         setBusy(true)
         setError(null)
         try {
-            const result = await client.create({
-                requestId: crypto.randomUUID(),
-                name: trimmed,
-                iconCatalogId,
-            })
+            if (attempt.current && (attempt.current.name !== trimmed || attempt.current.iconCatalogId !== iconCatalogId)) throw new Error('Confirm the previous workspace before creating another.')
+            attempt.current ??= { requestId: crypto.randomUUID(), name: trimmed, iconCatalogId }
+            const result = await client.create(attempt.current)
             if (!result.ok) {
                 setError(result.message)
                 setBusy(false)
                 return
             }
+            attempt.current = null
             onOpenChange(false)
             await onCreated(result.workspace.workspaceId)
         } catch {
-            setError('The workspace could not be created.')
+            setError('The workspace could not be confirmed. Retry with the same name and icon to check it.')
             setBusy(false)
         }
     }

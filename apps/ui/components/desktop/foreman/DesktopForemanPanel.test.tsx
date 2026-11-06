@@ -19,7 +19,7 @@ class Source {
 }
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; await flushDesktopForemanUiSaves(); document.body.innerHTML = ''; vi.unstubAllGlobals(); cancelDraftShutdown(); sources.length = 0 })
 it('keeps a usable exact-chat adapter through StrictMode and closes every live subscription on unmount', async () => {
-    cancelDraftShutdown(); vi.stubGlobal('crypto', { randomUUID }); vi.stubGlobal('EventSource', Source)
+    cancelDraftShutdown(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', { randomUUID }); vi.stubGlobal('EventSource', Source)
     const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
     const server = { chat, sessionId: 'session', model: null, messages: [{ id: 'message', role: 'user', parts: [{ type: 'text', text: 'A saved message' }] }], view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null }, ui: { revision: 0, snapshot: null as unknown } }
     const sends: unknown[] = []
@@ -33,7 +33,7 @@ it('keeps a usable exact-chat adapter through StrictMode and closes every live s
     const onClose = vi.fn(), onOpenCoworker = vi.fn(), onOpenBox = vi.fn()
     root = createRoot(document.body.appendChild(document.createElement('div')))
     await act(async () => root!.render(<StrictMode><DesktopForemanPanel onClose={onClose} onOpenCoworker={onOpenCoworker} onOpenBox={onOpenBox} agentNameOf={id => id} /></StrictMode>))
-    expect(column.messages).toEqual([{ id: 'message', role: 'user', text: 'A saved message' }])
+    expect(column.messages).toEqual([{ id: 'message', role: 'user', text: 'A saved message', docs: [] }])
     await act(async () => { expect(await column.ports.conversation.sendMessage('hello')).toBe(true) })
     expect(sends).toHaveLength(1); expect(onOpenCoworker).not.toHaveBeenCalled(); expect(onOpenBox).not.toHaveBeenCalled()
     await act(async () => document.querySelector<HTMLButtonElement>('button')!.click())

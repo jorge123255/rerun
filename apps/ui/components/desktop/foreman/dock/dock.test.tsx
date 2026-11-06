@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+// @vitest-environment happy-dom
 import { act, type ReactNode, type PointerEventHandler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -8,7 +8,7 @@ import { DEFAULT_DOCK_EXTRAS } from '@/lib/desktop/foreman-dock/layout'
 
 vi.mock('motion/react', async () => {
     const React = await import('react')
-    const Div = React.forwardRef<HTMLDivElement, Record<string, unknown>>(({ children, layout: _layout, transition: _transition, initial: _initial, animate: _animate, exit: _exit, ...props }, ref) => <div {...props} ref={ref}>{children as ReactNode}</div>)
+    const Div = React.forwardRef<HTMLDivElement, Record<string, unknown>>(function MockMotionDiv({ children, layout: _layout, transition: _transition, initial: _initial, animate: _animate, exit: _exit, ...props }, ref) { return <div {...props} ref={ref}>{children as ReactNode}</div> })
     return { motion: { div: Div }, AnimatePresence: ({ children }: { children: ReactNode }) => children, useReducedMotion: () => true }
 })
 let node: HTMLDivElement, root: Root

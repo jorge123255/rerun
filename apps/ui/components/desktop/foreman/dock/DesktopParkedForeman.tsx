@@ -56,7 +56,7 @@ export function DesktopParkedForeman(props: DesktopParkedForemanProps) {
         {pillVisible && (feed.busy || props.voiceSlot || props.composerSlot) && <ForemanPill side={props.corner.endsWith('left') ? 'left' : 'right'} width={feed.busy ? 'w-[420px]' : 'w-[340px]'} tone={feed.pending ? 'orange' : feed.failed ? 'red' : undefined}>
             {props.voiceSlot ?? (feed.busy ? <ForemanPillTicker label={feed.label} /> : props.composerSlot)}
         </ForemanPill>}
-        <motion.div key={`${scope}:${dragEpoch}:${visible}`} drag={visible} dragMomentum={false} dragSnapToOrigin dragTransition={reduce ? { duration: 0 } : { bounceStiffness: 500, bounceDamping: 38 }}
+        <motion.div key={`${scope}:${dragEpoch}:${visible}`} drag={visible} dragMomentum={false} dragSnapToOrigin dragTransition={{ bounceStiffness: reduce ? 100000 : 500, bounceDamping: reduce ? 1000 : 38 }}
             onPointerDownCapture={() => { dragged.current = false }} onDragStart={() => { cancelledDrag.current = false; dragged.current = true; setDragging(true) }}
             onDragEnd={(event, info) => {
                 setDragging(false)

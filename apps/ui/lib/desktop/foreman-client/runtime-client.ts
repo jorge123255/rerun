@@ -1,6 +1,7 @@
 'use client'
 
 import { z } from 'zod'
+import type { UIMessage } from 'ai'
 import {
     foremanChatRefSchema, foremanConversationViewSchema, foremanModelRefSchema, foremanDecisionInputSchema,
     foremanDecisionSchema, foremanBuildSchema, foremanLiveEventSchema, visibleText,
@@ -49,7 +50,7 @@ export async function readDesktopForemanState(signal?: AbortSignal): Promise<Des
 }
 const post = async (input: unknown, signal?: AbortSignal) => json(await fetch('/api/desktop/foreman', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal }))
 export function desktopForemanMessages(state: DesktopForemanClientState) {
-    return state.messages.map(message => ({ id: message.id, role: message.role, text: visibleText(message.parts, '\n') })).filter(message => message.text.length > 0)
+    return state.messages.map(message => ({ id: message.id, role: message.role, text: visibleText(message.parts, '\n'), docs: message.parts.filter(part => part && typeof part === 'object' && ((part as { type?: string }).type === 'tool-search_docs' || (part as { type?: string; toolName?: string }).type === 'dynamic-tool' && (part as { toolName?: string }).toolName === 'search_docs')) as UIMessage['parts'] })).filter(message => message.text.length > 0 || message.docs.length > 0)
 }
 function emptyUi(chat: DesktopForemanChatRef): DesktopForemanPersistedUi {
     return { ...chat, open: true, tab: 'assistant', draft: '', pendingPlanRevisionId: null, decision: { status: 'idle' }, build: null, discoveries: null, placement: DEFAULT_DESKTOP_FOREMAN_PLACEMENT }

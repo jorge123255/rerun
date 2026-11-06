@@ -31,15 +31,16 @@ async function harness(portOverrides: Record<string, unknown> = {}) {
         isQuitInProgress: () => false,
         ...portOverrides,
     }
+    const { seedLegacyCatalog } = await import('../../../../../desktop/src/main/workspaces/index.mjs')
+    await seedLegacyCatalog(dataRoot, installId)
     const main = await createInProcessWorkspaceBridge({ dataRoot, installId, ports })
-    // Seed happens on first list/create via coordinator readCatalog → seedLegacyCatalog
     await main.list()
     return { dataRoot, installId, main, handlers: desktopWorkspaceHandlers({ main }) }
 }
 
 describe('desktop local workspaces server adapters', () => {
     it('exports additive migration identity for root', () => {
-        expect(DESKTOP_LOCAL_WORKSPACES_MIGRATION.version).toBe(25)
+        expect(DESKTOP_LOCAL_WORKSPACES_MIGRATION.version).toBe(30)
         expect(DESKTOP_LOCAL_WORKSPACES_MIGRATION.id).toBe('local-workspace-catalog')
         expect(DESKTOP_LOCAL_WORKSPACES_MIGRATION.sql).toContain('desktop_local_workspaces')
         expect(DESKTOP_LOCAL_WORKSPACES_MIGRATION.sql).toContain('INSERT OR IGNORE INTO desktop_local_workspaces')
@@ -59,7 +60,7 @@ describe('desktop local workspaces server adapters', () => {
         if (!('ok' in renamed) || renamed.ok !== true) throw new Error('expected rename ok')
         expect(renamed.workspace.name).toBe('Northwind Labs')
         const listed = await handlers.list()
-        if ('ok' in listed && listed.ok === false) throw new Error('list failed')
+        if (!('catalog' in listed)) throw new Error('list failed')
         expect(listed.selection.workspaceId).toBe(1)
     })
 
@@ -94,7 +95,7 @@ describe('desktop local workspaces server adapters', () => {
         const result = await handlers.switchTo({ requestId: randomUUID(), workspaceId: created.workspace.workspaceId })
         expect(result).toMatchObject({ ok: false, code: 'draft_flush_failed' })
         const listed = await handlers.list()
-        if ('ok' in listed && listed.ok === false) throw new Error('list failed')
+        if (!('catalog' in listed)) throw new Error('list failed')
         expect(listed.selection.workspaceId).toBe(1)
         expect(listed.openReceipt).toBeNull()
     })

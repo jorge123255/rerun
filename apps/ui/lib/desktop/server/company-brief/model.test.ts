@@ -24,3 +24,10 @@ it('uses the saved workspace or coworker model and refuses a fallback', () => {
     if (refused.ok) throw new Error('conversation model')
     expect(refused.code).toBe('conversation_model_unverified')
 })
+
+
+it('keeps the exact connected Codex model for synthesis', () => {
+    const current = choice({ provider: 'codex', model: 'gpt-6.1-terra' })
+    current.workspace = { connectionId: 'conn', model: 'gpt-6.1-terra' }
+    expect(explicitCompanyBriefModel(current, null)).toEqual({ ok: true, model: { connectionId: 'conn', provider: 'codex', model: 'gpt-6.1-terra', source: 'workspace', agentId: null } })
+})

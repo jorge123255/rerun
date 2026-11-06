@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { workspaceAttachmentPart, desktopCoworkerMentionContextParts } from '@rerun/contracts'
+import { RERUN_PUBLIC_DOCS_CORPUS, workspaceAttachmentPart, desktopCoworkerMentionContextParts } from '@rerun/contracts'
 import { buildAttachmentsRef } from '@/lib/chat/attachments-marker'
 import { buildInstallMessage } from '@/lib/chat/install-marker'
 import { MAX_TOOL_OUTPUT_CHARS, type HistoryMessage, publicDesktopHistory, toApiMessages, transformEngineMessages } from '@/lib/chat/engine-history'
@@ -12,6 +12,49 @@ function user(text: string): HistoryMessage {
 function toolCall(toolName: string, output: unknown): HistoryMessage {
     return { id: 'a1', role: 'assistant', parts: [{ type: `tool-${toolName}`, toolCallId: 'c1', toolName, state: 'output-available', input: {}, output }] }
 }
+
+describe('saved Foreman documentation presentation', () => {
+    const result = {
+        status: 'ok', documentation: RERUN_PUBLIC_DOCS_CORPUS.documentation,
+        passages: [{ title: 'Automations', url: 'https://docs.rerun.build/agents/automations#webhook-triggers', text: 'Triggers can start a coworker.' }],
+        source: { corpusId: RERUN_PUBLIC_DOCS_CORPUS.id, sourceUrl: RERUN_PUBLIC_DOCS_CORPUS.exportUrl, cacheState: 'fresh', fetchedAt: '2026-11-06T00:00:00.000Z', ageMs: 1000, sha256: 'a'.repeat(64), byteLength: 100, version: 'v1' },
+    }
+    const saved = (output: unknown) => [{
+        id: 'docs-call', sessionId: 'foreman-session', role: 'assistant' as const,
+        contentJson: JSON.stringify([{ type: 'tool-call', toolName: 'search_docs', toolCallId: 'docs-1', input: { query: 'webhook triggers', binding: { privateRun: 'not-public' } } }]),
+        toolCallsJson: null, createdAt: '2026-11-06T00:00:00.000Z',
+    }, {
+        id: 'docs-result', sessionId: 'foreman-session', role: 'tool' as const,
+        contentJson: JSON.stringify([{ type: 'tool-result', toolName: 'search_docs', toolCallId: 'docs-1', output }]),
+        toolCallsJson: null, createdAt: '2026-11-06T00:00:01.000Z',
+    }]
+
+    it.each(['direct', 'json-wrapper', 'text-wrapper'] as const)('retains validated citations and source metadata from actual saved %s results', shape => {
+        const output = shape === 'direct' ? result : { type: shape === 'json-wrapper' ? 'json' : 'text', value: shape === 'json-wrapper' ? result : JSON.stringify(result) }
+        const rows = saved(output)
+        const original = rows.map(row => row.contentJson)
+        const [message] = publicDesktopHistory(transformEngineMessages(rows))
+        expect(message.parts[0]).toEqual({
+            type: 'tool-search_docs', toolName: 'search_docs', toolCallId: 'docs-1', state: 'output-available', desktopPreview: true,
+            input: { preview: 'webhook triggers' }, output: JSON.stringify(result),
+        })
+        expect(JSON.stringify(message)).not.toContain('not-public')
+        expect(rows.map(row => row.contentJson)).toEqual(original)
+    })
+
+    it.each([
+        { ...result, passages: [{ ...result.passages[0], url: 'https://example.com/private' }] },
+        { ...result, source: { ...result.source, corpusId: 'other-corpus' } },
+        { ...result, source: { ...result.source, sourceUrl: 'https://docs.rerun.build/private.txt' } },
+        { ...result, binding: { secret: 'not-public' } },
+        JSON.stringify({ ...result, authorization: 'Bearer not-public' }),
+    ])('does not expose malformed or noncanonical documentation results', output => {
+        const [message] = publicDesktopHistory(transformEngineMessages(saved(output)))
+        expect(message.parts[0]).toEqual({ type: 'tool-search_docs', toolName: 'search_docs', toolCallId: 'docs-1', state: 'output-available', desktopPreview: true, input: { preview: 'webhook triggers' } })
+        expect(JSON.stringify(message)).not.toContain('not-public')
+        expect(JSON.stringify(message)).not.toContain('example.com')
+    })
+})
 
 describe('toApiMessages', () => {
     it('keeps a plain user message as is', () => {

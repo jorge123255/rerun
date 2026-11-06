@@ -49,7 +49,7 @@ function memoryStore(): CompanyDiscoveryStore & { rows(): StoredSnapshot[] } {
 }
 
 function authority(owner: 'active' | 'deleted' | 'disabled' | 'replaced' = 'active', current = workspaceId): CompanyDiscoveryAuthority {
-    return { currentWorkspaceId: async () => current, owner: async () => owner }
+    return { assertRun: async () => {}, currentWorkspaceId: async () => current, owner: async () => owner }
 }
 
 const mail: CompanyDiscoveryEvent = {
@@ -162,7 +162,7 @@ test('deleted owners, stale workspaces, private targets and a missing authority 
     expect(await code(runtime(store, run, null).begin({ workspaceId, chatId, runId, discoveryId, url }))).toBe('authority_unbound')
     expect(await code(runtime(store, null).begin({ workspaceId, chatId, runId, discoveryId, url }))).toBe('fetch_authority_unbound')
     expect(calls).toBe(0)
-    await expect(runtime(store, null).collectForForeman({ url })).rejects.toMatchObject({ code: 'binding_unbound' })
+    expect(() => runtime(store, null).collectForForeman({ url })).toThrow(CompanyDiscoveryError)
 })
 
 test('a corrupt saved body is unknown and is not treated as an empty success', () => {
@@ -171,4 +171,26 @@ test('a corrupt saved body is unknown and is not treated as an empty success', (
     const swapped = emptyCompanyDiscoverySnapshot({ ...identity, url, domain: 'acme.example', startedAt: now().toISOString() })
     const replaced: DesktopCompanyDiscoverySnapshot = { ...swapped, chatId: otherChat }
     expect(readSnapshotBody(JSON.stringify(replaced), identity).state).toBe('unknown')
+})
+
+
+test('keeps every admitted retry identity when capacity is reached and replays never refetch', async () => {
+    const store = memoryStore(); let calls = 0
+    const discovery = runtime(store, async ({ emit }) => { calls++; emit({ type: 'end' }) })
+    await discovery.begin({ workspaceId, chatId, runId, discoveryId, url })
+    const ids = Array.from({ length: 21 }, (_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`)
+    for (const requestId of ids.slice(0, 20)) await discovery.retry({ workspaceId, chatId, runId, discoveryId, requestId })
+    expect(await code(discovery.retry({ workspaceId, chatId, runId, discoveryId, requestId: ids[20] }))).toBe('conflict')
+    await discovery.retry({ workspaceId, chatId, runId, discoveryId, requestId: ids[0] })
+    expect(calls).toBe(21)
+})
+
+test('rejects late source publication when the admitted Foreman run changes', async () => {
+    let live = true
+    const store = memoryStore()
+    const owner = { ...authority(), assertRun: async () => { if (!live) throw new CompanyDiscoveryError('stale_run', 'changed') } }
+    const discovery = runtime(store, async ({ emit }) => { live = false; emit(mail) }, owner)
+    expect(await code(discovery.begin({ workspaceId, chatId, runId, discoveryId, url }))).toBe('stale_run')
+    const saved = await discovery.read({ workspaceId, chatId, discoveryId })
+    expect(saved.state === 'present' && saved.snapshot.findings).toEqual([])
 })

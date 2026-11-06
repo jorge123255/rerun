@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import {
     LEGACY_WORKSPACE_ID,
     CONTRACT_VERSION,
@@ -10,6 +10,7 @@ import {
     readJSON,
     selectionPath,
     pathExists,
+    UUID, validWorkspaceId, persistenceError, inspectWorkspacesLayout,
 } from './paths.mjs'
 import { WORKSPACE_COPY, refusal } from './copy.mjs'
 
@@ -34,7 +35,7 @@ function nowIso() {
 }
 
 function normalizeName(name) {
-    return String(name ?? '').trim()
+    return typeof name === 'string' ? name.trim() : ''
 }
 
 function validateName(name) {
@@ -57,86 +58,69 @@ async function annotatePathStatus(dataRoot, installId, record) {
     return { ...record, pathStatus: inspection.status }
 }
 
+function operationFingerprint(operation, installId, payload) {
+    return createHash('sha256').update(JSON.stringify([operation, installId, payload])).digest('hex')
+}
+function priorOperation(catalog, requestId, operation, fingerprint) {
+    const prior = catalog.operations.find(row => row.requestId === requestId)
+    if (!prior) return null
+    return prior.operation === operation && prior.fingerprint === fingerprint
+        ? prior.result : refusal('duplicate_request', 'That request was already used for a different workspace change.')
+}
+function saveOperation(catalog, input, operation, fingerprint, result) {
+    catalog.operations.push({ requestId: input.requestId, operation, fingerprint, result })
+}
 export async function seedLegacyCatalog(dataRoot, installId, { name = 'My workspace', iconCatalogId = null } = {}) {
+    if (!UUID.test(installId)) throw persistenceError()
     await ensureWorkspacesLayout(dataRoot)
+    if (await pathExists(catalogPath(dataRoot))) return readCatalog(dataRoot, installId)
+    if (await pathExists(selectionPath(dataRoot))) throw persistenceError('Workspace catalog is missing; recovery is required.')
     await ensureOwnedWorkspaceDirectory(dataRoot, installId, LEGACY_WORKSPACE_ID)
     const stamp = nowIso()
-    const catalog = {
-        version: CONTRACT_VERSION,
-        installId,
-        workspaces: [
-            {
-                workspaceId: LEGACY_WORKSPACE_ID,
-                name: normalizeName(name) || 'My workspace',
-                iconCatalogId,
-                directoryName: String(LEGACY_WORKSPACE_ID),
-                createdAt: stamp,
-                updatedAt: stamp,
-                pathStatus: 'ready',
-            },
-        ],
-    }
-    const selection = {
-        version: CONTRACT_VERSION,
-        workspaceId: LEGACY_WORKSPACE_ID,
-        publishedByReceiptId: null,
-        selectedAt: stamp,
-    }
-    if (!(await pathExists(catalogPath(dataRoot)))) await atomicPrivateJSON(catalogPath(dataRoot), catalog)
-    if (!(await pathExists(selectionPath(dataRoot)))) await atomicPrivateJSON(selectionPath(dataRoot), selection)
-    return { catalog, selection }
+    const catalog = { version: CONTRACT_VERSION, installId, operations: [], workspaces: [{
+        workspaceId: LEGACY_WORKSPACE_ID, name: normalizeName(name) || 'My workspace', iconCatalogId,
+        directoryName: String(LEGACY_WORKSPACE_ID), createdAt: stamp, updatedAt: stamp,
+    }] }
+    const selection = { version: CONTRACT_VERSION, workspaceId: LEGACY_WORKSPACE_ID, publishedByReceiptId: null, selectedAt: stamp }
+    await atomicPrivateJSON(catalogPath(dataRoot), catalog)
+    await atomicPrivateJSON(selectionPath(dataRoot), selection)
+    return readCatalog(dataRoot, installId)
 }
-
 export async function readCatalog(dataRoot, installId) {
-    await ensureWorkspacesLayout(dataRoot)
-    if (!(await pathExists(catalogPath(dataRoot)))) {
-        return seedLegacyCatalog(dataRoot, installId)
-    }
+    if (!await inspectWorkspacesLayout(dataRoot)) throw persistenceError('Workspace catalog has not been initialized.')
     const catalog = await readJSON(catalogPath(dataRoot))
-    if (catalog.version !== CONTRACT_VERSION || catalog.installId !== installId) {
-        throw new Error('Workspace catalog does not belong to this install')
+    if (catalog.version !== CONTRACT_VERSION || catalog.installId !== installId || !UUID.test(installId)
+        || !Array.isArray(catalog.workspaces) || catalog.workspaces.length < 1) throw persistenceError()
+    const ids = new Set()
+    for (const row of catalog.workspaces) {
+        if (!validWorkspaceId(row.workspaceId) || ids.has(row.workspaceId) || row.directoryName !== String(row.workspaceId)
+            || !validateName(row.name).ok || !validateIcon(row.iconCatalogId).ok
+            || !Number.isFinite(Date.parse(row.createdAt)) || !Number.isFinite(Date.parse(row.updatedAt))) throw persistenceError()
+        ids.add(row.workspaceId)
     }
-    if (!Array.isArray(catalog.workspaces) || catalog.workspaces.length < 1) {
-        throw new Error('Workspace catalog is empty')
+    if (!ids.has(LEGACY_WORKSPACE_ID)) throw persistenceError()
+    const operations = catalog.operations ?? []
+    if (!Array.isArray(operations) || operations.length > 4096) throw persistenceError()
+    const requests = new Set()
+    for (const op of operations) {
+        if (!UUID.test(op.requestId) || requests.has(op.requestId) || !['create', 'rename'].includes(op.operation)
+            || !/^[a-f0-9]{64}$/.test(op.fingerprint) || op.result?.ok !== true || !ids.has(op.result.workspace?.workspaceId)) throw persistenceError()
+        requests.add(op.requestId)
     }
-    const legacy = catalog.workspaces.find(w => Number(w.workspaceId) === LEGACY_WORKSPACE_ID)
-    if (!legacy) throw new Error('Legacy workspace 1 is missing from the catalog')
-
-    let selection
-    if (await pathExists(selectionPath(dataRoot))) {
-        selection = await readJSON(selectionPath(dataRoot))
-    } else {
-        selection = {
-            version: CONTRACT_VERSION,
-            workspaceId: LEGACY_WORKSPACE_ID,
-            publishedByReceiptId: null,
-            selectedAt: nowIso(),
-        }
-        await atomicPrivateJSON(selectionPath(dataRoot), selection)
-    }
-    if (selection.installId && selection.installId !== installId) {
-        throw new Error('Workspace selection does not belong to this install')
-    }
+    const selection = await readJSON(selectionPath(dataRoot))
+    if (selection.version !== CONTRACT_VERSION || !ids.has(selection.workspaceId)
+        || (selection.publishedByReceiptId !== null && !UUID.test(selection.publishedByReceiptId))
+        || !Number.isFinite(Date.parse(selection.selectedAt))) throw persistenceError()
     const annotated = []
-    for (const record of catalog.workspaces) {
-        annotated.push(await annotatePathStatus(dataRoot, installId, record))
-    }
-    return {
-        catalog: { ...catalog, workspaces: annotated },
-        selection: {
-            version: CONTRACT_VERSION,
-            workspaceId: Number(selection.workspaceId),
-            publishedByReceiptId: selection.publishedByReceiptId ?? null,
-            selectedAt: selection.selectedAt,
-        },
-    }
+    for (const record of catalog.workspaces) annotated.push(await annotatePathStatus(dataRoot, installId, record))
+    return { catalog: { ...catalog, operations, workspaces: annotated }, selection }
 }
 
 /** Public list projection: strips idempotency keys from catalog rows. */
 export async function listCatalog(dataRoot, installId) {
     const { catalog, selection } = await readCatalog(dataRoot, installId)
     return {
-        catalog: { ...catalog, workspaces: catalog.workspaces.map(publicRecord) },
+        catalog: { version: catalog.version, installId: catalog.installId, workspaces: catalog.workspaces.map(publicRecord) },
         selection,
     }
 }
@@ -145,6 +129,7 @@ export async function writeCatalog(dataRoot, catalog) {
     await atomicPrivateJSON(catalogPath(dataRoot), {
         version: CONTRACT_VERSION,
         installId: catalog.installId,
+        operations: catalog.operations,
         workspaces: catalog.workspaces.map(({ pathStatus: _pathStatus, ...rest }) => rest),
     })
 }
@@ -167,21 +152,21 @@ export async function createWorkspace(dataRoot, installId, input, { nextId } = {
     if (!nameCheck.ok) return nameCheck
     const iconCheck = validateIcon(input?.iconCatalogId)
     if (!iconCheck.ok) return iconCheck
-    if (typeof input?.requestId !== 'string' || !/^[0-9a-f-]{36}$/i.test(input.requestId)) {
+    if (typeof input?.requestId !== 'string' || !UUID.test(input.requestId)) {
         return refusal('unsupported', WORKSPACE_COPY.createFailed)
     }
 
-    const { catalog, selection } = await readCatalog(dataRoot, installId)
-    const existing = catalog.workspaces.find(w => w.createRequestId === input.requestId)
-    if (existing) {
-        return { ok: true, workspace: publicRecord(await annotatePathStatus(dataRoot, installId, existing)), switched: false }
-    }
+    const { catalog } = await readCatalog(dataRoot, installId)
+    const fingerprint = operationFingerprint('create', installId, [nameCheck.name, iconCheck.iconCatalogId])
+    const previous = priorOperation(catalog, input.requestId, 'create', fingerprint)
+    if (previous) return previous
+    if (catalog.operations.length >= 4096) return refusal('unsupported', WORKSPACE_COPY.createFailed)
 
     const allocate = typeof nextId === 'function'
         ? nextId
         : (current) => Math.max(...current.map(w => Number(w.workspaceId))) + 1
     const workspaceId = allocate(catalog.workspaces)
-    if (!Number.isInteger(workspaceId) || workspaceId < 2) {
+    if (!validWorkspaceId(workspaceId) || workspaceId < 2) {
         return refusal('unsupported', WORKSPACE_COPY.createFailed)
     }
     if (catalog.workspaces.some(w => Number(w.workspaceId) === workspaceId)) {
@@ -190,7 +175,7 @@ export async function createWorkspace(dataRoot, installId, input, { nextId } = {
 
     const stamp = nowIso()
     try {
-        await ensureOwnedWorkspaceDirectory(dataRoot, installId, workspaceId, stamp)
+        await ensureOwnedWorkspaceDirectory(dataRoot, installId, workspaceId, stamp, { createRequestId: input.requestId })
     } catch (error) {
         const code = error?.code === 'path_foreign' || error?.code === 'path_corrupt' ? error.code : 'create_failed'
         if (code === 'path_foreign') return refusal('path_foreign', WORKSPACE_COPY.pathForeign)
@@ -209,8 +194,10 @@ export async function createWorkspace(dataRoot, installId, input, { nextId } = {
         createRequestId: input.requestId,
     }
     catalog.workspaces.push(record)
+    const result = { ok: true, workspace: publicRecord(record), switched: false }
+    saveOperation(catalog, input, 'create', fingerprint, result)
     await writeCatalog(dataRoot, catalog)
-    return { ok: true, workspace: publicRecord(record), switched: false }
+    return result
 }
 
 export async function renameWorkspace(dataRoot, installId, input) {
@@ -219,20 +206,21 @@ export async function renameWorkspace(dataRoot, installId, input) {
     const iconProvided = Object.prototype.hasOwnProperty.call(input ?? {}, 'iconCatalogId')
     const iconCheck = iconProvided ? validateIcon(input.iconCatalogId) : { ok: true, iconCatalogId: undefined }
     if (!iconCheck.ok) return iconCheck
-    if (typeof input?.requestId !== 'string' || !/^[0-9a-f-]{36}$/i.test(input.requestId)) {
+    if (typeof input?.requestId !== 'string' || !UUID.test(input.requestId)) {
         return refusal('unsupported', WORKSPACE_COPY.renameFailed)
     }
     const workspaceId = Number(input?.workspaceId)
-    if (!Number.isInteger(workspaceId) || workspaceId < 1) return refusal('not_found', WORKSPACE_COPY.notFound)
+    if (!validWorkspaceId(workspaceId)) return refusal('not_found', WORKSPACE_COPY.notFound)
 
     const { catalog } = await readCatalog(dataRoot, installId)
     const index = catalog.workspaces.findIndex(w => Number(w.workspaceId) === workspaceId)
     if (index < 0) return refusal('not_found', WORKSPACE_COPY.notFound)
 
     const current = catalog.workspaces[index]
-    if (current.renameRequestId === input.requestId) {
-        return { ok: true, workspace: publicRecord(await annotatePathStatus(dataRoot, installId, current)) }
-    }
+    const fingerprint = operationFingerprint('rename', installId, [workspaceId, nameCheck.name, iconProvided ? iconCheck.iconCatalogId : '__unchanged__'])
+    const previous = priorOperation(catalog, input.requestId, 'rename', fingerprint)
+    if (previous) return previous
+    if (catalog.operations.length >= 4096) return refusal('unsupported', WORKSPACE_COPY.renameFailed)
 
     const inspection = await inspectWorkspacePath(dataRoot, installId, workspaceId)
     if (inspection.status === 'missing') return refusal('path_missing', WORKSPACE_COPY.pathMissing)
@@ -248,8 +236,10 @@ export async function renameWorkspace(dataRoot, installId, input) {
         pathStatus: inspection.status,
     }
     catalog.workspaces[index] = updated
+    const result = { ok: true, workspace: publicRecord(updated) }
+    saveOperation(catalog, input, 'rename', fingerprint, result)
     await writeCatalog(dataRoot, catalog)
-    return { ok: true, workspace: publicRecord(updated) }
+    return result
 }
 
 export async function getWorkspace(dataRoot, installId, workspaceId) {

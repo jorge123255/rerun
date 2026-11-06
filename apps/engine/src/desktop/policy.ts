@@ -19,6 +19,12 @@ export function assertDesktopProvider(provider: string, id?: string): void {
 }
 
 export function desktopRouteAllowed(method: string, path: string): boolean {
+    if (path === '/desktop/workspace-admission') return method === 'POST'
+    if (/^\/desktop\/workspace-routines\/[A-Za-z0-9_-]+$/.test(path)) return method === 'GET' || method === 'POST'
+    if (/^\/desktop\/brain\/semantic\/[A-Za-z0-9_-]+\/status$/.test(path)) return method === 'GET'
+    if (/^\/desktop\/brain\/semantic\/[A-Za-z0-9_-]+\/(?:search|index)$/.test(path)) return method === 'POST'
+    if (path === '/desktop/company-brief') return method === 'GET'
+    if (/^\/desktop\/company-brief\/(?:observe|synthesize|cancel|cancel-chat|edit|dismiss|retry|handoff|handoff-receipt)$/.test(path)) return method === 'POST'
     if (method === 'GET' && /^\/agents\/[^/]+\/setup\/?$/.test(path)) return true
     if (method === 'POST' && /^\/agents\/[^/]+\/setup\/(save|claim|continue|import)$/.test(path)) return true
     if (desktopTemplateRouteAllowed(method, path)) return true

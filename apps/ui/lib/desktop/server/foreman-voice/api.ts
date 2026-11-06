@@ -3,6 +3,8 @@ import {
     foremanVoiceRequestSchema, foremanVoiceTargetSchema,
 } from '../../../../../../packages/contracts/src/desktop-foreman-voice'
 import { DesktopHttpError } from '../auth'
+import { readDesktopRuntime } from '../runtime'
+import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import { readDesktopJson } from '../request-json'
 import type { createForemanVoiceRuntime } from './runtime'
 
@@ -13,6 +15,7 @@ export function foremanVoiceHandlers(voice: ReturnType<typeof createForemanVoice
             try {
                 const parsed = foremanVoiceRequestSchema.safeParse(await readDesktopJson(request, 3 * 1024 * 1024))
                 if (!parsed.success) throw new DesktopHttpError(400, 'This Foreman recording request was not understood.')
+                if (parsed.data.action === 'send' || parsed.data.action === 'transcribe') assertDesktopWorkspaceAdmission(await readDesktopRuntime())
                 return Response.json(await voice.handle(parsed.data, request.signal), { headers: { 'cache-control': 'no-store' } })
             } catch (error) {
                 return Response.json({ error: error instanceof DesktopHttpError ? error.message : 'Foreman voice acknowledgement unavailable. Read the same attempt before retrying.' }, { status: error instanceof DesktopHttpError ? error.status : 503 })

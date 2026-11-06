@@ -1,3 +1,4 @@
+import { desktopEngineParts } from '../runtime'
 import 'server-only'
 import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -28,8 +29,8 @@ export const localResultFileAuthority: DesktopResultFileAuthority = {
             await assertOwner()
             if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(input.engineAgentId)) throw new DesktopHttpError(400, 'This coworker has no readable workspace.')
             const dataRoot = await realpath(/* turbopackIgnore: true */ input.runtime.dataRoot)
-            const relativeRoot = input.scope === 'shared' ? ['workspaces', '1', 'engine', 'shared']
-                : ['workspaces', '1', 'engine', 'agents', input.engineAgentId, 'workspace']
+            const relativeRoot = input.scope === 'shared' ? [...desktopEngineParts(input.runtime), 'shared']
+                : [...desktopEngineParts(input.runtime), 'agents', input.engineAgentId, 'workspace']
             const pathParts = input.path.split('/')
             if (pathParts.length > 64 || pathParts.some(part => !part || part.startsWith('.') || /[\\\p{Cc}]/u.test(part))) throw new DesktopHttpError(400, 'Choose a visible workspace file.')
             const parents: { path: string; stat: BigIntStats }[] = []

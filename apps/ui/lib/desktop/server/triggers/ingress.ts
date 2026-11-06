@@ -1,3 +1,4 @@
+import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import 'server-only'
 import { z } from 'zod'
 import { readDesktopRuntime } from '../runtime'
@@ -12,6 +13,7 @@ export async function desktopLocalTriggerIngress(request: Request, params: unkno
     try {
         const runtime = await readDesktopRuntime(), host = new URL(runtime.app.origin).host
         if (request.headers.get('host') !== host || (request.headers.get('origin') && request.headers.get('origin') !== runtime.app.origin) || request.headers.get('sec-fetch-site') === 'cross-site') return new Response(null, { status: 404, headers })
+        assertDesktopWorkspaceAdmission(runtime)
         const parsed = paramsSchema.safeParse(params)
         if (!parsed.success) return new Response(null, { status: 404, headers })
         const purpose = `${request.headers.get('sec-purpose') ?? ''} ${request.headers.get('purpose') ?? ''}`

@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest'
 import { DESKTOP_FOREMAN_DOCS_LIMITS, RERUN_PUBLIC_DOCS_CORPUS, type DesktopForemanDocsReceipt, type DesktopForemanDocsRequest } from '@rerun/contracts'
 import { createDesktopForemanDocsService, type DesktopForemanDocsCorpusRecord, type DesktopForemanDocsStore } from './service'
-import { desktopForemanDocsCorpusFingerprint } from './identity'
+import { desktopForemanDocsBodyFingerprint, desktopForemanDocsCorpusFingerprint } from './identity'
 
 const CORPUS = `# Automations
 Source: https://docs.rerun.build/agents/automations
@@ -24,7 +24,7 @@ const input = (query = 'webhook token'): DesktopForemanDocsRequest => ({ binding
 const fingerprint = desktopForemanDocsCorpusFingerprint(RERUN_PUBLIC_DOCS_CORPUS)
 
 function cache(overrides: Partial<DesktopForemanDocsCorpusRecord> = {}): DesktopForemanDocsCorpusRecord {
-    return { corpus: RERUN_PUBLIC_DOCS_CORPUS, fingerprint, body: CORPUS, fetchedAt: '2026-11-05T00:00:00.000Z', sha256: 'a'.repeat(64), byteLength: CORPUS.length, version: 'v1', publishedBy: { workspaceId: '1', chatId: binding.chatId, runId: binding.runId, toolCallId: 'old-call' }, ...overrides }
+    return { corpus: RERUN_PUBLIC_DOCS_CORPUS, fingerprint, body: CORPUS, fetchedAt: '2026-11-05T00:00:00.000Z', sha256: desktopForemanDocsBodyFingerprint(CORPUS), byteLength: Buffer.byteLength(CORPUS), version: 'v1', publishedBy: { workspaceId: '1', chatId: binding.chatId, runId: binding.runId, toolCallId: 'old-call' }, ...overrides }
 }
 
 function harness(options: { cached?: DesktopForemanDocsCorpusRecord | null; fetchCorpus?: (corpus: DesktopForemanDocsRequest['corpus'], signal: AbortSignal) => Promise<{ body: string; byteLength: number; version: string }>; now?: Date } = {}) {

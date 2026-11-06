@@ -1,3 +1,4 @@
+import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { useState, type FormEvent } from 'react'
 import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
@@ -16,6 +17,7 @@ import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { desktopProvider, type SettingsChange } from '@/lib/desktop/settings'
 
 type Props = {
+    initialTab?: 'AI providers' | 'Tool services' | 'Workspace' | 'Notifications' | 'Shortcuts'
     providers: ConnectionsList
     workspaceName: string
     onProviders: (providers: ConnectionsList) => void
@@ -28,8 +30,8 @@ function effortLabel(effort: string) {
     return effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
-export function DesktopSettings({ providers, workspaceName, onSave, onProviders }: Props) {
-    const [tab, setTab] = useState<typeof panels[number]>('AI providers')
+export function DesktopSettings({ providers, workspaceName, onSave, onProviders, initialTab }: Props) {
+    const [tab, setTab] = useState<typeof panels[number]>(initialTab ?? 'AI providers')
     const [source, setSource] = useState(providers.connections.find(c => c.id === providers.default?.connectionId)?.id ?? providers.connections[0]?.id ?? 'add:openai')
     const [key, setKey] = useState('')
     const [name, setName] = useState(workspaceName)
@@ -51,6 +53,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders 
         setError('')
         try {
             await onSave(change)
+            if (change.action === 'workspace') await flushDesktopWorkspaceMetadata().catch(() => {})
             if (change.action === 'key') setKey('')
             setNotice(message)
         } catch (cause) {

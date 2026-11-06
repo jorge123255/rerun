@@ -1,4 +1,7 @@
 import 'server-only'
+import { seedDesktopWorkspaceMetadataOutbox } from './workspaces/metadata'
+import { readDesktopWorkspaceIconSelection, writeDesktopWorkspaceIcon } from './workspace-icon'
+import { desktopWorkspaceIconById } from '../icon-catalog'
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
@@ -10,6 +13,7 @@ import { initializeDesktopSpaces } from './spaces'
 import { initializeDesktopDataPreferences } from './data-preferences-db'
 import { initializeDesktopMcp } from './mcp/schema'
 import { ensureDesktopPrivateFileToolsSchema } from './private-file-tools/schema'
+import { initializeDesktopRound35 } from './round35-schema'
 import { initializeDesktopRound34 } from './round34-schema'
 import { initializeDesktopRound33 } from './round33-schema'
 import { initializeDesktopRound32 } from './round32-schema'
@@ -230,9 +234,12 @@ async function initialize(dataRoot: string): Promise<Client> {
     if (!draftColumns.rows.some(row => row.name === 'attachment_items'))
         await client.execute('ALTER TABLE desktop_composer_drafts ADD COLUMN attachment_items TEXT')
     const now = new Date().toISOString()
-    await client.batch([
+    const nativeContext = process.env.RERUN_DESKTOP_APP === '1' && process.env.RERUN_DESKTOP_DATA_DIR && resolve(process.env.RERUN_DESKTOP_DATA_DIR) === resolve(dataRoot)
+    const assignedName = nativeContext ? process.env.RERUN_DESKTOP_WORKSPACE_NAME?.trim() : undefined
+    const initialName = assignedName && assignedName.length <= 60 ? assignedName : 'My workspace'
+    const seeded = await client.batch([
         { sql: 'INSERT OR IGNORE INTO desktop_profile (id, display_name, created_at, updated_at) VALUES (1, ?, ?, ?)', args: ['Local User', now, now] },
-        { sql: 'INSERT OR IGNORE INTO desktop_workspace (id, profile_id, name, created_at, updated_at) VALUES (1, 1, ?, ?, ?)', args: ['My workspace', now, now] },
+        { sql: 'INSERT OR IGNORE INTO desktop_workspace (id, profile_id, name, created_at, updated_at) VALUES (1, 1, ?, ?, ?)', args: [initialName, now, now] },
     ], 'write')
     await ensureDesktopComposerUploadsSchema(client)
     await initializeDesktopNotifications(client)
@@ -251,6 +258,14 @@ async function initialize(dataRoot: string): Promise<Client> {
     await initializeDesktopRound32(client)
     await initializeDesktopRound33(client)
     await initializeDesktopRound34(client)
+    await initializeDesktopRound35(client)
+    if (nativeContext) {
+        const assignedIcon = process.env.RERUN_DESKTOP_WORKSPACE_ICON
+        if (seeded[1].rowsAffected && assignedIcon && desktopWorkspaceIconById(assignedIcon)) await writeDesktopWorkspaceIcon(client, { name: initialName, catalogId: assignedIcon })
+        const name = String((await client.execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0].name)
+        const saved = await readDesktopWorkspaceIconSelection(client)
+        await seedDesktopWorkspaceMetadataOutbox(client, name, saved.iconCatalogId)
+    }
     return client
 }
 

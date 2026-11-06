@@ -19,6 +19,7 @@ export type DesktopForemanPersistedUi = {
     build: DesktopForemanBuildProgressView | null
     discoveries: DesktopDiscoveriesState | null
     pendingSend?: { requestId: string; text: string; modelChoice: import('@rerun/contracts').DesktopForemanModelRef | null }
+    dock?: import('@/lib/desktop/foreman-dock/layout').DockExtras
     placement: DesktopForemanPlacement
 }
 

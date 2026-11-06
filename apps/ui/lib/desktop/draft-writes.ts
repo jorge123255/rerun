@@ -19,6 +19,8 @@ const admissions = new Set<Promise<void>>()
 const shutdownListeners = new Set<() => void>()
 let quitting = false
 export const isDesktopQuitting = () => quitting
+/** Stop new effects before custody drains; listeners run later in the canonical draft flush. */
+export function freezeDesktopAdmissions() { quitting = true }
 export function subscribeDraftShutdown(listener: () => void) { shutdownListeners.add(listener); return () => { shutdownListeners.delete(listener) } }
 export function cancelDraftShutdown() { quitting = false; for (const listener of shutdownListeners) listener() }
 const empty = (): DraftState => ({ text: '', loaded: false, saving: false, version: 0, conflict: false })
@@ -171,7 +173,7 @@ export function holdDraftAdmission() {
 }
 
 export async function flushDesktopDrafts(): Promise<boolean> {
-    quitting = true
+    freezeDesktopAdmissions()
     for (const listener of shutdownListeners) listener()
     while (true) {
         await Promise.all([...admissions])

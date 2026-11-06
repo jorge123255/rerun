@@ -1,4 +1,5 @@
 import 'server-only'
+import { saveDesktopWorkspaceMetadataOutbox } from './workspaces/metadata'
 import type { Client } from '@libsql/client'
 import { z } from 'zod'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
@@ -129,6 +130,7 @@ export async function writeDesktopWorkspaceIcon(db: Client, input: DesktopWorksp
         })
         if (catalogId !== undefined) await transaction.execute('DELETE FROM desktop_workspace_icon_bytes WHERE identity NOT IN (SELECT upload_id FROM desktop_workspace_icon WHERE upload_id IS NOT NULL)')
         const result = await committedDesktopWorkspaceIcon(transaction)
+        await saveDesktopWorkspaceMetadataOutbox(transaction, result.name, result.catalogId)
         await transaction.commit()
         return result
     } finally { transaction.close() }
@@ -176,6 +178,7 @@ export async function writeDesktopWorkspaceLogoUpload(db: Client, input: { name:
         })
         await transaction.execute('DELETE FROM desktop_workspace_icon_bytes WHERE identity NOT IN (SELECT upload_id FROM desktop_workspace_icon WHERE upload_id IS NOT NULL)')
         const result = await committedDesktopWorkspaceIcon(transaction)
+        await saveDesktopWorkspaceMetadataOutbox(transaction, result.name, result.catalogId)
         await transaction.commit()
         return result
     } finally { transaction.close() }

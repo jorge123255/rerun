@@ -1,3 +1,4 @@
+import { desktopEngineParts } from './runtime'
 import 'server-only'
 import { constants, type BigIntStats } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
@@ -99,7 +100,7 @@ async function withStore<T>(runtime: DesktopRuntime, agentId: string, create: bo
     }
     try {
         await remember(base, handle)
-        for (const name of ['workspaces', '1', 'engine', 'agents', coworker.engineAgentId, 'chat-images']) {
+        for (const name of [...desktopEngineParts(runtime), 'agents', coworker.engineAgentId, 'chat-images']) {
             await assertCurrent()
             const pinnedChild = pathAt(await pinnedDirectory(handle), name)
             let childInfo = await stat(pinnedChild)

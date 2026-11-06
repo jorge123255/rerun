@@ -17,7 +17,7 @@ async function fixture() {
     const folder = join(root, 'workspaces/1/engine/shared'); await mkdir(folder, { recursive: true })
     const path = join(folder, "Bob's report;final.zip"); await writeFile(path, 'safe')
     const info = await stat(path, { bigint: true })
-    const input = { runtime: { dataRoot: root } as DesktopRuntime, agentId: owner.id, engineAgentId: 'owner', path: "Bob's report;final.zip", scope: 'shared' as const,
+    const input = { runtime: { dataRoot: root, workspaceId: 1 } as DesktopRuntime, agentId: owner.id, engineAgentId: 'owner', path: "Bob's report;final.zip", scope: 'shared' as const,
         identity: `${info.dev}:${info.ino}`, size: 4, signal: new AbortController().signal }
     return { root, db, owner, folder, path, input }
 }

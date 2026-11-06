@@ -650,7 +650,10 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
         const chat = { workspaceId: binding.workspaceId, chatId: binding.chatId }
         const created = await tx(async db => {
             const existing = await db.discovery(binding.chatId, binding.runId)
-            if (existing) return { run: existing, fresh: false }
+            if (existing) {
+                if (existing.url !== parsed.toString()) throw new ForemanError('conflict', 'This run already researched another website. Start a new message for a different company.')
+                return { run: existing, fresh: false }
+            }
             const run: DesktopForemanDiscoveryRun = { discoveryId: newId('fmx'), chat, runId: binding.runId, url: parsed.toString(), status: 'running', pending: [], unavailable: [], findings: [] }
             await db.putDiscovery(run)
             return { run, fresh: true }
@@ -684,7 +687,7 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
         const work = (async () => {
             try {
                 if (!collect) for (const source of DESKTOP_DISCOVERY_SOURCES) apply({ type: 'unavailable', source })
-                else await collect({ url: parsed.toString(), signal: controller.signal, emit: apply })
+                else await collect({ binding, discoveryId: created.run.discoveryId, url: parsed.toString(), signal: controller.signal, emit: apply })
                 apply({ type: 'end' })
                 await queue
             } catch {
@@ -709,5 +712,5 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
         await discoveryWork.get(discoveryId)
     }
 
-    return { recordShownPlan, decide, recoverDecision, buildAction, runBuild, reconcileBuild, reconcile, readView, emitNavigation, startDiscovery, stopDiscovery }
+    return { waitDiscovery: async (discoveryId: string) => { await discoveryWork.get(discoveryId) }, recordShownPlan, decide, recoverDecision, buildAction, runBuild, reconcileBuild, reconcile, readView, emitNavigation, startDiscovery, stopDiscovery }
 }

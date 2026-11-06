@@ -63,6 +63,7 @@ export const desktopWorkspaceSwitchPhaseSchema = z.enum([
     'admissions_frozen',
     'drafts_flushed',
     'work_drained',
+    'old_runtime_closing',
     'old_runtime_closed',
     'target_starting',
     'identity_verified',

@@ -8,7 +8,7 @@ import { canonicalJson, sha256 } from './hash.js'
 import type { PortableArtifactIdentity } from './portable-export.js'
 import { readOwnJson, requestHome, writeOwnJson } from './store.js'
 
-const ownerSchema = z.strictObject({ installId: z.uuid(), workspaceId: z.literal(1) })
+const ownerSchema = z.strictObject({ installId: z.uuid(), workspaceId: z.number().int().positive() })
 const fileNameSchema = z.string().min(1).max(180).refine(value => !/[\\/\p{Cc}]/u.test(value))
 const storedSchema = z.strictObject({
     version: z.literal(1), owner: ownerSchema, fileName: fileNameSchema,
@@ -28,6 +28,7 @@ export function createDesktopPortableFileStore(dataRoot: string) {
     const currentOwner = async () => {
         const owner = ownerSchema.safeParse(await readOwnJson(dataRoot, 'desktop-owner.json'))
         if (!owner.success) throw new TemplateRequestError(503, 'Template file storage is not bound to this workspace')
+        if (process.env.RERUN_DESKTOP_WORKSPACE_ID && owner.data.workspaceId !== Number(process.env.RERUN_DESKTOP_WORKSPACE_ID)) throw new TemplateRequestError(409, 'Template workspace identity changed')
         return owner.data
     }
     const assertOwner = async (record: z.infer<typeof storedSchema>) => {

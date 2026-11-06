@@ -1,3 +1,4 @@
+import { initializeDesktopCompanyBriefStore } from '../../desktop/company-brief/runtime.js'
 import { bindDesktopComputerPanel } from '../../desktop/computer-panel/binding.js'
 import { bindDesktopGuestShell } from '../../desktop/guest-shell/runtime.js'
 import { bindDesktopClaudePlanAuth } from '../../desktop/claude-plan/auth.js'
@@ -48,8 +49,8 @@ const origin = z.string().url().refine(value => {
     return url.protocol === 'http:' && url.hostname === '127.0.0.1' && !!url.port && url.origin === value
 })
 const runtimeSchema = z.object({
-    protocolVersion: z.literal(1), launchNonce: z.string().uuid(), buildId: z.string().min(1), workspaceId: z.literal(1),
-    dataRoot: z.string(), app: z.object({ origin, sessionToken: secret }), engine: z.object({ origin, apiKey: secret }),
+    protocolVersion: z.literal(1), launchNonce: z.string().uuid(), buildId: z.string().min(1), workspaceId: z.number().int().positive(),
+    dataRoot: z.string(), engineRoot: z.string().optional(), installRoot: z.string().optional(), installId: z.string().uuid().optional(), app: z.object({ origin, sessionToken: secret }), engine: z.object({ origin, apiKey: secret }),
 })
 
 export async function desktopRunCommand(): Promise<void> {
@@ -59,10 +60,23 @@ export async function desktopRunCommand(): Promise<void> {
     if (config.RERUN_HOST !== '127.0.0.1' || Number(new URL(runtime.engine.origin).port) !== config.RERUN_PORT || config.RERUN_HUB_BASE_URL !== runtime.app.origin) throw new Error('Desktop engine address mismatch')
     if (!config.RERUN_API_KEY || config.RERUN_API_KEY.length !== 64 || !timingSafeEqual(Buffer.from(config.RERUN_API_KEY), Buffer.from(runtime.engine.apiKey))) throw new Error('Desktop engine credential mismatch')
     if (!secret.safeParse(process.env.RERUN_DESKTOP_SECRET_KEY).success) throw new Error('Desktop credential encryption is unavailable')
-    if (await realpath(config.RERUN_DATA_DIR) !== await realpath(resolve(runtime.dataRoot, 'workspaces', '1', 'engine'))) throw new Error('Desktop engine data root mismatch')
+    if (runtime.workspaceId !== Number(process.env.RERUN_DESKTOP_WORKSPACE_ID ?? 1)) throw new Error('Desktop workspace identity mismatch')
+    const installRoot = resolve(process.env.RERUN_DESKTOP_INSTALL_DIR ?? runtime.dataRoot)
+    if (runtime.installRoot && resolve(runtime.installRoot) !== installRoot) throw new Error('Desktop install root mismatch')
+    const expectedContext = runtime.workspaceId === 1 ? installRoot : resolve(installRoot, 'workspaces', String(runtime.workspaceId))
+    if (resolve(runtime.dataRoot) !== expectedContext) throw new Error('Desktop workspace data root mismatch')
+    const expectedEngineRoot = resolve(installRoot, 'workspaces', String(runtime.workspaceId), 'engine')
+    if (runtime.engineRoot && resolve(runtime.engineRoot) !== expectedEngineRoot) throw new Error('Desktop engine root escaped its workspace')
+    if (runtime.workspaceId !== 1 && !runtime.engineRoot) throw new Error('Desktop engine storage identity is missing')
+    if (await realpath(config.RERUN_DATA_DIR) !== await realpath(expectedEngineRoot)) throw new Error('Desktop engine data root mismatch')
+    if (runtime.workspaceId !== 1 && !runtime.installId) throw new Error('Desktop workspace install identity is missing')
+    const owner = z.object({ installId: z.string().uuid(), workspaceId: z.number().int().positive() }).parse(JSON.parse(await readFile(resolve(expectedEngineRoot, 'desktop-owner.json'), 'utf8')))
+    if (owner.workspaceId !== runtime.workspaceId || runtime.installId && owner.installId !== runtime.installId) throw new Error('Desktop engine owner mismatch')
     await prepareDataDir()
     await ensureForeman()
     await initializeDesktopBrainStore()
+    // The schema version persists, but this process-local binding must be recreated.
+    await initializeDesktopCompanyBriefStore()
     const lifetime = new AbortController()
     let triggers: Awaited<ReturnType<typeof createDesktopTriggerRuntime>> | undefined
     let triggerTools: ReturnType<typeof createDesktopTriggerToolRuntime> | undefined
@@ -85,7 +99,7 @@ export async function desktopRunCommand(): Promise<void> {
         if (!desktopRouteAllowed(c.req.method, c.req.path)) return c.json({ error: 'This feature is not enabled in the desktop preview' }, 403)
         return next()
     })
-    const ready = { status: 'ready', protocolVersion: 1, launchNonce: runtime.launchNonce, buildId: runtime.buildId, workspaceId: 1 }
+    const ready = { status: 'ready', protocolVersion: 1, launchNonce: runtime.launchNonce, buildId: runtime.buildId, workspaceId: runtime.workspaceId }
     const claudeLogin = bindDesktopClaudePlanAuth(runtime.launchNonce)
     app.get('/desktop/claude-login', async c => c.json(await claudeLogin.status()))
     app.post('/desktop/claude-login', async c => {

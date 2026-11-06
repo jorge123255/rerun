@@ -296,3 +296,16 @@ test('selected coworker IDs persist with the exact draft body and another tab ca
     await drafts.saveDesktopDraft(restored)
     expect(restored.state.coworkerMentions).toEqual([])
 })
+
+
+test('freezes admission synchronously without notifying cancellation owners before custody is saved', async () => {
+    const notify = vi.fn()
+    const unsubscribe = drafts.subscribeDraftShutdown(notify)
+    try {
+        drafts.freezeDesktopAdmissions()
+        expect(drafts.isDesktopQuitting()).toBe(true)
+        expect(notify).not.toHaveBeenCalled()
+        expect(await drafts.flushDesktopDrafts()).toBe(true)
+        expect(notify).toHaveBeenCalledTimes(1)
+    } finally { unsubscribe(); drafts.cancelDraftShutdown() }
+})

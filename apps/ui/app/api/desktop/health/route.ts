@@ -10,7 +10,7 @@ export async function GET(request: Request): Promise<Response> {
             protocolVersion: 1,
             launchNonce: runtime.launchNonce,
             buildId: runtime.buildId,
-            workspaceId: 1,
+            workspaceId: runtime.workspaceId,
             status: 'ready',
         })
     })

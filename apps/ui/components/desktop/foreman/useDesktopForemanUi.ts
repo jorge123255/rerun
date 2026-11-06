@@ -51,7 +51,7 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
         chat: { workspaceId: chat.workspaceId, chatId: chat.chatId },
         state: initialState(chat, initialOpen), active: false, generation: 0,
         controllers: new Set<AbortController>(), discoveryVersion: 0,
-        earlyUi: {} as Partial<Pick<DesktopForemanPersistedUi, 'open' | 'tab' | 'placement'>>,
+        earlyUi: {} as Partial<Pick<DesktopForemanPersistedUi, 'open' | 'tab' | 'placement' | 'dock'>>,
         sending: false,
         buildAction: null as { action: 'stop' | 'resume'; requestId: string; buildId: string } | null,
         buildBusy: false,
@@ -160,18 +160,27 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
     const setOpen = useCallback((open: boolean) => {
         if (!valid()) return
         owner.earlyUi.open = open
+        if (owner.state.ui.open === open) return
         commit(state => ({ ...state, ui: { ...state.ui, open } }))
         if (!open) onClose?.()
     }, [owner, commit, onClose, valid])
     const setTab = useCallback((tab: DesktopForemanUiTab) => {
         owner.earlyUi.tab = tab
+        if (owner.state.ui.tab === tab) return
         commit(state => ({ ...state, ui: { ...state.ui, tab } }))
     }, [owner, commit])
     const setDraft = useCallback((draft: string) => {
         if (!isDesktopQuitting() && owner.state.restored) commit(state => ({ ...state, ui: { ...state.ui, draft } }))
     }, [owner, commit])
+    const setDock = useCallback((dock: import('@/lib/desktop/foreman-dock/layout').DockExtras) => {
+        if (!valid()) return
+        owner.earlyUi.dock = dock
+        if (JSON.stringify(owner.state.ui.dock) === JSON.stringify(dock)) return
+        commit(state => ({ ...state, ui: { ...state.ui, dock } }))
+    }, [owner, commit, valid])
     const setPlacement = useCallback((placement: DesktopForemanPlacement) => {
         owner.earlyUi.placement = placement
+        if (JSON.stringify(owner.state.ui.placement) === JSON.stringify(placement)) return
         commit(state => ({ ...state, ui: { ...state.ui, placement } }))
     }, [owner, commit])
     useEffect(() => {
@@ -301,7 +310,7 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
     return {
         ui, restored, planSnapshot, build, discoveries, leadState, blocked, error,
         nextSteps: projectForemanNextSteps(build), live: isLiveForemanView(live),
-        setOpen, setTab, setDraft, setPlacement, sendMessage, stop, actOnBuild, buildBusy: owner.buildBusy,
+        setOpen, setTab, setDraft, setPlacement, setDock, sendMessage, stop, actOnBuild, buildBusy: owner.buildBusy,
         clearDecision: () => { if (owner.state.ui.decision.status !== 'pending' && owner.state.ui.decision.status !== 'uncertain') commit(state => ({ ...state, ui: { ...state.ui, decision: { status: 'idle' } } })) },
         confirmPlan: () => void submitDecision('confirm'), askChanges: (feedback?: string) => void submitDecision('ask_changes', feedback),
         retryDecision: () => { const request = retryPlanDecisionRequest(owner.state.ui.decision); if (request) void submitDecision(request.decision, request.decision === 'ask_changes' ? request.feedback : undefined) },

@@ -41,12 +41,15 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, onOp
     const [saving, setSaving] = useState<string[]>([])
     const [renamingKey, setRenamingKey] = useState<string | null>(null)
     const [heldNextRuns, setHeldNextRuns] = useState<Record<string, string | null>>({})
-    const [editing, setEditing] = useState<{ routine: DesktopWorkspaceRoutine; externalChange: boolean } | null>(null)
+    const [editing, setEditing] = useState<{ routine: DesktopWorkspaceRoutine; externalChange: boolean; generation: number } | null>(null)
     const now = useNow(30_000)
     const loaded = useRef(false)
     const listEpoch = useRef(0)
     const previousWorkingSessions = useRef(workingSessions)
     const requestIds = useRef(new Map<string, string>())
+    const acting = useRef(new Set<string>())
+    const lifetime = useRef(0)
+    useEffect(() => { ++lifetime.current; return () => { ++lifetime.current } }, [client, active])
 
     const load = useCallback(async () => {
         const own = ++listEpoch.current
@@ -74,7 +77,8 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, onOp
         const settle = loaded.current && previousWorkingSessions.current !== workingSessions ? RUN_SETTLE_MS : 0
         previousWorkingSessions.current = workingSessions
         const timer = setTimeout(() => { void load() }, settle)
-        return () => { listEpoch.current++; clearTimeout(timer) }
+        const poll = setInterval(() => { void load() }, 2500)
+        return () => { listEpoch.current++; clearTimeout(timer); clearInterval(poll) }
     }, [active, refreshKey, workingSessions, load])
 
     const upToDate = useMemo(() => {
@@ -84,7 +88,7 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, onOp
             const key = routineKey(routine)
             const held = heldNextRuns[key]
             const stillHeld = key in heldNextRuns && (held === null || new Date(held).getTime() > now)
-            return { ...routine, nextRunAt: stillHeld ? held : nextRunAt(routine, at) }
+            return { ...routine, nextRunAt: stillHeld ? held : nextRunAt({ ...routine, lastRunAt: routine.lastRunAt ?? null }, at) }
         })
     }, [data, now, heldNextRuns])
 
@@ -104,7 +108,7 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, onOp
         patch(key, { enabled })
         setSaving(current => [...current, key])
         try {
-            const result = await client.mutate({ action: 'toggle', agentId: routine.agentId, slug: routine.slug, expectedRevision: routine.revision, requestId: requestId(`toggle:${routine.revision}`, routine.revision), enabled })
+            const result = await client.mutate({ action: 'toggle', agentId: routine.agentId, slug: routine.slug, expectedRevision: routine.revision, requestId: requestId(`toggle:${routine.agentId}:${routine.slug}:${enabled}`, routine.revision), enabled })
             patch(key, result.routine)
             await load()
         } catch (cause) {
@@ -120,7 +124,7 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, onOp
         setRenamingKey(null)
         patch(key, { name })
         try {
-            const result = await client.mutate({ action: 'rename', agentId: routine.agentId, slug: routine.slug, expectedRevision: routine.revision, requestId: requestId(`rename:${routine.revision}`, routine.revision), name })
+            const result = await client.mutate({ action: 'rename', agentId: routine.agentId, slug: routine.slug, expectedRevision: routine.revision, requestId: requestId(`rename:${routine.agentId}:${routine.slug}:${name}`, routine.revision), name })
             patch(key, result.routine)
             await load()
         } catch (cause) {
@@ -130,17 +134,26 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, onOp
     }
 
     const runNow = async (routine: DesktopWorkspaceRoutine) => {
+        const key = `run:${routine.agentId}:${routine.slug}:${routine.revision}`
+        if (!active || acting.current.has(key)) return
+        acting.current.add(key)
+        const own = lifetime.current
+        const id = requestId(key, routine.revision)
         try {
-            const result = await client.mutate({ action: 'run', agentId: routine.agentId, slug: routine.slug, expectedRevision: routine.revision, requestId: requestId(`run:${routine.revision}`, routine.revision) })
+            const result = await client.mutate({ action: 'run', agentId: routine.agentId, slug: routine.slug, expectedRevision: routine.revision, requestId: id })
+            // An acknowledged run ends this attempt. A later human click starts another,
+            // while an unknown acknowledgement retains this exact request for retry.
+            requestIds.current.delete(`${key}:${routine.revision}`)
+            if (own !== lifetime.current) return
             if (result.chat) onOpenChat(result.chat)
             else toast.success(`${routine.name} started`)
             await load()
         } catch (cause) {
-            toast.error(`Couldn't run ${routine.name}`, { description: cause instanceof Error ? cause.message : undefined })
-        }
+            if (own === lifetime.current) toast.error(`Couldn't run ${routine.name}`, { description: cause instanceof Error ? cause.message : undefined })
+        } finally { acting.current.delete(key) }
     }
 
-    const openEditor = (routine: DesktopWorkspaceRoutine) => setEditing({ routine, externalChange: false })
+    const openEditor = (routine: DesktopWorkspaceRoutine) => setEditing({ routine, externalChange: false, generation: 0 })
     const openResult = (routine: DesktopWorkspaceRoutine) => {
         if (routine.lastResult?.chat) onOpenChat(routine.lastResult.chat)
         else if (onOpenRoutine) onOpenRoutine(routine)
@@ -149,7 +162,7 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, onOp
     const saveEdit = async (input: DesktopScheduleEditInput) => {
         if (!editing || editing.externalChange) return
         const routine = editing.routine
-        const result = await client.mutate({ action: 'edit', agentId: routine.agentId, slug: routine.slug, expectedRevision: routine.revision, requestId: requestId(`edit:${routine.revision}`, routine.revision), input })
+        const result = await client.mutate({ action: 'edit', agentId: routine.agentId, slug: routine.slug, expectedRevision: routine.revision, requestId: requestId(`edit:${routine.agentId}:${routine.slug}:${JSON.stringify(input)}`, routine.revision), input })
         setEditing(null)
         patch(routineKey(routine), result.routine)
         await load()
@@ -158,13 +171,14 @@ export function DesktopWorkspaceRoutines({ client, agentNameOf, onOpenChat, onOp
     if (editing) {
         const latest = data?.routines.find(routine => routineKey(routine) === routineKey(editing.routine))
         return <DesktopWorkspaceRoutineEditor
-            routine={latest ?? editing.routine}
+            key={`${editing.routine.agentId}:${editing.routine.slug}:${editing.generation}`}
+            routine={editing.routine}
             externalChange={editing.externalChange}
             onBack={() => setEditing(null)}
             onSave={saveEdit}
             onRun={runNow}
-            onRefresh={() => setEditing(latest ? { routine: latest, externalChange: false } : null)}
-            onKeep={() => setEditing(current => current ? { ...current, externalChange: false } : null)}
+            onRefresh={() => setEditing(latest ? { routine: latest, externalChange: false, generation: editing.generation + 1 } : null)}
+            onKeep={() => setEditing(current => current && latest ? { ...current, routine: latest, externalChange: false } : current)}
         />
     }
     if (!upToDate || !data) return <RoutinesSkeleton className={className} />

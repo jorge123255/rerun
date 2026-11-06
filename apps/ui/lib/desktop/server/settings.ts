@@ -1,4 +1,5 @@
 import 'server-only'
+import { writeDesktopWorkspaceIcon } from './workspace-icon'
 import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS } from '@rerun/contracts'
 import { createConnection, listConnections, patchConnection, setBoxDefault, updateConnectionKeys } from '@/lib/engine/client'
 import { desktopProvider, type SettingsChange } from '../settings'
@@ -66,7 +67,7 @@ async function applyChange(runtime: DesktopRuntime, change: SettingsChange) {
     }
     if (change.action === 'workspace') {
         const db = await openDesktopDatabase(runtime.dataRoot)
-        await db.execute({ sql: 'UPDATE desktop_workspace SET name = ?, updated_at = ? WHERE id = 1', args: [change.name, new Date().toISOString()] })
+        await writeDesktopWorkspaceIcon(db, { name: change.name })
         return
     }
     const engine = engineOf(runtime)

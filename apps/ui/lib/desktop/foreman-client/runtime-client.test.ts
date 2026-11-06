@@ -71,7 +71,7 @@ it('recovers only an exact saved snapshot after a lost UI ACK and then advances 
 })
 it('refuses foreign state and hides context parts from restored transcript', async () => {
     server.messages = [{ id: 'one', role: 'user', parts: [{ type: 'text', text: 'Visible message' }, { type: 'text', text: 'private context', providerOptions: { rerun: { context: true } } }] }]
-    expect(desktopForemanMessages(await readDesktopForemanState())).toEqual([{ id: 'one', role: 'user', text: 'Visible message' }])
+    expect(desktopForemanMessages(await readDesktopForemanState())).toEqual([{ id: 'one', role: 'user', text: 'Visible message', docs: [] }])
     server.view.chat = { ...chat, chatId: 'fmc_otherchat' }
     await expect(readDesktopForemanState()).rejects.toThrow()
 })
@@ -137,4 +137,12 @@ it('serializes explicit Ask against normal composer send and forwards cancellati
     expect(await client.ports.conversation.sendMessage('second')).toBe(false)
     abort.abort(); await failure
     expect(server.ui.snapshot?.pendingSend?.text).toBe('first')
+})
+
+
+it('retains static and dynamic documentation parts while omitting unrelated restored tool details', () => {
+    const state = initial()
+    state.messages = [{ id: 'docs', role: 'assistant', parts: [{ type: 'dynamic-tool', toolName: 'search_docs', toolCallId: 'docs-1', state: 'output-available', output: {} }, { type: 'tool-search_docs', toolCallId: 'docs-2', state: 'output-available', output: {} }, { type: 'tool-unrelated', output: 'private detail' }] }]
+    expect(desktopForemanMessages(state)[0].docs).toHaveLength(2)
+    expect(JSON.stringify(desktopForemanMessages(state))).not.toContain('private detail')
 })

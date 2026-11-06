@@ -1,3 +1,6 @@
+import { shutdownDesktopForeman } from './foreman/binding'
+import { shutdownDesktopForemanVoice } from './foreman-voice/binding'
+import { canonicalDesktopEngineRoot, desktopEngineParts } from './runtime'
 import 'server-only'
 import { createCanonicalMcpSecretReferences } from './mcp-secret-references/binding'
 import type { DesktopMcpMaterialSource } from './mcp-secret-references/lease'
@@ -122,9 +125,10 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (!/^[A-Za-z0-9_-]+$/.test(owner.engineId)) throw new Error('Invalid coworker identity')
         const detail = authority.parse(await engineJson(`/agents/${encodeURIComponent(owner.engineId)}`, stop))
         const root = await realpath(/* turbopackIgnore: true */ runtime.dataRoot)
-        const workspaceRoot = join(/* turbopackIgnore: true */ root, 'workspaces', '1', 'engine', 'agents', owner.engineId, 'workspace')
+        const engineRoot = await canonicalDesktopEngineRoot(runtime)
+        const workspaceRoot = join(/* turbopackIgnore: true */ engineRoot, 'agents', owner.engineId, 'workspace')
         // Every ancestor must be canonical, so a swapped agent directory cannot alias a sibling.
-        for (const path of [join(/* turbopackIgnore: true */ root, 'workspaces'), join(/* turbopackIgnore: true */ root, 'workspaces', '1'), join(/* turbopackIgnore: true */ root, 'workspaces', '1', 'engine'), join(/* turbopackIgnore: true */ root, 'workspaces', '1', 'engine', 'agents'), join(/* turbopackIgnore: true */ root, 'workspaces', '1', 'engine', 'agents', owner.engineId), workspaceRoot]) {
+        for (const path of [root, ...desktopEngineParts(runtime).map((_, i, parts) => join(/* turbopackIgnore: true */ root, ...parts.slice(0, i + 1))), join(/* turbopackIgnore: true */ engineRoot, 'agents'), join(/* turbopackIgnore: true */ engineRoot, 'agents', owner.engineId), workspaceRoot]) {
             const stat = await lstat(/* turbopackIgnore: true */ path)
             if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || await realpath(/* turbopackIgnore: true */ path) !== path) throw new Error('Coworker workspace unavailable')
         }
@@ -337,7 +341,12 @@ export async function handleDesktopMcpBridge(request: Request): Promise<Response
         const runtime = await authenticateDesktopEngineRequest(request)
         const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10_000)])
         const body = desktopMcpBridgeRequest.parse(JSON.parse(await boundedText(new Response(request.body), signal, 96_000)))
-        if (body.action === 'shutdown') { await shutdownDesktopRemoteMcp(runtime); return Response.json({ stopped: true }, { headers: { 'Cache-Control': 'no-store' } }) }
+        if (body.action === 'shutdown') {
+            const outcomes = await Promise.allSettled([shutdownDesktopForeman(runtime), shutdownDesktopForemanVoice(runtime), shutdownDesktopRemoteMcp(runtime)])
+            const failures = outcomes.filter((item): item is PromiseRejectedResult => item.status === 'rejected')
+            if (failures.length) throw new AggregateError(failures.map(item => item.reason), 'Workspace shutdown is not confirmed')
+            return Response.json({ stopped: true }, { headers: { 'Cache-Control': 'no-store' } })
+        }
         const service = await getDesktopRemoteMcpService(runtime)
         const result = await service.bridge.handle(body, request.signal)
         return Response.json(result, { headers: { 'Cache-Control': 'no-store' } })

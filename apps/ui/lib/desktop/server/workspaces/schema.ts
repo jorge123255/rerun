@@ -6,7 +6,7 @@ import 'server-only'
  * cold-launch source of truth; these tables optionally mirror catalog rows for SQL
  * joins once root activates W1.
  *
- * Suggested next version after round33's 24: version 25, id 'local-workspace-catalog'.
+ * Optional mirror proposal after Round35 root migrations: version 30, id 'local-workspace-catalog'.
  */
 export const DESKTOP_LOCAL_WORKSPACES_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS desktop_local_workspaces (
@@ -45,7 +45,7 @@ SELECT 1, 1, NULL, COALESCE((SELECT updated_at FROM desktop_workspace WHERE id =
 `
 
 export const DESKTOP_LOCAL_WORKSPACES_MIGRATION = {
-    version: 25,
+    version: 30,
     id: 'local-workspace-catalog',
     sql: DESKTOP_LOCAL_WORKSPACES_SCHEMA_SQL,
 } as const

@@ -3,8 +3,9 @@ import { spawn } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
 import { resolve } from 'node:path'
-import { rm } from 'node:fs/promises'
-import { atomicPrivateJSON, bindWorkspace, childEnvironment, publicStatus, PROTOCOL_VERSION } from './runtime.mjs'
+import { rm, realpath } from 'node:fs/promises'
+import { workspaceDirectory, validWorkspaceId } from './workspaces/paths.mjs'
+import { atomicPrivateJSON, bindWorkspace, childEnvironment, publicStatus, PROTOCOL_VERSION, workspaceIdentity } from './runtime.mjs'
 
 const wait = ms => new Promise(done => setTimeout(done, ms))
 
@@ -59,6 +60,15 @@ export class RuntimeSupervisor extends EventEmitter {
         return child
     }
 
+    startFor(workspaceId, metadata = {}) {
+        if (!validWorkspaceId(workspaceId)) return Promise.reject(new Error('Invalid workspace identity'))
+        if (this.operation && this.workspaceId !== workspaceId) return Promise.reject(new Error('Another workspace is starting'))
+        if (this.runtime && this.runtime.workspaceId !== workspaceId) return Promise.reject(new Error('Close the active workspace before starting another'))
+        this.workspaceId = workspaceId
+        this.workspaceMetadata = metadata
+        return this.start()
+    }
+
     start() {
         if (this.unconfirmedEngineExit) return Promise.reject(new Error('Engine cleanup was not confirmed'))
         if (this.operation) return this.operation
@@ -70,7 +80,11 @@ export class RuntimeSupervisor extends EventEmitter {
     async startServices() {
         this.stopping = false
         this.publish('starting', 'Starting your local workspace…')
-        const engineRoot = await bindWorkspace(this.root, this.identity)
+        const workspaceId = this.workspaceId ?? 1
+        const installRoot = await realpath(this.root)
+        const engineRoot = await bindWorkspace(installRoot, this.identity, workspaceId)
+        const dataRoot = workspaceId === 1 ? installRoot : workspaceDirectory(installRoot, workspaceId)
+        const identity = workspaceIdentity(this.identity, workspaceId)
         for (let attempt = 0; attempt < 3; attempt++) {
             this.startupAbort = new AbortController()
             try {
@@ -79,17 +93,17 @@ export class RuntimeSupervisor extends EventEmitter {
                 while (enginePort === uiPort) enginePort = await this.port()
                 const runtime = {
                     protocolVersion: PROTOCOL_VERSION, launchNonce: randomUUID(), buildId: this.bundle.buildId,
-                    workspaceId: 1, dataRoot: this.root,
+                    workspaceId, installId: identity.installId, installRoot, dataRoot, engineRoot,
                     app: { origin: `http://127.0.0.1:${uiPort}`, sessionToken: randomBytes(32).toString('hex') },
-                    engine: { origin: `http://127.0.0.1:${enginePort}`, apiKey: this.identity.engineApiKey },
+                    engine: { origin: `http://127.0.0.1:${enginePort}`, apiKey: identity.engineApiKey },
                 }
                 const runtimeFile = resolve(this.root, 'runtime.json')
                 await atomicPrivateJSON(runtimeFile, runtime)
-                const shared = { ...childEnvironment(), RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_DATA_DIR: this.root, RERUN_DESKTOP_RUNTIME_FILE: runtimeFile, RERUN_DESKTOP_SECRET_KEY: this.identity.encryptionKey }
+                const shared = { ...childEnvironment(), RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_DATA_DIR: dataRoot, RERUN_DESKTOP_RUNTIME_FILE: runtimeFile, RERUN_DESKTOP_SECRET_KEY: identity.encryptionKey, RERUN_DESKTOP_WORKSPACE_ID: String(workspaceId), RERUN_DESKTOP_INSTALL_ROOT: installRoot, RERUN_DESKTOP_INSTALL_DIR: installRoot, RERUN_DESKTOP_ENGINE_ROOT: engineRoot, RERUN_DESKTOP_WORKSPACE_NAME: this.workspaceMetadata?.name || 'My workspace', RERUN_DESKTOP_WORKSPACE_ICON: this.workspaceMetadata?.iconCatalogId || '', RERUN_DESKTOP_ADMISSIONS_FROZEN: this.workspaceMetadata?.frozen ? '1' : '0' }
                 const ui = this.spawnOwned([this.bundle.uiHost], { ...shared, RERUN_DESKTOP_UI_ROOT: this.bundle.uiRoot, RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath, RERUN_DESKTOP_PDF_HELPER: this.bundle.pdfHelperPath, RERUN_DESKTOP_PDF_TEXT_HELPER: this.bundle.pdfTextHelperPath, PORT: String(uiPort), HOSTNAME: '127.0.0.1' }, undefined, 'ui')
                 await this.waitForHealth(ui, `${runtime.app.origin}/api/desktop/health`, { Cookie: `rerun-desktop-session=${runtime.app.sessionToken}` }, runtime)
                 const engine = this.spawnOwned([this.bundle.engineEntry, 'desktop-run'], {
-                    ...shared, RERUN_HOST: '127.0.0.1', RERUN_PORT: String(enginePort), RERUN_API_KEY: this.identity.engineApiKey,
+                    ...shared, RERUN_HOST: '127.0.0.1', RERUN_PORT: String(enginePort), RERUN_API_KEY: identity.engineApiKey,
                     RERUN_DATA_DIR: engineRoot, RERUN_HUB_BASE_URL: runtime.app.origin, RERUN_DESKTOP: 'off',
                     RERUN_DESKTOP_CODEX_RUNNER: this.bundle.codexPath,
                     RERUN_DESKTOP_CLAUDE_RUNNER: this.bundle.claudePath,
@@ -122,7 +136,7 @@ export class RuntimeSupervisor extends EventEmitter {
             try {
                 const response = await this.fetcher(url, { headers, signal: AbortSignal.any([AbortSignal.timeout(1500), this.startupAbort.signal]), redirect: 'error' })
                 const body = response.ok ? await response.json() : null
-                if (body?.status === 'ready' && body.protocolVersion === PROTOCOL_VERSION && body.launchNonce === runtime.launchNonce && body.buildId === runtime.buildId && body.workspaceId === 1) return
+                if (body?.status === 'ready' && body.protocolVersion === PROTOCOL_VERSION && body.launchNonce === runtime.launchNonce && body.buildId === runtime.buildId && body.workspaceId === runtime.workspaceId) return
             } catch {}
             await wait(100)
         }
@@ -180,6 +194,22 @@ export class RuntimeSupervisor extends EventEmitter {
         }
         this.cleaning = false
         return confirmed
+    }
+
+    async admissions(action, requestId) {
+        const runtime = this.runtime
+        if (!runtime) return true
+        if (this.admissionCounter?.runtime !== runtime) this.admissionCounter = { runtime, sequence: 0 }
+        const sequence = ++this.admissionCounter.sequence
+        if (!Number.isSafeInteger(sequence)) throw new Error('Workspace admission sequence is exhausted')
+        const response = await this.fetcher(`${runtime.app.origin}/api/desktop/internal/workspaces`, {
+            method: 'POST', headers: { Authorization: `Bearer ${runtime.engine.apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, launchNonce: runtime.launchNonce, expectedWorkspaceId: runtime.workspaceId, requestId, sequence }),
+            signal: AbortSignal.timeout(8000), redirect: 'error',
+        })
+        const body = response.ok ? await response.json() : null
+        if (this.runtime !== runtime || body?.ok !== true || body.launchNonce !== runtime.launchNonce || body.workspaceId !== runtime.workspaceId || body.frozen !== (action === 'freeze') || body.sequence !== sequence || body.requestId !== requestId) throw new Error('Workspace admission change was not confirmed')
+        return true
     }
 
     async confirmToolsStopped(runtime) {

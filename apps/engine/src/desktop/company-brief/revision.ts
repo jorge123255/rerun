@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { companyBriefCanonicalSnapshot, type DesktopForemanDiscoveryRun } from '@rerun/contracts'
+import { companyBriefCanonicalSnapshot, type DesktopCompanyDiscoverySnapshot } from '@rerun/contracts'
 
-export function companyBriefSourceRevision(snapshot: DesktopForemanDiscoveryRun): string {
+export function companyBriefSourceRevision(snapshot: DesktopCompanyDiscoverySnapshot): string {
     return createHash('sha256').update(companyBriefCanonicalSnapshot(snapshot)).digest('hex')
 }

@@ -1,4 +1,5 @@
 import 'server-only'
+import { desktopWorkspaceCreateResultSchema, desktopWorkspaceListResultSchema, desktopWorkspaceRenameResultSchema, desktopWorkspaceSwitchResultSchema } from '@rerun/contracts'
 import type {
     DesktopWorkspaceCreateInput,
     DesktopWorkspaceCreateResult,
@@ -56,10 +57,10 @@ export async function createInProcessWorkspaceBridge(input: {
         ports: input.ports,
     })
     return {
-        list: () => coordinator.list(),
-        create: (value) => coordinator.create(value),
-        rename: (value) => coordinator.rename(value),
-        switchTo: (value) => coordinator.switchTo(value),
-        reconcile: () => coordinator.reconcile(),
+        list: async () => desktopWorkspaceListResultSchema.parse(await coordinator.list()),
+        create: async value => desktopWorkspaceCreateResultSchema.parse(await coordinator.create(value)),
+        rename: async value => desktopWorkspaceRenameResultSchema.parse(await coordinator.rename(value)),
+        switchTo: async value => desktopWorkspaceSwitchResultSchema.parse(await coordinator.switchTo(value)),
+        reconcile: async () => { const state = await coordinator.reconcile(); return { ...desktopWorkspaceListResultSchema.parse(state), requiresManualRecovery: state.requiresManualRecovery } },
     }
 }

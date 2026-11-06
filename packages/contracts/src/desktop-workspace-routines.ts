@@ -39,7 +39,7 @@ export const desktopScheduledRunSchema = z.object({
 }).strict()
 export type DesktopScheduledRun = z.infer<typeof desktopScheduledRunSchema>
 
-export const desktopWorkspaceRoutineSchema = z.object({
+export const desktopWorkspaceRoutineSchema = desktopScheduleRecordSchema.extend({
     agentId: id,
     slug: id,
     name: z.string().min(1).max(120),
@@ -82,7 +82,7 @@ export const desktopScheduleEditInputSchema = z.object({
 })
 export type DesktopScheduleEditInput = z.infer<typeof desktopScheduleEditInputSchema>
 
-const mutationIdentity = { agentId: id, slug: id, expectedRevision: revision, requestId: id }
+const mutationIdentity = { agentId: id, slug: id, expectedRevision: revision, requestId: z.string().uuid() }
 export const desktopWorkspaceRoutineMutationSchema = z.discriminatedUnion('action', [
     z.object({ action: z.literal('rename'), ...mutationIdentity, name: z.string().trim().min(1).max(120) }).strict(),
     z.object({ action: z.literal('toggle'), ...mutationIdentity, enabled: z.boolean() }).strict(),

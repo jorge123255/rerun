@@ -1,6 +1,8 @@
 import 'server-only'
 import { COMPANY_BRIEF_MODEL_PROVIDERS, type CompanyBriefModelRef } from '@rerun/contracts'
 import type { DesktopRuntime } from '../runtime'
+import type { DesktopForemanChatRef } from '@rerun/contracts'
+import { desktopForeman } from '../foreman/binding'
 import { readDesktopModelState } from '../chat-model'
 
 export type CompanyBriefModelChoice = {
@@ -37,4 +39,11 @@ export function explicitCompanyBriefModel(choice: CompanyBriefModelChoice, agent
 export async function resolveCompanyBriefModel(runtime: DesktopRuntime, agentId: string, sessionId?: string): Promise<CompanyBriefModelResolution> {
     const view = await readDesktopModelState(runtime, agentId, sessionId)
     return explicitCompanyBriefModel(view, agentId)
+}
+
+
+// Foreman is a managed engine owner, not a desktop_agents row. Read its canonical saved chat
+// selection and let the engine recheck the same pair through authenticated callback at effect time.
+export async function resolveForemanCompanyBriefModel(runtime: DesktopRuntime, chat: DesktopForemanChatRef): Promise<CompanyBriefModelRef> {
+    return (await desktopForeman(runtime)).modelChoice(chat)
 }

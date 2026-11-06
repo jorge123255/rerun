@@ -1,3 +1,4 @@
+import { assertDesktopRunAdmission } from '../../desktop/workspace-admission.js'
 import { prepareTriggerHumanAdmission, withoutStoppedTriggerRequests } from '../../desktop/triggers/human.js'
 import { desktopDocumentSendSelectionSchema, desktopResolvedDocumentsSchema, desktopMcpSignInGuardSchema } from '@rerun/contracts'
 import { assertDesktopMcpSignInContinuation } from '../../desktop/mcp-sign-in/admission.js'
@@ -33,6 +34,7 @@ import { mergeRunStream } from '../../runtime/run-stream-merge.js'
 import { resumeStreamResponse, toResumableStreamResponse } from '../../runtime/stream.js'
 
 export const chatRoutes = new Hono()
+chatRoutes.use('*', async (c, next) => { if (c.req.method === 'POST') assertDesktopRunAdmission(); await next() })
 const takeoverPendingMessage = 'Open and finish or skip the coworker’s browser request before sending another message.'
 const questionPendingMessage = 'Answer or dismiss the coworker’s questions before sending another message.'
 const approvalPendingMessage = 'Approve or decline the coworker’s proposed actions before sending another message.'
@@ -176,6 +178,7 @@ chatRoutes.post('/chat', async c => {
         const holder = claimSession(sessionId, runId, body.author?.id)
         if (holder) throw new HttpError(409, 'This conversation is already starting. Retry the same first message.')
         try {
+            assertDesktopRunAdmission()
             const queuedUser = await startDesktopTabRun(agentId, turn)
             if (!queuedUser) { releaseSession(runId); return identified(resumeStreamResponse(runId), sessionId, runId) }
             // The normal queued-user path enriches this row with context and never appends a
@@ -252,6 +255,7 @@ chatRoutes.post('/chat', async c => {
                 return c.json({ error: pending ? questionPendingMessage : approval ? approvalPendingMessage : takeoverPendingMessage, code: pending ? 'question_pending' : approval ? 'approval_pending' : 'takeover_pending' }, 409)
             }
             const triggerAdmission = await prepareTriggerHumanAdmission(agentId, turn)
+            assertDesktopRunAdmission()
             const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, attachments, body.author, body.desktopAttachments, false, body.desktopDocuments, triggerAdmission)
             return streamChat(currentAgent, session.id, turn.runId, body.message, override, { provider, model }, {
                 source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...attachmentTrigger, ...documentTrigger, queuedUser,
@@ -304,6 +308,7 @@ chatRoutes.post('/chat', async c => {
             throw error
         }
     }
+    assertDesktopRunAdmission()
     const run = await startRun(agent.id, session.id, runId).catch(err => {
         releaseSession(runId)
         throw err

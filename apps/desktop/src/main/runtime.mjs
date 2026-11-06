@@ -1,6 +1,7 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID, createHmac } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename, chmod, realpath } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { ensureOwnedWorkspaceDirectory, readJSON, pathExists, validWorkspaceId } from './workspaces/paths.mjs'
 
 export const PROTOCOL_VERSION = 1
 
@@ -49,15 +50,21 @@ export async function loadIdentity(root, cipher) {
     return identity
 }
 
-export async function bindWorkspace(root, identity) {
-    const engineRoot = resolve(root, 'workspaces', '1', 'engine')
-    await mkdir(engineRoot, { recursive: true, mode: 0o700 })
-    const file = resolve(engineRoot, 'desktop-owner.json')
-    let existing
-    try { existing = JSON.parse(await readFile(file, 'utf8')) } catch (error) { if (error.code !== 'ENOENT') throw error }
-    if (existing && (existing.installId !== identity.installId || existing.workspaceId !== 1)) throw new Error('This engine data folder belongs to another workspace')
-    if (!existing) await writeFile(file, JSON.stringify({ installId: identity.installId, workspaceId: 1 }), { flag: 'wx', mode: 0o600 })
-    return engineRoot
+export function workspaceIdentity(identity, workspaceId) {
+    if (!validWorkspaceId(workspaceId)) throw new Error('Invalid workspace identity')
+    if (workspaceId === 1) return identity
+    const derive = domain => createHmac('sha256', identity.encryptionKey).update(`${domain}:${workspaceId}`).digest('hex')
+    return { ...identity, encryptionKey: derive('rerun-workspace-encryption-v1'), engineApiKey: derive('rerun-workspace-api-v1') }
+}
+export async function bindWorkspace(root, identity, workspaceId = 1) {
+    let engine
+    try { ({ engine } = await ensureOwnedWorkspaceDirectory(root, identity.installId, workspaceId)) }
+    catch { throw new Error('This engine data folder belongs to another workspace or cannot be verified') }
+    const file = resolve(engine, 'desktop-owner.json')
+    const existing = await pathExists(file) ? await readJSON(file) : null
+    if (existing && (existing.installId !== identity.installId || existing.workspaceId !== workspaceId)) throw new Error('This engine data folder belongs to another workspace')
+    if (!existing) await writeFile(file, JSON.stringify({ installId: identity.installId, workspaceId }), { flag: 'wx', mode: 0o600 })
+    return engine
 }
 
 export function childEnvironment(parent = process.env) {

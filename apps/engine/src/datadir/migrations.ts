@@ -1,3 +1,6 @@
+import { initializeDesktopBrainSemanticStore } from '../desktop/brain-semantic/runtime.js'
+import { initializeDesktopWorkspaceRoutineRequests } from '../desktop/workspace-routines/router.js'
+import { initializeDesktopCompanyBriefStore } from '../desktop/company-brief/runtime.js'
 import { existsSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { migrate } from '../db/migrate.js'
@@ -70,6 +73,12 @@ export const DATA_DIR_MIGRATIONS: DataDirMigration[] = [
             await initializeDesktopSemanticIndex(directory)
         },
     },
+    { version: 6, id: 'desktop-company-brief-brain-semantic-and-workspace-routines', up: async () => {
+        if (!desktopApp()) return
+        await initializeDesktopBrainSemanticStore()
+        await initializeDesktopWorkspaceRoutineRequests()
+        await initializeDesktopCompanyBriefStore()
+    } },
 ]
 
 export const DATA_DIR_VERSION = latestVersion(DATA_DIR_MIGRATIONS)

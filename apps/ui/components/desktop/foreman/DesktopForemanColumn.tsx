@@ -1,13 +1,20 @@
 'use client'
 
-import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, type ReactNode } from 'react'
 import type { ForemanAnchor, OrbActivity } from '@rerun/ui/foreman'
-import { cn } from '@/lib/utils'
+import { DesktopForemanDockLayout, DesktopParkedForeman, useDesktopForemanDockBinding } from './dock'
+import { DEFAULT_DOCK_EXTRAS } from '@/lib/desktop/foreman-dock'
+import type { ExactDockFeed } from '@/lib/desktop/foreman-dock/feed'
+import type { ForemanPlacement } from '@/lib/foreman-layout'
+import { useIsMobile as useMediaQuery } from '@rerun/ui/primitives/use-is-mobile'
 import type { DesktopForemanActionPorts, DesktopForemanChatRef, DesktopForemanPlacement } from '@/lib/desktop/foreman-client'
 import { DesktopForemanChatLayer, type DesktopForemanMessage } from './DesktopForemanChatLayer'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanHeader } from './DesktopForemanHeader'
 import { DesktopForemanRoutines } from './DesktopForemanRoutines'
+import { DesktopWorkspaceRoutines } from './routines/DesktopWorkspaceRoutines'
+import { createDesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
+import { useMemo } from 'react'
 import { DesktopPlanBoardPreview } from './plan/DesktopPlanBoardPreview'
 import { projectPlanCard } from '@/lib/desktop/foreman-client'
 import { useDesktopForemanUi } from './useDesktopForemanUi'
@@ -34,6 +41,13 @@ export type DesktopForemanColumnProps = {
     refreshKey?: string | number
     composerTrailing?: ReactNode
     focusRequest?: string
+    controlledOpen?: boolean
+    hidden?: boolean
+    centerOpen?: boolean
+    dockFeed?: ExactDockFeed | null
+    voiceSlot?: ReactNode
+    onOpenChange?: (open: boolean) => void
+    onLayout?: (layout: { scope: string; open: boolean; placement: ForemanPlacement; dragging: boolean; mobile: boolean }) => void
 }
 
 /**
@@ -50,7 +64,7 @@ export function DesktopForemanColumn({
     orbState = 'idle',
     headerActions,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest,
+    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
     const opened = useRef(false)
@@ -59,59 +73,53 @@ export function DesktopForemanColumn({
         if (openOnMount && foreman.restored && !opened.current) { opened.current = true; foreman.setOpen(true) }
     }, [openOnMount, foreman.restored, foreman.setOpen])
     const { ui } = foreman
+    const triggerRef = useRef<HTMLElement | null>(null)
+    const mobile = useMediaQuery('(max-width: 767px)')
+    const wide = useMediaQuery('(min-width: 1024px)')
+    const dockBinding = useDesktopForemanDockBinding({ chat, placement: ui.placement, dock: ui.dock ?? DEFAULT_DOCK_EXTRAS, setPlacement: foreman.setPlacement, setDock: foreman.setDock })
+    const consumedFocus = useRef<string | undefined>(undefined)
+    const changeOpen = useCallback((open: boolean) => {
+        if (!open) consumedFocus.current = focusRequest
+        foreman.setOpen(open)
+        onOpenChange?.(open)
+    }, [focusRequest, foreman.setOpen, onOpenChange])
     useEffect(() => {
-        if (!focusRequest || !foreman.restored) return
-        if (!ui.open) { foreman.setOpen(true); return }
+        if (controlledOpen === undefined || !foreman.restored || controlledOpen === ui.open) return
+        if (!controlledOpen) consumedFocus.current = focusRequest
+        foreman.setOpen(controlledOpen)
+    }, [controlledOpen, foreman.restored, ui.open, foreman.setOpen, focusRequest])
+    useEffect(() => {
+        if (!focusRequest || !foreman.restored || consumedFocus.current === focusRequest) return
+        if (!ui.open) { changeOpen(true); return }
         if (ui.tab !== 'assistant') { foreman.setTab('assistant'); return }
         let focused = false
         const focus = () => {
             const target = column.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message the Foreman"]')
-            if (!focused && target?.isConnected && !target.disabled && !target.closest('[inert]')) { focused = true; target.focus({ preventScroll: true }); observer.disconnect() }
+            if (!focused && target?.isConnected && !target.disabled && !target.closest('[inert]')) { focused = true; consumedFocus.current = focusRequest; target.focus({ preventScroll: true }); observer.disconnect() }
         }
         const observer = new MutationObserver(focus)
         observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['inert'] })
         queueMicrotask(focus)
         return () => { focused = true; observer.disconnect() }
-    }, [focusRequest, foreman.restored, ui.open, ui.tab, foreman.setOpen, foreman.setTab])
+    }, [focusRequest, foreman.restored, ui.open, ui.tab, foreman.setOpen, foreman.setTab, changeOpen])
+    const routinesClient = useMemo(() => createDesktopWorkspaceRoutinesClient(), [])
     const onRoutines = ui.tab === 'routines'
     const plan = projectPlanCard(foreman.planSnapshot)
     const docked = ui.placement.mode === 'dock'
-    const floating = ui.placement.mode === 'float'
-
-    const panelStyle = useMemo(() => {
-        if (!floating) return undefined
-        return { width: ui.placement.width, height: ui.placement.height } as const
-    }, [floating, ui.placement])
-
     return (
-        <div ref={column}
-            {...(!ui.open ? { inert: true } : {})}
-            style={panelStyle}
-            className={cn(
-                'absolute inset-0 z-50 min-w-0 overflow-hidden transition-transform duration-300 ease-in-out motion-reduce:transition-none max-md:top-auto md:translate-y-0',
-                'max-md:max-h-[calc(96dvh-env(safe-area-inset-top))] max-md:rounded-t-2xl max-md:border-t max-md:border-border max-md:shadow-2xl',
-                !ui.open && 'translate-y-full',
-                floating
-                    ? cn('md:fixed md:inset-auto md:z-50 md:overflow-visible md:rounded-xl md:border md:border-border md:shadow-2xl', !ui.open && 'md:pointer-events-none md:scale-95 md:opacity-0')
-                    : cn('md:relative md:inset-auto md:z-auto md:row-start-1 md:block', ui.placement.mode === 'dock' && ui.placement.side === 'left' ? 'md:col-start-1' : 'md:col-start-3'),
-                className,
-            )}
-        >
-            <div
-                className={cn(
-                    'absolute inset-y-0 flex w-full flex-col bg-background',
-                    floating
-                        ? 'right-0 md:inset-x-0 md:overflow-hidden md:rounded-xl md:border md:border-border md:shadow-2xl'
-                        : cn('md:w-[calc(var(--foreman-dock-track,26rem)-8px)] md:overflow-hidden md:rounded-3xl md:border md:border-border md:shadow', ui.placement.mode === 'dock' && ui.placement.side === 'left' ? 'left-0' : 'right-0'),
-                )}
-            >
+        <>
+        <DesktopForemanDockLayout scope={dockBinding.scope} open={ui.open} hidden={hidden}
+            placement={dockBinding.placement} dock={dockBinding.dock} onPlacement={dockBinding.onPlacement} onDock={dockBinding.onDock}
+            onClose={() => changeOpen(false)} returnFocus={() => triggerRef.current} onLayout={onLayout}>
+            {header => <div ref={column} className="relative flex h-full min-h-0 flex-col">
                 <DesktopForemanHeader
-                    anchor={anchorOf(ui.placement)}
+                    onDragPointerDown={header.onPointerDown}
+                    anchor={anchorOf(dockBinding.placement)}
                     orbState={orbState}
                     open={ui.open}
                     tab={ui.tab}
                     onTabChange={foreman.setTab}
-                    onClose={() => foreman.setOpen(false)}
+                    onClose={() => changeOpen(false)}
                     actions={headerActions}
                 />
                 <div className={onRoutines ? 'hidden' : 'contents'}>
@@ -140,7 +148,7 @@ export function DesktopForemanColumn({
                         className="min-h-0 flex-1"
                     />
                     <DesktopForemanComposer
-                        trailing={composerTrailing}
+                        trailing={ui.open ? voiceSlot ?? composerTrailing : composerTrailing}
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
@@ -150,16 +158,22 @@ export function DesktopForemanColumn({
                     />
                 </div>
                 {onRoutines && (
-                    <DesktopForemanRoutines
+                    <DesktopWorkspaceRoutines
                         key={`${chat.workspaceId}:${chat.chatId}`}
-                        routines={ports.routines}
+                        client={routinesClient}
+                        active={ui.open && !hidden}
+                        onOpenChat={target => foreman.navigate({ kind: 'open_coworker', agentId: target.agentId, sessionId: target.sessionId })}
                         docked={docked}
                         agentNameOf={agentNameOf}
                         className="min-h-0 flex-1 pt-24"
-                        onOpenRoutine={routine => foreman.navigate({ kind: 'open_coworker', agentId: routine.agentId, sessionId: routine.runningSessionId ?? null })}
                     />
                 )}
-            </div>
+            </div>}
+        </DesktopForemanDockLayout>
+        <DesktopParkedForeman chat={chat} open={ui.open} hidden={hidden} centerOpen={centerOpen} mobile={mobile} wide={wide}
+            corner={dockBinding.placement.mode === 'float' ? dockBinding.placement.corner : dockBinding.dock.orbCorner}
+            onCorner={corner => { dockBinding.onDock({ ...dockBinding.dock, orbCorner: corner }); if (dockBinding.placement.mode === 'float') dockBinding.onPlacement({ ...dockBinding.placement, corner }) }}
+            onOpen={() => changeOpen(true)} feed={dockFeed ?? null} voiceSlot={ui.open ? undefined : voiceSlot} onTrigger={node => { triggerRef.current = node }} />
             {/* Board-side plan preview host: root may also mirror plan via setPlanPreview. */}
             {renderBoardOverlay?.({ discoveries: foreman.discoveries, live: foreman.live })}
             {plan.view && (
@@ -167,6 +181,6 @@ export function DesktopForemanColumn({
                     <DesktopPlanBoardPreview plan={plan.view} />
                 </div>
             )}
-        </div>
+        </>
     )
 }

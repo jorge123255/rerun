@@ -23,13 +23,14 @@ export function createDesktopWorkspaceRoutinesReader(authority: DesktopWorkspace
                     const last = history[0]
                     const running = history.find(run => run.status === 'running')
                     const routine: DesktopWorkspaceRoutine = {
+                        ...schedule,
                         agentId: schedule.agentId,
                         slug: schedule.slug,
                         name: schedule.name,
                         enabled: schedule.enabled,
                         revision: schedule.revision,
                         frequency: routineFrequency(schedule),
-                        nextRunAt: nextRunAt(schedule, now),
+                        nextRunAt: nextRunAt({ ...schedule, lastRunAt: schedule.lastRunAt ?? null }, now),
                         runningSince: running?.startedAt ?? null,
                         setupPending: owner.setupPending,
                         ...(schedule.lastRunAt !== undefined ? { lastRunAt: schedule.lastRunAt } : {}),
@@ -38,6 +39,9 @@ export function createDesktopWorkspaceRoutinesReader(authority: DesktopWorkspace
                     return routine
                 }))
             }))
+            signal?.throwIfAborted()
+            const failures = perOwner.filter((row): row is PromiseRejectedResult => row.status === 'rejected')
+            if (failures.length) throw new AggregateError(failures.map(row => row.reason), 'Some coworker routines could not be read. Refresh before making changes.')
             return {
                 routines: perOwner.flatMap(result => result.status === 'fulfilled' ? result.value : []).sort(byNextRun),
                 canRename: await authority.canRename(signal),

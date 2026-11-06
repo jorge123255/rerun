@@ -115,3 +115,17 @@ export * from './desktop-template-fidelity.js'
 export * from './desktop-mcp-secret-references.js'
 export * from './desktop-claude-plan.js'
 export * from './desktop-guest-shell.js'
+
+export * from './desktop-company-discovery.js'
+
+export * from './desktop-company-brief.js'
+
+export * from './desktop-workspace-routines.js'
+
+export * from './desktop-brain-semantic.js'
+
+export * from './desktop-foreman-voice.js'
+
+export * from './desktop-foreman-docs.js'
+
+export * from './desktop-workspaces.js'
