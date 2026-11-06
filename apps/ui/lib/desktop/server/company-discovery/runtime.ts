@@ -75,10 +75,21 @@ export function createCompanyDiscoveryRuntime(deps: Deps) {
         signal.throwIfAborted()
     }
 
+    // The local SQLite driver opens a second connection for ordinary client reads. Never
+    // await run/network authority under its write lock: a Foreman poll can synchronously
+    // wait for that lock and prevent the authority response from resuming this writer.
+    // Async authority is checked immediately before admission and again after commit;
+    // only synchronous lifetime checks may run inside a database transaction.
+    function assertWriting(signal: AbortSignal) {
+        assertOpen()
+        signal.throwIfAborted()
+    }
+
     async function apply(snapshot: DesktopCompanyDiscoverySnapshot, event: CompanyDiscoveryEvent, signal: AbortSignal): Promise<boolean> {
         await assertCurrent(snapshot, signal)
         const parsed = companyDiscoveryEventSchema.parse(event)
         const applied = await deps.store.transaction(async tx => {
+            assertWriting(signal)
             const row = await tx.byId(snapshot.workspaceId, snapshot.chatId, snapshot.discoveryId)
             const current = present(row)
             if (!current || current.status !== 'running') return null
@@ -88,7 +99,7 @@ export function createCompanyDiscoveryRuntime(deps: Deps) {
                 const inserted = await tx.insertRevision(snapshot.discoveryId, parsed.source, parsed.revision, { status: parsed.status, reason: parsed.reason, payload: parsed.payload, provenance: parsed.provenance })
                 if (!inserted) return null
             }
-            await assertCurrent(snapshot, signal)
+            assertWriting(signal)
             await tx.put(next)
             return next
         })
@@ -172,8 +183,10 @@ export function createCompanyDiscoveryRuntime(deps: Deps) {
             const row = present(await deps.store.transaction(tx => tx.byId(workspaceId, chatId, discoveryId)))
             if (row) return row
         }
+        const signal = input.signal ?? new AbortController().signal
+        await deps.authority!.assertRun({ workspaceId, chatId, runId, discoveryId }, signal)
         const created = await deps.store.transaction(async tx => {
-            await deps.authority!.assertRun({ workspaceId, chatId, runId, discoveryId }, input.signal ?? new AbortController().signal)
+            assertWriting(signal)
             const byRun = await tx.byRun(workspaceId, chatId, runId)
             if (byRun?.state === 'unknown') throw new CompanyDiscoveryError('conflict', 'The saved discovery for this run cannot be read.')
             if (byRun?.state === 'present') {
@@ -183,6 +196,7 @@ export function createCompanyDiscoveryRuntime(deps: Deps) {
             const byId = await tx.byId(workspaceId, chatId, discoveryId)
             if (byId) throw new CompanyDiscoveryError('stale_run', 'That discovery belongs to another run.')
             const snapshot = companyDiscoverySnapshotSchema.parse(emptyCompanyDiscoverySnapshot({ discoveryId, workspaceId, chatId, runId, url: target.url, domain: target.domain, startedAt: now() }))
+            assertWriting(signal)
             const inserted = await tx.insert(snapshot)
             if (inserted === 'exists') {
                 const again = present(await tx.byRun(workspaceId, chatId, runId))
@@ -192,7 +206,7 @@ export function createCompanyDiscoveryRuntime(deps: Deps) {
             return { snapshot, fresh: true }
         })
         if (!created.fresh) return created.snapshot
-        await runCollect(created.snapshot, input.signal ?? new AbortController().signal, input.emitForeman)
+        await runCollect(created.snapshot, signal, input.emitForeman)
         const saved = present(await deps.store.transaction(tx => tx.byId(workspaceId, chatId, discoveryId)))
         if (!saved) throw new CompanyDiscoveryError('not_found', 'Discovery did not remain saved.')
         return saved
@@ -229,21 +243,30 @@ export function createCompanyDiscoveryRuntime(deps: Deps) {
             const discoveryId = companyDiscoveryIdSchema.parse(input.discoveryId)
             const runId = companyRunIdSchema.parse(input.runId)
             if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId)) throw new CompanyDiscoveryError('conflict', 'Retry needs a new request id.')
+            const signal = input.signal ?? new AbortController().signal
+            const prior = await deps.store.transaction(tx => tx.byId(workspaceId, chatId, discoveryId))
+            if (!prior) throw new CompanyDiscoveryError('not_found', 'That discovery is not in this chat.')
+            if (prior.state === 'unknown') throw new CompanyDiscoveryError('conflict', 'That discovery cannot be read.')
+            if (prior.snapshot.runId !== runId) throw new CompanyDiscoveryError('stale_run', 'That discovery belongs to another run.')
+            // Immutable retry receipts remain readable when the old run is no longer live.
+            if (prior.snapshot.retries.includes(input.requestId)) return prior.snapshot
+            await assertCurrent(prior.snapshot, signal)
             const prepared = await deps.store.transaction(async tx => {
+                assertWriting(signal)
                 const row = await tx.byId(workspaceId, chatId, discoveryId)
                 if (!row) throw new CompanyDiscoveryError('not_found', 'That discovery is not in this chat.')
                 if (row.state === 'unknown') throw new CompanyDiscoveryError('conflict', 'That discovery cannot be read.')
                 if (row.snapshot.runId !== runId) throw new CompanyDiscoveryError('stale_run', 'That discovery belongs to another run.')
                 if (row.snapshot.retries.includes(input.requestId)) return { snapshot: row.snapshot, fresh: false }
                 if (row.snapshot.retries.length >= DESKTOP_COMPANY_DISCOVERY_LIMITS.maxRetries) throw new CompanyDiscoveryError('conflict', 'This discovery reached its retry limit. Start a new discovery.')
-                await assertCurrent(row.snapshot, input.signal ?? new AbortController().signal)
                 if (row.snapshot.status === 'running' || inflight.has(discoveryId)) throw new CompanyDiscoveryError('conflict', 'Discovery is already running.')
                 const snapshot: DesktopCompanyDiscoverySnapshot = { ...row.snapshot, status: 'running', attempt: row.snapshot.attempt + 1, retries: [...row.snapshot.retries, input.requestId], updatedAt: now() }
+                assertWriting(signal)
                 await tx.put(snapshot)
                 return { snapshot, fresh: true }
             })
             if (!prepared.fresh) return prepared.snapshot
-            await runCollect(prepared.snapshot, input.signal ?? new AbortController().signal, input.emitForeman)
+            await runCollect(prepared.snapshot, signal, input.emitForeman)
             const saved = present(await deps.store.transaction(tx => tx.byId(workspaceId, chatId, discoveryId)))
             if (!saved) throw new CompanyDiscoveryError('not_found', 'Discovery did not remain saved.')
             return saved

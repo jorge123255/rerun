@@ -183,6 +183,7 @@ async function launch() {
             if (!draftQuit.ready) return { saved: false }
             return { saved: await draftQuit.request(value => window.webContents.send('desktop:before-quit', value)) }
         },
+        prepareRecovery: () => supervisor.prepareWorkspaceRecovery(),
         stopAndDrain: () => supervisor.stop(),
         bindAndStart: async workspaceId => {
             const { workspace } = await getWorkspace(dataRoot, identity.installId, workspaceId)

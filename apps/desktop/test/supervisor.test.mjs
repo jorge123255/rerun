@@ -57,7 +57,7 @@ for (const { name, code, signal, accepted } of [
     { name: 'raw signal', code: null, signal: 'SIGKILL', accepted: false },
     { name: 'confirmed clean exit', code: 0, signal: null, accepted: true },
 ]) {
-    test(`late engine ${name} after a stop timeout retains its verdict across a fresh UI drain ACK`, async () => {
+    test(`late engine ${name} after a stop timeout retains its verdict while reusing the exact UI drain ACK`, async () => {
         const root = await mkdtemp(join(tmpdir(), 'rerun-late-engine-exit-'))
         const runtime = { launchNonce: randomUUID(), app: { origin: 'http://127.0.0.1:3000' }, engine: { apiKey: 'fixture' } }
         let drainAcknowledgements = 0, uiStops = 0, engineStops = 0
@@ -94,7 +94,7 @@ for (const { name, code, signal, accepted } of [
             assert(supervisor.children.has(engine))
 
             // Exercise spawnOwned's actual exit listener after stop() has already
-            // failed; a second UI acknowledgement proves nothing about this engine.
+            // failed; the cached UI acknowledgement proves nothing about this engine.
             if (accepted) engine.emit('message', { type: 'stopped', launchNonce: runtime.launchNonce })
             engine.exitCode = code
             engine.signalCode = signal
@@ -114,7 +114,7 @@ for (const { name, code, signal, accepted } of [
                 assert.equal(ui.exitCode, null)
                 assert(supervisor.children.has(ui))
             }
-            assert.equal(drainAcknowledgements, 2)
+            assert.equal(drainAcknowledgements, 1)
         } finally { await rm(root, { recursive: true, force: true }) }
     })
 }

@@ -92,3 +92,46 @@ test('cleanup uses a higher admission sequence after a lost freeze ACK and refus
     await assert.rejects(supervisor.admissions('freeze', requestId), /not confirmed/)
     assert.equal(calls.at(-1).sequence, 3)
 })
+
+test('recovery reuses only the exact runtime shutdown ACK and reaches an engine whose HTTP listener is already closed', async t => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-recovery-cached-drain-'))
+    t.after(() => rm(root, { recursive: true, force: true }))
+    const runtime = { workspaceId: 1, launchNonce: randomUUID(), app: { origin: 'http://127.0.0.1:40100' }, engine: { apiKey: 'synthetic' } }
+    let engineStops = 0
+    const supervisor = new RuntimeSupervisor({ bundle: {}, root, identity: identity(), stopTimeout: 1, fetcher: async () => { assert.fail('The already-drained UI HTTP listener is gone') } })
+    supervisor.runtime = runtime; supervisor.toolsDrainedRuntime = runtime
+    const engine = new EventEmitter()
+    Object.assign(engine, { desktopRole: 'engine', exitCode: null, signalCode: null, connected: true,
+        send(message, callback) { assert.equal(message.type, 'stop'); engineStops++; this.exitCode = 0; this.emit('exit', 0, null); callback?.() },
+        kill() { assert.fail('Recovery must not force-kill an owned engine') },
+    })
+    supervisor.children.add(engine)
+    await supervisor.prepareWorkspaceRecovery()
+    assert.equal(engineStops, 1); assert.equal(supervisor.runtime, null); assert.equal(supervisor.children.size, 0)
+    assert.equal(await supervisor.admissions('freeze', randomUUID()), true)
+})
+
+test('recovery keeps a partial live engine in custody when it cannot confirm exit', async t => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-recovery-unconfirmed-'))
+    t.after(() => rm(root, { recursive: true, force: true }))
+    const runtime = { workspaceId: 1, launchNonce: randomUUID(), app: { origin: 'http://127.0.0.1:40100' }, engine: { apiKey: 'synthetic' } }
+    const supervisor = new RuntimeSupervisor({ bundle: {}, root, identity: identity(), stopTimeout: 1, fetcher: async () => { assert.fail('A cached exact-runtime drain does not need HTTP') } })
+    supervisor.runtime = runtime; supervisor.toolsDrainedRuntime = runtime
+    const engine = new EventEmitter()
+    Object.assign(engine, { desktopRole: 'engine', exitCode: null, signalCode: null, connected: true, send(_message, callback) { callback?.() }, kill() { assert.fail('Unknown writers retain parent custody') } })
+    supervisor.children.add(engine)
+    await assert.rejects(supervisor.prepareWorkspaceRecovery(), /cleanup was not confirmed/)
+    assert.equal(supervisor.runtime, runtime); assert.equal(supervisor.children.has(engine), true)
+    assert.equal(supervisor.status.state, 'error')
+})
+
+test('another launch shutdown ACK cannot authorize recovery of a dead UI', async t => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-recovery-wrong-drain-'))
+    t.after(() => rm(root, { recursive: true, force: true }))
+    const runtime = { workspaceId: 1, launchNonce: randomUUID(), app: { origin: 'http://127.0.0.1:40100' }, engine: { apiKey: 'synthetic' } }
+    let requests = 0
+    const supervisor = new RuntimeSupervisor({ bundle: {}, root, identity: identity(), stopTimeout: 1, fetcher: async () => { requests++; throw new Error('Old UI is unreachable') } })
+    supervisor.runtime = runtime; supervisor.toolsDrainedRuntime = { ...runtime, launchNonce: randomUUID() }
+    await assert.rejects(supervisor.prepareWorkspaceRecovery(), /unreachable/)
+    assert.equal(requests, 1); assert.equal(supervisor.runtime, runtime)
+})

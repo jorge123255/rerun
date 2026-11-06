@@ -34,6 +34,13 @@ export function createWorkspaceCoordinator({ dataRoot, installId, ports }) {
         const open = await findOpenReceipt(dataRoot, installId)
         if (!receipt || !open || receipt.receiptId !== open.receiptId || isTerminalPhase(receipt.phase)
             || (input.workspaceId !== undefined && input.workspaceId !== receipt.toWorkspaceId)) return refusal('duplicate_request', 'That workspace recovery no longer matches the pending switch.')
+        if (isAfterDrainPhase(receipt.phase) && typeof ports.prepareRecovery === 'function') {
+            const inspection = await inspectWorkspacePath(dataRoot, installId, receipt.toWorkspaceId)
+            if (inspection.status !== 'ready') return pathRefusal(inspection.status)
+            // Do not call an admission HTTP endpoint on services already drained or
+            // half-closed by this same transition. Native retains exact process custody.
+            await ports.prepareRecovery({ requestId: receipt.requestId, fromWorkspaceId: receipt.fromWorkspaceId, toWorkspaceId: receipt.toWorkspaceId })
+        }
         return perform(receipt)
     })
     async function switchWorkspace(input) {

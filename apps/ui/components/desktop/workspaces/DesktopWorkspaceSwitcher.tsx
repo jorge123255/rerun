@@ -26,7 +26,7 @@ import { toast } from 'sonner'
 export function DesktopWorkspaceSwitcher({
     client,
     profileLabel = 'Rerun Local',
-    className, menuItems, activeDisplay, disabled = false, onCloseAutoFocus, onRenameActive,
+    className, menuItems, activeDisplay, disabled = false, onCloseAutoFocus, onRenameActive, workspaceSettingsInMenu = false,
 }: {
     client: DesktopWorkspaceClient
     profileLabel?: string
@@ -35,6 +35,7 @@ export function DesktopWorkspaceSwitcher({
     activeDisplay?: { name: string; iconCatalogId?: string | null; iconUploadId?: string | null }
     disabled?: boolean
     onRenameActive?: () => void
+    workspaceSettingsInMenu?: boolean
     onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>['onCloseAutoFocus']
 }) {
     const [snapshot, setSnapshot] = useState<DesktopWorkspaceListResult | null>(null)
@@ -146,11 +147,11 @@ export function DesktopWorkspaceSwitcher({
                         <PlusIcon className="size-4" />
                         {DESKTOP_WORKSPACE_UI_COPY.newWorkspace}
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
+                    {!workspaceSettingsInMenu && <><DropdownMenuSeparator />
                     <DropdownMenuItem disabled={disabled || busy || !active || switchBlocked} onSelect={() => onRenameActive ? onRenameActive() : setRenameOpen(true)} className="gap-2 text-muted-foreground">
                         <SettingsIcon className="size-4" />
                         {DESKTOP_WORKSPACE_UI_COPY.renameTitle}
-                    </DropdownMenuItem>
+                    </DropdownMenuItem></>}
                     {loadError && <p role="status" className="px-2 py-1.5 text-xs text-muted-foreground">{loadError}</p>}
                     {switchBlocked && (
                         <p className="px-2 py-1.5 text-xs text-muted-foreground">{DESKTOP_WORKSPACE_UI_COPY.busySwitch}</p>

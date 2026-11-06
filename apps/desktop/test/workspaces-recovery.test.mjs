@@ -81,3 +81,29 @@ test('read-only reconciliation cannot recreate a missing selection', async t => 
     await assert.rejects(coordinator.reconcile())
     await assert.rejects(readFile(selection))
 })
+
+test('a cold supervisor with no old processes recovers the exact saved target without contacting the stale runtime URL', async t => {
+    const { RuntimeSupervisor } = await import('../src/main/supervisor.mjs')
+    const { access } = await import('node:fs/promises')
+    const { root, installId } = await fixture(t), requestId = randomUUID()
+    const failed = createWorkspaceCoordinator({ dataRoot: root, installId, ports: ports({ stopAndDrain: async () => { throw new Error('Old close did not confirm') } }) })
+    await failed.switchTo({ requestId, workspaceId: 2 })
+    const original = (await failed.list()).openReceipt
+    assert.equal(original.phase, 'failed_after_drain'); assert.equal(original.oldRuntimeClosed, false)
+    await writeFile(join(root, 'runtime.json'), JSON.stringify({ launchNonce: randomUUID(), workspaceId: 1, app: { origin: 'http://127.0.0.1:9' } }), { mode: 0o600 })
+    const supervisor = new RuntimeSupervisor({ root, bundle: {}, identity: { installId }, fetcher: async () => { assert.fail('No old process or HTTP service exists after this cold restart') } })
+    const starts = []
+    const resumed = createWorkspaceCoordinator({ dataRoot: root, installId, ports: ports({
+        prepareRecovery: async context => {
+            assert.equal(context.requestId, requestId); assert.equal(context.toWorkspaceId, 2)
+            await supervisor.prepareWorkspaceRecovery()
+            assert.equal((await failed.list()).openReceipt.receiptId, original.receiptId)
+        },
+        freezeAdmissions: context => supervisor.admissions('freeze', context.requestId),
+        stopAndDrain: () => supervisor.stop(),
+        bindAndStart: async id => { await assert.rejects(access(join(root, 'runtime.json'))); starts.push(id); return { workspaceId: id } },
+    }) })
+    const result = await resumed.recoverSwitch({ requestId, workspaceId: 2 })
+    assert.equal(result.ok, true); assert.equal(result.receipt.receiptId, original.receiptId); assert.equal(result.receipt.requestId, requestId)
+    assert.deepEqual(starts, [2]); assert.equal((await resumed.coldLaunchTarget()).workspaceId, 2)
+})

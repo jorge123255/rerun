@@ -224,20 +224,28 @@ export class RuntimeSupervisor extends EventEmitter {
         this.toolsDrainedRuntime = runtime
     }
 
+    async prepareWorkspaceRecovery() {
+        // Recovery may begin after the old HTTP listeners have closed. Retry the
+        // owned process barrier first; its exact-runtime tool-drain ACK remains
+        // valid because that UI registry was irreversibly closed by shutdown.
+        // A fresh supervisor has no owned services and needs no HTTP admission.
+        await this.stop()
+    }
+
     async stop({ preserveError = false } = {}) {
         this.stopping = true
         this.startupAbort?.abort()
         if (!preserveError) this.publish('stopping', 'Closing local services…')
         try {
-            if (this.runtime) await this.confirmToolsStopped(this.runtime)
-            if (!await this.stopChildren(preserveError)) throw new Error('Local service cleanup was not confirmed')
+            if (this.runtime && this.toolsDrainedRuntime !== this.runtime) await this.confirmToolsStopped(this.runtime)
+            if (!await this.stopChildren(false)) throw new Error('Local service cleanup was not confirmed')
             await rm(resolve(this.root, 'runtime.json'), { force: true })
             this.runtime = null
             if (!preserveError) this.publish('stopped')
         } catch (error) {
-            // On service death still terminate the surviving owned service. During
-            // ordinary Quit retain the UI authority so a later retry can drain it.
-            if (preserveError) await this.stopChildren()
+            // Retain custody when a live engine cannot acknowledge cleanup, including
+            // after service death. Retrying must not force-kill its parent and lose writers.
+            if (preserveError) await this.stopChildren(false)
             this.stopping = false
             this.publish('error', 'A local program or service could not confirm it stopped. Quit was cancelled. Try again before reopening the workspace.')
             throw error

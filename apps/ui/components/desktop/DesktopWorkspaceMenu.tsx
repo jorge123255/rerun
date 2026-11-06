@@ -37,6 +37,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     useEffect(() => { void flushDesktopWorkspaceMetadata().catch(() => {}) }, [workspaceName, iconCatalogId, iconUploadId])
     return <nav aria-label="Workspace" className="flex min-w-0 flex-wrap items-center gap-1.5">
         <DesktopWorkspaceSwitcher client={workspaceClient} profileLabel={`${profileName} · Rerun Local`} activeDisplay={{ name: workspaceName, iconCatalogId, iconUploadId }} disabled={navigationDisabled}
+            workspaceSettingsInMenu
             onRenameActive={onWorkspaceSettings ? () => { openingControlCenter.current = true; onWorkspaceSettings() } : undefined}
             onCloseAutoFocus={event => {
                 if (openingControlCenter.current) event.preventDefault()
