@@ -117,6 +117,7 @@ export type IsolatedScreenService = {
     navigate(target: ScreenTarget, input: ScreenNavigate, signal: AbortSignal, exports?: ScreenNavigationExport): Promise<ScreenPage>
     act(target: ScreenTarget, input: ScreenComputerInput, signal: AbortSignal): Promise<ScreenShot>
     openBrowser(target: ScreenTarget, signal: AbortSignal): Promise<ScreenShot>
+    toolInstall(target: ScreenTarget, body: { mode: 'probe' | 'install' | 'inspect'; operationId?: string; workspaceFingerprint?: string; packages?: string[] }, signal: AbortSignal, authorize: (signal: AbortSignal) => Promise<void>): Promise<Record<string, unknown>>
     withLauncherControl<T>(target: ScreenTarget, signal: AbortSignal, work: (control: LauncherControl, signal: AbortSignal) => Promise<T>): Promise<T>
     startTakeover(target: ScreenTarget, signal: AbortSignal): Promise<ScreenLease>
     finishTakeover(target: ScreenTarget, lease: ScreenLease, signal: AbortSignal): Promise<ScreenTakeover>

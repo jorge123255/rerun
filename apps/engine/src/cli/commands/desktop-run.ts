@@ -1,3 +1,8 @@
+import { ensureForeman } from '../../agents/foreman.js'
+import { bindDesktopForeman } from '../../desktop/foreman/binding.js'
+import { createDesktopForemanRoutes } from '../../desktop/foreman/routes.js'
+import { createDesktopScheduleToolRuntime } from '../../desktop/schedule-tools/runtime.js'
+import { bindDesktopToolInstall } from '../../desktop/tool-install/binding.js'
 import { bindDesktopDelegation, installDesktopDelegation } from '../../desktop/delegation/binding.js'
 import { createDesktopTriggerRuntime, readDesktopTriggerRuntime } from '../../desktop/triggers/runtime.js'
 import { createDesktopTriggerRoutes } from '../../desktop/triggers/router.js'
@@ -51,10 +56,12 @@ export async function desktopRunCommand(): Promise<void> {
     if (!secret.safeParse(process.env.RERUN_DESKTOP_SECRET_KEY).success) throw new Error('Desktop credential encryption is unavailable')
     if (await realpath(config.RERUN_DATA_DIR) !== await realpath(resolve(runtime.dataRoot, 'workspaces', '1', 'engine'))) throw new Error('Desktop engine data root mismatch')
     await prepareDataDir()
+    await ensureForeman()
     await initializeDesktopBrainStore()
     const lifetime = new AbortController()
     let triggers: Awaited<ReturnType<typeof createDesktopTriggerRuntime>> | undefined
     let schedules: Awaited<ReturnType<typeof bindDesktopSchedules>> | undefined
+    let scheduleTools: Awaited<ReturnType<typeof createDesktopScheduleToolRuntime>> | undefined
     let stopScheduler: ReturnType<typeof startScheduler> | undefined
     let stopping = false
     let shutdownActive = false
@@ -82,8 +89,12 @@ export async function desktopRunCommand(): Promise<void> {
     app.get('/health', c => initialized ? c.json(ready) : c.json({ status: 'starting' }, 503))
     await initializeComputerLaunchers()
     const screen = bindIsolatedScreen(runtime)
+    const toolInstall = bindDesktopToolInstall(runtime)
+    const foreman = bindDesktopForeman(runtime)
     const delegation = bindDesktopDelegation(runtime.launchNonce)
     installDesktopDelegation(delegation)
+    app.route('/desktop/foreman', createDesktopForemanRoutes())
+    app.route('/desktop/tool-install', toolInstall.routes)
     app.route('/agents/:id/screen', screen.routes)
     app.route('/desktop/delegation', delegation.routes)
     app.route('/desktop/triggers', createDesktopTriggerRoutes(readDesktopTriggerRuntime, runtime.launchNonce))
@@ -99,7 +110,7 @@ export async function desktopRunCommand(): Promise<void> {
         stopCodexLogin()
         // Close admissions before waiting for any preparation. Callback delivery is best effort
         // during teardown; failure must never reopen either local service or prevent shutdown.
-        const closing = Promise.allSettled([schedules?.close(), triggers?.close(), delegation.close(), stopDesktopMcp(), stopDesktopSkillProposals(), screen.close().then(() => shutdownIsolatedScreens(AbortSignal.timeout(25_000))), shutdownDesktopSemanticMemory()])
+        const closing = Promise.allSettled([schedules?.close(), triggers?.close(), delegation.close(), stopDesktopMcp(), stopDesktopSkillProposals(), screen.close().then(() => shutdownIsolatedScreens(AbortSignal.timeout(25_000))), shutdownDesktopSemanticMemory(), scheduleTools?.close(), toolInstall.close(), foreman.close()])
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
         await Promise.allSettled([closing, abortAllRuns(), stopScheduler?.drain()])
@@ -127,6 +138,8 @@ export async function desktopRunCommand(): Promise<void> {
             const recovered = await recoverNativeWritebackOutbox(bundle => sendNativeWriteback(bundle, lifetime.signal))
             if (recovered.retained.length) logger.warn({ count: recovered.retained.length }, 'Native file review captures retained for later recovery')
             if (stopping) return
+            scheduleTools = await createDesktopScheduleToolRuntime(runtime)
+            if (stopping) { await scheduleTools.close().catch(() => {}); return }
             schedules = await bindDesktopSchedules(runtime)
             if (stopping) { await schedules.close().catch(() => {}); return }
             await bindDesktopCoworkerCalls(runtime)

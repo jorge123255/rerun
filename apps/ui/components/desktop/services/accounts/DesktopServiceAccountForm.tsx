@@ -54,7 +54,7 @@ export function DesktopServiceAccountForm({
         }
     }, [])
     const method = methods.find(item => item.id === draft.methodId)
-    const supported = !!method && method.availability.supported && (method.kind === 'none' || method.kind === 'key')
+    const supported = !!method && method.availability.supported && (method.kind === 'none' || method.kind === 'key' || method.kind === 'oauth')
     const inputs = (method?.inputs ?? []) as InputDef[]
     function update(next: Partial<Draft>) {
         setDrafts(current => ({ ...current, [identity]: { ...(current[identity] ?? draft), ...next } }))
@@ -111,7 +111,7 @@ export function DesktopServiceAccountForm({
                 <>
                     <ServiceFields inputs={inputs} values={draft.values} onChange={(key, value) => { if (!disabled && !pending.current.has(identity)) { epoch.current += 1; update({ values: { ...draft.values, [key]: value } }); setError('') } }} />
                     <div className="flex flex-wrap gap-2">
-                        <Button size="sm" disabled={disabled || busy || missing} onClick={() => void submit()}>{busy ? 'Saving…' : submitLabel}</Button>
+                        <Button size="sm" disabled={disabled || busy || missing} onClick={() => void submit()}>{busy ? 'Saving…' : method.kind === 'oauth' ? 'Save configuration' : submitLabel}</Button>
                         <Button size="sm" variant="ghost" disabled={disabled && !busy} onClick={cancel}>Cancel</Button>
                     </div>
                 </>

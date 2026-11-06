@@ -15,8 +15,10 @@ import { POST } from './read/route'
 
 const serviceReader = vi.hoisted(() => vi.fn())
 const secretReader = vi.hoisted(() => vi.fn())
+const mcpReader = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/desktop/server/service-requests/view', () => ({ readDesktopServiceRequestView: serviceReader }))
 vi.mock('@/lib/desktop/server/secret-requests/binding', () => ({ readDesktopSecretRequestView: secretReader }))
+vi.mock('@/lib/desktop/server/mcp-sign-in/binding', () => ({ readDesktopMcpSignInView: mcpReader }))
 
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent
@@ -49,7 +51,7 @@ async function read() {
     expect(response.headers.get('cache-control')).toBe('no-store')
     return desktopPendingInboxSchema.parse(await response.json())
 }
-const seen = async () => (await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_pending_inbox_seen_v4')).rows
+const seen = async () => (await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_pending_inbox_seen_v5')).rows
 const questionId = async () => (await questionResolvers.readDesktopQuestion(runtime, question.id)).question!.id
 const approvalId = async () => (await readDesktopApproval(runtime, approval.id)).approval!.id
 
@@ -73,6 +75,7 @@ beforeEach(async () => {
     histories.clear(); calls.length = 0; failures.clear(); stalled.clear()
     serviceReader.mockReset(); serviceReader.mockResolvedValue({ request: null })
     secretReader.mockReset(); secretReader.mockResolvedValue({ request: null })
+    mcpReader.mockReset(); mcpReader.mockResolvedValue({ request: null })
     server = createServer((req, res) => {
         calls.push(`${req.method} ${req.url}`)
         const reply = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body))
@@ -376,4 +379,18 @@ test('credential requests share durable unread state without storing any credent
     expect(await seen()).toContainEqual(expect.objectContaining({ item_id: 'credential-request', kind: 'secret' }))
     await closeDesktopDatabase(root)
     expect((await read()).items.some(item => item.id === 'credential-request')).toBe(false)
+})
+
+test('MCP mark-as-read acknowledges only the inbox row and keeps the sign-in request pending', async () => {
+    const db = await openDesktopDatabase(root)
+    const session = await createDesktopSession(db, { agentId: alice.id, engineSessionId: 'mcp-chat', title: 'Tool sign-in' })
+    histories.set('mcp-chat', { owner: alice.engineAgentId, rows: [] })
+    const pending = { requestId: 'a'.repeat(64), source: { server: { displayName: 'Tools' } }, createdAt: time }
+    mcpReader.mockImplementation(async (_runtime, id) => ({ request: id === session.id ? pending : null }))
+    const target = { id: pending.requestId, agentId: alice.id, sessionId: session.id, kind: 'mcp' as const }
+    expect((await read()).items.some(item => item.id === target.id)).toBe(true)
+    const response = await mark([target]); expect(await response.json()).toEqual({ marked: 1, failedIds: [] })
+    expect((await read()).items.some(item => item.id === target.id)).toBe(false)
+    expect((await mcpReader(runtime, session.id)).request).toBe(pending)
+    expect((await seen()).find(row => row.item_id === target.id)?.kind).toBe('mcp')
 })

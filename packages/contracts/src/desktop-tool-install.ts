@@ -9,7 +9,7 @@ const hex64 = z.string().regex(/^[a-f0-9]{64}$/)
 const packageName = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
 const exactVersion = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
-export const desktopToolInstallPackageSchema = z.string().superRefine((value, context) => {
+export const desktopToolInstallPackageSchema = z.string().max(300).superRefine((value, context) => {
     const separator = value.lastIndexOf('@')
     const name = separator < 0 ? value : value.slice(0, separator)
     const version = separator < 0 ? '' : value.slice(separator + 1)
@@ -18,7 +18,7 @@ export const desktopToolInstallPackageSchema = z.string().superRefine((value, co
 export type DesktopToolInstallPackage = z.infer<typeof desktopToolInstallPackageSchema>
 
 export const desktopToolInstallInputSchema = z.strictObject({
-    packages: z.array(desktopToolInstallPackageSchema).min(1).max(DESKTOP_TOOL_INSTALL_MAX_PACKAGES).refine(items => new Set(items).size === items.length, 'Package targets must be unique'),
+    packages: z.array(desktopToolInstallPackageSchema).min(1).max(DESKTOP_TOOL_INSTALL_MAX_PACKAGES).refine(items => new Set(items.map(item => item.slice(0, item.lastIndexOf('@')))).size === items.length, 'Package targets must be unique'),
 })
 export type DesktopToolInstallInput = z.infer<typeof desktopToolInstallInputSchema>
 
@@ -94,14 +94,25 @@ export type DesktopToolInstallGuestResult = {
     message?: string
 }
 
-export type DesktopToolInstallAuthority = (identity: Omit<DesktopToolInstallRunIdentity, 'guest'>, signal: AbortSignal) => Promise<DesktopToolInstallGuestIdentity>
+export type DesktopToolInstallAuthority = (identity: Omit<DesktopToolInstallRunIdentity, 'guest'>, signal: AbortSignal, phase?: 'propose' | 'review' | 'inspect') => Promise<DesktopToolInstallGuestIdentity>
+export type DesktopToolInstallOperation = { identity: DesktopToolInstallRunIdentity; operationId: string; packages: DesktopToolInstallPackage[] }
 export type DesktopToolInstallGuestAdapter = {
-    execute(identity: DesktopToolInstallRunIdentity, signal: AbortSignal): Promise<DesktopToolInstallGuestResult>
-    inspect(identity: DesktopToolInstallRunIdentity, signal: AbortSignal): Promise<DesktopToolInstallGuestResult>
+    execute(operation: DesktopToolInstallOperation, signal: AbortSignal): Promise<DesktopToolInstallGuestResult>
+    inspect(operation: DesktopToolInstallOperation, signal: AbortSignal): Promise<DesktopToolInstallGuestResult>
 }
+export const desktopToolInstallGuestResultSchema = z.strictObject({
+    status: z.enum(['installed', 'partial', 'failed', 'cancelled', 'uncertain']),
+    packages: z.array(desktopToolInstallPackageOutcomeSchema).min(1).max(DESKTOP_TOOL_INSTALL_MAX_PACKAGES),
+    output: z.string().max(DESKTOP_TOOL_INSTALL_OUTPUT_MAX_CHARS).optional(),
+    message: z.string().max(1_000).optional(),
+})
 export type DesktopToolInstallStore = {
     begin(identity: DesktopToolInstallRunIdentity, operationId: string, packages: DesktopToolInstallPackage[]): Promise<'execute' | DesktopToolInstallSnapshot>
     complete(identity: DesktopToolInstallRunIdentity, snapshot: DesktopToolInstallSnapshot): Promise<void>
+    reservation(operationId: string): Promise<DesktopToolInstallOperation | null>
+    replay(identity: DesktopToolInstallRunIdentity, action: DesktopToolInstallAction): Promise<DesktopToolInstallSnapshot | null>
+    claim(identity: DesktopToolInstallRunIdentity, action: DesktopToolInstallAction): Promise<{ claimed: boolean; snapshot: DesktopToolInstallSnapshot }>
+    finishRequest(identity: DesktopToolInstallRunIdentity, action: DesktopToolInstallAction, snapshot: DesktopToolInstallSnapshot): Promise<void>
     read(operationId: string): Promise<DesktopToolInstallSnapshot | null>
     list(sessionId: string): Promise<DesktopToolInstallSnapshot[]>
 }
@@ -131,3 +142,6 @@ export function desktopToolInstallGuestId(identity: DesktopToolInstallGuestIdent
 export function desktopToolInstallOperationId(identity: DesktopToolInstallRunIdentity, packages: DesktopToolInstallPackage[]): Promise<string> {
     return digest([identity, packages])
 }
+
+export { createDesktopToolInstallService, type DesktopToolInstallService } from './desktop-tool-install-lifecycle.js'
+export * from './desktop-tool-install-projections.js'

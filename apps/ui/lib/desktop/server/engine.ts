@@ -1,3 +1,6 @@
+import type { DesktopDocumentSendSelection } from '@rerun/contracts'
+import { admitDesktopChatDocuments } from './document-attachments/chat'
+import { consumeDesktopDocumentAdmission } from './document-attachments/binding'
 import { checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf, desktopStoredCoworkerMentions, visibleText, type DesktopCoworkerMention } from '@rerun/contracts'
 import { validateDesktopCoworkerMentionsAtSend } from './coworker-mentions'
 import { assertDesktopSetupChatAllowed } from './setup/service'
@@ -100,7 +103,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
 }
 
 type DesktopChatInput = { agentId: string } & (
-    | { sessionId?: string; text: string; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard }
+    | { sessionId?: string; text: string; documents?: DesktopDocumentSendSelection; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; modelChoice?: DesktopModelPick; tabUid?: string; requestId?: string; reconcileOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard }
     | { sessionId: string; regenerateMessageId: string; requestId: string }
 )
 
@@ -117,7 +120,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     await assertCoworkerNotDeleting(db, input.agentId)
     const kickoff = await assertDesktopCreationSettled(db, input.agentId, internalCreationRequestId)
     if (kickoff && ('regenerateMessageId' in input || input.sessionId || input.tabUid !== kickoff.requestId || input.text !== kickoff.text ||
-        input.coworkerMentions?.length || input.requestId || input.reconcileOnly || input.modelChoice || input.question || input.approval || input.takeover || desktopAttachmentSelectionsOf(input).length)) {
+        input.documents || input.coworkerMentions?.length || input.requestId || input.reconcileOnly || input.modelChoice || input.question || input.approval || input.takeover || desktopAttachmentSelectionsOf(input).length)) {
         throw new DesktopHttpError(409, desktopCreationPendingMessage)
     }
     const agent = await findDesktopAgent(db, input.agentId)
@@ -137,11 +140,12 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const previousStart = !regenerate && uid ? await existingTabStart(db, agent, uid, input) : null
     if (previousStart) {
         const id = await recoverTabSession(db, engineOf(runtime), agent, previousStart)
+        if (id && !regenerate && input.documents) await consumeDesktopDocumentAdmission(runtime, input.documents, AbortSignal.timeout(10_000))
         if (id) return { sessionId: id, response: new Response('data: [DONE]\n\n', { headers: {
             'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1', 'x-session-id': id, 'x-run-id': String(previousStart.run_id),
         } }) }
     }
-    const queued = !regenerate && input.requestId ? { runId: input.requestId, ...attachmentFields, ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }), ...(input.takeover && { takeover: input.takeover }) } : undefined
+    const queued = !regenerate && input.requestId ? { runId: input.requestId, ...attachmentFields, ...(input.documents && { documents: input.documents }), ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }), ...(input.takeover && { takeover: input.takeover }) } : undefined
     const requestId = regenerate ? await regenerationRequestId(db, input.sessionId, input.regenerateMessageId, input.requestId) : undefined
     let replay: Response | undefined
     if (regenerate) {
@@ -185,6 +189,9 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     }
     const files = !replay && !regenerate ? await readDesktopAttachments(runtime, agent.id,
         attachmentPaths.filter((item): item is string => typeof item === 'string')) : []
+    const documents = !replay && !regenerate && input.documents ? await admitDesktopChatDocuments(runtime, db, { ...input, documents: input.documents }) : []
+    if (documents.length && !regenerate && input.documents?.modelChoice && (input.documents.modelChoice.connectionId !== connectionId || input.documents.modelChoice.model !== model)) throw new DesktopHttpError(409, 'The model changed after the documents were prepared. Review them before sending.')
+    if (files.reduce((sum, file) => sum + file.size, 0) + documents.reduce((sum, file) => sum + Buffer.byteLength(file.text), 0) > DESKTOP_ATTACHMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments must be 128 KiB or smaller in total.')
     const resolvedImages = !replay && images.length ? await readDesktopImageSnapshots(runtime, agent.id, images) : new Map<string, Uint8Array>()
     const resolved: DesktopResolvedAttachment[] = (replay ? [] : attachmentPaths).map(item => typeof item === 'string'
         ? { type: 'text', path: item, content: files.find(file => file.path === item)!.content }
@@ -207,6 +214,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             ...(start && { desktopFirstTurn: { sessionId: String(start.engine_session_id), runId: String(start.run_id) } }),
             ...(queued && { desktopQueuedTurn: queued }),
             ...attachmentBody,
+            ...(documents.length && { desktopDocuments: documents }),
         }),
         connectionId,
         model,
@@ -244,6 +252,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     const session = regenerate
         ? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Alternate · ' + existing!.title.replace(/^Alternate · /, ''), regenerationRequestId: requestId, model: savedChoice(existing) })
         : existing ?? await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: desktopChatTitle(input), model: firstChoice })
+    if (!regenerate && input.documents) await consumeDesktopDocumentAdmission(runtime, input.documents, AbortSignal.timeout(10_000))
     const headers = new Headers({
         'content-type': engineResponse.headers.get('content-type') ?? 'text/event-stream',
         'x-vercel-ai-ui-message-stream': engineResponse.headers.get('x-vercel-ai-ui-message-stream') ?? 'v1',

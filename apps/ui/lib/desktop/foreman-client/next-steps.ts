@@ -69,7 +69,7 @@ export function projectForemanNextSteps(build: DesktopForemanBuildProgressView |
     }]
 }
 
-/** Historical cards (live=null) must not start setup or create schedules. */
+/** Gate for automatic live effects only; human clicks on saved cards use server authorization. */
 export function nextStepAllowedWhileLive(live: boolean, step: DesktopForemanNextStep): boolean {
     if (!live) return false
     return step.kind !== 'unavailable'

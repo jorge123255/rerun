@@ -1,33 +1,15 @@
 /** Trusted discovery projection — aligns with I's DesktopForemanDiscoveryEvent / Finding. */
 
-export type DesktopDiscoverySource =
-    | 'profile'
-    | 'site'
-    | 'search'
-    | 'stack'
-    | 'dns'
-    | 'registry'
-    | 'linkedinPerson'
-    | 'linkedinCompany'
-    | 'googleBusiness'
-    | 'catalog'
-    | 'synthesis'
-
-export type DesktopDiscoveryAttribution = { url: string; fetchedAt: string }
-
-export type DesktopDiscoveryFinding =
-    | { kind: 'identity'; source: DesktopDiscoverySource; attribution: DesktopDiscoveryAttribution; name: string; oneLiner: string | null; logoUrl: null; domain: string }
-    | { kind: 'audience'; source: DesktopDiscoverySource; attribution: DesktopDiscoveryAttribution; text: string }
-    | { kind: 'products'; source: DesktopDiscoverySource; attribution: DesktopDiscoveryAttribution; items: string[] }
-    | { kind: 'customers'; source: DesktopDiscoverySource; attribution: DesktopDiscoveryAttribution; items: string[] }
-    | { kind: 'competitors'; source: DesktopDiscoverySource; attribution: DesktopDiscoveryAttribution; items: string[] }
-
-export type DesktopDiscoveryEvent =
-    | { type: 'pending'; source: DesktopDiscoverySource }
-    | { type: 'found'; source: DesktopDiscoverySource; findings: DesktopDiscoveryFinding[] }
-    | { type: 'dropped'; source: DesktopDiscoverySource; reason?: 'failed' | 'timeout' | 'blocked' | 'empty' }
-    | { type: 'unavailable'; source: DesktopDiscoverySource }
-    | { type: 'end' }
+import {
+    DESKTOP_FOREMAN_SOURCE_LABELS,
+    type DesktopDiscoverySource,
+    type DesktopForemanFinding,
+    type DesktopForemanDiscoveryEvent,
+} from '@rerun/contracts'
+export type { DesktopDiscoverySource }
+export type DesktopDiscoveryFinding = DesktopForemanFinding
+export type DesktopDiscoveryAttribution = DesktopForemanFinding['attribution']
+export type DesktopDiscoveryEvent = DesktopForemanDiscoveryEvent
 
 export type DesktopDiscoveryEntry =
     | { id: string; order: number; source: DesktopDiscoverySource; type: 'teaser' }
@@ -54,19 +36,7 @@ export const EMPTY_DESKTOP_DISCOVERIES: DesktopDiscoveriesState = {
     unavailable: [],
 }
 
-export const DESKTOP_DISCOVERY_SOURCE_LABELS: Record<DesktopDiscoverySource, string> = {
-    profile: 'Your website',
-    stack: 'Your website',
-    site: 'Your website',
-    dns: 'Your domain',
-    registry: 'Public registry',
-    search: 'The web',
-    linkedinPerson: 'LinkedIn',
-    linkedinCompany: 'LinkedIn',
-    googleBusiness: 'Google',
-    catalog: 'Your website',
-    synthesis: 'Rerun',
-}
+export const DESKTOP_DISCOVERY_SOURCE_LABELS = DESKTOP_FOREMAN_SOURCE_LABELS
 
 export const DESKTOP_DISCOVERY_TEASERS: Record<DesktopDiscoverySource, (subject: { name: string; domain: string }) => string> = {
     profile: ({ domain }) => `Reading ${domain}…`,
@@ -156,7 +126,8 @@ export function discoveriesFromRun(run: {
         bySource.set(finding.source, list)
     }
     for (const [source, findings] of bySource) state = applyDesktopDiscoveryEvent(state, { type: 'found', source, findings })
-    if (run.status === 'failed') state = { ...state, error: 'Discovery failed.', ended: true, loading: false }
+    if (run.status !== 'running') state = applyDesktopDiscoveryEvent(state, { type: 'end' })
+    if (run.status === 'failed') state = { ...state, error: 'Discovery failed.' }
     return state
 }
 

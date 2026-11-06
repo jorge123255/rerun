@@ -248,7 +248,7 @@ describe('isolated screen prerequisites', () => {
         docker.imageKind = { kind: 'missing' }
         const signal = new AbortController().signal
         await expect(service.status(owner, signal)).resolves.toEqual({ available: false, prerequisite: 'image-missing', state: 'absent' })
-        await expect(service.ensure(owner, signal)).rejects.toMatchObject({ kind: 'prerequisite', message: 'The isolated screen image rerun-desktop-guest:round32 is not built.' })
+        await expect(service.ensure(owner, signal)).rejects.toMatchObject({ kind: 'prerequisite', message: 'The isolated screen image rerun-desktop-guest:round33 is not built.' })
         expect(docker.runs).toEqual([])
         expect(docker.createdVolumes).toEqual([])
     })
@@ -861,5 +861,32 @@ describe('concrete launcher and foreground admission', () => {
         box.docker.launchers = { terminal: true, files: false }
         expect((await box.service.status(owner, box.signal)).launchers).toEqual({ terminal: true, files: false })
         expect(box.docker.runs).toHaveLength(1)
+    })
+})
+
+describe('reviewed isolated installation control', () => {
+    it('requires fresh authority under the shared lease and sends only fixed guest fields', async () => {
+        const box = await boot()
+        let allowed = false
+        const body = { mode: 'install' as const, operationId: 'a'.repeat(64), workspaceFingerprint: 'b'.repeat(64), packages: ['left-pad@1.2.3'] }
+        await expect(box.service.toolInstall(box.target, body, box.signal, async () => { if (!allowed) throw new Error('permission revoked') })).rejects.toThrow('permission revoked')
+        expect(box.docker.execs.filter(call => call.body.op === 'tool-install')).toHaveLength(0)
+        allowed = true
+        await box.service.toolInstall(box.target, body, box.signal, async () => {})
+        expect(box.docker.execs.find(call => call.body.op === 'tool-install')?.body).toMatchObject({ op: 'tool-install', ...body })
+        await box.service.startTakeover(box.target, box.signal)
+        await expect(box.service.toolInstall(box.target, body, box.signal, async () => {})).rejects.toThrow(HUMAN_DRIVING)
+    })
+    it('drains the entire exact guest after an interrupted submitted installation', async () => {
+        const box = await boot(), abort = new AbortController()
+        box.docker.holdOps.add('tool-install')
+        let submitted!: () => void
+        const started = new Promise<void>(resolve => { submitted = resolve })
+        box.docker.onHold = submitted
+        const effect = box.service.toolInstall(box.target, { mode: 'install', operationId: 'a'.repeat(64), workspaceFingerprint: 'b'.repeat(64), packages: ['left-pad@1.2.3'] }, abort.signal, async () => {})
+        await started; abort.abort()
+        await expect(effect).rejects.toThrow()
+        expect(box.docker.removedContainers).toContain(containerName(owner.engineAgentId))
+        expect(box.docker.containers.has(containerName(owner.engineAgentId))).toBe(false)
     })
 })

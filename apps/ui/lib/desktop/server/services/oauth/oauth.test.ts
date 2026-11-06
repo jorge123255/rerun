@@ -31,7 +31,7 @@ function fixture(){
   async save(a,revision){if(rows.get(a.snapshot.attemptId)?.snapshot.revision!==revision)throw new Error('revision conflict');rows.set(a.snapshot.attemptId,structuredClone(a))},
   async readToken(a){return tokens.get(a.snapshot.attemptId)??null},async writeToken(a,t){tokens.set(a.snapshot.attemptId,t)},async clearToken(a){tokens.delete(a.snapshot.attemptId)},
  }
- const accounts:OAuthAccounts={catalog:async()=>manifest,configure:async()=>binding,current:async()=>({binding,enabled,granted:true,healthy}),exclusive:async(_o,_i,work)=>work(),readiness:async(_binding,credential)=>{await credential();probes++;writeDuringProbe?.();return {healthy:true}},disconnect:async()=>{binding.configGeneration=crypto.randomUUID()} }
+ const accounts:OAuthAccounts={catalog:async()=>manifest,configure:async()=>binding,current:async()=>({binding,enabled,granted:true,healthy}),exclusive:async(_o,_i,work)=>work(),readiness:async(_binding,credential)=>{await credential();probes++;writeDuringProbe?.();return {healthy:true}},disconnect:async()=>{healthy=false} }
  const factory:OAuthPrimitiveFactory=()=>({async start(){starts++;return {status:{state:'waiting'},authorizationUrl:'https://fixture.example/authorize'}},async status(){return {state:primitiveState}},async credential(){return 'fixture-token'},async cancel(){},shutdown(){}})
  // Discovery address check and browser are fakes; tests make no network/sign-in calls.
  const lifecycle=serviceOAuthLifecycle(accounts,store,factory,async()=>{opens++},()=>time)
@@ -98,4 +98,16 @@ it('cancelled attempts remain invalidated and never probe after later status',as
  const cancelled=await f.lifecycle.action('owner',{action:'cancel',attemptId:a.snapshot.attemptId,expectedRevision:a.snapshot.revision},new AbortController().signal)
  const late=await f.lifecycle.action('owner',{action:'status',attemptId:cancelled.attemptId,expectedRevision:cancelled.revision},new AbortController().signal)
  expect(late.state).toBe('cancelled');expect(f.counts().probes).toBe(0)
+})
+
+it('disconnect preserves account configuration and permits only a new explicit sign-in attempt', async () => {
+ const f=fixture(),a=await f.reserve('connected');f.token(a)
+ const disconnected=await f.lifecycle.action('owner',{action:'disconnect',attemptId:a.snapshot.attemptId,expectedRevision:a.snapshot.revision},new AbortController().signal)
+ expect(disconnected.state).toBe('disconnected');expect(disconnected.configGeneration).toBe(a.binding.configGeneration)
+ expect(await f.store.readToken(a)).toBeNull()
+ const current=await f.lifecycle.action('owner',{action:'current',accountKey:f.binding.accountKey},new AbortController().signal)
+ expect(current.state).toBe('disconnected');expect(f.counts()).toEqual({starts:0,opens:0,probes:0})
+ const restarted=await f.lifecycle.action('owner',{action:'start',requestId:crypto.randomUUID(),accountKey:f.binding.accountKey,expectedGeneration:f.binding.configGeneration},new AbortController().signal)
+ expect(restarted.attemptId).not.toBe(a.snapshot.attemptId);expect(restarted.state).toBe('waiting')
+ expect(f.counts()).toEqual({starts:1,opens:1,probes:0})
 })

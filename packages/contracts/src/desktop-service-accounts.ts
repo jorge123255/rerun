@@ -106,7 +106,8 @@ export type DesktopServiceHeaderPlanEntry = z.infer<typeof desktopServiceHeaderP
 export const desktopServiceAccountViewSchema = desktopInstalledServiceSchema
     .extend({
         installationId: z.string().uuid(),
-        shape: z.enum(['anonymous', 'bearer', 'headers']),
+        shape: z.enum(['anonymous', 'bearer', 'headers', 'oauth']),
+        transport: z.enum(['http', 'sse']).optional(),
         headerPlan: z.array(desktopServiceHeaderPlanEntrySchema),
         configured: z.boolean(),
         configuredInputs: z.record(z.string().min(1).max(128), z.literal(true)),

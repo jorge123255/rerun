@@ -38,6 +38,9 @@ const MAX_ASKED = 4_000
 
 type BuildIntents = ForemanBuildIntents & { model: DesktopForemanRevision['model']; workspaceId: string; asked: string | null }
 type BuildRow = { build: DesktopForemanBuild; version: number; intents: BuildIntents; chatId: string }
+const WORK = Symbol.for('rerun.desktop.foreman.work.v1')
+type RuntimeWork = { builds: Map<string, Promise<void>>; decisions: Map<string, Promise<DesktopForemanDecision>>; stopEpochs?: Map<string, number>; resumes?: Map<string, Promise<DesktopForemanBuild>> }
+const sharedWork = () => ((globalThis as unknown as Record<symbol, WeakMap<object, RuntimeWork>>)[WORK] ??= new WeakMap())
 
 export type ForemanRuntime = ReturnType<typeof createForemanRuntime>
 
@@ -46,14 +49,25 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
     const auth = requireAuthorities(input.authorities)
     const now = () => (auth.now?.() ?? new Date()).toISOString()
     const newId = (prefix: string) => `${prefix}_${auth.id?.() ?? randomUUID()}`
-    const inflight = new Map<string, Promise<void>>()
+    const coordinationKey = store.coordinationKey ?? store
+    const work: RuntimeWork = sharedWork().get(coordinationKey) ?? { builds: new Map(), decisions: new Map() }
+    sharedWork().set(coordinationKey, work)
+    const inflight = work.builds
+    const stopEpochs = work.stopEpochs ??= new Map<string, number>()
+    const resumes = work.resumes ??= new Map<string, Promise<DesktopForemanBuild>>()
     const discoveries = new Map<string, AbortController>()
+    const discoveryWork = new Map<string, Promise<void>>()
 
     const tx = <T>(work: (db: ForemanTx) => Promise<T>) => store.transaction(work)
 
     async function assertLive(binding: DesktopForemanBinding) {
         foremanBindingSchema.parse(binding)
+        await assertWorkspace(binding)
         if (!(await auth.run.isLive(binding))) throw new ForemanError('not_live', 'This Foreman conversation is not the live run any more.')
+    }
+
+    async function assertWorkspace(chat: DesktopForemanChatRef) {
+        if (chat.workspaceId !== await auth.workspace.currentWorkspaceId()) throw new ForemanError('not_found', 'This conversation is not in the current workspace.')
     }
 
     // show_plan: validated, sealed and stored immutably before the card is drawn. The tool result
@@ -104,6 +118,7 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
     // Only the explicit user click on the exact displayed, still-current revision is admitted.
     async function decide(raw: unknown): Promise<DesktopForemanDecision> {
         const request = foremanDecisionInputSchema.parse(raw)
+        await assertWorkspace(request.chat)
         const fingerprint = fingerprintOf(request)
         const outcome = await tx(async db => {
             const replay = await db.decisionByRequest(request.requestId)
@@ -134,7 +149,12 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
             await reserveBuild(db, request.chat, target, decision, revisions, decisions)
             return { decision, fresh: true }
         })
-        if (outcome.decision.decision === 'ask_changes' && outcome.decision.state === 'pending') return sendChanges(request.chat, outcome.decision)
+        if (outcome.decision.decision === 'ask_changes' && outcome.decision.state === 'pending') {
+            if (!outcome.fresh) return work.decisions.get(request.requestId) ?? recoverDecision(request.chat, request.requestId)
+            const sending = sendChanges(request.chat, outcome.decision)
+            work.decisions.set(request.requestId, sending)
+            try { return await sending } finally { work.decisions.delete(request.requestId) }
+        }
         if (outcome.decision.decision === 'confirm' && outcome.decision.buildId && outcome.fresh) void runBuild(outcome.decision.buildId)
         return outcome.decision
     }
@@ -212,9 +232,9 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
     const outcome = (build: DesktopForemanBuild): DesktopForemanBuild['state'] => {
         const states = [...build.items.map(item => item.state), ...build.boxes.map(box => box.state)]
         if (states.includes('uncertain')) return 'uncertain'
+        if (build.state === 'stopped') return 'stopped'
         if (build.items.every(item => item.state === 'created')) return 'completed'
         const created = build.items.some(item => item.state === 'created')
-        if (build.state === 'stopped') return 'stopped'
         if (states.includes('creating') || states.includes('queued') || states.includes('reserved')) return build.state
         return created ? 'partial' : 'failed'
     }
@@ -224,8 +244,9 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
     function settledAfterReconcile(build: DesktopForemanBuild): DesktopForemanBuild['state'] {
         const states = [...build.items.map(item => item.state), ...build.boxes.map(box => box.state)]
         if (states.includes('uncertain')) return 'uncertain'
+        if (build.state === 'stopped') return 'stopped'
         if (build.items.every(item => item.state === 'created')) return 'completed'
-        if (build.state === 'uncertain' || build.state === 'stopped') return build.items.some(item => item.state === 'stopped') ? 'stopped' : build.items.some(item => item.state === 'created') ? 'partial' : 'failed'
+        if (build.state === 'uncertain') return build.items.some(item => item.state === 'stopped') ? 'stopped' : build.items.some(item => item.state === 'created') ? 'partial' : 'failed'
         return outcome(build)
     }
 
@@ -251,6 +272,7 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
         const revision = decision && (await tx(async db => (await db.revisionsOf({ workspaceId: row.intents.workspaceId, chatId: row.chatId })).find(entry => entry.revisionId === row.build.revisionId)))
         const fail = (failure: DesktopForemanBuildItem['failure'], message: string) =>
             mutate(buildId, build => {
+                if (build.state === 'stopped') return null
                 settleUnstarted(build, failure, message)
                 build.state = build.items.some(item => item.state === 'created') ? 'partial' : 'failed'
                 return build
@@ -273,7 +295,12 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
             if (row.build.state !== 'running') break
             if (current.state !== 'queued') continue
             if (revision.chat.workspaceId !== (await auth.workspace.currentWorkspaceId())) return void (await fail('workspace_changed', 'The workspace changed while the team was being built.'))
-            await mutate(buildId, build => (setBox(build, box.key, { state: 'creating' }), build))
+            const claimed = await mutate(buildId, build => {
+                if (build.state !== 'running' || build.boxes.find(entry => entry.boxKey === box.key)?.state !== 'queued') return null
+                setBox(build, box.key, { state: 'creating' })
+                return build
+            })
+            if (claimed.state !== 'running' || claimed.boxes.find(entry => entry.boxKey === box.key)?.state !== 'creating') break
             const result = await attempt(() => auth.creation.ensureBox({ requestId: row.intents.boxes[box.key], name: box.name, order: revision.plan.boxes.indexOf(box) }))
             await mutate(buildId, build => {
                 if (result.kind === 'ok') setBox(build, box.key, { state: 'created', spaceId: result.value.spaceId })
@@ -292,7 +319,12 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
             const space = row.build.boxes.find(entry => entry.boxKey === item.boxKey)
             if (!space?.spaceId) continue
             if (revision.chat.workspaceId !== (await auth.workspace.currentWorkspaceId())) return void (await fail('workspace_changed', 'The workspace changed while the team was being built.'))
-            await mutate(buildId, build => (setItem(build, item.key, { state: 'creating' }), build))
+            const claimed = await mutate(buildId, build => {
+                if (build.state !== 'running' || build.items.find(entry => entry.itemKey === item.key)?.state !== 'queued') return null
+                setItem(build, item.key, { state: 'creating' })
+                return build
+            })
+            if (claimed.state !== 'running' || claimed.items.find(entry => entry.itemKey === item.key)?.state !== 'creating') break
             const requestId = row.intents.items[item.key]
             const asked = row.intents.asked
             const result =
@@ -357,36 +389,86 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
 
     async function buildAction(raw: unknown): Promise<DesktopForemanBuild> {
         const request = foremanBuildActionSchema.parse(raw)
+        await assertWorkspace(request.chat)
         const row = await loadBuild(request.buildId)
-        if (row.chatId !== request.chat.chatId) throw new ForemanError('not_found', 'That build is not part of this conversation.')
+        if (row.chatId !== request.chat.chatId || row.intents.workspaceId !== request.chat.workspaceId) throw new ForemanError('not_found', 'That build is not part of this conversation.')
         const fingerprint = digestOf(request)
         const replay = await claimAction(request, fingerprint)
         if (replay && replay.state !== 'pending') return (await loadBuild(request.buildId)).build
 
         if (request.action === 'stop') {
-            const build = await mutate(request.buildId, build => {
+            stopEpochs.set(request.buildId, (stopEpochs.get(request.buildId) ?? 0) + 1)
+            await mutate(request.buildId, build => {
                 if (SETTLED_BUILD.has(build.state)) return null
                 settleUnstarted(build, null, 'Stopped before it was built.')
                 build.state = 'stopped'
                 return build
             })
+            await inflight.get(request.buildId)
             await settleAction(request.requestId, fingerprint, request.buildId, 'acknowledged', null)
-            return build
+            return (await loadBuild(request.buildId)).build
         }
 
         if (request.action === 'resume') {
-            await reconcileBuild(request.buildId)
-            const build = await mutate(request.buildId, build => {
-                if (!['stopped', 'partial', 'failed'].includes(build.state)) return null
-                if (build.items.some(item => item.state === 'uncertain' || item.state === 'creating') || build.boxes.some(box => box.state === 'uncertain' || box.state === 'creating')) throw new ForemanError('uncertain', 'An item is still unresolved. It is checked before anything is retried.')
-                for (const box of build.boxes) if (box.state === 'stopped' || box.state === 'failed') box.state = 'queued'
-                for (const item of build.items) if ((item.state === 'stopped' || item.state === 'failed') && item.failure !== 'replaced' && item.failure !== 'deleted') Object.assign(item, { state: 'queued', failure: null, error: null })
-                build.state = 'running'
+            const epoch = stopEpochs.get(request.buildId) ?? 0
+            const stoppedAgain = () => (stopEpochs.get(request.buildId) ?? 0) !== epoch
+            const resumed = (resumes.get(request.buildId) ?? Promise.resolve()).catch(() => {}).then(async () => {
+                // Drain a possibly still-publishing attempt before inspecting its durable receipt.
+                // The Stop epoch also covers a second explicit Stop racing this recovery action.
+                await mutate(request.buildId, build => {
+                    if (build.state !== 'running' && build.state !== 'reserved') return null
+                    settleUnstarted(build, null, 'Paused while the saved build is checked.')
+                    build.state = 'stopped'
+                    return build
+                })
+                await inflight.get(request.buildId)
+                await reconcileBuild(request.buildId)
+                if (!stoppedAgain() && auth.creation.resumePending) {
+                    const pending = await loadBuild(request.buildId)
+                    const ids = [
+                        ...pending.build.boxes.filter(box => box.state === 'uncertain').map(box => pending.intents.boxes[box.boxKey]),
+                        ...pending.build.items.filter(item => item.state === 'uncertain').map(item => pending.intents.items[item.itemKey]),
+                        ...((pending.build.setup.state === 'uncertain' || pending.build.setup.state === 'pending') && pending.intents.setup ? [pending.intents.setup] : []),
+                    ].filter((id): id is string => typeof id === 'string')
+                    if (ids.length) {
+                        await mutate(request.buildId, build => {
+                            if (stoppedAgain()) return null
+                            build.state = 'running'
+                            return build
+                        })
+                        const recover = (async () => {
+                            for (const id of ids) {
+                                if (stoppedAgain() || (await loadBuild(request.buildId)).build.state === 'stopped') break
+                                try { await auth.creation.resumePending!(id) }
+                                catch { break } // Preserve uncertainty; never move on by guessing absence.
+                            }
+                            await reconcileBuild(request.buildId)
+                        })()
+                        inflight.set(request.buildId, recover)
+                        try { await recover } finally { if (inflight.get(request.buildId) === recover) inflight.delete(request.buildId) }
+                    }
+                }
+                if (stoppedAgain()) {
+                    await settleAction(request.requestId, fingerprint, request.buildId, 'acknowledged', null)
+                    return (await loadBuild(request.buildId)).build
+                }
+                const build = await mutate(request.buildId, build => {
+                    if (stoppedAgain()) return null
+                    if (build.items.some(item => item.state === 'uncertain' || item.state === 'creating') || build.boxes.some(box => box.state === 'uncertain' || box.state === 'creating')) throw new ForemanError('uncertain', 'An item is still unresolved. It is checked before anything is retried.')
+                    if (!['stopped', 'partial', 'failed'].includes(build.state)) return null
+                    for (const box of build.boxes) if (box.state === 'stopped' || box.state === 'failed') box.state = 'queued'
+                    for (const item of build.items) if ((item.state === 'stopped' || item.state === 'failed') && item.failure !== 'replaced' && item.failure !== 'deleted') Object.assign(item, { state: 'queued', failure: null, error: null })
+                    build.state = 'running'
+                    return build
+                })
+                await settleAction(request.requestId, fingerprint, request.buildId, 'acknowledged', null)
+                if (!stoppedAgain()) void runBuild(request.buildId)
                 return build
             })
-            await settleAction(request.requestId, fingerprint, request.buildId, 'acknowledged', null)
-            void runBuild(request.buildId)
-            return build
+            resumes.set(request.buildId,resumed)
+            const clear = () => { if (resumes.get(request.buildId) === resumed) resumes.delete(request.buildId) }
+            void resumed.then(clear,clear)
+            return resumed
         }
 
         return startLeadSetup(request.buildId, request.itemKey, request.requestId, fingerprint)
@@ -480,18 +562,22 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
     // An uncertain change request may be settled from its receipt, never by sending it again.
     async function recoverDecision(chat: DesktopForemanChatRef, requestId: string) {
         foremanChatRefSchema.parse(chat)
+        await assertWorkspace(chat)
+        const sending = work.decisions.get(requestId)
+        if (sending) return sending
         const found = await tx(db => db.decisionByRequest(requestId))
         if (!found || found.chatId !== chat.chatId) throw new ForemanError('not_found', 'That answer is not part of this conversation.')
         if (found.decision.state !== 'uncertain' && found.decision.state !== 'pending') return found.decision
         const receipt = await auth.run.lookupFollowUp(requestId)
         if (receipt.state === 'present') return setDecision({ ...found.decision, state: 'acknowledged', followUpRunId: receipt.value.runId, error: null }, chat.chatId)
-        if (receipt.state === 'absent') return sendChanges(chat, found.decision)
+        if (receipt.state === 'absent') return setDecision({ ...found.decision, state: 'failed', error: 'The change request was never delivered. Send a new message to revise the plan.' }, chat.chatId)
         return found.decision
     }
 
     // Read-only. Never starts a run, picks a model, resumes a build or reruns discovery.
     async function readView(rawChat: DesktopForemanChatRef): Promise<DesktopForemanConversationView> {
         const chat = foremanChatRefSchema.parse(rawChat)
+        await assertWorkspace(chat)
         const [state, live, agents] = await Promise.all([
             tx(async db => ({ revisions: await db.revisionsOf(chat), decisions: await db.decisionsOf(chat.chatId), builds: await db.buildsOf(chat.chatId), discovery: await db.latestDiscovery(chat.chatId) })),
             auth.run.currentLive(chat),
@@ -525,6 +611,8 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
         const created = builds.flatMap(entry => entry.build.items.flatMap(item => (item.created ? [item.created] : [])))
         const known = intent.kind === 'open_box' ? created.some(entry => entry.spaceId === intent.spaceId) : created.some(entry => entry.agentIds.includes(intent.agentId))
         if (!known) return { ok: false as const, error: 'Only coworkers and Boxes this conversation built can be opened from here.' }
+        await assertLive(binding)
+        if (!(await auth.run.isObserved(chat, binding.runId))) return { ok: false as const, error: 'No window is watching this conversation.' }
         auth.events.publish({ type: 'navigation', binding, intent, eventId })
         return { ok: true as const }
     }
@@ -548,18 +636,27 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
         const deadline = setTimeout(() => controller.abort(), DESKTOP_FOREMAN_LIMITS.discoveryDeadlineMs)
         let queue = Promise.resolve()
         const apply = (raw: unknown) => {
+            if (controller.signal.aborted) return
             const event = foremanDiscoveryEventSchema.parse(raw)
             queue = queue.then(async () => {
-                await tx(async db => {
+                controller.signal.throwIfAborted()
+                if (!(await auth.run.isLive(binding))) { controller.abort(); controller.signal.throwIfAborted() }
+                const written = await tx(async db => {
+                    controller.signal.throwIfAborted()
                     const current = await db.discovery(binding.chatId, binding.runId)
-                    if (!current || current.discoveryId !== created.run.discoveryId || current.status !== 'running') return
+                    controller.signal.throwIfAborted()
+                    if (!current || current.discoveryId !== created.run.discoveryId || current.status !== 'running') return false
                     await db.putDiscovery(applyForemanDiscoveryEvent(current, event))
+                    return true
                 })
+                controller.signal.throwIfAborted()
+                if (!written || !(await auth.run.isLive(binding))) return
                 auth.events.publish({ type: 'discovery', chat, runId: binding.runId, discoveryId: created.run.discoveryId, event })
             })
+            void queue.catch(() => {})
         }
         const collect = auth.collectDiscovery
-        void (async () => {
+        const work = (async () => {
             try {
                 if (!collect) for (const source of DESKTOP_DISCOVERY_SOURCES) apply({ type: 'unavailable', source })
                 else await collect({ url: parsed.toString(), signal: controller.signal, emit: apply })
@@ -574,13 +671,17 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
             } finally {
                 clearTimeout(deadline)
                 discoveries.delete(created.run.discoveryId)
+                discoveryWork.delete(created.run.discoveryId)
             }
         })()
+        discoveryWork.set(created.run.discoveryId, work)
+        void work.catch(() => {})
         return created.run
     }
 
-    function stopDiscovery(discoveryId: string) {
+    async function stopDiscovery(discoveryId: string) {
         discoveries.get(discoveryId)?.abort()
+        await discoveryWork.get(discoveryId)
     }
 
     return { recordShownPlan, decide, recoverDecision, buildAction, runBuild, reconcileBuild, reconcile, readView, emitNavigation, startDiscovery, stopDiscovery }

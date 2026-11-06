@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
+import { cp, rename, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, afterEach, expect, test } from 'vitest'
@@ -6,7 +6,7 @@ import { DESKTOP_TEMPLATE_LIMITS, DESKTOP_TEMPLATE_PROSE_WARNING } from '@rerun/
 import { bindDesktopSkillOwnerReader } from '../service-skills/authority.js'
 import { prepareSkillHelperFixture } from '../skill-publication.test-support.js'
 import { desktopTemplateRouteAllowed } from './allow.js'
-import { installManifest, sealManifest } from './install.js'
+import { installManifest, readForemanTemplateImport, sealManifest } from './install.js'
 import { createDesktopTemplateEngine, type TemplateIndex } from './service.js'
 
 let helper: Awaited<ReturnType<typeof prepareSkillHelperFixture>>
@@ -264,4 +264,29 @@ test('desktop template plans exclude canonical app skills when the workspace reg
         if (previous === undefined) delete process.env.RERUN_DESKTOP_APP; else process.env.RERUN_DESKTOP_APP = previous
         bindDesktopSkillOwnerReader(async () => { throw new Error('No active fixture authority') })
     }
+})
+
+
+test('Foreman imports are disabled before indexing and bind read-only recovery to their original directory', async () => {
+    const { dataRoot, agentsRoot, engine, engineAgentId } = await scaffold()
+    const { draft, plan } = await draftAndPlan(engine, engineAgentId)
+    const captured = await engine.capture({ requestId: captureRequest, templateId: draft.templateId, revision: draft.revision, planRevision: plan.planRevision, selections: selection })
+    const id = `i${'d'.repeat(31)}`, names = new Map<string,string>()
+    const input = { foremanDisabled: true as const, dataRoot, agentsRoot, importReceiptId: importReceipt, templateId: captured.templateId, revision: captured.revision, coworkers: [{ engineAgentId: id, agentKey: 'c00' }],
+        readIndex: async (key: string) => names.has(key) ? { name: names.get(key)! } : null,
+        insertIndex: async (key: string, name: string) => {
+            const config = JSON.parse(await readFile(join(agentsRoot,key,'config.json'),'utf8'))
+            expect(config.enabled).toBe(false)
+            expect(Object.values(config.tools).every(value => value === false)).toBe(true)
+            names.set(key,name)
+        },
+    }
+    expect((await installManifest(input)).status).toBe('ready')
+    expect(await readForemanTemplateImport(agentsRoot,id,importReceipt)).toEqual({ state: 'present', engineAgentId: id, importReceiptId: importReceipt, templateId: captured.templateId, revision: captured.revision })
+    expect((await installManifest({ ...input, foremanDisabled: undefined })).status).toBe('uncertain')
+    expect(JSON.parse(await readFile(join(agentsRoot,id,'config.json'),'utf8')).enabled).toBe(false)
+    const original = join(agentsRoot,`${id}-original`)
+    await rename(join(agentsRoot,id),original); await cp(original,join(agentsRoot,id),{recursive:true})
+    expect(await readForemanTemplateImport(agentsRoot,id,importReceipt)).toEqual({state:'replaced'})
+    expect((await installManifest(input)).coworkers[0]?.phase).toBe('foreign')
 })

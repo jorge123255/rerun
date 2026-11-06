@@ -1,3 +1,6 @@
+import { desktopToolInstallAttention, desktopToolInstallSnapshotSchema } from '@rerun/contracts'
+import { readDesktopMcpSignInView } from './mcp-sign-in/binding'
+import { readDesktopToolInstallHistory } from './tool-install/runtime'
 import { readDesktopServiceRequestView } from './service-requests/view'
 import { readDesktopSecretRequestView } from './secret-requests/binding'
 import 'server-only'
@@ -25,7 +28,7 @@ export async function readDesktopPendingInbox(runtime: DesktopRuntime): Promise<
     await initializeDesktopPendingInbox(db)
     const ids = attention.items.map(item => item.id)
     if (!ids.length) return { items: [], unavailableAgentIds: attention.unavailableAgentIds, checkedAt: attention.checkedAt }
-    const result = await db.execute({ sql: `SELECT item_id FROM desktop_pending_inbox_seen_v4 WHERE item_id IN (${ids.map(() => '?').join(',')})`, args: ids })
+    const result = await db.execute({ sql: `SELECT item_id FROM desktop_pending_inbox_seen_v5 WHERE item_id IN (${ids.map(() => '?').join(',')})`, args: ids })
     const seen = new Set(result.rows.map(row => String(row.item_id)))
     return { items: attention.items.filter(item => !seen.has(item.id)), unavailableAgentIds: attention.unavailableAgentIds, checkedAt: attention.checkedAt }
 }
@@ -33,7 +36,7 @@ export async function readDesktopPendingInbox(runtime: DesktopRuntime): Promise<
 export const desktopPendingInboxReadSchema = z.object({
     items: z.array(z.object({
         id: z.string().min(1).max(8192),
-        kind: z.enum(['question', 'approval', 'takeover', 'service', 'secret']),
+        kind: z.enum(['question', 'approval', 'takeover', 'service', 'secret', 'mcp', 'tool-install']),
         agentId: z.string().min(1).max(200),
         sessionId: z.string().min(1).max(200),
     }).strict()).max(500),
@@ -84,6 +87,8 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
                             ? (await readDesktopQuestion(runtime, session.id, { signal })).question?.id ?? null
                             : item.kind === 'takeover' ? (await readDesktopTakeover(runtime, session.id, { signal })).takeover?.id ?? null
                             : item.kind === 'service' ? service && !service.receipt?.accepted && service.retry.phase !== 'accepted' ? service.serviceRequestId : null
+                            : item.kind === 'mcp' ? (await readDesktopMcpSignInView(runtime, session.id, { signal })).request?.requestId ?? null
+                            : item.kind === 'tool-install' ? (await readDesktopToolInstallHistory(runtime, session.id, { signal })).filter(row => desktopToolInstallAttention(row)).find(row => row.operationId === item.id)?.operationId ?? null
                             : item.kind === 'secret' ? (await readDesktopSecretRequestView(runtime, session.id, { signal })).request?.requestId ?? null
                             : (await readDesktopApproval(runtime, session.id, { signal })).approval?.id ?? null
                         // The resolver also reads local answer receipts after history arrives.
@@ -119,11 +124,20 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
                 const receipt = (await transaction.execute({ sql: 'SELECT accepted FROM desktop_service_suggestion_receipts WHERE service_request_id = ?', args: [item.id] })).rows[0]
                 if (Number(receipt?.accepted) === 1) { failed.add(item.id); continue }
             }
+            if (item.kind === 'tool-install') {
+                const row = (await transaction.execute({ sql: 'SELECT snapshot FROM desktop_tool_installs WHERE operation_id=?', args: [item.id] })).rows[0]
+                const snapshot = row ? desktopToolInstallSnapshotSchema.safeParse(JSON.parse(String(row.snapshot))) : null
+                if (!snapshot?.success || snapshot.data.agentId !== item.agentId || snapshot.data.sessionId !== item.sessionId || !desktopToolInstallAttention(snapshot.data)) { failed.add(item.id); continue }
+            }
+            if (item.kind === 'mcp') {
+                const receipt = (await transaction.execute({ sql: 'SELECT accepted FROM desktop_mcp_sign_in_receipts WHERE request_id = ?', args: [item.id] })).rows[0]
+                if (Number(receipt?.accepted) === 1) { failed.add(item.id); continue }
+            }
             if (item.kind === 'secret') {
                 const receipt = (await transaction.execute({ sql: 'SELECT accepted FROM desktop_secret_receipts WHERE request_id = ?', args: [item.id] })).rows[0]
                 if (Number(receipt?.accepted) === 1) { failed.add(item.id); continue }
             }
-            await transaction.execute({ sql: 'INSERT INTO desktop_pending_inbox_seen_v4 (item_id, agent_id, session_id, kind, seen_at) VALUES (?,?,?,?,?) ON CONFLICT(item_id) DO NOTHING', args: [item.id, item.agentId, item.sessionId, item.kind, seenAt] })
+            await transaction.execute({ sql: 'INSERT INTO desktop_pending_inbox_seen_v5 (item_id, agent_id, session_id, kind, seen_at) VALUES (?,?,?,?,?) ON CONFLICT(item_id) DO NOTHING', args: [item.id, item.agentId, item.sessionId, item.kind, seenAt] })
             marked++
         }
         await transaction.commit()

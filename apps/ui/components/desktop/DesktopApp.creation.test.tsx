@@ -10,7 +10,7 @@ import {createDesktopRecentFixture} from '@/test/desktop-recent-fixture'
 import type {DesktopBoardState} from '@/lib/desktop/spaces'
 import type {DesktopCreationIntent} from '@/lib/desktop/new-agent'
 
-vi.mock('@rerun/ui/foreman',()=>({Orb:()=>null}))
+vi.mock('@rerun/ui/foreman',()=>({PARKED_ORB_SIZE:40,PARKED_ORB_SIZE_MOBILE:40,Orb:()=>null}))
 // Keep the actual App, original description form and IsoGrid. The chat leaf records the exact
 // requested first session and gives the surrounding panel a draft whose DOM lifetime we assert.
 vi.mock('./DesktopChatTabs',()=>({DesktopChatTabs:({agent,requested}:ComponentProps<typeof import('./DesktopChatTabs').DesktopChatTabs>)=><div data-created-chat={agent.id} data-requested-session={requested&&'id' in requested?requested.id:''}><textarea aria-label="Existing chat draft" defaultValue="Original unsent draft"/></div>}))

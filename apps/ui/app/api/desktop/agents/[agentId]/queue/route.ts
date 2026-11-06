@@ -1,3 +1,4 @@
+import { admitDesktopChatDocuments } from '@/lib/desktop/server/document-attachments/chat'
 import { desktopQueueScopeSchema, desktopQueueWriteSchema } from '@/lib/desktop/queued-message'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
@@ -19,6 +20,8 @@ export async function PUT(request: Request, { params }: Params) {
     return desktopRoute(request, async runtime => {
         const parsed = desktopQueueWriteSchema.safeParse(await request.json().catch(() => null))
         if (!parsed.success) throw new DesktopHttpError(400, 'Choose a valid queued message.')
-        return Response.json(await writeDesktopQueue(await openDesktopDatabase(runtime.dataRoot), (await params).agentId, parsed.data))
+        const db = await openDesktopDatabase(runtime.dataRoot), agentId = (await params).agentId
+        if (parsed.data.action === 'enqueue' && parsed.data.item.documents) await admitDesktopChatDocuments(runtime, db, { agentId, ...parsed.data.scope, documents: parsed.data.item.documents })
+        return Response.json(await writeDesktopQueue(db, agentId, parsed.data))
     })
 }

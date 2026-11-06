@@ -1,68 +1,100 @@
 import 'server-only'
-import type { DesktopMcpSignInDecision, DesktopMcpSignInOAuthView, DesktopMcpSignInRequestInput, DesktopMcpSignInResponse, DesktopMcpSignInServer, DesktopMcpSignInSource } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
+import type { DesktopMcpSignInDecision, DesktopMcpSignInOAuthView, DesktopMcpSignInRequestInput, DesktopMcpSignInResponse, DesktopMcpSignInSource, DesktopMcpSignInView } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { DesktopHttpError } from '../auth'
 import { createDesktopMcpSignInContinuation, type DesktopMcpSignInContinuationPorts } from './service'
 import type { DesktopMcpSignInAuthority, DesktopMcpSignInStore } from './store'
 
+export type DesktopMcpSignInOAuthTarget = { requestId: string; attemptId?: string; source: DesktopMcpSignInSource }
 export type DesktopMcpSignInOAuthPorts = {
-    start: (server: DesktopMcpSignInServer, signal: AbortSignal) => Promise<DesktopMcpSignInOAuthView>
-    status: (server: DesktopMcpSignInServer, signal: AbortSignal) => Promise<DesktopMcpSignInOAuthView>
-    cancel: (server: DesktopMcpSignInServer, signal: AbortSignal) => Promise<void>
+    start: (target: DesktopMcpSignInOAuthTarget, signal: AbortSignal) => Promise<DesktopMcpSignInOAuthView>
+    status: (target: DesktopMcpSignInOAuthTarget, signal: AbortSignal) => Promise<DesktopMcpSignInOAuthView>
+    cancel: (target: DesktopMcpSignInOAuthTarget, signal: AbortSignal) => Promise<void>
+    ready: (target: DesktopMcpSignInOAuthTarget, signal: AbortSignal) => Promise<void>
 }
-
 export type DesktopMcpSignInRuntimePorts = {
     store: DesktopMcpSignInStore
     source: (sessionId: string, signal: AbortSignal) => Promise<(DesktopMcpSignInRequestInput & { source: DesktopMcpSignInSource }) | null>
-    authority: (sessionId: string) => DesktopMcpSignInAuthority
+    authority: (source: DesktopMcpSignInSource, signal: AbortSignal, mode?: 'decision' | 'replay' | 'read' | 'dismiss') => Promise<DesktopMcpSignInAuthority>
     oauth: DesktopMcpSignInOAuthPorts
     send: DesktopMcpSignInContinuationPorts['send']
 }
-
+const target = (view: DesktopMcpSignInView): DesktopMcpSignInOAuthTarget => ({ requestId: view.requestId, attemptId: view.activeAttemptId, source: view.source })
 export function createDesktopMcpSignInRuntimePorts(ports: DesktopMcpSignInRuntimePorts) {
     const continuation = createDesktopMcpSignInContinuation(ports.store, { send: ports.send })
-    const authority = (sessionId: string, signal: AbortSignal): DesktopMcpSignInAuthority => {
-        const current = ports.authority(sessionId)
-        return { check: () => { signal.throwIfAborted(); current.check() } }
-    }
-    const ready = async (input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<DesktopMcpSignInAuthority> => {
-        const status = await ports.oauth.status(input.source.server, signal)
-        if (status.state !== 'connected') throw new DesktopHttpError(409, 'This MCP server is not connected. Finish authorization before continuing.')
-        return authority(input.source.sessionId, signal)
+    async function validate(input: DesktopMcpSignInDecision, signal: AbortSignal, active = false, mode: 'decision' | 'dismiss' = 'decision') {
+        const authority = await ports.authority(input.source, signal, mode)
+        authority.check(); signal.throwIfAborted()
+        const request = await ports.store.validate(input, active)
+        authority.check(); signal.throwIfAborted()
+        return { request, authority }
     }
     return {
-        async read(sessionId: string, signal: AbortSignal): Promise<DesktopMcpSignInResponse> {
-            const source = await ports.source(sessionId, signal)
-            return { request: source ? await ports.store.publish(source) : null }
+        async read(sessionId: string, signal: AbortSignal, options?: { metadataOnly?: boolean }): Promise<DesktopMcpSignInResponse> {
+            const found = await ports.source(sessionId, signal)
+            if (!found) return { request: null }
+            const authority = await ports.authority(found.source, signal, 'read')
+            const request = await ports.store.publish(found, authority)
+            const oauth = request.receipt || options?.metadataOnly ? undefined : await ports.oauth.status(target(request), signal)
+            authority.check(); signal.throwIfAborted()
+            return { request, oauth }
         },
         async connect(input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<DesktopMcpSignInResponse> {
+            const authority = await ports.authority(input.source, signal)
+            const begun = await ports.store.beginAttempt(input, authority), request = begun.request
+            authority.check(); signal.throwIfAborted()
+            if (request.receipt) return { request }
+            const activeInput = { ...input, source: request.source, expectedRevision: request.revision }
+            if (!begun.created) return { request, oauth: await ports.oauth.status(target(request), signal) }
             try {
-                const request = await ports.store.begin(input, authority(input.source.sessionId, signal))
-                if (request.receipt) return { request }
-                const oauth = await ports.oauth.start(input.source.server, signal)
-                return { request: (await ports.store.read(input.requestId))!, oauth }
-            } catch (cause) {
-                const request = await ports.store.fail(input, cause instanceof Error ? cause.message : 'Authorization failed. Retry.')
-                return { request, oauth: { state: 'error', message: 'Authorization unavailable. Check this coworker’s MCP permission and retry.' } }
+                const oauth = await ports.oauth.start(target(request), signal)
+                await validate(activeInput, signal, true)
+                return { request, oauth }
+            } catch {
+                // Only this still-active attempt may publish a failure; a late callback never changes its replacement.
+                const current = await validate(activeInput, signal, true)
+                return { request: await ports.store.fail(activeInput, 'Authorization failed.', current.authority), oauth: { state: 'error', message: 'Authorization unavailable. Start a new sign-in attempt.' } }
             }
         },
         async status(input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<DesktopMcpSignInResponse> {
-            const [request, oauth] = await Promise.all([ports.store.read(input.requestId), ports.oauth.status(input.source.server, signal)])
-            return { request, oauth }
+            const current = await validate(input, signal)
+            const oauth = await ports.oauth.status(target(current.request), signal)
+            await validate(input, signal)
+            return { request: current.request, oauth }
         },
         async complete(input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<Response> {
-            return continuation.complete(input, await ready(input, signal))
+            let current = await validate(input, signal)
+            if (!current.request.activeAttemptId && !current.request.receipt) {
+                const begun = await ports.store.beginAttempt(input, current.authority)
+                input = { ...input, expectedRevision: begun.request.revision }
+                current = { ...current, request: begun.request }
+            }
+            current = await validate(input, signal, true)
+            const oauth = await ports.oauth.status(target(current.request), signal)
+            if (oauth.state !== 'connected') throw new DesktopHttpError(409, 'Finish authorization before continuing.')
+            await ports.oauth.ready(target(current.request), signal)
+            const final = await validate(input, signal, true)
+            return continuation.complete(input, final.authority)
         },
         async decline(input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<Response> {
-            return continuation.decline(input, authority(input.source.sessionId, signal))
+            const current = await validate(input, signal, false, 'dismiss')
+            if (current.request.activeAttemptId) await ports.oauth.cancel(target(current.request), signal)
+            const final = await validate(input, signal, false, 'dismiss')
+            const receipt = await ports.store.seal(input, 'declined', final.authority)
+            current.authority.check()
+            return continuation.deliverInitial(receipt, current.request.source, current.authority)
         },
         async cancel(input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<DesktopMcpSignInResponse> {
-            await ports.oauth.cancel(input.source.server, signal)
-            return { request: await ports.store.cancel(input), oauth: { state: 'idle' } }
+            const current = await validate(input, signal, true)
+            const request = await ports.store.cancel(input, current.authority)
+            await ports.oauth.cancel(target(current.request), signal)
+            current.authority.check(); signal.throwIfAborted()
+            return { request, oauth: { state: 'idle' } }
         },
-        async recover(input: DesktopMcpSignInDecision): Promise<Response> {
-            return continuation.recover(input)
+        async recover(input: DesktopMcpSignInDecision, signal: AbortSignal): Promise<Response> {
+            const authority = await ports.authority(input.source, signal, 'replay')
+            authority.check(); signal.throwIfAborted()
+            return continuation.recover(input, authority)
         },
     }
 }
-
 export type DesktopMcpSignInRuntimeApi = ReturnType<typeof createDesktopMcpSignInRuntimePorts>

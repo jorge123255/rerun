@@ -95,3 +95,17 @@ export * from './desktop-service-accounts.js'
 export * from './desktop-mcp-sse.js'
 export * from './desktop-self-mcp.js'
 export * from './desktop-portable-templates.js'
+
+export * from './desktop-document-attachments.js'
+
+export * from './desktop-mcp-sign-in.js'
+
+export * from './desktop-schedule-tools.js'
+
+export * from './desktop-tool-install.js'
+
+export * from './desktop-service-oauth.js'
+
+export * from './desktop-service-transports.js'
+
+export * from './desktop-foreman.js'

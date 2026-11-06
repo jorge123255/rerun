@@ -17,6 +17,7 @@ ipcRenderer.on('desktop:before-quit', (_event, value) => {
 })
 
 contextBridge.exposeInMainWorld('desktopApp', {
+    saveResultFile: (name, bytes) => ipcRenderer.invoke('desktop:result-save', { name, bytes }),
     templates: {
         pickImport: () => ipcRenderer.invoke('desktop:template-pick'),
         saveArtifact: value => ipcRenderer.invoke('desktop:template-save', { artifactId: value?.artifactId }),

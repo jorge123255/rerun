@@ -1,0 +1,164 @@
+import 'server-only'
+import { createHash } from 'node:crypto'
+import type { DesktopForemanBinding, DesktopForemanChatRef, DesktopForemanLiveEvent, DesktopForemanModelRef } from '@rerun/contracts'
+import { EngineRequestError, cancelRun, getRun, getSessionMessages } from '@/lib/engine/client'
+import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
+import { usableConnection } from '../../chat-model'
+import { DesktopHttpError } from '../auth'
+import { openDesktopDatabase } from '../database'
+import { desktopModel, engineOf, readDesktopProviders } from '../settings'
+import { readDesktopBoardState } from '../spaces'
+import { listDesktopAgents } from '../store'
+import type { DesktopRuntime } from '../runtime'
+import { openForemanRuntime } from './server'
+import { ensureForemanChat, foremanTurn, ownedForemanChat, withForemanChatWrite, type ForemanTurn } from './chat-store'
+import { createDesktopForemanCreationAuthority } from './creation'
+import { foremanPhaseInstructions } from '../../../../../engine/src/desktop/foreman/prompts.ts'
+import { ForemanRefusal } from './authority'
+
+const KEY = Symbol.for('rerun.desktop.foreman.binding.v1')
+type Subscriber = { chat: DesktopForemanChatRef; send: (event: DesktopForemanLiveEvent) => void }
+type Binding = Awaited<ReturnType<typeof createBinding>>
+const bindings = () => ((globalThis as unknown as Record<symbol, Map<string, Promise<Binding>>>)[KEY] ??= new Map())
+export function desktopForeman(runtime: DesktopRuntime): Promise<Binding> {
+    const key = JSON.stringify([runtime.dataRoot, runtime.launchNonce, runtime.engine.origin])
+    let value = bindings().get(key)
+    if (!value) {
+        value = createBinding(runtime)
+        bindings().set(key, value)
+        void value.catch(() => { if (bindings().get(key) === value) bindings().delete(key) })
+    }
+    return value
+}
+async function createBinding(runtime: DesktopRuntime) {
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    const workspaceId = String(runtime.workspaceId)
+    const subscribers = new Set<Subscriber>()
+    const modelAvailable = async (model: DesktopForemanModelRef) => !!usableConnection((await readDesktopProviders(runtime)).connections, model)
+    const creation = await createDesktopForemanCreationAuthority(runtime, db)
+    const lookupRun = async (id: string) => {
+        const turn = await foremanTurn(db, id)
+        if (!turn) return { state: 'absent' as const }
+        try {
+            const run = await getRun(engineOf(runtime), 'foreman', id, { signal: AbortSignal.timeout(10_000) })
+            if (run.id !== id || run.agentId !== 'foreman' || run.sessionId !== turn.body.sessionId) return { state: 'replaced' as const }
+            return { state: 'present' as const, value: { runId: id }, run, turn }
+        } catch (error) {
+            if (error instanceof EngineRequestError && error.status === 404) return { state: 'absent' as const }
+            return { state: 'unknown' as const }
+        }
+    }
+    const live = async (chat: DesktopForemanChatRef) => {
+        await ownedForemanChat(db, chat)
+        const rows = await db.execute({ sql: "SELECT request_id FROM desktop_foreman_turns WHERE chat_id=? AND status IN ('pending','admitted') ORDER BY rowid DESC LIMIT 1", args: [chat.chatId] })
+        if (!rows.rows[0]) return null
+        const result = await lookupRun(String(rows.rows[0].request_id))
+        return result.state === 'present' && result.run.status === 'running' ? { runId: result.value.runId, model: result.turn.body.binding.model } : null
+    }
+    const isLive = async (binding: DesktopForemanBinding) => {
+        if (binding.workspaceId !== workspaceId) return false
+        const current = await live(binding)
+        return current?.runId === binding.runId && JSON.stringify(current.model) === JSON.stringify(binding.model)
+    }
+    const core = openForemanRuntime(db, {
+        workspace: { currentWorkspaceId: async () => workspaceId, agentCount: async () => (await listDesktopAgents(db)).length },
+        run: {
+            isLive, currentLive: live,
+            isObserved: async (chat, runId) => [...subscribers].some(item => item.chat.chatId === chat.chatId && item.chat.workspaceId === chat.workspaceId) && (await live(chat))?.runId === runId,
+            sendFollowUp: input => send(input.chat, input.requestId, input.text),
+            lookupFollowUp: lookupRun,
+            modelAvailable,
+        },
+        creation: creation.creation,
+        setup: creation.setup,
+        events: { publish: event => {
+            const chat = 'binding' in event ? event.binding : event.chat
+            for (const subscriber of subscribers) if (subscriber.chat.chatId === chat.chatId && subscriber.chat.workspaceId === chat.workspaceId) subscriber.send(event)
+        } },
+        collectDiscovery: null,
+    }, async () => String((await db.execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0]?.name ?? 'My workspace'))
+    await core.reconcile()
+
+    async function dispatch(turn: ForemanTurn, replayOnly: boolean): Promise<{ runId: string }> {
+        const response = await fetch(`${runtime.engine.origin}/desktop/foreman/chat`, {
+            method: 'POST', headers: { authorization: `Bearer ${runtime.engine.apiKey}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ ...turn, replayOnly }), signal: AbortSignal.timeout(30_000), redirect: 'error',
+        })
+        if (!response.ok) {
+            const missing = response.status === 404 && replayOnly && (await response.json().catch(() => null))?.code === 'queued_turn_not_found'
+            await response.body?.cancel().catch(() => {})
+            // Only an explicit send retry reaches here. The engine checks the saved receipt
+            // under its admission lock, so reusing this exact turn cannot create a duplicate.
+            if (missing) return dispatch(turn, false)
+            throw new DesktopHttpError(response.status === 409 ? 409 : 503, 'The Foreman message was not confirmed. Retry this same message before starting another.')
+        }
+        if (response.headers.get('x-run-id') !== turn.binding.runId || response.headers.get('x-session-id') !== turn.sessionId) {
+            await response.body?.cancel().catch(() => {})
+            throw new DesktopHttpError(503, 'The Foreman returned a different conversation.')
+        }
+        if (response.body) void response.body.pipeTo(new WritableStream({ write() {} })).catch(() => {})
+        await db.execute({ sql: "UPDATE desktop_foreman_turns SET status='admitted',error=NULL WHERE request_id=?", args: [turn.binding.runId] })
+        return { runId: turn.binding.runId }
+    }
+    async function send(chat: DesktopForemanChatRef, requestId: string, text: string, requested?: DesktopForemanModelRef) {
+        if (chat.workspaceId !== workspaceId) throw new DesktopHttpError(404, 'Conversation not found.')
+        const fingerprint = createHash('sha256').update(JSON.stringify([chat, text, requested ?? null])).digest('hex')
+        return withForemanChatWrite(db, async () => {
+            const previous = await foremanTurn(db, requestId)
+            if (previous) {
+                if (previous.fingerprint !== fingerprint || previous.body.binding.chatId !== chat.chatId) throw new DesktopHttpError(409, 'This message ID was used for another message.')
+                return dispatch(previous.body, true)
+            }
+            const owner = await ownedForemanChat(db, chat)
+            const pending = await db.execute({ sql: "SELECT request_id FROM desktop_foreman_turns WHERE chat_id=? AND status IN ('pending','admitted') ORDER BY rowid DESC LIMIT 1", args: [chat.chatId] })
+            if (pending.rows[0]) {
+                const id = String(pending.rows[0].request_id), result = await lookupRun(id)
+                if (result.state === 'unknown' || result.state === 'present' && result.run.status === 'running') throw new DesktopHttpError(409, 'Wait for the Foreman’s current message to settle.')
+                await db.execute({ sql: "UPDATE desktop_foreman_turns SET status=? WHERE request_id=?", args: [result.state === 'present' ? 'finished' : 'failed', id] })
+            }
+            let model = requested ?? owner.model
+            if (!model) { const fallback = await desktopModel(runtime); model = { connectionId: fallback.connection.id, model: fallback.model } }
+            if (!await modelAvailable(model)) throw new ForemanRefusal('model_unavailable', 'Choose a connected model in Settings.')
+            const view = await core.readView(chat)
+            const board = await readDesktopBoardState(db)
+            const name = String((await db.execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0]?.name ?? 'My workspace')
+            // The companion can still propose a new team. It never receives a confirm/build tool.
+            const phase = view.phase === 'build' ? 'companion' : view.phase
+            const instructions = [foremanPhaseInstructions(phase, { workspaceName: name, boxes: board.spaces.map(box => box.name), readsWebsites: false }),
+                'When the user asks to design or add coworkers, propose their jobs with show_plan. Nothing is created until they confirm the card. Never treat chat text as approval.'].filter(Boolean).join('\n\n')
+            const turn: ForemanTurn = { binding: { ...chat, runId: requestId, model }, sessionId: owner.sessionId, text, brief: { instructions, tools: [] } }
+            await db.batch([
+                { sql: "INSERT INTO desktop_foreman_turns(request_id,chat_id,fingerprint,body,status,created_at) VALUES(?,?,?,?,'pending',?)", args: [requestId, chat.chatId, fingerprint, JSON.stringify(turn), new Date().toISOString()] },
+                { sql: 'UPDATE desktop_foreman_chats SET model=? WHERE chat_id=?', args: [JSON.stringify(model), chat.chatId] },
+            ], 'write')
+            return dispatch(turn, false)
+        })
+    }
+    return {
+        core, db, send, isLive,
+        async state() {
+            const owner = await ensureForemanChat(db, workspaceId)
+            const messages = await getSessionMessages(engineOf(runtime), 'foreman', owner.sessionId, { requireSuccess: true, signal: AbortSignal.timeout(10_000) }).catch(error => {
+                if (error instanceof EngineRequestError && error.status === 404) return []
+                throw error
+            })
+            return { ...owner, view: await core.readView(owner.chat), messages: publicDesktopHistory(transformEngineMessages(messages)) }
+        },
+        async stop(chat: DesktopForemanChatRef) {
+          return withForemanChatWrite(db, async () => {
+            const current = await live(chat)
+            if (current) await cancelRun(engineOf(runtime), 'foreman', current.runId)
+            const discovery = (await core.readView(chat)).discovery
+            if (discovery?.status === 'running') await core.stopDiscovery(discovery.discoveryId)
+          })
+        },
+        async subscribe(chat: DesktopForemanChatRef, signal: AbortSignal, sendEvent: Subscriber['send']) {
+            await ownedForemanChat(db, chat)
+            const subscriber = { chat, send: sendEvent }; subscribers.add(subscriber)
+            const close = () => { subscribers.delete(subscriber) }
+            signal.addEventListener('abort', close, { once: true })
+            if (signal.aborted) close()
+            return () => { close(); signal.removeEventListener('abort', close) }
+        },
+    }
+}

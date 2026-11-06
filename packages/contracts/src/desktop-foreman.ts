@@ -32,8 +32,8 @@ export const foremanDigestSchema = z.string().regex(/^[a-f0-9]{64}$/)
 
 // The original phases, minus the hosted-only waitlist and trial steps (no billing on desktop).
 export const DESKTOP_FOREMAN_PHASES = ['discover', 'plan', 'build', 'companion'] as const
-export const foremanPhaseSchema = z.enum(DESKTOP_FOREMAN_PHASES)
-export type DesktopForemanPhase = z.infer<typeof foremanPhaseSchema>
+export const desktopForemanPhaseSchema = z.enum(DESKTOP_FOREMAN_PHASES)
+export type DesktopForemanPhase = z.infer<typeof desktopForemanPhaseSchema>
 
 // The model choice the run was admitted on, by local connection id. Never a key or token.
 export const foremanModelRefSchema = z.strictObject({ connectionId: z.string().min(1).max(256), model: z.string().min(1).max(512) })
@@ -241,7 +241,7 @@ export type DesktopForemanLiveEvent = z.infer<typeof foremanLiveEventSchema>
 export const foremanConversationViewSchema = z.strictObject({
     contractVersion: z.literal(DESKTOP_FOREMAN_CONTRACT_VERSION),
     chat: foremanChatRefSchema,
-    phase: foremanPhaseSchema,
+    phase: desktopForemanPhaseSchema,
     live: z.strictObject({ runId: foremanRunIdSchema, model: foremanModelRefSchema }).nullable(),
     revisions: z.array(foremanRevisionSchema),
     currentRevisionId: foremanRevisionIdSchema.nullable(),

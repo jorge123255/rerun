@@ -46,7 +46,7 @@ function Connection({ account, name, client }: ServiceTransportConnectionProps) 
             {pending ? <>
                 <Button size="sm" disabled={busy} onClick={() => void perform('reconcile')}>Reconcile</Button>
                 {pending.action !== 'stop' && pending.action !== 'disconnect' && <Button size="sm" variant="outline" disabled={busy} onClick={() => void perform('retry')}>Retry connection</Button>}
-                {(pending.action === 'stop' || pending.action === 'disconnect') && <Button size="sm" variant="outline" disabled={busy} onClick={() => void perform(pending.action)}>Retry Stop</Button>}
+                {(pending.action === 'stop' || pending.action === 'disconnect') && <Button size="sm" variant="outline" disabled={busy} onClick={() => void perform(pending.action === 'disconnect' ? 'disconnect' : 'stop')}>Retry Stop</Button>}
             </> : <>
                 <Button size="sm" disabled={busy} onClick={() => void perform('probe')}>Check connection</Button>
                 <Button size="sm" disabled={busy} onClick={() => void perform('reconnect')}>Reconnect</Button>

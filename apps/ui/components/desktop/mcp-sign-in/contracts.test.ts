@@ -4,7 +4,7 @@ import {
     desktopMcpSignInRequestInputSchema,
     desktopMcpSignInViewSchema,
     serializeDesktopMcpSignInResult,
-} from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
+} from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 
 const source = {
     agentId: 'agent', sessionId: 'chat', runId: 'run', sourceMessageId: 'message', toolCallId: 'tool', fingerprint: 'fingerprint',

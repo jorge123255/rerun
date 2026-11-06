@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS } from '@rerun/contracts'
 import { HScrollFade } from '@rerun/ui/primitives'
 import { Chip } from '@/components/ui/chip'
@@ -19,6 +19,10 @@ import { serviceIconProps } from '@/lib/services/icons'
 import type { ServiceSearchResult } from '@/lib/services/types'
 import { createDesktopServiceAccountsClient, type DesktopServiceAccountsClient, type ServiceAccountDetail, type ServiceAccountLibraryRow } from '@/lib/desktop/service-accounts-client'
 import type { DesktopServiceAccountView } from '@rerun/contracts'
+import { DesktopServiceOAuthAccount } from '../oauth/DesktopServiceOAuthAccount'
+import { ServiceTransportConnection } from '../transports/ServiceTransportConnection'
+import { serviceOAuthClient } from '@/lib/desktop/service-oauth-client'
+import { desktopServiceTransportClient } from '@/lib/desktop/service-transports-client'
 import { DesktopServiceAccountForm } from './DesktopServiceAccountForm'
 
 function libraryService(row: ServiceAccountLibraryRow): ServiceSearchResult {
@@ -37,6 +41,8 @@ export function DesktopServiceAccounts(props: { agentId: string; focusSlug?: str
 }
 
 function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; focusSlug?: string; focusRequestKey?: string }) {
+    const oauthDriver = useMemo(() => serviceOAuthClient(), [agentId])
+    const transportClient = useMemo(() => desktopServiceTransportClient(), [agentId])
     const [client, setClient] = useState<DesktopServiceAccountsClient | null>(null)
     const [accounts, setAccounts] = useState<DesktopServiceAccountView[]>([])
     const [catalog, setCatalog] = useState<ServiceAccountLibraryRow[]>([])
@@ -182,12 +188,16 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
                                 <p className="text-xs">{healthText(selectedAccount)}{selectedAccount.health.checkedAt ? ` · ${selectedAccount.health.checkedAt}` : ''}</p>
                                 <p className="text-xs text-muted-foreground">{selectedAccount.health.message}</p>
                                 <div className="flex flex-wrap gap-2">
-                                    <Button size="sm" variant="outline" disabled={busy || selectedAccount.health.state === 'disconnected'} onClick={() => void mutate('probe')}>Probe connection</Button>
-                                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => void mutate('disconnect')}>Disconnect</Button>
+                                    {selectedAccount.shape !== 'oauth' && selectedAccount.transport !== 'sse' && <>
+                                        <Button size="sm" variant="outline" disabled={busy || selectedAccount.health.state === 'disconnected'} onClick={() => void mutate('probe')}>Probe connection</Button>
+                                        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void mutate('disconnect')}>Disconnect</Button>
+                                    </>}
                                     <PanelDeleteButton label={`Uninstall ${selectedAccount.label || detail.name}`} disabled={busy} busy={busy} onClick={() => void mutate('remove')} confirmTitle={`Uninstall ${selectedAccount.label || detail.name}?`} confirmDescription="The coworker loses this account’s owned resources and tools. Other accounts stay. Local credentials are removed; the remote API key is not revoked." confirmLabel="Uninstall" />
                                 </div>
                             </div>
                         )}
+                        {selectedAccount?.shape === 'oauth' && <DesktopServiceOAuthAccount coworkerId={agentId} account={selectedAccount} driver={oauthDriver} onChanged={() => { void refresh().catch(() => setError('Could not refresh this account.')) }} />}
+                        {selectedAccount?.transport === 'sse' && <ServiceTransportConnection account={{ agentId, key: selectedAccount.key, installationId: selectedAccount.installationId, revision: selectedAccount.revision }} name={selectedAccount.label || detail.name} client={transportClient} />}
                         <DesktopServiceAccountForm
                             key={formIdentity}
                             identity={formIdentity}

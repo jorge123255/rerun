@@ -5,9 +5,9 @@ import {sealHeaderBundle,openStoredHeaderBundle} from '../accounts/header-secret
 import type {OAuthAttempt,OAuthAttemptStore} from './ports'
 import type {OAuthTokenBundle} from '../../mcp/store'
 export const SERVICE_OAUTH_SCHEMA_SQL=[
- `CREATE TABLE desktop_service_oauth_attempts(owner TEXT NOT NULL,attempt_id TEXT NOT NULL,request_id TEXT NOT NULL,installation_id TEXT NOT NULL,revision TEXT NOT NULL,state TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(owner,attempt_id),UNIQUE(owner,request_id))`,
+ `CREATE TABLE desktop_service_oauth_attempts(owner TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,attempt_id TEXT NOT NULL,request_id TEXT NOT NULL,installation_id TEXT NOT NULL,revision TEXT NOT NULL,state TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(owner,attempt_id),UNIQUE(owner,request_id))`,
  `CREATE UNIQUE INDEX desktop_service_oauth_active ON desktop_service_oauth_attempts(owner,installation_id) WHERE state IN ('starting','waiting','checking','connected')`,
- `CREATE TABLE desktop_service_oauth_tokens(owner TEXT NOT NULL,installation_id TEXT NOT NULL,config_generation TEXT NOT NULL,token_generation TEXT NOT NULL,bundle TEXT NOT NULL,PRIMARY KEY(owner,installation_id))`,
+ `CREATE TABLE desktop_service_oauth_tokens(owner TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,installation_id TEXT NOT NULL,config_generation TEXT NOT NULL,token_generation TEXT NOT NULL,bundle TEXT NOT NULL,PRIMARY KEY(owner,installation_id))`,
 ] as const
 const tokenSchema=z.object({accessToken:z.string().min(1).max(8192),refreshToken:z.string().max(8192).optional(),expiresAt:z.number().finite(),resource:z.string().url(),issuer:z.string().url(),tokenEndpoint:z.string().url(),clientId:z.string().min(1).max(2048),scope:z.string().max(8192).optional(),refreshPending:z.string().max(200).optional()}).strict()
 const decode=(row:Row):OAuthAttempt=>{const record=JSON.parse(String(row.record)) as OAuthAttempt;if(record.version!==1)throw new Error('Unsupported OAuth attempt');return record}

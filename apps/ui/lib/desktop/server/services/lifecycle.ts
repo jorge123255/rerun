@@ -20,7 +20,7 @@ export type ServiceRestartAuthority=(owner:string,signal:AbortSignal)=>Promise<{
 export type ServiceRegistryWriter=(skillsRoot:string,records:ServiceInstall[],signal:AbortSignal)=>Promise<void>
 export type ServiceTransport={
  probe(owner:string,name:string,revision:string,signal?:AbortSignal):Promise<{tools?:RemoteTool[];result?:Record<string,unknown>}>
- call(owner:string,name:string,revision:string,tool:string,args:Record<string,unknown>,signal?:AbortSignal):Promise<{tools?:RemoteTool[];result?:Record<string,unknown>}>
+ call(owner:string,name:string,revision:string,tool:string,args:Record<string,unknown>,signal?:AbortSignal,invocation?:{toolCallId:string}):Promise<{tools?:RemoteTool[];result?:Record<string,unknown>}>
  validate(owner:string,name:string,revision:string,signal:AbortSignal):Promise<void>
 }
 export const isAccountService=(record:ServiceInstall)=>'shape' in record.plan

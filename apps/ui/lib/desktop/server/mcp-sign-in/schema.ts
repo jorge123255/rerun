@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS desktop_mcp_sign_in_requests (
     server_snapshot TEXT NOT NULL,
     ordered_input TEXT NOT NULL,
     reason TEXT,
+    active_attempt_id TEXT,
     revision TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending', 'connecting', 'connected', 'declined', 'error')),
     error TEXT,
@@ -26,7 +27,7 @@ CREATE TABLE IF NOT EXISTS desktop_mcp_sign_in_attempts (
     operation TEXT NOT NULL CHECK (operation IN ('connect', 'decline')),
     expected_revision TEXT NOT NULL,
     body_fingerprint TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('pending', 'sealed')),
+    state TEXT NOT NULL CHECK (state IN ('pending', 'sealed', 'cancelled', 'failed')),
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS desktop_mcp_sign_in_receipts (

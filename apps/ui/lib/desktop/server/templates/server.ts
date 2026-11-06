@@ -67,7 +67,7 @@ function canonicalJson(value: unknown): string {
     return JSON.stringify(value) ?? 'null'
 }
 
-const fingerprintOf = (operation: DesktopTemplateOperation): string => createHash('sha256').update(canonicalJson(operation)).digest('hex')
+const fingerprintOf = (operation: DesktopTemplateOperation | (DesktopTemplateOperation & {foremanDisabled:true})): string => createHash('sha256').update(canonicalJson(operation)).digest('hex')
 const engineIdFor = (requestId: string, agentKey: string): string => `i${createHash('sha256').update(`${requestId}\n${agentKey}`).digest('hex').slice(0, 31)}`
 
 function engineFailure(error: unknown): never {
@@ -95,6 +95,7 @@ export function createDesktopTemplateServer(input: {
     engine: DesktopTemplateEngineClient
     commitInstalled?: DesktopTemplateCommit | null
     initializeImportedSetup?: InitializeImportedSetup | null
+    foremanDisabled?: true
     signal?: AbortSignal
 }) {
     const signal = input.signal
@@ -178,7 +179,7 @@ export function createDesktopTemplateServer(input: {
     }
 
     async function install(operation: Extract<DesktopTemplateOperation, { operation: 'install' }>): Promise<DesktopTemplateInstallResult> {
-        const fingerprint = fingerprintOf(operation)
+        const fingerprint = fingerprintOf(input.foremanDisabled ? { ...operation, foremanDisabled: true } : operation)
         let existing = await row(operation.requestId)
         if (existing) sameFingerprint(existing, fingerprint, 'install')
         const detail = await call(get(`/desktop/templates/${operation.templateId}?revision=${operation.revision}`), value => desktopTemplateDetailSchema.parse(value))
@@ -237,6 +238,7 @@ export function createDesktopTemplateServer(input: {
         await save(operation.requestId, { status: 'creating', templateId: operation.templateId, revision: operation.revision, payload })
         const installed = await call(post('/desktop/templates/install', {
             importReceiptId: base.receiptId,
+            ...(input.foremanDisabled && { foremanDisabled: true }),
             templateId: operation.templateId,
             revision: operation.revision,
             coworkers: payload.coworkers.map(coworker => ({ engineAgentId: coworker.engineAgentId, agentKey: coworker.agentKey })),
@@ -399,6 +401,7 @@ export function createDesktopTemplateServer(input: {
 export async function openDesktopTemplateServer(db: Client, engine: DesktopTemplateEngineClient, authority: {
     commitInstalled?: DesktopTemplateCommit | null
     initializeImportedSetup?: InitializeImportedSetup | null
+    foremanDisabled?: true
     signal?: AbortSignal
 } = {}) {
     await initializeDesktopTemplates(db)

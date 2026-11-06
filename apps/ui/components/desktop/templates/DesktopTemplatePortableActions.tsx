@@ -70,7 +70,7 @@ export function DesktopTemplatePortableActions({
             forget('export')
             if (onSaveExport) {
                 const saved = await onSaveExport(result.result.artifactId)
-                setNote(saved.saved ? `Saved ${result.result.fileName}.` : 'Export ready. Choose Export to save the package.')
+                setNote(saved.saved ? 'Template package saved.' : 'Export ready. Choose Export to save the package.')
             } else setNote(`Exported ${result.result.fileName}.`)
         } catch {
             setError('Could not confirm the export. Try again to recover this attempt.')

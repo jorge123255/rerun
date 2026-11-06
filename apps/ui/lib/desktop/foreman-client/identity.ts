@@ -1,59 +1,28 @@
 /** Trusted Foreman chat identity — field names match I's DesktopForemanChatRef / Binding. */
 
-export type DesktopForemanChatRef = {
-    workspaceId: string
-    chatId: string
-}
-
-export type DesktopForemanModelRef = {
-    connectionId: string
-    model: string
-}
-
-export type DesktopForemanBinding = DesktopForemanChatRef & {
-    runId: string
-    model: DesktopForemanModelRef
-}
+import {
+    foremanBindingSchema, foremanChatRefSchema, foremanRevisionIdSchema, foremanRunIdSchema,
+    type DesktopForemanChatRef, type DesktopForemanModelRef, type DesktopForemanBinding,
+} from '@rerun/contracts'
+export type { DesktopForemanChatRef, DesktopForemanModelRef, DesktopForemanBinding }
 
 export type DesktopForemanLiveScope = DesktopForemanChatRef & {
     runId: string | null
     planRevisionId: string | null
 }
 
-const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
-const CHAT = /^fmc_[A-Za-z0-9-]{8,80}$/
-const REVISION = /^fmr_[A-Za-z0-9-]{8,80}$/
-
 export function isForemanId(value: unknown): value is string {
-    return typeof value === 'string' && ID.test(value)
+    return foremanRunIdSchema.safeParse(value).success
 }
 
 export function parseDesktopForemanChatRef(value: unknown): DesktopForemanChatRef | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-    const record = value as Record<string, unknown>
-    const keys = Object.keys(record).sort().join(',')
-    if (keys !== 'chatId,workspaceId') return null
-    if (!isForemanId(record.workspaceId) || typeof record.chatId !== 'string' || !CHAT.test(record.chatId)) return null
-    return { workspaceId: record.workspaceId, chatId: record.chatId }
+    const result = foremanChatRefSchema.safeParse(value)
+    return result.success ? result.data : null
 }
 
 export function parseDesktopForemanBinding(value: unknown): DesktopForemanBinding | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-    const record = value as Record<string, unknown>
-    const keys = Object.keys(record).sort().join(',')
-    if (keys !== 'chatId,model,runId,workspaceId') return null
-    if (!isForemanId(record.workspaceId) || typeof record.chatId !== 'string' || !CHAT.test(record.chatId)) return null
-    if (!isForemanId(record.runId)) return null
-    const model = record.model
-    if (!model || typeof model !== 'object' || Array.isArray(model)) return null
-    const m = model as Record<string, unknown>
-    if (typeof m.connectionId !== 'string' || !m.connectionId || typeof m.model !== 'string' || !m.model) return null
-    return {
-        workspaceId: record.workspaceId,
-        chatId: record.chatId,
-        runId: record.runId,
-        model: { connectionId: m.connectionId, model: m.model },
-    }
+    const result = foremanBindingSchema.safeParse(value)
+    return result.success ? result.data : null
 }
 
 export function sameForemanChat(a: DesktopForemanChatRef | null | undefined, b: DesktopForemanChatRef | null | undefined): boolean {
@@ -65,7 +34,7 @@ export function foremanChatKey(chat: DesktopForemanChatRef): string {
 }
 
 export function isForemanRevisionId(value: unknown): value is string {
-    return typeof value === 'string' && REVISION.test(value)
+    return foremanRevisionIdSchema.safeParse(value).success
 }
 
 /**

@@ -5,7 +5,8 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import type { FileCardEntry } from '@rerun/contracts'
 import { desktopResultFileName, desktopResultFilePreviewKind, desktopResultFileRoute } from '@/lib/desktop/server/result-files/contract'
 import { DownloadIcon, FileIcon } from '@/lib/icons'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { DesktopFilePdfPreview } from '../DesktopFilePdfPreview'
 import { resultFileAnnouncement, resultFileBytesAccepted, resultFileMayWrite, resultFileTicketKey } from './state'
 
 type SaveResultFile = (name: string, bytes: Uint8Array) => Promise<boolean>
@@ -22,13 +23,6 @@ type Phase =
 const none: Preview = { kind: 'none' }
 const changed = 'This file changed and was not downloaded.'
 const missed = 'This file was not downloaded.'
-
-function mediaType(path: string, kind: 'image' | 'audio' | 'video'): string {
-    const ext = path.split('.').pop()?.toLowerCase()
-    if (kind === 'image') return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : 'image/png'
-    if (kind === 'audio') return ext === 'mp3' ? 'audio/mpeg' : ext === 'm4a' ? 'audio/mp4' : ext === 'ogg' ? 'audio/ogg' : ext === 'flac' ? 'audio/flac' : 'audio/wav'
-    return ext === 'webm' ? 'video/webm' : ext === 'mov' ? 'video/quicktime' : 'video/mp4'
-}
 
 async function readExact(response: Response, expected: number, signal: AbortSignal): Promise<Uint8Array> {
     const declared = response.headers.get('content-length')
@@ -55,24 +49,31 @@ async function readExact(response: Response, expected: number, signal: AbortSign
     return bytes
 }
 
-async function fetchResultFile(agentId: string, file: FileCardEntry, signal: AbortSignal): Promise<{ response: Response; bytes: Uint8Array }> {
-    const response = await fetch(desktopResultFileRoute(agentId), {
+function requestResultFile(agentId: string, file: FileCardEntry, signal: AbortSignal, preview?: { page?: number; scale?: number }): Promise<Response> {
+    const query = preview ? '?preview=1&page=' + (preview.page ?? 1) + '&scale=' + (preview.scale ?? 1) : ''
+    return fetch(desktopResultFileRoute(agentId) + query, {
         method: 'POST',
-        cache: 'no-store',
+        cache: 'no-store', credentials: 'same-origin', redirect: 'error',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path: file.path, scope: file.scope === 'shared' ? 'shared' : 'agent', identity: file.identity, size: file.size }),
         signal,
     })
+}
+
+async function fetchResultFile(agentId: string, file: FileCardEntry, signal: AbortSignal, preview = false): Promise<{ response: Response; bytes: Uint8Array }> {
+    const response = await requestResultFile(agentId, file, signal, preview ? {} : undefined)
     if (!response.ok) {
         await response.body?.cancel().catch(() => {})
         return { response, bytes: new Uint8Array() }
     }
     const type = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
-    if (type !== 'application/octet-stream') {
+    if (preview ? !['image/png','image/jpeg','image/gif','image/webp','audio/wav','audio/mpeg','audio/mp4','audio/ogg','audio/flac','video/mp4','video/quicktime','video/webm','text/plain'].includes(type ?? '') : type !== 'application/octet-stream') {
         await response.body?.cancel().catch(() => {})
         throw new Error('type')
     }
-    return { response, bytes: await readExact(response, file.size, signal) }
+    const size = preview ? Number(response.headers.get('content-length')) : file.size
+    if (!Number.isSafeInteger(size) || size < 0 || size > 16 * 1024 * 1024) { await response.body?.cancel(); throw new Error('length') }
+    return { response, bytes: await readExact(response, size, signal) }
 }
 
 function failureMessage(response: Response): string {
@@ -83,7 +84,7 @@ function failureMessage(response: Response): string {
 }
 
 function browserDownload(name: string, bytes: Uint8Array) {
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }))
+    const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }))
     const link = document.createElement('a')
     link.href = url
     link.download = name
@@ -109,7 +110,7 @@ function OwnedResultFilePreview({ agentId, file, saveResultFile, onClose }: { ag
     const safeName = desktopResultFileName(file.name)
     const ticket = resultFileTicketKey(agentId, file)
     const [attempt, setAttempt] = useState(0)
-    const [phase, setPhase] = useState<Phase>(() => previewKind === 'none' ? { status: 'ready', preview: none } : { status: 'loading' })
+    const [phase, setPhase] = useState<Phase>(() => (previewKind === 'none' || previewKind === 'pdf') ? { status: 'ready', preview: none } : { status: 'loading' })
     const saveRef = useRef(saveResultFile)
     const generation = useRef(0)
     const alive = useRef(true)
@@ -117,14 +118,19 @@ function OwnedResultFilePreview({ agentId, file, saveResultFile, onClose }: { ag
     const urlRef = useRef<string | null>(null)
     saveRef.current = saveResultFile
 
-    useEffect(() => () => {
-        alive.current = false
-        generation.current += 1
-        abortRef.current?.abort()
+    useEffect(() => {
+        alive.current = true
+        return () => {
+            alive.current = false
+            generation.current += 1
+            abortRef.current?.abort()
+        }
     }, [])
+    const pdfSource = useMemo(() => ({ key: ticket, loadPage: (page: number, scale: number, signal: AbortSignal) =>
+        requestResultFile(agentId, file, signal, { page, scale }) }), [agentId, file, ticket])
 
     useEffect(() => {
-        if (previewKind === 'none' || !file.identity) {
+        if (previewKind === 'none' || previewKind === 'pdf' || !file.identity) {
             if (previewKind !== 'none' && !file.identity) setPhase({ status: 'unavailable', message: 'This file is no longer available.' })
             return
         }
@@ -134,15 +140,13 @@ function OwnedResultFilePreview({ agentId, file, saveResultFile, onClose }: { ag
         const release = (src: string | null) => { if (src) URL.revokeObjectURL(src) }
         void (async () => {
             try {
-                const loaded = await fetchResultFile(agentId, file, controller.signal)
+                const loaded = await fetchResultFile(agentId, file, controller.signal, true)
                 if (!active) return
                 const declared = loaded.response.headers.get('content-length')
-                const accepted = resultFileBytesAccepted({
-                    aborted: controller.signal.aborted, startedTicket: ticket, currentTicket: ticket,
-                    byteLength: loaded.bytes.byteLength, expectedSize: file.size,
-                    declaredLength: declared === null ? null : Number(declared),
-                    identity: loaded.response.headers.get('x-rerun-result-identity'), expectedIdentity: file.identity ?? '',
-                })
+                const accepted = !controller.signal.aborted && loaded.response.headers.get('x-rerun-result-identity') === file.identity
+                    && Number(loaded.response.headers.get('x-rerun-result-size')) === file.size
+                    && loaded.response.headers.get('x-rerun-preview-kind') === previewKind
+                    && declared !== null && Number(declared) === loaded.bytes.byteLength
                 if (!loaded.response.ok || !accepted) {
                     setPhase({ status: 'unavailable', message: loaded.response.ok ? changed : failureMessage(loaded.response) })
                     return
@@ -152,7 +156,7 @@ function OwnedResultFilePreview({ agentId, file, saveResultFile, onClose }: { ag
                     setPhase({ status: 'ready', preview: content === undefined ? none : { kind: 'text', content } })
                     return
                 }
-                const src = URL.createObjectURL(new Blob([loaded.bytes], { type: mediaType(file.path, previewKind) }))
+                const src = URL.createObjectURL(new Blob([new Uint8Array(loaded.bytes)], { type: loaded.response.headers.get('content-type')! }))
                 urlRef.current = src
                 setPhase({ status: 'ready', preview: { kind: previewKind, src } })
             } catch {
@@ -233,7 +237,9 @@ function OwnedResultFilePreview({ agentId, file, saveResultFile, onClose }: { ag
                     <DialogTitle className="min-w-0 flex-1 truncate text-left font-mono text-xs font-normal text-muted-foreground">{file.name}</DialogTitle>
                 </div>
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                    {phase.status === 'loading' ? (
+                    {previewKind === 'pdf' ? (
+                        <DesktopFilePdfPreview name={file.name} path={file.path} identity={file.identity} srcUrl="" source={pdfSource} onBack={onClose} chrome="body" />
+                    ) : phase.status === 'loading' ? (
                         <p className="p-6 text-xs text-muted-foreground">Loading…</p>
                     ) : phase.status === 'unavailable' ? (
                         <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">

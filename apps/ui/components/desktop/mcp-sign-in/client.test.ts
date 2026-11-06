@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { desktopMcpSignInAction, readDesktopMcpSignIn } from '@/lib/desktop/mcp-sign-in-client'
-import type { DesktopMcpSignInDecision } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
+import type { DesktopMcpSignInDecision } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 
 const decision: DesktopMcpSignInDecision = {
     operation: 'connect', requestId: 'request', attemptId: 'attempt', expectedRevision: 'revision',
@@ -17,7 +17,7 @@ test('GET reads the canonical no-store session projection', async () => {
 
 test('decision envelope and exact acknowledgement are required', async () => {
     const response = new Response('data: [DONE]\n\n', { headers: { 'x-mcp-sign-in-request-id': 'request', 'x-session-id': 'chat', 'x-run-id': 'continuation' } })
-    const fetcher = vi.fn(async () => response)
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response)
     vi.stubGlobal('fetch', fetcher)
     await expect(desktopMcpSignInAction('chat', 'complete', decision)).resolves.toEqual({ kind: 'continuation', response })
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ action: 'complete', request: decision })

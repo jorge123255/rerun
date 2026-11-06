@@ -26,6 +26,8 @@ const KIND_STATUS: Record<DesktopPendingInboxItem['kind'], string> = {
     takeover: 'waiting_human',
     service: 'waiting_human',
     secret: 'waiting_human',
+    mcp: 'waiting_human',
+    'tool-install': 'awaiting_approval',
 }
 const KIND_SENTENCE: Record<DesktopPendingInboxItem['kind'], string> = {
     question: 'asked you a question',
@@ -33,6 +35,8 @@ const KIND_SENTENCE: Record<DesktopPendingInboxItem['kind'], string> = {
     takeover: 'needs your browser help',
     service: 'needs app setup',
     secret: 'needs credentials',
+    mcp: 'needs tool sign-in',
+    'tool-install': 'needs package installation review',
 }
 
 export type DesktopActionsInboxProps = {

@@ -69,3 +69,13 @@ describe('desktop tool install client', () => {
         client.dispose()
     })
 })
+
+it('refuses a sibling operation in the same chat and a changed source in an action acknowledgement', async () => {
+    const client = createDesktopToolInstallClient('session')
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ installation: { ...snapshot, operationId: 'c'.repeat(64) } })))
+    await expect(client.read(snapshot.operationId)).rejects.toThrow('another conversation')
+    await expect(client.decide(snapshot, 'approved')).rejects.toThrow('another conversation')
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ installation: { ...installed, runId: 'other-run' } })))
+    await expect(client.decide(snapshot, 'approved')).rejects.toThrow('another proposal')
+    client.dispose()
+})

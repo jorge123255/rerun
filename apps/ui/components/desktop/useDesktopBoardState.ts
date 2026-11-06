@@ -107,5 +107,5 @@ export function useDesktopBoardState(initial: DesktopBoardState | undefined) {
         else await refresh()
     }, [command, refresh])
 
-    return { board, saving, error, command, refresh, retry }
+    return { board, saving, error, command, refresh, retry, current: () => latest.current }
 }

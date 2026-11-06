@@ -12,11 +12,14 @@ import { AGENT_BUBBLE_SURFACE } from '@/components/chat/bubble-styles'
 import { CompactionStep } from '@/components/chat/CompactionBlock'
 import { ReasoningStep } from '@/components/chat/ReasoningBlock'
 import { DesktopSetupCompleteCard } from './setup/DesktopSetupEventCards'
+import { DesktopToolInstallCard } from './tool-install/DesktopToolInstallCard'
+import { desktopToolInstallReferenceOf } from '@/lib/desktop/tool-install-reference'
 import { DesktopToolStep } from './DesktopToolStep'
 import { DesktopTableResult } from './DesktopTableResult'
 import { desktopTableCardOf } from '@/lib/desktop/table-card'
 import type { DesktopAgentView } from './DesktopApp'
 import { DesktopFileCard } from './DesktopFileCard'
+import { saveDesktopResultFile } from '@/lib/desktop/result-file-save'
 import { DesktopQuickReplies } from './DesktopQuickReplies'
 import type { DesktopQuickReplySend } from '@/lib/desktop/quick-replies'
 import { Button } from '@/components/ui/button'
@@ -124,7 +127,7 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent, skillProposals, childRuns }: {
+export function DesktopAssistantReply({ message, streaming, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, quickReplies, agentId, agent, skillProposals, childRuns, toolInstall }: {
     message: UIMessage
     streaming: boolean
     onRegenerate?: (id: string) => void
@@ -136,6 +139,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
     agentId?: string
     agent?: DesktopAgentView
     childRuns?: { sessionId: string; active: boolean; onOpenTarget?: (target: DesktopCoworkerCallOpenTarget) => Promise<void> }
+    toolInstall?: { sessionId: string; active: boolean; disabled?: boolean }
     skillProposals?: { rows: ReadonlyMap<string, EngineSkillProposal>; pinnedIds: ReadonlySet<string>; pendingId: string | null; onDecide?: (id: string, decision: 'accept' | 'dismiss') => void; onOpenSkill?: (slug: string) => void }
 }) {
     const { copied, copy } = useCopy(copyFailed, copyReplyText)
@@ -161,6 +165,13 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
                     ? <DesktopCoworkerCalls key={part.toolCallId} agentId={agentId} sessionId={childRuns.sessionId} toolCallId={part.toolCallId} active={childRuns.active} currentRunActive={streaming} fallback={fallback} onOpenTarget={childRuns.onOpenTarget} />
                     : <DesktopDelegationMount key={part.toolCallId} agentId={agentId} sessionId={childRuns.sessionId} toolCallId={part.toolCallId} view={childRuns.active ? 'live' : 'history'} followLive={streaming} fallback={fallback} />)
                 continue
+            }
+            if (toolName === 'tool_install' && part.state === 'output-available' && toolInstall && agentId) {
+                const reference = desktopToolInstallReferenceOf(part.output)
+                if (reference && reference.agentId === agentId && reference.sessionId === toolInstall.sessionId && reference.toolCallId === part.toolCallId) {
+                    blocks.push(<DesktopToolInstallCard key={reference.operationId} sessionId={toolInstall.sessionId} operationId={reference.operationId} active={toolInstall.active} disabled={toolInstall.disabled} />)
+                    continue
+                }
             }
             if(toolName==='install_complete' && part.state==='output-available') {
                 let output:unknown=part.output
@@ -190,7 +201,7 @@ export function DesktopAssistantReply({ message, streaming, onRegenerate, feedba
             if (toolName === 'card_file' && part.state === 'output-available') {
                 const card = desktopFileCardOf(part.output)
                 if (card) {
-                    blocks.push(<DesktopFileCard key={part.toolCallId} agentId={agentId} card={card} />)
+                    blocks.push(<DesktopFileCard key={part.toolCallId} agentId={agentId} card={card} saveResultFile={saveDesktopResultFile} />)
                     continue
                 }
             }

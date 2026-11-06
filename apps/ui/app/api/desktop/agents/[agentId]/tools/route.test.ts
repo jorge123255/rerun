@@ -129,3 +129,18 @@ test('shared text reading is an explicit grant and respects the shared-family pa
     expect((await patchTools(coworker, { group: 'rerun', id: 'sharedFilesRead', enabled: true })).status).toBe(400)
     expect((await patchTools(coworker, { group: 'rerun', id: 'sharedFilesRead', enabled: false })).status).toBe(200)
 })
+test('routine management and reviewed installation remain separate opt-ins with their original master switch', async () => {
+    const defaults = rerunRows((await readTools(coworker)).body)
+    expect(defaults.find(row => row.id === 'scheduleManage')).toMatchObject({ enabled: false, available: true })
+    expect(defaults.find(row => row.id === 'toolInstall')).toMatchObject({ enabled: false, available: true })
+    await patchTools(coworker, { group: 'rerun', id: 'scheduleManage', enabled: true })
+    expect(agents.get('engine-self')!.tools.desktopToolGrants).toMatchObject({ scheduleManage: true })
+    expect(agents.get('engine-self')!.tools.desktopToolGrants?.schedule).not.toBe(true)
+    agents.get('engine-self')!.selfImprovement.allowToolInstall = false
+    const installed = await patchTools(coworker, { group: 'rerun', id: 'toolInstall', enabled: true })
+    expect(rerunRows(installed.body).find(row => row.id === 'toolInstall')?.enabled).toBe(true)
+    expect(agents.get('engine-self')!.selfImprovement.allowToolInstall).toBe(true)
+    await patchTools(coworker, { group: 'rerun', id: 'self', enabled: false })
+    expect((await patchTools(coworker, { group: 'rerun', id: 'toolInstall', enabled: true })).status).toBe(400)
+    expect(agents.get('engine-self')!.tools.desktopToolGrants?.scheduleManage).toBe(true)
+})

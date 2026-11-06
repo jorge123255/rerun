@@ -9,26 +9,30 @@ import { desktopMcpSignInAction, type DesktopMcpSignInAction } from '@/lib/deskt
 import { humanizeToolSegment } from '@/lib/chat/connector-tools'
 import { serviceIconProps } from '@/lib/services/icons'
 import { cn } from '@/lib/utils'
-import type { DesktopMcpSignInDecision, DesktopMcpSignInOAuthView, DesktopMcpSignInView } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
+import type { DesktopMcpSignInDecision, DesktopMcpSignInOAuthView, DesktopMcpSignInView } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { DesktopMcpSignInReceipt } from './DesktopMcpSignInReceipt'
 import { DesktopMcpSignInStatusBadge } from './DesktopMcpSignInStatusBadge'
 
-export function DesktopMcpSignInBlock({ sessionId, request, active = true, inline, onAccepted }: {
+export function DesktopMcpSignInBlock({ sessionId, request, active = true, inline, onAccepted, initialOAuth }: {
     sessionId: string
     request: DesktopMcpSignInView
     active?: boolean
     inline?: boolean
-    onAccepted?: (response: Response) => void | Promise<void>
+    initialOAuth?: DesktopMcpSignInOAuthView
+    onAccepted?: (response: Response, stream: { signal: AbortSignal; cancelStream: () => void }) => void | Promise<void>
 }) {
     const [view, setView] = useState(request)
-    const [oauth, setOauth] = useState<DesktopMcpSignInOAuthView | undefined>()
+    const [oauth, setOauth] = useState<DesktopMcpSignInOAuthView | undefined>(initialOAuth)
     const [pendingAction, setPendingAction] = useState<DesktopMcpSignInAction | null>(null)
     const [answered, setAnswered] = useState(false)
     const attempts = useRef(new Map<string, string>())
     const controller = useRef<AbortController | null>(null)
     const epoch = useRef(0)
     const mounted = useRef(true)
+    const live = useRef({ owner: '', active })
+    const actionLatch = useRef(false)
     const owner = `${sessionId}:${request.requestId}`
+    live.current = { owner, active }
 
     useEffect(() => {
         mounted.current = true
@@ -39,18 +43,21 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
         controller.current?.abort()
         controller.current = null
         attempts.current.clear()
+        actionLatch.current = false
         setView(request)
-        setOauth(undefined)
+        setOauth(initialOAuth)
         setPendingAction(null)
         setAnswered(false)
-    }, [owner])
+    }, [owner, active, request.revision, request.receipt?.accepted])
 
     const run = async (action: DesktopMcpSignInAction) => {
-        if (!active || answered || pendingAction || sessionId !== view.source.sessionId) return
+        if (!active || answered || pendingAction || actionLatch.current || sessionId !== view.source.sessionId) return
         const operation = action === 'decline' ? 'decline' : action === 'cancel' ? 'cancel' : 'connect'
         const attemptOperation = operation === 'cancel' ? 'connect' : operation
-        const attemptId = action === 'recover' && view.receipt ? view.receipt.attemptId : attempts.current.get(attemptOperation) ?? crypto.randomUUID()
+        const attemptId = action === 'recover' && view.receipt ? view.receipt.attemptId : attemptOperation === 'connect' && view.activeAttemptId ? view.activeAttemptId : attempts.current.get(attemptOperation) ?? crypto.randomUUID()
         attempts.current.set(attemptOperation, attemptId)
+        actionLatch.current = true
+        const actionOwner = owner
         const generation = ++epoch.current
         controller.current?.abort()
         const pending = new AbortController()
@@ -60,12 +67,13 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
             const result = await desktopMcpSignInAction(sessionId, action, {
                 operation, requestId: view.requestId, attemptId, expectedRevision: view.revision, source: view.source,
             }, { signal: pending.signal })
-            if (generation !== epoch.current || pending.signal.aborted || !mounted.current) return
+            if (generation !== epoch.current || pending.signal.aborted || !mounted.current || !live.current.active || live.current.owner !== actionOwner) return
             if (result.kind === 'continuation') {
                 setAnswered(true)
-                void onAccepted?.(result.response)
+                controller.current = null
+                await onAccepted?.(result.response, { signal: pending.signal, cancelStream: () => pending.abort() })
             } else {
-                if (result.value.request) setView(result.value.request)
+                if (result.value.request) { setView(result.value.request); if (!result.value.request.activeAttemptId) attempts.current.delete('connect') }
                 setOauth(result.value.oauth)
             }
         } catch {
@@ -76,6 +84,7 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
         } finally {
             if (generation === epoch.current) {
                 controller.current = null
+                actionLatch.current = false
                 setPendingAction(null)
             }
         }
@@ -98,7 +107,7 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
     const subtitle = view.reason ?? (server.host ? `Custom MCP server · ${server.host}` : 'Custom MCP server')
     const busy = !active || pendingAction !== null || answered
     const connected = oauth?.state === 'connected'
-    const waiting = oauth?.state === 'waiting'
+    const waiting = oauth?.state === 'waiting' || !!view.activeAttemptId && !connected
     const error = oauth?.message ?? view.error
 
     return <div className={cn('relative space-y-3 overflow-hidden rounded-lg border border-border bg-muted/30 p-3', !inline && 'mb-2')}>
@@ -122,7 +131,7 @@ export function DesktopMcpSignInBlock({ sessionId, request, active = true, inlin
             <div className="space-y-2 py-1">
                 {waiting && <>
                     <Button type="button" variant="outline" size="sm" className="w-full" disabled>Waiting for authorization…</Button>
-                    {oauth.authorizationUrl && <a className="inline-flex break-words text-sm text-muted-foreground underline underline-offset-2" href={oauth.authorizationUrl} target="_blank" rel="noreferrer">Open authorization in browser</a>}
+                    {oauth?.authorizationUrl && <a className="inline-flex break-words text-sm text-muted-foreground underline underline-offset-2" href={oauth.authorizationUrl} target="_blank" rel="noreferrer">Open authorization in browser</a>}
                 </>}
                 {error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
             </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import type { ForemanAnchor, OrbActivity } from '@rerun/ui/foreman'
 import { cn } from '@/lib/utils'
 import type { DesktopForemanActionPorts, DesktopForemanChatRef, DesktopForemanPlacement } from '@/lib/desktop/foreman-client'
@@ -29,6 +29,10 @@ export type DesktopForemanColumnProps = {
     /** Root mounts discoveries on the board; receives live overlay state. */
     renderBoardOverlay?: (input: { discoveries: import('@/lib/desktop/foreman-client').DesktopDiscoveriesState; live: boolean }) => ReactNode
     className?: string
+    onClose?: () => void
+    openOnMount?: boolean
+    refreshKey?: string | number
+    composerTrailing?: ReactNode
 }
 
 /**
@@ -45,9 +49,13 @@ export function DesktopForemanColumn({
     orbState = 'idle',
     headerActions,
     renderBoardOverlay,
-    className,
+    className, onClose, openOnMount, refreshKey, composerTrailing,
 }: DesktopForemanColumnProps) {
-    const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true })
+    const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
+    const opened = useRef(false)
+    useEffect(() => {
+        if (openOnMount && foreman.restored && !opened.current) { opened.current = true; foreman.setOpen(true) }
+    }, [openOnMount, foreman.restored, foreman.setOpen])
     const { ui } = foreman
     const onRoutines = ui.tab === 'routines'
     const plan = projectPlanCard(foreman.planSnapshot)
@@ -78,7 +86,7 @@ export function DesktopForemanColumn({
                     'absolute inset-y-0 flex w-full flex-col bg-background',
                     floating
                         ? 'right-0 md:inset-x-0 md:overflow-hidden md:rounded-xl md:border md:border-border md:shadow-2xl'
-                        : cn('md:w-[calc(var(--foreman-dock-track,26rem)-8px)] md:overflow-hidden md:rounded-3xl md:border md:border-border md:shadow', docked && ui.placement.side === 'left' ? 'left-0' : 'right-0'),
+                        : cn('md:w-[calc(var(--foreman-dock-track,26rem)-8px)] md:overflow-hidden md:rounded-3xl md:border md:border-border md:shadow', ui.placement.mode === 'dock' && ui.placement.side === 'left' ? 'left-0' : 'right-0'),
                 )}
             >
                 <DesktopForemanHeader
@@ -113,20 +121,18 @@ export function DesktopForemanColumn({
                         className="min-h-0 flex-1"
                     />
                     <DesktopForemanComposer
+                        trailing={composerTrailing}
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
                         busy={!!streaming}
-                        disabled={!!foreman.blocked || ui.decision.status === 'pending'}
-                        onSend={text => {
-                            void Promise.resolve(ports.conversation.sendMessage(text)).then(accepted => {
-                                if (accepted) foreman.setDraft('')
-                            })
-                        }}
-                        onStop={() => void ports.conversation.stop()}
+                        disabled={!foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'}
+                        onSend={text => { void foreman.sendMessage(text) }}
+                        onStop={() => void foreman.stop()}
                     />
                 </div>
                 {onRoutines && (
                     <DesktopForemanRoutines
+                        key={`${chat.workspaceId}:${chat.chatId}`}
                         routines={ports.routines}
                         docked={docked}
                         agentNameOf={agentNameOf}

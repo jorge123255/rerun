@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { DesktopMcpSignInView } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
+import type { DesktopMcpSignInView } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 import { DesktopMcpSignInBlock } from './DesktopMcpSignInBlock'
 
 vi.mock('@rerun/ui', () => ({ BorderBeam: () => null }))
@@ -89,7 +89,7 @@ test('a restored sealed receipt retries its exact unacknowledged continuation', 
 })
 
 test('an invalid adapter link and provider failure remain honest and retryable', async () => {
-    const fetcher = vi.fn(async () => response({ request: { ...request, status: 'error', error: 'Authorization failed. Retry.' }, oauth: { state: 'error', authorizationUrl: 'http://127.0.0.1/private' }))
+    const fetcher = vi.fn(async () => response({ request: { ...request, status: 'error', error: 'Authorization failed. Retry.' }, oauth: { state: 'error', authorizationUrl: 'http://127.0.0.1/private' } }))
     vi.stubGlobal('fetch', fetcher)
     await mount()
     await click('Connect')
@@ -97,4 +97,18 @@ test('an invalid adapter link and provider failure remain honest and retryable',
     expect(document.body.textContent).toContain('Unreachable')
     expect(document.body.textContent).toContain('Authorization failed. Retry.')
     expect(button('Connect').disabled).toBe(false)
+})
+
+
+test('accepted continuation transfers stream ownership across the card unmount', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => acknowledged()))
+    let transferred: { signal: AbortSignal; cancelStream: () => void } | undefined
+    const accepted = vi.fn((_response: Response, stream: { signal: AbortSignal; cancelStream: () => void }) => { transferred = stream })
+    const { root } = await mount(request, accepted)
+    await click('Not now')
+    expect(accepted).toHaveBeenCalledOnce()
+    await act(async () => root.render(null))
+    expect(transferred?.signal.aborted).toBe(false)
+    transferred?.cancelStream()
+    expect(transferred?.signal.aborted).toBe(true)
 })

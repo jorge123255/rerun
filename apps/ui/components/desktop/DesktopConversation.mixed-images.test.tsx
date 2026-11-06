@@ -236,7 +236,7 @@ test('a selection above the combined limit imports nothing and leaves a clear no
     await render(); await drain()
     await pick(Array.from({ length: 15 }, (_, i) => txt(`file-${i}.txt`))); await drain()
     expect(imports).toEqual([])
-    expect(container.textContent).toContain('Choose up to 10 text files and 4 images')
+    expect(container.textContent).toContain('Choose up to 10 files and 4 images')
     expect(chat.sendMessage).not.toHaveBeenCalled()
 })
 

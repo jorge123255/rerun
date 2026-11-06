@@ -47,7 +47,8 @@ export function createDesktopScheduleIntentStore(getClient: (engineAgentId: stri
             const updated = await client.execute({ sql: 'UPDATE desktop_schedule_tool_intents SET result_json=? WHERE request_id=? AND result_json IS NULL', args: [resultJson, requestId] })
             if (Number(updated.rowsAffected) === 1) return
             const existing = (await client.execute({ sql: 'SELECT result_json FROM desktop_schedule_tool_intents WHERE request_id=?', args: [requestId] })).rows[0]
-            if (existing?.result_json != null) return
+            if (existing?.result_json === resultJson) return
+            if (existing?.result_json != null) throw new Error('Schedule receipt conflict')
             throw new Error('Schedule receipt was not saved')
         },
     }

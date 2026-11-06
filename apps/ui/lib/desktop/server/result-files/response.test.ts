@@ -11,9 +11,9 @@ test('rejects a client filename, an absolute path, a private preview and an unsa
     expect(parseDesktopResultFileBody('coworker-1', { ...ticket, filename: 'evil.zip' })).toBeUndefined()
     expect(parseDesktopResultFileBody('coworker-1', { path: '/tmp/bundle.zip', scope: 'shared', identity: '7:8', size: 4 })).toBeUndefined()
     expect(parseDesktopResultFileBody('coworker-1', { path: 'reports/deck.pdf', scope: 'agent', identity: '7:8', size: 4 })).toBeUndefined()
-    expect(parseDesktopResultFileBody('coworker-1', { path: 'reports/a"b.zip', scope: 'agent', identity: '7:8', size: 4 })).toBeUndefined()
-    expect(desktopResultFileName('a"b.zip')).toBeUndefined()
-    expect(desktopResultFileName('a;b.zip')).toBeUndefined()
+    expect(parseDesktopResultFileBody('coworker-1', { path: 'reports/a"b.zip', scope: 'agent', identity: '7:8', size: 4 })?.name).toBe('a"b.zip')
+    expect(desktopResultFileName('a"b.zip')).toBe('a"b.zip')
+    expect(desktopResultFileName('a;b.zip')).toBe('a;b.zip')
     expect(parseDesktopResultFileBody('coworker-1', { path: 'reports/bundle.zip', scope: 'agent', identity: '7:8', size: 4 })).toMatchObject(ticket)
     expect(parseDesktopResultFileBody('coworker-1', { path: 'notes/page.pdf', scope: 'shared', identity: '7:8', size: 4 })?.scope).toBe('shared')
     expect(desktopResultFileRoute('coworker 1')).toBe('/api/desktop/coworkers/coworker%201/result-files')
@@ -28,7 +28,7 @@ test('a missing, changed or unnamed file is not a download', async () => {
     expect(changed.status).toBe(409)
     expect(await changed.json()).toMatchObject({ downloaded: false })
     expect(desktopResultFileResponse(ticket, read({ size: 3, bytes: new Uint8Array([1, 2, 3]) })).status).toBe(409)
-    expect(desktopResultFileDisposition('a"b.zip')).toBeUndefined()
+    expect(desktopResultFileDisposition('a"b.zip')).toContain('filename*=UTF-8\'\'a%22b.zip')
 })
 
 test('returns the saved name and identity with the verified bytes', () => {
@@ -49,4 +49,10 @@ test('an unbound reader fails closed before any file is opened', async () => {
     const response = await handleDesktopResultFilePost(runtime, 'coworker-1', request)
     expect(response.status).toBe(503)
     expect(await response.json()).toEqual({ error: 'Result file downloads are not available.', downloaded: false })
+})
+
+test('the actual route reader rejects an oversized body before database or file access', async () => {
+    const read = async () => { throw new Error('Must not read') }
+    const request = new Request('http://127.0.0.1/result-files', { method: 'POST', body: JSON.stringify({ path: 'x'.repeat(13_000) }) })
+    await expect(handleDesktopResultFilePost({ dataRoot: '/must-not-open' } as DesktopRuntime, 'owner', request, { read })).rejects.toMatchObject({ status: 413 })
 })

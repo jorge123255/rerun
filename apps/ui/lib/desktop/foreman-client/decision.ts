@@ -1,29 +1,12 @@
 /** Explicit plan decisions — matches I's DesktopForemanDecisionInput / Decision states. */
 
-import type { DesktopForemanChatRef, DesktopForemanLiveScope } from './identity'
+import type { DesktopForemanDecisionInput } from '@rerun/contracts'
+import type { DesktopForemanLiveScope } from './identity'
 import { acceptsForemanReply } from './identity'
 
 export type DesktopPlanDecisionKind = 'confirm' | 'ask_changes'
 
-/** Presentation mirror of DesktopForemanDecisionInput. */
-export type DesktopPlanDecisionRequest =
-    | {
-          decision: 'confirm'
-          requestId: string
-          chat: DesktopForemanChatRef
-          planId: string
-          revisionId: string
-          digest: string
-      }
-    | {
-          decision: 'ask_changes'
-          requestId: string
-          chat: DesktopForemanChatRef
-          planId: string
-          revisionId: string
-          digest: string
-          feedback: string
-      }
+export type DesktopPlanDecisionRequest = DesktopForemanDecisionInput
 
 export type DesktopPlanDecisionStatus =
     | { status: 'idle' }
@@ -37,8 +20,8 @@ export type DesktopPlanDecisionResult =
     | { ok: false; requestId: string; revisionId: string; error: string; uncertain?: boolean }
 
 export function createPlanDecisionRequestId(): string {
-    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
-    return '00000000-0000-4000-8000-000000000000'
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+    throw new Error('Secure request identifiers are unavailable. Reopen Rerun and try again.')
 }
 
 export function canSubmitPlanDecision(state: DesktopPlanDecisionStatus): boolean {

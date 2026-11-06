@@ -9,6 +9,7 @@ import { TemplateRequestError } from './errors.js'
 import { createDesktopTemplateEngine } from './service.js'
 import { createDesktopPortableTemplateService } from './portable-service.js'
 import { createDesktopPortableFileStore } from './portable-files.js'
+import { readForemanTemplateImport } from './install.js'
 import { trustedSkillOwners } from '../service-skills/authority.js'
 
 const draftBody = z.strictObject({ requestId: z.uuid(), title: z.string() })
@@ -29,6 +30,7 @@ const captureBody = z.strictObject({
     selections: z.array(desktopTemplateSelectionSchema).min(1).max(12),
 })
 const installBody = z.strictObject({
+    foremanDisabled: z.literal(true).optional(),
     importReceiptId: z.uuid(),
     templateId: desktopTemplateIdSchema,
     revision: desktopTemplateRevisionSchema,
@@ -162,4 +164,10 @@ desktopTemplateRoutes.get('/:templateId', async c => {
     const revision = c.req.query('revision')
     if (revision !== undefined && !desktopTemplateRevisionSchema.safeParse(revision).success) throw new HttpError(400, 'Invalid template revision')
     return c.json(await engine().detail(templateId.data, revision).catch(reject))
+})
+
+desktopTemplateRoutes.get('/foreman-import/:engineAgentId/:receiptId', async c => {
+    const engineAgentId = z.string().regex(/^i[a-f0-9]{31}$/).parse(c.req.param('engineAgentId'))
+    const receiptId = z.uuid().parse(c.req.param('receiptId'))
+    return c.json(await readForemanTemplateImport(agentsDir(),engineAgentId,receiptId))
 })

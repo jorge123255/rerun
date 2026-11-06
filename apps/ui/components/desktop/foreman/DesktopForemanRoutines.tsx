@@ -27,8 +27,9 @@ export function DesktopForemanRoutines({
 
     useEffect(() => {
         let cancelled = false
+        const controller = new AbortController()
         void routines
-            .list()
+            .list(controller.signal)
             .then(next => {
                 if (cancelled) return
                 setData({
@@ -51,6 +52,7 @@ export function DesktopForemanRoutines({
             })
         return () => {
             cancelled = true
+            controller.abort()
         }
     }, [routines])
 

@@ -95,7 +95,7 @@ export function accountFeature(deps: AccountFeatureDeps) {
                 authMethods: manifest.authMethods.map(method => ({ ...summarize(method), availability: availability.find(item => item.id === method.id) ?? { id: method.id, supported: false, reason: M.method } })),
                 methodAvailability: availability,
                 accounts,
-                localLimitations: 'One HTTPS Streamable HTTP endpoint per method. OAuth, managed, Composio, paid, stdio and SSE methods stay unavailable. Saving configuration does not enable Apps.',
+                localLimitations: 'Local HTTP accounts support anonymous, header credentials, and public OAuth sign-in. SSE supports anonymous or Bearer credentials. Hosted methods and local catalog programs are unavailable. Saving configuration does not enable Apps.',
             }
         },
         async catalog(coworkerId: string, query: { text?: string; category?: string; offset: number; limit: number }, signal: AbortSignal) {

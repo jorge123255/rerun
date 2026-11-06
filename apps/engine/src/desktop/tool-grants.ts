@@ -4,6 +4,7 @@ import type { RunContext } from '../runtime/context.js'
 
 export function hasDesktopToolGrant(config: AgentConfig, id: DesktopRerunGrantId): boolean {
     if (!desktopRerunGrantsOf(config.tools)[id]) return false
+    if (id === 'toolInstall') return config.selfImprovement.enabled && config.selfImprovement.allowToolInstall && !config.ephemeral && config.kind !== 'foreman'
     if (id === 'browser') return config.tools.browser !== false
     if (id === 'computer') return config.tools.computer !== false && !config.ephemeral && config.kind !== 'foreman'
     if (id === 'brain') return config.tools.brain !== false

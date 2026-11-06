@@ -24,7 +24,7 @@ export function createDesktopMcpSignInApi(ports: DesktopMcpSignInRuntimeApi) {
             const body = await input(request)
             if (body.request.source.sessionId !== sessionId) throw new DesktopHttpError(409, 'This MCP sign-in belongs to another conversation.')
             if (body.action === 'complete' || body.action === 'decline' || body.action === 'recover') {
-                const response = await (body.action === 'complete' ? ports.complete(body.request, signal(request)) : body.action === 'decline' ? ports.decline(body.request, signal(request)) : ports.recover(body.request))
+                const response = await (body.action === 'complete' ? ports.complete(body.request, signal(request)) : body.action === 'decline' ? ports.decline(body.request, signal(request)) : ports.recover(body.request, signal(request)))
                 if (response.headers.get('x-mcp-sign-in-request-id') !== body.request.requestId || response.headers.get('x-session-id') !== sessionId || !response.headers.get('x-run-id')) {
                     throw new DesktopHttpError(502, 'MCP sign-in acknowledgement belonged to another request.')
                 }

@@ -7,7 +7,7 @@ process.env.RERUN_API_KEY = ''
 
 const { describe, expect, it } = await import('vitest')
 const { createClient } = await import('@libsql/client')
-const { closeSystemDb, getSystemDb, systemDbExists, SYSTEM_DB_MIGRATIONS, migrateSystemDb } = await import('./systemDb.js')
+const { closeSystemDb, getSystemDb, systemDbExists, SYSTEM_DB_MIGRATIONS, SYSTEM_DB_VERSION, migrateSystemDb } = await import('./systemDb.js')
 const { agentDataDir, systemDbPath } = await import('../config/paths.js')
 
 async function columnsOf(agentId: string, table: string): Promise<string[]> {
@@ -125,7 +125,7 @@ describe('desktop trigger migration from version 7', () => {
             await migrateSystemDb(db, systemDbPath(id))
             await db.execute("INSERT INTO desktop_trigger_intents VALUES('request','digest','hook','{}',NULL)")
             await migrateSystemDb(db, systemDbPath(id))
-            expect((await db.execute('PRAGMA user_version')).rows[0]?.user_version).toBe(8)
+            expect((await db.execute('PRAGMA user_version')).rows[0]?.user_version).toBe(SYSTEM_DB_VERSION)
             expect((await db.execute("SELECT title FROM sessions WHERE id='keep'")).rows[0]?.title).toBe('Saved chat')
             expect((await db.execute('SELECT fingerprint FROM desktop_first_turns')).rows[0]?.fingerprint).toBe('fingerprint')
             expect((await db.execute('SELECT fingerprint FROM desktop_trigger_intents')).rows[0]?.fingerprint).toBe('digest')

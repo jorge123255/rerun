@@ -10,7 +10,7 @@ import type { DesktopPlanBeats, DesktopPlanGroupView } from '@/lib/desktop/forem
 import { desktopPlanCardScene } from './plan-scene'
 
 type PlanLifeStage = 'rest' | 'trigger' | 'working' | 'delivered'
-type AgentStatus = 'idle' | 'working' | 'attention' | 'offline'
+type AgentStatus = Parameters<typeof agentTileStyle>[0]
 type PlanLifeBeat = { hold: number; stage: PlanLifeStage; status: AgentStatus; line: string | null }
 
 const REST_MS = 2800

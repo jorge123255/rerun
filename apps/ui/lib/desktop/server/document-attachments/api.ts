@@ -1,111 +1,93 @@
 import 'server-only'
-
 import { z } from 'zod'
-import { DESKTOP_DOCUMENT_MAX_BYTES, type DesktopDocumentScope } from '../../../../../../packages/contracts/src/desktop-document-attachments.ts'
+import { DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentRequestSchema, desktopDocumentScopeSchema } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { desktopRoute } from '../http'
+import { previewResultBytes } from '../result-files/preview'
 import type { DesktopDocumentAttachmentService } from './service'
 
-const MAX_BODY_BYTES = Math.ceil(DESKTOP_DOCUMENT_MAX_BYTES / 3) * 4 + 100_000
-const scopeInput = z.object({ tabUid: z.string().min(1).max(128), sessionId: z.string().min(1).max(200).optional() }).strict()
+const MAX_BODY_BYTES = Math.ceil(DESKTOP_DOCUMENT_MAX_BYTES / 3) * 4 + 16_384
 const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }
-
-function withDeadline<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-        const onAbort = () => reject(new Error('Document request deadline exceeded'))
-        signal.addEventListener('abort', onAbort, { once: true })
-        work.then(value => {
-            signal.removeEventListener('abort', onAbort)
-            resolve(value)
-        }, error => {
-            signal.removeEventListener('abort', onAbort)
-            reject(error)
-        })
-        if (signal.aborted) onAbort()
-    })
-}
-
-async function readJson(request: Request, signal: AbortSignal): Promise<Record<string, unknown>> {
+const readQuery = desktopDocumentScopeSchema.omit({ agentId: true }).extend({ attachmentId: z.string().uuid().optional(), sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(), view: z.enum(['read', 'preview', 'download']).optional(), page: z.coerce.number().int().min(1).max(10_000).optional(), scale: z.coerce.number().min(.5).max(2).optional() }).strict()
+async function readJson(request: Request, signal: AbortSignal): Promise<unknown> {
+    const declared = request.headers.get('content-length')
+    if (declared && (!/^\d+$/.test(declared) || Number(declared) > MAX_BODY_BYTES)) throw new DesktopHttpError(413, 'Document request exceeds its limit.')
     const reader = request.body?.getReader()
     if (!reader) throw new DesktopHttpError(400, 'Missing document request body.')
-    const chunks: Uint8Array[] = []
-    let size = 0
+    const abort = () => { void reader.cancel().catch(() => {}) }
+    signal.addEventListener('abort', abort, { once: true })
+    const chunks: Uint8Array[] = []; let length = 0
     try {
         while (true) {
-            const part = await withDeadline(reader.read(), signal)
+            signal.throwIfAborted()
+            const part = await reader.read(); signal.throwIfAborted()
             if (part.done) break
-            size += part.value.byteLength
-            if (size > MAX_BODY_BYTES) throw new DesktopHttpError(413, 'Document request exceeds its limit.')
+            length += part.value.byteLength
+            if (length > MAX_BODY_BYTES) throw new DesktopHttpError(413, 'Document request exceeds its limit.')
             chunks.push(part.value)
         }
-    } finally {
-        await reader.cancel().catch(() => {})
-    }
-    const bytes = new Uint8Array(size)
-    let offset = 0
-    for (const chunk of chunks) {
-        bytes.set(chunk, offset)
-        offset += chunk.byteLength
-    }
-    return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
+        const bytes = new Uint8Array(length); let offset = 0
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+        return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+    } finally { signal.removeEventListener('abort', abort); await reader.cancel().catch(() => {}) }
 }
-
-function scopeOf(agentId: string, body: unknown): DesktopDocumentScope {
-    const input = scopeInput.parse(body)
-    return { agentId, ...input }
-}
-
-function decodeAudio(value: unknown): Uint8Array {
-    if (typeof value !== 'string' || !value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw new DesktopHttpError(400, 'Document bytes are invalid.')
+function decode(value: string) {
+    if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw new DesktopHttpError(400, 'Document bytes are invalid.')
     const bytes = Buffer.from(value, 'base64')
-    if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_DOCUMENT_MAX_BYTES || bytes.toString('base64') !== value) throw new DesktopHttpError(400, 'Document bytes are invalid.')
+    if (!bytes.byteLength || bytes.byteLength > DESKTOP_DOCUMENT_MAX_BYTES || bytes.toString('base64') !== value) throw new DesktopHttpError(400, 'Document bytes are invalid.')
     return new Uint8Array(bytes)
 }
-
 export function desktopDocumentAttachmentsApi(service: DesktopDocumentAttachmentService) {
     return async (request: Request, agentId: string): Promise<Response> => {
         const signal = AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
         try {
             if (request.method === 'GET') {
-                const url = new URL(request.url)
-                const tabUid = url.searchParams.get('tabUid')
-                if (!tabUid) throw new DesktopHttpError(400, 'Choose a conversation tab.')
-                const scope = scopeOf(agentId, { tabUid, sessionId: url.searchParams.get('sessionId') ?? undefined })
-                const attachmentId = url.searchParams.get('attachmentId')
-                if (attachmentId && url.searchParams.get('view') === 'read') {
-                    const result = await withDeadline(service.read(scope, attachmentId, signal), signal)
-                    return new Response(result.bytes, { headers: { ...headers, 'Content-Type': result.mimeType, 'Content-Length': String(result.bytes.byteLength) } })
+                const search = new URL(request.url).searchParams
+                if ([...search.keys()].some(key => search.getAll(key).length > 1)) throw new DesktopHttpError(400, 'Duplicate document query fields.')
+                const query = readQuery.parse(Object.fromEntries(search))
+                const scope = { agentId, tabUid: query.tabUid, ...(query.sessionId ? { sessionId: query.sessionId } : {}) }
+                if (!query.attachmentId) {
+                    if (query.view || query.sha256 || query.page || query.scale) throw new DesktopHttpError(400, 'Choose an attachment.')
+                    return Response.json({ attachments: await service.list(scope, signal) }, { headers })
                 }
-                return Response.json({ attachments: await withDeadline(service.list(scope, signal), signal) }, { headers })
+                if (!query.sha256 || !query.view) throw new DesktopHttpError(400, 'Choose an exact attachment identity.')
+                const result = await service.read(scope, query.attachmentId, query.sha256, signal)
+                if (query.view === 'preview') {
+                    const response = await previewResultBytes(result.attachment.name, result.bytes, { signal, page: query.page, scale: query.scale })
+                    await service.assertReadable(scope, query.attachmentId, query.sha256, signal)
+                    response.headers.set('x-rerun-document-sha256', query.sha256)
+                    return response
+                }
+                await service.assertReadable(scope, query.attachmentId, query.sha256, signal)
+                const name = encodeURIComponent(result.attachment.name).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
+                return new Response(new Uint8Array(result.bytes), { headers: { ...headers, 'Content-Type': query.view === 'download' ? 'application/octet-stream' : result.attachment.mimeType, 'Content-Length': String(result.bytes.byteLength), 'Content-Disposition': `attachment; filename*=UTF-8''${name}`, 'x-rerun-document-sha256': query.sha256 } })
             }
             if (request.method !== 'POST') return Response.json({ error: 'Method unavailable.' }, { status: 405, headers })
-            const body = await readJson(request, signal)
-            const scope = scopeOf(agentId, body)
+            const body = desktopDocumentRequestSchema.parse(await readJson(request, signal))
+            if (body.agentId !== agentId) throw new DesktopHttpError(409, 'These attachments belong to another coworker.')
+            const scope = { agentId, tabUid: body.tabUid, ...(body.sessionId ? { sessionId: body.sessionId } : {}) }
             switch (body.operation) {
                 case 'upload': {
-                    const bytes = decodeAudio(body.audioBase64)
-                    const input = { ...body, audioBase64: undefined }
-                    return Response.json({ attachment: await withDeadline(service.upload(scope, input, bytes, signal), signal) }, { headers })
+                    const { operation: _operation, audioBase64, ...input } = body
+                    return Response.json({ attachment: await service.upload(scope, input, decode(audioBase64), signal) }, { headers })
                 }
-                case 'convert':
-                    return Response.json({ attachment: await withDeadline(service.convert(scope, body, signal), signal) }, { headers })
-                case 'admission':
-                    return Response.json(await withDeadline(service.admission(scope, signal), signal), { headers })
-                case 'discard':
-                    await withDeadline(service.discard(scope, body, signal), signal)
-                    return Response.json({ discarded: true }, { headers })
-                default:
-                    throw new DesktopHttpError(400, 'Unknown document operation.')
+                case 'convert': return Response.json({ attachment: await service.convert(scope, { attachmentId: body.attachmentId, expectedRevision: body.expectedRevision }, signal) }, { headers })
+                case 'discard': await service.discard(scope, { attachmentId: body.attachmentId, expectedRevision: body.expectedRevision }, signal); return Response.json({ discarded: true }, { headers })
+                case 'detach': await service.detach(scope, { attachmentId: body.attachmentId, expectedRevision: body.expectedRevision }, signal); return Response.json({ detached: true }, { headers })
+                case 'admission': return Response.json(await service.admission(scope, { admissionId: body.admissionId, attachmentIds: body.attachmentIds, ...(body.modelChoice && { modelChoice: body.modelChoice }) }, signal), { headers })
+                case 'consume': await service.consume(scope, body.admissionId, signal); return Response.json({ consumed: true }, { headers })
+                case 'cancel-upload': await service.cancelUpload(scope, body.attachmentId, signal); return Response.json({ cancelled: true }, { headers })
             }
         } catch (error) {
             if (error instanceof DesktopHttpError) throw error
-            return Response.json({ error: 'Document request failed or changed. Retry the same attempt.' }, { status: 400, headers })
+            if (signal.aborted) throw new DesktopHttpError(499, 'Document request was cancelled. Restore the attachment before retrying.')
+            if (error instanceof z.ZodError || error instanceof SyntaxError) throw new DesktopHttpError(400, 'Document request was not understood.')
+            throw new DesktopHttpError(502, 'Document request did not finish. Restore the same attempt before retrying.')
         }
     }
 }
-
 export function desktopDocumentAttachmentHandlers(service: DesktopDocumentAttachmentService) {
     const api = desktopDocumentAttachmentsApi(service)
-    const handler = async (request: Request, context: { params: Promise<{ agentId: string }> }) => desktopRoute(request, async () => api(request, (await context.params).agentId))
+    const handler = (request: Request, context: { params: Promise<{ agentId: string }> }) => desktopRoute(request, async () => api(request, (await context.params).agentId))
     return { GET: handler, POST: handler }
 }

@@ -3,6 +3,7 @@ import { createHash, createHmac } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import type { DesktopMcpSseRef, DesktopMcpSseRequest } from '@rerun/contracts'
 import type { McpRunIdentity } from '../mcp/bridge'
+import type { RemoteServer } from '../mcp/model'
 import type { RemoteMcpStore } from '../mcp/store'
 import { publicOAuthAddress } from '../mcp/oauth-network'
 import { createPinnedSseNetwork } from './network'
@@ -24,6 +25,7 @@ export type DesktopSseBindingDeps = {
     manage(owner: string, signal: AbortSignal): Promise<() => void>
     refreshCredential(owner: string, name: string, revision: string, signal: AbortSignal): Promise<string | null>
     validateToolNames(owner: string, names: string[], signal: AbortSignal): Promise<void>
+    account?: (ref: DesktopMcpSseRef, action: 'read' | 'use' | 'call' | 'close', run: McpRunIdentity | undefined, signal: AbortSignal) => Promise<{ server: RemoteServer & { id: string; transport: 'sse' }; bearer: string; credentialGeneration: string; check(): void } | null>
     network?: SseNetwork
 }
 
@@ -39,6 +41,8 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
     const fingerprint = (ref: DesktopMcpSseRef, bearer: string) => createHmac('sha256', deps.key()).update(JSON.stringify([ref, bearer])).digest('hex')
     async function credential(ref: DesktopMcpSseRef, signal: AbortSignal) {
         signal.throwIfAborted()
+        const account = await deps.account?.(ref, 'use', undefined, signal)
+        if (account) return account
         const server = await deps.store.read(ref.agentId, ref.name)
         if (server.id !== ref.serverId || server.revision !== ref.expectedRevision || server.transport !== 'sse') throw new SseFailure('changed')
         const oauth = await deps.store.readOAuth(ref.agentId, ref.name)
@@ -47,6 +51,7 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
         return { server, bearer: oauth?.accessToken ?? server.bearer }
     }
     async function preflight(ref: DesktopMcpSseRef, signal: AbortSignal) {
+        if (await deps.account?.(ref, 'use', undefined, signal)) return
         const permission = await deps.access(ref.agentId)
         if (!permission.enabled || !permission.granted) throw new SseFailure('changed')
         const current = await credential(ref, signal).catch(async error => {
@@ -68,7 +73,7 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
             if (!saved) throw new SseFailure('changed')
             const current = await credential(saved.ref, signal)
             authority.check()
-            if (fingerprint(saved.ref, current.bearer) !== authority.credentialGeneration || current.server.url !== authority.server.url) throw new SseFailure('changed')
+            if (('credentialGeneration' in current ? current.credentialGeneration : fingerprint(saved.ref, current.bearer)) !== authority.credentialGeneration || current.server.url !== authority.server.url) throw new SseFailure('changed')
             return current.bearer ? { bearer: current.bearer } : {}
         },
     })
@@ -78,6 +83,12 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
         shutdownSignal: deps.shutdownSignal,
         network,
         async authorize({ ref, action, run }, signal): Promise<SseAuthority> {
+            const account = await deps.account?.(ref, action, run, signal)
+            if (account) {
+                const handle = {}, check = () => { account.check(); deps.shutdownSignal.throwIfAborted() }
+                check(); credentials.set(handle, { ref, bearer: account.bearer })
+                return { server: account.server, credentialGeneration: account.credentialGeneration, credentialHandle: handle, check }
+            }
             const watch = deps.store.lifecycle.watch(ref.agentId, ref.name)
             const permission = await deps.access(ref.agentId)
             if (action === 'use' || action === 'call') {
@@ -142,6 +153,7 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
             return definitions
         },
         releaseRun: runtime.releaseRun,
+        releaseServerRun: runtime.releaseServerRun,
         dispose: runtime.dispose,
         shutdown: runtime.shutdown,
     }

@@ -200,7 +200,7 @@ async function applyCommand(tx: Transaction, board: DesktopBoardState, command: 
 
 /** Revision compare, mutation, and receipt are one transaction. A lost response confirms
  * its receipt and returns today's board; a reused UUID with different content never mutates it. */
-export function writeDesktopBoardState(db: Client, raw: DesktopSpaceWrite): Promise<DesktopBoardState> {
+export function writeDesktopBoardState(db: Client, raw: DesktopSpaceWrite, onCommit?: (tx: Transaction, before: DesktopBoardState, after: DesktopBoardState) => Promise<void>): Promise<DesktopBoardState> {
     const parsed = desktopSpaceWriteSchema.safeParse(raw)
     if (!parsed.success) return Promise.reject(new DesktopHttpError(400, 'Choose a valid Box change.'))
     const input = parsed.data
@@ -219,6 +219,7 @@ export function writeDesktopBoardState(db: Client, raw: DesktopSpaceWrite): Prom
             await applyCommand(tx, board, input.command)
             await tx.execute(revisionWrite)
             const result = await readState(tx)
+            await onCommit?.(tx, board, result)
             await tx.execute({ sql: 'INSERT INTO desktop_space_writes (request_id, fingerprint, result_revision) VALUES (?,?,?)', args: [input.requestId, fingerprint, result.revision] })
             await tx.commit()
             return result

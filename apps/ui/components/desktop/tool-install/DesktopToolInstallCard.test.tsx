@@ -61,5 +61,5 @@ it('renders per-package evidence and the guest-only availability boundary', () =
     expect(host.textContent).toContain('Installed left-pad@1.2.3')
     expect(host.textContent).toContain(`manifest ${'a'.repeat(64)}`)
     expect(host.textContent).toContain(`lock ${'b'.repeat(64)}`)
-    expect(host.textContent).toContain('Host Codex and native tools cannot import these packages.')
+    expect(host.textContent).toContain('Available in this coworker’s isolated computer.')
 })

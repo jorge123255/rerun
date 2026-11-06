@@ -17,7 +17,7 @@ export function desktopToolInstallTools(ctx: RunContext, ports: DesktopToolInsta
             description: 'Review exact npm package@version targets for installation in this coworker’s isolated computer. Approval is required before any package executes. Packages remain available only in that guest.',
             inputSchema: desktopToolInstallInputSchema,
             execute: async (input, options) => {
-                const signal = ctx.abortSignal ?? options.abortSignal
+                const signal = ctx.abortSignal || options.abortSignal ? AbortSignal.any([...(ctx.abortSignal ? [ctx.abortSignal] : []), ...(options.abortSignal ? [options.abortSignal] : [])]) : undefined
                 if (!signal || !ctx.runId) throw new Error('Tool installation requires an active, cancellable run.')
                 signal.throwIfAborted()
                 const release = beginDesktopAgentWork(ctx.agent.id)

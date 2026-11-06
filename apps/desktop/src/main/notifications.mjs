@@ -1,5 +1,5 @@
 // A deliberately narrow main-process notification boundary; renderer permissions stay denied.
-const kinds = new Set(['done', 'error', 'question', 'approval', 'takeover', 'service', 'secret'])
+const kinds = new Set(['done', 'error', 'question', 'approval', 'takeover', 'service', 'secret', 'mcp', 'tool-install'])
 const text = (value, max, required = false) => typeof value === 'string' && value.length <= max && (!required || value.length > 0) && !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value)
 export function notificationPayload(value) {
     if (!value || typeof value !== 'object' || !kinds.has(value.kind) || !text(value.key, 600, true)

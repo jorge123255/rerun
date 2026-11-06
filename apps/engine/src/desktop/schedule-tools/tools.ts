@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { providerSchema, DESKTOP_SCHEDULE_TOOL_MESSAGES as M, type DesktopScheduleToolProjection } from '@rerun/contracts'
 import type { DesktopScheduleLifecycle } from './lifecycle.js'
 import { DesktopScheduleToolError } from './lifecycle.js'
-import { desktopScheduleDefinitionRevision } from './revision.js'
+import { beginDesktopAgentWork } from '../agent-lifecycle.js'
 import type { DesktopScheduleIntentStore, DesktopScheduleToolAuthority, DesktopScheduleToolContext } from './types.js'
 
 const slug = z.string().trim().regex(/^[A-Za-z0-9_-]{1,160}$/)
@@ -26,7 +26,7 @@ export function createDesktopScheduleToolFactory(deps: {
         return text
     }
     return {
-        projection(key: string) { return projections.get(key) ?? null },
+        projection(engineAgentId: string, runId: string, key: string) { return projections.get(JSON.stringify([engineAgentId, runId, key])) ?? null },
         tools(engineAgentId: string, context?: DesktopScheduleToolContext): ToolSet {
             const guard = async () => {
                 deps.authority.assertActive()
@@ -47,6 +47,8 @@ export function createDesktopScheduleToolFactory(deps: {
                 return requestId(engineAgentId, context.runId, options.toolCallId)
             }
             const run = async (key: string, operation: DesktopScheduleToolProjection['operation'], slugValue: string | null, work: () => Promise<{ text: string; revision: string | null; outcome?: DesktopScheduleToolProjection['outcome'] }>) => {
+                key = JSON.stringify([engineAgentId, context?.runId, key])
+                const release = beginDesktopAgentWork(engineAgentId)
                 try {
                     const result = await work()
                     return finish(key, operation, slugValue, result.outcome ?? 'committed', result.text, result.revision)
@@ -55,7 +57,7 @@ export function createDesktopScheduleToolFactory(deps: {
                     if (error instanceof DesktopScheduleToolError) return finish(key, operation, slugValue, error.outcome, error.message, null)
                     if (error instanceof Error && error.message === M.fileUnsafe) return finish(key, operation, slugValue, 'rejected', error.message, null)
                     return finish(key, operation, slugValue, 'uncertain', M.uncertain, null)
-                }
+                } finally { release() }
             }
             return {
                 schedule_list: tool({
@@ -101,7 +103,7 @@ export function createDesktopScheduleToolFactory(deps: {
                     description: 'Update an existing scheduled task (description, cron, runAt, timezone, or enable/disable it). Passing body overwrites the entire instruction body: use it ONLY for a deliberate full rewrite of a body you have just read with schedule_get. For ANY partial change to the body, use schedule_edit instead. Pass expectedRevision from schedule_get. A stale revision is rejected and the previous routine is kept. Setting cron clears runAt, and setting runAt clears cron. This does not run the task.',
                     inputSchema: z.object({
                         slug,
-                        expectedRevision: z.string().min(1).max(128).optional(),
+                        expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
                         description: z.string().trim().max(4000).optional(),
                         body: z.string().max(64000).optional(),
                         cron: z.string().trim().min(1).max(120).optional(),
@@ -114,10 +116,7 @@ export function createDesktopScheduleToolFactory(deps: {
                     execute: async (input, options) => run(options?.toolCallId ?? `update:${input.slug}`, 'update', input.slug, async () => {
                         await guard()
                         const requestId = idFor(options)
-                        const prior = await deps.store.findIntent(engineAgentId, requestId)
-                        const expectedRevision = prior?.before
-                            ? desktopScheduleDefinitionRevision(prior.before)
-                            : input.expectedRevision ?? (await deps.lifecycle.get(engineAgentId, input.slug, guard)).revision ?? undefined
+                        const expectedRevision = input.expectedRevision
                         if (!expectedRevision) throw new DesktopScheduleToolError('rejected', M.stale)
                         const receipt = await deps.lifecycle.update(engineAgentId, input.slug, {
                             requestId,
@@ -138,7 +137,7 @@ export function createDesktopScheduleToolFactory(deps: {
                     description: 'Make a surgical edit to a scheduled task body by replacing an exact string — this is the default way to change a body and it preserves everything else. Read the body with schedule_get first so oldString is an exact excerpt. Prefer this over schedule_update for any partial change. By default oldString must match exactly once. Pass expectedRevision from schedule_get. A stale or ambiguous replacement is rejected and the previous routine is kept. This does not run the task.',
                     inputSchema: z.object({
                         slug,
-                        expectedRevision: z.string().min(1).max(128).optional(),
+                        expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
                         oldString: z.string().min(1),
                         newString: z.string(),
                         replaceAll: z.boolean().default(false).describe('Replace every occurrence instead of requiring a unique match'),
@@ -146,8 +145,7 @@ export function createDesktopScheduleToolFactory(deps: {
                     execute: async (input, options) => run(options?.toolCallId ?? `edit:${input.slug}`, 'edit', input.slug, async () => {
                         await guard()
                         const requestId = idFor(options)
-                        const prior = await deps.store.findIntent(engineAgentId, requestId)
-                        const expectedRevision = prior?.before ? desktopScheduleDefinitionRevision(prior.before) : input.expectedRevision ?? (await deps.lifecycle.get(engineAgentId, input.slug, guard)).revision ?? undefined
+                        const expectedRevision = input.expectedRevision
                         if (!expectedRevision) throw new DesktopScheduleToolError('rejected', M.stale)
                         const receipt = await deps.lifecycle.edit(engineAgentId, input.slug, { requestId, expectedRevision, oldString: input.oldString, newString: input.newString, replaceAll: input.replaceAll }, guard)
                         return { text: receipt.text, revision: receipt.revision }
@@ -155,12 +153,11 @@ export function createDesktopScheduleToolFactory(deps: {
                 }),
                 schedule_delete: tool({
                     description: 'Delete a scheduled task definition. Run history is kept. This does not run the task or delete past results.',
-                    inputSchema: z.object({ slug, expectedRevision: z.string().min(1).max(128).optional() }),
+                    inputSchema: z.object({ slug, expectedRevision: z.string().regex(/^[a-f0-9]{64}$/) }),
                     execute: async ({ slug: task, expectedRevision }, options) => run(options?.toolCallId ?? `delete:${task}`, 'delete', task, async () => {
                         await guard()
                         const requestId = idFor(options)
-                        const prior = await deps.store.findIntent(engineAgentId, requestId)
-                        const revision = prior?.before ? desktopScheduleDefinitionRevision(prior.before) : expectedRevision ?? (await deps.lifecycle.get(engineAgentId, task, guard)).revision ?? undefined
+                        const revision = expectedRevision
                         if (!revision) throw new DesktopScheduleToolError('rejected', M.stale)
                         const receipt = await deps.lifecycle.remove(engineAgentId, task, { requestId, expectedRevision: revision }, guard)
                         return { text: receipt.text, revision: receipt.revision }

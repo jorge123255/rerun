@@ -36,7 +36,7 @@ export type DesktopScheduleFilePort = {
     list(engineAgentId: string): Promise<DesktopScheduleDefinition[]>
     read(engineAgentId: string, slug: string): Promise<DesktopScheduleDefinition | null>
     /** Compare-and-swap the definition. Preserve lastRunAt from the current file. Null deletes the definition only. */
-    replace(engineAgentId: string, slug: string, expected: DesktopScheduleDefinition | null, next: DesktopScheduleDefinition | null): Promise<DesktopScheduleDefinition | null>
+    replace(engineAgentId: string, slug: string, expected: DesktopScheduleDefinition | null, next: DesktopScheduleDefinition | null, admission?: () => Promise<void>): Promise<DesktopScheduleDefinition | null>
 }
 
 export type DesktopScheduleIntentKind = 'create' | 'update' | 'edit' | 'delete'

@@ -60,6 +60,24 @@ describe('desktop schedule tools', () => {
         const read = await call('schedule_get', { slug: 'digest' }, 'get')
         const revision = read.split('\n').find(line => line.startsWith('Revision: '))?.slice('Revision: '.length)
         expect(await call('schedule_edit', { slug: 'digest', expectedRevision: revision, oldString: 'inbox', newString: 'mailbox', replaceAll: false }, 'edit')).toBe('Edited schedule digest (1 replacement)')
-        expect(await call('schedule_edit', { slug: 'digest', oldString: 'nope', newString: 'x', replaceAll: false }, 'miss')).toBe(M.missingExcerpt('digest'))
+        expect(await call('schedule_edit', { slug: 'digest', expectedRevision: (await call('schedule_get', { slug: 'digest' }, 'again')).split('Revision: ')[1]?.split('\n')[0], oldString: 'nope', newString: 'x', replaceAll: false }, 'miss')).toBe(M.missingExcerpt('digest'))
     })
+})
+
+it('does not adopt a new revision when the model omits it after a human edit', async () => {
+    const box = factory()
+    await box.call('schedule_create', { name: 'Daily', description: '', body: 'Original', cron: '0 8 * * *', timezone: 'UTC' }, 'create')
+    const original = (await box.files.read('eng-1', 'daily'))!
+    await box.files.replace('eng-1', 'daily', original, { ...original, body: 'Human saved' })
+    expect(await box.call('schedule_update', { slug: 'daily', body: 'Old model replacement' }, 'stale')).toBe(M.stale)
+    expect(await box.call('schedule_delete', { slug: 'daily' }, 'delete')).toBe(M.stale)
+    expect((await box.files.read('eng-1', 'daily'))?.body).toBe('Human saved')
+})
+it('rejects a retry that changes only its originally supplied revision', async () => {
+    const box = factory()
+    await box.call('schedule_create', { name: 'Daily', description: '', body: 'Original', cron: '0 8 * * *', timezone: 'UTC' }, 'create')
+    const revision = (await box.call('schedule_get', { slug: 'daily' }, 'read')).split('Revision: ')[1]!.split('\n')[0]
+    const input = { slug: 'daily', expectedRevision: revision, body: 'Replacement' }
+    expect(await box.call('schedule_update', input, 'update')).toContain('Updated schedule daily')
+    expect(await box.call('schedule_update', { ...input, expectedRevision: 'f'.repeat(64) }, 'update')).toBe(M.conflict)
 })

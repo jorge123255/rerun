@@ -16,6 +16,7 @@ import { abortable } from '../web-fetch/transport.js'
 import { abortError, isAbortError, IsolatedScreenRefusal, throwIfAborted } from './refusal.js'
 import { guardedRfbInput } from './rfb-input.js'
 import type { ScreenForeground } from './permissions.js'
+import { desktopToolInstallInputSchema } from '@rerun/contracts'
 import type { LauncherControl } from '../computer-launchers/ports.js'
 import { launcherRequestSchema } from '../computer-launchers/contract.js'
 import type { EnsuredScreen, IsolatedScreenService, ScreenComputerInput, ScreenLease, ScreenNavigate, ScreenNavigationExport, ScreenOwner, ScreenPage, ScreenPrerequisite, ScreenReconcile, ScreenRunState, ScreenShot, ScreenStatus, ScreenTakeover, ScreenTarget, ViewerMode } from './types.js'
@@ -73,7 +74,7 @@ function prerequisiteText(prerequisite: ScreenPrerequisite): string {
         case 'docker-missing': return 'Docker is not installed.'
         case 'daemon-unreachable': return 'Docker is not running.'
         case 'docker-wrong-arch': return 'Docker is not a linux/arm64 engine.'
-        case 'image-missing': return 'The isolated screen image rerun-desktop-guest:round32 is not built.'
+        case 'image-missing': return 'The isolated screen image rerun-desktop-guest:round33 is not built.'
         case 'image-wrong-arch': return 'The isolated screen image is not arm64.'
         case 'name-conflict': return CONFLICT
         case 'ready': return 'The screen is ready.'
@@ -220,6 +221,27 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         const image = await encodeJpeg(reply.binary, screen.viewWidth, screen.viewHeight)
         current(target); throwIfAborted(signal)
         return { image, mediaType: 'image/jpeg', width: screen.viewWidth, height: screen.viewHeight }
+    }
+
+    async function toolInstall(target: ScreenTarget, body: { mode: 'probe' | 'install' | 'inspect'; operationId?: string; workspaceFingerprint?: string; packages?: string[] }, signal: AbortSignal, authorize: (signal: AbortSignal) => Promise<void>) {
+        if (!['probe', 'install', 'inspect'].includes(body.mode)) throw new IsolatedScreenRefusal('Invalid installation request.', 'refused')
+        if (body.mode !== 'probe') {
+            desktopToolInstallInputSchema.parse({ packages: body.packages })
+            if (!/^[a-f0-9]{64}$/.test(body.operationId ?? '') || !/^[a-f0-9]{64}$/.test(body.workspaceFingerprint ?? '')) throw new IsolatedScreenRefusal('Invalid installation identity.', 'refused')
+        }
+        let submitted = false
+        try {
+            return await action(target, signal, async (_live, linked) => {
+                await authorize(linked); linked.throwIfAborted()
+                const request = body.mode === 'probe' ? { op: 'tool-install', mode: 'probe' } : { op: 'tool-install', mode: body.mode, operationId: body.operationId, workspaceFingerprint: body.workspaceFingerprint, packages: body.packages }
+                submitted = body.mode === 'install'
+                return (await guestCall(target, request, linked)).value
+            })
+        } catch (error) {
+            // Package scripts can spawn descendants. Stopping the whole owned guest confirms drain.
+            if (submitted) await stop(target, AbortSignal.timeout(20000))
+            throw error
+        }
     }
 
     async function withLauncherControl<T>(target: ScreenTarget, signal: AbortSignal, work: (control: LauncherControl, signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -630,5 +652,5 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         return result
     }
 
-    return { status, ensure, running, navigate, act, openBrowser, withLauncherControl, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }
+    return { status, ensure, running, navigate, act, openBrowser, toolInstall, withLauncherControl, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }
 }

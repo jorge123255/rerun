@@ -54,7 +54,9 @@ export type ForemanTx = {
     runningDiscoveries(): Promise<DesktopForemanDiscoveryRun[]>
 }
 
-export type ForemanStore = { transaction<T>(work: (tx: ForemanTx) => Promise<T>): Promise<T> }
+export type ForemanStore = { coordinationKey?: object; transaction<T>(work: (tx: ForemanTx) => Promise<T>): Promise<T> }
+const TRANSACTIONS = Symbol.for('rerun.desktop.foreman.transactions.v1')
+const transactions = () => ((globalThis as unknown as Record<symbol, WeakMap<Client, Promise<unknown>>>)[TRANSACTIONS] ??= new WeakMap())
 
 type Exec = Pick<Transaction, 'execute'>
 const one = async (db: Exec, stmt: InStatement) => (await db.execute(stmt)).rows[0] ?? null
@@ -135,7 +137,15 @@ function bind(db: Exec): ForemanTx {
 // Binds the store to root's open desktop database. Root must have applied the schema step.
 export function createForemanSqliteStore(db: Client): ForemanStore {
     return {
-        async transaction(work) {
+        coordinationKey: db,
+        transaction(work) {
+            const previous = transactions().get(db) ?? Promise.resolve()
+            const result = previous.then(() => execute(work), () => execute(work))
+            transactions().set(db, result.catch(() => {}))
+            return result
+        },
+    }
+    async function execute<T>(work: (tx: ForemanTx) => Promise<T>): Promise<T> {
             const tx = await db.transaction('write')
             try {
                 const result = await work(bind(tx))
@@ -147,6 +157,5 @@ export function createForemanSqliteStore(db: Client): ForemanStore {
             } finally {
                 tx.close()
             }
-        },
     }
 }

@@ -18,6 +18,7 @@ export type DesktopForemanPersistedUi = {
     decision: DesktopPlanDecisionStatus
     build: DesktopForemanBuildProgressView | null
     discoveries: DesktopDiscoveriesState | null
+    pendingSend?: { requestId: string; text: string; modelChoice: import('@rerun/contracts').DesktopForemanModelRef | null }
     placement: DesktopForemanPlacement
 }
 

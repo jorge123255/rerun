@@ -32,7 +32,6 @@ export function DesktopForemanChatLayer({
     build,
     nextSteps,
     leadState,
-    live,
     error,
     onConfirmPlan,
     onAskChanges,
@@ -106,14 +105,13 @@ export function DesktopForemanChatLayer({
                         />
                     )}
                     {build && (
-                        <DesktopForemanBuildProgress build={build} onOpenCoworker={live ? onOpenCoworker : undefined} onOpenBox={live ? onOpenBox : undefined} />
+                        <DesktopForemanBuildProgress build={build} onOpenCoworker={onOpenCoworker} onOpenBox={onOpenBox} />
                     )}
                     {nextSteps.length > 0 && !streaming && (
                         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28 }}>
                             <DesktopForemanNextSteps
                                 steps={nextSteps}
                                 leadState={leadState}
-                                live={live}
                                 onStartLead={onStartLead}
                                 onOpenCreated={onOpenCreated}
                             />

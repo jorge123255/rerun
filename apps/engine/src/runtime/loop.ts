@@ -1,3 +1,4 @@
+import { desktopDocumentContextParts } from '@rerun/contracts'
 import { streamText, type LanguageModelUsage, type ModelMessage, type StepResult, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
 import { RERUN_CONNECTION_ID, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
@@ -510,7 +511,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                 : []
             const attachmentParts = trigger.source === 'chat' && trigger.desktopAttachments
                 ? desktopResolvedAttachmentParts(trigger.desktopAttachments) : workspaceAttachmentParts(attachment)
-            const context = [...attachmentParts, ...(trigger.source === 'chat' ? desktopCoworkerMentionContextParts(userText, trigger.coworkerMentions) : []), ...(suffix ? [contextTextPart(suffix)] : [])]
+            const documents = trigger.source === 'chat' && trigger.desktopDocuments ? desktopDocumentContextParts(trigger.desktopDocuments) : []
+            const context = [...attachmentParts, ...documents, ...(trigger.source === 'chat' ? desktopCoworkerMentionContextParts(userText, trigger.coworkerMentions) : []), ...(suffix ? [contextTextPart(suffix)] : [])]
             const content = [{ type: 'text' as const, text: userText }, ...context]
             appendP = queuedUser ? completeQueuedUser(agent.id, queuedUser, content) : appendMessage(agent.id, sessionId, { role: 'user', content }, author)
             if (queuedUser) await appendP

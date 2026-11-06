@@ -17,6 +17,9 @@ import { DesktopNotificationDelivery } from './DesktopNotificationDelivery'
 import { DesktopSharedData } from './DesktopSharedData'
 import { DesktopBrainDialog } from './brain/pages/DesktopBrainDialog'
 import { DesktopBrainProposalsPanel } from './brain/proposals/DesktopBrainProposalsPanel'
+import { DesktopForemanDock } from './foreman/DesktopForemanDock'
+import { DesktopForemanPanel } from './foreman/DesktopForemanPanel'
+import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
 import { flushDesktopBrainDrafts } from '@/lib/desktop/use-brain-page-draft'
 import { createDesktopBrainPagesActions } from '@/lib/desktop/brain-pages'
 import { countDesktopBrainProposals } from '@/lib/desktop/brain-proposals'
@@ -104,8 +107,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             setSharedDataOpen(false)
             // Freeze chat admissions synchronously, then let best-effort navigation history
             // settle alongside the existing durable draft handshake.
-            const [chatReady, brainReady] = await Promise.all([flushDesktopDrafts(), flushDesktopBrainDrafts(), flushDesktopRecentCoworkers()])
-            const ready = chatReady && brainReady
+            const [chatReady, brainReady, foremanReady] = await Promise.all([flushDesktopDrafts(), flushDesktopBrainDrafts(), flushDesktopForemanUiSaves(), flushDesktopRecentCoworkers()])
+            const ready = chatReady && brainReady && foremanReady
             if (!ready) setQuitting(false)
             return ready
         })
@@ -119,6 +122,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const themeErrorToast = useRef<string | number | undefined>(undefined)
     const [recenterSignal, setRecenterSignal] = useState(0)
     const [newBoxSignal, setNewBoxSignal] = useState(0)
+    const [boxFocus, setBoxFocus] = useState<{ spaceId: string; nonce: number } | null>(null)
     const [boardFocus, setBoardFocus] = useState<{ tileId: string; nonce: number; insetRight: number } | null>(null)
     useEffect(() => {
         if (theme !== preference) setTheme(preference)
@@ -169,6 +173,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgentRef = useRef(selectedAgentId)
     selectedAgentRef.current = selectedAgentId
     const [panelOpen, setPanelOpen] = useState(false)
+    const [foremanOpen, setForemanOpen] = useState(false)
     const [visibleSession, setVisibleSession] = useState<{ agentId: string; sessionId: string | null } | null>(null)
     const reportVisibleSession = useCallback((agentId: string, sessionId: string | null) => {
         if (selectedAgentRef.current !== agentId) return
@@ -341,6 +346,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         if (create && (creationAdmission.current.blocked || isDesktopQuitting())) return
         setRequestedPanel(null)
         setSettings(false)
+        setForemanOpen(false)
         setCreating(create)
         setCreatingSpaceId(create ? spaceId : undefined)
         setPanelOpen(false)
@@ -365,6 +371,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         setRequestedPanel(null)
         setSettings(false)
         setCreating(false)
+        setForemanOpen(false)
         selectedAgentRef.current = agentId
         setSelectedAgentId(agentId)
         setPanelOpen(true)
@@ -392,6 +399,27 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         selectCoworker(target.agentId, target.sessionId)
     }
 
+    async function openForemanCoworker(target: { agentId: string; sessionId?: string }) {
+        if (creationAdmission.current.blocked || isDesktopQuitting()) return
+        const result = await json<{ agents: DesktopAgentView[] }>(await fetch('/api/desktop/agents', { cache: 'no-store', signal: AbortSignal.timeout(10_000) }))
+        const owner = result.agents.find(agent => agent.id === target.agentId)
+        if (!owner || deletedAgents.current.has(owner.id)) throw new Error('This coworker is no longer available.')
+        if (isDesktopQuitting()) return
+        mergeBoardAgents(result.agents)
+        await boardState.refresh()
+        if (isDesktopQuitting()) return
+        presentCoworker(owner.id, target.sessionId ?? null)
+    }
+    async function openForemanBox(spaceId: string) {
+        const refreshed = await boardState.refresh()
+        const board = boardState.current()
+        if (!refreshed || !board || isDesktopQuitting() || !board.spaces.some(space => space.id === spaceId)) throw new Error('This Box is no longer available.')
+        setForemanOpen(false)
+        setPanelOpen(false)
+        // The original board focuses a Box through its existing container selection.
+        setBoxFocus({ spaceId, nonce: Date.now() })
+        setRecenterSignal(value => value + 1)
+    }
     function openSavedConversation(hit: DesktopConversationHit) {
         if (currentAgents.current.some(agent => agent.id === hit.agentId)) selectCoworker(hit.agentId, hit.id)
     }
@@ -427,7 +455,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <div ref={boardFrame} inert={settings} aria-hidden={settings || undefined}
                 className="relative isolate flex min-h-0 flex-1 overflow-clip bg-background md:rounded-3xl md:border md:border-border md:shadow">
                 <DesktopBoard activitySnapshot={boardActivity} agents={agents} workspaceName={workspaceName} workspaceMenu={workspaceMenu} recenterSignal={recenterSignal}
-                    newBoxSignal={newBoxSignal} focusRequest={boardFocus}
+                    newBoxSignal={newBoxSignal} focusRequest={boardFocus} boxFocusRequest={boxFocus}
                     board={boardState.board} onBoardCommand={initialData.board ? boardState.command : undefined}
                     boardSaving={boardState.saving} boardError={boardState.error} onRetryBoard={boardState.retry}
                     newCoworker={creation.placement} onPlaceCoworker={creation.place} onCancelCoworker={creation.cancel}
@@ -435,9 +463,15 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                     boardDisabled={templatesActive || settings || workspaceSettings || shortcutsOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || controlCenterOpen || !!busy || quitting || themeSaving}
                     onBoardInteractionChange={setBoardInteraction}
                     visibleSessionId={panelOpen && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
-                    selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : 0} onOpen={selectCoworker}
+                    selectedAgentId={panelOpen ? selectedAgentId : null} panelInsetRight={panelOpen ? panelInsetRight : foremanOpen ? 420 : 0} onOpen={selectCoworker}
                     onRename={renameCoworker} onDuplicate={duplicateCoworker} onSetEnabled={setCoworkerEnabled} onDelete={deleteCoworker}
                     onCreate={spaceId => showBoard(true, spaceId)} onDismiss={() => showBoard()} onOpenConversation={openSavedConversation} onPlacementChange={setPlacingCopy} />
+                {!controlCenterDisabled && !controlCenterOpen && !panelOpen && <DesktopForemanDock open={foremanOpen} onToggle={() => { if (!isDesktopQuitting()) setForemanOpen(true) }} />}
+                {foremanOpen && <div className="pointer-events-none absolute inset-2 z-40 grid min-h-0 grid-cols-[minmax(0,1fr)] md:grid-cols-[420px_minmax(0,1fr)_420px]" inert={controlCenterDisabled || controlCenterOpen || undefined}>
+                    <DesktopForemanPanel className="pointer-events-auto h-full min-h-0" onClose={() => setForemanOpen(false)}
+                        onOpenCoworker={openForemanCoworker} onOpenBox={openForemanBox} workspaceModel={modelLabel}
+                        agentNameOf={id => currentAgents.current.find(agent => agent.id === id)?.name ?? 'Coworker'} />
+                </div>}
                 {selectedAgent && <div inert={!panelOpen || boardInteraction} aria-hidden={!panelOpen || boardInteraction || undefined}>
                     <SidePanel isOpen={panelOpen} onDismiss={closePanel}>
                         <section ref={panelContent} tabIndex={-1} aria-label="Coworker chat" className="flex h-full min-h-0 flex-col outline-none"

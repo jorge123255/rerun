@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { DesktopForemanNextStep, DesktopLeadSetupState } from '@/lib/desktop/foreman-client'
@@ -8,32 +7,22 @@ import type { DesktopForemanNextStep, DesktopLeadSetupState } from '@/lib/deskto
 export function DesktopForemanNextSteps({
     steps,
     leadState,
-    live,
     onStartLead,
     onOpenCreated,
 }: {
     steps: DesktopForemanNextStep[]
     leadState: DesktopLeadSetupState
-    live: boolean
+    live?: boolean
     onStartLead: (step: Extract<DesktopForemanNextStep, { kind: 'start_lead' }>) => void | Promise<void>
     onOpenCreated: (step: Extract<DesktopForemanNextStep, { kind: 'open_created' }>) => void
 }) {
     const [step] = steps
-    const [starting, setStarting] = useState(false)
     if (!step) return null
 
     if (step.kind === 'unavailable') {
         return (
             <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" role="status">
                 {step.label}: {step.reason}
-            </div>
-        )
-    }
-
-    if (!live) {
-        return (
-            <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" role="status">
-                This step is only available in the live Foreman chat.
             </div>
         )
     }
@@ -67,13 +56,10 @@ export function DesktopForemanNextSteps({
         <Button
             size="lg"
             className="w-full"
-            disabled={starting || leadState.status === 'starting'}
-            onClick={() => {
-                setStarting(true)
-                void Promise.resolve(onStartLead(step)).finally(() => setStarting(false))
-            }}
+            disabled={leadState.status === 'starting'}
+            onClick={() => { void onStartLead(step) }}
         >
-            {starting ? 'Starting…' : step.label}
+            {step.label}
         </Button>
     )
 }

@@ -163,8 +163,9 @@ describe('application-driven construction', () => {
         fake.authorities.creation.ensureBox = async input => (await gate, ensure(input))
         const { revision } = await runtime.recordShownPlan(binding, 'call-1', twoCoworkerPlan)
         const decision = await runtime.decide(confirm(revision))
-        const stopped = await runtime.buildAction({ action: 'stop', requestId: randomUUID(), chat, buildId: decision.buildId! })
+        const stopping = runtime.buildAction({ action: 'stop', requestId: randomUUID(), chat, buildId: decision.buildId! })
         release()
+        const stopped = await stopping
         await runtime.runBuild(decision.buildId!)
         expect(stopped.state).toBe('stopped')
         const view = (await runtime.readView(chat)).build!
@@ -188,6 +189,8 @@ describe('application-driven construction', () => {
         fake.state.workspace = 'ws-2'
         await runtime.runBuild(decision.buildId!)
         expect(fake.calls).toEqual([])
+        await expect(runtime.readView(chat)).rejects.toMatchObject({ code: 'not_found' })
+        fake.state.workspace = chat.workspaceId
         expect((await runtime.readView(chat)).build?.items[0].failure).toBe('workspace_changed')
     })
 
@@ -297,4 +300,50 @@ describe('isolation', () => {
         expect((await runtime.readView(copy)).revisions).toEqual([])
         expect(await code(runtime.decide({ ...confirm(revision), chat: copy }))).toBe('not_found')
     })
+})
+
+test('explicit recovery drains the current exact attempt and a later Stop prevents remaining coworkers from starting', async () => {
+    const { runtime, fake } = setup()
+    const original = fake.authorities.creation.createCoworker
+    let lostId = ''
+    let receipt: ReturnType<typeof fake.receipts.get>
+    fake.authorities.creation.createCoworker = async spec => {
+        const result = await original(spec)
+        if (spec.name === 'Enquiries') {
+            lostId = spec.requestId; receipt = fake.receipts.get(lostId)
+            fake.receipts.set(lostId, { state: 'unknown' })
+            throw new Error('partial publication has no local acknowledgement')
+        }
+        return result
+    }
+    const recoveryCalls: string[] = []
+    let release!: () => void, entered!: () => void, stopped!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const recoveryEntered = new Promise<void>(resolve => { entered = resolve })
+    const stopObserved = new Promise<void>(resolve => { stopped = resolve })
+    const publish = fake.authorities.events.publish
+    fake.authorities.events.publish = event => { publish(event); if (event.type === 'build_progress' && event.build.state === 'stopped') stopped() }
+    fake.authorities.creation.resumePending = async requestId => {
+        recoveryCalls.push(requestId); entered(); await gate
+        if (requestId !== lostId || !receipt) throw new Error('wrong recovery identity')
+        fake.receipts.set(requestId, receipt)
+    }
+    const { revision } = await runtime.recordShownPlan(binding, 'partial-recovery', twoCoworkerPlan)
+    const decision = await runtime.decide(confirm(revision))
+    await runtime.runBuild(decision.buildId!)
+    await runtime.reconcile(); await runtime.readView(chat)
+    expect(recoveryCalls).toEqual([])
+    const resuming = runtime.buildAction({ action: 'resume', requestId: randomUUID(), chat, buildId: decision.buildId! })
+    await recoveryEntered
+    let stopReturned = false
+    const stopping = runtime.buildAction({ action: 'stop', requestId: randomUUID(), chat, buildId: decision.buildId! }).then(value => { stopReturned = true; return value })
+    await stopObserved
+    expect(stopReturned).toBe(false)
+    release()
+    await Promise.all([resuming, stopping])
+    await runtime.runBuild(decision.buildId!)
+    expect(recoveryCalls).toEqual([lostId])
+    expect(fake.calls.filter(call => call.kind === 'coworker').map(call => call.name)).toEqual(['Enquiries'])
+    expect((await runtime.readView(chat)).build?.items[0].state).toBe('created')
+    expect((await runtime.readView(chat)).build?.items[1].state).toBe('stopped')
 })

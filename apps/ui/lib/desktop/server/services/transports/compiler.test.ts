@@ -52,3 +52,11 @@ describe('declarative service transport compiler', () => {
         await expect(resolveTransportMaterial(authority(p), { read: async () => null, unseal: async () => '' }, { ...programs, resolve: async () => ({ executable: '/usr/bin/npx', args: [], supportsEnvironment: false }) }, async () => {}, new AbortController().signal)).rejects.toThrow()
     })
 })
+
+it('does not silently drop SSE OAuth declarations or catalog overrides', () => {
+    for (const oauth of [{}, { clientId: 'fixed-client' }, { scopes: ['write'] }, { authorizationServer: 'https://auth.example.org' }]) {
+        const m = serviceManifestSchema.parse({ ...raw, mcpServers: [{ ...raw.mcpServers[0], oauth }] })
+        expect(() => compileServiceTransport(m, 'default', ref)).toThrow('unsupported')
+        expect(serviceTransportMethods(m, ref)[0].availability).toBe('unsupported')
+    }
+})

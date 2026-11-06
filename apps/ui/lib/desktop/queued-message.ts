@@ -1,3 +1,4 @@
+import { desktopDocumentSendSelectionSchema } from '@rerun/contracts'
 import { desktopCoworkerMentionsSchema, validDesktopCoworkerMentionFields } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopChatHasContent } from './chat-content'
@@ -7,6 +8,7 @@ export const desktopQueueScopeSchema = z.object({ sessionId: z.string().min(1).m
 export type DesktopQueueScope = z.infer<typeof desktopQueueScopeSchema>
 export const desktopQueuedMessageSchema = z.object({
     id: z.string().uuid(), text: z.string().max(20_000),
+    documents: desktopDocumentSendSelectionSchema.optional(),
     coworkerMentions: desktopCoworkerMentionsSchema.optional(),
     attachmentPath: z.string().min(1).max(4096).optional(),
     attachmentPaths: desktopAttachmentPathsSchema.optional(),

@@ -34,6 +34,19 @@ export const desktopAgentCreationSchema = z.object({
 }).strict()
 export type DesktopAgentCreationInput = z.input<typeof desktopAgentCreationSchema>
 
+// Separate trusted UI-server entrypoint. Never accepted by ordinary board creation.
+const foremanInstructionsSchema = z.strictObject({
+    soulMd: z.string().min(1).refine(text => Buffer.byteLength(text, 'utf8') <= 24 * 1024),
+    installMd: z.string().min(1).refine(text => Buffer.byteLength(text, 'utf8') <= 24 * 1024),
+})
+export const desktopForemanAgentCreationSchema = z.strictObject({
+    requestId: z.uuid().transform(value => value.toLowerCase()),
+    config: desktopAgentCreationConfigSchema.extend({ enabled: z.literal(false), connectionId: z.string().min(1).max(256), model: z.string().min(1).max(512) }),
+    instructions: foremanInstructionsSchema,
+}).refine(value => Buffer.byteLength(JSON.stringify(value), 'utf8') <= 60 * 1024, 'Coworker instructions exceed the durable receipt limit')
+type ForemanInstructions = z.infer<typeof foremanInstructionsSchema>
+
+
 const RECEIPT = '.desktop-creation.json'
 const COMPLETE = '.desktop-created'
 const STAGED_CONFIG = '.desktop-new-config.json'
@@ -44,6 +57,7 @@ const canonical = (value: Record<string, unknown>) => JSON.stringify(Object.from
 const identitySchema = z.object({ dev: z.string().regex(/^\d+$/), ino: z.string().regex(/^\d+$/) }).strict()
 const receiptSchema = z.object({ version: z.literal(1), requestId: z.uuid(), fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     folder: identitySchema, input: desktopAgentCreationConfigSchema,
+    foreman: foremanInstructionsSchema.optional(),
     configHash: z.string().regex(/^[a-f0-9]{64}$/), soulHash: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict()
 type Receipt = z.infer<typeof receiptSchema>
@@ -134,21 +148,28 @@ async function readReceipt(folder: Pin, requestId: string, fingerprint: string):
     if (!text) throw conflict()
     let receipt: Receipt
     try { receipt = receiptSchema.parse(JSON.parse(text.text)) } catch { throw conflict() }
-    if (receipt.requestId !== requestId || receipt.fingerprint !== fingerprint || hash(canonical(receipt.input)) !== fingerprint ||
+    if (receipt.requestId !== requestId || receipt.fingerprint !== fingerprint || inputFingerprint(receipt.input, receipt.foreman) !== fingerprint ||
         receipt.folder.dev !== String(folder.dev) || receipt.folder.ino !== String(folder.ino)) throw conflict()
     return receipt
 }
 
+function inputFingerprint(input: z.infer<typeof desktopAgentCreationConfigSchema>, foreman?: ForemanInstructions) {
+    return hash(canonical(foreman ? { config: input, instructions: foreman } : input))
+}
+function creationConfig(input: z.infer<typeof desktopAgentCreationConfigSchema>, foreman?: ForemanInstructions) {
+    return agentConfigSchema.parse({ ...input, kind: 'user', ...(foreman && { enabled: false, setup: { required: true, completedAt: null, sessionId: null } }) })
+}
 async function prepare(folder: Pin, receipt: Receipt): Promise<void> {
-    const allowed = new Set([RECEIPT, COMPLETE, STAGED_CONFIG, 'config.json', 'SOUL.md', '.env', 'workspace', 'skills', 'memory'])
+    const allowed = new Set([RECEIPT, COMPLETE, STAGED_CONFIG, 'config.json', 'SOUL.md', ...(receipt.foreman ? ['INSTALL.md'] : []), '.env', 'workspace', 'skills', 'memory'])
     if ((await readdir(folder.path)).some(name => !allowed.has(name))) throw conflict()
-    const config = agentConfigSchema.parse({ ...receipt.input, kind: 'user' })
+    const config = creationConfig(receipt.input, receipt.foreman)
     const encoded = JSON.stringify(config, null, 4)
     // The description is sent verbatim as kickoff. It must not silently become a fixed mission.
-    const soul = defaultSoul({ ...config, description: '' })
+    const soul = receipt.foreman?.soulMd ?? defaultSoul({ ...config, description: '' })
     if (hash(encoded) !== receipt.configHash || hash(soul) !== receipt.soulHash) throw conflict()
     for (const name of ['workspace', 'skills', 'memory']) await ensureChild(folder, name)
     await writeOnce(folder, 'SOUL.md', soul)
+    if (receipt.foreman) await writeOnce(folder, 'INSTALL.md', receipt.foreman.installMd)
     await writeOnce(folder, '.env', '')
     const published = await readText(folder, 'config.json')
     const staged = await readText(folder, STAGED_CONFIG)
@@ -158,7 +179,7 @@ async function prepare(folder: Pin, receipt: Receipt): Promise<void> {
     await syncDirectory(folder)
 }
 
-async function publicResult(folder: Pin, id: string) {
+async function publicResult(folder: Pin, id: string, foreman?: ForemanInstructions) {
     for (const name of ['workspace', 'skills', 'memory']) {
         const child = await pinDirectory(join(folder.path, name)).catch(() => { throw conflict() })
         await child.handle.close()
@@ -166,21 +187,30 @@ async function publicResult(folder: Pin, id: string) {
     const file = await readText(folder, 'config.json')
     const soul = await readText(folder, 'SOUL.md')
     const env = await readText(folder, '.env')
+    const install = foreman ? await readText(folder, 'INSTALL.md') : null
+    if (foreman && !install) throw conflict()
     if (!file || !soul || !env) throw conflict()
     let config: z.infer<typeof agentConfigSchema>
     try { config = agentConfigSchema.parse(JSON.parse(file.text)) } catch { throw conflict() }
     if (config.kind !== 'user') throw conflict()
     const resolved = await resolveConfiguredModel(config)
     await assertDirectory(folder)
-    return { id, config, soul: soul.text, install: '', resolvedConnectionId: resolved.connection?.id ?? null, resolvedProvider: resolved.provider, resolvedModel: resolved.model }
+    return { id, config, soul: soul.text, install: install?.text ?? '', resolvedConnectionId: resolved.connection?.id ?? null, resolvedProvider: resolved.provider, resolvedModel: resolved.model }
 }
 
 /** Durable desktop-only creation; no provider/model call, chat or grant is started here. */
 export async function createDesktopAgent(input: DesktopAgentCreationInput) {
+    return createAgentWithReceipt(desktopAgentCreationSchema.parse(input))
+}
+export async function createDesktopForemanAgent(input: z.input<typeof desktopForemanAgentCreationSchema>) {
+    const parsed = desktopForemanAgentCreationSchema.parse(input)
+    return createAgentWithReceipt(parsed, parsed.instructions)
+}
+async function createAgentWithReceipt(input: DesktopAgentCreationInput, foreman?: ForemanInstructions) {
     if (!desktopApp()) throw new HttpError(404, 'Desktop creation is unavailable.')
-    const { requestId, config: exactInput } = desktopAgentCreationSchema.parse(input)
+    const { requestId, config: exactInput } = desktopAgentCreationSchema.parse({ requestId: input.requestId, config: input.config })
     const id = `new-${requestId}`
-    const fingerprint = hash(canonical(exactInput))
+    const fingerprint = inputFingerprint(exactInput, foreman)
     const release = beginDesktopAgentWork(id)
     try {
         return await withAgentLock(id, async () => {
@@ -206,9 +236,9 @@ export async function createDesktopAgent(input: DesktopAgentCreationInput) {
                     // A partially written/unowned directory is never erased or guessed at on retry.
                     await mkdir(join(agents.pinned, stageName), { mode: 0o700 })
                     folder = await pinDirectory(join(agents.path, stageName))
-                    const config = agentConfigSchema.parse({ ...exactInput, kind: 'user' })
-                    receipt = { version: 1, requestId, fingerprint, input: exactInput, folder: { dev: String(folder.dev), ino: String(folder.ino) },
-                        configHash: hash(JSON.stringify(config, null, 4)), soulHash: hash(defaultSoul({ ...config, description: '' })) }
+                    const config = creationConfig(exactInput, foreman)
+                    receipt = { version: 1, requestId, fingerprint, input: exactInput, ...(foreman && { foreman }), folder: { dev: String(folder.dev), ino: String(folder.ino) },
+                        configHash: hash(JSON.stringify(config, null, 4)), soulHash: hash(foreman?.soulMd ?? defaultSoul({ ...config, description: '' })) }
                     await writeOnce(folder, RECEIPT, JSON.stringify(receipt))
                     await syncDirectory(folder)
                     await syncDirectory(agents)
@@ -230,7 +260,7 @@ export async function createDesktopAgent(input: DesktopAgentCreationInput) {
                     if (stagedConfig) await move(folder!, STAGED_CONFIG, stagedConfig, 'config.json')
                     await hooks?.afterPublished?.()
                 }
-                const result = await publicResult(folder!, id)
+                const result = await publicResult(folder!, id, receipt.foreman)
                 const currentIndex = await getAgentIndex(id)
                 if (currentIndex && currentIndex.name !== result.config.name) throw conflict()
                 if (!currentIndex) await insertAgentIndex(id, result.config.name)
@@ -240,4 +270,30 @@ export async function createDesktopAgent(input: DesktopAgentCreationInput) {
             } finally { await folder?.handle.close(); await agents?.handle.close(); await data.handle.close() }
         })
     } finally { release() }
+}
+
+/** Read-only identity proof. An incomplete creation is unknown, never permission for a new ID. */
+export async function readDesktopForemanAgentCreation(rawRequestId: string) {
+    if (!desktopApp()) throw new HttpError(404, 'Desktop creation is unavailable.')
+    const requestId = z.uuid().parse(rawRequestId).toLowerCase()
+    return withAgentLock(`new-${requestId}`, async () => {
+        const root = await realpath(dataDir())
+        const folder = await maybeDirectory(join(root, 'agents', `new-${requestId}`))
+        if (!folder) {
+            const stage = await maybeDirectory(join(root, 'agents', `.desktop-new-${requestId}`))
+            if (stage) { await stage.handle.close(); return { state: 'unknown' as const } }
+            return (await getAgentIndex(`new-${requestId}`)) ? { state: 'replaced' as const } : { state: 'absent' as const }
+        }
+        try {
+            const raw = await readText(folder, RECEIPT)
+            if (!raw) return { state: 'replaced' as const }
+            const parsed = receiptSchema.parse(JSON.parse(raw.text))
+            const receipt = await readReceipt(folder, requestId, parsed.fingerprint)
+            if (!receipt.foreman) return { state: 'replaced' as const }
+            const complete = await readText(folder, COMPLETE)
+            if (!complete) return { state: 'unknown' as const }
+            if (complete.text !== `${receipt.fingerprint}\n` || !(await getAgentIndex(`new-${requestId}`))) return { state: 'replaced' as const }
+            return { state: 'present' as const, id: `new-${requestId}`, input: receipt.input, instructions: receipt.foreman }
+        } catch { return { state: 'replaced' as const } } finally { await folder.handle.close() }
+    })
 }

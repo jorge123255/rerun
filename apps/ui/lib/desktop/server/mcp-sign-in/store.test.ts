@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { ensureDesktopMcpSignInSchema } from './schema'
@@ -13,8 +16,8 @@ const source: DesktopMcpSignInSource = {
 const allow = { check: () => {} }
 
 beforeEach(async () => {
-    db = createClient({ url: ':memory:' })
-    await db.executeMultiple('CREATE TABLE desktop_agents (id TEXT PRIMARY KEY); CREATE TABLE desktop_sessions (id TEXT PRIMARY KEY, agent_id TEXT);')
+    db = createClient({ url: temporaryDatabaseUrl() })
+    await db.executeMultiple(`CREATE TABLE desktop_agents (id TEXT PRIMARY KEY); CREATE TABLE desktop_sessions (id TEXT PRIMARY KEY, agent_id TEXT); INSERT INTO desktop_agents VALUES ('agent'); INSERT INTO desktop_sessions VALUES ('chat','agent');`)
     await ensureDesktopMcpSignInSchema(db)
     store = createDesktopMcpSignInStore(db)
 })
@@ -22,7 +25,8 @@ afterEach(() => db.close())
 
 async function decision(operation: DesktopMcpSignInDecision['operation'] = 'connect'): Promise<DesktopMcpSignInDecision> {
     const view = await store.publish({ source, name: 'linear', reason: 'Use Linear.' })
-    return { operation, requestId: view.requestId, attemptId: 'attempt', expectedRevision: view.revision, source }
+    const input = { operation, requestId: view.requestId, attemptId: 'attempt', expectedRevision: view.revision, source }
+    return operation === 'connect' ? { ...input, expectedRevision: (await store.begin(input, allow)).revision } : input
 }
 
 test('Connect is unresolved until fresh readiness seals it, then duplicate completion converges', async () => {
@@ -59,10 +63,10 @@ test('concurrent Connect and Not now cannot produce two continuations', async ()
 test('denied login and Cancel leave the request unresolved without fabricating success', async () => {
     const input = await decision()
     await store.begin(input, allow)
-    await store.cancel(input)
+    const cancelled = await store.cancel({ ...input, operation: 'cancel' })
     expect((await store.read(input.requestId))?.status).toBe('pending')
     expect((await store.read(input.requestId))?.receipt).toBeUndefined()
-    const declined = await store.seal({ ...input, operation: 'decline', attemptId: 'declined-attempt' }, 'declined', allow)
+    const declined = await store.seal({ ...input, operation: 'decline', attemptId: 'declined-attempt', expectedRevision: cancelled.revision }, 'declined', allow)
     expect(declined.outcome).toBe('declined')
 })
 
@@ -82,3 +86,7 @@ test('restart preserves sealed receipts and independent sibling requests', async
     await expect(reopened.receipt(input)).resolves.toEqual(sealed)
     expect((await reopened.read(sibling.requestId))?.status).toBe('pending')
 })
+
+const temporaryDirectories: string[] = []
+function temporaryDatabaseUrl() { const path = mkdtempSync(join(tmpdir(), 'rerun-ledger-')); temporaryDirectories.push(path); return `file:${join(path, 'app.db')}` }
+afterEach(() => temporaryDirectories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })))

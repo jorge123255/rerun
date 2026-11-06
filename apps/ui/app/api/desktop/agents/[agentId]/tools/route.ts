@@ -22,12 +22,13 @@ function pausedReason(id: string, config: AgentConfig): string | undefined {
     if (id === 'sharedFilesRead' && config.tools.shared === false) return 'Shared files access is paused for this coworker.'
     if (id === 'memoryRecall' && !config.tools.memory) return 'Turn on Use saved memories in chat in Edit coworker.'
     if (id === 'memoryWrite' && (!config.selfImprovement.enabled || !config.selfImprovement.autoMemory)) return 'Memory learning is paused for this coworker.'
-    if ((id === 'selfInstruction' || id === 'verbositySet' || id === 'selfMcpRegister') && !config.selfImprovement.enabled) return 'Turn on Improve itself to change this permission.'
+    if ((id === 'selfInstruction' || id === 'verbositySet' || id === 'selfMcpRegister' || id === 'toolInstall') && !config.selfImprovement.enabled) return 'Turn on Improve itself to change this permission.'
 }
 
 function toolPayload(patch: CoworkerToolPatch): EngineAgentConfigPatch {
+    if (patch.group === 'rerun' && patch.id === 'toolInstall') return { tools: { desktopToolGrants: { toolInstall: patch.enabled } }, selfImprovement: { allowToolInstall: patch.enabled } }
     if (patch.group === 'rerun' && patch.id === 'self') return { selfImprovement: { enabled: patch.enabled } }
-    if (patch.group === 'rerun' && (patch.id === 'selfInstruction' || patch.id === 'verbositySet' || patch.id === 'selfMcpRegister')) {
+    if (patch.group === 'rerun' && (patch.id === 'selfInstruction' || patch.id === 'verbositySet' || patch.id === 'selfMcpRegister' || patch.id === 'toolInstall')) {
         return { tools: { desktopToolGrants: { [patch.id]: patch.enabled } } }
     }
     return { tools: { [patch.group === 'codex' ? 'desktopCodexGrants' : 'desktopToolGrants']: { [patch.id]: patch.enabled } } }
@@ -48,7 +49,7 @@ async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToo
                 if ((patch.id === 'memoryRecall' || patch.id === 'memoryWrite') && pausedReason(patch.id, current.config)) {
                     throw new DesktopHttpError(400, 'Turn on this coworker’s memory preference first.')
                 }
-                if ((patch.id === 'selfInstruction' || patch.id === 'verbositySet' || patch.id === 'selfMcpRegister') && !current.config.selfImprovement.enabled) {
+                if ((patch.id === 'selfInstruction' || patch.id === 'verbositySet' || patch.id === 'selfMcpRegister' || patch.id === 'toolInstall') && !current.config.selfImprovement.enabled) {
                     throw new DesktopHttpError(400, 'Turn on Improve itself to change this permission.')
                 }
             }
@@ -61,7 +62,7 @@ async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToo
             rerun: coworkerToolCatalogs.rerun.map(row => {
                 const nested = row.parent === 'self'
                 const reason = pausedReason(row.id, agent.config)
-                const enabled = !reason && (row.id === 'self' ? master : nested ? master && rerun[row.id] === true : rerun[row.id] === true)
+                const enabled = !reason && (row.id === 'toolInstall' && !agent.config.selfImprovement.allowToolInstall ? false : row.id === 'self' ? master : nested ? master && rerun[row.id] === true : rerun[row.id] === true)
                 return { ...row, ...(reason && { available: false, unavailableReason: reason }), enabled: row.available && enabled }
             }),
             codex: coworkerToolCatalogs.codex.map(row => ({ ...row, enabled: row.available && codex[row.id] === true })),

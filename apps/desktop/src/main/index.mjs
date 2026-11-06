@@ -8,6 +8,7 @@ import { createDesktopNotifications } from './notifications.mjs'
 import { BeforeQuitDrafts, completeDesktopQuit } from './before-quit.mjs'
 import { createDesktopTemplateFiles } from './templates.mjs'
 import { desktopMicrophonePermissions } from './media-permissions.mjs'
+import { createDesktopResultFileSave } from './result-files.mjs'
 
 const directory = fileURLToPath(new URL('.', import.meta.url))
 const startup = resolve(directory, 'startup.html')
@@ -19,6 +20,10 @@ let quittingNow = false
 let bootStatus = { state: 'starting', message: 'Preparing local runtime…' }
 const profile = 'persist:rerun-desktop-local'
 const draftQuit = new BeforeQuitDrafts()
+const saveResultFile = createDesktopResultFileSave({ dialog, context: () => {
+    if (quitting || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
+    return { runtime, window }
+} })
 const templateFiles = createDesktopTemplateFiles({ dialog, context: () => {
     if (quitting || !window || window.isDestroyed() || !isDesktopPage(window.webContents.mainFrame.url)) return null
     return { runtime, window }
@@ -145,6 +150,7 @@ async function launch() {
     ipcMain.handle('desktop:quit', event => { trusted(event); app.quit() })
     ipcMain.handle('desktop:template-pick', event => { trusted(event); return templateFiles.pickImport() })
     ipcMain.handle('desktop:template-save', (event, value) => { trusted(event); return templateFiles.saveArtifact(value) })
+    ipcMain.handle('desktop:result-save', (event, value) => { trusted(event); return saveResultFile(value) })
     ipcMain.handle('desktop:notify', (event, value) => {
         trusted(event)
         if (quitting || !isDesktopPage(event.senderFrame.url)) return { status: 'unavailable' }

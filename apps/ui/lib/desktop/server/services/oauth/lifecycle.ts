@@ -43,6 +43,7 @@ export function serviceOAuthLifecycle(accounts:OAuthAccounts,store:OAuthAttemptS
  async function action(owner:string,raw:DesktopServiceOAuthAction,stopSignal:AbortSignal){
   const input=desktopServiceOAuthActionSchema.parse(raw),signal=AbortSignal.any([stopSignal,shutdown.signal,AbortSignal.timeout(45000)])
   signal.throwIfAborted()
+  if(input.action==='current'){const current=await accounts.current(owner,input.accountKey,signal);const matches=(await store.list(owner)).filter(a=>a.binding.installationId===current.binding.installationId&&a.binding.configGeneration===current.binding.configGeneration);const attempt=matches.find(a=>activeStates.has(a.snapshot.state))??matches.at(-1);if(!attempt)throw new Error('OAuth account has no saved sign-in setup');await guard(attempt,signal,false);return attempt.snapshot}
   if(input.action==='lookup'){const attempt=(await store.list(owner)).find(a=>a.requestId===input.requestId);if(!attempt)throw new Error('OAuth attempt unavailable');await guard(attempt,signal,false);return attempt.snapshot}
   if(input.action==='configure'){
    if(input.intent.kind!=='existing'&&input.intent.slug!==input.slug)throw new Error('Catalog identity changed')
@@ -123,6 +124,7 @@ export function serviceOAuthLifecycle(accounts:OAuthAccounts,store:OAuthAttemptS
  return {action,
   // Called BEFORE canonical account reconfigure/remove, sharing its mutation serialization.
   async invalidateAccount(owner:string,installationId:string){for(const attempt of await store.list(owner))if(attempt.binding.installationId===installationId)await stop(attempt,'disconnected')},
+  async suspendOwner(owner:string){for(const attempt of await store.list(owner)){engines.get(attempt.snapshot.attemptId)?.shutdown();engines.delete(attempt.snapshot.attemptId);if(activeStates.has(attempt.snapshot.state))await transition(attempt,attempt.snapshot.state==='connected'?'checking':'interrupted',{configured:attempt.snapshot.configured})}},
   async reconcile(){
    for(const attempt of await store.list())if(activeStates.has(attempt.snapshot.state)){let token:Awaited<ReturnType<OAuthAttemptStore['readToken']>>=null;try{token=await store.readToken(attempt)}catch{}await transition(attempt,token&&!token.refreshPending&&!attempt.probePending?'checking':'interrupted',{configured:!!token})}
   },

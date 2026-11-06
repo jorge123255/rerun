@@ -1,3 +1,6 @@
+import { desktopDocumentSendSelectionSchema, desktopResolvedDocumentsSchema, desktopMcpSignInGuardSchema } from '@rerun/contracts'
+import { assertDesktopMcpSignInContinuation } from '../../desktop/mcp-sign-in/admission.js'
+import { readDesktopMcpSignInSource } from '../../desktop/mcp-sign-in/source.js'
 import { desktopCoworkerMentionsSchema, checkedDesktopCoworkerMentions, desktopCoworkerMentionFieldsOf } from '@rerun/contracts'
 import { desktopServiceRequestGuardSchema, desktopTakeoverGuardSchema, findDesktopTakeover } from '@rerun/contracts'
 import { createHash } from 'node:crypto'
@@ -33,21 +36,22 @@ const takeoverPendingMessage = 'Open and finish or skip the coworker’s browser
 const questionPendingMessage = 'Answer or dismiss the coworker’s questions before sending another message.'
 const approvalPendingMessage = 'Approve or decline the coworker’s proposed actions before sending another message.'
 const desktopFirstTurn = z.object({ sessionId: z.uuid(), runId: z.uuid() }).strict()
-const desktopQueuedTurn = z.object({ runId: z.uuid(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional(), takeover: desktopTakeoverGuardSchema.optional(), service: desktopServiceRequestGuardSchema.optional(), secret: desktopSecretRequestGuardSchema.optional() }).strict()
+const desktopQueuedTurn = z.object({ runId: z.uuid(), documents: desktopDocumentSendSelectionSchema.optional(), mcpSignIn: desktopMcpSignInGuardSchema.optional(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional(), takeover: desktopTakeoverGuardSchema.optional(), service: desktopServiceRequestGuardSchema.optional(), secret: desktopSecretRequestGuardSchema.optional() }).strict()
     .refine(hasOneDesktopAttachmentField, 'Use one attachment field.')
-    .refine(turn => [turn.question, turn.approval, turn.takeover, turn.service, turn.secret].filter(Boolean).length <= 1, 'An answer can target only one pending request.')
+    .refine(turn => [turn.question, turn.approval, turn.takeover, turn.service, turn.secret, turn.mcpSignIn].filter(Boolean).length <= 1, 'An answer can target only one pending request.')
 const desktopChatRequest = chatRequestSchema.extend({
     message: z.string().max(20_000),
     coworkerMentions: desktopCoworkerMentionsSchema.optional(),
     workspaceAttachment: desktopWorkspaceAttachmentSchema.optional(),
     workspaceAttachments: desktopWorkspaceAttachmentsSchema.optional(),
     desktopAttachments: desktopResolvedAttachmentsSchema.optional(),
+    desktopDocuments: desktopResolvedDocumentsSchema.optional(),
     desktopFirstTurn: desktopFirstTurn.optional(),
     desktopQueuedTurn: desktopQueuedTurn.optional(),
 }).strict().refine(body => { try { checkedDesktopCoworkerMentions(body.message, body.coworkerMentions); return true } catch { return false } }, 'Coworker mention ranges changed.').refine(body => [body.workspaceAttachment, body.workspaceAttachments, body.desktopAttachments].filter(value => value !== undefined).length <= 1, 'Use one attachment field.')
-.refine(body => !!body.message.trim() || !!body.workspaceAttachment || !!body.workspaceAttachments?.length || !!body.desktopAttachments?.length
+.refine(body => !!body.message.trim() || !!body.workspaceAttachment || !!body.workspaceAttachments?.length || !!body.desktopAttachments?.length || !!body.desktopDocuments?.length
     // An exact read-only receipt probe deliberately carries identities without re-reading bytes.
-    || !!(body.desktopQueuedTurn?.replayOnly && desktopAttachmentSelectionsOf(body.desktopQueuedTurn).length), 'Write a message or attach a file.')
+    || !!(body.desktopQueuedTurn?.replayOnly && (desktopAttachmentSelectionsOf(body.desktopQueuedTurn).length || body.desktopQueuedTurn.documents)), 'Write a message or attach a file.')
 .refine(body => (!body.desktopFirstTurn || (!body.sessionId && !body.install && !body.foreman && !body.desktopQueuedTurn && (!body.source || body.source === 'dashboard')))
     && (!body.desktopQueuedTurn || (!!body.sessionId && !body.install && !body.foreman && (!body.source || body.source === 'dashboard'))))
 
@@ -134,31 +138,33 @@ chatRoutes.post('/chat', async c => {
         const queued = body?.desktopQueuedTurn
         if (body?.desktopFirstTurn && await getDesktopTabRun(agentId, {
             ...body.desktopFirstTurn, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), author: body.author,
-            attachments: body.workspaceAttachments ?? (body.workspaceAttachment ? [body.workspaceAttachment] : []), desktopAttachments: body.desktopAttachments,
+            attachments: body.workspaceAttachments ?? (body.workspaceAttachment ? [body.workspaceAttachment] : []), desktopAttachments: body.desktopAttachments, desktopDocuments: body.desktopDocuments,
         })) return identified(resumeStreamResponse(body.desktopFirstTurn.runId), body.desktopFirstTurn.sessionId, body.desktopFirstTurn.runId)
         if (body?.sessionId && queued?.replayOnly) {
             const session = await getSession(agentId, body.sessionId)
             if (session?.agentId === agentId && await getDesktopQueuedTurn(agentId, {
                 runId: queued.runId, sessionId: session.id, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions),
-                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service, secret: queued.secret,
+                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service, secret: queued.secret, mcpSignIn: queued.mcpSignIn, documents: queued.documents,
             })) return identified(resumeStreamResponse(queued.runId), session.id, queued.runId)
         }
         throw agentDisabled()
     }
     if (desktopApp() && input && typeof input === 'object' && 'regenerateMessageId' in input) return regenerateChat(agent, regenerateRequest.parse(input))
-    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), coworkerMentions: undefined, workspaceAttachment: undefined, workspaceAttachments: undefined, desktopAttachments: undefined, desktopFirstTurn: undefined, desktopQueuedTurn: undefined }
+    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), coworkerMentions: undefined, workspaceAttachment: undefined, workspaceAttachments: undefined, desktopAttachments: undefined, desktopDocuments: undefined, desktopFirstTurn: undefined, desktopQueuedTurn: undefined }
     const attachments = body.workspaceAttachments ?? (body.workspaceAttachment ? [body.workspaceAttachment] : [])
     const resolvedAttachments = body.desktopAttachments ?? []
     verifyImageBytes(resolvedAttachments)
     const attachmentSelections = body.desktopAttachments ? desktopResolvedAttachmentSelections(body.desktopAttachments) : attachments.map(attachment => attachment.path)
+    if (resolvedAttachments.filter(item => item.type === 'text').reduce((n, item) => n + Buffer.byteLength(item.content), 0) + attachments.reduce((n, item) => n + Buffer.byteLength(item.content), 0) + (body.desktopDocuments ?? []).reduce((n, item) => n + Buffer.byteLength(item.text), 0) > 128 * 1024) throw new HttpError(413, 'Attachments must be 128 KiB or smaller in total.')
     // One attachment keeps the original trigger field, so existing runs, tests and queued
     // receipts keep their shape. Two or more travel as the ordered array.
     const attachmentTrigger = body.desktopAttachments ? { desktopAttachments: body.desktopAttachments } : attachments.length === 1 ? { workspaceAttachment: attachments[0] } : attachments.length > 1 ? { workspaceAttachments: attachments } : {}
+    const documentTrigger = body.desktopDocuments ? { desktopDocuments: body.desktopDocuments } : {}
     const runAgentView = agent.config.kind === 'foreman' && body.foreman ? { ...agent, brief: body.foreman } : agent
     const source = body.source ?? 'dashboard'
     if (body.desktopFirstTurn) return withAgentLock(agentId, async () => {
         const { sessionId, runId } = body.desktopFirstTurn!
-        const turn = { sessionId, runId, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), attachments, desktopAttachments: body.desktopAttachments, author: body.author }
+        const turn = { sessionId, runId, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), attachments, desktopAttachments: body.desktopAttachments, desktopDocuments: body.desktopDocuments, author: body.author }
         if (await getDesktopTabRun(agentId, turn)) return identified(resumeStreamResponse(runId), sessionId, runId)
         // A disable/config write may have completed while this request awaited the lock.
         const currentAgent = await getAgent(agentId)
@@ -173,20 +179,21 @@ chatRoutes.post('/chat', async c => {
             if (!queuedUser) { releaseSession(runId); return identified(resumeStreamResponse(runId), sessionId, runId) }
             // The normal queued-user path enriches this row with context and never appends a
             // second user message. Failed preparation/Stop therefore still leave the input saved.
-            return streamChat(currentAgent, sessionId, runId, body.message, override, { provider, model }, { source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...attachmentTrigger, queuedUser })
+            return streamChat(currentAgent, sessionId, runId, body.message, override, { provider, model }, { source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...attachmentTrigger, ...documentTrigger, queuedUser })
         } catch (error) { releaseSession(runId); throw error }
     })
     if (body.desktopQueuedTurn) return withAgentLock(agentId, async () => {
         const queued = body.desktopQueuedTurn!
         const session = await getSession(agentId, body.sessionId!)
         if (!session || session.agentId !== agentId) throw new HttpError(404, 'Session not found for this agent')
-        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service, secret: queued.secret }
+        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service, secret: queued.secret, mcpSignIn: queued.mcpSignIn, documents: queued.documents }
         if (await getDesktopQueuedTurn(agentId, turn)) return identified(resumeStreamResponse(turn.runId), session.id, turn.runId)
         if (await getRun(agentId, turn.runId)) throw new HttpError(409, 'This queued message ID is already in use.')
         // The bridge can reconcile a lost acknowledgement before re-reading a moved file or
         // resolving a changed model. A probe never creates a run or a user message.
         if (queued.replayOnly) return c.json({ code: 'queued_turn_not_found' }, 404)
         if (JSON.stringify(desktopAttachmentSelectionsOf(queued)) !== JSON.stringify(attachmentSelections)) throw new HttpError(400, 'The queued attachments do not match this message.')
+        if (JSON.stringify(queued.documents?.attachmentIds ?? []) !== JSON.stringify((body.desktopDocuments ?? []).map(item => item.reference.attachmentId))) throw new HttpError(400, 'The document manifest does not match this message.')
         // Config changes share this lock. Recheck after replay reconciliation so a disable
         // while waiting cannot start a new reply, but an already accepted receipt still resumes.
         const currentAgent = await getAgent(agentId)
@@ -215,6 +222,7 @@ chatRoutes.post('/chat', async c => {
                 releaseSession(turn.runId)
                 return c.json({ error: 'Finish or skip the credential form before sending another message.', code: 'secret_pending' }, 409)
             }
+            if (['running', 'done'].includes((await readDesktopMcpSignInSource(agentId, session.id))?.status ?? '')) throw new HttpError(409, 'Finish or skip MCP sign-in before sending another message.')
             const service = decideDesktopServiceRequestTurn({ rows: messages, queued })
             if (service.kind === 'reject' || service.kind === 'block') {
                 releaseSession(turn.runId)
@@ -239,9 +247,9 @@ chatRoutes.post('/chat', async c => {
                 releaseSession(turn.runId)
                 return c.json({ error: pending ? questionPendingMessage : approval ? approvalPendingMessage : takeoverPendingMessage, code: pending ? 'question_pending' : approval ? 'approval_pending' : 'takeover_pending' }, 409)
             }
-            const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, attachments, body.author, body.desktopAttachments)
+            const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, attachments, body.author, body.desktopAttachments, false, body.desktopDocuments)
             return streamChat(currentAgent, session.id, turn.runId, body.message, override, { provider, model }, {
-                source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...attachmentTrigger, queuedUser,
+                source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...attachmentTrigger, ...documentTrigger, queuedUser,
             })
         } catch (error) {
             releaseSession(turn.runId)
@@ -276,6 +284,7 @@ chatRoutes.post('/chat', async c => {
                 releaseSession(runId)
                 return c.json({ error: 'Finish or skip the credential form before sending another message.', code: 'secret_pending' }, 409)
             }
+            if (await readDesktopMcpSignInSource(agentId, session.id)) throw new HttpError(409, 'Finish or skip MCP sign-in before sending another message.')
             const service = decideDesktopServiceRequestTurn({ rows: messages })
             if (service.kind === 'block') {
                 releaseSession(runId)
@@ -295,6 +304,6 @@ chatRoutes.post('/chat', async c => {
         throw err
     })
     return streamChat(runAgentView, session.id, run.id, body.message, override, meta, {
-        source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), userLanguage: claim ? body.userLanguage : undefined, ...attachmentTrigger,
+        source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), userLanguage: claim ? body.userLanguage : undefined, ...attachmentTrigger, ...documentTrigger,
     })
 })

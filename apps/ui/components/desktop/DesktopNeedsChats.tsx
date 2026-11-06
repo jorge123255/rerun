@@ -47,12 +47,12 @@ export function DesktopNeedsChats({ agentId, query, onSelect, busy = false, inbo
     const shown = inbox.items.filter(item => `${item.title} ${item.summary}`.toLowerCase().includes(query.trim().toLowerCase()))
     const unavailable = inbox.status === 'failed' || inbox.unavailableAgentIds.includes(agentId)
     return <div className="max-h-[420px] min-h-0 space-y-0.5 overflow-y-auto px-2 pb-2">
-        {!!inbox.items.length && <div className="flex justify-end">
-            <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => { if (!isDesktopQuitting()) { interaction.current.epoch++; read.current?.abort(); setConfirm([...inbox.items]) } }}><CheckCheckIcon className="size-3.5" />Mark all as read</Button>
+        {inbox.items.length > 0 && <div className="flex justify-end">
+            <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => { if (!isDesktopQuitting()) { interaction.current.epoch++; read.current?.abort(); setConfirm(inbox.items) } }}><CheckCheckIcon className="size-3.5" />Mark all as read</Button>
         </div>}
         {shown.map(item => <InboxRow key={item.id} item={{ id: item.id, agentId: item.agentId, agentName: item.agentName,
             title: item.title, message: item.summary || null, updatedAt: item.requestedAt ?? item.updatedAt,
-            status: item.kind === 'takeover' || item.kind === 'service' || item.kind === 'secret' ? 'waiting_human' : item.kind === 'question' ? 'awaiting_question' : 'awaiting_approval' }}
+            status: item.kind === 'takeover' || item.kind === 'service' || item.kind === 'secret' || item.kind === 'mcp' ? 'waiting_human' : item.kind === 'question' ? 'awaiting_question' : 'awaiting_approval' }}
             onOpen={() => { void open(item) }} onMarkRead={() => { if (current(item)) inbox.markRead(item) }} />)}
         {inbox.status === 'loading' && <p role="status" className="px-3 py-6 text-center text-xs text-muted-foreground">Checking pending requests…</p>}
         {(unavailable || inbox.readError || notice) && <div role="status" className="space-y-2 p-3 text-xs text-muted-foreground">

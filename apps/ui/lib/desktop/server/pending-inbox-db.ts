@@ -31,6 +31,16 @@ CREATE TABLE IF NOT EXISTS desktop_pending_inbox_seen_v4 (
 );
 INSERT OR IGNORE INTO desktop_pending_inbox_seen_v4 SELECT * FROM desktop_pending_inbox_seen_v3;
 `
+export const DESKTOP_REVIEW_PENDING_INBOX_SCHEMA = `
+CREATE TABLE IF NOT EXISTS desktop_pending_inbox_seen_v5 (
+    item_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES desktop_sessions(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('question','approval','takeover','service','secret','mcp','tool-install')),
+    seen_at TEXT NOT NULL
+);
+INSERT OR IGNORE INTO desktop_pending_inbox_seen_v5 SELECT * FROM desktop_pending_inbox_seen_v4;
+`
 export async function initializeDesktopPendingInbox(db: Client): Promise<void> {
     let work = initialized.get(db)
     if (!work) {
@@ -43,8 +53,9 @@ export async function initializeDesktopPendingInbox(db: Client): Promise<void> {
                 seen_at TEXT NOT NULL
             );
             INSERT OR IGNORE INTO desktop_pending_inbox_seen_v3 SELECT * FROM desktop_pending_inbox_seen_v2;
-        ` + DESKTOP_SECRET_PENDING_INBOX_SCHEMA)
+        ` + DESKTOP_SECRET_PENDING_INBOX_SCHEMA + DESKTOP_REVIEW_PENDING_INBOX_SCHEMA)
         initialized.set(db, work)
+        void work.catch(() => { if (initialized.get(db) === work) initialized.delete(db) })
     }
     await work
 }

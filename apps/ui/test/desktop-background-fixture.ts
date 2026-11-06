@@ -5,6 +5,10 @@ import { normalizeNotificationPrefs } from '@rerun/contracts'
 export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestInit): Response | undefined {
     if ((init?.method ?? 'GET') !== 'GET') return
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
+    if (/^\/api\/desktop\/coworkers\/[^/]+\/document-attachments$/.test(url.pathname)) return Response.json({ attachments: [] })
+    if (/^\/api\/desktop\/sessions\/[^/]+\/mcp-sign-in$/.test(url.pathname)) return Response.json({ request: null })
+    if (/^\/api\/desktop\/sessions\/[^/]+\/tool-install$/.test(url.pathname) && url.searchParams.get('pending') === '1') return Response.json({ installations: [], more: false })
+    if (/^\/api\/desktop\/coworkers\/[^/]+\/schedule-tool-notices$/.test(url.pathname)) return Response.json({ notices: [] })
     const setup = url.pathname.match(/^\/api\/desktop\/coworkers\/([^/]+)\/setup$/)
     if (/^\/api\/desktop\/coworkers\/[^/]+\/voice$/.test(url.pathname) && !url.searchParams.has('attemptId')) return Response.json({ drafts: [] })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/semantic-memory$/.test(url.pathname)) return Response.json({ mode: 'keyword-only', backend: null, indexed: 0, pending: 0, omitted: 0, detail: 'Keyword search is available.' })
@@ -24,6 +28,10 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
 export function desktopNativeReviewRead(input: RequestInfo | URL, init?: RequestInit): Response | undefined {
     if ((init?.method ?? 'GET') !== 'GET') return
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
+    if (/^\/api\/desktop\/coworkers\/[^/]+\/document-attachments$/.test(url.pathname)) return Response.json({ attachments: [] })
+    if (/^\/api\/desktop\/sessions\/[^/]+\/mcp-sign-in$/.test(url.pathname)) return Response.json({ request: null })
+    if (/^\/api\/desktop\/sessions\/[^/]+\/tool-install$/.test(url.pathname) && url.searchParams.get('pending') === '1') return Response.json({ installations: [], more: false })
+    if (/^\/api\/desktop\/coworkers\/[^/]+\/schedule-tool-notices$/.test(url.pathname)) return Response.json({ notices: [] })
     const setup = url.pathname.match(/^\/api\/desktop\/coworkers\/([^/]+)\/setup$/)
     if (/^\/api\/desktop\/coworkers\/[^/]+\/voice$/.test(url.pathname) && !url.searchParams.has('attemptId')) return Response.json({ drafts: [] })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/semantic-memory$/.test(url.pathname)) return Response.json({ mode: 'keyword-only', backend: null, indexed: 0, pending: 0, omitted: 0, detail: 'Keyword search is available.' })

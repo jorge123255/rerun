@@ -30,7 +30,7 @@ function harness() {
     const port: DesktopScheduleFilePort = {
         list: files.list.bind(files),
         read: files.read.bind(files),
-        replace: async (agent, slug, expected, next) => { writes += 1; return files.replace(agent, slug, expected, next) },
+        replace: async (agent, slug, expected, next, admission) => { writes += 1; return files.replace(agent, slug, expected, next, admission) },
     }
     const lifecycle = createDesktopScheduleLifecycle({
         authority: { assertActive() {}, resolveOwner: async () => owner, readRun: async () => ({ agentId: 'eng-1', sessionId: 'session-1', status: 'running' }), notify },
@@ -268,7 +268,7 @@ describe('desktop schedule tool lifecycle', () => {
         const box = harness()
         await box.lifecycle.create('eng-1', created)
         const saved = await box.store.findIntent('eng-1', created.requestId)
-        await box.store.complete('eng-1', created.requestId, JSON.stringify({ outcome: 'committed', text: 'changed' }))
+        await expect(box.store.complete('eng-1', created.requestId, JSON.stringify({ outcome: 'committed', text: 'changed' }))).rejects.toThrow('receipt conflict')
         expect(await box.store.findIntent('eng-1', created.requestId)).toEqual(saved)
     })
 

@@ -1,3 +1,4 @@
+import { DESKTOP_SCHEDULE_TOOL_SCHEMA_SQL } from '../desktop/schedule-tools/schema.js'
 import { desktopTriggerStateSchema } from '../desktop/triggers/state.js'
 import { mkdirSync, existsSync } from 'node:fs'
 import { createClient, type Client } from '@libsql/client'
@@ -254,6 +255,7 @@ export const SYSTEM_DB_MIGRATIONS: SqliteMigration[] = [
             await ensureColumns(client, 'desktop_trigger_events', ['request_fingerprint TEXT', 'pending_tool_call_id TEXT', 'stop_request_id TEXT'])
         },
     },
+    { version: 9, id: 'desktop-schedule-tool-intents', up: client => client.executeMultiple(DESKTOP_SCHEDULE_TOOL_SCHEMA_SQL) },
 ]
 
 export const SYSTEM_DB_VERSION = latestVersion(SYSTEM_DB_MIGRATIONS)

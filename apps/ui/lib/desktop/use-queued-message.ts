@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { desktopCoworkerMentionFieldsOf, type DesktopCoworkerMention, desktopAttachmentFieldsOf, type DesktopAttachmentSelection } from '@rerun/contracts'
+import { desktopCoworkerMentionFieldsOf, type DesktopCoworkerMention, desktopAttachmentFieldsOf, type DesktopAttachmentSelection, type DesktopDocumentSendSelection } from '@rerun/contracts'
 import { desktopQueuedMessageSchema, type DesktopQueuedMessage, type DesktopQueueWrite } from './queued-message'
 import { pendingTabWrite } from './tab-writes'
 
@@ -82,8 +82,8 @@ export function useDesktopQueuedMessage(agentId: string, sessionId: string | nul
     }, [accept, agentId, key, tabUid, url])
 
     const queued = state.key === key ? state.queued : null
-    const enqueue = useCallback(async (text: string, attachments: readonly DesktopAttachmentSelection[], behindRunId: string | null, coworkerMentions: readonly DesktopCoworkerMention[] = []) => {
-        const item: DesktopQueuedMessage = { id: crypto.randomUUID(), text, ...desktopCoworkerMentionFieldsOf(coworkerMentions), ...desktopAttachmentFieldsOf(attachments), createdAt: Date.now(), behindRunId, state: 'waiting' }
+    const enqueue = useCallback(async (text: string, attachments: readonly DesktopAttachmentSelection[], behindRunId: string | null, coworkerMentions: readonly DesktopCoworkerMention[] = [], documents?: DesktopDocumentSendSelection) => {
+        const item: DesktopQueuedMessage = { ...(documents && { documents }), id: crypto.randomUUID(), text, ...desktopCoworkerMentionFieldsOf(coworkerMentions), ...desktopAttachmentFieldsOf(attachments), createdAt: Date.now(), behindRunId, state: 'waiting' }
         uncertain.current.add(item.id)
         return write({ action: 'enqueue', scope, expectedId: queued?.id ?? null, item })
     }, [queued?.id, scope, write])

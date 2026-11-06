@@ -26,6 +26,10 @@ import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
 import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, type DesktopVoiceSendReceipt } from '@rerun/contracts'
 import { DesktopServiceRequestBlock, type DesktopServiceRequestBlockProps } from './service-requests/DesktopServiceRequestBlock'
 import { DesktopServiceRequestReceipt } from './service-requests/DesktopServiceRequestReceipt'
+import { DesktopMcpSignInBlock } from './mcp-sign-in/DesktopMcpSignInBlock'
+import { DesktopMcpSignInSummary } from './mcp-sign-in/DesktopMcpSignInReceipt'
+import { readDesktopMcpSignIn } from '@/lib/desktop/mcp-sign-in-client'
+import type { DesktopMcpSignInResponse } from '@rerun/contracts'
 import { DesktopSecretRequestBlock } from './secret-requests/DesktopSecretRequestBlock'
 import { DesktopSecretSummaryReceipt } from './secret-requests/DesktopSecretRequestReceipt'
 import { readDesktopSecretRequest } from '@/lib/desktop/secret-requests-client'
@@ -59,6 +63,10 @@ import type { DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 import type { DesktopCoworkerPanel } from '@/lib/desktop/coworker-panel'
 import type { DesktopCoworkerPanelRequest } from '@/lib/desktop/coworker-panel-request'
 import { AttachmentChips, DesktopAttachmentPicker } from './DesktopAttachmentPicker'
+import { useDesktopDocumentAttachments } from '@/lib/desktop/document-attachments/useDesktopDocumentAttachments'
+import { DesktopDocumentAttachmentControls } from './document-attachments/DesktopDocumentAttachmentControls'
+import { DesktopDocumentLightbox } from './document-attachments/DesktopDocumentLightbox'
+import { desktopDocumentReferenceSchema, type DesktopDocumentReference, type DesktopDocumentSendSelection } from '@rerun/contracts'
 import { DesktopUploadChips } from './DesktopUploadChips'
 import { DesktopImageUploadChips } from './DesktopImageUploadChips'
 import { ChatAttachmentChip } from '@/components/chat/ChatAttachmentChip'
@@ -76,6 +84,7 @@ import { desktopQueuedAttachmentSelections as desktopQueuedAttachmentPaths, desk
 import { useDesktopQueuedMessage } from '@/lib/desktop/use-queued-message'
 import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf as desktopAttachmentPathsOf, parseScheduledRun, type DesktopAttachmentFields, type DesktopAttachmentSelection, type DesktopImageSnapshot } from '@rerun/contracts'
 import { desktopQuestionViewSchema, type DesktopPendingQuestion, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
+import { DesktopToolInstallPending } from './tool-install/DesktopToolInstallPending'
 import { DesktopQuestionCard } from './DesktopQuestionCard'
 import { desktopApprovalViewSchema, type DesktopPendingApproval, type DesktopApprovalAnswer } from '@/lib/desktop/approvals'
 import { DesktopApprovalCard } from './DesktopApprovalCard'
@@ -89,7 +98,7 @@ import { IsolatedScreenDialog } from './isolated-screen/IsolatedScreenDialog'
 import { DesktopBrowserCard } from './isolated-screen/DesktopBrowserCard'
 
 type ServiceRequest = DesktopServiceRequestBlockProps['request']
-type AcceptedService = Parameters<DesktopServiceRequestBlockProps['onAccepted']>[0] & { secretRequestId?: string }
+type AcceptedService = Parameters<DesktopServiceRequestBlockProps['onAccepted']>[0] & { secretRequestId?: string; mcpSignInRequestId?: string }
 class AcceptedResponseDecoder extends DefaultChatTransport<UIMessage> {
     decode(response: Response) { if (!response.body) throw new Error('The app response has no stream.'); return this.processResponseStream(response.body) }
 }
@@ -274,7 +283,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the path signature covers inline arrays
     useEffect(() => { composer.current = { text: input, attachments: [...attachmentPaths], coworkerMentions } }, [input, attachmentSignature, mentionSignature])
-    const pendingAttachment = useRef<{ key: string; inputKey: string; input: string; attachments: readonly DesktopAttachmentSelection[]; version: number; release: () => void } | null>(null)
+    const pendingAttachment = useRef<{ key: string; inputKey: string; input: string; attachments: readonly DesktopAttachmentSelection[]; version: number; documents?: DesktopDocumentSendSelection; release: () => void } | null>(null)
     const preparingSubmit = useRef(false)
     const [preparingSend, setPreparingSend] = useState(false)
     const regenerationIds = useRef(new Map<string, string>())
@@ -320,6 +329,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         agentId: agent.id, ownerKey: uploadOwner, tabUid, active: active && !draft.quitting,
         attachedImages: imageAttachments, onConfirmed: attachUploadedImage, onNotice: reportUploadNotice,
     })
+    const documents = useDesktopDocumentAttachments({ agentId: agent.id, tabUid: tabUid ?? sessionId ?? 'legacy-draft', sessionId: sessionId ?? undefined, enabled: active && !draft.quitting && !!tabUid })
+    const [documentPreview, setDocumentPreview] = useState<{ attachments: DesktopDocumentReference[]; index: number } | null>(null)
+    useEffect(() => { setDocumentPreview(null) }, [agent.id, tabUid, sessionId, active])
     const { items: uploadItems, remove: removeUpload, retry: retryUpload } = textUploads
     const uploadScope = useRef({ owner: uploadOwner, live: active && !draft.quitting })
     if (uploadScope.current.owner !== uploadOwner) uploadScope.current = { owner: uploadOwner, live: active && !draft.quitting }
@@ -327,9 +339,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     useEffect(() => { const scope = uploadScope.current; scope.live = active && !draft.quitting; return () => { scope.live = false } }, [uploadOwner, active, draft.quitting])
     const batchUpload = useRef<Promise<boolean> | null>(null)
     const [batchActive, setBatchActive] = useState(false)
-    const uploadsActive = batchActive || textUploads.active || imageUploads.active
-    const uploadsLoaded = textUploads.loaded && imageUploads.loaded
-    const uploadsBusy = () => !!batchUpload.current || textUploads.isBusy() || imageUploads.isBusy()
+    const uploadsActive = batchActive || textUploads.active || imageUploads.active || documents.busy > 0
+    const uploadsLoaded = textUploads.loaded && imageUploads.loaded && (!tabUid || documents.loaded)
+    const uploadsBusy = () => !!batchUpload.current || textUploads.isBusy() || imageUploads.isBusy() || documents.busy > 0
     const uploadsHaveBlocked = () => textUploads.hasBlocked() || imageUploads.hasBlocked()
     const settleUploads = async () => {
         const batchOkay = await batchUpload.current
@@ -339,7 +351,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const uploadGate = useRef(false)
     const beginUpload = useCallback((files: File[]) => {
         if (!files.length || uploadGate.current || batchUpload.current || preparingSubmit.current || isDesktopQuitting()) return
-        if (files.length > 14) { setUploadNotice('Choose up to 10 text files and 4 images at a time.'); return }
+        if (files.length > 14) { setUploadNotice('Choose up to 10 files and 4 images at a time.'); return }
         const scope = uploadScope.current
         const release = holdDraftAdmission()
         setBatchActive(true)
@@ -351,10 +363,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         const work = (async () => {
             for (let index = 0; index < files.length;) {
                 if (uploadScope.current !== scope || !scope.live || isDesktopQuitting()) break
-                const images = !!desktopImageKindForName(files[index].name)
+                const kindOf = (file: File) => desktopImageKindForName(file.name) ? 'image' : /\.(txt|md)$/i.test(file.name) ? 'text' : 'document'
+                const kind = kindOf(files[index])
                 const group: File[] = []
-                while (index < files.length && !!desktopImageKindForName(files[index].name) === images) group.push(files[index++])
-                if (images) await imageUploads.start(group)
+                while (index < files.length && kindOf(files[index]) === kind) group.push(files[index++])
+                if (kind === 'image') await imageUploads.start(group)
+                else if (kind === 'document') { if (!tabUid) throw new Error('Open a saved chat tab before adding documents.'); documents.add(group) }
                 else await textUploads.start(group)
             }
             return failures[0] === textUploads.failureVersion() && failures[1] === imageUploads.failureVersion()
@@ -364,8 +378,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             release()
         })
         batchUpload.current = work
-    }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion])
-    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null })
+    }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion, documents.add, tabUid])
+    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; mcpSignIn?: DesktopMcpSignInResponse | null; error?: string; loadedGeneration?: number }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null, mcpSignIn: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer | DesktopTakeoverTerminal; onAccepted?: () => void; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
     const quickReplyIds = useRef(new Map<string, string>())
@@ -436,6 +450,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 try { await queued.acknowledge() } catch { setQueueNotice('The message was sent, but its queue receipt could not be cleared. Send now will check the same message safely.') }
                 if (flushingQueue.current === queued.item.id) flushingQueue.current = null
             }
+            if (pending?.documents) await documents.consumed(pending.documents).catch(() => setUploadNotice('The documents were sent. Reopen the chat to refresh their saved state.'))
             if (pending && draft.clear(pending.version)) {
                 setInputs(current => current.get(pending.inputKey) === pending.input ? new Map(current).set(pending.inputKey, '') : current)
                 setAttachments(current => {
@@ -468,7 +483,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         }
         return response
         } finally { pending?.release(); alternate?.release() }
-    }, [agent.id, tabUid, onChatSession, draft.clear, draft.reload, draft.invalidate])
+    }, [agent.id, tabUid, onChatSession, draft.clear, draft.reload, draft.invalidate, documents.consumed])
 
     // The constructor saves the callback; only a submitted request reads the pending draft.
     // eslint-disable-next-line react-hooks/refs
@@ -530,9 +545,9 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         conversationRoot.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
         setPanelFocus(null)
     }, [panelFocus, active, detailPanel, cardOpen])
-    const dirty = voiceActivity.dirty || !draft.loaded || !uploadsLoaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive || uploadItems.length || imageUploads.items.length)
+    const dirty = voiceActivity.dirty || !draft.loaded || !uploadsLoaded || !!(input || attachmentPaths.length || queue.queued || uploadsActive || uploadItems.length || imageUploads.items.length || documents.attachments.length)
     const readable = active && !cardOpen && !detailPanel && !chatsOpen && ready && !generating && history.loadedGeneration === historyGeneration
-        && !!history.transcript && history.question !== undefined && history.approval !== undefined && history.takeover !== undefined && history.serviceRequest !== undefined && history.secretRequest !== undefined
+        && !!history.transcript && history.question !== undefined && history.approval !== undefined && history.takeover !== undefined && history.serviceRequest !== undefined && history.secretRequest !== undefined && history.mcpSignIn !== undefined
         && engineRunning.id === sessionId
     useEffect(() => { if (tabUid) onTabActivity?.(tabUid, { busy: generating || voiceActivity.busy, dirty, recordingPending: voiceActivity.dirty, readableSessionId: readable ? sessionId : null }) }, [tabUid, generating, voiceActivity.busy, voiceActivity.dirty, dirty, readable, sessionId, onTabActivity])
     const question = history.id === sessionId ? history.question : undefined
@@ -543,9 +558,11 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     useEffect(() => { setScreenOpen(null) }, [active, sessionId, takeover?.id])
     const serviceRequest = history.id === sessionId ? history.serviceRequest : undefined
     const secretRequest = history.id === sessionId ? history.secretRequest : undefined
-    const pendingRequest = question || approval || takeover || (serviceRequest ? { id: serviceRequest.serviceRequestId, toolCallId: serviceRequest.source.toolCallId } : null) || (secretRequest ? { id: secretRequest.requestId, toolCallId: secretRequest.source.toolCallId } : null)
+    const mcpSignIn = history.id === sessionId ? history.mcpSignIn : undefined
+    const mcpRequest = mcpSignIn?.request?.receipt?.accepted ? null : mcpSignIn?.request
+    const pendingRequest = question || approval || takeover || (serviceRequest ? { id: serviceRequest.serviceRequestId, toolCallId: serviceRequest.source.toolCallId } : null) || (secretRequest ? { id: secretRequest.requestId, toolCallId: secretRequest.source.toolCallId } : null) || (mcpRequest ? { id: mcpRequest.requestId, toolCallId: mcpRequest.source.toolCallId } : null)
     // Every pending request must be known before a later turn or an automatic queue flush.
-    const requestBlocked = setupBlocked || !!sessionId && (question !== null || approval !== null || takeover !== null || serviceRequest !== null || secretRequest !== null)
+    const requestBlocked = setupBlocked || !!sessionId && (question !== null || approval !== null || takeover !== null || serviceRequest !== null || secretRequest !== null || mcpSignIn === undefined || !!mcpRequest)
     const canRegenerate = draft.loaded && !draft.error && !draft.quitting && !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
     const stopTarget = busy ? liveSessionId : runInFlight ? sessionId : null
@@ -579,12 +596,12 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     useEffect(() => {
         if (busy) return
         const controller = new AbortController()
-        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal), approvalFor(sessionId, controller.signal), takeoverFor(sessionId, controller.signal), serviceRequestFor(sessionId, controller.signal), secretRequestFor(sessionId, controller.signal)]) : Promise.resolve([[], null, null, null, null, null] as [UIMessage[], null, null, null, null, null])
-        void read.then(([result, pending, approval, takeover, serviceRequest, secretRequest]) => {
+        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal), approvalFor(sessionId, controller.signal), takeoverFor(sessionId, controller.signal), serviceRequestFor(sessionId, controller.signal), secretRequestFor(sessionId, controller.signal), readDesktopMcpSignIn(sessionId, { signal: controller.signal })]) : Promise.resolve([[], null, null, null, null, null, null] as [UIMessage[], null, null, null, null, null, null])
+        void read.then(([result, pending, approval, takeover, serviceRequest, secretRequest, mcpSignIn]) => {
             if (controller.signal.aborted) return
-            if ([pending, approval, takeover, serviceRequest, secretRequest?.receipt ? null : secretRequest].filter(Boolean).length > 1) throw new Error('This conversation changed while loading. Reload it to see the current request.')
+            if ([pending, approval, takeover, serviceRequest, secretRequest?.receipt ? null : secretRequest, mcpSignIn?.request?.receipt ? null : mcpSignIn?.request].filter(Boolean).length > 1) throw new Error('This conversation changed while loading. Reload it to see the current request.')
             setMessages(result)
-            setHistory({ id: sessionId, transcript: result, question: pending, approval, takeover, serviceRequest, secretRequest, loadedGeneration: historyGeneration })
+            setHistory({ id: sessionId, transcript: result, question: pending, approval, takeover, serviceRequest, secretRequest, mcpSignIn, loadedGeneration: historyGeneration })
         }).catch(cause => {
             if (!controller.signal.aborted) setHistory({ id: sessionId, error: cause instanceof Error ? cause.message : 'Could not load history' })
         })
@@ -609,7 +626,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     wasRunning = true
                     timer = setTimeout(check, RUN_POLL_MS)
                 } else if (wasRunning) {
-                    setHistory(current => current.id === sessionId ? { ...current, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined, secretRequest: undefined } : current)
+                    setHistory(current => current.id === sessionId ? { ...current, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined, secretRequest: undefined, mcpSignIn: undefined } : current)
                     setAttempt(n => n + 1) // The reply finished elsewhere: reload the saved transcript.
                 }
             } catch {
@@ -636,7 +653,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             const body = await response.json().catch(() => ({}))
             if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not stop this reply. Try again.')
             setEngineRunning({ id, running: false })
-            setHistory(current => current.id === id ? { ...current, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined, secretRequest: undefined } : current)
+            setHistory(current => current.id === id ? { ...current, question: undefined, approval: undefined, takeover: undefined, serviceRequest: undefined, secretRequest: undefined, mcpSignIn: undefined } : current)
             setAttempt(n => n + 1)
             return true
         } catch (cause) {
@@ -658,7 +675,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     async function submit(event: React.FormEvent) {
         event.preventDefault()
         const text = input.trim()
-        if (!active || !draft.loaded || draft.error || isDesktopQuitting() || preparingSubmit.current || (requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || (!text && !attachmentPaths.length && !uploadsBusy()) || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current || pendingAttachment.current) return
+        if (!active || !draft.loaded || draft.error || isDesktopQuitting() || preparingSubmit.current || (requestBlocked && !generating) || !!pendingRequest || (responding.current && !(generating && responding.current.accepted)) || (quickReplyRequest.current && !(generating && quickReplyRequest.current.accepted)) || inactive || (!text && !attachmentPaths.length && !documents.attachments.length && !uploadsBusy()) || stopping || !ready || !queue.loaded || queue.pending || queue.error || regenerating.current || pendingAttachment.current) return
         const intent = submissionScope.current
         const currentIntent = () => submissionMounted.current && submissionScope.current === intent && submissionCurrent.current.active && !isDesktopQuitting()
         preparingSubmit.current = true
@@ -682,15 +699,19 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             if ((tabUid ? desktopDraftRecord(agent.id, tabUid).state.version !== version : submissionCurrent.current.input !== input)) return
             const paths = [...(composer.current.attachments ?? [])]
             const mentionFields = trimDesktopCoworkerMentions(input, composer.current.coworkerMentions)
-            if (!text && !paths.length) return
+            const pick = !sessionId && conversationChoice.current?.session === null ? conversationChoice.current.pick : undefined
+            const documentSend = tabUid ? await documents.settle(pick) : null
+            if (!currentIntent()) return
+            if (!text && !paths.length && !documentSend) return
             const live = submissionCurrent.current
             if (live.inactive || live.stopping || !live.ready || live.pendingRequest || (live.requestBlocked && !live.generating)
                 || !live.queue.loaded || live.queue.pending || live.queue.error || regenerating.current || pendingAttachment.current) return
             if (live.generating || (live.queue.queued && draftQueues.current.has(live.queue.queued.id))) {
                 const queuedPaths = live.queue.queued ? desktopQueuedAttachmentPaths(live.queue.queued) : []
-                const sameDraft = !live.generating && live.queue.queued && live.queue.queued.text === text && samePaths(queuedPaths, paths) && JSON.stringify(live.queue.queued.coworkerMentions ?? []) === JSON.stringify(mentionFields.coworkerMentions ?? [])
-                const item = sameDraft ? live.queue.queued : await live.queue.enqueue(text, paths, live.busy ? live.liveRunId : live.engineRunning.runId ?? null, mentionFields.coworkerMentions)
+                const sameDraft = !live.generating && live.queue.queued && live.queue.queued.text === text && samePaths(queuedPaths, paths) && JSON.stringify(live.queue.queued.coworkerMentions ?? []) === JSON.stringify(mentionFields.coworkerMentions ?? []) && JSON.stringify(live.queue.queued.documents ?? null) === JSON.stringify(documentSend?.selection ?? null)
+                const item = sameDraft ? live.queue.queued : await live.queue.enqueue(text, paths, live.busy ? live.liveRunId : live.engineRunning.runId ?? null, mentionFields.coworkerMentions, documentSend?.selection)
                 if (!item) return
+                if (documentSend) await documents.consumed(documentSend.selection)
                 if (current.draft.clear(version)) {
                     setInputs(current => current.get(inputKey) === input ? new Map(current).set(inputKey, '') : current)
                     setAttachments(current => { const next = new Map(current); if (samePaths(current.get(draftKey) ?? [], paths)) next.delete(draftKey); return next })
@@ -702,17 +723,16 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             }
             setLiveSessionId(null)
             setLiveRunId(null)
-            const pending = { key: draftKey, inputKey, input, attachments: paths, version, release: hold }
+            const pending = { key: draftKey, inputKey, input, attachments: paths, version, documents: documentSend?.selection, release: hold }
             pendingAttachment.current = pending
-            const pick = !sessionId && conversationChoice.current?.session === null ? conversationChoice.current.pick : undefined
             const attachmentFields = desktopAttachmentFieldsOf(paths)
-            const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(!sessionId && tabUid && { tabUid }), ...(pick && { modelChoice: pick }), ...attachmentFields, ...desktopCoworkerMentionFieldsOf(mentionFields.coworkerMentions) }
+            const body = { agentId: agent.id, sessionId: sessionId ?? undefined, ...(!sessionId && tabUid && { tabUid }), ...(pick && { modelChoice: pick }), ...(documentSend && { documents: documentSend.selection, ...(sessionId && { requestId: documentSend.selection.admissionId }) }), ...attachmentFields, ...desktopCoworkerMentionFieldsOf(mentionFields.coworkerMentions) }
             handedOff = true
-            void sendMessage({ text, ...((paths.length || mentionFields.coworkerMentions?.length) && { metadata: { ...attachmentFields, ...desktopCoworkerMentionFieldsOf(mentionFields.coworkerMentions) } }) }, { body }).finally(() => {
+            void sendMessage({ text, ...((paths.length || documentSend || mentionFields.coworkerMentions?.length) && { metadata: { ...(documentSend && { documents: documentSend.admission.references }), ...attachmentFields, ...desktopCoworkerMentionFieldsOf(mentionFields.coworkerMentions) } }) }, { body }).finally(() => {
                 if (pendingAttachment.current === pending) pendingAttachment.current = null
                 hold()
             })
-        } catch { /* Draft/queue saves retain the composer and expose their own retry controls. */ }
+        } catch (error) { setUploadNotice(error instanceof Error ? error.message : 'Could not prepare the message. Your draft is still saved.') }
         finally { preparingSubmit.current = false; if (submissionMounted.current) setPreparingSend(false); if (!handedOff) release?.() }
     }
 
@@ -731,7 +751,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             const paths = desktopQueuedAttachmentPaths(item)
             const attachmentFields = desktopAttachmentFieldsOf(paths)
             await sendMessage({ text: item.text, ...((paths.length || item.coworkerMentions?.length) && { metadata: { ...attachmentFields, ...desktopCoworkerMentionFieldsOf(item.coworkerMentions) } }) }, {
-                body: { agentId: agent.id, sessionId, text: item.text, requestId: item.id, ...attachmentFields, ...desktopCoworkerMentionFieldsOf(item.coworkerMentions) },
+                body: { agentId: agent.id, sessionId, text: item.text, requestId: item.id, ...(item.documents && { documents: item.documents }), ...attachmentFields, ...desktopCoworkerMentionFieldsOf(item.coworkerMentions) },
             })
         } catch (cause) {
             setQueueNotice(cause instanceof Error ? cause.message : 'Could not send the queued message. It is still saved.')
@@ -772,7 +792,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             if (!isCurrent()) return
             if (composer.current.text.trim() === item.text && samePaths(draftPaths(composer.current), paths) && JSON.stringify(trimDesktopCoworkerMentions(composer.current.text, composer.current.coworkerMentions).coworkerMentions ?? []) === JSON.stringify(item.coworkerMentions ?? [])) draftQueues.current.add(item.id)
             // An older waiting message must not replace a newer draft already in the composer.
-            if (!composer.current.text && draftPaths(composer.current).length === 0) {
+            if (!item.documents && !composer.current.text && draftPaths(composer.current).length === 0) {
                 draftQueues.current.add(item.id)
                 setInputs(current => new Map(current).set(draftKey, item.text))
                 setAttachments(current => { const next = new Map(current); if (paths.length) next.set(draftKey, paths); else next.delete(draftKey); return next })
@@ -787,7 +807,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 // A restart may have lost only the HTTP acknowledgement. Reconcile the exact
                 // request before offering its draft again; this probe can never create a run.
                 const response = await fetch('/api/desktop/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
-                    agentId: agent.id, sessionId, text: item.text, requestId: item.id, reconcileOnly: true, ...desktopCoworkerMentionFieldsOf(item.coworkerMentions),
+                    agentId: agent.id, sessionId, text: item.text, requestId: item.id, reconcileOnly: true, ...(item.documents && { documents: item.documents }), ...desktopCoworkerMentionFieldsOf(item.coworkerMentions),
                     ...desktopAttachmentFieldsOf(desktopQueuedAttachmentPaths(item)),
                 }) })
                 if (response.ok && response.headers.get('x-session-id') === sessionId && response.headers.get('x-run-id') === item.id) {
@@ -899,7 +919,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         const owns = () => serviceOwner.current.agentId === result.agentId && serviceOwner.current.sessionId === result.sessionId && serviceOwner.current.active
         if (!owns() || serviceStream.current) { result.cancelStream(); throw new Error('This conversation is no longer active.') }
         serviceStream.current = result
-        setHistory(current => current.id === result.sessionId ? {...current, ...(result.secretRequestId ? { secretRequest: null } : { serviceRequest: null })} : current)
+        setHistory(current => current.id === result.sessionId ? {...current, ...(result.mcpSignInRequestId ? { mcpSignIn: null } : result.secretRequestId ? { secretRequest: null } : { serviceRequest: null })} : current)
         setMessages(history.transcript ?? messages)
         setServiceStreaming(true); setLiveSessionId(result.sessionId); setLiveRunId(result.requestId)
         try {
@@ -1090,6 +1110,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         const hitl = message.role === 'user' ? parseHitlReply(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         const secretReceipt = message.role === 'user' ? parseDesktopSecretReceiptSummary(message.parts.filter(part=>part.type==='text').map(part=>part.text).join('\n')) : null
                         if (secretReceipt) return <DesktopSecretSummaryReceipt key={message.id} entries={secretReceipt} />
+                        if (hitl?.kind === 'mcp' || hitl?.kind === 'cancelled' && hitl.of === 'mcp') return <DesktopMcpSignInSummary key={message.id} name={hitl.kind === 'mcp' ? hitl.name : undefined} />
                         if(hitl?.kind==='service')return <DesktopServiceRequestReceipt key={message.id} entries={hitl.entries} />
                         if (triggerPayload) return <DesktopWebhookRunBlock key={message.id} agentId={agent.id} payload={triggerPayload} />
                         if (scheduledRun) return <DesktopScheduledRunBlock key={message.id} run={scheduledRun} />
@@ -1103,11 +1124,13 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                         const files = message.parts.filter((part): part is FileUIPart => part.type === 'file' && part.mediaType.startsWith('image/'))
                                         const images = files.length ? files.map((part, index) => ({ path: `${index}/${part.filename ?? 'image.png'}`, url: part.url }))
                                             : selections.filter((item): item is DesktopImageSnapshot => typeof item !== 'string').map((image, index) => ({ path: `${index}/${image.name}`, url: `/api/desktop/agents/${encodeURIComponent(agent.id)}/images?snapshot=${encodeURIComponent(JSON.stringify(image))}` }))
-                                        return <>{paths.length > 0 && <div className="mb-1"><AttachmentChips paths={paths} /></div>}
+                                        const refs = message.metadata && typeof message.metadata === 'object' && 'documents' in message.metadata ? desktopDocumentReferenceSchema.array().safeParse(message.metadata.documents) : null
+                                        return <>{refs?.success && refs.data.length > 0 && <div className="mb-1 flex flex-wrap gap-1">{refs.data.map((ref, index) => <Button type="button" variant="secondary" size="sm" key={ref.attachmentId} onClick={() => setDocumentPreview({ attachments: refs.data, index })}>{ref.name}</Button>)}</div>}{paths.length > 0 && <div className="mb-1"><AttachmentChips paths={paths} /></div>}
                                             {images.length > 0 && <MessageAttachments paths={images.map(item => item.path)} rawUrlFor={path => images.find(item => item.path === path)?.url ?? ''} />}</>
                                     })()}
                                     {message.role === 'assistant'
                                         ? <DesktopAssistantReply agent={agent} message={message} agentId={agent.id} streaming={(status === 'streaming' || serviceStreaming) && messageIndex === transcript.length - 1}
+                                            toolInstall={sessionId ? { sessionId, active: active && ready, disabled: draft.quitting || inactive || generating || stopping } : undefined}
                                             childRuns={sessionId ? { sessionId, active, onOpenTarget: onOpenCoworkerChat } : undefined}
                                             skillProposals={{ rows: skillProposals.proposals, pinnedIds: skillProposals.pinnedIds, pendingId: skillProposals.pendingId,
                                                 onDecide: proposalsActive ? skillProposals.decide : undefined, onOpenSkill: proposalsActive ? openProposalSkill : undefined }}
@@ -1123,6 +1146,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                             {message.role === 'user' && <span aria-hidden className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"><UserRoundIcon className="size-4" /></span>}
                         </div>
                     )})}
+                    {sessionId && <DesktopToolInstallPending agentId={agent.id} sessionId={sessionId} messages={transcript} active={active && ready} disabled={draft.quitting || inactive || generating || stopping} />}
                     {active && takeover && <DesktopBrowserCard key={takeover.id} agentId={agent.id} takeover={takeover} disabled={draft.quitting || inactive || generating || stopping || !ready} onAction={async payload => {
                         if (payload.action === 'open') { setScreenOpen('request'); return }
                         if (payload.action === 'done' || payload.action === 'skip') await decideTakeover(payload)
@@ -1169,6 +1193,10 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     busy={generating} pending={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || queue.pending || stopping || inactive || !!flushingQueue.current}
                     onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued && !isDesktopQuitting()) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
                 {serviceRequest && sessionId && <DesktopServiceRequestBlock agentId={agent.id} sessionId={sessionId} request={serviceRequest} inline disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onOpenApps={openServiceApps} onAccepted={adoptServiceResponse} />}
+                {mcpRequest && sessionId && <DesktopMcpSignInBlock sessionId={sessionId} request={mcpRequest} initialOAuth={mcpSignIn?.oauth} inline active={!draft.quitting && active && !inactive && !generating && !stopping && ready} onAccepted={(response, stream) => adoptServiceResponse({
+                    agentId: agent.id, sessionId, serviceRequestId: mcpRequest.requestId, mcpSignInRequestId: mcpRequest.requestId,
+                    requestId: response.headers.get('x-run-id')!, response, ...stream,
+                })} />}
                 {secretRequest && sessionId && <DesktopSecretRequestBlock sessionId={sessionId} request={secretRequest} inline active={!draft.quitting && active && (!inactive || !!secretRequest.receipt) && !generating && !stopping && ready} onAccepted={(response, stream) => adoptServiceResponse({
                     agentId: agent.id, sessionId, serviceRequestId: secretRequest.requestId, secretRequestId: secretRequest.requestId,
                     requestId: response.headers.get('x-run-id')!, response, ...stream,
@@ -1178,6 +1206,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 {setup.view?.skipped && <DesktopSetupSkippedBanner agentId={agent.id} canStart={modelReady} onStartBlocked={onOpenModelSettings} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {question && <DesktopQuestionCard key={question.id} question={question} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
                 {approval && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
+                {documentPreview && <DesktopDocumentLightbox {...documentPreview} onIndexChange={index => setDocumentPreview(value => value ? { ...value, index } : null)} onClose={() => setDocumentPreview(null)} />}
                 <form ref={composerForm} onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>
                     {uploadDragOver && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] border border-dashed border-brand bg-background/85">
                         <span className="flex items-center gap-2 text-sm font-medium text-brand"><UploadIcon className="size-4" />Drop files to attach</span>
@@ -1197,7 +1226,8 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         <DesktopUploadChips items={uploadItems} disabled={uploadDisabled} onRemove={removeUpload} onRetry={retryUpload} />
                         <DesktopImageUploadChips items={imageUploads.items} disabled={uploadDisabled} onRemove={imageUploads.remove} onRetry={imageUploads.retry} />
                     </div></div>}
-                    <input ref={uploadFileInput} type="file" multiple accept={`${DESKTOP_UPLOAD_ACCEPT},${DESKTOP_IMAGE_UPLOAD_ACCEPT}`} className="hidden" aria-label="Upload files from this Mac"
+                    {!!tabUid && <DesktopDocumentAttachmentControls controller={documents} disabled={uploadDisabled || preparingSend} />}
+                    <input ref={uploadFileInput} type="file" multiple className="hidden" aria-label="Upload files from this Mac"
                         onChange={event => {
                             const files = Array.from(event.target.files ?? [])
                             event.target.value = ''
@@ -1255,7 +1285,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                                 disabled={generating || stopping || inactive || !ready || !modelReady || requestBlocked || !!pendingRequest || !!queue.queued || queue.pending || uploadsActive || preparingSend || !draft.loaded}
                                 onActivity={setVoiceActivity} onSent={voiceSent} />}
                             {generating && <Button type="button" variant="ghost" size="icon-sm" disabled={stopping || !stopTarget} onClick={() => void handleStop()}><SquareIcon aria-hidden className="size-4" /><span className="sr-only">Stop</span></Button>}
-                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={voiceActivity.busy || !draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || (!input.trim() && !attachmentPaths.length) || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
+                            <Button type="submit" title={generating ? 'Queue message' : 'Send message'} size="icon-sm" className="rounded-full" disabled={voiceActivity.busy || !draft.loaded || !uploadsLoaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || inactive || (!input.trim() && !attachmentPaths.length && !documents.attachments.length) || stopping || !ready || !queue.loaded || queue.pending || !!queue.error || uploadsActive || blockedUploads.length > 0 || preparingSend}>
                                 <ArrowUpIcon aria-hidden className="size-4" /><span className="sr-only">Send</span>
                             </Button>
                         </div>

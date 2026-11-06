@@ -1,5 +1,7 @@
 /** Injected action ports for I's canonical runtime and root mounting. */
 
+import type { DesktopForemanConversationView } from '@rerun/contracts'
+import { foremanChatKey } from './identity'
 import type { DesktopPlanDecisionRequest, DesktopPlanDecisionResult } from './decision'
 import type { DesktopForemanBuildProgressView } from './build-progress'
 import type { DesktopDiscoveryEvent } from './discovery-view'
@@ -41,15 +43,8 @@ export type DesktopForemanNavigationPort = {
 
 export type DesktopForemanPlanPort = {
     readShownPlan: (chat: DesktopForemanChatRef, signal?: AbortSignal) => Promise<DesktopTrustedPlanSnapshot | null>
-    /** Trusted conversation projection (I's DesktopForemanConversationView shape). */
-    readConversationView: (chat: DesktopForemanChatRef, signal?: AbortSignal) => Promise<{
-        contractVersion: 1
-        chat: DesktopForemanChatRef
-        phase: 'discover' | 'plan' | 'build' | 'companion'
-        live: { runId: string; model: { connectionId: string; model: string } } | null
-        currentRevisionId: string | null
-        blocked: 'decision_uncertain' | 'build_uncertain' | 'setup_uncertain' | null
-    } | null>
+    /** Canonical view retains persisted discoveries, revisions and build state. */
+    readConversationView: (chat: DesktopForemanChatRef, signal?: AbortSignal) => Promise<DesktopForemanConversationView | null>
 }
 
 export type DesktopForemanRoutinesPort = {
@@ -86,10 +81,44 @@ export function requirePort<T>(port: T | null | undefined, label: string): T {
     return port
 }
 
-export async function saveForemanUiIfMatching(
-    persistence: DesktopForemanPersistence,
-    snapshot: DesktopForemanPersistedUi,
-): Promise<void> {
-    if (!snapshot.workspaceId || !snapshot.chatId) return
-    await persistence.save(snapshot)
+// One ordered writer per persistence adapter and exact chat. A load after remount also
+// waits for already admitted writes, so an old response cannot overwrite a newer draft.
+const retainedSnapshots = new Map<string, DesktopForemanPersistedUi>()
+const pendingSaves = new Set<Promise<void>>()
+const failedSaves = new Set<string>()
+export const hasPendingDesktopForemanUiSaves = () => pendingSaves.size > 0 || failedSaves.size > 0
+export async function flushDesktopForemanUiSaves(): Promise<boolean> {
+    while (pendingSaves.size) await Promise.allSettled([...pendingSaves])
+    return failedSaves.size === 0
+}
+const writes = new WeakMap<DesktopForemanPersistence, Map<string, Promise<void>>>()
+function pendingWrites(persistence: DesktopForemanPersistence) {
+    let pending = writes.get(persistence)
+    if (!pending) { pending = new Map(); writes.set(persistence, pending) }
+    return pending
+}
+export async function loadForemanUiAfterWrites(persistence: DesktopForemanPersistence, chat: DesktopForemanChatRef) {
+    await pendingWrites(persistence).get(foremanChatKey(chat))?.catch(() => undefined)
+    const saved = await persistence.load(chat)
+    return structuredClone(retainedSnapshots.get(foremanChatKey(chat)) ?? saved)
+}
+export function saveForemanUiIfMatching(persistence: DesktopForemanPersistence, snapshot: DesktopForemanPersistedUi): Promise<void> {
+    if (!snapshot.workspaceId || !snapshot.chatId) return Promise.reject(new Error('Foreman chat is unavailable.'))
+    const pending = pendingWrites(persistence)
+    const key = foremanChatKey(snapshot)
+    const immutable = structuredClone(snapshot)
+    retainedSnapshots.set(key, immutable)
+    const next = (pending.get(key) ?? Promise.resolve()).catch(() => undefined).then(() => persistence.save(immutable))
+    pending.set(key, next)
+    pendingSaves.add(next)
+    void next.then(() => {
+        pendingSaves.delete(next)
+        failedSaves.delete(key)
+        if (retainedSnapshots.get(key) === immutable) retainedSnapshots.delete(key)
+    }, () => {
+        pendingSaves.delete(next)
+        failedSaves.add(key)
+    })
+    void next.then(() => { if (pending.get(key) === next) pending.delete(key) }, () => { if (pending.get(key) === next) pending.delete(key) })
+    return next
 }

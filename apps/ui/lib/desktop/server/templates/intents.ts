@@ -62,12 +62,13 @@ export async function readTemplateInstallIntent(db: Client, raw: unknown): Promi
     } finally { tx.close() }
 }
 
-export async function prepareTemplateIntent(db: Client, engine: DesktopTemplateEngineClient, raw: unknown): Promise<DesktopTemplateOperation> {
+export async function prepareTemplateIntent(db: Client, engine: DesktopTemplateEngineClient, raw: unknown, internal?: { requestId: string; scopeKey: string }): Promise<DesktopTemplateOperation> {
     const input = bodySchema.safeParse(raw)
     if (!input.success) throw new DesktopHttpError(400, 'Invalid template attempt')
     const body = input.data.operation
     if ('requestId' in body || !['create-draft', 'plan', 'capture', 'install'].includes(String(body.operation))) throw new DesktopHttpError(400, 'Invalid template attempt')
-    const key = createHash('sha256').update(canonical(body)).digest('hex')
+    if (internal && (!z.uuid().safeParse(internal.requestId).success || !internal.scopeKey.startsWith('foreman:') || input.data.againRequestId)) throw new DesktopHttpError(400, 'Invalid internal template attempt')
+    const key = createHash('sha256').update(canonical(internal ? { body, scopeKey: internal.scopeKey } : body)).digest('hex')
     const detail = body.operation === 'install' ? desktopTemplateDetailSchema.parse(await engine.get(`/desktop/templates/${encodeURIComponent(String(body.templateId))}?revision=${encodeURIComponent(String(body.revision))}`)) : null
     return withRosterWrite(async () => {
         const tx = await db.transaction('write')
@@ -82,8 +83,9 @@ export async function prepareTemplateIntent(db: Client, engine: DesktopTemplateE
             }
             const prior = (await tx.execute({ sql: 'SELECT request_id,operation FROM desktop_template_intents WHERE key=?', args: [key] })).rows[0]
             const previousReceipt = prior ? (await tx.execute({sql:'SELECT status FROM desktop_template_requests WHERE request_id=?',args:[String(prior.request_id)]})).rows[0] : null
-            if (prior && !input.data.againRequestId && previousReceipt?.status!=='refused') {
+            if (prior && !input.data.againRequestId && (internal || previousReceipt?.status!=='refused')) {
                 const operation = desktopTemplateOperationSchema.parse(JSON.parse(String(prior.operation)))
+                if (internal && (!('requestId' in operation) || operation.requestId !== internal.requestId)) throw new DesktopHttpError(409, 'Template attempt identity changed')
                 await tx.commit()
                 return operation
             }
@@ -114,7 +116,7 @@ export async function prepareTemplateIntent(db: Client, engine: DesktopTemplateE
                 if (positions.length !== detail.coworkers.length) throw new DesktopHttpError(409, 'This Box needs more room. Enlarge it before installing the template.')
                 positionBody = { spaceId, positions }
             }
-            const parsed = desktopTemplateOperationSchema.safeParse({ ...body, ...positionBody, requestId: randomUUID() })
+            const parsed = desktopTemplateOperationSchema.safeParse({ ...body, ...positionBody, requestId: internal?.requestId ?? randomUUID() })
             if (!parsed.success) throw new DesktopHttpError(400, 'Invalid template attempt')
             await tx.execute({ sql: 'INSERT INTO desktop_template_intents(key,request_id,operation) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET request_id=excluded.request_id,operation=excluded.operation', args: [key, 'requestId' in parsed.data ? parsed.data.requestId : '', JSON.stringify(parsed.data)] })
             if(input.data.againRequestId)await tx.execute({sql:'INSERT INTO desktop_template_rotations(request_id,key,operation) VALUES(?,?,?)',args:[input.data.againRequestId,key,JSON.stringify(parsed.data)]})

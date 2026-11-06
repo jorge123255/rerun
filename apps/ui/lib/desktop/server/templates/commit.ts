@@ -59,7 +59,7 @@ export function preflightDesktopTemplateInstall(db: Client, input: DesktopTempla
     })
 }
 
-export function commitDesktopTemplateInstall(db: Client, input: DesktopTemplateCommitInput & { signal?: AbortSignal }): Promise<{ acknowledged: true }> {
+export function commitDesktopTemplateInstall(db: Client, input: DesktopTemplateCommitInput & { signal?: AbortSignal }, internal?: { enabled: false; onCommit?: (tx: Transaction) => Promise<void> }): Promise<{ acknowledged: true }> {
     const parsed = parsedCommit(input)
     return withRosterWrite(async () => {
         const tx = await db.transaction('write')
@@ -70,12 +70,13 @@ export function commitDesktopTemplateInstall(db: Client, input: DesktopTemplateC
                 const existing = await tx.execute({ sql: 'SELECT engine_agent_id, name FROM desktop_agents WHERE id = ?', args: [coworker.agentId] })
                 const row = existing.rows[0]
                 if (row) {
+                    if (internal) throw new DesktopHttpError(409, 'This Foreman install would adopt an existing coworker')
                     if (String(row.engine_agent_id) !== coworker.engineAgentId || String(row.name) !== coworker.name) throw new DesktopHttpError(409, 'This install receipt already belongs to another coworker')
                     continue
                 }
                 await tx.execute({
-                    sql: 'INSERT INTO desktop_agents (id, workspace_id, engine_agent_id, name, description, enabled, created_at, updated_at) VALUES (?,1,?,?,?,1,?,?)',
-                    args: [coworker.agentId, coworker.engineAgentId, coworker.name, coworker.description, now, now],
+                    sql: 'INSERT INTO desktop_agents (id, workspace_id, engine_agent_id, name, description, enabled, created_at, updated_at) VALUES (?,1,?,?,?,?,?,?)',
+                    args: [coworker.agentId, coworker.engineAgentId, coworker.name, coworker.description, internal?.enabled === false ? 0 : 1, now, now],
                 })
                 await tx.execute(desktopPlacementInsert({ agentId: coworker.agentId, spaceId: parsed.spaceId, col: coworker.position.col, row: coworker.position.row }))
             }
@@ -84,6 +85,7 @@ export function commitDesktopTemplateInstall(db: Client, input: DesktopTemplateC
                 args: [parsed.templateId, parsed.revision, now, parsed.requestId, parsed.receiptId],
             })
             await tx.execute(desktopBoardRevisionWrite)
+            await internal?.onCommit?.(tx)
             await tx.commit()
             return { acknowledged: true as const }
         } finally { tx.close() }

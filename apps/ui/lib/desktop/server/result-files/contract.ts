@@ -5,7 +5,6 @@ export const DESKTOP_RESULT_FILE_BINARY_MAX_BYTES = 16 * 1024 * 1024
 export const DESKTOP_RESULT_FILE_IDENTITY = /^\d{1,24}:\d{1,24}$/
 const PART = /^[^/\\.\0][^/\\\0]{0,240}$/
 const IMAGE = /\.(?:png|jpe?g|gif|webp|svg|avif|ico|bmp)$/i
-const RASTER = /\.(?:png|jpe?g|gif|webp)$/i
 const AUDIO = /\.(?:wav|mp3|m4a|ogg|flac)$/i
 const VIDEO = /\.(?:mp4|webm|mov|m4v)$/i
 const PDF = /\.pdf$/i
@@ -24,17 +23,17 @@ export type DesktopResultFileTicket = {
 const visible = (path: string) => path.length > 0 && path.length <= 4096 && !/[\\\p{Cc}]/u.test(path)
     && path.split('/').every(part => PART.test(part))
 
-/** Basename only. Rejects quotes, semicolons, controls, slashes and a leading dot. Does not rewrite the name. */
 export function desktopResultFileName(name: string): string | undefined {
-    if (name.length < 1 || name.length > 255 || name.startsWith('.') || /[\\/\p{Cc}"';]/u.test(name)) return undefined
+    if (name.length < 1 || name.length > 255 || name.startsWith('.') || /[\\/\p{Cc}]/u.test(name)) return undefined
     return name
 }
 
 export function desktopResultFileDisposition(name: string): string | undefined {
     const safe = desktopResultFileName(name)
     if (!safe) return undefined
-    const star = `UTF-8''${encodeURIComponent(safe)}`
-    if (/^[\x20-\x7E]+$/.test(safe)) return `attachment; filename="${safe}"; filename*=${star}`
+    const encoded = encodeURIComponent(safe).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+    const star = `UTF-8''${encoded}`
+    if (/^[\x20-\x7E]+$/.test(safe)) return `attachment; filename="${safe.replace(/"/g, '\\"')}"; filename*=${star}`
     return `attachment; filename*=${star}`
 }
 
@@ -76,10 +75,10 @@ export function parseDesktopResultFileBody(agentId: string, value: unknown): Des
     return { agentId, path: body.path, name, scope: body.scope, identity: body.identity, size: body.size }
 }
 
-/** Shared SVG, AVIF, ICO, BMP and PDF stay download-only. This process does not convert or parse them. */
-export function desktopResultFilePreviewKind(file: { path: string; scope?: string }): 'none' | 'text' | 'image' | 'audio' | 'video' {
+export function desktopResultFilePreviewKind(file: { path: string; scope?: string }): 'none' | 'text' | 'image' | 'audio' | 'video' | 'pdf' {
     if (file.scope !== 'shared') return 'none'
-    if (RASTER.test(file.path)) return 'image'
+    if (IMAGE.test(file.path)) return 'image'
+    if (PDF.test(file.path)) return 'pdf'
     if (AUDIO.test(file.path)) return 'audio'
     if (VIDEO.test(file.path)) return 'video'
     if (TEXT.test(file.path)) return 'text'

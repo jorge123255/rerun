@@ -26,13 +26,13 @@ test('reuses original ordered authentication cards and exact catalog labels', as
 })
 test('mount does not save/probe; unknown setup acknowledgement retains exact id after reopening', async () => {
     let stored: ServiceTransportSetupIntent | null = null
-    const ports: ServiceTransportSetupPorts = { uuid: () => requestId, journal: { read: async () => stored, put: async value => { stored = value }, clear: async () => { stored = null } }, save: vi.fn(async intent => ({ requestId: intent.requestId, outcome: 'unknown' })), reconcile: vi.fn(async intent => ({ requestId: intent.requestId, outcome: 'saved', ref: { ...ref, revision: '00000000-0000-4000-8000-000000000004' } })) }
+    const ports: ServiceTransportSetupPorts = { uuid: () => requestId, journal: { read: async () => stored, put: async value => { stored = value }, clear: async () => { stored = null } }, save: vi.fn(async intent => ({ requestId: intent.requestId, outcome: 'unknown' as const })), reconcile: vi.fn(async intent => ({ requestId: intent.requestId, outcome: 'saved' as const, ref: { ...ref, revision: '00000000-0000-4000-8000-000000000004' } })) }
     const saved = vi.fn(), root = mount()
     const render = (revision = ref.revision) => <ServiceTransportSetup account={{ ...ref, revision }} name="Example" methods={methods} initialMethodId="token" configuredInputs={{ TOKEN: true }} ports={ports} onSaved={saved} onCancel={() => {}} />
     await act(async () => root.render(render()))
     expect(ports.save).not.toHaveBeenCalled(); expect(document.querySelector<HTMLInputElement>('input')?.type).toBe('password')
     await act(async () => button('Install').click())
-    expect(saved).not.toHaveBeenCalled(); expect(stored?.requestId).toBe(requestId)
+    expect(saved).not.toHaveBeenCalled(); expect(await ports.journal.read(ref)).toEqual(expect.objectContaining({ requestId }))
     expect(JSON.stringify(stored)).not.toContain('TOKEN')
     await act(async () => root.render(render('00000000-0000-4000-8000-000000000004')))
     expect(ports.save).toHaveBeenCalledTimes(1)
@@ -56,4 +56,17 @@ test('Stop stays available while an explicit connection check waits', async () =
     await act(async () => button('Check connection').click())
     expect(button('Stop').disabled).toBe(false)
     await act(async () => button('Stop').click()); expect(client.stop).toHaveBeenCalledOnce()
+})
+
+test('a confirmed refused setup clears its exact pending journal so the user can correct it', async () => {
+    let stored: ServiceTransportSetupIntent | null = null
+    const clear = vi.fn(async (intent: ServiceTransportSetupIntent) => { if (stored?.requestId === intent.requestId) stored = null })
+    const ports: ServiceTransportSetupPorts = { uuid: () => requestId, journal: { read: async () => stored, put: async value => { stored = value }, clear }, save: vi.fn(async intent => ({ requestId: intent.requestId, outcome: 'refused' as const })), reconcile: vi.fn() }
+    const root = mount(), saved = vi.fn()
+    await act(async () => root.render(<ServiceTransportSetup account={ref} name="Example" methods={methods} initialMethodId="token" configuredInputs={{ TOKEN: true }} ports={ports} onSaved={saved} onCancel={() => {}} />))
+    await act(async () => button('Install').click())
+    expect(clear).toHaveBeenCalledWith(expect.objectContaining({ requestId }))
+    expect(stored).toBeNull(); expect(saved).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Configuration was not saved')
+    expect(button('Install').disabled).toBe(false)
 })

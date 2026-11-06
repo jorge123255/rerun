@@ -5,6 +5,9 @@ import { openDesktopDatabase } from '../database'
 import type { DesktopRuntime } from '../runtime'
 import { findDesktopAgent } from '../store'
 import { desktopResultFileDisposition, parseDesktopResultFileBody, type DesktopResultFileTicket } from './contract'
+import { readDesktopJson } from '../request-json'
+import { previewResultBytes } from './preview'
+import { desktopPdfRenderOptions } from '../pdf-render'
 
 const noStore = { 'cache-control': 'no-store' }
 const unavailable = 'This file is no longer available.'
@@ -61,13 +64,16 @@ export function desktopResultFileResponse(ticket: DesktopResultFileTicket, read:
  * Read one saved result file for the coworker in the route. This does not start a model run or
  * publish a tool result. The engine agent id comes from the coworker row, never from the body.
  */
-export async function handleDesktopResultFilePost(runtime: DesktopRuntime, agentId: string, request: Request): Promise<Response> {
-    const bound = authority
+export async function handleDesktopResultFilePost(runtime: DesktopRuntime, agentId: string, request: Request, reader?: DesktopResultFileAuthority): Promise<Response> {
+    const bound = reader ?? authority
     if (!bound) return unboundDesktopResultFileResponse()
     if (request.signal.aborted) return new Response(null, { status: 499, headers: noStore })
     let ticket: DesktopResultFileTicket | undefined
-    try { ticket = parseDesktopResultFileBody(agentId, await request.json()) }
-    catch { return Response.json({ error: 'Result file request was not understood.', downloaded: false }, { status: 400, headers: noStore }) }
+    try { ticket = parseDesktopResultFileBody(agentId, await readDesktopJson(request, 12_000)) }
+    catch (error) {
+        if (error instanceof DesktopHttpError) throw error
+        return Response.json({ error: 'Result file request was not understood.', downloaded: false }, { status: 400, headers: noStore })
+    }
     if (!ticket) return Response.json({ error: 'Result file request was not understood.', downloaded: false }, { status: 400, headers: noStore })
     const db = await openDesktopDatabase(runtime.dataRoot)
     const coworker = await findDesktopAgent(db, agentId)
@@ -80,7 +86,22 @@ export async function handleDesktopResultFilePost(runtime: DesktopRuntime, agent
             identity: ticket.identity, size: ticket.size, signal: request.signal,
         })
         if (request.signal.aborted) return new Response(null, { status: 499, headers: noStore })
-        return desktopResultFileResponse(ticket, read)
+        let response = desktopResultFileResponse(ticket, read)
+        const url = new URL(request.url)
+        if (url.searchParams.has('preview')) {
+            if (url.searchParams.getAll('preview').length !== 1 || url.searchParams.get('preview') !== '1') throw new DesktopHttpError(400, 'Choose a supported preview.')
+            if (response.ok && read) {
+                response = await previewResultBytes(ticket.name, read.bytes, { signal: request.signal,
+                    ...desktopPdfRenderOptions(Number(url.searchParams.get('page') ?? 1), Number(url.searchParams.get('scale') ?? 1)) })
+                response.headers.set('x-rerun-result-identity', read.identity)
+                response.headers.set('x-rerun-result-size', String(read.size))
+            }
+        }
+        await assertCoworkerNotDeleting(db, agentId)
+        const current = await findDesktopAgent(db, agentId)
+        if (!current || current.engineAgentId !== coworker.engineAgentId) throw new DesktopHttpError(404, 'Coworker not found')
+        request.signal.throwIfAborted()
+        return response
     } catch (error) {
         if (error instanceof DesktopHttpError) throw error
         if (request.signal.aborted) return new Response(null, { status: 499, headers: noStore })

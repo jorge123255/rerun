@@ -2,7 +2,7 @@
 
 import { Badge } from '@rerun/ui/primitives'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { DesktopMcpSignInOAuthView, DesktopMcpSignInView } from '../../../../../../packages/contracts/src/desktop-mcp-sign-in'
+import type { DesktopMcpSignInOAuthView, DesktopMcpSignInView } from '../../../../../packages/contracts/src/desktop-mcp-sign-in'
 
 export function DesktopMcpSignInStatusBadge({ request, oauth, loading }: { request: DesktopMcpSignInView; oauth?: DesktopMcpSignInOAuthView; loading?: boolean }) {
     if (loading) return <Skeleton className="h-4 w-16 rounded-full" />

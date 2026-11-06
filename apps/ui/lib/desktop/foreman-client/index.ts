@@ -101,6 +101,9 @@ export {
     type DesktopForemanActionPorts,
     requirePort,
     saveForemanUiIfMatching,
+    loadForemanUiAfterWrites,
+    flushDesktopForemanUiSaves,
+    hasPendingDesktopForemanUiSaves,
 } from './actions'
 
 export { DESKTOP_FOREMAN_CONTRACT_EXPECTATIONS } from './contract-expectations'

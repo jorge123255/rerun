@@ -48,7 +48,7 @@ export function canonical(value: unknown): unknown {
 function asAccount(record: ServiceInstall): AccountInstallRecord {
     const plan = record.plan as Partial<AccountCompilePlan> & ServiceInstall['plan']
     if (plan.shape !== undefined) {
-        if (!['anonymous', 'bearer', 'headers'].includes(plan.shape) || !Array.isArray(plan.credentialInputs) || !Array.isArray(plan.headerPlan) || !plan.publicInputs || typeof plan.label !== 'string') throw new Error('Invalid service account plan')
+        if (!['anonymous', 'bearer', 'headers', 'oauth'].includes(plan.shape) || !Array.isArray(plan.credentialInputs) || !Array.isArray(plan.headerPlan) || !plan.publicInputs || typeof plan.label !== 'string') throw new Error('Invalid service account plan')
         return { ...record, plan: plan as AccountCompilePlan }
     }
     const { instanceId } = parseServiceRegistryKey(record.key)

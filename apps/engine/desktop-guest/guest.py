@@ -445,6 +445,12 @@ def dispatch(request, client):
     if op == 'ping':
         width, height = geometry()
         return {'ok': True, 'ready': True, 'width': width, 'height': height, 'launchers': launchers.capabilities() if launchers is not None else {'terminal': False, 'files': False}}, b''
+    if op == 'tool-install':
+        from tool_install import dispatch as install_dispatch, InstallError
+        try:
+            return install_dispatch(request, client, cancelled), b''
+        except InstallError:
+            raise GuestError('The reviewed installation could not be verified.', refusal=True)
     if op in ('computer-launcher', 'foreground', 'focus-browser'):
         from computer_launchers import LauncherError
         if launchers is None:

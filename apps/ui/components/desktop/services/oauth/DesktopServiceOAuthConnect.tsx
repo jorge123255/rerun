@@ -48,6 +48,7 @@ function OAuthConnect({initial,driver,onChanged}:{initial:Snapshot;driver:Servic
    {snapshot.installed?<CheckCircle2Icon className="size-3.5 shrink-0 text-green-600"/>:waiting?<Loader2Icon className="size-3.5 shrink-0 animate-spin"/>:null}
    <span className="min-w-0 break-words">{snapshot.message}</span>
   </div>
+  {waiting&&snapshot.authorizationUrl&&<a href={snapshot.authorizationUrl} target="_blank" rel="noreferrer" className="inline-flex break-words text-sm underline underline-offset-2">Open sign-in in browser</a>}
   {error&&<p role="alert" className="break-words text-sm text-destructive">{error}</p>}
   {error&&waiting&&<Button variant="outline" size="sm" onClick={()=>void perform('status')}>Retry</Button>}
   <div className="flex flex-wrap gap-2">

@@ -118,3 +118,10 @@ test('desktop duplication only allows POST on the selected coworker', () => {
     for (const method of ['GET', 'PATCH', 'PUT', 'DELETE']) expect(desktopRouteAllowed(method, '/agents/a/duplicate')).toBe(false)
     for (const path of ['/agents/foreman/duplicate', '/agents/a/duplicate/more']) expect(desktopRouteAllowed('POST', path)).toBe(false)
 })
+
+
+test('MCP sign-in source lookup is only the owned-session POST boundary', () => {
+    expect(desktopRouteAllowed('POST', '/agents/owner/sessions/chat/mcp-sign-in-source')).toBe(true)
+    for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, '/agents/owner/sessions/chat/mcp-sign-in-source')).toBe(false)
+    for (const path of ['/agents/foreman/sessions/chat/mcp-sign-in-source', '/agents/owner/mcp-sign-in-source', '/agents/owner/sessions/chat/mcp-sign-in-source/more']) expect(desktopRouteAllowed('POST', path)).toBe(false)
+})

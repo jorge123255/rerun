@@ -10,6 +10,7 @@ import { initializeDesktopSpaces } from './spaces'
 import { initializeDesktopDataPreferences } from './data-preferences-db'
 import { initializeDesktopMcp } from './mcp/schema'
 import { ensureDesktopPrivateFileToolsSchema } from './private-file-tools/schema'
+import { initializeDesktopRound33 } from './round33-schema'
 import { initializeDesktopRound32 } from './round32-schema'
 import { initializeDesktopRound31 } from './round31-schema'
 import { initializeDesktopRound28 } from './round28-schema'
@@ -247,6 +248,7 @@ async function initialize(dataRoot: string): Promise<Client> {
     await initializeDesktopRound28(client)
     await initializeDesktopRound31(client)
     await initializeDesktopRound32(client)
+    await initializeDesktopRound33(client)
     return client
 }
 

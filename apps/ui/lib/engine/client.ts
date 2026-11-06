@@ -1,3 +1,4 @@
+import type { DesktopDocumentSendSelection, DesktopResolvedDocument, DesktopMcpSignInGuard } from '@rerun/contracts'
 import type { DesktopCoworkerMention } from '@rerun/contracts'
 import type { DesktopTakeoverGuard } from '@rerun/contracts'
 import { z } from 'zod'
@@ -470,7 +471,7 @@ export async function getSessionMessages(conn: EngineConnection, agentId: string
 // Returns the raw fetch Response so the caller can read the `x-session-id`
 // header and pipe the SSE body straight through to the browser.
 type ChatParams = { connectionId?: string; model?: string; source?: SessionSource; author?: MessageAuthor } & (
-    | { sessionId?: string; message: string; coworkerMentions?: DesktopCoworkerMention[]; foreman?: ForemanBrief; install?: boolean; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; workspaceAttachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; desktopFirstTurn?: { sessionId: string; runId: string }; desktopQueuedTurn?: { runId: string; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; replayOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard; secret?: import('@rerun/contracts').DesktopSecretRequestGuard } }
+    | { sessionId?: string; message: string; coworkerMentions?: DesktopCoworkerMention[]; foreman?: ForemanBrief; install?: boolean; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; workspaceAttachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; desktopDocuments?: DesktopResolvedDocument[]; desktopFirstTurn?: { sessionId: string; runId: string }; desktopQueuedTurn?: { runId: string; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; replayOnly?: boolean; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard; secret?: import('@rerun/contracts').DesktopSecretRequestGuard; documents?: DesktopDocumentSendSelection; mcpSignIn?: DesktopMcpSignInGuard } }
     | { sessionId: string; regenerateMessageId: string; requestId: string; replayOnly?: boolean }
 )
 

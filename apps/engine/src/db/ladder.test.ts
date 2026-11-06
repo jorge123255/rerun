@@ -117,6 +117,10 @@ describe('sqlite ladders', () => {
               8,
               "desktop-trigger-intents-and-deliveries",
             ],
+            [
+              9,
+              "desktop-schedule-tool-intents",
+            ],
           ]
         `)
         expect(SHARED_DB_MIGRATIONS.map(s => [s.version, s.id])).toMatchInlineSnapshot(`

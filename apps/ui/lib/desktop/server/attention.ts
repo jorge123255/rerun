@@ -1,3 +1,6 @@
+import { desktopToolInstallAttention } from '@rerun/contracts'
+import { readDesktopToolInstallHistory } from './tool-install/runtime'
+import { readDesktopMcpSignInView } from './mcp-sign-in/binding'
 import { readDesktopServiceRequestView } from './service-requests/view'
 import { readDesktopSecretRequestView } from './secret-requests/binding'
 import 'server-only'
@@ -65,6 +68,16 @@ async function collect(runtime: DesktopRuntime): Promise<DesktopAttention> {
                                 signal.throwIfAborted()
                                 const { request: secret } = await readDesktopSecretRequestView(runtime, session.id, { signal })
                                 if (secret) pending = { id: secret.requestId, kind: 'secret', summary: summary(`Needs ${secret.fields[0].label}${secret.fields.length > 1 ? ` (+${secret.fields.length - 1} more)` : ''}`), requestedAt: secret.createdAt }
+                                else {
+                                    signal.throwIfAborted()
+                                    const { request: mcp } = await readDesktopMcpSignInView(runtime, session.id, { signal })
+                                    if (mcp) pending = { id: mcp.requestId, kind: 'mcp', summary: summary(`Sign in to ${mcp.source.server.displayName}`), requestedAt: mcp.createdAt }
+                                    else {
+                                        const installs = await readDesktopToolInstallHistory(runtime, session.id, { signal })
+                                        const installation = installs.map(desktopToolInstallAttention).find(Boolean)
+                                        if (installation) pending = { ...installation, summary: summary(installation.summary) }
+                                    }
+                                }
                             }
                         }
                     }

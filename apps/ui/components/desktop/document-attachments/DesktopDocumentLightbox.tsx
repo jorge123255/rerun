@@ -2,20 +2,18 @@
 
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from '@/lib/icons'
-import type { DesktopDocumentAttachment } from '../../../../../packages/contracts/src/desktop-document-attachments.ts'
-import { DesktopDocumentAttachmentView, type DesktopDocumentViewerUrls } from './DesktopDocumentAttachmentView'
+import { ChevronLeftIcon, ChevronRightIcon } from '@/lib/icons'
+import type { DesktopDocumentReference } from '@rerun/contracts'
+import { DesktopDocumentAttachmentView, DesktopDocumentDownload } from './DesktopDocumentAttachmentView'
 
-export function DesktopDocumentLightbox({ attachments, index, urlsFor, onIndexChange, onClose }: {
-    attachments: readonly DesktopDocumentAttachment[]
+export function DesktopDocumentLightbox({ attachments, index, onIndexChange, onClose }: {
+    attachments: readonly DesktopDocumentReference[]
     index: number
-    urlsFor: (attachment: DesktopDocumentAttachment) => DesktopDocumentViewerUrls
     onIndexChange: (index: number) => void
     onClose: () => void
 }) {
     const attachment = attachments[index]
     if (!attachment) return null
-    const urls = urlsFor(attachment)
     return <Dialog open onOpenChange={open => !open && onClose()}>
         <DialogContent aria-describedby={undefined} className="flex h-[80vh] flex-col gap-0 p-0 sm:max-w-4xl">
             <div className="flex shrink-0 items-center gap-2 border-b border-border py-2 pl-4 pr-12">
@@ -25,10 +23,10 @@ export function DesktopDocumentLightbox({ attachments, index, urlsFor, onIndexCh
                     <Button size="icon-sm" variant="ghost" onClick={() => onIndexChange((index - 1 + attachments.length) % attachments.length)} aria-label="Previous attachment"><ChevronLeftIcon className="size-4" /></Button>
                     <Button size="icon-sm" variant="ghost" onClick={() => onIndexChange((index + 1) % attachments.length)} aria-label="Next attachment"><ChevronRightIcon className="size-4" /></Button>
                 </>}
-                <Button size="icon-sm" variant="ghost" asChild title="Download" aria-label="Download"><a href={urls.downloadUrl} download={attachment.name}><DownloadIcon className="size-4" /></a></Button>
+                <DesktopDocumentDownload attachment={attachment} />
             </div>
             <div className="min-h-0 flex-1 overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
-                <DesktopDocumentAttachmentView attachment={attachment} urls={urls} onBack={onClose} />
+                <DesktopDocumentAttachmentView attachment={attachment} onBack={onClose} />
             </div>
         </DialogContent>
     </Dialog>

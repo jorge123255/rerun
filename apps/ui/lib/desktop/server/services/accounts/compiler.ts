@@ -4,6 +4,7 @@ import { parseServiceRegistryKey, serviceRegistryKey, type DesktopServiceMethodA
 import { DESKTOP_SERVICE_ACCOUNT_MESSAGES as M } from '@rerun/contracts'
 import { serviceManifestSchema, type AuthMethod, type InputDef, type ServiceManifest } from '@/lib/services/manifest'
 import { instanceServerName } from '@/lib/services/instances'
+import { compileCatalogOAuth, oauthAccountServerName } from '../oauth/compiler'
 import { endpoint, serverName } from '../../mcp/model'
 
 const INPUT_PLACEHOLDER = /\$\{input\.([A-Za-z0-9_]+)\}/g
@@ -59,7 +60,9 @@ export type AccountCompilePlan = {
     headerPlan: AccountHeaderPlanEntry[]
     credentialInputs: string[]
     publicInputs: Record<string, string>
-    shape: 'anonymous' | 'bearer' | 'headers'
+    shape: 'anonymous' | 'bearer' | 'headers' | 'oauth'
+    oauthFingerprint?: string
+    transport?: 'http' | 'sse'
 }
 
 export type AccountCompileResult = {
@@ -170,6 +173,23 @@ export function compileAccountService(
     if (!method) fail(M.unknownMethod)
     if (availability.id !== methodId) fail(M.method)
     if (!availability.supported && availability.reason !== CATALOG_CUSTOM_HEADER_REASON) fail(M.method)
+    if (method.mcpServers[0]?.transport === 'sse') {
+        if (method.mcpServers.length !== 1) fail(M.endpoint)
+        if (method.kind === 'oauth' || method.mcpServers[0].oauth !== undefined) fail('SSE OAuth is not available on this Mac.')
+        const server = method.mcpServers[0]
+        const converted = { ...manifest, authMethods: manifest.authMethods.map(row => row.id === methodId ? { ...row, mcpServers: [{ ...server, transport: 'http' as const }] } : row) }
+        const compiled = compileAccountService(converted, methodId, values, availability, target)
+        if (compiled.plan.shape !== 'anonymous' && compiled.plan.shape !== 'bearer') fail('SSE supports anonymous or one Bearer credential only.')
+        return { ...compiled, plan: { ...compiled.plan, transport: 'sse' } }
+    }
+    if (method.kind === 'oauth') {
+        if (Object.keys(values).length) fail(M.unknownInput)
+        const oauth = compileCatalogOAuth(manifest, methodId)
+        const key = serviceRegistryKey(manifest.slug, target.instanceId), parsedKey = parseServiceRegistryKey(key)
+        if (parsedKey.slug !== manifest.slug || manifest.slug.includes('@') || (target.instanceId !== undefined && parsedKey.instanceId !== target.instanceId)) fail(M.instance)
+        const plan: AccountCompilePlan = { slug: manifest.slug, key: serviceRegistryKey(manifest.slug, target.instanceId), ...(target.instanceId ? { instanceId: target.instanceId } : {}), label: target.label, name: manifest.name, category: manifest.category, icon: manifest.icon ?? null, methodId, serverName: serverName(oauthAccountServerName(oauth, target.instanceId)), url: oauth.endpoint, skills: oauth.skills, headerPlan: [], credentialInputs: [], publicInputs: {}, shape: 'oauth', oauthFingerprint: oauth.fingerprint }
+        return { plan, headers: {}, bearer: '' }
+    }
     const { server, url } = shell(manifest, method)
     const inputs = method.inputs
     const headerEntries = Object.entries(server.headers)

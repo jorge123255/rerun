@@ -34,7 +34,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, newBoxSignal = 0, focusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation }: {
+export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation }: {
     activitySnapshot?: BoardActivitySnapshot
     agents: DesktopAgentView[]
     workspaceName: string
@@ -45,6 +45,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     recenterSignal?: number
     newBoxSignal?: number
     focusRequest?: { tileId: string; nonce: number; insetRight: number } | null
+    boxFocusRequest?: { spaceId: string; nonce: number } | null
     onOpen: (id: string) => void
     onRename?: (id: string, name: string) => Promise<void>
     onDuplicate?: (sourceId: string, requestId: string, position: GridPosition, spaceId?: string) => Promise<'created' | 'occupied'>
@@ -82,6 +83,7 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
         position: newCoworker.position, spaceId: newCoworker.spaceId, saving: newCoworker.saving, error: newCoworker.error } : copyPlacement
     const [spaceDialog, setSpaceDialog] = useState<DesktopSpaceDialogTarget | null>(null)
     const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null)
+    useEffect(() => { if (boxFocusRequest && board?.spaces.some(space => space.id === boxFocusRequest.spaceId)) setSelectedSpaceId(boxFocusRequest.spaceId) }, [boxFocusRequest, board])
     const [menuInteracting, setMenuInteracting] = useState(false)
     const [resizing, setResizing] = useState<string | null>(null)
     const [commandBusy, setCommandBusy] = useState(false)

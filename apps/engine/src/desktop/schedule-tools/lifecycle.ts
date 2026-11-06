@@ -146,7 +146,8 @@ export function createDesktopScheduleLifecycle(input: {
                 if (kind === 'create' && current) throw reject(M.exists)
                 if (kind !== 'create' && !current) throw reject(M.notFound(slug))
                 if (kind !== 'create' && desktopScheduleDefinitionRevision(current) !== raw.expectedRevision) throw reject(M.stale)
-                const after = prepare(current)
+                const prepared = prepare(current)
+                const after = prepared ? { ...prepared, body: prepared.body.trim() } : null
                 assertRunnable(await owner(engineAgentId), after)
                 const text = textFor(current)
                 intent = {
@@ -195,8 +196,18 @@ export function createDesktopScheduleLifecycle(input: {
             }
             assertRunnable(writer, actual === after ? current : intent.after)
             if (actual !== after) {
-                try { await input.files.replace(engineAgentId, slug, intent.before, intent.after) }
+                try { await input.files.replace(engineAgentId, slug, intent.before, intent.after, async () => {
+                    await admission?.()
+                    const latest = await owner(engineAgentId)
+                    if (latest.localAgentId !== identity.localAgentId) throw reject(M.deleting)
+                    assertRunnable(latest, intent!.after)
+                }) }
                 catch (error) {
+                    if (error instanceof DesktopScheduleToolError) {
+                        const closed: DesktopScheduleReceipt = { outcome: error.outcome === 'cancelled' ? 'cancelled' : 'interrupted', operation: kind, text: error.message, slug, revision: before }
+                        await input.store.complete(engineAgentId, raw.requestId, JSON.stringify(closed))
+                        throw error
+                    }
                     if (error instanceof Error && error.message === M.fileUnsafe) throw reject(M.fileUnsafe)
                     throw new DesktopScheduleToolError('uncertain', M.uncertain)
                 }
@@ -220,6 +231,8 @@ export function createDesktopScheduleLifecycle(input: {
             await owner(engineAgentId)
             try {
                 const schedules = await input.files.list(engineAgentId)
+                await admission?.()
+                await owner(engineAgentId)
                 const text = projectScheduleList(schedules, now())
                 const receipt = committed('list', text, '', null)
                 remember(receipt)
@@ -235,12 +248,14 @@ export function createDesktopScheduleLifecycle(input: {
             await owner(engineAgentId)
             if (!SLUG_RE.test(slug)) throw reject(M.notFound(slug))
             const schedule = await readOf(engineAgentId, slug)
+            await admission?.()
+            await owner(engineAgentId)
             if (!schedule) throw reject(M.notFound(slug))
             const receipt = committed('get', projectScheduleGet(schedule, now()), slug, desktopScheduleDefinitionRevision(schedule))
             remember(receipt)
             return receipt
         },
-        create(engineAgentId: string, raw: DesktopScheduleCreateInput, admission?: () => Promise<void>) {
+        async create(engineAgentId: string, raw: DesktopScheduleCreateInput, admission?: () => Promise<void>) {
             const slug = slugify(raw.name)
             if (!SLUG_RE.test(slug)) throw reject(M.name)
             if (raw.body.length > 64000) throw reject(M.tooLong)
@@ -273,7 +288,7 @@ export function createDesktopScheduleLifecycle(input: {
                 if (!named.ok) throw reject(named.refusal)
             })
         },
-        update(engineAgentId: string, slug: string, raw: DesktopScheduleUpdateInput, admission?: () => Promise<void>) {
+        async update(engineAgentId: string, slug: string, raw: DesktopScheduleUpdateInput, admission?: () => Promise<void>) {
             if (raw.provider && !raw.model) throw reject(M.providerWithoutModel)
             if (raw.cron && raw.runAt) throw reject(M.both)
             return mutate(engineAgentId, slug, 'update', raw, current => {
@@ -300,7 +315,7 @@ export function createDesktopScheduleLifecycle(input: {
                 if (!named.ok) throw reject(named.refusal)
             })
         },
-        edit(engineAgentId: string, slug: string, raw: DesktopScheduleEditInput, admission?: () => Promise<void>) {
+        async edit(engineAgentId: string, slug: string, raw: DesktopScheduleEditInput, admission?: () => Promise<void>) {
             if (!raw.oldString) throw reject(M.emptyExcerpt)
             if (raw.oldString === raw.newString) throw reject(M.identical)
             return mutate(engineAgentId, slug, 'edit', raw, current => {

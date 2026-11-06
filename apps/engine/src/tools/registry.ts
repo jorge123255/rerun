@@ -1,3 +1,8 @@
+import { desktopMcpSignInTools } from '../desktop/mcp-sign-in/request-sign-in.js'
+import { readDesktopScheduleTools } from '../desktop/schedule-tools/binding.js'
+import { readDesktopToolInstall } from '../desktop/tool-install/binding.js'
+import { FOREMAN_AGENT_ID } from '@rerun/contracts'
+import { desktopForemanTools } from '../desktop/foreman/binding.js'
 import { readDesktopDelegation } from '../desktop/delegation/binding.js'
 import { desktopDelegationChildTools } from '../desktop/delegation/child-scope.js'
 import { readDesktopTriggerRuntime } from '../desktop/triggers/runtime.js'
@@ -64,12 +69,16 @@ import { desktopCallAgentTools } from '../desktop/coworker-calls/tool.js'
 
 export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
     if (desktopApp()) {
+        if (ctx.agent.id === FOREMAN_AGENT_ID || ctx.agent.config.kind === 'foreman') return desktopForemanTools(ctx)
         const child = await desktopDelegationChildTools(ctx)
         if (child) return child
         const screen = isolatedScreenTools(ctx, { publishExports: desktopBrowserExportPublisher })
         const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopSuggestServiceTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx) }
         Object.assign(tools, readDesktopDelegation()?.tools(ctx) ?? {})
         Object.assign(tools, desktopSecretRequestTools(ctx))
+        Object.assign(tools, desktopMcpSignInTools(ctx))
+        if (!ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'scheduleManage')) Object.assign(tools, readDesktopScheduleTools()?.tools(ctx.agent.id, ctx) ?? {})
+        if (!ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'toolInstall')) Object.assign(tools, readDesktopToolInstall()?.tools(ctx) ?? {})
         Object.assign(tools, desktopSelfMcpTools(ctx))
         Object.assign(tools, desktopWebSearchTools(ctx, { search: desktopWebSearch }))
         const triggers = readDesktopTriggerRuntime()

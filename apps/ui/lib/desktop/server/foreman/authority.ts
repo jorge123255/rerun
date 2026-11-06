@@ -45,6 +45,9 @@ export type ForemanCoworkerSpec = {
 // receipts. Created coworkers start disabled for runs (no kickoff), setup pending, and with the
 // default conservative tool grants: the plan carries no permissions.
 export type ForemanCreationAuthority = {
+    // Explicit user recovery only. Replays the exact pending durable body with its original ID.
+    // Startup/read inspection must never call this. No journal entry means no effect.
+    resumePending?(requestId: string): Promise<void>
     ensureBox(input: { requestId: string; name: string; order: number }): Promise<{ spaceId: string }>
     lookupBox(requestId: string): Promise<ForemanReceipt<{ spaceId: string }>>
     createCoworker(spec: ForemanCoworkerSpec): Promise<{ agentId: string }>

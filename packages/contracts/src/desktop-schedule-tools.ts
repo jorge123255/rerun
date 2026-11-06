@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-/** Separate from the Schedules grant, which only runs routines. Default off until root adds it to the grant catalog. */
+/** Separate from the Schedules grant, which only runs routines. A separate, default-off capability in the desktop grant catalog. */
 export const DESKTOP_SCHEDULE_MANAGE_GRANT_ID = 'scheduleManage' as const
 
 export const DESKTOP_SCHEDULE_TOOL_NAMES = ['schedule_list', 'schedule_get', 'schedule_create', 'schedule_update', 'schedule_edit', 'schedule_delete'] as const

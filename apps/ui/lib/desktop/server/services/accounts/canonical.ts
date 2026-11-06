@@ -2,7 +2,7 @@ import 'server-only'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { desktopServiceAccountMutationSchema } from '@rerun/contracts'
 import type { DesktopRuntime } from '../../runtime'
-import type { LocalServices } from '../lifecycle'
+import type { LocalServices, ServiceRun, ServiceTransport } from '../lifecycle'
 import type { OwnedSkill, ServiceInstall, ServiceStore } from '../store'
 import { currentSkillInstallation, type SkillReservation } from '../skill-journal'
 import { acknowledgeServiceSkill, createServiceSkill, removeServiceSkill, resolveServiceSkillRemoval, verifyServiceSkill } from '../skill-resources'
@@ -17,7 +17,7 @@ import { accountAttempts } from './attempts'
 const sameResource = (a: OwnedSkill, b: OwnedSkill) => a.slug === b.slug && a.directoryIdentity === b.directoryIdentity && a.manifestVersion === b.manifestVersion && a.contentHash === b.contentHash
 
 /** One feature per canonical MCP binding; no route-local credentials/runtime. */
-export async function canonicalServiceAccounts(runtime: DesktopRuntime, store: ServiceStore, services: LocalServices, keyReader: () => Buffer): Promise<AccountFeature> {
+export async function canonicalServiceAccounts(runtime: DesktopRuntime, store: ServiceStore, services: LocalServices, keyReader: () => Buffer, options: { additionalTransport?: (record: ServiceInstall, run: ServiceRun | undefined, signal: AbortSignal) => ServiceTransport | undefined; oauthCredential?: (record: ServiceInstall, run: ServiceRun | undefined, signal: AbortSignal) => Promise<string>; beforeChange?: (owner: string, installationId: string) => Promise<void> } = {}): Promise<AccountFeature> {
     type Scope = { owner: string; signal: AbortSignal; authority: Awaited<ReturnType<LocalServices['current']>> }
     const context = new AsyncLocalStorage<Scope>()
     const scope = () => { const value = context.getStore(); if (!value) throw new Error('Account mutation authority unavailable'); return value }
@@ -120,8 +120,8 @@ export async function canonicalServiceAccounts(runtime: DesktopRuntime, store: S
         }
     }
     const secrets = legacyCompatibleHeaderSecrets(store, sqliteHeaderSecrets(store.db, keyReader))
-    const transport = canonicalAccountTransport(services, secrets)
-    services.setAccountTransport(transport)
+    const transport = canonicalAccountTransport(services, secrets, fetch, options.oauthCredential)
+    services.setAccountTransport((record, run, signal) => options.additionalTransport?.(record, run, signal) ?? transport(record, run, signal))
     const feature = await openDesktopServiceAccounts(runtime, {
         keyReader, skills, decorateInstalls, assertToolNames: services.assertToolNames,
         authority: { async current(owner, action, signal) { const value = await services.current(owner, action, undefined, signal); return { engineAgentId: value.engineAgentId, enabled: value.enabled, granted: value.granted, skillsRoot: value.skillsRoot, launchNonce: value.runtime.launchNonce } } },
@@ -171,7 +171,13 @@ export async function canonicalServiceAccounts(runtime: DesktopRuntime, store: S
             return services.accountMutation(owner, input.action === 'probe', async () => {
                 const authority = await services.current(owner, 'manage', undefined, signal)
                 return context.run({ owner, signal, authority }, async () => {
-                    const execute = () => feature.mutate(owner, input, signal)
+                    const execute = async () => {
+                        if (input.action !== 'probe' && input.intent.kind === 'existing') {
+                            const prior = await store.read(owner, input.intent.accountKey)
+                            if (prior && prior.revision === input.intent.expectedRevision) await options.beforeChange?.(owner, prior.id)
+                        }
+                        return feature.mutate(owner, input, signal)
+                    }
                     const result = input.action === 'probe' && input.intent.kind === 'existing'
                         ? await probeContext.run({ owner, key: input.intent.accountKey, revision: input.intent.expectedRevision }, execute)
                         : await execute()

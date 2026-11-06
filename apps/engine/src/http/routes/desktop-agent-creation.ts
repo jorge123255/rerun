@@ -1,14 +1,14 @@
 import { Hono } from 'hono'
-import { createDesktopAgent, desktopAgentCreationSchema } from '../../desktop/agent-creation.js'
+import { createDesktopAgent, desktopAgentCreationSchema, createDesktopForemanAgent, desktopForemanAgentCreationSchema, readDesktopForemanAgentCreation } from '../../desktop/agent-creation.js'
 import { desktopApp } from '../../desktop/policy.js'
 import { HttpError, notFound } from '../../lib/errors.js'
 
 const BODY_BYTES = 32 * 1024
 const BODY_DEADLINE_MS = 6000
 
-async function bodyOf(request: Request): Promise<unknown> {
+async function bodyOf(request: Request, maximum = BODY_BYTES): Promise<unknown> {
     const length = request.headers.get('content-length')
-    if (length !== null && (!/^\d+$/.test(length) || Number(length) > BODY_BYTES)) throw new HttpError(413, 'Coworker creation request is too large.')
+    if (length !== null && (!/^\d+$/.test(length) || Number(length) > maximum)) throw new HttpError(413, 'Coworker creation request is too large.')
     if (request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') throw new HttpError(415, 'Expected a JSON coworker creation request.')
     if (!request.body) throw new HttpError(400, 'Expected a coworker creation request.')
     const reader = request.body.getReader()
@@ -31,7 +31,7 @@ async function bodyOf(request: Request): Promise<unknown> {
                     catch { throw new HttpError(400, 'Invalid coworker creation request.') }
                 }
                 bytes += chunk.value.byteLength
-                if (bytes > BODY_BYTES) throw new HttpError(413, 'Coworker creation request is too large.')
+                if (bytes > maximum) throw new HttpError(413, 'Coworker creation request is too large.')
                 try { text += decoder.decode(chunk.value, { stream: true }) }
                 catch { throw new HttpError(400, 'Invalid coworker creation request.') }
             }
@@ -51,4 +51,16 @@ desktopAgentCreationRoutes.post('/create', async c => {
     // Once admitted, finishing publication is intentional even if the response is lost. The
     // caller retries this requestId; it never retries the random-ID hosted factory.
     return c.json(await createDesktopAgent(input), 201)
+})
+
+// Protected by the existing engine auth middleware; never a browser-direct creation route.
+desktopAgentCreationRoutes.post('/foreman-create', async c => {
+    if (!desktopApp()) throw notFound('desktop creation')
+    const input = desktopForemanAgentCreationSchema.parse(await bodyOf(c.req.raw, 96 * 1024))
+    if (c.req.raw.signal.aborted) throw new HttpError(408, 'Coworker creation request was cancelled.')
+    return c.json(await createDesktopForemanAgent(input), 201)
+})
+desktopAgentCreationRoutes.get('/foreman-create/:requestId', async c => {
+    if (!desktopApp()) throw notFound('desktop creation')
+    return c.json(await readDesktopForemanAgentCreation(c.req.param('requestId')))
 })

@@ -130,6 +130,7 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
             health,
             installationId: record.id,
             shape: record.plan.shape,
+            ...(record.plan.transport ? { transport: record.plan.transport } : {}),
             headerPlan: record.plan.headerPlan,
             configured: record.plan.shape === 'anonymous' || configured,
             configuredInputs: Object.fromEntries(record.plan.credentialInputs.filter(() => configured).map(key => [key, true as const])),
@@ -209,7 +210,7 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
             if (existing && (existing.id !== reservation.installationId || existing.engineId !== binding.engineOwnerId)) throw new Error(M.owner)
             if (existing && existing.skills.length > 0 && JSON.stringify(existing.plan.skills) !== JSON.stringify(compiled.plan.skills)) throw new Error(M.skill)
             if (compiled.plan.skills.length > 0 && !deps.skills) throw new Error(M.skillsUnavailable)
-            if (compiled.plan.shape === 'anonymous') {
+            if (compiled.plan.shape === 'anonymous' || compiled.plan.shape === 'oauth') {
                 if (await deps.secrets.has(owner, reservation.installationId)) {
                     const atNew = await deps.secrets.read(owner, reservation.installationId, reservation.revision)
                     const atOld = existing && existing.revision !== reservation.revision ? await deps.secrets.read(owner, reservation.installationId, existing.revision) : null
@@ -372,7 +373,7 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
         }
         const useAuthority = await authorityOf(binding, 'use', signal)
         if (useAuthority.engineAgentId !== record.engineId) throw new Error(M.owner)
-        const bundle: HeaderSecretBundle | null = record.plan.shape === 'anonymous' ? { headers: {}, inputs: {} } : await deps.secrets.read(binding.coworkerId, record.id, record.revision)
+        const bundle: HeaderSecretBundle | null = ['anonymous', 'oauth'].includes(record.plan.shape) ? { headers: {}, inputs: {} } : await deps.secrets.read(binding.coworkerId, record.id, record.revision)
         if (!bundle) throw new Error(M.credential)
         reservation = await save(reservation, 'reserved', { phase: 'probing' })
         let aborted = false
@@ -457,7 +458,7 @@ export function accountLifecycle(deps: AccountLifecycleDeps) {
             const checkedAt = Date.parse(record.health.checkedAt ?? '')
             const fresh = record.health.state === 'healthy' && record.healthLaunch === authority.launchNonce && Number.isFinite(checkedAt) && Date.parse(deps.clock.now()) - checkedAt < 60_000
             if (!fresh || !record.toolNames.includes(`${record.plan.serverName}_${call.name}`)) throw new Error(M.probeFailed)
-            const bundle = record.plan.shape === 'anonymous' ? { headers: {}, inputs: {} } : await deps.secrets.read(binding.coworkerId, record.id, record.revision)
+            const bundle = ['anonymous', 'oauth'].includes(record.plan.shape) ? { headers: {}, inputs: {} } : await deps.secrets.read(binding.coworkerId, record.id, record.revision)
             if (!bundle) throw new Error(M.credential)
             const guard = async () => {
                 const current = await deps.installs.read(binding.coworkerId, accountKey)

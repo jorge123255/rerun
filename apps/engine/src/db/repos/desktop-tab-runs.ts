@@ -1,3 +1,4 @@
+import { desktopDocumentContextParts, type DesktopResolvedDocument } from '@rerun/contracts'
 import { createHash } from 'node:crypto'
 import { desktopCoworkerMentionContextParts, desktopStoredCoworkerMentions, type DesktopCoworkerMention, isContextPart, workspaceAttachmentParts, desktopStoredAttachmentSelections, desktopResolvedAttachmentParts, type DesktopResolvedAttachment, type DesktopWorkspaceAttachment, type MessageAuthor } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
@@ -5,9 +6,9 @@ import type { MessageRow } from '../schema.js'
 import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
 
-export type DesktopFirstTurn = { sessionId: string; runId: string; message: string; coworkerMentions?: DesktopCoworkerMention[]; attachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; author?: MessageAuthor }
+export type DesktopFirstTurn = { sessionId: string; runId: string; message: string; coworkerMentions?: DesktopCoworkerMention[]; attachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; author?: MessageAuthor; desktopDocuments?: DesktopResolvedDocument[] }
 const conflict = () => new HttpError(409, 'This conversation belongs to a different or incomplete first turn.')
-const initialContent = (turn: DesktopFirstTurn) => [{ type: 'text' as const, text: turn.message }, ...(turn.desktopAttachments ? desktopResolvedAttachmentParts(turn.desktopAttachments) : workspaceAttachmentParts(turn.attachments ?? [])), ...desktopCoworkerMentionContextParts(turn.message, turn.coworkerMentions)]
+const initialContent = (turn: DesktopFirstTurn) => [{ type: 'text' as const, text: turn.message }, ...(turn.desktopAttachments ? desktopResolvedAttachmentParts(turn.desktopAttachments) : workspaceAttachmentParts(turn.attachments ?? [])), ...desktopCoworkerMentionContextParts(turn.message, turn.coworkerMentions), ...desktopDocumentContextParts(turn.desktopDocuments ?? [])]
 function fingerprint(turn: DesktopFirstTurn) {
     return createHash('sha256').update(JSON.stringify([turn.sessionId, initialContent(turn), turn.author?.id ?? null, turn.author?.name ?? null])).digest('hex')
 }
@@ -18,7 +19,7 @@ function matchesUser(row: import('@libsql/client').Row, turn: DesktopFirstTurn) 
     if (row.role !== 'user' || row.author_id !== (turn.author?.id ?? null) || row.author_name !== (turn.author?.name ?? null)) return false
     let content: unknown
     try { content = JSON.parse(String(row.content_json)) } catch { return false }
-    if (typeof content === 'string') return content === turn.message && !turn.attachments?.length && !turn.desktopAttachments?.length && !turn.coworkerMentions?.length
+    if (typeof content === 'string') return content === turn.message && !turn.attachments?.length && !turn.desktopAttachments?.length && !turn.coworkerMentions?.length && !turn.desktopDocuments?.length
     if (!Array.isArray(content)) return false
     try { if (JSON.stringify(desktopStoredCoworkerMentions(content, true)) !== JSON.stringify(turn.coworkerMentions ?? [])) return false } catch { return false }
     const prefix = initialContent(turn)

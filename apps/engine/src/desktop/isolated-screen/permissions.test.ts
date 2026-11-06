@@ -36,3 +36,12 @@ it('denies disabled, deleted or aborted owners and revokes an existing guest whe
     state.deleting = false
     await expect(authorizeScreenInput(target, 'files', AbortSignal.abort())).rejects.toThrow()
 })
+it('drains reviewed installations when their independent grant or either self-improvement switch is revoked', () => {
+    const grants = { computer: true, browser: true, toolInstall: true }
+    const before = config(grants, { selfImprovement: { enabled: true, allowToolInstall: true } })
+    expect(screenPermissionsRevoked(before, config({ ...grants, toolInstall: false }))).toBe(true)
+    expect(screenPermissionsRevoked(before, config(grants, { selfImprovement: { enabled: false, allowToolInstall: true } }))).toBe(true)
+    expect(screenPermissionsRevoked(before, config(grants, { selfImprovement: { enabled: true, allowToolInstall: false } }))).toBe(true)
+    expect(screenPermissionsRevoked(before, config(grants, { selfImprovement: { enabled: true, allowToolInstall: true, autoMemory: false } }))).toBe(false)
+    expect(desktopRerunGrantsOf(config({ computer: true, browser: true }).tools)).toMatchObject({ toolInstall: false, scheduleManage: false })
+})

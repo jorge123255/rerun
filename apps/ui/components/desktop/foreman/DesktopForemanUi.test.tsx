@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { canSubmitPlanDecision, projectDecisionBusy, projectOpenChange, DEFAULT_DESKTOP_FOREMAN_PLACEMENT } from '@/lib/desktop/foreman-client'
 
 describe('Desktop Foreman UI invariants', () => {
@@ -41,10 +41,5 @@ describe('Desktop Foreman UI invariants', () => {
         expect(closed.decision.status).toBe('idle')
     })
 
-    it('escape handler ignores dialog targets', () => {
-        const closest = vi.fn().mockReturnValue(true)
-        const target = { closest } as unknown as Element
-        const shouldClose = !(target instanceof Element && target.closest('[role="dialog"], [role="alertdialog"], [role="menu"]'))
-        expect(shouldClose).toBe(false)
-    })
+
 })

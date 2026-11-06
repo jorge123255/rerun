@@ -22,6 +22,13 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (desktopBrainPagesRouteAllowed(method, path)) return true
     if (/^\/desktop\/brain\/proposals(?:\/count)?$/.test(path)) return method === 'GET'
     if (/^\/desktop\/brain\/proposals\/[A-Za-z0-9_-]+\/(?:accept|dismiss)$/.test(path)) return method === 'POST'
+    if (path === '/desktop/foreman/chat' || path === '/desktop/agents/foreman-create') return method === 'POST'
+    if (/^\/desktop\/agents\/foreman-create\/[A-Za-z0-9_-]+$/.test(path)) return method === 'GET'
+    if (/^\/desktop\/templates\/foreman-import\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(path)) return method === 'GET'
+    // Only the private Foreman chat adapter may admit runs. Its observer reads these exact routes.
+    if (/^\/agents\/foreman\/(?:sessions\/[A-Za-z0-9_-]+(?:\/messages)?|runs\/[A-Za-z0-9_-]+(?:\/stream)?)$/.test(path)) return method === 'GET'
+    if (/^\/agents\/foreman\/runs\/[A-Za-z0-9_-]+\/cancel$/.test(path)) return method === 'POST'
+    if (path === '/desktop/tool-install/control') return method === 'POST'
     if (path === '/desktop/delegation/stop') return method === 'POST'
     if (path === '/desktop/triggers/manage') return method === 'POST'
     if (path === '/desktop/agents/create') return method === 'POST'
@@ -29,6 +36,7 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (path === '/desktop/codex-login') return (method === 'GET' || method === 'POST') && desktopCodexAvailable()
     if (/^\/agents\/(?:import|foreman|default)(?:\/|$)/.test(path)) return false
     const id = '[A-Za-z0-9_-]+'
+    if (new RegExp(`^/agents/${id}/sessions/${id}/mcp-sign-in-source$`).test(path)) return method === 'POST'
     if (new RegExp(`^/agents/${id}/sessions/${id}/secret-request-source$`).test(path)) return method === 'POST'
     if (new RegExp(`^/agents/${id}/memories/semantic/status$`).test(path)) return method === 'GET'
     if (new RegExp(`^/agents/${id}/memories/semantic/(?:recall|index)$`).test(path)) return method === 'POST'

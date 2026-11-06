@@ -414,7 +414,7 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
             }
         },
 
-        install(input: { importReceiptId: string; templateId: string; revision: string; coworkers: { engineAgentId: string; agentKey: string }[] }) {
+        install(input: { foremanDisabled?: true; importReceiptId: string; templateId: string; revision: string; coworkers: { engineAgentId: string; agentKey: string }[] }) {
             return installManifest({ ...input, dataRoot: roots.dataRoot, agentsRoot: roots.agentsRoot, insertIndex: indexes.insert, readIndex: indexes.get })
         },
     }

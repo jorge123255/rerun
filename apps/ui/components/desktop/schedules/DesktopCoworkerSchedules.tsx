@@ -16,6 +16,8 @@ import { CalendarClockIcon,PlusIcon } from '@/lib/icons'
 import { scheduleSummary } from '@/lib/schedules/cron'
 import { Badge } from '@rerun/ui/primitives'
 import type { DesktopScheduleInput } from '@/lib/desktop/server/schedules/api'
+import { useDesktopScheduleToolNotices } from '@/lib/desktop/use-schedule-tool-notices'
+import { DesktopScheduleToolNotice } from '../schedule-tools/DesktopScheduleToolNotice'
 import { DesktopTaskNotifyField } from '../DesktopTaskNotifyField'
 
 type Chat={agentId:string;sessionId:string;engineSessionId:string;tabUid:string;title:string;runId:string|null}
@@ -24,6 +26,7 @@ class ScheduleRequestError extends Error {}
 export function DesktopCoworkerSchedules(props:{agentId:string;onOpenSession:(chat:Chat)=>void}) {return <Schedules key={props.agentId} {...props}/>}
 function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:Chat)=>void}) {
     const [tasks,setTasks]=useState<Task[]|null>(null),[editing,setEditing]=useState<Task|'new'|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true)
+    const [externalChange,setExternalChange]=useState(false)
     const alive=useRef(true),epoch=useRef(0),listEpoch=useRef(0)
     useEffect(()=>{alive.current=true;return()=>{alive.current=false;epoch.current++;listEpoch.current++}},[])
     const request=useCallback(async(method:string,body?:unknown)=>{
@@ -44,15 +47,16 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
         }
     },[request])
     useEffect(()=>{void load()},[load])
-    function navigate(task:Task|'new'|null){epoch.current++;setEditing(task)}
+    const notice=useDesktopScheduleToolNotices(agentId,()=>{if(editing)setExternalChange(true);void load()})
+    function navigate(task:Task|'new'|null){epoch.current++;setEditing(task);setExternalChange(false)}
     async function change(method:string,body:unknown){const own=epoch.current;listEpoch.current++;await request(method,body);if(alive.current && own===epoch.current){navigate(null);await load()}}
     const newButton=<Button size="sm" variant="outline" disabled={loading || Boolean(error) || tasks===null} onClick={()=>{if(!loading && !error && tasks!==null)navigate('new')}}><PlusIcon className="size-3.5 mr-1"/>New</Button>
     return <PanelSteps stepKey={editing ? 'editor' : 'list'} depth={editing ? 1 : 0}>{editing ?
-        <ScheduleEditor key={editing==='new'?'new':editing.slug} agentId={agentId} task={editing==='new'?undefined:editing} onBack={()=>navigate(null)}
+        <ScheduleEditor stale={externalChange} key={editing==='new'?'new':editing.slug} agentId={agentId} task={editing==='new'?undefined:editing} onBack={()=>navigate(null)}
             onSave={input=>change('PUT',{slug:editing==='new'?undefined:editing.slug,input})}
             onDelete={editing==='new'?undefined:()=>change('DELETE',{slug:editing.slug})}
             onRun={editing==='new'?undefined:async requestId=>{const own=epoch.current;const chat=await request('POST',{slug:editing.slug,action:'run',requestId});if(alive.current && own===epoch.current){onOpenSession(chat);await load()}}}/> :
-        <div className="flex flex-col h-full">{tasks!==null && !loading && !error ? <PanelListHeader count={tasks.length} noun="scheduled task">{newButton}</PanelListHeader> : <PanelListHeader>{newButton}</PanelListHeader>}
+        <div className="flex flex-col h-full">{notice && <div className="px-3 pt-2 text-xs"><DesktopScheduleToolNotice outcome="committed" text={`The coworker changed routine ${notice.slug}. The list is refreshed.`}/></div>}{tasks!==null && !loading && !error ? <PanelListHeader count={tasks.length} noun="scheduled task">{newButton}</PanelListHeader> : <PanelListHeader>{newButton}</PanelListHeader>}
             {error && <p role="alert" className="p-3 text-xs text-destructive">{error}</p>}
             {loading && <p className="p-3 text-xs" role="status">Loading scheduled tasks…</p>}
             {error && tasks!==null && tasks.length>0 && <p className="px-3 text-xs text-muted-foreground">Showing previously loaded tasks.</p>}
@@ -63,14 +67,15 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
             <p className="p-3 text-xs text-muted-foreground">Tasks run while Rerun is open. After sleep or reopening, one due occurrence runs. Refresh to see the latest result.</p><Button size="sm" variant="ghost" disabled={loading} onClick={()=>void load()}>Refresh</Button>
         </div>}</PanelSteps>
 }
-function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun}:{agentId:string;task?:Task;onBack:()=>void;onSave:(input:DesktopScheduleInput)=>Promise<void>;onDelete?:()=>Promise<void>;onRun?:(requestId:string)=>Promise<void>}) {
+function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun,stale=false}:{stale?:boolean;agentId:string;task?:Task;onBack:()=>void;onSave:(input:DesktopScheduleInput)=>Promise<void>;onDelete?:()=>Promise<void>;onRun?:(requestId:string)=>Promise<void>}) {
     const [name,setName]=useState(task?.name ?? ''),[description,setDescription]=useState(task?.description ?? ''),[body,setBody]=useState(task?.body ?? '')
     const [mode,setMode]=useState(task?.runAt ? 'runAt' : 'cron'),[cron,setCron]=useState(task?.cron ?? '0 8 * * *'),[runAt,setRunAt]=useState(task?.runAt ?? '')
     const [timezone,setTimezone]=useState(task?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone),[enabled,setEnabled]=useState(task?.enabled ?? true),[busy,setBusy]=useState(false),[error,setError]=useState('')
     const pending=useRef(false),alive=useRef(true),manual=useRef<string|null>(null)
     useEffect(()=>{alive.current=true;return()=>{alive.current=false}},[])
-    async function perform(action:()=>Promise<void>){if(pending.current)return;pending.current=true;setBusy(true);setError('');try{await action()}catch(e){if(alive.current)setError(e instanceof Error?e.message:'Task request failed')}finally{pending.current=false;if(alive.current)setBusy(false)}}
+    async function perform(action:()=>Promise<void>){if(stale || pending.current)return;pending.current=true;setBusy(true);setError('');try{await action()}catch(e){if(alive.current)setError(e instanceof Error?e.message:'Task request failed')}finally{pending.current=false;if(alive.current)setBusy(false)}}
     return <PanelEditorShell><PanelEditorHeader title={task?'Edit task':'New task'} onBack={busy?undefined:()=>{if(!pending.current)onBack()}}/><PanelEditorBody>
+        {stale && <p role="alert" className="text-xs text-destructive">This routine changed while you were editing. Your text is kept here. Go back and reopen the latest task before saving.</p>}
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         <Field label="Name"><Input aria-label="Name" value={name} onChange={e=>setName(e.target.value)} maxLength={120} disabled={busy}/></Field><Field label="Description"><Input aria-label="Description" value={description} onChange={e=>setDescription(e.target.value)} disabled={busy}/></Field>
         <Field label="When"><select aria-label="Schedule type" value={mode} disabled={busy} onChange={e=>setMode(e.target.value)}><option value="cron">Recurring</option><option value="runAt">Once</option></select></Field>
@@ -82,8 +87,8 @@ function ScheduleEditor({agentId,task,onBack,onSave,onDelete,onRun}:{agentId:str
         <MarkdownTextarea label="Task prompt" dialogTitle="Edit the task prompt" value={body} onChange={setBody} disabled={busy}/>
         {task?.lastResult?.chat && <p className="text-xs">Last result: {task.lastResult.status}</p>}
     </PanelEditorBody><PanelEditorFooter>
-        {onDelete && <PanelDeleteButton label="Delete task" busy={busy} disabled={busy} onClick={()=>perform(onDelete)} confirmDescription="The task stops firing and its schedule is removed. Runs it already produced are kept."/>}
-        {onRun && <Button size="sm" variant="outline" title="Run now" disabled={busy || !task?.enabled} onClick={()=>perform(async()=>{manual.current ??=crypto.randomUUID();await onRun(manual.current);manual.current=null})}>Test Run</Button>}
-        <Button size="sm" disabled={busy || !name.trim() || !body.trim()} onClick={()=>perform(()=>onSave({name,description,body,enabled,timezone,cron:mode==='cron'?cron:null,runAt:mode==='runAt'?new Date(runAt).toISOString():null}))}>{task?'Save changes':'Create task'}</Button>
+        {onDelete && <PanelDeleteButton label="Delete task" busy={busy} disabled={busy || stale} onClick={()=>perform(onDelete)} confirmDescription="The task stops firing and its schedule is removed. Runs it already produced are kept."/>}
+        {onRun && <Button size="sm" variant="outline" title="Run now" disabled={busy || stale || !task?.enabled} onClick={()=>perform(async()=>{manual.current ??=crypto.randomUUID();await onRun(manual.current);manual.current=null})}>Test Run</Button>}
+        <Button size="sm" disabled={busy || stale || !name.trim() || !body.trim()} onClick={()=>perform(()=>onSave({name,description,body,enabled,timezone,cron:mode==='cron'?cron:null,runAt:mode==='runAt'?new Date(runAt).toISOString():null}))}>{task?'Save changes':'Create task'}</Button>
     </PanelEditorFooter></PanelEditorShell>
 }

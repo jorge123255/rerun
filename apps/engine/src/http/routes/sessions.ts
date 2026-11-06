@@ -1,6 +1,8 @@
 import { Hono } from 'hono'
 import { getSession, listSessions, sessionBelongsToAgent } from '../../db/repos/sessions.js'
 import { listMessages } from '../../db/repos/messages.js'
+import { desktopMcpSignInGuardSchema, desktopMcpSignInSourceResponseSchema } from '@rerun/contracts'
+import { readDesktopMcpSignInSource } from '../../desktop/mcp-sign-in/source.js'
 import { desktopSecretRequestGuardSchema, desktopSecretSourceResponseSchema } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopApp } from '../../desktop/policy.js'
@@ -14,6 +16,16 @@ sessionRoutes.post('/:sid/secret-request-source', async c => {
     if (!(await sessionBelongsToAgent(sessionId, agentId))) return c.json({ error: 'session not found' }, 404)
     const { source } = z.object({ source: desktopSecretRequestGuardSchema.optional() }).strict().parse(await c.req.json())
     return c.json(desktopSecretSourceResponseSchema.parse({ agentId, sessionId, request: await readDesktopSecretSource(agentId, sessionId, source) }))
+})
+
+sessionRoutes.post('/:sid/mcp-sign-in-source', async c => {
+    if (!desktopApp()) return c.json({ error: 'Not found' }, 404)
+    const agentId = c.req.param('id')!, sessionId = c.req.param('sid')
+    if (!(await sessionBelongsToAgent(sessionId, agentId))) return c.json({ error: 'session not found' }, 404)
+    const raw = await c.req.text()
+    if (Buffer.byteLength(raw) > 65_536) return c.json({ error: 'Source request exceeds limit' }, 413)
+    const { source } = z.object({ source: desktopMcpSignInGuardSchema.optional() }).strict().parse(JSON.parse(raw))
+    return c.json(desktopMcpSignInSourceResponseSchema.parse({ agentId, sessionId, request: await readDesktopMcpSignInSource(agentId, sessionId, source) }))
 })
 
 sessionRoutes.get('/', async c => {

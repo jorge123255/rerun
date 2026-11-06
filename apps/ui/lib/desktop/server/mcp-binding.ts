@@ -7,6 +7,8 @@ import { bindDesktopServiceSkillOwners, desktopServiceSkillRestartScope } from '
 import { localServiceLifecycle, type ServiceAuthority } from './services/lifecycle'
 import { serviceApi } from './services/api'
 import { serviceEngineBridge } from './services/bridge'
+import { createCanonicalServiceOAuth } from './services/oauth/binding'
+import { createCanonicalServiceTransports } from './services/transports/binding'
 import { canonicalServiceAccounts } from './services/accounts/canonical'
 import { createDesktopSseBinding } from './mcp-sse/binding'
 import { lstat, realpath } from 'node:fs/promises'
@@ -175,15 +177,24 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (new Set(names).size !== names.length || names.some(name => !/^[\w.-]{1,128}$/.test(name) || reserved.has(name) || prefixes.some(prefix => name.startsWith(`${prefix}_`)))) throw new Error('Service tool conflicts with another tool')
         signal.throwIfAborted()
     }, fetch, undefined, (owner, signal) => desktopServiceSkillRestartScope(runtime, owner, signal))
+    let serviceTransports: ReturnType<typeof createCanonicalServiceTransports>
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
+    }, (owner, identity, signal) => serviceTransports.releaseRun(owner, identity, signal))
+    let serviceOAuth: ReturnType<typeof createCanonicalServiceOAuth>
+    const accounts = await canonicalServiceAccounts(runtime, installedServices, services, masterKey, {
+        additionalTransport: (record, run, signal) => serviceTransports?.service(record, run, signal),
+        oauthCredential: (record, run, signal) => serviceOAuth.credentialFor(record, run, signal),
+        beforeChange: async (owner, id) => { await serviceTransports.beforeChange(owner, id); await serviceOAuth.invalidateAccount(owner, id) },
     })
-    const accounts = await canonicalServiceAccounts(runtime, installedServices, services, masterKey)
+    serviceOAuth = createCanonicalServiceOAuth(runtime, installedServices, services, accounts, masterKey, entry.shutdown.signal)
+    await serviceOAuth.reconcile()
     const sse = createDesktopSseBinding({
         db, store, key: masterKey, shutdownSignal: entry.shutdown.signal, access, authorizeRun,
         manage: async (owner, signal) => (await currentOwner(owner, signal)).check,
         refreshCredential: oauth.credential,
+        account: (ref, action, run, signal) => serviceTransports.account(ref, action, run, signal),
         async validateToolNames(owner, names, signal) {
             signal.throwIfAborted()
             const reserved = new Set([...desktopRerunToolCatalog, ...desktopCodexToolCatalog].flatMap(item => item.tools))
@@ -193,6 +204,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             signal.throwIfAborted()
         },
     })
+    serviceTransports = createCanonicalServiceTransports(runtime, installedServices, services, masterKey, access, entry.shutdown.signal, () => sse)
     bindRemoteTransportDrain(store, async (owner, name) => {
         const row = await store.read(owner, name)
         if (row.transport === 'sse' && row.id) await sse.dispose(owner, row.id)
@@ -223,7 +235,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     const bridge = desktopMcpBridge(store, remote, authorizeRun, sse)
     return { store, runtime: remote, bridge, access, authorizeRun, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
         localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback),
-        selfMcp, services, servicesBridge, servicesApi: serviceApi(installedServices, services), accounts, sse }
+        selfMcp, serviceOAuth, serviceTransports, services, servicesBridge, servicesApi: serviceApi(installedServices, services), accounts, sse }
 
 }
 
@@ -257,6 +269,7 @@ export async function withDesktopMcpOwnerTransition<T>(runtime: DesktopRuntime, 
         // deleting a coworker; the global reservation still excludes concurrent admission.
         const service = entry.service ? await entry.service.catch(() => undefined) : undefined
         if (!service) return await write()
+        await service.serviceOAuth.suspendOwner(localAgentId)
         service.servicesBridge.releaseOwner(localAgentId)
         service.services.lifecycle.disconnect(localAgentId)
         await service.sse.dispose(localAgentId)
@@ -274,6 +287,7 @@ export async function shutdownDesktopRemoteMcp(runtime: DesktopRuntime) {
     if (entry.service) {
         const service = await entry.service.catch(() => undefined)
         service?.oauth.shutdown()
+        service?.serviceOAuth.shutdown()
         service?.bridge.shutdown()
         const stopped = await Promise.allSettled([service?.localBridge.shutdown(), service?.servicesBridge.shutdown(), service?.sse.shutdown()])
         const failures = stopped.flatMap(result => result.status === 'rejected' ? [result.reason] : [])

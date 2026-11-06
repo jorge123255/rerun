@@ -57,3 +57,24 @@ export function createServiceTransportClient(ports: {
         async reconcile(request: ServiceTransportControl, signal: AbortSignal) { return finish(request, await ports.reconcile(request, signal), signal) },
     }
 }
+
+export function desktopServiceTransportClient(network: typeof fetch = fetch): ServiceTransportClient {
+    async function send(owner: string, body: unknown, signal?: AbortSignal) {
+        const response = await network(`/api/desktop/coworkers/${encodeURIComponent(owner)}/service-transports`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal, credentials: 'same-origin', redirect: 'error', cache: 'no-store' })
+        if (!response.ok) throw new Error('Connection acknowledgement unavailable. Reconcile this attempt before retrying.')
+        return await response.json() as Record<string, unknown>
+    }
+    async function result(request: ServiceTransportControl, action: 'control' | 'reconcile', signal: AbortSignal): Promise<ServiceTransportReply> {
+        const response = await send(request.agentId, { action, request }, signal)
+        if (response.ok !== true) return { ok: false, failure: 'unavailable', message: 'Connection acknowledgement unavailable.' }
+        return { ok: true, snapshot: serviceTransportSnapshotSchema.parse(response.snapshot) }
+    }
+    return createServiceTransportClient({
+        uuid: () => crypto.randomUUID(), post: (request, signal) => result(request, 'control', signal), reconcile: (request, signal) => result(request, 'reconcile', signal),
+        journal: {
+            async read(ref) { const response = await send(ref.agentId, { action: 'pending', ref }); return response.pending === null ? null : serviceTransportControlSchema.parse(response.pending) },
+            async put(request) { await send(request.agentId, { action: 'reserve', request }) },
+            async clear(request) { await send(request.agentId, { action: 'clear', request }) },
+        },
+    })
+}

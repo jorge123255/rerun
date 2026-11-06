@@ -12,16 +12,16 @@ export function DesktopDocumentPicker({ onFiles, disabled = false }: {
     return <>
         <input ref={inputRef} type="file" multiple className="hidden" onChange={event => {
             const files = Array.from(event.currentTarget.files ?? [])
-            if (files.length) onFiles(files)
+            if (!disabled && files.length) onFiles(files)
             event.currentTarget.value = ''
         }} />
         <span onDragOver={event => event.preventDefault()} onDrop={event => {
             event.preventDefault()
             const files = Array.from(event.dataTransfer.files)
-            if (files.length) onFiles(files)
+            if (!disabled && files.length) onFiles(files)
         }} onPaste={event => {
             const files = Array.from(event.clipboardData.files)
-            if (files.length) {
+            if (!disabled && files.length) {
                 event.preventDefault()
                 onFiles(files)
             }

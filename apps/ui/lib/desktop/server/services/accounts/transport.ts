@@ -22,7 +22,7 @@ export interface AccountTransportPort {
 const LIMIT = 1024 * 1024
 
 function redact(value: unknown, secrets: string[]): unknown {
-    const hidden = secrets.filter(secret => secret.length >= 4)
+    const hidden = secrets.filter(secret => secret.length > 0)
     const apply = (item: unknown): unknown => {
         if (typeof item === 'string') return hidden.reduce((text, secret) => text.split(secret).join('[REDACTED]'), item)
         if (Array.isArray(item)) return item.map(apply)

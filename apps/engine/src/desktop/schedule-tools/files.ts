@@ -70,12 +70,13 @@ export function desktopScheduleFiles(): DesktopScheduleFilePort {
             return records.filter((row): row is DesktopScheduleDefinition => row !== null).sort((a, b) => a.slug.localeCompare(b.slug))
         },
         read: readDefinition,
-        replace(engineAgentId, slug, expected, next) {
+        replace(engineAgentId, slug, expected, next, admission) {
             // Same key as schedules/loader.ts. Do not call updateScheduleAt from inside this section.
             return withKeyedLock(`schedule:${engineAgentId}:${slug}`, async () => {
                 await safeDirectory(engineAgentId)
                 const current = await readDefinition(engineAgentId, slug)
                 if (desktopScheduleDefinitionRevision(current) !== desktopScheduleDefinitionRevision(expected)) throw new DesktopScheduleFileConflict()
+                await admission?.()
                 if (!next) {
                     if (current) await unlink(scheduleFile(engineAgentId, slug))
                     return null
@@ -99,10 +100,11 @@ export function memoryScheduleFiles(): DesktopScheduleFilePort & { seed(engineAg
         async read(engineAgentId, slug) {
             return rows.get(key(engineAgentId, slug)) ?? null
         },
-        replace(engineAgentId, slug, expected, next) {
+        replace(engineAgentId, slug, expected, next, admission) {
             return withKeyedLock(`schedule:${engineAgentId}:${slug}`, async () => {
                 const current = rows.get(key(engineAgentId, slug)) ?? null
                 if (desktopScheduleDefinitionRevision(current) !== desktopScheduleDefinitionRevision(expected)) throw new DesktopScheduleFileConflict()
+                await admission?.()
                 if (!next) {
                     rows.delete(key(engineAgentId, slug))
                     return null

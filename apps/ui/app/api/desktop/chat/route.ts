@@ -1,3 +1,4 @@
+import { desktopDocumentSendSelectionSchema } from '@rerun/contracts'
 import { desktopCoworkerMentionsSchema, validDesktopCoworkerMentionFields } from '@rerun/contracts'
 import { desktopModelPickSchema } from '@/lib/desktop/chat-model'
 import { desktopChatHasContent } from '@/lib/desktop/chat-content'
@@ -11,6 +12,7 @@ const sendInput = z.object({
     agentId: z.string().min(1),
     sessionId: z.string().min(1).optional(),
     text: z.string().max(20_000),
+    documents: desktopDocumentSendSelectionSchema.optional(),
     coworkerMentions: desktopCoworkerMentionsSchema.optional(),
     attachmentPath: z.string().min(1).max(4096).optional(),
     attachmentPaths: desktopAttachmentPathsSchema.optional(),

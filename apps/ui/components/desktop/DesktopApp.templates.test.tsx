@@ -13,7 +13,7 @@ import type { DesktopBoardState } from '@/lib/desktop/spaces'
 const owner = '33333333-3333-4333-8333-333333333333'
 const first = '44444444-4444-4444-8444-444444444444'
 const second = '55555555-5555-4555-8555-555555555555'
-vi.mock('@rerun/ui/foreman', () => ({ Orb: () => null }))
+vi.mock('@rerun/ui/foreman', () => ({ PARKED_ORB_SIZE: 40, PARKED_ORB_SIZE_MOBILE: 40, Orb: () => null }))
 vi.mock('./templates/DesktopTemplateNavigation', () => ({
     DesktopTemplateNavigation: ({ open, onOpenChange, onInstalled }: ComponentProps<typeof import('./templates/DesktopTemplateNavigation').DesktopTemplateNavigation>) =>
         <div data-library-open={String(open)}><button onClick={() => onOpenChange(true)}>Open test library</button>{open && <button onClick={() => onInstalled({ receiptId: 'receipt', coworkers: [{ id: first, name: 'First installed' }, { id: second, name: 'Second installed' }] })}>Acknowledge installation</button>}</div>,

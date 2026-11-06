@@ -1,80 +1,87 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import type { DesktopDocumentAttachment, DesktopDocumentScope } from '@rerun/contracts'
 import { useDesktopDocumentAttachments } from './useDesktopDocumentAttachments'
-import type { DesktopDocumentAttachment } from '../../../../../packages/contracts/src/desktop-document-attachments.ts'
-
-const scope = { agentId: 'owner', tabUid: 'tab-1', sessionId: 'session-1' }
-const transport = vi.hoisted(() => ({
-    uploadDesktopDocument: vi.fn(),
-    convertDesktopDocument: vi.fn(),
-    listDesktopDocuments: vi.fn(),
-    admitDesktopDocuments: vi.fn(),
-    discardDesktopDocument: vi.fn(),
-}))
-vi.mock('@/lib/desktop/document-attachments/client', () => transport)
-
-function attachment(id: string, name: string, state: 'pending' | 'ready' | 'failed' = 'pending'): DesktopDocumentAttachment {
-    const now = new Date().toISOString()
-    return {
-        attachmentId: id,
-        scope,
-        name,
-        mimeType: 'application/pdf',
-        kind: 'pdf',
-        byteLength: 12,
-        sha256: 'a'.repeat(64),
-        conversion: { mode: 'pdf-text', state },
-        admitted: false,
-        revision: crypto.randomUUID(),
-        createdAt: now,
-        updatedAt: now,
-    }
+import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
+const scope = { agentId: 'owner', tabUid: 'tab', sessionId: 'session' }
+const transport = vi.hoisted(() => ({ uploadDesktopDocument: vi.fn(), listDesktopDocuments: vi.fn(), convertDesktopDocument: vi.fn(), discardDesktopDocument: vi.fn(), detachDesktopDocument: vi.fn(), admitDesktopDocuments: vi.fn(), consumeDesktopDocuments: vi.fn(), cancelDesktopDocumentUpload: vi.fn() }))
+vi.mock('./client', () => transport)
+function attachment(id: string, currentScope: DesktopDocumentScope = scope, position = 0): DesktopDocumentAttachment {
+    return { attachmentId: id, scope: currentScope, name: 'sample.pdf', kind: 'pdf', mimeType: 'application/pdf', byteLength: 8, sha256: 'a'.repeat(64), conversion: { mode: 'pdf-text', state: 'pending' }, admitted: false, selected: true, uploaded: true, position, revision: crypto.randomUUID(), createdAt: 'now', updatedAt: 'now' }
 }
-
-let root: Root | undefined
-let api: ReturnType<typeof useDesktopDocumentAttachments>
-function Probe() {
-    api = useDesktopDocumentAttachments(scope)
-    return null
-}
-
-afterEach(async () => {
-    if (root) await act(async () => root!.unmount())
-    root = undefined
-    document.body.innerHTML = ''
-    vi.clearAllMocks()
+let root: Root | undefined, api: ReturnType<typeof useDesktopDocumentAttachments>
+let saved: DesktopDocumentAttachment[]
+function Probe({ value = scope }: { value?: DesktopDocumentScope }) { api = useDesktopDocumentAttachments(value); return null }
+beforeEach(() => {
+    cancelDraftShutdown(); saved = []
+    Object.values(transport).forEach(mock => mock.mockReset())
+    transport.listDesktopDocuments.mockImplementation(async (owner: DesktopDocumentScope) => saved.filter(a => a.scope.agentId === owner.agentId && a.scope.tabUid === owner.tabUid))
+    transport.uploadDesktopDocument.mockImplementation(async (owner, id, _file, _signal, position) => { const a = attachment(id, owner, position); saved.push(a); return a })
+    transport.convertDesktopDocument.mockImplementation(async (_owner, id) => { const a = saved.find(a => a.attachmentId === id)!; a.conversion = { mode: 'pdf-text', state: 'ready', text: 'actual content' }; return a })
 })
-
-it('preserves ordered intake and admission without creating another send authority', async () => {
-    transport.listDesktopDocuments.mockResolvedValue([])
-    transport.uploadDesktopDocument.mockImplementation(async (_scope, id, file: File) => attachment(id, file.name)
-    transport.convertDesktopDocument.mockImplementation(async (_scope, id, _revision) => attachment(id, `${id}.pdf`, 'ready'))
-    transport.admitDesktopDocuments.mockResolvedValue({ allowed: true, references: [], inputs: [] })
-    root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => root!.render(<Probe />))
-    const first = new File(['%PDF-1.7'], 'first.pdf', { type: 'application/pdf' })
-    const second = new File(['%PDF-1.4'], 'second.pdf', { type: 'application/pdf' })
-
-    await act(async () => { api.add([first, second]) })
-    expect(api.attachments.map(item => item.name)).toEqual(['first.pdf', 'second.pdf'])
-    expect(transport.uploadDesktopDocument).toHaveBeenCalledTimes(2)
-    await act(async () => { await api.settle() })
-    expect(transport.admitDesktopDocuments).toHaveBeenCalledWith(scope)
-})
-
-it('retries a lost upload with the same identity and does not replay pending conversion on restart', async () => {
-    const pending = attachment('11111111-1111-4111-8111-111111111111', 'report.pdf')
-    transport.listDesktopDocuments.mockResolvedValue([pending])
-    transport.uploadDesktopDocument.mockRejectedValueOnce(new Error('lost acknowledgement')).mockResolvedValue(pending)
-    transport.convertDesktopDocument.mockResolvedValue({ ...pending, conversion: { mode: 'pdf-text', state: 'ready', text: 'text' } })
-    root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => root!.render(<Probe />))
+afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.innerHTML = ''; cancelDraftShutdown(); vi.clearAllMocks() })
+const mount = async () => { root = createRoot(document.body.appendChild(document.createElement('div'))); await act(async () => root!.render(<Probe />)) }
+it('saves immediately without preparing, preserves order, and sends only the explicitly prepared selection', async () => {
+    await mount()
+    await act(async () => { api.add([new File(['first'], 'first.pdf'), new File(['second'], 'second.pdf')]) })
+    expect(api.attachments.map(a => a.position)).toEqual([0, 1]); expect(api.busy).toBe(0)
     expect(transport.convertDesktopDocument).not.toHaveBeenCalled()
-
-    await act(async () => { api.retry(pending.attachmentId) })
+    await expect(api.settle()).rejects.toThrow('Prepare')
+    for (const a of api.attachments) await act(async () => { await api.prepare(a.attachmentId) })
+    transport.admitDesktopDocuments.mockResolvedValue({ allowed: true, references: [], inputs: [] })
+    let result: Awaited<ReturnType<typeof api.settle>> = null
+    await act(async () => { result = await api.settle({ connectionId: 'codex', model: 'terra' }) })
+    expect(result).toMatchObject({ selection: { scope, attachmentIds: api.attachments.map(a => a.attachmentId), modelChoice: { connectionId: 'codex', model: 'terra' } } })
+})
+it('unmount keeps raw upload under the quit hold, then another chat ignores its late completion', async () => {
+    let resolve!: (value: DesktopDocumentAttachment) => void
+    transport.uploadDesktopDocument.mockImplementation(() => new Promise(done => { resolve = done }))
+    await mount()
+    await act(async () => { api.add([new File(['pending'], 'pending.pdf')]) })
+    const id = transport.uploadDesktopDocument.mock.calls[0]![1]
+    await expect(api.settle()).rejects.toThrow('saving')
+    const quit = flushDesktopDrafts(); let finished = false; void quit.then(() => { finished = true })
+    await act(async () => root!.render(<Probe value={{ ...scope, tabUid: 'other' }} />))
+    expect(finished).toBe(false)
+    const row = attachment(id)
+    await act(async () => { saved.push(row); resolve(row) })
+    expect(await quit).toBe(true); expect(api.attachments).toEqual([])
+    cancelDraftShutdown()
+    await act(async () => root!.render(<Probe />))
+    expect(api.attachments[0]?.attachmentId).toBe(id)
+    expect(transport.convertDesktopDocument).not.toHaveBeenCalled()
+})
+it('a lost upload keeps the same File and UUID for retry and never starts conversion', async () => {
+    transport.uploadDesktopDocument.mockRejectedValueOnce(new Error('lost acknowledgement'))
+    await mount()
+    await act(async () => { api.add([new File(['pending'], 'pending.pdf')]) })
+    const id = api.attachments[0]!.attachmentId
+    expect(api.attachments[0]?.conversion.state).toBe('failed')
+    await act(async () => { await api.retry(id) })
+    expect(transport.uploadDesktopDocument.mock.calls.map(call => call[1])).toEqual([id, id])
+    expect(api.attachments[0]?.uploaded).toBe(true)
+    expect(transport.convertDesktopDocument).not.toHaveBeenCalled()
+})
+it('restored unfinished conversion is explicit and removing a retained history selection only detaches it', async () => {
+    const row = attachment(crypto.randomUUID()); row.admitted = true; row.conversion = { mode: 'pdf-text', state: 'ready', text: 'content' }; saved.push(row)
+    transport.detachDesktopDocument.mockImplementation(async () => { saved = [] })
+    await mount()
+    expect(transport.convertDesktopDocument).not.toHaveBeenCalled()
+    await act(async () => { await api.remove(row.attachmentId) })
+    expect(transport.detachDesktopDocument).toHaveBeenCalledWith(scope, row.attachmentId, row.revision, expect.any(AbortSignal))
+    expect(transport.discardDesktopDocument).not.toHaveBeenCalled(); expect(api.attachments).toEqual([])
+})
+it('removes a failed raw upload through its exact cancellation receipt without requiring another upload', async () => {
+    transport.uploadDesktopDocument.mockRejectedValue(new Error('storage full'))
+    transport.cancelDesktopDocumentUpload.mockResolvedValue(undefined)
+    await mount()
+    await act(async () => { api.add([new File(['pending'], 'pending.pdf')]) })
+    const id = api.attachments[0]!.attachmentId
+    await act(async () => { await api.remove(id) })
+    expect(transport.cancelDesktopDocumentUpload).toHaveBeenCalledWith(scope, id, expect.any(AbortSignal))
     expect(transport.uploadDesktopDocument).toHaveBeenCalledTimes(1)
-    expect(transport.uploadDesktopDocument.mock.calls[0][1]).toBe(pending.attachmentId)
-    expect(transport.convertDesktopDocument).toHaveBeenCalledWith(scope, pending.attachmentId, pending.revision)
+    expect(api.attachments).toEqual([])
+    expect(await flushDesktopDrafts()).toBe(true)
 })

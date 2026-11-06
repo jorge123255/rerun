@@ -26,11 +26,12 @@ function identified(receipt: DesktopMcpSignInReceipt & { requestId: string }, so
 }
 
 export function createDesktopMcpSignInContinuation(store: DesktopMcpSignInStore, ports: DesktopMcpSignInContinuationPorts) {
-    async function deliver(receipt: DesktopMcpSignInReceipt & { requestId: string }, source: DesktopMcpSignInSource): Promise<Response> {
+    async function deliver(receipt: DesktopMcpSignInReceipt & { requestId: string }, source: DesktopMcpSignInSource, authority: DesktopMcpSignInAuthority, replayOnly = false): Promise<Response> {
+        authority.check()
         if (receipt.accepted) return identified(receipt, source)
-        for (const mode of ['replay', 'send'] as const) {
+        for (const mode of (replayOnly ? ['replay'] : ['replay', 'send']) as ('replay' | 'send')[]) {
             let response: DesktopMcpSignInFollowUpResponse
-            try { response = await ports.send(receipt, source, mode) }
+            try { authority.check(); response = await ports.send(receipt, source, mode); authority.check() }
             catch { throw new DesktopHttpError(502, 'Could not confirm this MCP sign-in result. Retry the saved decision.') }
             if (response.status === 404 && response.code === 'queued_turn_not_found' && mode === 'replay') continue
             if (response.status === 403 || response.status === 409) throw new DesktopHttpError(response.status, 'This MCP sign-in result could not be admitted. Reload the conversation and retry the saved decision.')
@@ -43,17 +44,19 @@ export function createDesktopMcpSignInContinuation(store: DesktopMcpSignInStore,
         throw new DesktopHttpError(502, 'Could not send this MCP sign-in result. Retry the saved decision.')
     }
     return {
+        deliverInitial: (receipt: DesktopMcpSignInReceipt & { requestId: string }, source: DesktopMcpSignInSource, authority: DesktopMcpSignInAuthority) => deliver(receipt, source, authority),
         async complete(input: DesktopMcpSignInDecision, authority: DesktopMcpSignInAuthority): Promise<Response> {
             const receipt = await store.seal(input, 'connected', authority)
-            return deliver(receipt, input.source)
+            return deliver(receipt, input.source, authority)
         },
         async decline(input: DesktopMcpSignInDecision, authority: DesktopMcpSignInAuthority): Promise<Response> {
             const receipt = await store.seal(input, 'declined', authority)
-            return deliver(receipt, input.source)
+            return deliver(receipt, input.source, authority)
         },
-        async recover(input: DesktopMcpSignInDecision): Promise<Response> {
+        async recover(input: DesktopMcpSignInDecision, authority: DesktopMcpSignInAuthority): Promise<Response> {
+            authority.check()
             const receipt = await store.receipt(input)
-            return deliver(receipt, input.source)
+            return deliver(receipt, input.source, authority, true)
         },
     }
 }

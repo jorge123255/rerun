@@ -199,6 +199,9 @@ export function createSseRuntime(deps: SseDependencies, pool: SsePoolState) {
         async releaseRun(agentId: string, run: McpRunIdentity) {
             await Promise.all([...new Set([...pool.entries.values(), ...pool.retired])].filter(entry => entry.ref.agentId === agentId && entry.users.has(runKey(run))).map(retire))
         },
+        async releaseServerRun(agentId: string, serverId: string, run: McpRunIdentity) {
+            await Promise.all([...new Set([...pool.entries.values(), ...pool.retired])].filter(entry => entry.ref.agentId === agentId && entry.ref.serverId === serverId && entry.users.has(runKey(run))).map(retire))
+        },
         async shutdown() { pool.closed = true; await dispose() },
     }
 }

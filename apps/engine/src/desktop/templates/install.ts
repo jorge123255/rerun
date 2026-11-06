@@ -71,6 +71,8 @@ const importReceiptSchema = z.strictObject({
     engineAgentId: z.string().regex(/^i[a-f0-9]{31}$/),
     agentKey: desktopTemplateAgentKeySchema,
     phase: z.enum(['bound', 'files', 'indexed']),
+    foremanDisabled: z.literal(true).optional(),
+    folder: z.strictObject({dev:z.string(),ino:z.string()}).optional(),
 })
 type ImportReceipt = z.infer<typeof importReceiptSchema>
 
@@ -168,6 +170,7 @@ async function readReceipt(folder: string): Promise<ImportReceipt | null> {
 }
 
 export async function installManifest(input: {
+    foremanDisabled?: true
     dataRoot: string
     agentsRoot: string
     importReceiptId: string
@@ -202,17 +205,20 @@ export async function installManifest(input: {
         }
         const bound: ImportReceipt = {
             version: 1, importReceiptId: input.importReceiptId, templateId: input.templateId, revision: input.revision,
-            engineAgentId, agentKey: coworker.agentKey, phase: 'bound',
+            engineAgentId, agentKey: coworker.agentKey, phase: 'bound', ...(input.foremanDisabled && { foremanDisabled: true }),
         }
         if (!kind) {
             const staged = await mkdtemp(join(input.agentsRoot, '.template-import-'))
             try {
-                await writeOwnJson(staged, '.desktop-template-import.json', bound)
+                const identity = await lstat(staged,{bigint:true})
+                await writeOwnJson(staged, '.desktop-template-import.json', {...bound,...(input.foremanDisabled && {folder:{dev:String(identity.dev),ino:String(identity.ino)}})})
                 await renameSkillEntry(input.agentsRoot, await lstat(input.agentsRoot, { bigint: true }), staged.split('/').at(-1)!, await lstat(staged, { bigint: true }), engineAgentId)
             } finally { await rm(staged, { recursive: true, force: true }) }
         }
         const receipt = await readReceipt(folder)
-        if (!receipt || receipt.importReceiptId !== bound.importReceiptId || receipt.engineAgentId !== engineAgentId || receipt.templateId !== bound.templateId || receipt.revision !== bound.revision || receipt.agentKey !== coworker.agentKey) {
+        const identity = await lstat(folder,{bigint:true})
+        const ownedForemanFolder = !input.foremanDisabled || (receipt?.folder?.dev === String(identity.dev) && receipt.folder.ino === String(identity.ino))
+        if (!ownedForemanFolder || !receipt || receipt.importReceiptId !== bound.importReceiptId || receipt.engineAgentId !== engineAgentId || receipt.templateId !== bound.templateId || receipt.revision !== bound.revision || receipt.agentKey !== coworker.agentKey || receipt.foremanDisabled !== bound.foremanDisabled) {
             phases.push({ engineAgentId, agentKey: coworker.agentKey, name: coworker.name, description: coworker.description, phase: 'foreign' })
             uncertain = 'An imported coworker folder is not owned by this receipt'
             continue
@@ -229,7 +235,14 @@ export async function installManifest(input: {
                 uncertain = 'Template bytes changed before import finished'
                 break
             }
-            try { await writeExclusiveFile(folder, file.path, stored.bytes) }
+            let bytes = stored.bytes
+            if (input.foremanDisabled && file.path === 'config.json') {
+                // The captured conservative config remains otherwise exact; enabling is reserved
+                // for the later explicit lead action. No runnable enabled window during import.
+                const config = JSON.parse(Buffer.from(bytes).toString('utf8'))
+                bytes = Buffer.from(JSON.stringify({ ...config, enabled: false }, null, 4), 'utf8')
+            }
+            try { await writeExclusiveFile(folder, file.path, bytes) }
             catch (error) {
                 if (error instanceof TemplateRequestError && error.status === 409) {
                     partial = true
@@ -264,4 +277,17 @@ export async function installManifest(input: {
         return { status: 'uncertain', reason: uncertain ?? 'Import did not finish every coworker', coworkers: phases }
     }
     return { status: 'ready', coworkers: phases }
+}
+
+/** Foreman lookup is read-only and proves the original imported directory, not merely its name. */
+export async function readForemanTemplateImport(agentsRoot: string, engineAgentId: string, importReceiptId: string) {
+    const path = destination(agentsRoot,engineAgentId)
+    const before = await lstat(path,{bigint:true}).catch((error: NodeJS.ErrnoException) => error.code === 'ENOENT' ? null : Promise.reject(error))
+    if (!before) return {state:'absent' as const}
+    if (!before.isDirectory() || before.isSymbolicLink()) return {state:'replaced' as const}
+    const receipt = await readReceipt(path)
+    const after = await lstat(path,{bigint:true})
+    if (!receipt || !receipt.foremanDisabled || receipt.engineAgentId !== engineAgentId || receipt.importReceiptId !== importReceiptId || receipt.folder?.dev !== String(before.dev) || receipt.folder.ino !== String(before.ino) || before.dev !== after.dev || before.ino !== after.ino) return {state:'replaced' as const}
+    if (receipt.phase !== 'indexed') return {state:'unknown' as const}
+    return {state:'present' as const,engineAgentId,importReceiptId,templateId:receipt.templateId,revision:receipt.revision}
 }

@@ -11,7 +11,7 @@ function ports(): DesktopToolInstallPorts {
     return {
         authority: vi.fn(async () => ({ engineAgentId: 'engine', launchNonce: 'launch', sessionGeneration: 'a'.repeat(32), workspaceFingerprint: 'b'.repeat(64) })),
         guest: { execute: vi.fn(), inspect: vi.fn() },
-        outcomes: { begin: vi.fn(async () => 'execute'), complete: vi.fn(async () => {}), read: vi.fn(), list: vi.fn() },
+        outcomes: { reservation: vi.fn(), replay: vi.fn(), claim: vi.fn(), finishRequest: vi.fn(), begin: vi.fn(async () => 'execute'), complete: vi.fn(async () => {}), read: vi.fn(), list: vi.fn() },
     }
 }
 

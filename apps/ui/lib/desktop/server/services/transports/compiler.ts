@@ -43,6 +43,7 @@ export function compileServiceTransport(raw: ServiceManifest, methodId: string, 
     if (method.inputs.length > L.inputs || new Set(method.inputs.map(i => i.key)).size !== method.inputs.length || method.inputs.some(i => !inputKey.test(i.key) || ['__proto__', 'constructor', 'prototype'].includes(i.key))) throw new TransportFailure('unsupported')
     const s = method.mcpServers[0], transport = s.transport ?? (s.command ? 'stdio' : s.url?.replace(/\/+$/, '').endsWith('/sse') ? 'sse' : 'http')
     if (transport !== 'sse' && transport !== 'stdio') throw new TransportFailure('unsupported')
+    if (s.oauth !== undefined || method.kind === 'oauth') throw new TransportFailure('unsupported')
     const name = serverName(account.instanceId ? instanceServerName(s.name, account.instanceId) : s.name)
     if (manifest.skills.length > 8 || manifest.skills.some(s => !s.name || s.name.length > 128 || Buffer.byteLength(s.body) > 65536 || Buffer.byteLength(s.description) > 4096 || [s.name, s.description, s.body].some(v => v.includes('${') || v.includes('\0')))) throw new TransportFailure('unsupported')
     const env: Record<string, Template> = Object.create(null)
@@ -57,7 +58,7 @@ export function compileServiceTransport(raw: ServiceManifest, methodId: string, 
         env[mapping.key] = mapped
     }
     if (Object.keys(env).length > L.env || s.args.length > L.args) throw new TransportFailure('unsupported')
-    const plan: TransportPlan = { ref, slug: manifest.slug, methodId, transport, serverName: name, inputs: method.inputs, args: s.args.map(a => parseTemplate(a, method.inputs)), env, skills: manifest.skills, requiresOAuth: s.oauth !== undefined || method.kind === 'oauth' }
+    const plan: TransportPlan = { ref, slug: manifest.slug, methodId, transport, serverName: name, inputs: method.inputs, args: s.args.map(a => parseTemplate(a, method.inputs)), env, skills: manifest.skills, requiresOAuth: false }
     if (transport === 'sse') {
         if (!s.url || s.command || s.args.length || Object.keys(env).length) throw new TransportFailure('unsupported')
         plan.url = parseTemplate(s.url, method.inputs)

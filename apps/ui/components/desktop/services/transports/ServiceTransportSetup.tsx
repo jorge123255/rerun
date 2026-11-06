@@ -47,7 +47,13 @@ function Setup({ account, name, methods, initialMethodId, configuredInputs = {},
             await ports.journal.put(intent); signal.throwIfAborted()
             const result = reconcile ? await ports.reconcile(intent, signal) : await ports.save(intent, values, signal)
             signal.throwIfAborted(); setValues({})
-            if (result.requestId !== intent.requestId || result.outcome !== 'saved' || !result.ref) throw new Error()
+            if (result.requestId !== intent.requestId) throw new Error()
+            if (result.outcome === 'refused') {
+                await ports.journal.clear(intent); signal.throwIfAborted(); setPending(null)
+                setError('Configuration was not saved. Correct the setup and try again.')
+                return
+            }
+            if (result.outcome !== 'saved' || !result.ref) throw new Error()
             const saved = serviceTransportRefSchema.parse(result.ref)
             if (saved.agentId !== account.agentId || saved.key !== account.key || saved.installationId !== account.installationId) throw new Error()
             await ports.journal.clear(intent); signal.throwIfAborted(); setPending(null); onSaved(saved)

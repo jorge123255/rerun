@@ -2,7 +2,7 @@ import 'server-only'
 
 import type { Client } from '@libsql/client'
 import type { DesktopToolInstallDecision, DesktopToolInstallInspect, DesktopToolInstallPorts, DesktopToolInstallRunIdentity, DesktopToolInstallSnapshot } from '@rerun/contracts'
-import { createDesktopToolInstallService, type DesktopToolInstallService } from '../../../../../engine/src/desktop/tool-install/service'
+import { createDesktopToolInstallService, type DesktopToolInstallService } from '@rerun/contracts'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
 import { openDesktopDatabase } from '../database'
 import type { DesktopRuntime } from '../runtime'
@@ -24,8 +24,8 @@ export function createDesktopToolInstallServer(runtime: DesktopRuntime, ports: D
         return { db, agent, session }
     }
 
-    function owned(snapshot: DesktopToolInstallSnapshot | null, sessionId: string): DesktopToolInstallSnapshot | null {
-        if (snapshot && snapshot.sessionId !== sessionId) throw new Error('This installation belongs to another conversation.')
+    function owned(snapshot: DesktopToolInstallSnapshot | null, sessionId: string, agentId?: string): DesktopToolInstallSnapshot | null {
+        if (snapshot && (snapshot.sessionId !== sessionId || agentId !== undefined && snapshot.agentId !== agentId)) throw new Error('This installation belongs to another conversation.')
         return snapshot
     }
 
@@ -47,21 +47,30 @@ export function createDesktopToolInstallServer(runtime: DesktopRuntime, ports: D
 
     return {
         async read(sessionId: string, operationId: string): Promise<DesktopToolInstallSnapshot | null> {
-            await targetOf(sessionId)
-            return owned(await service.read(operationId), sessionId)
+            const target = await targetOf(sessionId)
+            const result = owned(await service.read(operationId), sessionId, target.agent.id)
+            const current = await targetOf(sessionId)
+            if (current.agent.engineAgentId !== target.agent.engineAgentId || current.session.engineSessionId !== target.session.engineSessionId) throw new Error('Installation conversation changed')
+            return result
         },
 
         async history(sessionId: string): Promise<DesktopToolInstallSnapshot[]> {
-            await targetOf(sessionId)
-            return ports.outcomes.list(sessionId)
+            const target = await targetOf(sessionId)
+            const rows = await ports.outcomes.list(sessionId)
+            for (const row of rows) owned(row, sessionId, target.agent.id)
+            const current = await targetOf(sessionId)
+            if (current.agent.engineAgentId !== target.agent.engineAgentId || current.session.engineSessionId !== target.session.engineSessionId) throw new Error('Installation conversation changed')
+            return rows
         },
 
         async decide(sessionId: string, input: DesktopToolInstallDecision, signal?: AbortSignal): Promise<DesktopToolInstallSnapshot> {
+            await targetOf(sessionId)
             const snapshot = await current(sessionId, input.operationId)
             return service.decide(base(snapshot), input, signal)
         },
 
         async inspect(sessionId: string, input: DesktopToolInstallInspect, signal?: AbortSignal): Promise<DesktopToolInstallSnapshot> {
+            await targetOf(sessionId)
             const snapshot = await current(sessionId, input.operationId)
             return service.inspect(base(snapshot), input, signal)
         },

@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs'
-import { lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, rename, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, expect, test, vi } from 'vitest'
@@ -16,7 +16,7 @@ const { migrate } = await import('../db/migrate.js')
 const { agentDir, agentsDir } = await import('../config/paths.js')
 const { listAgentIdsOnDisk } = await import('../agents/loader.js')
 const { deleteAgentIndex, getAgentIndex, insertAgentIndex, listAgentIndex } = await import('../db/repos/agents.js')
-const { createDesktopAgent, setDesktopAgentCreationHooksForTests } = await import('./agent-creation.js')
+const { createDesktopAgent, createDesktopForemanAgent, readDesktopForemanAgentCreation, setDesktopAgentCreationHooksForTests } = await import('./agent-creation.js')
 const { desktopRouteAllowed } = await import('./policy.js')
 const app = createServer()
 const headers = { 'content-type': 'application/json', authorization: 'Bearer desktop-create-test-key' }
@@ -177,4 +177,37 @@ test('cancelling an unread request body cannot admit a creation later', async ()
     expect(() => stream.enqueue(new TextEncoder().encode(JSON.stringify(body)))).toThrow()
     expect(await getAgentIndex(`new-${body.requestId}`)).toBeUndefined()
     await expect(lstat(agentDir(`new-${body.requestId}`))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+
+test('trusted Foreman creation publishes exact SOUL and INSTALL, disabled pending setup and no new grants', async () => {
+    const body = { requestId: crypto.randomUUID(), config: { ...config, enabled: false as const, connectionId: 'offline-codex', provider: 'codex' as const, model: 'terra' }, instructions: { soulMd: '# Mission\nKeep these exact bytes.\n', installMd: '# Setup\nAsk the user for their goal.\n' } }
+    const made = await createDesktopForemanAgent(body)
+    expect(made).toMatchObject({ id: `new-${body.requestId}`, soul: body.instructions.soulMd, install: body.instructions.installMd, config: { enabled: false, connectionId: 'offline-codex', model: 'terra', setup: { required: true, completedAt: null, sessionId: null } } })
+    expect(Object.values(desktopRerunGrantsOf(made.config.tools)).some(Boolean)).toBe(false)
+    expect(await readdir(agentDir(made.id))).not.toContain('data')
+    expect(await readDesktopForemanAgentCreation(body.requestId)).toMatchObject({ state: 'present', id: made.id, instructions: body.instructions })
+    await expect(createDesktopForemanAgent({ ...body, instructions: { ...body.instructions, soulMd: 'Changed' } })).rejects.toMatchObject({ status: 409 })
+    expect((await send({ ...body })).status).toBe(400)
+    await expect(createDesktopForemanAgent({ ...body, config: { ...body.config, enabled: true as never } })).rejects.toThrow()
+})
+
+test('Foreman partial publication resumes the same original directory and receipt after restart', async () => {
+    const body = { requestId: crypto.randomUUID(), config: { ...config, enabled: false as const, connectionId: 'offline-codex', provider: 'codex' as const, model: 'terra' }, instructions: { soulMd: 'Exact mission', installMd: 'Exact setup' } }
+    setDesktopAgentCreationHooksForTests({ afterPublished: async () => { throw new Error('lost before index') } })
+    await expect(createDesktopForemanAgent(body)).rejects.toThrow('lost before index')
+    const id = `new-${body.requestId}`, before = await lstat(agentDir(id), { bigint: true })
+    expect(await readDesktopForemanAgentCreation(body.requestId)).toEqual({ state: 'unknown' })
+    setDesktopAgentCreationHooksForTests(null)
+    vi.resetModules()
+    const restarted = await import('./agent-creation.js')
+    expect((await restarted.createDesktopForemanAgent(body)).id).toBe(id)
+    expect((await lstat(agentDir(id), { bigint: true })).ino).toBe(before.ino)
+    expect((await listAgentIndex()).filter(row => row.id === id)).toHaveLength(1)
+    expect(await restarted.readDesktopForemanAgentCreation(body.requestId)).toMatchObject({ state: 'present', id })
+    const original = `${agentDir(id)}-kept-original`
+    await rename(agentDir(id), original)
+    await cp(original, agentDir(id), { recursive: true })
+    expect(await restarted.readDesktopForemanAgentCreation(body.requestId)).toEqual({ state: 'replaced' })
+    await expect(restarted.createDesktopForemanAgent(body)).rejects.toMatchObject({ status: 409 })
 })

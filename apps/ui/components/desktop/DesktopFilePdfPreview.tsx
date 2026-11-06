@@ -21,12 +21,14 @@ export function isDesktopPdfName(name: string): boolean {
     return !/[\/\\\0]/.test(name) && /^.+\.pdf$/i.test(name)
 }
 
+export type DesktopPdfPageSource = { key: string; loadPage(page: number, scale: number, signal: AbortSignal): Promise<Response> }
 type Props = {
     name: string
     path: string
     identity?: string
     /** Authenticated same-origin PDF page route, already bound to this owner/path/identity. */
     srcUrl: string
+    source?: DesktopPdfPageSource
     onBack: () => void
     siblings?: SiblingFiles | null
     viewerRef?: Ref<HTMLDivElement>
@@ -39,11 +41,11 @@ type TextState = { key: string; status: 'idle' | 'loading' } | { key: string; st
 
 export function DesktopFilePdfPreview(props: Props) {
     // Changing coworker, file, or listing identity discards both page selection and zoom.
-    return <PdfDocument key={`${props.srcUrl}\0${props.path}\0${props.identity ?? ''}`} {...props} />
+    return <PdfDocument key={`${props.source?.key ?? props.srcUrl}\0${props.path}\0${props.identity ?? ''}`} {...props} />
 }
 
 /** Rerun's FileDetail header and white PDF frame. The page is a PNG; selection and Find sit on top of it. */
-function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef, chrome = 'files' }: Props) {
+function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = null, viewerRef, chrome = 'files' }: Props) {
     const [page, setPage] = useState(1)
     const [scale, setScale] = useState(1)
     const [pages, setPages] = useState<number | null>(null)
@@ -61,15 +63,15 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
     const [activeMatch, setActiveMatch] = useState(0)
     const [found, setFound] = useState<{ query: string; matches: DesktopPdfTextMatch[]; limited: boolean }>({ query: '', matches: [], limited: false })
     const findGeneration = useRef(0)
-    const canReadText = 'src' in visible && visible.meta.pageWidth !== null && visible.meta.pageHeight !== null && visible.meta.sha256 !== null
+    const canReadText = !source && 'src' in visible && visible.meta.pageWidth !== null && visible.meta.pageHeight !== null && visible.meta.sha256 !== null
 
     useEffect(() => { textRef.current = text }, [text])
 
     useEffect(() => {
         const url = pdfRoute(srcUrl, path, identity)
-        if (!url) { setView({ key: requestKey, error: 'Could not read this PDF.' }); return }
-        url.searchParams.set('page', String(page))
-        url.searchParams.set('scale', String(scale))
+        if (!source && !url) { setView({ key: requestKey, error: 'Could not read this PDF.' }); return }
+        url?.searchParams.set('page', String(page))
+        url?.searchParams.set('scale', String(scale))
         const controller = new AbortController()
         let cancelled = false
         let objectUrl = ''
@@ -77,7 +79,7 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
         setView({ key: requestKey, loading: true })
         void (async () => {
             try {
-                const response = await fetch(`${url.pathname}?${url.searchParams}`, {
+                const response = source ? await source.loadPage(page, scale, controller.signal) : await fetch(`${url!.pathname}?${url!.searchParams}`, {
                     cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: controller.signal,
                 })
                 if (cancelled) { await response.body?.cancel(); return }
@@ -107,7 +109,7 @@ function PdfDocument({ name, path, identity, srcUrl, onBack, siblings = null, vi
             }
         })()
         return () => { cancelled = true; controller.abort(); release() }
-    }, [srcUrl, path, identity, page, scale, requestKey])
+    }, [srcUrl, source, path, identity, page, scale, requestKey])
 
     // Text is tied to the exact bytes rendered, not only dev:ino (which survives in-place edits).
     // Page and zoom reuse it while that content hash is unchanged.
