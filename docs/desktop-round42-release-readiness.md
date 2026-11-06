@@ -33,8 +33,8 @@
 ## RD43–45 decision gates (plan only — not implemented)
 
 1. **RD43:** Approved compatible remote host + explicit user activation before pair/replace/remove acceptance.
-2. **RD44:** Real storage/auth for hosted links; authenticated public webhooks; multi-user authority for W2/ACLs — do not simulate with localhost-as-public or EE imports.
-3. **RD45:** Specify phone↔Mac contract, pairing/revocation, credential storage, offline behavior before transport port; separate signing/notarization/update plan for public Mac delivery.
+2. **RD44:** Conditional plan sourced (`01M6S8847DX06HMEYQVV73EZYP.md`). Hosted links/public webhooks/multi-user ACL remain unmade host/account decisions; local milestone independent. Desktop-base `/p/[slug]` older unguarded redirect **must not** be enabled as shortcut vs pin gate+signed read. Loopback auth/replay/rotate stays; disabled networking stays off. No vendor/host selected.
+3. **RD45:** Conditional plan sourced (`01M6S85MF39SNP545DE226RXTS.md`). Pin phone = Expo/Supabase hub client (bearer+`x-workspace-id`), absent on `6f6ad959`. No phone↔Mac pairing contract; `/api/engines/pair` and remote-machine allowlist are not phone protocol. User/root: hub deployment vs new phone-to-Mac protocol. Distribution preview path/id/versions unchanged; signer pin user-provided not repo evidence. Do not port/activate.
 
 ## Misleading claims
 
@@ -46,7 +46,7 @@ Frozen-base audit `bc-1e95582a-a658-55d3-8480-85f654b18cc8` reconciled. **SOURCE
 
 ## RD40 / RD41 audit intake (not acceptance)
 
-- **RD40:** **W4** `73b6855e…`; **D4** `d0b2a798…`; **D3 Claude generation** SOURCE-REPAIRED `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` (handoff `docs/desktop-round40-claude-generation-handoff.md`; **not tested / not accepted**). Still open: native nontext receipt, search rotated-key classification.
+- **RD40:** **W4** `73b6855e…`; **D4** `d0b2a798…`; **D3** `4415d319…`; **E2 nontext** `42aa785f9b72ca676bc473cab0f708f899db0d3f` (handoff `docs/desktop-round40-nontext-writeback-handoff.md`); **E2 search** `aed685747b0ee88fad99e90bf870650be997d990` (handoff `docs/desktop-round40-search-revision-handoff.md`) — all SOURCE-REPAIRED / **not tested / not accepted**. **Do not mark whole RD40 accepted.** C–I / root conversation+notifications still pending.
 - **RD41:** Three confirmed unrepaired defects (share plan credential count/label; board camera persistence; five loading skeletons — no UI edits here). Same-box Duplicate **inherits grants today**; portable import forces grants off. **User t18u forbids inherited grants on copies/imports** — recorded as discrepancy for root authority, not accepted as settled product decision. Root separately decides `.env`/`mcp`/credential **file** copy semantics. Preserve `.rerun*` / `.rerun-skill-*` exclusion and ordinary hidden files.
 - **RD39** four defects still unrepaired; C7 native notify channel decision preserved.
 - All cloud audits (RD39/40/41) returned; **none** of RD39/40/41 are implementation-complete. C–I still PENDING.

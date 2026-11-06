@@ -143,3 +143,14 @@ No critical blocker found that prevents RD38 A. Memories remain correctly fail-c
 - Durable token ⇒ projected `connected` + `credentialRevision`; replacement ⇒ `pendingAttempt`.
 - SOURCE-REPAIRED / ROOT-UNVERIFIED (no live account this checkpoint).
 
+## RD40 E2 nontext + search (master)
+
+- Nontext unsupported writeback: `42aa785f9b72ca676bc473cab0f708f899db0d3f` — handoff `docs/desktop-round40-nontext-writeback-handoff.md`.
+- Search credential-revision: `aed685747b0ee88fad99e90bf870650be997d990` — handoff `docs/desktop-round40-search-revision-handoff.md`.
+- **Not accepted / not tested.** Whole RD40 not accepted. C–I pending.
+
+## RD44 / RD45 conditional plans (master)
+
+- RD45 `01M6S85MF39SNP545DE226RXTS.md`: pin Expo/Supabase hub client; absent on `6f6ad959`; no phone↔Mac pairing; engines/pair + remote-machine ≠ phone; preview distribution unchanged; signer user-provided.
+- RD44 `01M6S8847DX06HMEYQVV73EZYP.md`: hosted/webhook/ACL decisions unmade; local independent; must not enable older unguarded `/p/[slug]`; loopback remains legitimate.
+- Plans **sourced only** — not accepted, not implementation-complete. No mobile/hosting activation.

@@ -2,7 +2,7 @@
 
 **Purpose:** checklist for root’s integrated release-candidate / Mac acceptance work.  
 **This agent did not create fixtures, run the app, grant permissions, or mark results.**  
-**Tip referenced:** `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` (RD40 D3 Claude generation + prior)
+**Tip referenced:** `70e03e69d7515b122d56eb399699501b9cbdde85` (RD40 E2 nontext `42aa785f9b72…` + search `aed685747b0e…` + prior)
 
 Result cells stay blank until root fills them. Distinguish: source present ≠ root accepted ≠ configured service live.
 
@@ -47,9 +47,9 @@ Result cells stay blank until root fills them. Distinguish: source present ≠ r
 | ID | Gate | Notes | Root result |
 |---|---|---|---|
 | P1 | Embeddings / STT / OAuth / SSE live | Source may exist; live acceptance separate | |
-| P2 | Hosted share URL / external webhooks / multi-user ACL | RD44 — needs authority | |
+| P2 | Hosted share URL / external webhooks / multi-user ACL | RD44 plan sourced `01M6S8847DX06HMEYQVV73EZYP.md` — needs authority; do not enable old `/p/[slug]` | |
 | P3 | Remote machine pair | RD43 — needs approved host | |
-| P4 | Mobile / public notarized distribution | RD45 | |
+| P4 | Mobile / public notarized distribution | RD45 plan sourced `01M6S85MF39SNP545DE226RXTS.md` — hub vs new phone↔Mac decision; preview path unchanged | |
 
 ## C5 → C6
 

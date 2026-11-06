@@ -1,7 +1,7 @@
 # RD42 source inventory (preparation — not complete)
 
 **Status:** independent RD42 preparation checkpoint only. Does **not** claim release-candidate completion, Mac acceptance, or that RD39–41 / C–I are done.  
-**Worktree tip at inventory authorship:** `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` on `desktop/round38-master-completion` (RD40 D3 Claude generation; docs tip may follow)
+**Worktree tip at inventory authorship:** `70e03e69d7515b122d56eb399699501b9cbdde85` on `desktop/round38-master-completion` (RD40 E2 nontext+search SOURCE-REPAIRED; docs tip this commit)
 **Prepared base:** `6f6ad959a09abaf1947950b6f82413c94407e22a` (`desktop/rd38-cloud-base`)  
 **Original comparison pin:** `2a57fa6dd53311f763bfc9abde85997b7f7e5309` (historical `a6d63a4b542674ddd002e51b39ba0df6e0807bcc` secondary)  
 **Seam:** A/B/E `abe-1` in `docs/desktop-round38-a-transfer-seam.md`  
@@ -27,6 +27,11 @@
 | 13 | `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` | **RD40 D4** private memory clear → semantic index wipe |
 | 14 | `c183cd50993cfeab142278f6389899ceb477f576` | RD40 D4 → RD42 docs |
 | 15 | `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` | **RD40 D3** Claude generation / pendingAttempt truthfulness |
+| 16 | `c43c532dad511ed1c483d142e2345570418e0c73` | RD40 D3 → RD42 docs |
+| 17 | `42aa785f9b72ca676bc473cab0f708f899db0d3f` | **RD40 E2** native non-text unsupported writeback receipt |
+| 18 | `81d3109489cabe7397763194f8adad44522d8199` | RD40 E2 nontext handoff |
+| 19 | `aed685747b0ee88fad99e90bf870650be997d990` | **RD40 E2** search credential-revision classification |
+| 20 | `70e03e69d7515b122d56eb399699501b9cbdde85` | RD40 E2 search revision handoff |
 
 ## Delivered on this branch (source only)
 
@@ -77,12 +82,12 @@ export * from './desktop-coworker-share-database.js'
 | RD38 **H** packaging/startup readiness source | PENDING — seven-agent isolated tree |
 | RD38 **I** remote gateway transitions source | PENDING — seven-agent isolated tree |
 | **RD39** local journey audits/fixes | **E3 paste + C3 document add SOURCE-REPAIRED**; D2 >14 + D4 C7 receipt **INTEGRATION/ROOT pending**; not complete / not accepted |
-| **RD40** providers/recall/Foreman/W4/D4/D3 | **W4** `73b6855e…`; **D4** `d0b2a798…`; **D3 Claude generation** SOURCE-REPAIRED `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` (not accepted/not tested); native nontext + search rotated **unrepaired**; not complete |
+| **RD40** providers/recall/Foreman/W4/D4/D3/E2 | **W4** `73b6855e…`; **D4** `d0b2a798…`; **D3** `4415d319…`; **E2 nontext** `42aa785f9b72…`; **E2 search** `aed685747b0e…` — all SOURCE-REPAIRED / **not accepted / not tested**; C–I + remaining root still open; **RD40 not complete** |
 | **RD41** whole-product design/state audit | **audit reconciled** — 3 confirmed defects + Duplicate-grants discrepancy **unrepaired** (root); not complete |
 | **RD42** RC repair + root acceptance | **this doc is preparation only** — not finished |
 | RD43 remote host acceptance | product/host gate |
-| RD44 hosted share/webhooks/collaboration | product/authority gate |
-| RD45 mobile + public distribution | product/signing gate |
+| RD44 hosted share/webhooks/collaboration | **conditional plan sourced** (asset `01M6S8847DX06HMEYQVV73EZYP.md`) — product/authority gate; local milestone independent; **not accepted / not implemented** |
+| RD45 mobile + public distribution | **conditional plan sourced** (asset `01M6S85MF39SNP545DE226RXTS.md`) — hub vs new phone↔Mac contract decision required; **not accepted / not implemented** |
 
 ## Historical checklist discipline
 
@@ -155,7 +160,7 @@ C3 draft/queue/image cap 4 / text 10; C4 voice/mentions; C6 sealed follow-up; E3
 
 ### Pending outside this reconcile
 
-C–I seven-agent packages still PENDING. RD39 D1+D3 source-repaired (paste + document add); D2 >14 + D4 C7 still root/owner. RD40 W4 source-repaired; candidates 2–5 open. RD41 D1–D3 + Duplicate-grants discrepancy open. C7: keep native channel.
+C–I seven-agent packages still PENDING. RD39 D1+D3 source-repaired (paste + document add); D2 >14 + D4 C7 still root/owner. RD40 W4/D4/D3/E2 source-repaired (nontext `42aa785f9b72…`, search `aed685747b0e…`); RD40 still not accepted. RD41 D1–D3 + Duplicate-grants discrepancy open. C7: keep native channel.
 
 
 ## RD40 frozen-base audit reconciliation (source review + one narrow repair)
@@ -166,18 +171,41 @@ C–I seven-agent packages still PENDING. RD39 D1+D3 source-repaired (paste + do
 |---|---|---|---|
 | 1 | External `update_agent` grant bypass (`tools` / `selfImprovement` / grant aliases → engine merge without Tools consent) | **Source repaired** in external operations adapter only — `73b6855e6d227011fcd6198ce3ee71f1d640a94c`. Handoff: `docs/desktop-round40-w4-grant-guard-handoff.md`. **Not accepted / not tested.** Engine routes, scopes, defaults unchanged. | W4 adapter (done source); root live key verify later |
 | 2 | Claude re-login `publicState` hides still-active token | **SOURCE-REPAIRED** `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` — `projectDesktopClaudePlanSnapshot` + `pendingAttempt`; handoff `docs/desktop-round40-claude-generation-handoff.md`. **ROOT-UNVERIFIED.** | D3; root fixture + optional live sign-in |
-| 3 | Native non-text scratch writes vanish without unsupported receipt | **Confirmed unrepaired** — `native-worker` / `native-writeback/capture.ts` `allowedTextPath` drops non-`.txt`/`.md`; finish deletes scratch with no unsupported row | E2 native writeback |
+| 3 | Native non-text scratch writes vanish without unsupported receipt | **SOURCE-REPAIRED** `42aa785f9b72ca676bc473cab0f708f899db0d3f` — unsupported metadata-only rows (`binary-or-non-text`); handoff `docs/desktop-round40-nontext-writeback-handoff.md`. **ROOT-UNVERIFIED.** | E2 native writeback |
 | 4 | Clear-all private semantic vectors residue (async observer) | **SOURCE-REPAIRED** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` — after-lock bound `notesCleared`; clear mode skips swallowed reconcile; handoff `docs/desktop-round40-memory-clear-handoff.md`. **ROOT-UNVERIFIED.** | D4 private memory (not RD38 A portable) |
-| 5 | Search rotated-key stale/uncertain receipt classification | **Confirmed unrepaired** — changed-credential error mapped to generic “Search provider failed.” | E2 search binding |
+| 5 | Search rotated-key stale/uncertain receipt classification | **SOURCE-REPAIRED** `aed685747b0ee88fad99e90bf870650be997d990` — pre-flight capability-changed / in-flight uncertain; handoff `docs/desktop-round40-search-revision-handoff.md`. **ROOT-UNVERIFIED.** | E2 search binding |
 
 **Preserved decisions:** RD39 C7 keep native `bridge.notify` (receipt from native result). W4 repair rejects whole mixed authority patch; metadata/Box/model fields remain.
 
 ### Proposed fragments (candidates 2–5 — do not apply this checkpoint)
 
 - **D3:** **Applied** at `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` via projection + pendingAttempt (see handoff).
-- **E2 nontext:** Capture non-text added/changed paths as `unsupported` review rows (`binary-or-non-text`), no payload/apply, return to run; keep text digest/conflict behavior.
+- **E2 nontext:** **Applied** at `42aa785f9b72ca676bc473cab0f708f899db0d3f` (see handoff).
 - **D4:** **Applied outside lock** at `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` (deadlock avoided). See handoff. Keep best-effort reconcile for non-clear edits.
-- **E2 search:** Map pre-accept changed-credential to `{ status:'error', message:'Search capability changed.' }`; if request already started keep `uncertain`; never “Search provider failed.” for that case.
+- **E2 search:** **Applied** at `aed685747b0ee88fad99e90bf870650be997d990` (see handoff).
+
+
+
+## RD44 / RD45 conditional gates (plans sourced — not accepted, not implemented)
+
+Read-only cloud plans against frozen base `6f6ad959…` + original pin `2a57fa6…`. **No mobile/hosting/cloud source changes in this checkpoint.** Local Mac readiness stays independent.
+
+### RD45 — phone companion + Mac distribution (asset `01M6S85MF39SNP545DE226RXTS.md`)
+
+- Pin phone app is Expo/Supabase **hub client** (bearer + `x-workspace-id`); **absent** on `6f6ad959` (zero `apps/mobile`, zero `/api/v1`).
+- No public **phone↔local Mac** pairing / identity / revocation / workspace-mapping contract on either tree.
+- Existing `POST /api/engines/pair` and remote-machine allowlist are **not** a phone protocol; do not retarget.
+- User/root must choose: keep phone on pin hub (no Mac listener / no copied mobile tree) **or** authorize a new phone↔Mac contract before any port.
+- Distribution canonical preview path/id/source versions unchanged (`Rerun Desktop Preview.app`, bundle `build.rerun.desktop.preview`). Signer SHA-1 is **user-provided**, not repo evidence. Notarization/update feed remain separate public-release work.
+- **Status:** plan sourced · **not accepted** · **not implementation-complete** · do not port/activate.
+
+### RD44 — hosted links / public webhooks / multi-user ACL (asset `01M6S8847DX06HMEYQVV73EZYP.md`)
+
+- Hosted publish, public webhooks, and multi-user Box ACL remain **unmade** host/account/review/auth/rate/revocation decisions. Local milestone independent.
+- Desktop-base `GET /p/[slug]` is the **older unguarded** stored `public_url` redirect; pin has stricter gate + 60s signed read. **MUST NOT** enable the old hosted route as a shortcut.
+- Existing local loopback trigger auth/replay/rotate/custody remains legitimate; disabled networking stays off. No public listener from this lane.
+- No vendor/host/accounts selected; no public service activated.
+- **Status:** plan sourced · **not accepted** · **not implementation-complete**.
 
 ## RD41 frozen-base audit reconciliation (source review only — no runtime edits)
 

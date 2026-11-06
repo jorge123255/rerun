@@ -8,6 +8,8 @@
 **RD39 C3 documents SHA:** `2520a0ef3d483bd29c66e12fdb4ebfd37761a4bb`  
 **RD40 D4 clear wipe SHA:** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16`  
 **RD40 D3 Claude generation SHA:** `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8`  
+**RD40 E2 nontext SHA:** `42aa785f9b72ca676bc473cab0f708f899db0d3f`  
+**RD40 E2 search SHA:** `aed685747b0ee88fad99e90bf870650be997d990`  
 **Parent tip before W4 impl:** `92dc02509cd9a3069bb588b39da6f3e6f6184bba`  
 **Branch:** `desktop/round38-master-completion`  
 **No checks executed. No installed acceptance. No push/PR. Canonical checklist not mutated.**
@@ -29,9 +31,9 @@
 | Track | Status |
 |---|---|
 | RD38 A/B | Source delivered; product binding still `unavailable.*` |
-| RD38 C–I | **PENDING** seven-agent exclusive trees |
+| RD38 C–I | **PENDING** — seven agent tips exist; READONLY reviewer inspecting; **not merged / not marked complete** on master |
 | RD39 | E3+C3 doc-add **SOURCE-REPAIRED**; >14 + C7 **pending**; handoffs `desktop-round39-*-handoff.md` |
-| RD40 | W4 + **D4 clear wipe SOURCE-REPAIRED** (`d0b2a79834261ad34e04abd4e9ce20e1f79cdc16`); Claude/nontext/search still open; not accepted/tested |
+| RD40 | W4 + D4 + D3 + **E2 nontext** `42aa785f9b72…` + **E2 search** `aed685747b0e…` SOURCE-REPAIRED; **not accepted/tested**; C–I still open |
 | RD41 | Audit reconciled; **3 defects unrepaired** + Duplicate grants discrepancy vs t18u; no runtime edits |
 | RD42 | Preparation / inventory only — **not** RC complete |
 
@@ -51,7 +53,8 @@
 | 1 W4 grants | **Repaired source** in `external-mcp-tools/operations.ts` only — see W4 handoff |
 | 4 D4 clear wipe | **SOURCE-REPAIRED** `d0b2a79834261ad34e04abd4e9ce20e1f79cdc16` — `docs/desktop-round40-memory-clear-handoff.md` |
 | 2 D3 Claude generation | **SOURCE-REPAIRED** `4415d3193bc467d0f25cbd9fdfdb3d76bf5c65f8` — `docs/desktop-round40-claude-generation-handoff.md` |
-| 3,5 | Still open — native nontext / search rotated |
+| 3 | SOURCE-REPAIRED nontext `42aa785f9b72…` (ROOT-UNVERIFIED) |
+| 5 | SOURCE-REPAIRED search `aed685747b0e…` (ROOT-UNVERIFIED) |
 
 ## RD41 outcome
 
@@ -75,3 +78,9 @@ tests, typecheck, lint, build, install, fixtures, app, provider, Docker, UI, Key
 ## Next
 
 Root/owners apply unrepaired defects; fill matrix cells; bind A/B; wait is over for cloud audits (all returned) but C–I source packages remain PENDING before claiming RD42 RC.
+
+## RD44 / RD45 conditional (docs only this checkpoint)
+
+- RD45 asset `01M6S85MF39SNP545DE226RXTS.md` — Expo hub client on pin; absent on base; no phone↔Mac contract; distribution preview unchanged; signer not in repo.
+- RD44 asset `01M6S8847DX06HMEYQVV73EZYP.md` — hosted/webhook/ACL decisions unmade; do not enable older `/p/[slug]`; loopback stays local.
+- Both **sourced, not accepted, not implementation-complete**. No mobile/hosting code.
