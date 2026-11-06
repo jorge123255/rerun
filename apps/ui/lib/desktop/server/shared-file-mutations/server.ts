@@ -19,7 +19,7 @@ const publishers = () => {
 }
 
 /** @deprecated Global authority injection is refused; bind the validated runtime/service instead. */
-export function bindSharedMutationAuthority(_next: SharedMutationAuthority | null): never { throw new DesktopHttpError(503,'Shared-file authority must be scoped to the validated runtime.') }
+export function bindSharedMutationAuthority(next: SharedMutationAuthority | null): never { void next; throw new DesktopHttpError(503,'Shared-file authority must be scoped to the validated runtime.') }
 
 function refused(status: number, code: string, message: string) {
     return Response.json({ status: 'refused', code, message }, { status, headers: { 'cache-control': 'no-store' } })

@@ -52,14 +52,13 @@ export function createDesktopCoworkerShareService(store: DesktopCoworkerShareSto
         const reserved = 2 * (sourceBytes + metadataBytes + source.members.length * 2048) + 1024
         if (reserved > limits.maxBytes) throw new DesktopHttpError(413,'This coworker is too large to keep safely for review. Choose fewer files.')
         if (reviews.size >= limits.maxEntries || retainedBytes() + reserved > limits.maxBytes) throw new DesktopHttpError(409,'Finish an open share review before starting another, or review again after it expires.')
-        let review: Review
         const work = Promise.resolve().then(() => createDesktopCoworkerSnapshot(source,include,workspaceId)).then(snapshot => {
             const bytes = snapshot.archiveBytes.byteLength + snapshot.members.reduce((total,member) => total + member.bytes.byteLength,0) + Buffer.byteLength(JSON.stringify(snapshot.manifest))
             if (bytes > limits.maxBytes || retainedBytes() - review.bytes + bytes > limits.maxBytes) throw new DesktopHttpError(413,'This coworker is too large to keep safely for review. Choose fewer files.')
             review.bytes = bytes
             return snapshot
         })
-        review = { work,bytes: reserved,users: 1,expiresAt: Date.now() + limits.ttlMs }
+        const review: Review = { work,bytes: reserved,users: 1,expiresAt: Date.now() + limits.ttlMs }
         reviews.set(id,review)
         void work.catch(() => dropReview(id,review)).finally(() => { review.users--; expireReview(id,review) })
         return review

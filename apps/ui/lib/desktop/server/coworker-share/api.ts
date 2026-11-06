@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { desktopCoworkerShareExportInputSchema, desktopCoworkerShareImportInputSchema, desktopCoworkerShareReviewInputSchema, desktopCoworkerShareRevokeInputSchema, desktopCoworkerShareSourceSchema, type DesktopCoworkerShareSource } from '../../../../../../packages/contracts/src/desktop-coworker-share'
+import { desktopCoworkerShareExportInputSchema, desktopCoworkerShareImportInputSchema, desktopCoworkerShareReviewInputSchema, desktopCoworkerShareRevokeInputSchema, type DesktopCoworkerShareSource } from '../../../../../../packages/contracts/src/desktop-coworker-share'
 import { DesktopHttpError } from '../auth'
 import type { DesktopCoworkerShareService } from './service'
 import { readDesktopJson } from '../request-json'
