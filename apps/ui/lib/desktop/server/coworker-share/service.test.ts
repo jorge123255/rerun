@@ -20,10 +20,14 @@ test('replay reuses the snapshot and changed source requires fresh review', asyn
     const install = vi.fn(async () => 'imported-a')
     const service = createDesktopCoworkerShareService(store, { install })
     const include = { memories: false, database: false, files: false }
-    const first = await service.export({ workspaceId: 1, agentId: 'agent-a', sourceRevision: source.revision, requestId: 'request-a', include }, source)
-    const replay = await service.export({ workspaceId: 1, agentId: 'agent-a', sourceRevision: source.revision, requestId: 'request-b', include }, source)
+    const exportInput = async (requestId: string, current = source) => {
+        const review = await service.review({ workspaceId: 1, agentId: 'agent-a', sourceRevision: current.revision, requestId, include }, current)
+        return { workspaceId: 1, agentId: 'agent-a', sourceRevision: current.revision, requestId, include, reviewId: review.reviewId, expectedDigest: review.manifest.contentDigest }
+    }
+    const first = await service.export(await exportInput('request-a'), source)
+    const replay = await service.export(await exportInput('request-b'), source)
     expect(replay.manifest.packageKey).toBe(first.manifest.packageKey)
-    const changed = await service.export({ workspaceId: 1, agentId: 'agent-a', sourceRevision: 'b'.repeat(64), requestId: 'request-c', include }, { ...source, revision: 'b'.repeat(64) })
+    const changed = await service.export(await exportInput('request-c', { ...source, revision: 'b'.repeat(64) }), { ...source, revision: 'b'.repeat(64) })
     expect(changed.manifest.packageKey).not.toBe(first.manifest.packageKey)
     await service.import({ requestId: 'import-a', snapshotId: first.manifest.packageKey, expectedDigest: first.manifest.contentDigest, targetWorkspaceId: 2 })
     await service.import({ requestId: 'import-b', snapshotId: first.manifest.packageKey, expectedDigest: first.manifest.contentDigest, targetWorkspaceId: 2 })

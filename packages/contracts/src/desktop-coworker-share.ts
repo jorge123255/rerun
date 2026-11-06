@@ -42,6 +42,11 @@ export const desktopCoworkerSnapshotResultSchema = z.strictObject({
 })
 export type DesktopCoworkerSnapshotResult = z.infer<typeof desktopCoworkerSnapshotResultSchema>
 
+export const desktopCoworkerShareReviewResultSchema = desktopCoworkerSnapshotResultSchema.extend({
+    reviewId: z.string().regex(/^[a-f0-9]{64}$/),
+})
+export type DesktopCoworkerShareReviewResult = z.infer<typeof desktopCoworkerShareReviewResultSchema>
+
 export const desktopCoworkerSharePlanSchema = z.strictObject({
     agentName: z.string().min(1).max(200),
     warnings: z.array(z.string().min(1).max(400)).max(30),
@@ -55,12 +60,18 @@ export const desktopCoworkerSharePlanSchema = z.strictObject({
 })
 export type DesktopCoworkerSharePlan = z.infer<typeof desktopCoworkerSharePlanSchema>
 
-export const desktopCoworkerShareExportInputSchema = z.strictObject({
+export const desktopCoworkerShareReviewInputSchema = z.strictObject({
     workspaceId: z.number().int().positive(),
     agentId: z.string().min(1).max(160),
     sourceRevision: desktopTemplateRevisionSchema,
     requestId: z.string().min(1).max(160),
     include: desktopCoworkerShareIncludeSchema,
+})
+export type DesktopCoworkerShareReviewInput = z.infer<typeof desktopCoworkerShareReviewInputSchema>
+
+export const desktopCoworkerShareExportInputSchema = desktopCoworkerShareReviewInputSchema.extend({
+    reviewId: z.string().regex(/^[a-f0-9]{64}$/),
+    expectedDigest: desktopTemplateRevisionSchema,
 })
 export type DesktopCoworkerShareExportInput = z.infer<typeof desktopCoworkerShareExportInputSchema>
 

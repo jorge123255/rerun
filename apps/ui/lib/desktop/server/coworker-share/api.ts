@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { desktopCoworkerShareExportInputSchema, desktopCoworkerShareImportInputSchema, desktopCoworkerShareRevokeInputSchema, desktopCoworkerShareSourceSchema, type DesktopCoworkerShareSource } from '../../../../../../packages/contracts/src/desktop-coworker-share'
+import { desktopCoworkerShareExportInputSchema, desktopCoworkerShareImportInputSchema, desktopCoworkerShareReviewInputSchema, desktopCoworkerShareRevokeInputSchema, desktopCoworkerShareSourceSchema, type DesktopCoworkerShareSource } from '../../../../../../packages/contracts/src/desktop-coworker-share'
 import { DesktopHttpError } from '../auth'
 import type { DesktopCoworkerShareService } from './service'
 
@@ -22,6 +22,10 @@ export function createDesktopCoworkerShareApi(service: DesktopCoworkerShareServi
             if (body.action === 'plan') {
                 const input = z.object({ workspaceId: z.number().int().positive(), agentId: z.string().min(1).max(160) }).strict().parse(body)
                 return Response.json({ plan: service.plan(await source(input.workspaceId, input.agentId, request.signal) }, { headers: { 'Cache-Control': 'no-store' } })
+            }
+            if (body.action === 'review') {
+                const input = desktopCoworkerShareReviewInputSchema.parse(body)
+                return Response.json(await service.review(input, await source(input.workspaceId, input.agentId, request.signal)), { headers: { 'Cache-Control': 'no-store' } })
             }
             if (body.action === 'export') {
                 const input = desktopCoworkerShareExportInputSchema.parse(body)

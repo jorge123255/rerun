@@ -35,6 +35,9 @@ export function createDesktopCoworkerShareStore(db: Client) {
             })
             return { reused: false }
         },
+        async recordExport(requestId: string, snapshotId: string): Promise<DesktopCoworkerShareReceipt> {
+            return record(requestId, 'export', 'created', snapshotId, false)
+        },
         async readArchive(snapshotId: string): Promise<{ bytes: Buffer; sha256: string }> {
             const row = (await db.execute({ sql: 'SELECT archive_blob,archive_sha256 FROM desktop_coworker_shares WHERE snapshot_id = ? AND status = ?', args: [snapshotId, 'active'] })).rows[0]
             if (!row?.archive_blob) refusal(409, 'This local share is no longer available.')

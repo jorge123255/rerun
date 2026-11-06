@@ -39,8 +39,16 @@ Snapshot ID binds workspace, source agent, full source revision and include flag
 
 - `schema.ts`: additive snapshots, per-workspace imports and operation receipts.
 - `store.ts`: immutable create/reuse, active-only archive reads, per-workspace import dedupe, rollback receipts and withdrawal with archive removal.
-- `service.ts`: source/revision validation, preview/download, disconnected import, uncertainty recovery and replay.
-- `api.ts`: bounded no-store plan/export/import/revoke and preview/download handlers with a root source resolver.
+- `service.ts`: non-persisting `review`, exact prepared-byte export, preview/download, disconnected import, uncertainty recovery and replay.
+- `api.ts`: bounded no-store plan/review/export/import/revoke and preview/download handlers with a root source resolver.
+
+### Non-persisting review/prepare contract
+
+`desktopCoworkerShareReviewInputSchema` accepts `{workspaceId,agentId,sourceRevision,requestId,include}`. `POST {action:'review'}` returns `desktopCoworkerShareReviewResultSchema`: the exact `desktopCoworkerSnapshotResultSchema` plus `reviewId` (64 hex). It contains the selected manifest/member hashes, `archiveSha256` and numeric `archiveBytes`; `reused:false`. No snapshot or receipt is persisted at this point, so Cancel creates no share.
+
+`desktopCoworkerShareExportInputSchema` adds `reviewId` and `expectedDigest` (both 64 hex) to the review fields. Export rechecks workspace/agent/sourceRevision/include, consumes the exact prepared manifest/archive bytes and records the export receipt with the stable `requestId`. It never regenerates the snapshot or `capturedAt`. A retry returns the persisted same snapshot with `reused:true`; after a lost ACK or restart it resolves from the export receipt or persisted archive rather than the ephemeral review map.
+
+Root must bind one `createDesktopCoworkerShareService` instance per runtime so the in-memory review is available between review and export. The map is not a second persistent store and is discarded after a successful export; persistence is always the existing snapshot/receipt tables.
 
 The archive codec is the existing `desktop/templates/portable-package` implementation, including path confinement, duplicate/collision checks, member digests, size ceilings, gzip validation and manifest verification. No new archive authority was introduced.
 
@@ -140,6 +148,7 @@ Keep canonical workspace identity and template storage ownership. The snapshotâ€
 - `apps/engine/src/desktop/coworker-share/snapshot.test.ts`: selected content, opt-in buckets, binary fidelity, disconnected import plan and archive tamper rejection.
 - `apps/ui/lib/desktop/server/coworker-share/store.test.ts`: snapshot replay, withdrawal, duplicate/cross-workspace imports and rollback receipts.
 - `apps/ui/lib/desktop/server/coworker-share/service.test.ts`: replay versus source changes, duplicate install and uncertain acknowledgement.
+- `apps/ui/lib/desktop/server/coworker-share/review.test.ts`: non-persisting review result/identity, exact prepared-byte export, lost-ACK restart replay and wrong-identity refusal.
 
 No tests, typecheck, lint, builds, installs, servers, provider calls, browser/native UI, Docker, Keychain, live data or restart checks were executed. Installed Next.js guides under `node_modules/next/dist/docs` are absent in this checkout; no installation was attempted.
 
@@ -153,6 +162,7 @@ No tests, typecheck, lint, builds, installs, servers, provider calls, browser/na
 - `apps/ui/lib/desktop/server/coworker-share/store.test.ts`
 - `apps/ui/lib/desktop/server/coworker-share/service.ts`
 - `apps/ui/lib/desktop/server/coworker-share/service.test.ts`
+- `apps/ui/lib/desktop/server/coworker-share/review.test.ts`
 - `apps/ui/lib/desktop/server/coworker-share/api.ts`
 - `docs/desktop-round36-e-handoff.md`
 
