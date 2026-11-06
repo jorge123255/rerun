@@ -8,7 +8,8 @@ Source implementation only. No checks were executed. No installed acceptance. No
 |---|---|
 | Published base | `desktop/finish-cloud-base-20261106-8297fe64` → `8297fe6404caa114dcb0c2cd6006291a8abb2038` |
 | Implementation branch | `cursor/desktop-c8-c9-b5-workflows-dbba` |
-| Tip | recorded in the commit that adds this file |
+| Implementation commit | `d3b35f4f7a7fbebbb0f89b790bbfd52a31962b30` |
+| Tip | the stamp commit that records this implementation hash. `git rev-parse HEAD` on this branch is that tip. |
 | Official reference | `ab3def9bfcf545cc9548f99c63c2b011ca094023` |
 | Earlier pin | `2a57fa6dd53311f763bfc9abde85997b7f7e5309` |
 | RD37 H notice | not on this base. This change does not reimplement `DesktopProviderErrorNotice`. It adds the resume stream H does not provide. The stop status field is named `failedRunError`, which H’s unmerged controller reads. The value is the newest run’s error only, matching official `lastRunError`, not an older error behind a later run. |
