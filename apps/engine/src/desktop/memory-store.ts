@@ -14,8 +14,38 @@ import { listMemoryFiles, readDesktopMemoryFile } from '../memory/files.js'
 import { rankRecallHits, type RecalledMemory } from '../memory/store.js'
 import { desktopMemoryPaths } from './memory-paths.js'
 import { desktopMemoryChanged } from './semantic-memory/events.js'
+import { desktopApp } from './policy.js'
+import type { DesktopSemanticMutationResult } from '@rerun/contracts'
 
 const noteId = /^[A-Za-z0-9_-]+$/
+
+
+/** Bound by semantic-memory/runtime so clear can wipe the private vector index outside the memory lock. */
+export type DesktopMemorySemanticClearPort = {
+    notesCleared(agentId: string): Promise<DesktopSemanticMutationResult>
+}
+
+let semanticClearPort: DesktopMemorySemanticClearPort | null = null
+const pendingSemanticClears = new Set<string>()
+
+export function bindDesktopMemorySemanticClear(port: DesktopMemorySemanticClearPort | null) {
+    semanticClearPort = port
+}
+
+async function wipeSemanticAfterClear(agentId: string) {
+    if (!desktopApp()) return
+    const port = semanticClearPort
+    if (!port) throw new HttpError(503, 'Private memory index wipe is unavailable.')
+    const result = await port.notesCleared(agentId)
+    if (!result.accepted) {
+        throw new HttpError(503, `Private memory index could not be cleared (${result.reason}).`)
+    }
+}
+
+function markSemanticClearPending(agentId: string) {
+    pendingSemanticClears.add(agentId)
+}
+
 
 // Node exposes no unlinkat/renameat. Address the open directory by its filesystem ID on
 // macOS (fd on Linux), so replacing a parent with a symlink cannot redirect our mutations.
@@ -68,9 +98,9 @@ async function recover(agentId: string, dir: string, hasIndex: boolean, data: st
 
 type Directory = { dir?: string; data?: string; memory: string; hasIndex: boolean }
 
-function withMemoryStore<T>(agentId: string, mode: 'list' | 'create' | 'update' | 'delete' | 'recall' | 'chat', action: (store: Directory) => Promise<T>) {
+function withMemoryStore<T>(agentId: string, mode: 'list' | 'create' | 'update' | 'delete' | 'clear' | 'recall' | 'chat', action: (store: Directory) => Promise<T>) {
     return withKeyedLock('desktop-memories:' + agentId, async () => {
-        const mutation = mode === 'create' || mode === 'update' || mode === 'delete' ? mode : null
+        const mutation = mode === 'create' || mode === 'update' || mode === 'delete' || mode === 'clear' ? mode : null
         if (mutation) desktopMemoryChanged({ agentId, phase: 'before', mode: mutation })
         const paths = await desktopMemoryPaths(agentId)
         const result = !paths.hasMemory && mode !== 'create' ? await action(paths) : await inDirectory(dirname(paths.memory), async parent => {
@@ -83,6 +113,11 @@ function withMemoryStore<T>(agentId: string, mode: 'list' | 'create' | 'update' 
             })
         })
         if (mutation) desktopMemoryChanged({ agentId, phase: 'after', mode: mutation })
+        return result
+    }).then(async result => {
+        // Semantic wipe runs only after the memory lock releases. notesCleared reads
+        // canonical notes through listDesktopMemory and would deadlock inside the lock.
+        if (pendingSemanticClears.delete(agentId)) await wipeSemanticAfterClear(agentId)
         return result
     })
 }
@@ -287,14 +322,19 @@ async function finishClear(agentId: string, dir: string, data: string, hasIndex:
     for (const path of await clearableFiles(dir)) await unlink(path)
     await clearMemoryIndex(agentId, data, hasIndex)
     await unlink(join(dir, '.clearing'))
+    markSemanticClearPending(agentId)
 }
 
 // A confirmed clear is durable intent: after an interrupted request, finish the same clear before
 // allowing another write. A single marker also covers legacy filenames and index-only remnants.
 export function clearDesktopMemories(agentId: string) {
-    return withMemoryStore(agentId, 'delete', async ({ dir, data, memory, hasIndex }) => {
+    return withMemoryStore(agentId, 'clear', async ({ dir, data, memory, hasIndex }) => {
         const index = data ?? join(dirname(memory), 'data')
-        if (!dir) return clearMemoryIndex(agentId, index, hasIndex)
+        if (!dir) {
+            await clearMemoryIndex(agentId, index, hasIndex)
+            markSemanticClearPending(agentId)
+            return
+        }
         await clearableFiles(dir)
         const intent = await open(join(dir, '.clearing'), 'wx', 0o600)
         try { await intent.sync() }

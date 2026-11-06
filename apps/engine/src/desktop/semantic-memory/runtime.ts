@@ -7,7 +7,7 @@ import { dataDir } from '../../config/paths.js'
 import { memoryStatus } from '../../memory/decay.js'
 import { desktopDeletionActive } from '../agent-lifecycle.js'
 import { desktopInternalJson } from '../internal-client.js'
-import { listDesktopMemory, recallDesktopMemory, reinforceDesktopMemories } from '../memory-store.js'
+import { bindDesktopMemorySemanticClear, listDesktopMemory, recallDesktopMemory, reinforceDesktopMemories } from '../memory-store.js'
 import { desktopMemoryPaths } from '../memory-paths.js'
 import { desktopApp } from '../policy.js'
 import { createDesktopSemanticEmbedder } from './embed-adapter.js'
@@ -139,6 +139,9 @@ export function invalidateDesktopSemanticMemory(agentId: string) {
 observeDesktopMemoryChanges(change => {
     if (!desktopApp() || closed) return
     if (change.phase === 'before') { invalidateDesktopSemanticMemory(change.agentId); return }
+    // Clear awaits notesCleared after the memory lock (bound below). Do not also fire a
+    // swallowed background reconcile that can race or leave residue if the process exits.
+    if (change.mode === 'clear') return
     // Queue after the canonical store releases its lock; indexing never changes the saved note outcome.
     const work = Promise.resolve().then(async () => {
         const current = entry(change.agentId)
@@ -147,6 +150,14 @@ observeDesktopMemoryChanges(change => {
     }).catch(() => {})
     background.add(work)
     void work.then(() => background.delete(work))
+})
+
+bindDesktopMemorySemanticClear({
+    async notesCleared(agentId) {
+        const current = entry(agentId)
+        await current.refresh()
+        return current.service.notesCleared(agentId)
+    },
 })
 
 export async function shutdownDesktopSemanticMemory() {

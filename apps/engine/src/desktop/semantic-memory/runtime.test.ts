@@ -11,6 +11,7 @@ vi.mock('../memory-store.js', () => ({
     listDesktopMemory: async () => [[...state.notes], []],
     recallDesktopMemory: async (_id: string, query: string) => state.notes.filter(note => note.content.includes(query)).map(({ path: _path, ...note }) => ({ ...note, strength: 1 })),
     reinforceDesktopMemories: vi.fn(),
+    bindDesktopMemorySemanticClear: () => {},
 }))
 vi.mock('./index-store.js', async original => {
     const actual = await original<typeof import('./index-store.js')>()
