@@ -10,8 +10,8 @@ Source only. Not validated. No installed acceptance. Do not merge, deploy, or re
 | Published base | `desktop/finish-cloud-base-20261106-8297fe64` |
 | Base SHA | `8297fe6404caa114dcb0c2cd6006291a8abb2038` |
 | Branch | `cursor/desktop-ui01-coworker-overview-dbba` |
-| Implementation commit | filled by the stamp commit |
-| Tip | `git rev-parse HEAD` on this branch after the stamp |
+| Implementation commit | `8f1c906f658dbaa2d4f054d065c388e2204836c8` |
+| Tip | the stamp commit that records this implementation hash. `git rev-parse HEAD` on this branch is that tip. |
 | Official overview | `2a57fa6dd53311f763bfc9abde85997b7f7e5309` and `ab3def9bfcf545cc9548f99c63c2b011ca094023` share the same blobs: `agent-sheet-views.ts` `45a7410f11f68fb6c350043703786ce5a60c32fb`, `AgentCard.tsx` `04cdd5a80091eb21c2e4468e6907a1ac71fd1f22`, `AgentView.tsx` `92f292513d3d94b205de89877ac4ef37af68faf2`, `AgentPanel.tsx` `152bf246f8c80c65586d84e40dd48d01b21620a0` |
 | This base’s copies | `AgentPanel.tsx` matches. `agent-sheet-views.ts`, `AgentCard.tsx`, and `AgentView.tsx` do not. Those shared files were not edited. |
 
