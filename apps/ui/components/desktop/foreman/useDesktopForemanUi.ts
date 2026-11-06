@@ -123,6 +123,12 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
             if (view?.discovery && !sameForemanChat(view.discovery.chat, owner.chat)) throw new Error('Foreman discoveries belong to a different chat.')
             const currentPlan = !view || snapshot?.revisionId === view.currentRevisionId ? snapshot : null
             commit(state => ({ ...state, planSnapshot: currentPlan, blocked: view?.blocked ?? null,
+                // A settled decision belongs to its reviewed revision. It must not
+                // disable confirmation of a newly shown plan in this same chat.
+                // Pending/uncertain receipts retain their exact recovery identity.
+                ui: currentPlan && (state.ui.decision.status === 'acknowledged' || state.ui.decision.status === 'failed')
+                    && state.ui.decision.request.revisionId !== currentPlan.revisionId
+                    ? { ...state.ui, decision: { status: 'idle' }, pendingPlanRevisionId: null } : state.ui,
                 build: view ? (view.build ? fromContractBuild(view.build, owner.chat) : null) : progress,
                 discoveries: view && owner.discoveryVersion === discoveryVersion ? discoveriesFromRun(view.discovery) : state.discoveries }))
         }).catch(error => {

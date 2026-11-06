@@ -77,9 +77,9 @@ export type DesktopMcpSecretReferenceField = z.infer<typeof desktopMcpSecretRefe
 const looseConfigSchema = z.object({
     name: z.string(),
     transport: desktopMcpTransportSchema,
-    command: z.string().optional(),
+    command: z.string().nullable().transform(value => value ?? undefined).optional(),
     args: z.array(z.string()).optional(),
-    url: z.string().optional(),
+    url: z.string().nullable().transform(value => value ?? undefined).optional(),
     env: z.record(z.string(), z.string()).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     oauth: z.boolean().optional(),

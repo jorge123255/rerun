@@ -71,6 +71,29 @@ it('serializes draft saves and waits for them before reading a remounted chat', 
     expect(api.ui.draft).toBe('newest'); expect(persisted.get(chat.chatId)?.draft).toBe('newest')
 })
 
+it.each(['acknowledged', 'failed', 'uncertain'] as const)('keeps a %s decision scoped to its old plan when a new revision is shown', async status => {
+    const request = { decision: 'confirm' as const, requestId: randomUUID(), chat, planId: plan.planId, revisionId: plan.revisionId, digest: plan.digest }
+    const decision = status === 'acknowledged' ? { status, request, decisionId: 'fmd_oldplan', at: 1 }
+        : { status, request, error: 'Saved outcome', at: 1 }
+    persisted.set(chat.chatId, { ...saved(), decision, pendingPlanRevisionId: plan.revisionId })
+    const next = { ...plan, revisionId: 'fmr_newrevision', digest: 'b'.repeat(64) }
+    vi.mocked(ports.plans.readShownPlan).mockResolvedValue(next)
+    vi.mocked(ports.plans.readConversationView).mockResolvedValue({ ...view(), currentRevisionId: next.revisionId })
+    await render()
+    expect(ports.decisions.submit).not.toHaveBeenCalled()
+    await act(async () => { api.confirmPlan(); api.confirmPlan() })
+    if (status === 'uncertain') {
+        expect(api.ui.decision).toMatchObject({ status, request })
+        expect(api.error).toContain('different plan revision')
+        expect(ports.decisions.submit).not.toHaveBeenCalled()
+    } else {
+        expect(ports.decisions.submit).toHaveBeenCalledTimes(1)
+        expect(vi.mocked(ports.decisions.submit).mock.calls[0]![0]).toMatchObject({ revisionId: next.revisionId, digest: next.digest })
+        expect(vi.mocked(ports.decisions.submit).mock.calls[0]![0].requestId).not.toBe(request.requestId)
+        expect(api.ui.decision.status).toBe('acknowledged')
+    }
+})
+
 it('cancels old chat reads and ignores old decision acknowledgements after switching identity', async () => {
     await render()
     const response = deferred<Awaited<ReturnType<typeof ports.decisions.submit>>>()

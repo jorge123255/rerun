@@ -6,6 +6,7 @@ import {
     desktopMcpSecretReferenceError,
     desktopMcpSecretReferenceIssue,
     desktopMcpSecretReferencePlan,
+    desktopMcpSecretReferencePublicConfig,
     desktopMcpSecretReferenceRedirectIssue,
     desktopMcpSecretReferenceReview,
     redactDesktopMcpSecretText,
@@ -51,6 +52,17 @@ const binding = (overrides: Partial<DesktopMcpSecretBinding> = {}): DesktopMcpSe
     status: 'bound',
     origin: 'app://desktop',
     ...overrides,
+})
+
+it.each(['http', 'sse', 'stdio'] as const)('reopens persisted %s credential references with nullable absent transport fields', transport => {
+    const initial = transport === 'stdio'
+        ? config({ transport, command: '/usr/bin/node', url: undefined, headers: {}, env: { QA_TOKEN: '${QA_TOKEN}' } })
+        : config({ transport })
+    const persisted = desktopMcpSecretReferenceCanonical(initial)
+    const reopened = desktopMcpSecretReferencePublicConfig(JSON.parse(persisted))
+    expect(reopened).toEqual(initial)
+    expect(desktopMcpSecretReferenceCanonical(reopened!)).toBe(persisted)
+    expect(desktopMcpSecretReferencePlan(JSON.parse(persisted))?.references).toHaveLength(1)
 })
 
 const owner = async (agentId: string) => agentId === 'coworker'

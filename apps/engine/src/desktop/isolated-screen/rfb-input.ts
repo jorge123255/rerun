@@ -1,8 +1,8 @@
 import { Duplex } from 'node:stream'
 
 /** Parses client RFB messages, never WebSocket chunks, before admitting input.
- * Only the guest's RFB 3.7/3.8 NoAuth endpoint is supported. Clipboard/unknown
- * extensions fail closed rather than slipping arbitrary input past the guard. */
+ * Only the guest's RFB 3.7/3.8 NoAuth endpoint is supported. Clipboard writes
+ * require the same fresh authority as keys; unknown extensions fail closed. */
 export function guardedRfbInput(remote: Duplex, authorize: () => Promise<void>): Duplex {
     let buffered = Buffer.alloc(0), phase: 'version' | 'security' | 'init' | 'messages' = 'version'
     const write = (bytes: Buffer) => new Promise<void>((resolve, reject) => remote.write(bytes, error => error ? reject(error) : resolve()))
@@ -13,7 +13,7 @@ export function guardedRfbInput(remote: Duplex, authorize: () => Promise<void>):
                 if (buffered.length + chunk.length > 131072) throw new Error('Viewer input exceeds limit')
                 buffered = Buffer.concat([buffered, chunk])
                 while (buffered.length) {
-                    let size = 0, input = false
+                    let size = 0, input = false, encodingList = false
                     if (phase === 'version') {
                         if (buffered.length < 12) break
                         const version = buffered.subarray(0, 12).toString('ascii')
@@ -29,10 +29,16 @@ export function guardedRfbInput(remote: Duplex, authorize: () => Promise<void>):
                             case 2:
                                 if (buffered.length < 4) return
                                 if (buffered.readUInt16BE(2) > 256) throw new Error('Viewer encodings exceed limit')
-                                size = 4 + buffered.readUInt16BE(2) * 4; break
+                                size = 4 + buffered.readUInt16BE(2) * 4; encodingList = true; break
                             case 3: size = 10; break // FramebufferUpdateRequest
                             case 4: size = 8; input = true; break
                             case 5: size = 6; input = true; break
+                            case 6:
+                                if (buffered.length < 8) return
+                                // Legacy ClientCutText is the explicit Paste path. Extended
+                                // clipboard negotiation/data is never admitted here.
+                                if (buffered.readInt32BE(4) < 0 || buffered.readUInt32BE(4) > 65536) throw new Error('Viewer clipboard unavailable')
+                                size = 8 + buffered.readUInt32BE(4); input = true; break
                             case 150: size = 10; break // EnableContinuousUpdates
                             case 248:
                                 if (buffered.length < 9) return
@@ -46,7 +52,20 @@ export function guardedRfbInput(remote: Duplex, authorize: () => Promise<void>):
                         }
                     }
                     if (buffered.length < size) break
-                    const packet = Buffer.from(buffered.subarray(0, size)); buffered = buffered.subarray(size)
+                    let packet = Buffer.from(buffered.subarray(0, size)); buffered = buffered.subarray(size)
+                    if (encodingList) {
+                        // noVNC answers ExtendedClipboard capability negotiation with a
+                        // ClientCutText packet even without Paste. Do not advertise a
+                        // capability this guarded channel deliberately does not support.
+                        // Explicit Paste uses bounded ClientCutText with fresh authority.
+                        const encodings: Buffer[] = []
+                        for (let offset = 4; offset < packet.length; offset += 4) {
+                            if (packet.readUInt32BE(offset) !== 0xc0a1e5ce) encodings.push(packet.subarray(offset, offset + 4))
+                        }
+                        const header = Buffer.from(packet.subarray(0, 4))
+                        header.writeUInt16BE(encodings.length, 2)
+                        packet = Buffer.concat([header, ...encodings])
+                    }
                     if (input) await authorize()
                     if (stream.destroyed || remote.destroyed) throw new Error('Viewer closed')
                     await write(packet)
