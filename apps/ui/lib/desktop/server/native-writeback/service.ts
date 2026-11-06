@@ -10,10 +10,19 @@ import {abortable} from '../mcp/remote'
 import type {DesktopRuntime} from '../runtime'
 const id=z.string().min(1).max(200),hash=z.string().regex(/^[a-f0-9]{64}$/)
 const before=z.object({text:z.string().max(65536),sha256:hash,identity:id,version:z.string().max(512)}).strict()
-const file=z.object({path:z.string().max(1024),before:before.nullable(),after:z.string().max(65536),afterHash:hash,parents:z.array(z.object({path:z.string().max(1024),identity:id}).strict()).min(1).max(8)}).strict()
-export const nativeBundle=z.object({id:z.string().uuid(),engineAgentId:id,sessionId:id,runId:id,files:z.array(file).min(1).max(64)}).strict()
+const parents=z.array(z.object({path:z.string().max(1024),identity:id}).strict()).min(1).max(8)
+const file=z.object({path:z.string().max(1024),before:before.nullable(),after:z.string().max(65536),afterHash:hash,parents}).strict()
+/** Metadata-only; never carries scratch/workspace bytes. */
+const unsupportedFile=z.object({path:z.string().max(1024),reason:z.literal('binary-or-non-text'),parents}).strict()
+function reviewPath(path:string){
+ if(!path || path.length>1024 || path.includes('\\') || path.includes('\0') || path.startsWith('/') || path.split('/').some(part=>!part || part.startsWith('.')))throw new Error('Choose a visible private path')
+ return path
+}
+export const nativeBundle=z.object({id:z.string().uuid(),engineAgentId:id,sessionId:id,runId:id,files:z.array(file).max(64),unsupported:z.array(unsupportedFile).max(64).default([])}).strict().superRefine((bundle,ctx)=>{
+ if(bundle.files.length+bundle.unsupported.length<1)ctx.addIssue({code:z.ZodIssueCode.custom,message:'Proposal requires at least one file or unsupported receipt'})
+})
 export type NativeBundle=z.infer<typeof nativeBundle>
-export type NativeReview={id:string;digest:string;path:string;before:string|null;after:string;state:string}
+export type NativeReview={id:string;digest:string;path:string;before:string|null;after:string;state:string;reason?:string}
 export type WritebackAuthority=(identity:{engineAgentId:string;sessionId:string;runId:string},action:'capture'|'read'|'apply'|'reject',signal:AbortSignal)=>Promise<{owner:string;runtime:DesktopRuntime;workspaceRoot:string;cancelled?:boolean}>
 export {nativeWritebackSchema} from './schema'
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex')
@@ -30,13 +39,21 @@ export function nativeWritebackService(db:Client,authorize:WritebackAuthority){
    const parents=[''];const parts=item.path.split('/').slice(0,-1);for(let i=1;i<=parts.length;i++)parents.push(parts.slice(0,i).join('/'))
    if(JSON.stringify(item.parents.map(p=>p.path))!==JSON.stringify(parents))throw new Error('Invalid proposal parent identities')
   }
+  for(const item of bundle.unsupported){
+   reviewPath(item.path);if(/\.(txt|md)$/i.test(item.path))throw new Error('Unsupported receipt cannot cover text proposals')
+   if(seen.has(item.path) || item.reason!=='binary-or-non-text')throw new Error('Invalid immutable unsupported receipt')
+   seen.add(item.path)
+   const parents=[''];const parts=item.path.split('/').slice(0,-1);for(let i=1;i<=parts.length;i++)parents.push(parts.slice(0,i).join('/'))
+   if(JSON.stringify(item.parents.map(p=>p.path))!==JSON.stringify(parents))throw new Error('Invalid proposal parent identities')
+  }
   const digest=sha(JSON.stringify(bundle)),transaction=await db.transaction('write')
   try{
    const old=(await transaction.execute({sql:'SELECT * FROM desktop_native_writeback WHERE id=?',args:[bundle.id]})).rows[0]
    if(old){if(old.owner!==authority.owner || old.digest!==digest)throw new Error('Proposal identity reused')}
    else {
     await transaction.execute({sql:'INSERT INTO desktop_native_writeback(id,owner,engine_id,session_id,run_id,digest) VALUES(?,?,?,?,?,?)',args:[bundle.id,authority.owner,bundle.engineAgentId,bundle.sessionId,bundle.runId,digest]})
-    for(const item of bundle.files)await transaction.execute({sql:'INSERT INTO desktop_native_writeback_files(proposal_id,path,digest,payload) VALUES(?,?,?,?)',args:[bundle.id,item.path,sha(JSON.stringify(item)),JSON.stringify(item)]})
+    for(const item of bundle.files)await transaction.execute({sql:'INSERT INTO desktop_native_writeback_files(proposal_id,path,digest,payload,state) VALUES(?,?,?,?,?)',args:[bundle.id,item.path,sha(JSON.stringify(item)),JSON.stringify(item),'pending']})
+    for(const item of bundle.unsupported)await transaction.execute({sql:'INSERT INTO desktop_native_writeback_files(proposal_id,path,digest,payload,state) VALUES(?,?,?,?,?)',args:[bundle.id,item.path,sha(JSON.stringify(item)),JSON.stringify(item),'unsupported']})
    }
    const current=await abortable(authorize(identity,'capture',signal),signal);signal.throwIfAborted();if(current.owner!==authority.owner)throw new Error('Proposal owner changed')
    await transaction.commit()
@@ -66,10 +83,17 @@ export function nativeWritebackService(db:Client,authorize:WritebackAuthority){
   for(const row of rows){
    if(result.length>=64)break
    const authority=await owned(owner,sessionId,String(row.proposal_id),'read',signal)
+   const state=String(row.state)
+   if(state==='unsupported'){
+    const item=unsupportedFile.parse(JSON.parse(String(row.payload)))
+    last=String(row.cursor)
+    result.push({id:String(row.proposal_id),digest:String(row.digest),path:item.path,before:null,after:'',state:'unsupported',reason:item.reason})
+    continue
+   }
    const item=file.parse(JSON.parse(String(row.payload))),size=Buffer.byteLength(item.after)+Buffer.byteLength(item.before?.text??'')
    if(bytes+size>3*1024*1024)break
    bytes+=size;last=String(row.cursor)
-   result.push({id:String(row.proposal_id),digest:String(row.digest),path:item.path,before:item.before?.text??null,after:item.after,state:row.state==='pending' && authority.current.cancelled?'cancelled':String(row.state)})
+   result.push({id:String(row.proposal_id),digest:String(row.digest),path:item.path,before:item.before?.text??null,after:item.after,state:state==='pending' && authority.current.cancelled?'cancelled':state})
   }
   signal.throwIfAborted();return {files:result,nextCursor:result.length<rows.length?last:undefined}
  }
@@ -77,6 +101,7 @@ export function nativeWritebackService(db:Client,authorize:WritebackAuthority){
   const auth=await owned(owner,sessionId,proposalId,decision,signal)
   const row=(await abortable(db.execute({sql:'SELECT * FROM desktop_native_writeback_files WHERE proposal_id=? AND path=? AND digest=?',args:[proposalId,path,digest]}),signal)).rows[0]
   if(!row)throw new Error('Reviewed bytes do not match proposal')
+  if(row.state==='unsupported')return {state:'unsupported'}
   if(row.state!=='pending')return {state:String(row.state)}
   const guard=async()=>{const current=await owned(owner,sessionId,proposalId,decision,signal);signal.throwIfAborted();if(current.current.runtime.dataRoot!==auth.current.runtime.dataRoot || current.current.runtime.launchNonce!==auth.current.runtime.launchNonce || current.current.workspaceRoot!==auth.current.workspaceRoot)throw new Error('Publication authority changed')}
   await guard()

@@ -20,7 +20,7 @@ import type {NativeWritebackBundle} from './capture.js'
 const roots:string[]=[]
 afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});state.loseAcknowledgement=false})
 async function fixture(){state.root=await realpath(await mkdtemp(join(tmpdir(),'writeback-outbox-')));roots.push(state.root)}
-const bundle=(owner='owner'):NativeWritebackBundle=>({id:randomUUID(),engineAgentId:owner,sessionId:'session',runId:'run',files:[]})
+const bundle=(owner='owner'):NativeWritebackBundle=>({id:randomUUID(),engineAgentId:owner,sessionId:'session',runId:'run',files:[],unsupported:[]})
 it('recovers the same single-link capture after a lost atomic publication acknowledgement',async()=>{
  await fixture();const capture=bundle();state.loseAcknowledgement=true
  await expect(retainNativeWriteback(capture)).rejects.toThrow('unconfirmed')

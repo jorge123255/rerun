@@ -10,7 +10,7 @@ import { desktopCodexGrantsOf } from '@rerun/contracts'
 import { dataDir } from '../config/paths.js'
 import { readAgentConfig } from '../agents/loader.js'
 import type { RunContext } from '../runtime/context.js'
-import {captureNativeBaseline,captureNativeChanges,type NativeBaseline,type NativeWritebackBundle} from './native-writeback/capture.js'
+import {allowedTextPath,captureNativeBaseline,captureNativeChanges,type NativeBaseline,type NativeWritebackBundle} from './native-writeback/capture.js'
 import {stopNativeProcess} from './native-writeback/stop.js'
 import { snapshotWorkspaceText } from './workspace-read.js'
 
@@ -72,7 +72,14 @@ async function admit(method: string, params: Record<string, unknown>, root: stri
     if (method === 'fs/getMetadata') return scratchTarget(root, params.path, 'any')
     if (method === 'fs/readFile') return scratchTarget(root, params.path, 'file')
     if (method === 'fs/readDirectory') return scratchTarget(root, params.path, 'directory')
-    if (method === 'fs/writeFile') return edit && textEdit(params.dataBase64) && scratchTarget(root, params.path, 'file')
+    if (method === 'fs/writeFile') {
+        if (!edit || !textEdit(params.dataBase64) || !await scratchTarget(root, params.path, 'file')) return false
+        try {
+            const local = typeof params.path === 'string' && params.path.startsWith('file:') ? fileURLToPath(params.path) : String(params.path ?? '')
+            const rel = relative(root, local).split(sep).join('/')
+            return allowedTextPath(rel)
+        } catch { return false }
+    }
     if (method === 'fs/remove') return edit && params.recursive === false && scratchTarget(root, params.path, 'file')
     if (method === 'fs/createDirectory') return edit && scratchTarget(root, params.path, 'directory')
     if (!shell) return false
@@ -168,7 +175,7 @@ export async function createDesktopNativeWorker(ctx: RunContext, writeback?:Nati
             if(capture && baseline && writeback){
                 await writeback.authorizeCapture(ctx)
                 const bundle=await captureNativeChanges(ctx,cwd,baseline)
-                if(bundle.files.length)await writeback.persist(bundle)
+                if(bundle.files.length || bundle.unsupported.length)await writeback.persist(bundle)
             }
             await rm(dir,{recursive:true,force:true,maxRetries:4,retryDelay:50})
         })()
@@ -215,7 +222,12 @@ export async function createDesktopNativeWorker(ctx: RunContext, writeback?:Nati
                     const message = JSON.parse(text) as { method: string; params?: Record<string, unknown>; id?: unknown }
                     const params = message.params ?? {}
                     if (!await admit(message.method, params, cwd, shell, edit)) {
-                        if (message.id !== undefined) ws.send(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32001, message: 'This operation is unavailable in the command snapshot.' } }))
+                        if (message.id !== undefined) {
+                            const unsupportedWrite = message.method === 'fs/writeFile'
+                            ws.send(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32001, message: unsupportedWrite
+                                ? 'Unsupported write: only bounded plain text .txt or .md can be proposed (binary-or-non-text).'
+                                : 'This operation is unavailable in the command snapshot.' } }))
+                        }
                         return
                     }
                     if (message.method === 'process/start') {

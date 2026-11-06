@@ -25,3 +25,49 @@ it('captures exact before identity, new bounded text only in copied folders, and
  expect(await readFile(join(source,'removed.txt'),'utf8')).toBe('keep original')
  expect(JSON.stringify(proposal)).not.toContain('outside secret')
 })
+
+it('emits unsupported receipts for added binary without retaining bytes; text still digests',async()=>{
+ const folder=await realpath(await mkdtemp(join(tmpdir(),'native-writeback-')));folders.push(folder)
+ const source=join(folder,'source'),scratch=join(folder,'scratch');config.root=source
+ for(const path of [source,scratch]){await mkdir(join(path,'notes'),{recursive:true});await writeFile(join(path,'notes','a.md'),'before')}
+ const ctx={agent:{id:'engine'},sessionId:'session',runId:'run'} as RunContext
+ const baseline=await captureNativeBaseline(ctx,scratch,async()=>{})
+ await writeFile(join(scratch,'notes','a.md'),'after')
+ await writeFile(join(scratch,'notes','blob.bin'),Buffer.from([0,1,2,3,255]))
+ await writeFile(join(scratch,'notes','photo.png'),'pretend-png-bytes')
+ await symlink(join(folder,'outside.bin'),join(scratch,'notes','link.bin')).catch(async()=>{await writeFile(join(folder,'outside.bin'),'x');await symlink(join(folder,'outside.bin'),join(scratch,'notes','link.bin'))})
+ await writeFile(join(scratch,'.hidden.bin'),Buffer.from([9]))
+ const huge=Buffer.alloc(65*1024,7);await writeFile(join(scratch,'notes','huge.bin'),huge)
+ const proposal=await captureNativeChanges(ctx,scratch,baseline)
+ expect(proposal.files.map(f=>f.path).sort()).toEqual(['notes/a.md'])
+ expect(proposal.files[0]?.after).toBe('after')
+ const paths=proposal.unsupported.map(f=>f.path).sort()
+ expect(paths).toEqual(['notes/blob.bin','notes/huge.bin','notes/photo.png'])
+ expect(proposal.unsupported.every(f=>f.reason==='binary-or-non-text')).toBe(true)
+ expect(JSON.stringify(proposal)).not.toContain('\u0000')
+ expect(JSON.stringify(proposal)).not.toMatch(/pretend-png|\x00|outside/)
+ expect(proposal.unsupported.some(f=>f.path.includes('link'))).toBe(false)
+ expect(proposal.unsupported.some(f=>f.path.startsWith('.'))).toBe(false)
+ expect(await readFile(join(source,'notes','a.md'),'utf8')).toBe('before')
+})
+it('all-binary scratch yields unsupported-only bundle and no text rows',async()=>{
+ const folder=await realpath(await mkdtemp(join(tmpdir(),'native-writeback-')));folders.push(folder)
+ const source=join(folder,'source'),scratch=join(folder,'scratch');config.root=source
+ for(const path of [source,scratch])await mkdir(path,{recursive:true})
+ const ctx={agent:{id:'engine'},sessionId:'session',runId:'run'} as RunContext
+ const baseline=await captureNativeBaseline(ctx,scratch,async()=>{})
+ await writeFile(join(scratch,'only.bin'),Buffer.from([1,2,3]))
+ const proposal=await captureNativeChanges(ctx,scratch,baseline)
+ expect(proposal.files).toEqual([])
+ expect(proposal.unsupported).toEqual([expect.objectContaining({path:'only.bin',reason:'binary-or-non-text'})])
+})
+it('unchanged copied non-text is not proposed',async()=>{
+ const folder=await realpath(await mkdtemp(join(tmpdir(),'native-writeback-')));folders.push(folder)
+ const source=join(folder,'source'),scratch=join(folder,'scratch');config.root=source
+ for(const path of [source,scratch]){await mkdir(path,{recursive:true});await writeFile(join(path,'same.bin'),Buffer.from([4,5,6]))}
+ const ctx={agent:{id:'engine'},sessionId:'session',runId:'run'} as RunContext
+ const baseline=await captureNativeBaseline(ctx,scratch,async()=>{})
+ const proposal=await captureNativeChanges(ctx,scratch,baseline)
+ expect(proposal.files).toEqual([])
+ expect(proposal.unsupported).toEqual([])
+})

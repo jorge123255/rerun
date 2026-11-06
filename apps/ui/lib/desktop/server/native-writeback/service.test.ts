@@ -25,7 +25,7 @@ async function setup(){
  const service=nativeWritebackService(db,authorize)
  fs.location.mockResolvedValue({directories:[{path:'/example/private',dev:BigInt(1),ino:BigInt(2)}],target:'/example/private/a.md'})
  fs.read.mockResolvedValue({version:'version-before',identity:'3:4',content:'before',hash:'publisher-hash'})
- const bundle:NativeBundle={id:'b531ced2-5bbe-4490-b441-b9405e2eeb45',engineAgentId:'engine',sessionId:'session',runId:'run',files:[{path:'a.md',before:{text:'before',sha256:sha('before'),identity:'3:4',version:'version-before'},after:'after',afterHash:sha('after'),parents:[{path:'',identity:'1:2'}]}]}
+ const bundle:NativeBundle={id:'b531ced2-5bbe-4490-b441-b9405e2eeb45',engineAgentId:'engine',sessionId:'session',runId:'run',files:[{path:'a.md',before:{text:'before',sha256:sha('before'),identity:'3:4',version:'version-before'},after:'after',afterHash:sha('after'),parents:[{path:'',identity:'1:2'}]}],unsupported:[]}
  await service.capture(bundle,new AbortController().signal)
  return {db,service,bundle,authorize,revoke:()=>{granted=false}}
 }
@@ -55,4 +55,30 @@ it('keeps a sibling conversation from listing or applying another conversation p
  expect((await service.list('owner','other-session',signal)).files).toEqual([])
  await expect(service.decide('owner','other-session',bundle.id,item.path,item.digest,'apply',signal)).rejects.toThrow('conversation')
  expect(fs.save).not.toHaveBeenCalled()
+})
+
+it('records text+binary: text pending, binary unsupported with no payload bytes, apply text only',async()=>{
+ const {service,bundle}=await setup(),signal=new AbortController().signal
+ const mixed={...bundle,id:'c631ced2-5bbe-4490-b441-b9405e2eeb45',files:bundle.files,unsupported:[{path:'blob.bin',reason:'binary-or-non-text' as const,parents:[{path:'',identity:'1:2'}]}]}
+ await service.capture(mixed,signal)
+ const listed=await service.list('owner','local-session',signal)
+ const text=listed.files.find(f=>f.path==='a.md'),bin=listed.files.find(f=>f.path==='blob.bin')
+ expect(text?.state).toBe('pending');expect(bin).toEqual(expect.objectContaining({path:'blob.bin',state:'unsupported',reason:'binary-or-non-text',after:'',before:null}))
+ expect(JSON.stringify(listed)).not.toMatch(/\u0000|\\x00/)
+ expect(await service.decide('owner','local-session',mixed.id,bin!.path,bin!.digest,'apply',signal)).toEqual({state:'unsupported'})
+ expect(fs.save).not.toHaveBeenCalled();expect(fs.create).not.toHaveBeenCalled()
+ expect(await service.decide('owner','local-session',mixed.id,text!.path,text!.digest,'apply',signal)).toEqual({state:'saved'})
+ expect(fs.save).toHaveBeenCalledTimes(1)
+})
+it('all-binary nonempty unsupported receipt never claims a successful text write',async()=>{
+ const folder=await mkdtemp(join(tmpdir(),'writeback-service-'));folders.push(folder)
+ const db=createClient({url:pathToFileURL(join(folder,'review.db')).href});clients.push(db);await db.executeMultiple("CREATE TABLE desktop_agents(id TEXT PRIMARY KEY);INSERT INTO desktop_agents VALUES('owner');CREATE TABLE desktop_sessions(id TEXT PRIMARY KEY,agent_id TEXT,engine_session_id TEXT);INSERT INTO desktop_sessions VALUES('local-session','owner','session');"+nativeWritebackSchema)
+ const authorize=vi.fn(async()=>({owner:'owner',runtime:{dataRoot:'/example',launchNonce:'launch'} as DesktopRuntime,workspaceRoot:'/example/private'}))
+ const service=nativeWritebackService(db,authorize),signal=new AbortController().signal
+ const only={id:'d731ced2-5bbe-4490-b441-b9405e2eeb45',engineAgentId:'engine',sessionId:'session',runId:'run',files:[],unsupported:[{path:'photo.png',reason:'binary-or-non-text' as const,parents:[{path:'',identity:'1:2'}]}]}
+ await service.capture(only,signal)
+ const listed=await service.list('owner','local-session',signal)
+ expect(listed.files).toEqual([expect.objectContaining({path:'photo.png',state:'unsupported',after:''})])
+ expect(await service.decide('owner','local-session',only.id,listed.files[0].path,listed.files[0].digest,'apply',signal)).toEqual({state:'unsupported'})
+ expect(fs.save).not.toHaveBeenCalled();expect(fs.create).not.toHaveBeenCalled()
 })
