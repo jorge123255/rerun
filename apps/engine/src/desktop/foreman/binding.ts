@@ -10,6 +10,7 @@ import { registerDesktopForemanTools } from './tool-identity.js'
 import { createDesktopForemanBridge, type ForemanRuntime } from './bridge.js'
 import { createDesktopForemanDocsBridge } from '../foreman-docs/bridge.js'
 import { desktopForemanDocsTools } from '../foreman-docs/tools.js'
+import { foremanAgentFileTools } from '../foreman-agent-files/tools.js'
 type Binding = ReturnType<typeof createDesktopForemanBridge>
 let installed: Binding | undefined
 let installedDocs: ReturnType<typeof createDesktopForemanDocsBridge> | undefined
@@ -49,5 +50,6 @@ export async function desktopForemanTools(ctx: RunContext) {
     })
     const docs = installedDocs
     Object.assign(tools, desktopForemanDocsTools({ binding, corpus: RERUN_PUBLIC_DOCS_CORPUS, assertCurrent: current, search: docs ? (input, requestSignal) => docs.search(input, requestSignal ?? signal) : null }))
+    Object.assign(tools, foremanAgentFileTools(ctx))
     return { tools: registerDesktopForemanTools(tools), close: async () => {} }
 }
