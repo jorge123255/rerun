@@ -17,10 +17,13 @@ const CARD_VIDEO = /\.(?:mp4|webm|mov|m4v)$/i
 const CARD_PDF = /\.pdf$/i
 /** Matches DESKTOP_PDF_MAX_BYTES. The shared card contract is unchanged, so the cap stays local. */
 export const DESKTOP_CARD_PDF_MAX_BYTES = 16 * 1024 * 1024
+/** Download tiles. Same local cap as a PDF. They do not join the image/video album budget. */
+export const DESKTOP_CARD_BINARY_MAX_BYTES = 16 * 1024 * 1024
 const imagePath = (path: string) => visiblePath(path) && CARD_IMAGE.test(path)
 const audioPath = (path: string) => visiblePath(path) && CARD_AUDIO.test(path)
 const videoPath = (path: string) => visiblePath(path) && CARD_VIDEO.test(path)
 const pdfPath = (path: string) => visiblePath(path) && CARD_PDF.test(path)
+const binaryPath = (path: string) => visiblePath(path) && !imagePath(path) && !audioPath(path) && !videoPath(path) && !pdfPath(path) && !textPath(path)
 const validName = (name: string) => name.length > 0 && name.length <= 255 && !/[\\/\p{Cc}]/u.test(name)
 const CARD_IDENTITY = /^\d{1,24}:\d{1,24}$/
 const AUDIO_TYPES = new Set(['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'audio/flac'])
@@ -46,6 +49,16 @@ export function isDesktopCardPdf(path: string): boolean {
     return pdfPath(path)
 }
 
+/** A card file the preview routes do not render. Office and archive names stay in this set. */
+export function isDesktopCardBinary(path: string): boolean {
+    return binaryPath(path)
+}
+
+/** Shared files and generic download tiles open the result-file dialog, not the private lightbox. */
+export function isDesktopResultFile(file: { path: string; scope?: string }): boolean {
+    return file.scope === 'shared' || isDesktopCardBinary(file.path)
+}
+
 function candidate(value: unknown, depth = 0): unknown {
     if (depth > 2) return undefined
     if (typeof value === 'string') {
@@ -63,12 +76,12 @@ function candidate(value: unknown, depth = 0): unknown {
 /**
  * Validate one recorded card_file result for the Mac conversation. It accepts the live tool output
  * (a JSON string), a stored text/json wrapper, a parsed card, and the legacy single-file card. Every
- * file must still look like a visible reference of this coworker: a .txt/.md document, a PDF, a bounded
- * PNG/JPEG/WebP/GIF/SVG/AVIF/ICO/BMP image, a WAV/MP3/M4A/Ogg/FLAC audio file, or an MP4/WebM/MOV/M4V video. Images and videos share the
- * endpoint identity and the 24 MiB combined preview budget; images stay 8 MiB, video 16 MiB, audio
- * 16 MiB, and each PDF 16 MiB. PDFs carry the same identity and do not join that budget. Text keeps
- * its 32 KiB bound. Anything else returns undefined so the reply can fall back to the real tool
- * result instead of drawing a fabricated, replaced or partial card.
+ * file must still look like a visible reference: a .txt/.md document, a PDF, a bounded
+ * PNG/JPEG/WebP/GIF/SVG/AVIF/ICO/BMP image, a WAV/MP3/M4A/Ogg/FLAC audio file, an MP4/WebM/MOV/M4V video,
+ * or another visible file with an identity. Scope is only `agent` or `shared`. Private images and videos
+ * share the 24 MiB album budget; shared files and download tiles do not. Images stay 8 MiB, video, audio,
+ * PDF and download tiles 16 MiB. Private text keeps its 32 KiB bound and omits identity. Shared text keeps
+ * identity. One invalid file rejects the whole card.
  */
 export function desktopFileCardOf(value: unknown): FileCard | undefined {
     const parsed = fileCardSchema.safeParse(candidate(value))
@@ -78,32 +91,43 @@ export function desktopFileCardOf(value: unknown): FileCard | undefined {
     const normalized: FileCardEntry[] = []
     let mediaBytes = 0
     for (const file of files) {
-        if (file.scope !== 'agent') return undefined
+        if (file.scope !== 'agent' && file.scope !== 'shared') return undefined
         if (!validName(file.name) || file.name !== file.path.split('/').at(-1)) return undefined
         if (!Number.isSafeInteger(file.size) || file.size < 0) return undefined
-        if (imagePath(file.path)) {
-            if (file.size === 0 || file.size > CARD_MAX_IMAGE_BYTES) return undefined
-            if (!file.identity || !CARD_IDENTITY.test(file.identity)) return undefined
-            mediaBytes += file.size
-            if (mediaBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return undefined
-            normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
-        } else if (videoPath(file.path)) {
-            if (file.size === 0 || file.size > CARD_MAX_VIDEO_BYTES) return undefined
-            if (!file.identity || !CARD_IDENTITY.test(file.identity)) return undefined
-            mediaBytes += file.size
-            if (mediaBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return undefined
-            normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
-        } else if (audioPath(file.path)) {
-            if (file.size === 0 || file.size > CARD_MAX_AUDIO_BYTES) return undefined
-            if (!file.identity || !CARD_IDENTITY.test(file.identity)) return undefined
-            normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
-        } else if (pdfPath(file.path)) {
-            if (file.size === 0 || file.size > DESKTOP_CARD_PDF_MAX_BYTES) return undefined
-            if (!file.identity || !CARD_IDENTITY.test(file.identity)) return undefined
-            normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent', identity: file.identity })
+        const scope = file.scope
+        const identified = file.identity && CARD_IDENTITY.test(file.identity) ? file.identity : undefined
+        const withIdentity = () => {
+            if (!identified) return undefined
+            return { path: file.path, name: file.name, size: file.size, scope, identity: identified }
+        }
+        if (imagePath(file.path) || videoPath(file.path)) {
+            const max = imagePath(file.path) ? CARD_MAX_IMAGE_BYTES : CARD_MAX_VIDEO_BYTES
+            if (file.size === 0 || file.size > max) return undefined
+            const entry = withIdentity()
+            if (!entry) return undefined
+            if (scope === 'agent') {
+                mediaBytes += file.size
+                if (mediaBytes > CARD_MAX_IMAGE_TOTAL_BYTES) return undefined
+            }
+            normalized.push(entry)
+        } else if (audioPath(file.path) || pdfPath(file.path)) {
+            const max = audioPath(file.path) ? CARD_MAX_AUDIO_BYTES : DESKTOP_CARD_PDF_MAX_BYTES
+            if (file.size === 0 || file.size > max) return undefined
+            const entry = withIdentity()
+            if (!entry) return undefined
+            normalized.push(entry)
         } else if (textPath(file.path)) {
             if (file.size > DESKTOP_ATTACHMENT_MAX_BYTES) return undefined
-            normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent' })
+            if (scope === 'shared') {
+                const entry = withIdentity()
+                if (!entry) return undefined
+                normalized.push(entry)
+            } else normalized.push({ path: file.path, name: file.name, size: file.size, scope: 'agent' })
+        } else if (binaryPath(file.path)) {
+            if (file.size < 1 || file.size > DESKTOP_CARD_BINARY_MAX_BYTES) return undefined
+            const entry = withIdentity()
+            if (!entry) return undefined
+            normalized.push(entry)
         } else return undefined
     }
     return { kind: 'file', files: normalized }

@@ -8,7 +8,8 @@ import { cn } from '@/lib/utils'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { DesktopCardVideoFrame, DesktopCardVideoTile } from './DesktopCardVideoTile'
 import { DesktopFileLightbox } from './DesktopFileLightbox'
-import { DesktopCardError, isDesktopCardImage, isDesktopCardVideo, readDesktopCardImage, readDesktopCardVideo } from '@/lib/desktop/file-card'
+import { DesktopCardError, isDesktopCardImage, isDesktopCardVideo, isDesktopResultFile, readDesktopCardImage, readDesktopCardVideo } from '@/lib/desktop/file-card'
+import { DesktopResultFilePreview } from './result-files/DesktopResultFilePreview'
 
 type MediaKind = 'image' | 'video'
 type MediaLoad = { status: 'loading' } | { status: 'ready'; src: string } | { status: 'error'; message: string }
@@ -22,6 +23,7 @@ const MEDIA_BUDGET_MESSAGE = 'This card’s images and videos exceed the 24 MB p
 
 function mediaItems(files: readonly FileCardEntry[]): MediaItem[] {
     return files.flatMap((file, index) => {
+        if (file.scope === 'shared') return []
         const kind: MediaKind | null = isDesktopCardImage(file.path) ? 'image' : isDesktopCardVideo(file.path) ? 'video' : null
         return kind ? [{ index, file, kind }] : []
     })
@@ -191,11 +193,11 @@ function DesktopMediaAlbum({ items, onOpen, onError }: {
  * one released object URL per tile, with replaced, deleted and invalid files shown explicitly. Only
  * the visible album previews are fetched; the hidden ones are fetched by the paged lightbox.
  */
-export function DesktopFileCard(props: { agentId?: string; card: FileCard }) {
+export function DesktopFileCard(props: { agentId?: string; card: FileCard; saveResultFile?: (name: string, bytes: Uint8Array) => Promise<boolean> }) {
     return <DesktopOwnedFileCard key={JSON.stringify([props.agentId, props.card])} {...props} />
 }
 
-function DesktopOwnedFileCard({ agentId, card }: { agentId?: string; card: FileCard }) {
+function DesktopOwnedFileCard({ agentId, card, saveResultFile }: { agentId?: string; card: FileCard; saveResultFile?: (name: string, bytes: Uint8Array) => Promise<boolean> }) {
     const [openIndex, setOpenIndex] = useState<number | null>(null)
     const files = card.files
     const media = mediaItems(files)
@@ -295,12 +297,15 @@ function DesktopOwnedFileCard({ agentId, card }: { agentId?: string; card: FileC
     }, [media, mediaKey])
 
     const opened = openIndex === null ? null : files[openIndex]
+    const resultOpen = !!opened && isDesktopResultFile(opened)
+    const lightboxFiles = files.flatMap((file, index) => isDesktopResultFile(file) ? [] : [{ file, index }])
+    const lightboxAt = opened && !resultOpen ? lightboxFiles.findIndex(item => item.index === openIndex) : -1
     return <div data-file-card="true" className="min-w-0 w-full">
         {allMedia ? (
             <DesktopMediaAlbum items={media.map(withLoad)} onOpen={setOpenIndex} onError={failMedia} />
         ) : (
             <div className="flex flex-wrap gap-1.5">
-                {files.map((file, index) => isDesktopCardImage(file.path) ? (
+                {files.map((file, index) => isDesktopCardImage(file.path) && file.scope !== 'shared' ? (
                     <DesktopMixedImageTile
                         key={`${index}:${file.path}`}
                         item={withLoad({ index, file, kind: 'image' })}
@@ -308,7 +313,7 @@ function DesktopOwnedFileCard({ agentId, card }: { agentId?: string; card: FileC
                         onOpen={() => setOpenIndex(index)}
                         onError={failMedia}
                     />
-                ) : isDesktopCardVideo(file.path) ? (
+                ) : isDesktopCardVideo(file.path) && file.scope !== 'shared' ? (
                     <DesktopMixedVideoTile
                         key={`${index}:${file.path}`}
                         item={withLoad({ index, file, kind: 'video' })}
@@ -328,13 +333,24 @@ function DesktopOwnedFileCard({ agentId, card }: { agentId?: string; card: FileC
                 ))}
             </div>
         )}
-        {opened && openIndex !== null && agentId && (
-            <DesktopFileLightbox
-                key={`${agentId}:${openIndex}:${JSON.stringify(files)}`}
+        {resultOpen && opened && agentId && (
+            <DesktopResultFilePreview
                 agentId={agentId}
-                files={files}
-                index={openIndex}
-                onIndexChange={setOpenIndex}
+                file={opened}
+                saveResultFile={saveResultFile}
+                onClose={() => setOpenIndex(null)}
+            />
+        )}
+        {opened && agentId && lightboxAt >= 0 && (
+            <DesktopFileLightbox
+                key={`${agentId}:${openIndex}:${JSON.stringify(lightboxFiles.map(item => item.file))}`}
+                agentId={agentId}
+                files={lightboxFiles.map(item => item.file)}
+                index={lightboxAt}
+                onIndexChange={next => {
+                    const target = lightboxFiles[next]
+                    if (target) setOpenIndex(target.index)
+                }}
                 onClose={() => setOpenIndex(null)}
             />
         )}
