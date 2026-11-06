@@ -312,3 +312,37 @@ it('recovers an exact committed handoff even after source context and Brain page
     expect(recovered).toEqual({ ...saved, recovered: true })
     expect(proposeCalls).toBe(1)
 })
+
+it('durably dismisses a handed brief after reopening without withdrawing or repeating its saved Brain proposal', async () => {
+    const made = await service.synthesize(input(), new AbortController().signal)
+    const edited = await service.edit({ requestId: made.attempt.requestId, workspaceId, chatId, expectedDraftRevision: 0, brief: 'Acme sells widgets, as corrected. [site]' })
+    const command = { requestId: made.attempt.requestId, handoffRequestId: randomUUID(), workspaceId, chatId, sourceRevision: made.attempt.sourceRevision, expectedDraftRevision: edited.draftRevision, selectedClaimIds: [made.attempt.result!.claims[0]!.id], includeDraft: true, expectedPages: [{ slug: 'company', expectedPageHash: null }] }
+    const receipt = await service.handoff(command)
+    expect(receipt.status).toBe('recorded')
+    const handoffRows = (await db.execute('SELECT * FROM desktop_company_brief_handoffs')).rows
+    const identities = (await db.execute('SELECT * FROM desktop_company_brief_requests ORDER BY request_id')).rows
+    const reopen = async () => {
+        db.close()
+        db = createClient({ url: `file:${join(root, 'brief.db')}` })
+        service = createCompanyBriefService(async () => db, { model: {
+            confirm: async () => { throw new Error('Reading or dismissing must not select a model.') },
+            complete: async () => { throw new Error('Reading or dismissing must not call a provider.') },
+        }, brain })
+        await service.initialize()
+    }
+    await reopen()
+    expect((await service.read(workspaceId, chatId))?.status).toBe('handed')
+    await expect(service.dismiss(made.attempt.requestId, workspaceId, otherChat)).rejects.toMatchObject({ status: 409 })
+    const dismissed = await service.dismiss(made.attempt.requestId, workspaceId, chatId)
+    expect(dismissed).toMatchObject({ status: 'dismissed', draft: edited.draft, draftRevision: 1, result: made.attempt.result })
+    expect(await service.dismiss(made.attempt.requestId, workspaceId, chatId)).toEqual(dismissed)
+    await reopen()
+    expect(await service.read(workspaceId, chatId)).toEqual(dismissed)
+    expect(await service.readHandoff(command)).toEqual({ ...receipt, recovered: true })
+    expect(await service.handoff(command)).toEqual({ ...receipt, recovered: true })
+    await expect(service.handoff({ ...command, handoffRequestId: randomUUID() })).rejects.toMatchObject({ status: 409 })
+    expect((await db.execute('SELECT * FROM desktop_company_brief_handoffs')).rows).toEqual(handoffRows)
+    expect((await db.execute('SELECT * FROM desktop_company_brief_requests ORDER BY request_id')).rows).toEqual(identities)
+    expect(calls).toHaveLength(1)
+    expect(proposeCalls).toBe(1)
+})

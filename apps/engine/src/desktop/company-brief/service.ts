@@ -239,12 +239,15 @@ export function createCompanyBriefService(getDatabase: () => Promise<Client>, de
         const attempt = await required(requestId, workspaceId, chatId)
         if (attempt.status === 'dismissed') return attempt
         if (attempt.status === 'pending') throw new HttpError(409, 'Stop this research before dismissing it.')
-        if (attempt.status === 'handed') throw new HttpError(409, 'Review the Company Brain proposals before dismissing this brief.')
+        // Dismiss closes this saved review. A committed handoff has its own immutable
+        // receipt and Brain proposal lifecycle; hiding the brief never withdraws either.
         await (await db()).execute({
-            sql: `UPDATE desktop_company_briefs SET status = 'dismissed', updated_at = ? WHERE request_id = ? AND status = ?`,
-            args: [now(), requestId, attempt.status],
+            sql: `UPDATE desktop_company_briefs SET status = 'dismissed', updated_at = ? WHERE request_id = ? AND workspace_id = ? AND chat_id = ? AND status = ?`,
+            args: [now(), requestId, workspaceId, chatId, attempt.status],
         })
-        return (await row(requestId))!
+        const saved = await required(requestId, workspaceId, chatId)
+        if (saved.status !== 'dismissed') throw new HttpError(409, 'This company brief changed. Retry Dismiss for its current saved result.')
+        return saved
     }
 
     async function retry(input: CompanyBriefSynthesizeInput & { previousRequestId: string }, signal: AbortSignal): Promise<CompanyBriefSynthesizeResult> {
