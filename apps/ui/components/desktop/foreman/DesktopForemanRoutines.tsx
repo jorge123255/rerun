@@ -23,6 +23,11 @@ export function DesktopForemanRoutines({
     agentNameOf: (agentId: string) => string
     onOpenRoutine?: (routine: RoutineRow) => void
 }) {
+    const [now, setNow] = useState(() => Date.now())
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), 30_000)
+        return () => clearInterval(timer)
+    }, [])
     const [data, setData] = useState<{ available: boolean; reason?: string; routines: RoutineRow[] } | null>(null)
 
     useEffect(() => {
@@ -90,7 +95,7 @@ export function DesktopForemanRoutines({
     return (
         <RoutineList
             routines={data.routines}
-            now={Date.now()}
+            now={now}
             docked={docked}
             className={className}
             agentNameOf={agentNameOf}

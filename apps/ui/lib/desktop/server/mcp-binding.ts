@@ -177,18 +177,16 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (new Set(names).size !== names.length || names.some(name => !/^[\w.-]{1,128}$/.test(name) || reserved.has(name) || prefixes.some(prefix => name.startsWith(`${prefix}_`)))) throw new Error('Service tool conflicts with another tool')
         signal.throwIfAborted()
     }, fetch, undefined, (owner, signal) => desktopServiceSkillRestartScope(runtime, owner, signal))
-    let serviceTransports: ReturnType<typeof createCanonicalServiceTransports>
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'services')
         return (await historicalOwner(identity, signal)).owner.id
     }, (owner, identity, signal) => serviceTransports.releaseRun(owner, identity, signal))
-    let serviceOAuth: ReturnType<typeof createCanonicalServiceOAuth>
     const accounts = await canonicalServiceAccounts(runtime, installedServices, services, masterKey, {
         additionalTransport: (record, run, signal) => serviceTransports?.service(record, run, signal),
         oauthCredential: (record, run, signal) => serviceOAuth.credentialFor(record, run, signal),
         beforeChange: async (owner, id) => { await serviceTransports.beforeChange(owner, id); await serviceOAuth.invalidateAccount(owner, id) },
     })
-    serviceOAuth = createCanonicalServiceOAuth(runtime, installedServices, services, accounts, masterKey, entry.shutdown.signal)
+    const serviceOAuth = createCanonicalServiceOAuth(runtime, installedServices, services, accounts, masterKey, entry.shutdown.signal)
     await serviceOAuth.reconcile()
     const sse = createDesktopSseBinding({
         db, store, key: masterKey, shutdownSignal: entry.shutdown.signal, access, authorizeRun,
@@ -204,7 +202,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
             signal.throwIfAborted()
         },
     })
-    serviceTransports = createCanonicalServiceTransports(runtime, installedServices, services, masterKey, access, entry.shutdown.signal, () => sse)
+    const serviceTransports = createCanonicalServiceTransports(runtime, installedServices, services, masterKey, access, entry.shutdown.signal, () => sse)
     bindRemoteTransportDrain(store, async (owner, name) => {
         const row = await store.read(owner, name)
         if (row.transport === 'sse' && row.id) await sse.dispose(owner, row.id)

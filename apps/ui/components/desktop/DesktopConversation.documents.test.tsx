@@ -7,7 +7,7 @@ import { DesktopConversation } from './DesktopConversation'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
 import { forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
-import type { DesktopDocumentAttachment, DesktopDocumentReference } from '@rerun/contracts'
+import type { DesktopDocumentAttachment, DesktopDocumentReference, DesktopDocumentSendSelection } from '@rerun/contracts'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
 const agent = { id: 'documents-owner', name: 'Document reader', description: '', createdAt: '', updatedAt: '' }
@@ -16,7 +16,7 @@ it('restores a prepared PDF, retains its exact admission after a lost send ACK, 
     const scope = { agentId: agent.id, tabUid: 'documents-tab', sessionId: 'documents-chat' }
     const row: DesktopDocumentAttachment = { scope, attachmentId: randomUUID(), name: 'handbook.pdf', mimeType: 'application/pdf', kind: 'pdf', byteLength: 50, sha256: 'a'.repeat(64), conversion: { mode: 'pdf-text', state: 'ready', text: 'Secret conversion context' }, admitted: false, selected: true, position: 0, uploaded: true, revision: randomUUID(), createdAt: 'now', updatedAt: 'now' }
     const reference: DesktopDocumentReference = { scope, attachmentId: row.attachmentId, name: row.name, mimeType: row.mimeType, kind: row.kind, byteLength: row.byteLength, sha256: row.sha256 }
-    const drafts = createDesktopDraftFixture(), operations: string[] = [], posts: Array<Record<string, any>> = []
+    const drafts = createDesktopDraftFixture(), operations: string[] = [], posts: Array<{ requestId: string; documents: DesktopDocumentSendSelection } > = []
     drafts.seedTabs(agent.id, [{ uid: scope.tabUid, id: scope.sessionId }])
     let selected = true, accepted = false
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

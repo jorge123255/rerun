@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useLayoutEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { DesktopDocumentAttachment, DesktopDocumentScope } from '@rerun/contracts'
@@ -13,7 +13,7 @@ function attachment(id: string, currentScope: DesktopDocumentScope = scope, posi
 }
 let root: Root | undefined, api: ReturnType<typeof useDesktopDocumentAttachments>
 let saved: DesktopDocumentAttachment[]
-function Probe({ value = scope }: { value?: DesktopDocumentScope }) { api = useDesktopDocumentAttachments(value); return null }
+function Probe({ value = scope }: { value?: DesktopDocumentScope }) { const current = useDesktopDocumentAttachments(value); useLayoutEffect(() => { api = current }); return null }
 beforeEach(() => {
     cancelDraftShutdown(); saved = []
     Object.values(transport).forEach(mock => mock.mockReset())

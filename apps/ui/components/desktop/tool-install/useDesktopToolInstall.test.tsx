@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, StrictMode } from 'react'
+import { act, StrictMode, useLayoutEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopToolInstallSnapshot } from '@rerun/contracts'
@@ -9,7 +9,7 @@ import { useDesktopToolInstall } from './useDesktopToolInstall'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const source: DesktopToolInstallSnapshot = { operationId: 'a'.repeat(64), agentId: 'agent', sessionId: 'session', runId: 'run', toolCallId: 'call', proposalRevision: '1', revision: '1', status: 'pending-approval', packages: [{ package: 'pkg@1.0.0', status: 'pending' }], guestId: 'f'.repeat(64), availability: 'isolated-guest-only', createdAt: '2026-11-05T00:00:00.000Z', updatedAt: '2026-11-05T00:00:00.000Z' }
 let latest: ReturnType<typeof useDesktopToolInstall>
-function Harness({ operationId, active = true }: { operationId: string; active?: boolean }) { latest = useDesktopToolInstall('session', operationId, active); return <p>{latest.snapshot?.operationId ?? 'empty'}</p> }
+function Harness({ operationId, active = true }: { operationId: string; active?: boolean }) { const current = useDesktopToolInstall('session', operationId, active); useLayoutEffect(() => { latest = current }); return <p>{current.snapshot?.operationId ?? 'empty'}</p> }
 const cleanups: Array<() => void> = []
 afterEach(() => { cleanups.splice(0).forEach(fn => fn()); mocks.clients.length = 0; mocks.make.mockReset() })
 function host() {

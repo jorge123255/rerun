@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { randomUUID } from 'node:crypto'
 import { cancelDraftShutdown } from '@/lib/desktop/draft-writes'
-import { act } from 'react'
+import { act, useLayoutEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { DesktopForemanConversationView, DesktopForemanBuild } from '@rerun/contracts'
@@ -21,8 +21,9 @@ let api: ReturnType<typeof useDesktopForemanUi>
 let ports: DesktopForemanActionPorts
 let persisted: Map<string, DesktopForemanPersistedUi>
 function Probe({ owner = chat, live = null }: { owner?: DesktopForemanChatRef; live?: { runId: string } | null }) {
-    api = useDesktopForemanUi({ chat: owner, ports, live, initialOpen: true })
-    return <><button onClick={api.confirmPlan}>Confirm</button><DesktopForemanNextSteps steps={api.nextSteps} leadState={api.leadState} live={api.live} onStartLead={api.startLead} onOpenCreated={step => api.navigate({ kind: 'open_coworker', agentId: step.agentId, sessionId: step.sessionId })} /></>
+    const current = useDesktopForemanUi({ chat: owner, ports, live, initialOpen: true })
+    useLayoutEffect(() => { api = current })
+    return <><button onClick={current.confirmPlan}>Confirm</button><DesktopForemanNextSteps steps={current.nextSteps} leadState={current.leadState} live={current.live} onStartLead={current.startLead} onOpenCreated={step => current.navigate({ kind: 'open_coworker', agentId: step.agentId, sessionId: step.sessionId })} /></>
 }
 const render = async (owner = chat, live: { runId: string } | null = null) => { if (!root) root = createRoot(document.body.appendChild(document.createElement('div'))); await act(async () => { root!.render(<Probe owner={owner} live={live} />) }) }
 beforeEach(() => {
