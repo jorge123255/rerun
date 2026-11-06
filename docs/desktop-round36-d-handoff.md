@@ -2,6 +2,8 @@
 
 Worktree `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round36-external-mcp-ui`, branch `desktop/round36-external-mcp-ui`, prepared base `970415507e28824bb001f46c8537d20fd2636b1c`. Original source pin `a6d63a4b542674ddd002e51b39ba0df6e0807bcc`.
 
+Source package commit `06d133492cef7a6f38db78f64c797f7cf326d4e8` (`Add desktop external MCP setup UI`). Worktree was clean immediately after that commit; this handoff’s commit metadata is updated in a separate owned documentation commit.
+
 Source handoff only. No tests, typecheck, lint, builds, installs, servers, network/provider calls, Docker, browser/native UI, microphone, Keychain or restart checks were executed. This is not installed acceptance or W4/B5 completion. Root integrates, repairs and accepts.
 
 ## Published dependent contracts
