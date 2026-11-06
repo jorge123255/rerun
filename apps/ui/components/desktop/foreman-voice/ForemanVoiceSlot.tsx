@@ -26,9 +26,9 @@ export function ForemanVoiceSlot({ voice, onOpenTranscriptionSettings }: Foreman
                     : busy ? <TextShimmer className="truncate text-sm">{view.phase === 'restoring' ? 'Restoring recording…' : view.phase === 'starting' ? 'Opening microphone…' : view.phase === 'saving' ? 'Saving recording…' : 'Sending…'}</TextShimmer> : null}
         {view.pending && <Review voice={voice} />}
         {view.error && <p role="alert" className="break-words text-xs text-destructive">{view.error}</p>}
-        {view.snapshot?.setup === 'transcription' && <Button size="sm" variant="outline" onClick={onOpenTranscriptionSettings}>Set up transcription</Button>}
+        {view.snapshot?.setup === 'transcription' && <Button type="button" size="sm" variant="outline" onClick={onOpenTranscriptionSettings}>Set up transcription</Button>}
         <div className="flex flex-wrap gap-2">
-            {['idle', 'starting', 'listening'].includes(view.phase) && <Button size="sm" variant="ghost" disabled={!view.restored || !voice.active}
+            {['idle', 'starting', 'listening'].includes(view.phase) && <Button type="button" size="sm" variant="ghost" disabled={!view.restored || !voice.active}
                 onPointerDown={event => {
                     if (event.button !== 0 || held.current) return
                     held.current = true
@@ -43,18 +43,18 @@ export function ForemanVoiceSlot({ voice, onOpenTranscriptionSettings }: Foreman
                 onPointerCancel={() => { held.current = false; clearHold(); void controller.cancel() }}
                 onLostPointerCapture={() => { if (held.current) { held.current = false; clearHold(); void controller.cancel() } }}
                 aria-label="Hold to talk to Foreman">Hold to talk</Button>}
-            {view.phase === 'idle' && !view.restored && <Button size="sm" variant="outline" onClick={() => void controller.restore()}>Restore recording</Button>}
-            {view.phase === 'error' && !view.pending && <Button size="sm" variant="outline" onClick={() => { void controller.cancel().then(() => controller.restore()).then(() => controller.start()) }}>Try again</Button>}
-            {view.phase === 'listening' && <Button size="sm" variant="outline" onClick={() => void controller.release(true)}>Review</Button>}
+            {view.phase === 'idle' && !view.restored && <Button type="button" size="sm" variant="outline" onClick={() => void controller.restore()}>Restore recording</Button>}
+            {view.phase === 'error' && !view.pending && <Button type="button" size="sm" variant="outline" onClick={() => { void controller.cancel().then(() => controller.restore()).then(() => controller.start()) }}>Try again</Button>}
+            {view.phase === 'listening' && <Button type="button" size="sm" variant="outline" onClick={() => void controller.release(true)}>Review</Button>}
             {view.pending && !busy && view.phase !== 'sent' && <>
-                <Button size="sm" variant="outline" onClick={() => void controller.refresh()}>Refresh</Button>
-                {(!view.snapshot?.attempt || ['uploading', 'failed'].includes(view.snapshot.attempt.phase)) && <Button size="sm" onClick={() => void controller.retrySave()}>Save recording</Button>}
-                <Button size="sm" variant="outline" onClick={() => void controller.transcribe()}>Transcribe</Button>
-                <Button size="sm" disabled={!view.snapshot?.attempt?.transcript} onClick={() => void controller.send()}>Send voice message</Button>
-                <Button size="sm" variant="ghost" onClick={() => void controller.discard()}>Discard</Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => void controller.refresh()}>Refresh</Button>
+                {(!view.snapshot?.attempt || ['uploading', 'failed'].includes(view.snapshot.attempt.phase)) && <Button type="button" size="sm" onClick={() => void controller.retrySave()}>Save recording</Button>}
+                <Button type="button" size="sm" variant="outline" onClick={() => void controller.transcribe()}>Transcribe</Button>
+                <Button type="button" size="sm" disabled={!view.snapshot?.attempt?.transcript} onClick={() => void controller.send()}>Send voice message</Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => void controller.discard()}>Discard</Button>
             </>}
-            {view.phase !== 'idle' && view.phase !== 'sent' && <Button size="sm" variant="ghost" onClick={() => void controller.cancel()}>Cancel</Button>}
-            {view.phase === 'sent' && <><span role="status" className="text-xs text-muted-foreground">Sent</span><Button size="sm" variant="ghost" onClick={() => void controller.done()}>Done</Button></>}
+            {view.phase !== 'idle' && view.phase !== 'sent' && <Button type="button" size="sm" variant="ghost" onClick={() => void controller.cancel()}>Cancel</Button>}
+            {view.phase === 'sent' && <><span role="status" className="text-xs text-muted-foreground">Sent</span><Button type="button" size="sm" variant="ghost" onClick={() => void controller.done()}>Done</Button></>}
         </div>
     </div>
 }
@@ -63,7 +63,7 @@ function Review({ voice }: { voice: ForemanVoiceSlotController }) {
     const playback = useDesktopVoicePlayback({ srcUrl: foremanVoiceAudioUrl(p.target, p.attemptId), blob: p.blob, ownerKey: JSON.stringify([p.target, p.attemptId]) })
     return <div className="min-w-0 space-y-2">
         <div className="flex min-w-0 items-center gap-2">
-            <Button size="sm" variant="ghost" disabled={playback.loading} onClick={() => void playback.toggle()}>{playback.playing ? 'Pause' : 'Play voice message'}</Button>
+            <Button type="button" size="sm" variant="ghost" disabled={playback.loading} onClick={() => void playback.toggle()}>{playback.playing ? 'Pause' : 'Play voice message'}</Button>
             <DesktopVoiceWaveform peaks={a?.recording.levels ?? p.levels} className="min-w-0 flex-1" />
         </div>
         <audio ref={playback.audioRef} preload="none" className="hidden" {...playback.audioProps} />

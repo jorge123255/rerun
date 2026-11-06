@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { DesktopForemanChatRef, DesktopForemanModelRef } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
-import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
 import { createDesktopForemanClient, desktopForemanMessages, readDesktopForemanState, type DesktopForemanClientState } from '@/lib/desktop/foreman-client/runtime-client'
 import { createClientDockFeed } from '@/lib/desktop/foreman-dock/feed'
@@ -75,18 +75,35 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         active.current = true
         let cancelled = false
         let timer: ReturnType<typeof setTimeout> | undefined
-        const poll = async () => {
-            if (cancelled) return
-            if (!isDesktopQuitting()) try { await client.refresh() } catch (error) { if (!cancelled) setError(error instanceof Error ? error.message : 'Could not refresh Foreman.') }
-            if (!cancelled) timer = setTimeout(() => void poll(), 1500)
+        let events: EventSource | undefined, generation = 0
+        const currentFeed = (value: number) => !cancelled && value === generation && !isDesktopQuitting()
+        const poll = async (value: number) => {
+            if (!currentFeed(value)) return
+            try { await client.refresh() } catch (error) { if (currentFeed(value)) setError(error instanceof Error ? error.message : 'Could not refresh Foreman.') }
+            if (currentFeed(value)) timer = setTimeout(() => void poll(value), 1500)
         }
-        void poll()
-        const events = new EventSource(`/api/desktop/foreman/events?${new URLSearchParams(initial.chat)}`)
-        events.onmessage = event => {
-            if (cancelled || typeof event.data !== 'string' || event.data.length > 256 * 1024) return
-            try { client.acceptEvent(JSON.parse(event.data)) } catch { /* A malformed event never becomes an action. */ }
+        const pauseFeed = () => {
+            ++generation
+            if (timer) clearTimeout(timer)
+            timer = undefined
+            if (events) { events.onmessage = null; events.close(); events = undefined }
         }
-        return () => { cancelled = true; active.current = false; if (timer) clearTimeout(timer); events.close(); client.close() }
+        const resumeFeed = () => {
+            if (cancelled || isDesktopQuitting() || events) return
+            const value = ++generation
+            const source = new EventSource(`/api/desktop/foreman/events?${new URLSearchParams(initial.chat)}`)
+            events = source
+            source.onmessage = event => {
+                if (!currentFeed(value) || events !== source || typeof event.data !== 'string' || event.data.length > 256 * 1024) return
+                try { client.acceptEvent(JSON.parse(event.data)) } catch { /* A malformed event never becomes an action. */ }
+            }
+            void poll(value)
+        }
+        // Keep the client and persistence writer alive so admitted draft saves can
+        // finish. The unbounded SSE must close before Next's graceful shutdown.
+        const unsubscribe = subscribeDraftShutdown(() => { if (isDesktopQuitting()) pauseFeed(); else resumeFeed() })
+        resumeFeed()
+        return () => { cancelled = true; active.current = false; unsubscribe(); pauseFeed(); client.close() }
     }, [initial])
     const consumed = useRef(new Set<string>())
     const [focusRequest, setFocusRequest] = useState<string>()

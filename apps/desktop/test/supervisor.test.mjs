@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdtemp, rm, access, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, access, readFile, lstat, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { once } from 'node:events'
@@ -12,6 +12,83 @@ import { RuntimeSupervisor } from '../src/main/supervisor.mjs'
 
 const fixture = fileURLToPath(new URL('./service-fixture.mjs', import.meta.url))
 const identity = () => ({ installId: randomUUID(), engineApiKey: randomBytes(32).toString('hex'), encryptionKey: randomBytes(32).toString('hex') })
+
+test('private shutdown evidence distinguishes a timed-out clean late engine from a rejected UI exit without exposing runtime secrets', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-native-stop-evidence-'))
+    const workspaceIdentity = identity()
+    const supervisor = new RuntimeSupervisor({ root, identity: workspaceIdentity, bundle: { nodePath: '/private/never-journal-command' }, stopTimeout: 1,
+        launch: (_command, args) => {
+            const child = new EventEmitter()
+            Object.assign(child, { exitCode: null, signalCode: null, connected: true, privateError: 'never-journal-error',
+                send(_message, callback) {
+                    if (args[0] === 'ui') { this.exitCode = 143; this.emit('exit', 143, null) }
+                    callback?.()
+                }, kill() { assert.fail('A journal must not force a process verdict') },
+            })
+            return child
+        },
+    })
+    const runtime = { launchNonce: randomUUID(), workspaceId: 7, installRoot: await realpath(root), app: { origin: 'http://127.0.0.1:3000', sessionToken: 'never-journal-session' }, engine: { apiKey: 'never-journal-engine-key' } }
+    supervisor.runtime = runtime; supervisor.toolsDrainedRuntime = runtime
+    const ui = supervisor.spawnOwned(['ui', 'never-journal-argument'], { PRIVATE: 'never-journal-environment' }, undefined, 'ui')
+    const engine = supervisor.spawnOwned(['engine'], {}, runtime.launchNonce, 'engine')
+    supervisor.publish('ready')
+    try {
+        await assert.rejects(supervisor.stop(), /cleanup was not confirmed/)
+        const file = join(root, 'shutdown-diagnostics.json')
+        assert.equal((await lstat(file)).mode & 0o777, 0o600)
+        const failed = JSON.parse(await readFile(file, 'utf8'))
+        assert(failed.events.some(row => row.event === 'child-stop-verdict' && row.role === 'engine' && row.timeout && row.confirmed === false && row.sameRuntimeToolsAck && !row.stoppedAck && row.exitCode === null))
+        assert.equal(failed.events.at(-1).event, 'stop-failed')
+        assert(supervisor.children.has(engine)); assert(supervisor.children.has(ui))
+
+        engine.emit('message', { type: 'stopped', launchNonce: 'foreign-launch' })
+        assert.equal(engine.stoppedAcknowledged, undefined)
+        engine.emit('message', { type: 'stopped', launchNonce: runtime.launchNonce })
+        engine.exitCode = 0; engine.emit('exit', 0, null)
+        await supervisor.shutdownDiagnosticWrites
+        const late = JSON.parse(await readFile(file, 'utf8'))
+        assert(late.events.some(row => row.event === 'child-exit' && row.role === 'engine' && row.exitCode === 0 && row.stoppedAck && !row.unconfirmedEngineExit))
+        await supervisor.stop()
+        const stopped = JSON.parse(await readFile(file, 'utf8'))
+        assert(stopped.events.some(row => row.event === 'child-stop-verdict' && row.role === 'ui' && row.exitCode === 143 && row.signalCode === null && row.confirmed))
+        assert.equal(stopped.events.at(-1).event, 'stop-succeeded')
+        const keys = ['event', 'launchNonce', 'workspaceId', 'role', 'exitCode', 'signalCode', 'shutdownFailed', 'stopRequested', 'stoppedAck', 'sameRuntimeToolsAck', 'unconfirmedEngineExit', 'timeout', 'confirmed', 'force'].sort()
+        for (const row of stopped.events) { assert.deepEqual(Object.keys(row).sort(), keys); assert.equal(row.launchNonce, runtime.launchNonce); assert.equal(row.workspaceId, 7) }
+        const text = JSON.stringify(stopped)
+        for (const secret of ['never-journal', root, workspaceIdentity.encryptionKey, workspaceIdentity.engineApiKey]) assert(!text.includes(secret))
+    } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('shutdown evidence records a rejected raw UI signal, caps its history, and never follows a substituted journal symlink', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rerun-native-stop-ui-evidence-'))
+    const supervisor = new RuntimeSupervisor({ root, bundle: {}, identity: identity() })
+    supervisor.runtime = { launchNonce: randomUUID(), workspaceId: 1, installRoot: await realpath(root) }
+    supervisor.toolsDrainedRuntime = supervisor.runtime
+    const child = new EventEmitter()
+    Object.assign(child, { desktopRole: 'ui', exitCode: null, signalCode: null, connected: true,
+        send() { this.signalCode = 'SIGTERM'; this.emit('exit', null, 'SIGTERM') },
+    })
+    supervisor.children.add(child)
+    try {
+        assert.equal(await supervisor.stopChildren(false), false)
+        await supervisor.shutdownDiagnosticWrites
+        const file = join(root, 'shutdown-diagnostics.json')
+        const saved = JSON.parse(await readFile(file, 'utf8'))
+        assert(saved.events.some(row => row.event === 'child-stop-verdict' && row.role === 'ui' && row.signalCode === 'SIGTERM' && !row.timeout && row.confirmed === false && row.sameRuntimeToolsAck))
+        for (let index = 0; index < 80; index++) supervisor.shutdownDiagnostic('stop-requested')
+        await supervisor.shutdownDiagnosticWrites
+        assert.equal(JSON.parse(await readFile(file, 'utf8')).events.length, 64)
+        await rm(file)
+        const outside = join(root, 'protected-content')
+        await writeFile(outside, 'unchanged', { mode: 0o600 })
+        await symlink(outside, file)
+        supervisor.shutdownDiagnostic('stop-failed')
+        await supervisor.shutdownDiagnosticWrites
+        assert.equal(await readFile(outside, 'utf8'), 'unchanged')
+        assert((await lstat(file)).isSymbolicLink())
+    } finally { await rm(root, { recursive: true, force: true }) }
+})
 
 test('only a requested UI graceful exit accepts 143 after this launch has drained tools', async () => {
     for (const [role, code, signal, drained, accepted] of [

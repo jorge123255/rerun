@@ -2,12 +2,17 @@ import { EventEmitter } from 'node:events'
 import { spawn } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
-import { resolve } from 'node:path'
-import { rm, realpath } from 'node:fs/promises'
+import { isAbsolute, resolve } from 'node:path'
+import { lstat, rm, realpath } from 'node:fs/promises'
 import { workspaceDirectory, validWorkspaceId } from './workspaces/paths.mjs'
 import { atomicPrivateJSON, bindWorkspace, childEnvironment, publicStatus, PROTOCOL_VERSION, workspaceIdentity } from './runtime.mjs'
 
 const wait = ms => new Promise(done => setTimeout(done, ms))
+const SHUTDOWN_DIAGNOSTIC_EVENTS = new Set([
+    'stop-requested', 'stop-succeeded', 'stop-failed', 'tools-drain-requested', 'tools-drain-ack',
+    'engine-stop-failed', 'engine-stopped-ack', 'child-exit', 'blocked-engine-exit',
+    'child-already-exited', 'child-stop-requested', 'child-stop-wait-settled', 'child-stop-verdict', 'children-stop-verdict',
+])
 
 export async function candidatePort() {
     const server = createServer()
@@ -27,6 +32,46 @@ export class RuntimeSupervisor extends EventEmitter {
         this.status = publicStatus('stopped')
         this.operation = null
         this.stopping = false
+        this.shutdownEvents = []
+        this.shutdownDiagnosticWrites = Promise.resolve()
+    }
+
+    shutdownDiagnostic(event, child, { timeout = false, confirmed = null, force = false } = {}) {
+        if (!SHUTDOWN_DIAGNOSTIC_EVENTS.has(event)) return
+        // A fixed projection only: never serialize ChildProcess, runtime, errors, paths,
+        // argv, provider data or environment. Keep late exits after a failed Quit too.
+        const runtime = this.runtime
+        const row = {
+            event,
+            launchNonce: typeof runtime?.launchNonce === 'string' && /^[a-f0-9-]{36}$/i.test(runtime.launchNonce) ? runtime.launchNonce : null,
+            workspaceId: validWorkspaceId(runtime?.workspaceId) ? runtime.workspaceId : null,
+            role: child?.desktopRole === 'engine' ? 'engine' : child?.desktopRole === 'ui' ? 'ui' : null,
+            exitCode: Number.isSafeInteger(child?.exitCode) ? child.exitCode : null,
+            signalCode: typeof child?.signalCode === 'string' && /^SIG[A-Z0-9]{1,12}$/.test(child.signalCode) ? child.signalCode : null,
+            shutdownFailed: child?.shutdownFailed === true,
+            stopRequested: child?.stopRequested === true,
+            stoppedAck: child?.stoppedAcknowledged === true,
+            sameRuntimeToolsAck: !!runtime && this.toolsDrainedRuntime === runtime,
+            unconfirmedEngineExit: this.unconfirmedEngineExit === true,
+            timeout: timeout === true,
+            confirmed: typeof confirmed === 'boolean' ? confirmed : null,
+            force: force === true,
+        }
+        this.shutdownEvents.push(row)
+        this.shutdownEvents = this.shutdownEvents.slice(-64)
+        const snapshot = { version: 1, events: [...this.shutdownEvents] }
+        this.shutdownDiagnosticWrites = this.shutdownDiagnosticWrites.then(async () => {
+            if (typeof this.root !== 'string' || !isAbsolute(this.root)) return
+            const root = await realpath(this.root), info = await lstat(root)
+            if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0) return
+            if (runtime?.installRoot && root !== runtime.installRoot) return
+            const file = resolve(root, 'shutdown-diagnostics.json')
+            try {
+                const existing = await lstat(file)
+                if (!existing.isFile() || existing.isSymbolicLink() || existing.uid !== process.getuid?.()) return
+            } catch (error) { if (error.code !== 'ENOENT') return }
+            await atomicPrivateJSON(file, snapshot)
+        }).catch(() => {}) // Diagnostics must never change shutdown success or failure.
     }
 
     publish(state, message = '') {
@@ -43,8 +88,8 @@ export class RuntimeSupervisor extends EventEmitter {
         child.stderr?.resume()
         child.on('message', value => {
             if (!launchNonce || value?.launchNonce !== launchNonce) return
-            if (value.type === 'stop-failed') child.shutdownFailed = true
-            if (value.type === 'stopped') child.shutdownFailed = false
+            if (value.type === 'stop-failed') { child.shutdownFailed = true; this.shutdownDiagnostic('engine-stop-failed', child) }
+            if (value.type === 'stopped') { child.shutdownFailed = false; child.stoppedAcknowledged = true; this.shutdownDiagnostic('engine-stopped-ack', child) }
         })
         child.on('error', () => { child.launchFailed = true; if (!this.cleaning && !this.stopping) startup?.abort() })
         child.once('exit', () => {
@@ -52,6 +97,7 @@ export class RuntimeSupervisor extends EventEmitter {
             // the ChildProcess. UI cleanup cannot attest this engine's writers.
             if (child.desktopRole === 'engine' && child.stopRequested
                 && (child.shutdownFailed || child.exitCode !== 0 || child.signalCode !== null)) this.unconfirmedEngineExit = true
+            this.shutdownDiagnostic('child-exit', child)
             this.children.delete(child)
             if (!this.cleaning && !this.stopping && this.status.state === 'starting') startup?.abort()
             if (!this.stopping && this.status.state === 'ready') {
@@ -163,21 +209,24 @@ export class RuntimeSupervisor extends EventEmitter {
     }
 
     async stopChildren(force = true) {
-        if (this.unconfirmedEngineExit && !force) return false
+        if (this.unconfirmedEngineExit && !force) { this.shutdownDiagnostic('blocked-engine-exit'); return false }
         this.cleaning = true
         let confirmed = !this.unconfirmedEngineExit
         const owned = [...this.children].reverse()
         for (const child of owned) {
-            if (child.exitCode !== null || child.signalCode !== null) continue
+            if (child.exitCode !== null || child.signalCode !== null) { this.shutdownDiagnostic('child-already-exited', child); continue }
             const exited = new Promise(done => child.once('exit', done))
             child.stopRequested = true
+            this.shutdownDiagnostic('child-stop-requested', child, { force })
             if (child.connected) child.send({ type: 'stop' }, () => {})
             else child.kill('SIGTERM')
-            let timer
-            await Promise.race([exited, new Promise(done => { timer = setTimeout(done, this.stopTimeout) })])
+            let timer, timeout = false
+            await Promise.race([exited, new Promise(done => { timer = setTimeout(() => { timeout = true; done() }, this.stopTimeout) })])
             clearTimeout(timer)
+            this.shutdownDiagnostic('child-stop-wait-settled', child, { timeout, force })
             if (child.exitCode === null && child.signalCode === null) {
                 confirmed = false
+                this.shutdownDiagnostic('child-stop-verdict', child, { timeout, confirmed: false, force })
                 // An ordinary Quit can retry a still-owned service. Force killing
                 // its parent would discard custody of detached native workers.
                 if (!force) break
@@ -191,10 +240,12 @@ export class RuntimeSupervisor extends EventEmitter {
             const gracefulUiExit = child.desktopRole === 'ui' && child.exitCode === 143
                 && this.runtime && this.toolsDrainedRuntime === this.runtime
             if (child.shutdownFailed || (child.exitCode !== 0 && !gracefulUiExit) || child.signalCode !== null) confirmed = false
+            this.shutdownDiagnostic('child-stop-verdict', child, { timeout, confirmed, force })
             this.children.delete(child)
             if (!confirmed && !force) break
         }
         this.cleaning = false
+        this.shutdownDiagnostic('children-stop-verdict', undefined, { confirmed, force })
         return confirmed
     }
 
@@ -217,6 +268,7 @@ export class RuntimeSupervisor extends EventEmitter {
     async confirmToolsStopped(runtime) {
         // The UI owns detached local MCP groups. Obtain its explicit drain result
         // while both services are alive; killing a parent alone proves nothing.
+        this.shutdownDiagnostic('tools-drain-requested')
         const response = await this.fetcher(`${runtime.app.origin}/api/desktop/internal/mcp`, {
             method: 'POST', headers: { Authorization: `Bearer ${runtime.engine.apiKey}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'shutdown' }), signal: AbortSignal.timeout(8000), redirect: 'error',
@@ -224,6 +276,7 @@ export class RuntimeSupervisor extends EventEmitter {
         const result = response.ok ? await response.json() : null
         if (result?.stopped !== true) throw new Error('Local program cleanup was not confirmed')
         this.toolsDrainedRuntime = runtime
+        this.shutdownDiagnostic('tools-drain-ack')
     }
 
     async prepareWorkspaceRecovery() {
@@ -235,6 +288,7 @@ export class RuntimeSupervisor extends EventEmitter {
     }
 
     async stop({ preserveError = false } = {}) {
+        this.shutdownDiagnostic('stop-requested')
         this.stopping = true
         this.startupAbort?.abort()
         if (!preserveError) this.publish('stopping', 'Closing local services…')
@@ -242,12 +296,16 @@ export class RuntimeSupervisor extends EventEmitter {
             if (this.runtime && this.toolsDrainedRuntime !== this.runtime) await this.confirmToolsStopped(this.runtime)
             if (!await this.stopChildren(false)) throw new Error('Local service cleanup was not confirmed')
             await rm(resolve(this.root, 'runtime.json'), { force: true })
+            this.shutdownDiagnostic('stop-succeeded', undefined, { confirmed: true })
+            await this.shutdownDiagnosticWrites
             this.runtime = null
             if (!preserveError) this.publish('stopped')
         } catch (error) {
             // Retain custody when a live engine cannot acknowledge cleanup, including
             // after service death. Retrying must not force-kill its parent and lose writers.
             if (preserveError) await this.stopChildren(false)
+            this.shutdownDiagnostic('stop-failed', undefined, { confirmed: false })
+            await this.shutdownDiagnosticWrites
             this.stopping = false
             this.publish('error', 'A local program or service could not confirm it stopped. Quit was cancelled. Try again before reopening the workspace.')
             throw error

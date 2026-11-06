@@ -95,12 +95,15 @@ function unique(values: string[]): string[] {
     return [...new Set(values.map(value => value.trim()).filter(Boolean))]
 }
 
-export function gapsFor(snapshot: DesktopCompanyDiscoverySnapshot): string[] {
+export function gapsFor(snapshot: DesktopCompanyDiscoverySnapshot, acceptedClaims: readonly Pick<CompanyBriefClaim, 'section'>[] = []): string[] {
     const kinds = new Set(snapshot.findings.map(finding => finding.kind))
+    const sections = new Set(acceptedClaims.map(claim => claim.section))
     const gaps: string[] = []
     if (!kinds.has('identity')) gaps.push('The sources did not name the company.')
-    if (!kinds.has('audience')) gaps.push('The sources did not say who the company sells to.')
-    if (!kinds.has('products') && !snapshot.sources.some(source => source.status === 'found' && source.payload.kind === 'catalog' && source.payload.catalog.products.length)) gaps.push('The sources did not list products or services.')
+    // The full site text can support these sections without producing a separate finding
+    // card. Do not contradict claims that survived source validation with a blanket gap.
+    if (!kinds.has('audience') && !sections.has('Customers & market')) gaps.push('The sources did not say who the company sells to.')
+    if (!kinds.has('products') && !sections.has('Offering') && !snapshot.sources.some(source => source.status === 'found' && source.payload.kind === 'catalog' && source.payload.catalog.products.length)) gaps.push('The sources did not list products or services.')
     if (!kinds.has('customers')) gaps.push('The sources did not name customers.')
     if (!kinds.has('competitors')) gaps.push('The sources did not name competitors.')
     gaps.push('Team, pricing and reputation remain unknown unless the cited source explicitly answers them.')
@@ -114,12 +117,12 @@ export function groundCompanyBrief(snapshot: DesktopCompanyDiscoverySnapshot, mo
     const evidence = companyBriefEvidence(snapshot)
     const allowed = new Set(evidence.map(item => item.tag))
     const claims: CompanyBriefClaim[] = []
-    const unknowns = [...gapsFor(snapshot)]
+    const rejected: string[] = []
     model.claims.forEach(claim => {
         const tagsInText = companyBriefSourceTags(claim.text)
         const sources = unique([...claim.sources, ...tagsInText])
         if (!sources.length || sources.some(tag => !allowed.has(tag)) || tagsInText.some(tag => !allowed.has(tag))) {
-            unknowns.push('A claim cited a source the snapshot does not contain.')
+            rejected.push('A claim cited a source the snapshot does not contain.')
             return
         }
         const text = withTags(claim.text, sources)
@@ -129,6 +132,7 @@ export function groundCompanyBrief(snapshot: DesktopCompanyDiscoverySnapshot, mo
         })
         claims.push({ id: `c${claims.length + 1}`, section: claim.section, text, sources, links })
     })
+    const unknowns = [...gapsFor(snapshot, claims), ...rejected]
     for (const unknown of model.unknowns) {
         if (!companyBriefSourceTags(unknown).length) unknowns.push(unknown.trim())
     }
