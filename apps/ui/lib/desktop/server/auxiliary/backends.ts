@@ -44,13 +44,25 @@ export function desktopAuxiliaryBackends(store: ReturnType<typeof desktopAuxilia
             return parsed.text.trim()
         },
         async search(input: DesktopWebSearchInput, revision: string, signal: AbortSignal): Promise<DesktopWebSearchResponse> {
-            const current = await configured('search', revision)
+            // Pre-effect revision bind: stale key/config never reaches the provider and is not a provider failure.
+            const credential = await store.read('search')
+            if (!credential.key) throw new Error('This tool service is not configured or has changed.')
+            if (credential.revision !== revision) throw new Error('Search capability changed.')
+            const current = credential as { revision: string; key: string }
             const url = new URL('https://api.search.brave.com/res/v1/web/search')
             url.searchParams.set('q', input.query); url.searchParams.set('count', String(input.maxResults))
             signal.throwIfAborted()
             const response = await fetcher(url, { headers: { Accept: 'application/json', 'X-Subscription-Token': current.key }, signal, redirect: 'error' })
             const parsed = braveReply.parse(await json(response, signal, 2_000_000))
-            await assertCurrent('search', current.revision, signal)
+            try {
+                await assertCurrent('search', current.revision, signal)
+            } catch (error) {
+                // Provider request may already have been accepted; do not claim a clean pre-flight refusal.
+                if (error instanceof Error && /changed|not configured/.test(error.message)) {
+                    throw new Error('Search capability changed after the provider request.')
+                }
+                throw error
+            }
             return { provenance: { provider: 'brave' }, results: (parsed.web?.results ?? []).slice(0, input.maxResults).map(value => ({ title: (value.title?.trim() || value.url).slice(0, 512), url: value.url, snippet: (value.description ?? '').slice(0, 4000) })) }
         },
     }

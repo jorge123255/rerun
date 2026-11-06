@@ -87,3 +87,11 @@ it('search receipts survive a fresh service and never permit another effect or c
     await expect(store.complete(identity, 'fp', { status: 'error', message: 'different' })).rejects.toThrow()
     await expect(desktopSearchOutcomes(f.db, 'other').begin(identity, 'fp')).rejects.toThrow()
 })
+
+it('search pre-flight revision mismatch is capability-changed without calling the provider', async () => {
+    const f = await fixture(), fetcher = vi.fn<typeof fetch>()
+    await f.store.change({ purpose: 'search', expectedRevision: 'unconfigured', key: 'fixture-key' })
+    const backends = desktopAuxiliaryBackends(f.store, fetcher)
+    await expect(backends.search({ query: 'stale', maxResults: 1 }, 'not-this-revision', new AbortController().signal)).rejects.toThrow('Search capability changed.')
+    expect(fetcher).not.toHaveBeenCalled()
+})

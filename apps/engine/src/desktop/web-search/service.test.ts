@@ -170,4 +170,91 @@ describe('desktop web search service', () => {
         expect(parts.outcomes.complete).toHaveBeenCalledTimes(1)
     })
 
+    it('pre-flight capability revision change is explicit error, never provider failed, and withholds fabricated success', async () => {
+        const parts = fixture({
+            adapter: {
+                generation: 'generation-1',
+                search: vi.fn(async () => { throw new Error('Search capability changed.') }),
+            },
+        })
+        const service = createDesktopWebSearchService(portsOf(parts))
+        const outcome = await invoke(service, { query: 'stale-key' })
+        expect(outcome).toEqual({ status: 'error', message: 'Search capability changed.' })
+        expect(outcome).not.toMatchObject({ status: 'success' })
+        expect(JSON.stringify(outcome)).not.toContain('Search provider failed.')
+        expect(parts.outcomes.complete).toHaveBeenCalledWith(
+            expect.objectContaining({ adapterGeneration: 'generation-1' }),
+            expect.any(String),
+            { status: 'error', message: 'Search capability changed.' },
+        )
+    })
+
+    it('in-flight capability rotation after provider request persists uncertain and never retries the same fingerprint', async () => {
+        const parts = fixture({
+            adapter: {
+                generation: 'generation-1',
+                search: vi.fn(async () => { throw new Error('Search capability changed after the provider request.') }),
+            },
+        })
+        const service = createDesktopWebSearchService(portsOf(parts))
+        await expect(invoke(service, { query: 'rotating' })).resolves.toMatchObject({
+            status: 'uncertain',
+            message: 'Search capability changed during the request. The search was not repeated.',
+        })
+        await expect(invoke(service, { query: 'rotating' })).resolves.toMatchObject({ status: 'uncertain' })
+        expect(parts.adapter!.search).toHaveBeenCalledTimes(1)
+        expect(parts.outcomes.complete).toHaveBeenCalledTimes(1)
+    })
+
+    it('withholds body when capability changes after a provider response and before publish', async () => {
+        const parts = fixture({
+            authority: vi.fn()
+                .mockResolvedValueOnce({ adapterGeneration: 'generation-1' })
+                .mockResolvedValueOnce({ adapterGeneration: 'generation-2' }),
+        })
+        const service = createDesktopWebSearchService(portsOf(parts))
+        const outcome = await invoke(service, { query: 'withhold' })
+        expect(outcome).toEqual({ status: 'error', message: 'Search capability changed.' })
+        expect(parts.outcomes.complete).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.any(String),
+            { status: 'error', message: 'Search capability changed.' },
+        )
+        expect(parts.outcomes.complete).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ status: 'success' }))
+    })
+
+    it('idempotent replay of a retained capability-changed error never re-calls the provider', async () => {
+        const retained: DesktopWebSearchOutcome = { status: 'error', message: 'Search capability changed.' }
+        const parts = fixture({ begin: vi.fn(async () => retained) })
+        const service = createDesktopWebSearchService(portsOf(parts))
+        await expect(invoke(service, { query: 'replay' })).resolves.toEqual(retained)
+        await expect(invoke(service, { query: 'replay' })).resolves.toEqual(retained)
+        expect(parts.adapter!.search).not.toHaveBeenCalled()
+    })
+
+    it('a new tool-call identity under a new adapter generation can be admitted separately', async () => {
+        const parts = fixture({
+            authority: vi.fn(async () => ({ adapterGeneration: 'generation-2' })),
+            adapter: {
+                generation: 'generation-2',
+                search: vi.fn(async () => ({ provenance: { provider: 'fixture-search' }, results: [result()] })),
+            },
+        })
+        const service = createDesktopWebSearchService(portsOf(parts))
+        const next = { ...identity, toolCallId: 'tool-call-2' }
+        await expect(service.search(next, { query: 'fresh-key' })).resolves.toEqual(success())
+        expect(parts.adapter!.search).toHaveBeenCalledTimes(1)
+    })
+
+    it('provider transport errors remain Search provider failed and stay redacted', async () => {
+        const parts = fixture()
+        parts.adapter!.search = vi.fn(async () => { throw new Error('502 from https://api.search.brave.com/?token=leak') })
+        const service = createDesktopWebSearchService(portsOf(parts))
+        const outcome = await invoke(service, { query: 'x' })
+        expect(outcome).toMatchObject({ status: 'error', message: 'Search provider failed.' })
+        expect(JSON.stringify(outcome)).not.toContain('token=leak')
+        expect(JSON.stringify(outcome)).not.toContain('brave.com')
+    })
+
 })
+

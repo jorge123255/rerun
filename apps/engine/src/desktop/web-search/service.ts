@@ -40,6 +40,19 @@ function messageOf(error: unknown, fallback: string): string {
     return (message || fallback).slice(0, 500)
 }
 
+/** Explicit stale/rotated search capability vs generic provider failure. */
+function searchFailureOf(error: unknown, providerFailure: boolean): Extract<DesktopWebSearchOutcome, { status: 'error' | 'uncertain' }> {
+    const raw = error instanceof Error ? error.message : ''
+    if (raw === 'Search capability changed after the provider request.') {
+        return { status: 'uncertain', message: 'Search capability changed during the request. The search was not repeated.' }
+    }
+    if (raw === 'Search capability changed.' || raw.startsWith('Search capability changed')) {
+        return { status: 'error', message: 'Search capability changed.' }
+    }
+    if (providerFailure) return { status: 'error', message: 'Search provider failed.' }
+    return { status: 'error', message: messageOf(error, 'Search is unavailable.') }
+}
+
 export function createDesktopWebSearchService(ports: DesktopWebSearchPorts, options: { deadlineMs?: number; settlementMs?: number } = {}) {
     const deadlineMs = options.deadlineMs ?? DESKTOP_WEB_SEARCH_DEADLINE_MS
     const settlementMs = options.settlementMs ?? 1000
@@ -97,7 +110,7 @@ export function createDesktopWebSearchService(ports: DesktopWebSearchPorts, opti
                             ? { status: 'cancelled', message: 'Search cancelled by run.' }
                             : deadline.signal.aborted
                                 ? { status: 'cancelled', message: `Search timed out after ${Math.round(deadlineMs / 1000)} s.` }
-                                : { status: 'error', message: providerFailure ? 'Search provider failed.' : messageOf(error, 'Search is unavailable.') }
+                                : searchFailureOf(error, providerFailure)
                     if (began && !publishing) {
                         await abortable(ports.outcomes.complete(invocation, fingerprint, outcome), AbortSignal.timeout(settlementMs)).catch(() => undefined)
                     }
