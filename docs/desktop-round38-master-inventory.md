@@ -154,3 +154,12 @@ No critical blocker found that prevents RD38 A. Memories remain correctly fail-c
 - RD45 `01M6S85MF39SNP545DE226RXTS.md`: pin Expo/Supabase hub client; absent on `6f6ad959`; no phone↔Mac pairing; engines/pair + remote-machine ≠ phone; preview distribution unchanged; signer user-provided.
 - RD44 `01M6S8847DX06HMEYQVV73EZYP.md`: hosted/webhook/ACL decisions unmade; local independent; must not enable older unguarded `/p/[slug]`; loopback remains legitimate.
 - Plans **sourced only** — not accepted, not implementation-complete. No mobile/hosting activation.
+
+## t31u upstream PR38 supplement (master)
+
+- Docs-only reconciliation at parent tip `2362ca1f350524031bfb60e817d355ee138b0aad`. Canonical: `docs/desktop-round42-upstream-pr38-supplement.md`.
+- Official dev `ab3def9bfcf545cc9548f99c63c2b011ca094023` = **supplement reference**, not integration/rebase target. Base `6f6ad959…` immutable. Pin `2a57fa6…` retained.
+- Seven UP packets map into existing E8/E10/E4/E2/C3/D7/C7 + RD39/40/42 — **not** RD46.
+- Nine delivered packets (A…search) unchanged; A/B unavailable until bind; W4 guard root-integrate before external write; remaining catalog projection of refused fields distinct from delivered honesty.
+- C–I: user-reported shorts only; preserve owners; not merged/complete.
+- Duplicate grant/credential inheritance: SOURCE/SPEC discrepancy for root — not settled here.

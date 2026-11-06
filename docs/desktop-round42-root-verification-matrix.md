@@ -2,7 +2,7 @@
 
 **Purpose:** checklist for root’s integrated release-candidate / Mac acceptance work.  
 **This agent did not create fixtures, run the app, grant permissions, or mark results.**  
-**Tip referenced:** `2d769a5c53723b78de0ebb9c2501b353fec59521` (RD40 E2 nontext `42aa785f9b72…` + search `aed685747b0e…` + prior)
+**Tip referenced:** `2362ca1f350524031bfb60e817d355ee138b0aad` (RD40 E2 nontext `42aa785f9b72…` + search `aed685747b0e…` + prior)
 
 Result cells stay blank until root fills them. Distinguish: source present ≠ root accepted ≠ configured service live.
 
@@ -93,3 +93,16 @@ Audit asset `01M6S74CTXEGPS2M7G67ZPH2VM.md`; verified on master `73b6855e…`. *
 
 **Privacy preserve:** `.rerun*` / `.rerun-skill-*` nested aliases excluded; ordinary hidden user files remain portable-eligible.
 
+## H. t31u UP packets (documentation mapping — not acceptance)
+
+Provenance: user audit 2026-11-06 14:41 CST. Full table: `docs/desktop-round42-upstream-pr38-supplement.md`. Upstream `ab3def9b…` supplement-only. Result cells blank.
+
+| ID | Maps to | Expected after future repair (root/owners) | Notes |
+|---|---|---|---|
+| UP-01 | E8 / RD42 | Bad schedule row contained; others tick; next-run validated on write | I excludes cron; UI mirror must not be duplicated |
+| UP-02 | E10/R1/E11 RD40 | Five team-read tools + See other coworkers; default-OFF grant | After D presenters handoff |
+| UP-03 | E4 RD40 | WhatsApp Status via real Apps/Linkup | No paid bypass / no invented post |
+| UP-04 | E2 RD40 | Public URL → owner Files binary-safe | Existing publication authority |
+| UP-05 | C3/E2 RD40 | vision_analyze own saved image | ≠ manual attach |
+| UP-06 | D7 RD40 | table_view_save/delete | No card_table read⇒write; delete≠rows |
+| UP-07 | C7 RD39 | notify_user nonblocking | Native kept; fail/unknown ≠ shown |

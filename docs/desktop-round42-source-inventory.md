@@ -1,7 +1,7 @@
 # RD42 source inventory (preparation — not complete)
 
 **Status:** independent RD42 preparation checkpoint only. Does **not** claim release-candidate completion, Mac acceptance, or that RD39–41 / C–I are done.  
-**Worktree tip at inventory authorship:** `2d769a5c53723b78de0ebb9c2501b353fec59521` on `desktop/round38-master-completion` (RD40 E2 nontext+search SOURCE-REPAIRED; docs tip this commit)
+**Worktree tip at inventory authorship:** `2362ca1f350524031bfb60e817d355ee138b0aad` on `desktop/round38-master-completion` (t31u UP provenance docs; tip-ref follow-up may append)
 **Prepared base:** `6f6ad959a09abaf1947950b6f82413c94407e22a` (`desktop/rd38-cloud-base`)  
 **Original comparison pin:** `2a57fa6dd53311f763bfc9abde85997b7f7e5309` (historical `a6d63a4b542674ddd002e51b39ba0df6e0807bcc` secondary)  
 **Seam:** A/B/E `abe-1` in `docs/desktop-round38-a-transfer-seam.md`  
@@ -74,13 +74,13 @@ export * from './desktop-coworker-share-database.js'
 
 | Track | State |
 |---|---|
-| RD38 **C** control-center parity | PENDING — seven-agent isolated tree |
-| RD38 **D** run/tool presentations | PENDING — seven-agent isolated tree |
-| RD38 **E** share preview/import UI (consumes A/B + `abe-1`) | PENDING — seven-agent isolated tree |
-| RD38 **F** named API-connection runtime | PENDING — seven-agent isolated tree |
-| RD38 **G** named API-connection UI | PENDING — seven-agent isolated tree (depends F) |
-| RD38 **H** packaging/startup readiness source | PENDING — seven-agent isolated tree |
-| RD38 **I** remote gateway transitions source | PENDING — seven-agent isolated tree |
+| RD38 **C** control-center parity | PENDING — user-reported tip short `80cdcab4` (not freshly full-verified); prior dirty findings ≠ auto-present; **not merged** |
+| RD38 **D** run/tool presentations | PENDING — no local committed delta at t31u snapshot; owner/base preserved |
+| RD38 **E** share preview/import UI (consumes A/B + `abe-1`) | PENDING — no local committed delta at t31u snapshot; owner/base preserved |
+| RD38 **F** named API-connection runtime | PENDING — user-reported `72e8ef86`; secret-derived receipt SHA256 + key-presence/probe ambiguity = source-review blockers; **not merged** |
+| RD38 **G** named API-connection UI | PENDING — WIP uncommitted at snapshot; work elsewhere unknown; owner preserved |
+| RD38 **H** packaging/startup readiness source | PENDING — user-reported `62c7a5d8`; root fragments still required; **not merged** |
+| RD38 **I** remote gateway transitions source | PENDING — user-reported `a9fa3888`; hard gate unmounted; **not merged** |
 | **RD39** local journey audits/fixes | **E3 paste + C3 document add SOURCE-REPAIRED**; D2 >14 + D4 C7 receipt **INTEGRATION/ROOT pending**; not complete / not accepted |
 | **RD40** providers/recall/Foreman/W4/D4/D3/E2 | **W4** `73b6855e…`; **D4** `d0b2a798…`; **D3** `4415d319…`; **E2 nontext** `42aa785f9b72…`; **E2 search** `aed685747b0e…` — all SOURCE-REPAIRED / **not accepted / not tested**; C–I + remaining root still open; **RD40 not complete** |
 | **RD41** whole-product design/state audit | **audit reconciled** — 3 confirmed defects + Duplicate-grants discrepancy **unrepaired** (root); not complete |
@@ -185,6 +185,25 @@ C–I seven-agent packages still PENDING. RD39 D1+D3 source-repaired (paste + do
 - **E2 search:** **Applied** at `aed685747b0ee88fad99e90bf870650be997d990` (see handoff).
 
 
+
+
+
+## t31u upstream PR38 supplement (docs-only — not RD46)
+
+**Full classification:** `docs/desktop-round42-upstream-pr38-supplement.md`  
+**Provenance:** user audit 2026-11-06 14:41 CST; official dev `ab3def9b…` is **supplement reference only** (not rebase/integration target). Base `6f6ad959…` immutable. Pin `2a57fa6…` retained.
+
+| UP | Maps to | One-line |
+|---|---|---|
+| UP-01 | E8 / RD42 | Scheduler per-row containment + real next-run via schedule writes; RD37 I excludes cron |
+| UP-02 | E10/R1/E11 → RD40 | Five team-read tools + See other coworkers; default-OFF grant |
+| UP-03 | E4 / RD40 | WhatsApp Status via real Linkup/Apps custody — no paid bypass |
+| UP-04 | E2 / RD40 | Public binary-safe download into owner Files |
+| UP-05 | C3/E2 / RD40 | Autonomous vision of own saved image (≠ manual attach) |
+| UP-06 | D7 / RD40 | Model table_view_save/delete; no card_table read⇒write |
+| UP-07 | C7 / RD39 | Nonblocking notify_user; native channel; fail≠shown |
+
+Nine delivered master packets (A/B/paste/docs/guard/wipe/Claude/nontext/search) listed in the supplement — **not** new assignments. W4 guard root integration + remaining catalog projection of refused fields before external write enable. A/B stay unavailable until two-way bind.
 
 ## RD44 / RD45 conditional gates (plans sourced — not accepted, not implemented)
 

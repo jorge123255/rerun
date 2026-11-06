@@ -30,4 +30,5 @@ Publication: local commits only until root approves exact head. No push from thi
 | — | RD40 E2 search handoff | docs on master | `aed68574…` | search revision | `dd4b86ab…` |
 | — | RD42 E2 + RD44/RD45 conditional docs | docs on master | `dd4b86ab…` | E2 status + sourced gates | `2d769a5c…` (+ tip-ref fix commit) |
 
+| — | t31u UP provenance docs (PR38 supplement) | docs on master | `2362ca1f3505…` | user audit classification into existing groups | *(this docs commit)* |
 

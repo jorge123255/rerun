@@ -31,7 +31,7 @@
 | Track | Status |
 |---|---|
 | RD38 A/B | Source delivered; product binding still `unavailable.*` |
-| RD38 C–I | **PENDING** — seven agent tips exist; READONLY reviewer inspecting; **not merged / not marked complete** on master |
+| RD38 C–I | **PENDING** — t31u user-reported shorts C`80cdcab4` F`72e8ef86` H`62c7a5d8` I`a9fa3888`; D/E no local delta; G WIP; F blockers retained; I unmounted; **not merged / not complete** |
 | RD39 | E3+C3 doc-add **SOURCE-REPAIRED**; >14 + C7 **pending**; handoffs `desktop-round39-*-handoff.md` |
 | RD40 | W4 + D4 + D3 + **E2 nontext** `42aa785f9b72…` + **E2 search** `aed685747b0e…` SOURCE-REPAIRED; **not accepted/tested**; C–I still open |
 | RD41 | Audit reconciled; **3 defects unrepaired** + Duplicate grants discrepancy vs t18u; no runtime edits |
@@ -63,7 +63,7 @@
 | D1 share plan | Root canonical `snapshot.ts` — align count/reason with `includeMember`; E consumes plan |
 | D2 board camera | Root `DesktopBoard` — workspace-scoped persist |
 | D3 skeletons | Panel owners later — **no UI edit this pass** |
-| Duplicate grants | **Discrepancy:** Duplicate inherits grants; t18u requires no inherited grants on copies/imports. Root decides env/mcp **file** copy separately; must not treat audit “product decision” as override |
+| Duplicate grants | **SOURCE/SPEC discrepancy (t31u):** inheritance vs import/copy wording — root reconciles; no clone-semantics change in docs; no outside-task quote as final instruction; preserve import restrictions |
 
 ## Diff this checkpoint
 
@@ -84,3 +84,19 @@ Root/owners apply unrepaired defects; fill matrix cells; bind A/B; wait is over 
 - RD45 asset `01M6S85MF39SNP545DE226RXTS.md` — Expo hub client on pin; absent on base; no phone↔Mac contract; distribution preview unchanged; signer not in repo.
 - RD44 asset `01M6S8847DX06HMEYQVV73EZYP.md` — hosted/webhook/ACL decisions unmade; do not enable older `/p/[slug]`; loopback stays local.
 - Both **sourced, not accepted, not implementation-complete**. No mobile/hosting code.
+
+## t31u UP packets (docs-only this checkpoint)
+
+Canonical: `docs/desktop-round42-upstream-pr38-supplement.md` (user audit 2026-11-06 14:41 CST; provenance not re-verified runtime).
+
+| UP | Existing placement |
+|---|---|
+| UP-01 | E8 / RD42 scheduler containment (root; I excludes cron) |
+| UP-02 | E10/R1/E11 → RD40 team-read tools (default-OFF) |
+| UP-03 | E4 / RD40 WhatsApp Status (real Linkup) |
+| UP-04 | E2 / RD40 public download to Files |
+| UP-05 | C3/E2 / RD40 vision on saved image |
+| UP-06 | D7 / RD40 model table view save/delete |
+| UP-07 | C7 / RD39 notify_user (native; fail≠shown) |
+
+Upstream `ab3def9b…` = supplement reference only. Base `6f6ad959…` immutable. No RD46. No C–I merge. No feature code.

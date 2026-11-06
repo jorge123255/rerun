@@ -20,7 +20,7 @@
 | Collaboration accounts/roles/Box ACLs | RD44 — ChatGPT login is not a workspace account system |
 | Mobile companion | RD45 |
 | Public Mac distribution / notarization changes | RD45 + separate root release action |
-| RD38 C–I feature packages | PENDING isolated agents |
+| RD38 C–I feature packages | PENDING — user t31u short tips C`80cdcab4` F`72e8ef86` H`62c7a5d8` I`a9fa3888`; D/E no local delta; G WIP; **not merged/complete** |
 | RD39–41 audits/implementation | Audits reconciled into RD42 docs; **implementation incomplete** (W4 source repair only) |
 
 ## Honest defaults to preserve
@@ -47,7 +47,12 @@ Frozen-base audit `bc-1e95582a-a658-55d3-8480-85f654b18cc8` reconciled. **SOURCE
 ## RD40 / RD41 audit intake (not acceptance)
 
 - **RD40:** **W4** `73b6855e…`; **D4** `d0b2a798…`; **D3** `4415d319…`; **E2 nontext** `42aa785f9b72ca676bc473cab0f708f899db0d3f` (handoff `docs/desktop-round40-nontext-writeback-handoff.md`); **E2 search** `aed685747b0ee88fad99e90bf870650be997d990` (handoff `docs/desktop-round40-search-revision-handoff.md`) — all SOURCE-REPAIRED / **not tested / not accepted**. **Do not mark whole RD40 accepted.** C–I / root conversation+notifications still pending.
-- **RD41:** Three confirmed unrepaired defects (share plan credential count/label; board camera persistence; five loading skeletons — no UI edits here). Same-box Duplicate **inherits grants today**; portable import forces grants off. **User t18u forbids inherited grants on copies/imports** — recorded as discrepancy for root authority, not accepted as settled product decision. Root separately decides `.env`/`mcp`/credential **file** copy semantics. Preserve `.rerun*` / `.rerun-skill-*` exclusion and ordinary hidden files.
+- **RD41:** Three confirmed unrepaired defects (share plan credential count/label; board camera persistence; five loading skeletons — no UI edits here). Same-box Duplicate **inherits grants today**; portable import forces grants off. **t31u:** grant/credential inheritance is a SOURCE/SPEC discrepancy for root — do not settle from outside-task quotes; do not change clone semantics here; preserve import restrictions. Root separately decides `.env`/`mcp`/credential **file** copy semantics. Preserve `.rerun*` / `.rerun-skill-*` exclusion and ordinary hidden files.
+- **t31u UP packets (docs):** see `docs/desktop-round42-upstream-pr38-supplement.md` — UP-01…07 mapped into E8/E10/E4/E2/C3/D7/C7 under existing RD39/40/42 numbering; upstream `ab3def9b…` supplement-only; **not** RD46; **not** implemented this checkpoint.
+- **W4 root queue:** integrate `73b6855e…` before external write enable; inspect remaining Mac catalog projection advertising refused `tools`/`selfImprovement` (distinct from already-delivered adapter catalog honesty).
 - **RD39** four defects still unrepaired; C7 native notify channel decision preserved.
 - All cloud audits (RD39/40/41) returned; **none** of RD39/40/41 are implementation-complete. C–I still PENDING.
 
+## t31u upstream supplement (docs-only)
+
+Canonical table: `docs/desktop-round42-upstream-pr38-supplement.md`. Seven UP packets attach to existing groups. Nine delivered packets remain integration/root-check only. No feature code in this checkpoint. No installed/live acceptance.
