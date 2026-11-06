@@ -4,6 +4,7 @@ import * as React from 'react'
 import type { DesktopCoworkerShareImportInput, DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
 import type { DesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
 import type { DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
+import { classifyShareDestination } from '@/lib/desktop/coworker-share/sections'
 
 export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspaceId, snapshotId, active = true }: {
     client: DesktopCoworkerShareClient
@@ -88,15 +89,15 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
             await refreshAttempts()
             if (!activeRef.current || request !== epoch.current) return false
             const result = await client.import(input)
-            if (result.status === 'uncertain') {
-                if (activeRef.current && request === epoch.current) setError(result.reason)
+            const outcome = classifyShareDestination(result)
+            if (!outcome.installed) {
+                if (activeRef.current && request === epoch.current) setError(outcome.reason)
                 return false
             }
-            if (!result.importedAgentId) throw new Error('Import acknowledgement did not identify the fresh copy. Retry this same attempt.')
             if (!activeRef.current || request !== epoch.current) return false
             await attempts.forgetImport(input)
             if (!activeRef.current || request !== epoch.current) return false
-            setImportedAgentId(result.importedAgentId)
+            setImportedAgentId(outcome.importedAgentId)
             refreshAttempts()
             return true
         } catch (cause) {

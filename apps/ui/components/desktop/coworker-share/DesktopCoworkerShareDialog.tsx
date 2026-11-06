@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } f
 import { Icon } from '@/components/ui/icon'
 import type { DesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
 import type { DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
+import { desktopCoworkerShareConfirmationPlan, type DesktopCoworkerShareSectionBindings } from '@/lib/desktop/coworker-share/sections'
 import { desktopCoworkerShareCarriedData } from '@/lib/desktop/coworker-share/state'
 import { Link2 } from '@/lib/icons'
 import { DesktopCoworkerManifestReview } from './DesktopCoworkerManifestReview'
@@ -17,7 +18,7 @@ import { DesktopCoworkerShareSafety } from './DesktopCoworkerShareSafety'
 import { DesktopCoworkerShareSuccess } from './DesktopCoworkerShareSuccess'
 import { useDesktopCoworkerShareFlow, type DesktopCoworkerShareFlow } from './useDesktopCoworkerShareFlow'
 
-export function DesktopCoworkerShareDialog({ open, onOpenChange, client, attempts, workspaceId, agentId, agentName, sourceRevision, onPreviewImport }: {
+export function DesktopCoworkerShareDialog({ open, onOpenChange, client, attempts, workspaceId, agentId, agentName, sourceRevision, onPreviewImport, sectionBindings = null }: {
     open: boolean
     onOpenChange: (open: boolean) => void
     client: DesktopCoworkerShareClient
@@ -27,16 +28,17 @@ export function DesktopCoworkerShareDialog({ open, onOpenChange, client, attempt
     agentName: string
     sourceRevision: string
     onPreviewImport?: (snapshotId: string) => void
+    sectionBindings?: DesktopCoworkerShareSectionBindings | null
 }) {
     return <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-xl">
-            {open && <DesktopCoworkerShareBody client={client} attempts={attempts} workspaceId={workspaceId} agentId={agentId} agentName={agentName} sourceRevision={sourceRevision} onClose={() => onOpenChange(false)} onPreviewImport={onPreviewImport} />}
+            {open && <DesktopCoworkerShareBody client={client} attempts={attempts} workspaceId={workspaceId} agentId={agentId} agentName={agentName} sourceRevision={sourceRevision} sectionBindings={sectionBindings} onClose={() => onOpenChange(false)} onPreviewImport={onPreviewImport} />}
         </DialogContent>
     </Dialog>
 }
 
-function DesktopCoworkerShareBody({ client, attempts, workspaceId, agentId, agentName, sourceRevision, onClose, onPreviewImport }: Omit<Parameters<typeof DesktopCoworkerShareDialog>[0], 'open' | 'onOpenChange'> & { onClose: () => void }) {
-    const flow = useDesktopCoworkerShareFlow({ client, attempts, workspaceId, agentId, sourceRevision })
+function DesktopCoworkerShareBody({ client, attempts, workspaceId, agentId, agentName, sourceRevision, sectionBindings = null, onClose, onPreviewImport }: Omit<Parameters<typeof DesktopCoworkerShareDialog>[0], 'open' | 'onOpenChange'> & { onClose: () => void }) {
+    const flow = useDesktopCoworkerShareFlow({ client, attempts, workspaceId, agentId, sourceRevision, sectionBindings })
     return <>
         <div className="relative flex flex-col items-center gap-3 px-6 pt-8 pb-6 text-center">
             <Stripes />
@@ -70,12 +72,13 @@ function DesktopCoworkerShareBody({ client, attempts, workspaceId, agentId, agen
                     archiveBytes={flow.reviewed.result.archiveBytes}
                     archiveSha256={flow.reviewed.result.archiveSha256}
                     sourceRevision={flow.reviewed.input.sourceRevision}
+                    sectionReview={flow.reviewed.sections}
                     approved={flow.approved}
                     onApprovedChange={flow.setApproved}
                     disabled={flow.busy || flow.stale}
                 />
             </div> : <div className="flex flex-col gap-4">
-                {flow.loading ? <DesktopCoworkerShareOptionsSkeleton /> : flow.plan ? <DesktopCoworkerShareOptions plan={flow.plan} include={flow.include} onChange={flow.setInclude} disabled={flow.busy} /> : null}
+                {flow.loading ? <DesktopCoworkerShareOptionsSkeleton /> : flow.plan ? <DesktopCoworkerShareOptions plan={flow.plan} include={flow.include} sections={flow.sections} onChange={flow.setInclude} disabled={flow.busy} /> : null}
                 {flow.plan?.warnings.map(warning => <p key={warning} className="text-xs text-muted-foreground">{warning}</p>)}
                 <DesktopCoworkerShareSafety />
                 <PendingExports pending={flow.pendingExports} busy={flow.busy} onRecover={input => void flow.recoverExport(input)} />
@@ -111,12 +114,11 @@ function PendingRevocations({ pending, busy, onRecover }: { pending: DesktopCowo
 }
 
 function CreatePortableFileButton({ flow, agentName }: { flow: DesktopCoworkerShareFlow; agentName: string }) {
-    const button = <Button type="button" disabled={flow.busy || flow.stale || !flow.approved} onClick={flow.plan && desktopCoworkerShareCarriedData(flow.plan, flow.include).length ? undefined : () => void flow.exportShare()}>
+    const carried = flow.plan ? desktopCoworkerShareCarriedData(desktopCoworkerShareConfirmationPlan(flow.plan, flow.sections), flow.include) : []
+    const button = <Button type="button" disabled={flow.busy || flow.stale || !flow.approved} onClick={carried.length ? undefined : () => void flow.exportShare()}>
         {flow.busy ? 'Packing the coworker…' : 'Create portable file'}
     </Button>
-    if (!flow.plan) return button
-    const carried = desktopCoworkerShareCarriedData(flow.plan, flow.include)
-    if (carried.length === 0) return button
+    if (!flow.plan || carried.length === 0) return button
     return <ConfirmDialog
         title={`Send ${agentName} with its data?`}
         description={`The copy will carry ${carried.join(', ')}. Anyone holding the portable file can read all of it. Withdrawing the local share cannot recall files already saved or imported.`}

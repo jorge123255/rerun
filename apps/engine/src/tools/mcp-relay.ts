@@ -2,6 +2,7 @@ import { McpServer as SdkMcpServer } from '@modelcontextprotocol/sdk/server/mcp.
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import type { McpSdkServerConfigWithInstance } from 'ai-sdk-provider-claude-code'
 import type { LoadedAgent, McpServer } from '../agents/types.js'
+import { modelReadyMcpTools } from '../desktop/upstream-compat/model-ready-mcp-tool.js'
 import { acquireMcp, agentMcpSpawn, type PooledMcp } from './mcp-pool.js'
 
 // A server the engine already holds a connection to, as the run hands it to a provider: the CLI is
@@ -9,11 +10,14 @@ import { acquireMcp, agentMcpSpawn, type PooledMcp } from './mcp-pool.js'
 export type RunMcpServer = McpServer & { relay?: PooledMcp }
 
 // An in-process server under the original name, so the CLI still sees `mcp__<server>__<tool>` and
-// nothing downstream (allowed tools, hooks, the chat) can tell. The tools go through as the server
-// listed them, JSON schemas untouched, and every call is passed on to the pooled connection.
+// nothing downstream (allowed tools, hooks, the chat) can tell. Every call is passed on to the pooled
+// connection as the model made it. The listed schemas go through `modelReadyMcpTool`: the CLI never
+// hands the model a tool whose schema has a root `anyOf`, so the mail server's send_email,
+// reply_to_email and continue_email_thread answered "No such tool available".
 export function relayMcpServer(relay: PooledMcp, toolTimeoutMs: number): McpSdkServerConfigWithInstance {
     const server = new SdkMcpServer({ name: relay.name, version: '1.0.0' }, { capabilities: { tools: {} } })
-    server.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: relay.tools }))
+    const tools = modelReadyMcpTools(relay.name, relay.tools)
+    server.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }))
     server.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         try {
             return await relay.call(request.params.name, request.params.arguments ?? {}, { signal: extra.signal, timeout: toolTimeoutMs })
@@ -32,6 +36,6 @@ export async function withPooledRelays(agent: Pick<LoadedAgent, 'id' | 'env' | '
         servers.map(async server => {
             const relay = await acquireMcp(agent.id, server, spawn)
             return relay ? { ...server, relay } : server
-        })
+        }),
     )
 }

@@ -194,6 +194,7 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
             {attachments?.render(current)}
             {attachments && (
                 <Button
+                    type="button"
                     size="icon-sm"
                     variant="ghost"
                     disabled={locked}
@@ -253,13 +254,14 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
             <div className="flex items-start gap-2.5 text-sm">
                 <AnimatePresence mode="wait" initial={false}>
                     <motion.div key={current} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="min-w-0 flex-1 font-medium leading-snug">
+                        {q.header && <span className="mb-1 block truncate text-xs font-medium text-muted-foreground">{q.header}</span>}
                         <ScrollFade className="max-h-24">{renderText(q.question)}</ScrollFade>
                         {multi && <span className="mt-1 block text-xs font-normal text-muted-foreground">Select all that apply</span>}
                     </motion.div>
                 </AnimatePresence>
                 {onCancel && (
                     <div className="flex shrink-0 items-center gap-0.5">
-                        <Button size="icon-sm" variant="ghost" disabled={locked} onClick={cancel} aria-label="Dismiss questions" data-hitl="dismiss" className="-my-1 text-muted-foreground">
+                        <Button type="button" size="icon-sm" variant="ghost" disabled={locked} onClick={cancel} aria-label="Dismiss questions" data-hitl="dismiss" className="-my-1 text-muted-foreground">
                             <X className="size-4" />
                         </Button>
                     </div>
@@ -274,9 +276,16 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
                                 <div className="flex w-full items-start gap-2.5 rounded-md px-2 py-2">{answerInput}</div>
                             ) : (
                                 <>
-                                    {q.options.map((opt, oi) => (
-                                        <OptionRow key={oi} index={oi} label={renderText(opt)} selected={value.selected.includes(opt)} multi={multi} disabled={locked} onChoose={() => chooseOption(current, opt)} />
-                                    ))}
+                                    {q.options.map((opt, oi) => {
+                                        const label = typeof opt === 'string' ? opt : opt.label
+                                        const description = typeof opt === 'string' ? undefined : opt.description
+                                        return <OptionRow key={oi} index={oi} label={description ? (
+                                            <span className="flex min-h-7 min-w-0 flex-1 flex-col justify-center text-left">
+                                                <span data-selected={value.selected.includes(label)} className="text-muted-foreground data-[selected=true]:font-medium data-[selected=true]:text-foreground">{renderText(label)}</span>
+                                                <span className="line-clamp-2 text-xs font-normal text-muted-foreground/80">{renderText(description)}</span>
+                                            </span>
+                                        ) : renderText(label)} selected={value.selected.includes(label)} multi={multi} disabled={locked} onChoose={() => chooseOption(current, label)} />
+                                    })}
 
                                     <CustomOptionRow open={isCustom} onOpen={() => openCustom(current)}>
                                         {answerInput}
@@ -303,10 +312,10 @@ export function QuestionForm({ ref, questions, onSubmit, onCancel, disabled, ren
                     <div />
                 )}
                 <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline" disabled={locked} onClick={skip} data-hitl="skip">
+                    <Button type="button" size="sm" variant="outline" disabled={locked} onClick={skip} data-hitl="skip">
                         Skip
                     </Button>
-                    <Button size="icon-sm" disabled={locked} onClick={() => advance()} aria-label={current === last ? 'Submit answers' : 'Next question'} data-hitl="next">
+                    <Button type="button" size="icon-sm" disabled={locked} onClick={() => advance()} aria-label={current === last ? 'Submit answers' : 'Next question'} data-hitl="next">
                         <ArrowRight className="size-4" />
                     </Button>
                 </div>

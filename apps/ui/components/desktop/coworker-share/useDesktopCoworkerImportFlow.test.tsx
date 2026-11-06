@@ -51,6 +51,33 @@ test('lost import acknowledgement recovers the same fresh copy without navigatio
     expect(mounted.attempts.listImport({ targetWorkspaceId: 2, snapshotId: shareManifest.packageKey })).toEqual([])
 })
 
+test('a destination failure is not an added coworker and a later success does not import twice', async () => {
+    const api = { import: vi.fn()
+        .mockResolvedValueOnce({ status: 'partial', reason: 'Two tables were not installed.' })
+        .mockResolvedValueOnce({ status: 'imported', importedAgentId: 'fresh-a' }) } as Partial<DesktopCoworkerShareClient>
+    const mounted = await mount(api)
+    await act(async () => mounted.flow().setApproved(true))
+    await act(async () => { await mounted.flow().importFresh() })
+    expect(mounted.flow().importedAgentId).toBeNull()
+    expect(mounted.flow().error).toBe('Two tables were not installed.')
+    expect(mounted.attempts.listImport({ targetWorkspaceId: 2, snapshotId: shareManifest.packageKey })).toHaveLength(1)
+    await act(async () => { await mounted.flow().importFresh() })
+    expect(mounted.flow().importedAgentId).toBe('fresh-a')
+    await act(async () => { await mounted.flow().importFresh() })
+    expect(mounted.api.import).toHaveBeenCalledTimes(2)
+})
+
+test('a changed portable file keeps the saved attempt', async () => {
+    const mounted = await mount()
+    const saved = { requestId: '66666666-6666-4666-8666-666666666666', snapshotId: shareManifest.packageKey, expectedDigest: '9'.repeat(64), targetWorkspaceId: 2 }
+    mounted.attempts.rememberImport(saved)
+    await act(async () => mounted.flow().setApproved(true))
+    await act(async () => { await mounted.flow().importFresh(saved) })
+    expect(mounted.api.import).not.toHaveBeenCalled()
+    expect(mounted.flow().error).toContain('The portable file changed')
+    expect(mounted.attempts.listImport({ targetWorkspaceId: 2, snapshotId: shareManifest.packageKey })).toEqual([saved])
+})
+
 test('another workspace cannot consume the saved import attempt', async () => {
     const first = await mount({ import: vi.fn(async () => ({ status: 'uncertain' as const, recoverable: true as const, reason: 'unknown' })) })
     await act(async () => first.flow().setApproved(true))

@@ -5,6 +5,7 @@ import { Field } from '@/components/ui/field'
 import { PANEL_CARD } from '@/components/ui/panel-row'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { sectionTransferReady, type DesktopCoworkerShareSectionReadiness } from '@/lib/desktop/coworker-share/sections'
 import { formatBytes } from '@/lib/files/format'
 import { cn } from '@/lib/utils'
 
@@ -16,20 +17,24 @@ function bucketLabel(bucket: ShareBucket, noun: string, empty: string): string {
 const CONTAINER = cn(PANEL_CARD, 'divide-y divide-border')
 const ROW = 'p-3'
 
-export function DesktopCoworkerShareOptions({ plan, include, onChange, disabled }: {
+export function DesktopCoworkerShareOptions({ plan, include, onChange, disabled, sections }: {
     plan: DesktopCoworkerSharePlan
     include: DesktopCoworkerShareInclude
     onChange: (next: Partial<DesktopCoworkerShareInclude>) => void
     disabled: boolean
+    sections?: { memories: DesktopCoworkerShareSectionReadiness; database: DesktopCoworkerShareSectionReadiness }
 }) {
+    const memories = sections?.memories ?? sectionTransferReady('memories', plan.unavailable?.memories, null)
+    const database = sections?.database ?? sectionTransferReady('database', plan.unavailable?.database, null)
+    const filesReason = plan.unavailable?.files
     const rows = [
-        { key: 'memories' as const, label: 'Memories', helper: bucketLabel(plan.contents.memories, 'memory', 'Nothing remembered yet'), value: include.memories },
-        { key: 'database' as const, label: 'Coworker database', helper: plan.contents.database.count === 0 ? 'No tables yet' : `${formatBytes(plan.contents.database.bytes)} · not scanned for secrets`, value: include.database },
-        { key: 'files' as const, label: 'Workspace files', helper: bucketLabel(plan.contents.files, 'file', 'No files yet'), value: include.files },
+        { key: 'memories' as const, label: 'Memories', helper: memories.reason ?? bucketLabel(memories.contents, 'memory', 'Nothing remembered yet'), value: include.memories, enabled: memories.enabled },
+        { key: 'database' as const, label: 'Coworker database', helper: database.reason ?? (database.contents.count === 0 ? 'No tables yet' : `${formatBytes(database.contents.bytes)} · not scanned for secrets`), value: include.database, enabled: database.enabled },
+        { key: 'files' as const, label: 'Workspace files', helper: filesReason ?? bucketLabel(plan.contents.files, 'file', 'No files yet'), value: include.files, enabled: !filesReason },
     ]
     return <div className={CONTAINER}>
-        {rows.map(row => <Field key={row.key} orientation="row" label={row.label} helperText={plan.unavailable?.[row.key] ?? row.helper} className={ROW}>
-            <Switch checked={!plan.unavailable?.[row.key] && row.value} disabled={disabled || !!plan.unavailable?.[row.key]} onCheckedChange={checked => onChange({ [row.key]: checked })} aria-label={row.label} />
+        {rows.map(row => <Field key={row.key} orientation="row" label={row.label} helperText={row.helper} className={ROW}>
+            <Switch checked={row.enabled && row.value} disabled={disabled || !row.enabled} onCheckedChange={checked => onChange({ [row.key]: checked })} aria-label={row.label} />
         </Field>)}
     </div>
 }

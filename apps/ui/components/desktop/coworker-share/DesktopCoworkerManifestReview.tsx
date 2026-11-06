@@ -3,13 +3,15 @@
 import type { DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Field } from '@/components/ui/field'
+import type { DesktopCoworkerShareReviewedSections } from '@/lib/desktop/coworker-share/state'
 import { formatBytes } from '@/lib/files/format'
 
-export function DesktopCoworkerManifestReview({ manifest, archiveBytes, archiveSha256, sourceRevision, approved, onApprovedChange, disabled = false }: {
+export function DesktopCoworkerManifestReview({ manifest, archiveBytes, archiveSha256, sourceRevision, sectionReview, approved, onApprovedChange, disabled = false }: {
     manifest: DesktopCoworkerSnapshotManifest
     archiveBytes?: number
     archiveSha256?: string
     sourceRevision?: string
+    sectionReview?: DesktopCoworkerShareReviewedSections
     approved: boolean
     onApprovedChange: (approved: boolean) => void
     disabled?: boolean
@@ -66,6 +68,9 @@ export function DesktopCoworkerManifestReview({ manifest, archiveBytes, archiveS
             <summary className="cursor-pointer text-xs font-medium">Archive and source identities</summary>
             <div className="mt-2 space-y-2 text-[10px] text-muted-foreground">
                 <code className="block break-all">Manifest SHA-256 {manifest.contentDigest}</code>
+                {sectionReview?.memoriesDigest && <code className="block break-all">Memories SHA-256 {sectionReview.memoriesDigest}</code>}
+                {sectionReview?.databaseDigest && <code className="block break-all">Database SHA-256 {sectionReview.databaseDigest}</code>}
+                {sectionReview?.databaseDigest && sectionReview.databaseViewCount !== null && <p>Saved database views {sectionReview.databaseViewCount}. Views are logical records, not a copy of the live database file.</p>}
                 {archiveSha256 && <code className="block break-all">Archive SHA-256 {archiveSha256}</code>}
                 {sourceRevision && <code className="block break-all">Source revision {sourceRevision}</code>}
             </div>

@@ -95,3 +95,40 @@ export function parseVoiceMessage(text: string): VoiceMessage | null {
         peaks: decodePeaks(attributes.get('peaks') ?? ''),
     }
 }
+
+/** Real provider/alignment output, supplied from saved artifact metadata, never estimated by text length. */
+export type VoiceTranscriptAlignment = {
+    version: 1
+    source: 'provider' | 'alignment'
+    provenance: string
+    transcript: string
+    durationMs: number
+    words: readonly { text: string; startMs: number; endMs: number }[]
+}
+export type AlignedTranscriptWord = { text: string; startMs: number | null; endMs: number | null }
+
+/** Missing, inconsistent or incomplete metadata yields the original plain transcript fallback. */
+export function alignedTranscriptWords(transcript: string, durationMs: number, alignment?: VoiceTranscriptAlignment | null): AlignedTranscriptWord[] | null {
+    if (!alignment || alignment.version !== 1 || !['provider', 'alignment'].includes(alignment.source)
+        || typeof alignment.provenance !== 'string' || !alignment.provenance.trim() || alignment.provenance.length > 200
+        || transcript.length > 20_000 || alignment.transcript !== transcript || alignment.durationMs !== durationMs
+        || !Number.isFinite(durationMs) || durationMs <= 0 || durationMs > MAX_RECORDING_MS
+        || !Array.isArray(alignment.words) || !alignment.words.length || alignment.words.length > 5000) return null
+    const pieces: AlignedTranscriptWord[] = []
+    let offset = 0, previousEnd = 0
+    const boundary = (index: number) => index === 0 || index === transcript.length
+        || !(transcript.charCodeAt(index) >= 0xdc00 && transcript.charCodeAt(index) <= 0xdfff && transcript.charCodeAt(index - 1) >= 0xd800 && transcript.charCodeAt(index - 1) <= 0xdbff)
+    for (const word of alignment.words) {
+        if (!word || typeof word.text !== 'string' || !word.text.trim() || word.text.length > 2000
+            || !Number.isFinite(word.startMs) || !Number.isFinite(word.endMs) || word.startMs < previousEnd
+            || word.startMs < 0 || word.endMs <= word.startMs || word.endMs > durationMs) return null
+        const start = transcript.indexOf(word.text, offset), end = start + word.text.length
+        if (start < offset || !boundary(start) || !boundary(end) || !/^[\s\p{P}]*$/u.test(transcript.slice(offset, start))) return null
+        if (start > offset) pieces.push({ text: transcript.slice(offset, start), startMs: null, endMs: null })
+        pieces.push({ text: word.text, startMs: word.startMs, endMs: word.endMs })
+        offset = end; previousEnd = word.endMs
+    }
+    if (!/^[\s\p{P}]*$/u.test(transcript.slice(offset))) return null
+    if (offset < transcript.length) pieces.push({ text: transcript.slice(offset), startMs: null, endMs: null })
+    return pieces
+}

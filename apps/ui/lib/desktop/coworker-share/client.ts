@@ -12,6 +12,7 @@ import {
     type DesktopCoworkerShareReviewInput,
     type DesktopCoworkerShareRevokeInput,
 } from '@rerun/contracts'
+import { refusedDestinationReason } from './sections'
 
 const UNKNOWN = 'Local share acknowledgement is unknown. Retry the same attempt.'
 
@@ -93,7 +94,12 @@ export function createDesktopCoworkerShareClient({ workspaceId, routeAgentId }: 
             return `${base}?${new URLSearchParams({ snapshotId })}`
         },
         async import(input: DesktopCoworkerShareImportInput): Promise<DesktopCoworkerShareImportResult> {
-            return importResultSchema.parse(await post({ action: 'import', ...input }))
+            const data = await post({ action: 'import', ...input })
+            const parsed = importResultSchema.safeParse(data)
+            if (parsed.success) return parsed.data
+            const refused = refusedDestinationReason(data)
+            if (refused) throw new DesktopCoworkerShareRequestError(refused, true)
+            throw new DesktopCoworkerShareRequestError(UNKNOWN, false)
         },
         async revoke(input: DesktopCoworkerShareRevokeInput) {
             return desktopCoworkerShareReceiptSchema.parse(await post({ action: 'revoke', ...input }))

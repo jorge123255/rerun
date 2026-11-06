@@ -1,0 +1,6 @@
+export { DesktopOpencodeCatalogError, desktopOpencodeCatalogView, desktopOpencodeContextWindow, desktopOpencodeDispatchModel, desktopOpencodeListedModel, desktopOpencodeListedModels, refreshDesktopOpencodeCatalog, refreshStaleDesktopOpencodeCatalog, resetDesktopOpencodeCatalogForTests } from './catalog.js'
+export { executeDesktopOpencode, settleDesktopOpencodeRefusal, type DesktopOpencodeCall, type DesktopOpencodePrompt } from './execute.js'
+export { forgetDesktopOpencodeLimits, readDesktopOpencodeLimits, refreshDesktopOpencodeLimits, refreshStaleDesktopOpencodeLimits, resetDesktopOpencodeLimitsForTests, spentDesktopOpencodeWindow } from './limits.js'
+export { DesktopOpencodeModelError, desktopOpencodeLanguageModel, type DesktopOpencodeLanguageModel } from './model.js'
+export { desktopOpencodeChatReasoningMiddleware, desktopOpencodeUsageMiddleware } from './stream.js'
+export { desktopOpencodeCost, desktopOpencodeErrorEnvelope, desktopOpencodeHttpRequest, desktopOpencodeLimitMessage, desktopOpencodeRefusalMessage, findDesktopOpencodeUsage, parseDesktopOpencodeSse } from './wire.js'

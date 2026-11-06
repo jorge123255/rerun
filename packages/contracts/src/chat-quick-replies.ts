@@ -38,6 +38,36 @@ export function parseQuickReplies(input: unknown): QuickRepliesResult {
     return { ok: true, replies }
 }
 
+const AWAITS_VALUE_MARK = /\s*(?:…|\.{3}|:)$/
+// The prompt forbids a reply that announces a value without holding it, but a model can still slip
+// and the rows stored before the rule carry such replies. "Voilà" is left out, it mostly says that
+// something is done, and so is a reply with punctuation of its own ("Here you go, all set!").
+const ANNOUNCES_VALUE = /^(?:here(?:'s|’s| is| are)|voici|ci-joint)\s[^,;.!?]*$/i
+
+// A reply that announces a value without holding it ("Here is the repo URL") would reach the
+// coworker empty-handed: it goes to the composer for the user to finish, never out on its own.
+export function quickReplyDraft(reply: string): string | null {
+    const trimmed = reply.trim()
+    if (!AWAITS_VALUE_MARK.test(trimmed) && !ANNOUNCES_VALUE.test(trimmed)) return null
+    const lead = trimmed.replace(AWAITS_VALUE_MARK, '')
+    return lead ? `${lead}: ` : null
+}
+
+// A reply that only promises to send something later ("It's on GitHub, I'll send the URL") holds
+// nothing to send and nothing to finish: the chat leaves it out, whatever the prompt said. Pasting
+// or uploading always brings a value; sending, sharing or giving only when the reply names one
+// ("I'll send the URL"), never "I'll give it a try", "Je donne mon accord" or "I'll send it myself".
+const PROMISES_PASTE = /\b(?:i['’]ll|i will|i['’]m going to)\s+(?:\w+\s+)?(?:paste|upload)\b|\bje\s+(?:vous\s+|te\s+|t['’]\s*)?colle\b|\bje\s+vais\s+(?:vous\s+|te\s+|t['’]\s*)?coller\b/i
+const PROMISES_SEND = /\b(?:i['’]ll|i will|i['’]m going to)\s+(?:\w+\s+)?(?:send|share|give|add|grant|provide|drop|copy)\b|\bje\s+(?:vous\s+|te\s+|t['’]\s*)?(?:envoie|partage|donne|ajoute|transmets)\b|\bje\s+vais\s+(?:vous\s+|te\s+|t['’]\s*)?(?:envoyer|partager|donner|ajouter|transmettre)\b/i
+// \b does not see the edge of an accented word ("accès"), hence the letter classes of the u flag.
+const VALUE_NOUN = /(?:^|[^\p{L}])(?:urls?|links?|liens?|ids?|access|accès|files?|fichiers?|clones?|repos?|repository|dépôts?|keys?|clés?|tokens?|paths?|chemins?|e-?mails?|address(?:es)?|adresses?|credentials|identifiants|passwords?)(?![\p{L}])/iu
+const DONE_BY_USER = /(?:^|[^\p{L}])(?:myself|moi-même)(?![\p{L}])/iu
+
+export function quickReplyPromisesValue(reply: string): boolean {
+    if (DONE_BY_USER.test(reply)) return false
+    return PROMISES_PASTE.test(reply) || (PROMISES_SEND.test(reply) && VALUE_NOUN.test(reply))
+}
+
 type QuickRepliesPart = { type: string; toolName?: string; state?: string; input?: unknown }
 
 function isQuickRepliesPart(part: QuickRepliesPart): boolean {
@@ -53,7 +83,7 @@ export function quickRepliesOf(message: { role: string; parts: readonly unknown[
         const part = message.parts[i] as QuickRepliesPart
         if (typeof part?.type !== 'string' || !isQuickRepliesPart(part) || part.state === 'input-streaming') continue
         const result = parseQuickReplies(part.input)
-        if (result.ok) return result.replies
+        if (result.ok) return result.replies.filter(reply => !quickReplyPromisesValue(reply))
     }
     return []
 }
