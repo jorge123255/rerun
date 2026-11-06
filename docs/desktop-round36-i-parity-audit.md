@@ -1,5 +1,8 @@
 # Round 36 I — Original-code parity audit (static evidence)
 
+**Root reconciliation, November 6:** This is the author's source-time audit, not the current installed verdict. `desktop-round36-integration.md` supersedes old C35-pending, unbound RD36 P0.1–P0.4 and five-read C statements. Installed `34c9cf39` has the complete received C catalog/bridge and accepted local read-only MCP, shared mutation and offline Share slices; remote gateway/transition, memories/database transfer and external service gates remain explicit. Approximate package arithmetic here does not replace the canonical 21 unchecked whole-group subtotal. Existing template cleanup, guest install and RD37-owned transcript/provider/profile work must not be allocated again as absent implementation.
+
+
 **Evidence class:** static source / handoff / acceptance-doc review only.  
 **Not Mac acceptance.** No tests, typechecks, builds, installs, servers, provider calls, Docker, native/browser UI, Keychain, microphone or restart checks were executed by this lane.
 
