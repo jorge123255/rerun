@@ -32,7 +32,7 @@ RD37 tips are **source handoffs awaiting root review**; they are not integrated 
 |---|---|---|
 | Inventory | delivered | master agent (this worktree) |
 | **RD38 A** portable memories | delivered (`cb7a184d…`) | master agent |
-| **RD38 B** portable database | implementing now | master agent (this worktree) |
+| **RD38 B** portable database | delivered (`1e1b6ea1…`) | master agent |
 | **RD38 C** control-center parity | **RESERVED** for isolated agent | seven-agent wave (parent) |
 | **RD38 D** run presentations | **RESERVED** for isolated agent | seven-agent wave |
 | **RD38 E** share UI for A/B | **RESERVED** for isolated agent | seven-agent wave — consume A/B seam `abe-1` |
@@ -118,3 +118,10 @@ Seams root must compose (do not invent second authorities): existing `desktop-co
 ## Critical issue notice
 
 No critical blocker found that prevents RD38 A. Memories remain correctly fail-closed (`unavailable.memories`) until A ports bind; do not enable the checkbox alone. Cloud base branch `desktop/rd38-cloud-base` holds the exact SHA. C/F cloud reservations were released after F’s automatic PR workflow was canceled; no independent cloud package is active. New code publication remains unapproved.
+
+## RD40 / RD41 / W4 note (master)
+
+- **W4 external MCP grant bypass:** source repaired on this branch at `73b6855e6d227011fcd6198ce3ee71f1d640a94c` (operations adapter deny only). Details: `docs/desktop-round40-w4-grant-guard-handoff.md`. Not accepted / not tested.
+- RD39/40/41 cloud audits reconciled into `docs/desktop-round42-*.md`. Implementation of unrepaired candidates is **not** claimed complete. C–I still RESERVED.
+- Same-box Duplicate currently inherits config grants; portable import forces grants off. User t18u no-inherited-grants on copies/imports recorded as root discrepancy (not overridden by audit product-decision label).
+

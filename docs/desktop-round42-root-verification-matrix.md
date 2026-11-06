@@ -2,7 +2,7 @@
 
 **Purpose:** checklist for root’s integrated release-candidate / Mac acceptance work.  
 **This agent did not create fixtures, run the app, grant permissions, or mark results.**  
-**Tip referenced:** `406cb2661544e6d6828c36a6c4f8732d2281b3b7` · base `6f6ad959a09abaf1947950b6f82413c94407e22a` · original pin `2a57fa6dd53311f763bfc9abde85997b7f7e5309`
+**Tip referenced:** `73b6855e6d227011fcd6198ce3ee71f1d640a94c` (W4 grant-guard source) · base `6f6ad959a09abaf1947950b6f82413c94407e22a` · original pin `2a57fa6dd53311f763bfc9abde85997b7f7e5309`
 
 Result cells stay blank until root fills them. Distinguish: source present ≠ root accepted ≠ configured service live.
 
@@ -67,4 +67,29 @@ Audit base `6f6ad959a09abaf1947950b6f82413c94407e22a`; symbols re-confirmed on m
 | R4 | C7 receipt | Native `failed`/`unknown` does **not** durable-mark `shown`; retry/cooldown can run; toast may still show; Open click still resolves | Disposable question event; force native fail/timeout if possible | In-app toasts on; **do not** request new OS permission | Seen row inserted despite failed native | Delete disposable coworker | Real inbox receipts | |
 
 **C7 note for root:** Prefer receipt-truthfulness with native channel retained (t18u). Do not remove `bridge.notify` solely to make toast-only receipts look consistent.
+
+## F. RD40 candidates (root verifies; W4 source repaired only)
+
+Audit asset `01M6S6Z5RSZHQX92H233BR0AH0.md`; verified on master before/after W4. Result cells blank until root runs. **Not acceptance.**
+
+| ID | Journey | Expected after repair | Disposable fixture | Temp perms | Failure evidence | Cleanup | Preserve | Root result |
+|---|---|---|---|---|---|---|---|---|
+| W4-G1 | External grant bypass | `coworkers:write` `update_agent` with tools/grants/selfImprovement returns unsupported; grants stay default-off after restart; metadata-only update still works | Disposable coworker + key (`mcp:read`+`coworkers:write`); listener QA-only | Grants off; listener off after | Grants flipped / partial apply / sibling changed | Revoke key; delete coworker; disable listener | Default model; other keys | |
+| D3-R1 | Claude re-login truthfulness | Cancel/fail replacement keeps prior generation `connected`; chat still uses that token; disconnect removes token | Fixture encrypted env token (no live account required for this row) | Desktop app flag | Snapshot shows signed-out while token live | Disconnect; delete fixture env | Other connections | |
+| E2-N1 | Native nontext receipt | Shell `note.md` + `blob.bin` → markdown pending + bin unsupported; approve md only; bin absent after restart | Coworker with native write grant | n/a | Bin missing from review / bytes in workspace | Delete QA files | Sibling coworker | |
+| D4-V1 | Clear-all vector wipe | After clear, A index has no records even if process dies before background reconcile; B untouched | Two coworkers; optional fixture embedder | No OpenRouter unless consented | Vector residue for cleared notes | Clear A; confirm wipe | B notes; Brain | |
+| E2-S1 | Search key rotation receipt | Mid-flight revision bump → “Search capability changed.” / uncertain as specified; body not published; next call can succeed | Fixture Brave-shaped server | webSearch grant | Generic “provider failed” replay forever | Delete outcome row + key | Other auxiliary | |
+
+## G. RD41 candidates (root / panel owners — no master UI edits this pass)
+
+Audit asset `01M6S74CTXEGPS2M7G67ZPH2VM.md`; verified on master `73b6855e…`. **Not acceptance.**
+
+| ID | Defect | Expected after repair | Fixture | Notes | Root result |
+|---|---|---|---|---|---|
+| S-P1 | Share plan count/label | Credential paths not in files count; exclusion reason `credentials`; `.notes.md` still counted; `.rerun*` uncounted | Coworker Files with `.env`, key file, `.notes.md`, `.rerun-backup-old` | Canonical `snapshot.ts` only; E consumes plan | |
+| B-C1 | Board camera persist | Pan/zoom survive chat, quit/reopen, workspace switch; Recenter then new pan stored | Two QA workspaces | Root `DesktopBoard` / workspace-scoped store | |
+| UI-L1 | Five loading skeletons | Unresolved Files/Memories/Settings/Schedules/Tools show matching skeletons not sentences | Each panel unresolved → empty → error | Panel owners / seven-agent; not this master commit | |
+| DUP-G1 | Duplicate grants | **User requirement:** copy/import must not inherit grants. After root decision, Duplicate must not leave tool grants on. Credential/`.env`/`mcp/` copy policy is a **separate** root product choice | Disposable coworker with grants on → Duplicate | Do **not** treat audit “product decision” as override of no-grant inheritance | |
+
+**Privacy preserve:** `.rerun*` / `.rerun-skill-*` nested aliases excluded; ordinary hidden user files remain portable-eligible.
 

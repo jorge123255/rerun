@@ -1,7 +1,7 @@
 # RD42 source inventory (preparation — not complete)
 
 **Status:** independent RD42 preparation checkpoint only. Does **not** claim release-candidate completion, Mac acceptance, or that RD39–41 / C–I are done.  
-**Worktree tip at inventory authorship:** `406cb2661544e6d6828c36a6c4f8732d2281b3b7` on `desktop/round38-master-completion`  
+**Worktree tip at inventory authorship:** `73b6855e6d227011fcd6198ce3ee71f1d640a94c` on `desktop/round38-master-completion` (W4 grant-guard impl; docs tip follows)  
 **Prepared base:** `6f6ad959a09abaf1947950b6f82413c94407e22a` (`desktop/rd38-cloud-base`)  
 **Original comparison pin:** `2a57fa6dd53311f763bfc9abde85997b7f7e5309` (historical `a6d63a4b542674ddd002e51b39ba0df6e0807bcc` secondary)  
 **Seam:** A/B/E `abe-1` in `docs/desktop-round38-a-transfer-seam.md`  
@@ -17,6 +17,9 @@
 | 3 | `ed7c737629adfe5b02555c5d061d83dec158221a` | RD38 A handoff |
 | 4 | `1e1b6ea138ff3e0c3051e2607304d0ea33260ec0` | **RD38 B** logical portable coworker database implementation |
 | 5 | `406cb2661544e6d6828c36a6c4f8732d2281b3b7` | RD38 B handoff |
+| 6 | `3ecdd20c1889df01109c73864a325c9fe5ea1d2c` | RD42 RC preparation docs |
+| 7 | `92dc02509cd9a3069bb588b39da6f3e6f6184bba` | RD39 frozen-base reconcile into RD42 |
+| 8 | `73b6855e6d227011fcd6198ce3ee71f1d640a94c` | **RD40 W4** external `update_agent` grant-guard (narrow adapter deny) |
 
 ## Delivered on this branch (source only)
 
@@ -66,9 +69,9 @@ export * from './desktop-coworker-share-database.js'
 | RD38 **G** named API-connection UI | PENDING — seven-agent isolated tree (depends F) |
 | RD38 **H** packaging/startup readiness source | PENDING — seven-agent isolated tree |
 | RD38 **I** remote gateway transitions source | PENDING — seven-agent isolated tree |
-| **RD39** local journey audits/fixes | PENDING — cloud readonly audit on base; implementation later |
-| **RD40** providers/recall/Foreman compose | PENDING — cloud readonly audit on base; implementation later |
-| **RD41** whole-product design/state audit | PENDING — cloud readonly audit on base |
+| **RD39** local journey audits/fixes | **audit reconciled** — 4 confirmed defects **unrepaired** (root/owners); not complete |
+| **RD40** providers/recall/Foreman/W4 | **W4 grant-bypass source repaired** at `73b6855e…` (not accepted/not tested); candidates 2–5 **unrepaired**; not complete |
+| **RD41** whole-product design/state audit | **audit reconciled** — 3 confirmed defects + Duplicate-grants discrepancy **unrepaired** (root); not complete |
 | **RD42** RC repair + root acceptance | **this doc is preparation only** — not finished |
 | RD43 remote host acceptance | product/host gate |
 | RD44 hosted share/webhooks/collaboration | product/authority gate |
@@ -143,5 +146,77 @@ C3 draft/queue/image cap 4 / text 10; C4 voice/mentions; C6 sealed follow-up; E3
 
 ### Pending outside this reconcile
 
-C–I seven-agent packages; RD40–41 audits; applying the four repairs (root/central owners).
+C–I seven-agent packages still PENDING. Applying RD39 D1–D4, RD40 candidates 2–5, and RD41 D1–D3 / Duplicate-grants discrepancy remains root/owner work. W4 grant-guard is source-repaired only.
+
+
+## RD40 frozen-base audit reconciliation (source review + one narrow repair)
+
+**Audit source:** cloud agent asset `01M6S6Z5RSZHQX92H233BR0AH0.md` against frozen base `6f6ad959…`, original pin `2a57fa6…`. Untrusted until verified on master. Verified on tip before W4 repair (`92dc0250…`). **RD40 is not complete.** No checklist mutation.
+
+| # | Candidate | State on master | Owner / gate |
+|---|---|---|---|
+| 1 | External `update_agent` grant bypass (`tools` / `selfImprovement` / grant aliases → engine merge without Tools consent) | **Source repaired** in external operations adapter only — `73b6855e6d227011fcd6198ce3ee71f1d640a94c`. Handoff: `docs/desktop-round40-w4-grant-guard-handoff.md`. **Not accepted / not tested.** Engine routes, scopes, defaults unchanged. | W4 adapter (done source); root live key verify later |
+| 2 | Claude re-login `publicState` hides still-active token | **Confirmed unrepaired** — `apps/engine/src/desktop/claude-plan/auth.ts` `publicState` / `start` / `cancel` / failed `complete`; UI `DesktopClaudePlanSteps` `linked = phase === 'connected'`; runner still injects env token | D3; root fixture + optional live sign-in |
+| 3 | Native non-text scratch writes vanish without unsupported receipt | **Confirmed unrepaired** — `native-worker` / `native-writeback/capture.ts` `allowedTextPath` drops non-`.txt`/`.md`; finish deletes scratch with no unsupported row | E2 native writeback |
+| 4 | Clear-all private semantic vectors residue (async observer) | **Confirmed unrepaired** — `clearDesktopMemories` does not call `notesCleared` inside lock; observer `reconcile` best-effort / swallowed | D4 private memory (not RD38 A portable) |
+| 5 | Search rotated-key stale/uncertain receipt classification | **Confirmed unrepaired** — changed-credential error mapped to generic “Search provider failed.” | E2 search binding |
+
+**Preserved decisions:** RD39 C7 keep native `bridge.notify` (receipt from native result). W4 repair rejects whole mixed authority patch; metadata/Box/model fields remain.
+
+### Proposed fragments (candidates 2–5 — do not apply this checkpoint)
+
+- **D3:** While current credential generation’s token exists, snapshot stays `connected`; replacement is separate `pendingAttempt`; cancel/failed complete leave generation untouched; only disconnect or committed complete/token replace.
+- **E2 nontext:** Capture non-text added/changed paths as `unsupported` review rows (`binary-or-non-text`), no payload/apply, return to run; keep text digest/conflict behavior.
+- **D4:** Inside clear lock after files/rows gone, call `notesCleared` and do not succeed until index wipe commits; surface wipe failure; keep best-effort reconcile for single-note edits.
+- **E2 search:** Map pre-accept changed-credential to `{ status:'error', message:'Search capability changed.' }`; if request already started keep `uncertain`; never “Search provider failed.” for that case.
+
+## RD41 frozen-base audit reconciliation (source review only — no runtime edits)
+
+**Audit source:** cloud agent asset `01M6S74CTXEGPS2M7G67ZPH2VM.md` against frozen base `6f6ad959…`, original pin `2a57fa6…`. Verified read-only on current master after W4 tip `73b6855e…`. **RD41 is not complete. No duplicate/secret/env runtime edits. No UI panel edits (seven C–I / panel owners).** Canonical checklist not mutated.
+
+### Confirmed defects (unrepaired)
+
+#### RD41-D1 · Share plan file count includes credential paths; exclusion mislabeled `native-grant`
+
+- **Local:** `createDesktopCoworkerSharePlan` counts every `workspace/` member (`snapshot.ts` ~113–124) without `scanPathForSecrets` / reserved-metadata filter. `includeMember` correctly drops secrets at pack time. `exclusionReason` has no credentials branch for `workspace/.env` / key material → falls through to `'native-grant'`.
+- **Consequence:** Files switch overstates pack size; review labels credential paths as native grants. Bytes are not packed; explanation is wrong. Ordinary hidden user files (e.g. `.notes.md`) correctly remain eligible.
+- **Surgical repair (root on canonical snapshot):** Align plan count + `exclusionReason` with `includeMember` predicate — label `scanPathForSecrets` hits `credentials`, reserved `.rerun`/`.rerun-skill-` as internal metadata, **before** pricing the files switch. **Preserve** ordinary hidden user files and nested/alias `.rerun*` / `.rerun-skill-*` exclusion (`isReservedTemplateMetadataPath` + `includeMember`).
+- **Owner:** Root — `apps/engine/src/desktop/coworker-share/snapshot.ts` (canonical plan). **RD38 E** must consume this plan/manifest; **must not** invent a second exclusion filter in Share UI.
+- **Unrun regression proposal:** Extend `snapshot.test.ts` — with files on, `.env` / `id_ed25519` absent from archive + plan count, present as `credentials`; `.notes.md` in plan+archive; `.rerun-backup-old` / `.rerun-skill-bak-old` out and uncounted.
+
+#### RD41-D2 · DesktopBoard lacks per-workspace persistent camera
+
+- **Original:** `IsoBoard` `board:<workspace.id>` via `readCamera`/`writeCamera`, remount key.
+- **Local:** `DesktopBoard.tsx` mounts `IsoGrid` with `fitToContent` / `frameInset` / `recenterSignal` only — no `initialCamera` / `onCameraChange`. `isolation.mjs` claims board camera restores per workspace; renderer never writes one.
+- **Same-session behavior to keep:** `userFramedRef` blocks fit while chat inset changes; Recenter remains explicit reset.
+- **Surgical repair (root):** Persist camera scoped by workspace id (`board:<workspaceId>` or workspace `app.db` row); pass `initialCamera` so restore suppresses fit; leave chat open/close framing alone.
+- **Owner:** Root / central `DesktopBoard.tsx` — not RD38 C Share/API/packaging/remote unless they already own that file.
+- **Unrun regression proposal:** Pan/zoom survive chat open/close; quit/reopen and workspace switch restore per-workspace camera; Recenter then manual pan is what persists.
+
+#### RD41-D3 · Five coworker panels use loading sentences instead of skeletons
+
+- **Local sentences:** Files / Memories / Settings / Schedules / Tools (`Loading …`). Original used `SkeletonFileGrid` / `SkeletonPanelRows` / `SkeletonForm` / `SkeletonCardGrid`. Share options + Triggers already use skeletons.
+- **Surgical repair:** Swap five sentences for matching existing skeletons; keep error `role="alert"` and empty copy.
+- **Owner:** Each panel’s owner lane / seven-agent wave — **no UI edits in this master checkpoint.**
+- **Unrun regression proposal:** Unresolved request → matching skeleton; resolve empty/error without leftover loading sentence.
+
+### Duplicate / copy grants vs user t18u (do not accept audit “product decision” as override)
+
+| Path | Actual source behavior | User / master requirement |
+|---|---|---|
+| Portable share / template import | `createDesktopCoworkerImportPlan` forces `grants: 'off'`; `scrubConfig` strips connection/provider/model/MCP/`tools`/native grants/selfImprovement | No inherited grants — **aligned** |
+| Same-box Duplicate | `duplicate.ts` deliberately keeps full staged `config.json` (including tool grant bags) + `.env` + `mcp/`; desktop publisher copies `enabled` from source | **t18u RD41: copies/imports must not inherit grants/permissions** |
+
+- **Discrepancy:** Same-box Duplicate **does** inherit grant-bearing config today. Audit bucketed this as a settled product decision; **master does not accept that override.**
+- **Root authority split:** Root decides credential / `.env` / `mcp/` **copying** product semantics (commented intent: same owner, same box). Separately, **user-required no-grant inheritance** remains explicit — root must decide how Duplicate forces grants off (and related permission fields) without treating the audit’s blanket “product decision” as permission to keep inherited tool grants.
+- **This checkpoint:** document only — **no** duplicate/secret/env runtime edits.
+
+### Privacy rule reaffirmation (already on base; preserve)
+
+`isReservedTemplateMetadataPath` + `includeMember` exclude `.rerun*` / `.rerun-skill-*` (nested + case aliases) and keep ordinary hidden user files. Do not “fix” by excluding every dotfile.
+
+### Already-source-present notes (not acceptance)
+
+Portable grants-off import; per-coworker desktop grants default off + execution recheck; Improve-itself master default on (schema); workspace DBs separated; Control Center failed-vs-empty; hosted Box ACL / Published tab / members admin = product/RD44 decisions (not this repair pass).
+
 
