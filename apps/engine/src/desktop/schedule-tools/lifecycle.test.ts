@@ -1,6 +1,7 @@
 import { createClient } from '@libsql/client'
 import { describe, expect, it, vi } from 'vitest'
 import { DESKTOP_SCHEDULE_TOOL_MESSAGES as M } from '@rerun/contracts'
+import * as timing from '../../schedules/next-run.js'
 import { isDue } from '../../schedules/cron.js'
 import { createDesktopScheduleIntentStore } from './intents.js'
 import { createDesktopScheduleLifecycle, DesktopScheduleToolError } from './lifecycle.js'
@@ -288,5 +289,33 @@ describe('desktop schedule tool lifecycle', () => {
         files.seed('eng-1', definition({ slug: 'digest', name: 'Digest', body: 'digest', cron: '0 8 * * *', provider: 'openai', model: 'gpt-5' }))
         await expect(lifecycle.update('eng-1', 'digest', { requestId: '00000000-0000-4000-8000-0000000000a0', expectedRevision: desktopScheduleDefinitionRevision(await files.read('eng-1', 'digest')), provider: 'claude', description: 'Later' })).rejects.toThrow(M.providerWithoutModel)
         expect(await files.read('eng-1', 'digest')).toMatchObject({ description: '', provider: 'openai', model: 'gpt-5' })
+    })
+})
+
+
+describe('compute-based desktop schedule writes', () => {
+    it('rejects a deferred computation failure before reserving or writing', async () => {
+        const box = harness()
+        const compute = vi.spyOn(timing, 'computeNextRun').mockReturnValueOnce({ ok: false })
+        try {
+            await expect(box.lifecycle.create('eng-1', created)).rejects.toThrow(M.invalidCron(created.cron))
+            expect(box.writes()).toBe(0)
+            expect(await box.store.findIntent('eng-1', created.requestId)).toBeNull()
+            expect(box.notify).not.toHaveBeenCalled()
+        } finally { compute.mockRestore() }
+    })
+
+    it('preserves the exact saved task when a timing update cannot compute', async () => {
+        const box = harness()
+        const saved = await box.lifecycle.create('eng-1', created)
+        const before = await box.files.read('eng-1', 'weekly-report')
+        const compute = vi.spyOn(timing, 'computeNextRun').mockReturnValueOnce({ ok: false })
+        try {
+            await expect(box.lifecycle.update('eng-1', 'weekly-report', {
+                requestId: '00000000-0000-4000-8000-000000000099', expectedRevision: saved.revision!, cron: '0 10 * * 1',
+            })).rejects.toThrow(M.invalidCron('0 10 * * 1'))
+            expect(await box.files.read('eng-1', 'weekly-report')).toEqual(before)
+            expect(box.writes()).toBe(1)
+        } finally { compute.mockRestore() }
     })
 })

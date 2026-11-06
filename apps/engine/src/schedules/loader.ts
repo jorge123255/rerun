@@ -4,6 +4,7 @@ import matter from 'gray-matter'
 import { providerSchema, type MessageAuthor, type Provider } from '@rerun/contracts'
 import { scheduleFile, schedulesDir } from '../config/paths.js'
 import { writeFileAtomic } from '../lib/atomic-write.js'
+import { assertComputableTiming } from './next-run.js'
 import { nowIso, slugify } from '../lib/ids.js'
 import { withKeyedLock } from '../lib/lock.js'
 import { authorMetadata, sendNotification } from '../runtime/notify.js'
@@ -139,6 +140,7 @@ export async function writeSchedule(agentId: string, input: ScheduleInput, autho
             body: input.body,
             createdAt: existing?.createdAt || nowIso(),
         }
+        assertComputableTiming(next, new Date())
         await mkdir(schedulesDir(agentId), { recursive: true })
         await writeFileAtomic(scheduleFile(agentId, slug), serialize(next))
         return { schedule: next, created: !existing }
@@ -159,6 +161,7 @@ export async function updateScheduleAt(agentId: string, slug: string, patch: Sch
         const current = await readScheduleForUpdate(agentId, slug)
         const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as SchedulePatch
         const next: Schedule = { ...current, ...defined }
+        assertComputableTiming(next, new Date())
         await writeFileAtomic(scheduleFile(agentId, slug), serialize(next))
         return next
     })

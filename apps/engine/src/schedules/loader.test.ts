@@ -243,3 +243,22 @@ describe('concurrent writes', () => {
         expect(await readFile(scheduleFile(id, 'daily'), 'utf8')).toBe('')
     })
 })
+
+
+describe('compute validation before schedule publication', () => {
+    it('refuses bad cron or timezone without creating a file or notification', async () => {
+        await expect(writeSchedule(id, { name: 'Bad', body: 'Keep', cron: 'not cron', timezone: 'UTC' })).rejects.toThrow('Invalid cron expression')
+        await expect(writeSchedule(id, { name: 'Bad', body: 'Keep', cron: '0 9 * * *', timezone: 'Not/AZone' })).rejects.toThrow('Invalid timezone')
+        expect(scheduleExists(id, 'bad')).toBe(false)
+        expect(sent).toEqual([])
+    })
+
+    it('validates the merged definition and preserves bytes on a failed patch', async () => {
+        await writeSchedule(id, { name: 'Valid', body: 'Preserve **Markdown**', cron: '0 9 * * *', timezone: 'Europe/Paris' })
+        const before = await readFile(scheduleFile(id, 'valid'), 'utf8')
+        await expect(updateScheduleAt(id, 'valid', { timezone: 'Not/AZone' })).rejects.toThrow('Invalid timezone')
+        expect(await readFile(scheduleFile(id, 'valid'), 'utf8')).toBe(before)
+        await expect(writeSchedule(id, { name: 'Valid', body: 'Changed', cron: 'bad' })).rejects.toThrow('Invalid cron expression')
+        expect(await readFile(scheduleFile(id, 'valid'), 'utf8')).toBe(before)
+    })
+})
