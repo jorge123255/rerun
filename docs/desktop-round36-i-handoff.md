@@ -11,7 +11,7 @@
 | Worktree | `/Users/gszulc/OpenBot/Shared/rerun-desktop-worktrees/round36-remaining-parity-audit` |
 | Machine | `e7d81f9b-15cc-4c7f-9416-cce93cafe692` |
 | Owned deliverables | `docs/desktop-round36-i-parity-audit.md`, `docs/desktop-round36-i-design-map.md`, `docs/desktop-round36-i-task-backlog.md`, this handoff |
-| Commit SHA | _filled by commit stamp below / `git rev-parse HEAD` after commit_ |
+| Commit SHA | `7c551342113e9f42a863a1c42f1c575e7fcd04d9` |
 | Worktree status after commit | clean (owned docs only) |
 
 ## What was read (required)
@@ -99,16 +99,16 @@ Reconciled without violating docs-only ownership:
 
 ## Commit stamp
 
-After the local commit of the four owned docs, record:
+Stamped after commit:
 
 ```
-FULL_SHA=<<git rev-parse HEAD>>
-PARENT=<<970415507e28824bb001f46c8537d20fd2636b1c>>
-STATUS=<<git status --porcelain empty>>
+FULL_SHA=7c551342113e9f42a863a1c42f1c575e7fcd04d9
+PARENT=970415507e28824bb001f46c8537d20fd2636b1c
+STATUS=clean after stamp commit
 FILES=docs/desktop-round36-i-parity-audit.md
       docs/desktop-round36-i-design-map.md
       docs/desktop-round36-i-task-backlog.md
       docs/desktop-round36-i-handoff.md
 ```
 
-If the handoff commit message lands before the SHA is known, a one-line follow-up commit may stamp the SHA inside this section only.
+Initial package commit is the parent of this stamp if the SHA line changed; use `git rev-parse HEAD` as the tip delivered to root.
