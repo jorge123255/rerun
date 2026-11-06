@@ -1,5 +1,7 @@
 import { desktopTemplateRouteAllowed } from './templates/allow.js'
 import { DESKTOP_CODEX_ID, desktopCodexAvailable } from './codex-runtime.js'
+import { DESKTOP_CLAUDE_CONNECTION_ID } from '@rerun/contracts'
+import { desktopClaudeAvailable } from './claude-plan/runtime.js'
 import { desktopBrainPagesRouteAllowed } from './brain-pages-policy.js'
 import { badRequest } from '../lib/errors.js'
 
@@ -9,6 +11,7 @@ const API_PROVIDERS = new Set(['openai', 'anthropic', 'google', 'openrouter'])
 
 export function desktopProviderAllowed(provider: string, id?: string) {
     return API_PROVIDERS.has(provider) || (provider === 'codex' && id === DESKTOP_CODEX_ID && desktopCodexAvailable())
+        || (provider === 'claude' && id === DESKTOP_CLAUDE_CONNECTION_ID && desktopClaudeAvailable())
 }
 
 export function assertDesktopProvider(provider: string, id?: string): void {
@@ -28,12 +31,14 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     // Only the private Foreman chat adapter may admit runs. Its observer reads these exact routes.
     if (/^\/agents\/foreman\/(?:sessions\/[A-Za-z0-9_-]+(?:\/messages)?|runs\/[A-Za-z0-9_-]+(?:\/stream)?)$/.test(path)) return method === 'GET'
     if (/^\/agents\/foreman\/runs\/[A-Za-z0-9_-]+\/cancel$/.test(path)) return method === 'POST'
+    if (path === '/desktop/computer-panel/control') return method === 'POST'
     if (path === '/desktop/tool-install/control') return method === 'POST'
     if (path === '/desktop/delegation/stop') return method === 'POST'
     if (path === '/desktop/triggers/manage') return method === 'POST'
     if (path === '/desktop/agents/create') return method === 'POST'
     if (path === '/desktop/new-agent/read') return method === 'POST'
     if (path === '/desktop/codex-login') return (method === 'GET' || method === 'POST') && desktopCodexAvailable()
+    if (path === '/desktop/claude-login') return (method === 'GET' || method === 'POST') && desktopClaudeAvailable()
     if (/^\/agents\/(?:import|foreman|default)(?:\/|$)/.test(path)) return false
     const id = '[A-Za-z0-9_-]+'
     if (new RegExp(`^/agents/${id}/sessions/${id}/mcp-sign-in-source$`).test(path)) return method === 'POST'

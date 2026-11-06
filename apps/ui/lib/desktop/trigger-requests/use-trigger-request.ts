@@ -21,6 +21,9 @@ export function useTriggerRequest(initial: TriggerRequestView, active: boolean, 
         }).catch(() => { if (!controller.signal.aborted && generation.current === epoch) setError('The saved webhook request could not be refreshed.') })
         return () => { ++generation.current; controller.abort(); pending.current?.abort() }
     }, [initial.key, active])
+    useEffect(() => {
+        if (!claimed.current && sameTriggerResultOwner(view.link, initial.link)) setView(initial)
+    }, [initial])
     async function perform(action: 'reconcile' | 'stop' | 'decide', decision?: TriggerRequestDecision) {
         if (!latest.current.active || claimed.current || !sameTriggerResultOwner(view.link, latest.current.initial.link)) throw new Error('This webhook result is no longer active')
         claimed.current = true; setBusy(true); setError('')
@@ -32,6 +35,8 @@ export function useTriggerRequest(initial: TriggerRequestView, active: boolean, 
                 const response = await client.current.decide(decision, controller.signal)
                 if (!current()) { void response.body?.cancel().catch(() => {}); return }
                 admitted = true
+                // The parent owns the acknowledged response reader now; visibility changes cancel through that owner.
+                if (pending.current === controller) pending.current = null
                 setView(value => ({ ...value, phase: 'accepted', request: null, acceptedRunId: response.headers.get('x-run-id') }))
                 await latest.current.onAccepted(response, view)
             } else {

@@ -1,5 +1,7 @@
 import 'server-only'
+import { createHash } from 'node:crypto'
 import {
+    desktopMcpSecretReferenceCanonical,
     desktopMcpSecretReferenceError,
     desktopMcpSecretReferenceLooksSecret,
     desktopMcpSecretReferencePlan,
@@ -11,7 +13,7 @@ import {
     type DesktopMcpSecretReferenceAuthority,
     type DesktopMcpSecretReferencePhase,
     type DesktopMcpSecretTransport,
-} from '../../../../../../packages/contracts/src/desktop-mcp-secret-references'
+} from '@rerun/contracts'
 import type { DesktopMcpSecretGate, DesktopMcpSecretLookup } from './lookup'
 
 export class DesktopMcpSecretReferenceFailure extends Error {
@@ -80,27 +82,32 @@ export async function withDesktopMcpSecrets<T>(input: {
     transport: DesktopMcpSecretTransport
     config: unknown
     bindings: readonly DesktopMcpSecretBinding[]
+    head: { configRevision: string; bindingRevision: number; origin: string; fingerprint: string }
+    check: () => void | Promise<void>
     authority: DesktopMcpSecretReferenceAuthority
     lookup: DesktopMcpSecretLookup
-    use: (material: DesktopMcpResolvedMaterial) => Promise<T>
+    use: (material: DesktopMcpResolvedMaterial, guard: { check: () => Promise<void>; protect: <V>(value: V) => V }) => Promise<T>
 }): Promise<DesktopMcpSecretAdmission<T>> {
     if (input.phase !== 'discovery' && input.phase !== 'invocation') return refused('unsupported', 'Credential references are checked only at discovery and invocation.')
     const plan = desktopMcpSecretReferencePlan(input.config)
     if (!plan) return refused('invalid', desktopMcpSecretReferenceError('invalid').message, { invalid: ['config'] })
     if (plan.config.name !== input.serverName || plan.config.transport !== input.transport) return refused('unsupported', 'Credential references belong to a different MCP server.', { invalid: [input.serverName] })
-    const owner = await input.authority.currentOwner(input.agentId)
-    if (!owner || owner.agentId !== input.agentId || !owner.enabled || owner.deleting) return refused('forbidden', desktopMcpSecretReferenceError('forbidden').message)
-    if (plan.references.length > 0 && !owner.selfMcpGranted) return refused('forbidden', desktopMcpSecretReferenceError('forbidden').message)
-    if (plan.config.transport === 'stdio' && plan.references.length > 0 && !owner.localMcpStdioGranted) return refused('forbidden', desktopMcpSecretReferenceError('forbidden').message)
-    if (input.bindings.some(binding => binding.agentId !== input.agentId || binding.serverName !== input.serverName)) {
+    const fingerprint = createHash('sha256').update(desktopMcpSecretReferenceCanonical(plan.config)).digest('hex')
+    if (input.head.fingerprint !== fingerprint || input.bindings.some(binding => binding.agentId !== input.agentId || binding.serverName !== input.serverName || binding.configRevision !== input.head.configRevision || binding.bindingRevision !== input.head.bindingRevision || binding.origin !== input.head.origin)) {
         return refused('forbidden', desktopMcpSecretReferenceError('forbidden').message)
     }
-
+    let admitted = true
+    const gate: DesktopMcpSecretGate = { async check(credential) {
+        if (!admitted || credential && credential.agentId !== input.agentId) throw new Error('Credential use is not admitted.')
+        await input.check()
+        const owner = await input.authority.currentOwner(input.agentId)
+        await input.check()
+        if (!owner || owner.agentId !== input.agentId || !owner.enabled || owner.deleting || plan.references.length > 0 && !owner.selfMcpGranted || plan.config.transport === 'stdio' && !owner.localMcpStdioGranted) throw new Error('Credential owner is unavailable')
+    } }
+    try { await gate.check() } catch { return refused('forbidden', desktopMcpSecretReferenceError('forbidden').message) }
     const pending: string[] = []
     const rotated: string[] = []
     const ready = new Map<string, number>()
-    let admitted = false
-    const gate: DesktopMcpSecretGate = { check() { if (!admitted) throw new Error('Credential use is not admitted.') } }
     for (const reference of plan.references) {
         const binding = input.bindings.find(item => item.field === reference.field && item.fieldKey === reference.key && item.secretName === reference.name)
         if (!binding || binding.status !== 'bound' || binding.secretVersion === null) {
@@ -112,9 +119,7 @@ export async function withDesktopMcpSecrets<T>(input: {
             rotated.push(reference.name)
             continue
         }
-        admitted = true
         const version = await input.lookup.version(input.agentId, reference.name, gate)
-        admitted = false
         if (version.state === 'forbidden') return refused('forbidden', desktopMcpSecretReferenceError('forbidden', reference.name).message)
         if (version.state === 'missing') pending.push(reference.name)
         else if (version.version !== binding.secretVersion) rotated.push(reference.name)
@@ -157,7 +162,10 @@ export async function withDesktopMcpSecrets<T>(input: {
             const material = assemble(opened)
             if (!material) return refused('invalid', desktopMcpSecretReferenceError('invalid').message, { invalid: names })
             try {
-                const value = redactDesktopMcpSecretValue(await input.use(material), copies)
+                await gate.check()
+                const raw = await input.use(material, { check: async () => { await gate.check() }, protect: value => redactDesktopMcpSecretValue(value, copies) })
+                await gate.check()
+                const value = redactDesktopMcpSecretValue(raw, copies)
                 return {
                     ok: true,
                     authority: plan.authority,

@@ -5,12 +5,12 @@ import { hasDesktopToolGrant } from '../tool-grants.js'
 import type { ScreenTarget } from './types.js'
 
 export type ScreenForeground = 'browser' | 'terminal' | 'files' | 'unknown'
-const grants = ['browser', 'computer', 'terminalLaunch', 'filesLaunch', 'toolInstall'] as const
+const grants = ['browser', 'computer', 'terminalLaunch', 'filesLaunch', 'toolInstall', 'guestShell'] as const
 export function screenGranted(config: AgentConfig) {
     return config.enabled && hasDesktopToolGrant(config, 'computer') && (hasDesktopToolGrant(config, 'browser') || hasDesktopToolGrant(config, 'terminalLaunch') || hasDesktopToolGrant(config, 'filesLaunch'))
 }
 export function screenPermissionsRevoked(before: AgentConfig, after: AgentConfig) {
-    return !screenGranted(after) || grants.some(grant => hasDesktopToolGrant(before, grant) && !hasDesktopToolGrant(after, grant))
+    return !after.enabled || (screenGranted(before) && !screenGranted(after)) || grants.some(grant => hasDesktopToolGrant(before, grant) && !hasDesktopToolGrant(after, grant))
 }
 export async function authorizeScreenInput(target: ScreenTarget, app: ScreenForeground, signal: AbortSignal) {
     signal.throwIfAborted()

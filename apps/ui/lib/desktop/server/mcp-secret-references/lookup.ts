@@ -1,61 +1,44 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
+import type { DesktopSecretCredentialAuthority } from '../secret-requests/store'
 
-export type DesktopMcpSecretGate = { check: () => void }
-
+export type DesktopMcpSecretGate = { check: (credential?: { agentId: string; key: string; version?: number }) => void | Promise<void> }
 export type DesktopMcpSecretOpener = {
-    useCredential<T>(agentId: string, key: string, authority: DesktopMcpSecretGate, use: (value: Uint8Array) => T | Promise<T>): Promise<T>
+    useCredential<T>(agentId: string, key: string, authority: DesktopSecretCredentialAuthority, invoke: (value: Uint8Array) => T | Promise<T>): Promise<T>
 }
-
-export type DesktopMcpSecretVersion =
-    | { state: 'present'; version: number }
-    | { state: 'missing' }
-    | { state: 'forbidden' }
-
-export type DesktopMcpSecretOpen<T> =
-    | { state: 'present'; version: number; produced: T }
-    | { state: 'missing' }
-    | { state: 'rotated'; version: number }
-    | { state: 'forbidden' }
-    | { state: 'invalid' }
-
+export type DesktopMcpSecretVersion = { state: 'present'; version: number } | { state: 'missing' } | { state: 'forbidden' }
+export type DesktopMcpSecretOpen<T> = { state: 'present'; version: number; produced: T } | { state: 'missing' } | { state: 'rotated'; version: number } | { state: 'forbidden' } | { state: 'invalid' }
 const MISSING = 'Credential not found for this coworker.'
-
-function closed(gate: DesktopMcpSecretGate): boolean {
-    try {
-        gate.check()
-        return false
-    } catch {
-        return true
-    }
-}
 
 export function createDesktopMcpSecretLookup(db: Pick<Client, 'execute'>, opener: DesktopMcpSecretOpener) {
     return {
         async version(agentId: string, key: string, gate: DesktopMcpSecretGate): Promise<DesktopMcpSecretVersion> {
-            if (closed(gate)) return { state: 'forbidden' }
-            const row = (await db.execute({
-                sql: 'SELECT version FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?',
-                args: [agentId, key],
-            })).rows[0]
-            if (!row) return { state: 'missing' }
-            return { state: 'present', version: Number(row.version) }
-        },
-
-        async open<T>(agentId: string, key: string, expectedVersion: number, gate: DesktopMcpSecretGate, use: (value: Uint8Array) => Promise<T>): Promise<DesktopMcpSecretOpen<T>> {
-            if (closed(gate)) return { state: 'forbidden' }
-            if (!Number.isInteger(expectedVersion) || expectedVersion < 0) return { state: 'invalid' }
-            const row = (await db.execute({
-                sql: 'SELECT version FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?',
-                args: [agentId, key],
-            })).rows[0]
-            if (!row) return { state: 'missing' }
-            const version = Number(row.version)
-            if (version !== expectedVersion) return { state: 'rotated', version }
             try {
-                const produced = await opener.useCredential(agentId, key, gate, async value => use(value))
-                return { state: 'present', version, produced }
+                await gate.check({ agentId, key })
+                const row = (await db.execute({ sql: 'SELECT version FROM desktop_secret_credentials WHERE agent_id = ? AND key = ?', args: [agentId, key] })).rows[0]
+                await gate.check({ agentId, key })
+                return row ? { state: 'present', version: Number(row.version) } : { state: 'missing' }
+            } catch { return { state: 'forbidden' } }
+        },
+        async open<T>(agentId: string, key: string, expectedVersion: number, gate: DesktopMcpSecretGate, invoke: (value: Uint8Array) => Promise<T>): Promise<DesktopMcpSecretOpen<T>> {
+            if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) return { state: 'invalid' }
+            let rotated: number | undefined
+            const exact: DesktopSecretCredentialAuthority = { async check(credential) {
+                if (credential.agentId !== agentId || credential.key !== key) throw new Error('Credential owner changed')
+                if (credential.version !== undefined && credential.version !== expectedVersion) { rotated = credential.version; throw new Error('Credential version changed') }
+                await gate.check(credential)
+            } }
+            try {
+                await exact.check({ agentId, key })
+                const produced = await opener.useCredential(agentId, key, exact, async value => {
+                    await exact.check({ agentId, key, version: expectedVersion })
+                    const result = await invoke(value)
+                    await exact.check({ agentId, key, version: expectedVersion })
+                    return result
+                })
+                return { state: 'present', version: expectedVersion, produced }
             } catch (error) {
+                if (rotated !== undefined) return { state: 'rotated', version: rotated }
                 if (error instanceof Error && error.name === 'DesktopMcpSecretReferenceFailure') throw error
                 if (error instanceof Error && error.message === MISSING) return { state: 'missing' }
                 return { state: 'forbidden' }
@@ -63,5 +46,4 @@ export function createDesktopMcpSecretLookup(db: Pick<Client, 'execute'>, opener
         },
     }
 }
-
 export type DesktopMcpSecretLookup = ReturnType<typeof createDesktopMcpSecretLookup>

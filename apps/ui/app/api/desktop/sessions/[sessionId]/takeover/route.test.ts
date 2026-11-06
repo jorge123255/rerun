@@ -13,6 +13,7 @@ import { GET, POST } from './route'
 const originalEnv = { ...process.env }
 let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, bob: DesktopAgent, a: DesktopSession, b: DesktopSession
 let rejectBeforeAccept: boolean, foreignHistory: boolean, historyReads: number, modelReads: number
+let sourceUnavailable: boolean
 const histories = new Map<string, Message[]>(), receipts = new Map<string, string>(), dispatches: Record<string, unknown>[] = []
 const input = {url:'https://example.com/sign-in',reason:'Open the fixture'}
 const activeLeases = new Map<string,string>(), finished: string[] = []
@@ -35,12 +36,22 @@ const pending = async (sessionId = a.id) => (await (await get(sessionId)).json()
 const answer = (takeover: DesktopPendingTakeover, action: 'done' | 'skip' = 'done'): DesktopTakeoverAnswer => ({ takeoverId: takeover.id, requestId: crypto.randomUUID(), action })
 
 beforeEach(async () => {
+    sourceUnavailable = false
     root = await mkdtemp(join(tmpdir(), 'rerun-takeover-api-'))
     activeLeases.clear(); finished.length=0; histories.clear(); receipts.clear(); dispatches.length = 0; rejectBeforeAccept = false; foreignHistory = false; historyReads = 0; modelReads = 0
     server = createServer(async (req, res) => {
         let raw = ''; for await (const part of req) raw += part
         const body = raw ? JSON.parse(raw) : null
         const reply = (status: number, value: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(value))
+        if (req.method === 'POST' && req.url === '/desktop/triggers/manage') {
+            if (req.headers.authorization !== `Bearer ${runtime.engine.apiKey}` || body.launchNonce !== runtime.launchNonce) return reply(403, { error: 'Wrong fixture launch' })
+            const owner = body.engineAgentId === 'engine-alice' ? alice : body.engineAgentId === 'engine-bob' ? bob : null
+            const sessionId = owner === alice ? 'engine-a' : 'engine-b'
+            if (!owner || body.localAgentId !== owner.id || body.op !== 'session' || body.input?.sessionId !== sessionId) return reply(409, { error: 'Wrong fixture source' })
+            if (sourceUnavailable) return reply(503, { error: 'Source identity unavailable' })
+            // These are ordinary chats, proven by the canonical engine source lookup.
+            return reply(200, { result: { event: null } })
+        }
         if (req.method === 'GET' && /^\/agents\/(engine-alice|engine-bob)\/setup$/.test(req.url ?? '')) return reply(200, {
             required: false, prompt: '', completedAt: null, sessionId: null, pending: false, revision: 'fixture-setup',
         })
@@ -101,6 +112,20 @@ afterEach(async () => {
     await closeDesktopDatabase(root); process.env = { ...originalEnv }
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
     await rm(root, { recursive: true, force: true })
+})
+
+test('an unavailable source lookup cannot bypass webhook authority and dispatch an ordinary reply', async () => {
+    const body = answer(await pending(), 'skip')
+    sourceUnavailable = true
+    expect((await post(body)).status).toBe(503)
+    expect(dispatches).toHaveLength(0)
+    expect(receipts.size).toBe(0)
+    expect((await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_takeover_answers')).rows).toHaveLength(0)
+    sourceUnavailable = false
+    const response = await post(body)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('x-run-id')).toBe(body.requestId)
+    expect(dispatches).toHaveLength(1)
 })
 
 

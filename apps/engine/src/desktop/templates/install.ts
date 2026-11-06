@@ -20,7 +20,7 @@ import { TemplateRequestError } from './errors.js'
 import { readConfined, writeExclusiveFile } from './files.js'
 import { canonicalJson, sha256 } from './hash.js'
 import { renameSkillEntry } from '../skill-publication-native.js'
-import { readOwnJson, replaceOwnJson, templateHome, writeOwnJson } from './store.js'
+import { readOwnJson, replaceOwnJson, templateHome, writeOwnJson, requestHome } from './store.js'
 
 const fileSchema = z.strictObject({
     path: desktopTemplateRelativePathSchema,
@@ -33,6 +33,7 @@ const fileSchema = z.strictObject({
     mediaType: desktopTemplateMediaTypeSchema.optional(),
 })
 const coworkerSchema = z.strictObject({
+    enabled: z.boolean().optional(),
     agentKey: desktopTemplateAgentKeySchema,
     sourceEngineId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
     name: z.string().min(1).max(60),
@@ -67,6 +68,7 @@ const manifestSchema = z.strictObject({
 export type TemplateManifest = z.infer<typeof manifestSchema>
 
 const importReceiptSchema = z.strictObject({
+    indexCreatedAt: z.string().datetime().optional(),
     version: z.literal(1),
     importReceiptId: z.uuid(),
     templateId: desktopTemplateIdSchema,
@@ -138,6 +140,7 @@ export function publicDetail(manifest: TemplateManifest): DesktopTemplateDetail 
         limits: manifest.limits,
         engineCommit: null,
         coworkers: manifest.coworkers.map(coworker => ({
+            enabled: coworker.enabled !== false,
             agentKey: coworker.agentKey,
             name: coworker.name,
             description: coworker.description,
@@ -181,9 +184,10 @@ async function installManifestUnlocked(input: {
     templateId: string
     revision: string
     coworkers: { engineAgentId: string; agentKey: string }[]
-    insertIndex: (id: string, name: string) => Promise<void>
-    readIndex: (id: string) => Promise<{ name: string } | null>
+    insertIndex: (id: string, name: string, createdAt?: string) => Promise<void>
+    readIndex: (id: string) => Promise<{ name: string; createdAt?: string; status?: string } | null>
 }): Promise<{ status: 'ready' | 'uncertain'; reason?: string; coworkers: InstalledPhase[] }> {
+    if (await readOwnJson(requestHome(input.dataRoot), `cancel-install-${input.importReceiptId}.json`)) throw new TemplateRequestError(409, 'This installation was cancelled. Start a new installation instead.')
     const manifest = await readManifest(input.dataRoot, input.templateId, input.revision)
     const wanted = new Map(input.coworkers.map(coworker => [coworker.agentKey, coworker.engineAgentId]))
     if (wanted.size !== input.coworkers.length || manifest.coworkers.some(coworker => !wanted.has(coworker.agentKey)) || wanted.size !== manifest.coworkers.length) {
@@ -215,13 +219,13 @@ async function installManifestUnlocked(input: {
             const staged = await mkdtemp(join(input.agentsRoot, '.template-import-'))
             try {
                 const identity = await lstat(staged,{bigint:true})
-                await writeOwnJson(staged, '.desktop-template-import.json', {...bound,...(input.foremanDisabled && {folder:{dev:String(identity.dev),ino:String(identity.ino)}})})
+                await writeOwnJson(staged, '.desktop-template-import.json', {...bound,folder:{dev:String(identity.dev),ino:String(identity.ino)}})
                 await renameSkillEntry(input.agentsRoot, await lstat(input.agentsRoot, { bigint: true }), staged.split('/').at(-1)!, await lstat(staged, { bigint: true }), engineAgentId)
             } finally { await rm(staged, { recursive: true, force: true }) }
         }
-        const receipt = await readReceipt(folder)
+        let receipt = await readReceipt(folder)
         const identity = await lstat(folder,{bigint:true})
-        const ownedForemanFolder = !input.foremanDisabled || (receipt?.folder?.dev === String(identity.dev) && receipt.folder.ino === String(identity.ino))
+        const ownedForemanFolder = receipt?.folder ? receipt.folder.dev === String(identity.dev) && receipt.folder.ino === String(identity.ino) : !input.foremanDisabled
         if (!ownedForemanFolder || !receipt || receipt.importReceiptId !== bound.importReceiptId || receipt.engineAgentId !== engineAgentId || receipt.templateId !== bound.templateId || receipt.revision !== bound.revision || receipt.agentKey !== coworker.agentKey || receipt.foremanDisabled !== bound.foremanDisabled) {
             phases.push({ engineAgentId, agentKey: coworker.agentKey, name: coworker.name, description: coworker.description, phase: 'foreign' })
             uncertain = 'An imported coworker folder is not owned by this receipt'
@@ -263,9 +267,13 @@ async function installManifestUnlocked(input: {
         await writeOwnJson(folder, '.desktop-template-requirements.json', { version: 1, importReceiptId: input.importReceiptId, requirements: coworker.requirements ?? [] })
         if (receipt.phase === 'bound') await replaceOwnJson(folder, '.desktop-template-import.json', { ...receipt, phase: 'files' })
         try {
-            const indexed = await input.readIndex(engineAgentId)
-            if (!indexed) await input.insertIndex(engineAgentId, coworker.name)
-            else if (indexed.name !== coworker.name) {
+            let indexed = await input.readIndex(engineAgentId)
+            if (!indexed) {
+                if (!receipt.indexCreatedAt) { receipt = { ...receipt, indexCreatedAt: new Date().toISOString() }; await replaceOwnJson(folder, '.desktop-template-import.json', receipt) }
+                await input.insertIndex(engineAgentId, coworker.name, receipt.indexCreatedAt)
+                indexed = await input.readIndex(engineAgentId)
+            }
+            if (!indexed || indexed.name !== coworker.name || (indexed.createdAt !== undefined && receipt.indexCreatedAt !== undefined && indexed.createdAt !== receipt.indexCreatedAt)) {
                 phases.push({ engineAgentId, agentKey: coworker.agentKey, name: coworker.name, description: coworker.description, phase: 'partial' })
                 uncertain = 'The engine index for an imported coworker does not match this receipt'
                 continue

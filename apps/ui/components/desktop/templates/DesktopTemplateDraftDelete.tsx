@@ -7,12 +7,13 @@ import type { DesktopPortableTemplateActions } from '@/lib/desktop/portable-temp
 type Props = { templateId:string; revision:string; title:string; actions:DesktopPortableTemplateActions; onDeleted(templateId:string):void }
 export function DesktopTemplateDraftDelete(props:Props) { return <DraftDelete key={`${props.templateId}:${props.revision}`} {...props} /> }
 function DraftDelete({templateId,revision,title,actions,onDeleted}:Props) {
-    const [busy,setBusy]=useState(false),[error,setError]=useState(''),alive=useRef(true),running=useRef(false)
+    const [busy,setBusy]=useState(false),[error,setError]=useState(''),alive=useRef(true),running=useRef(false),attempt=useRef<string|null>(null)
     useEffect(()=>{alive.current=true;return()=>{alive.current=false}},[])
     async function remove() {
         if(running.current)return;running.current=true;setBusy(true);setError('')
         try {
-            const result=await actions.deleteTemplate({templateId,revision})
+            attempt.current ??= crypto.randomUUID()
+            const result=await actions.deleteTemplate({templateId,revision,requestId:attempt.current})
             if(!alive.current)return
             if(!result.ok || result.result.status!=='deleted' || result.result.templateId!==templateId || result.result.revision!==revision){setError('Delete acknowledgement unavailable. Retry the same attempt.');return}
             onDeleted(templateId)

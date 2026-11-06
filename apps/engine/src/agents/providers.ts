@@ -36,6 +36,7 @@ import { openrouterStreamRetryMiddleware } from './openrouter-stream-retry.js'
 import { agentProcessEnv } from './process-env.js'
 import { BRIDGE_SERVER_NAME, CLI_PROVIDERS, type LoadedAgent } from './types.js'
 import { hubCallerHeaders } from '../runtime/hub.js'
+import { desktopClaudeRuntime } from '../desktop/claude-plan/runtime.js'
 import { desktopCodexRuntime, signedInFlag } from '../desktop/codex-runtime.js'
 import type { DesktopNativeWorker } from '../desktop/native-worker.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
@@ -286,8 +287,13 @@ export function withCardTagNudge(hooks: ClaudeHooks | undefined): ClaudeHooks {
     return { ...hooks, Stop: [...stop, { hooks: [cardTagStopHook] }] }
 }
 
-function claudeProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers: RunMcpServer[] = [], capture?: ClaudeContextCapture, options: CliModelOptions = {}) {
-    const { mcpServers: servers, allowedTools } = claudeMcpConfig(tools, mcpServers, options.screenshots)
+function claudeProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers: RunMcpServer[] = [], capture?: ClaudeContextCapture, options: CliModelOptions = {}, desktopRuntime?: ReturnType<typeof desktopClaudeRuntime>) {
+    const desktop = desktopApp()
+    if (desktop && !desktopRuntime) throw new Error('The isolated Claude runtime is unavailable.')
+    const grants = desktopRerunGrantsOf(agent.config.tools)
+    const allowed = new Set(desktopRerunToolCatalog.filter(entry => entry.available && grants[entry.id as keyof typeof grants]).flatMap(entry => entry.tools))
+    const admitted = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name, tool]) => allowed.has(name) || isDesktopForemanTool(tool, name, agent.id, agent.config.kind) || name === 'install_complete' && isDesktopSetupTool(tool, agent.id) || grants.mcp && isDesktopMcpTool(tool) || grants.localMcpStdio && isDesktopStdioTool(tool) || grants.services && isDesktopServiceTool(tool))) : tools
+    const { mcpServers: servers, allowedTools } = claudeMcpConfig(admitted, desktop ? [] : mcpServers, options.screenshots)
     const { cwd, env: agentEnv } = agentProcessEnv(agent)
     return createClaudeCode({
         defaultSettings: {
@@ -311,6 +317,7 @@ function claudeProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers: RunMcpS
             ...(options.system !== undefined ? { systemPrompt: options.system } : {}),
             ...(allowedTools.length ? { mcpServers: servers, allowedTools } : {}),
             ...(capture ? { ...capture.settings, hooks: withCardTagNudge(capture.settings.hooks) } : {}),
+            ...(desktopRuntime ? { ...desktopRuntime.settings, canUseTool: async (name, input) => allowedTools.includes(name) ? { behavior: 'allow' as const, updatedInput: input } : { behavior: 'deny' as const, message: 'This tool is not enabled for this coworker.' } } : {}),
         },
     })
 }
@@ -445,7 +452,7 @@ function registryFor(agent: LoadedAgent, tools?: ToolSet, mcpServers?: McpServer
     return createProviderRegistry({
         rerun: openaiChat(openrouterCompatibleOptions(agent, 'rerun')),
         anthropic: createAnthropic({ apiKey: e.ANTHROPIC_API_KEY }),
-        claude: claudeProvider(agent, tools, mcpServers, undefined, options),
+        ...(!desktopApp() ? { claude: claudeProvider(agent, tools, mcpServers, undefined, options) } : {}),
         ...(!desktopApp() || agent.resolved.provider === 'codex' ? { codex: codexExecProvider(agent) } : {}),
         openai: createOpenAI({ apiKey: e.OPENAI_API_KEY }),
         google: createGoogleGenerativeAI({ apiKey: e.GOOGLE_GENERATIVE_AI_API_KEY ?? e.GOOGLE_API_KEY }),
@@ -470,6 +477,38 @@ function pairFor(agent: LoadedAgent, override?: ModelOverride): { provider: Prov
 // and exits — nothing to dispose. A run that streams must use `resolveModel` instead.
 export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: McpServer[], options?: CliModelOptions): LanguageModel {
     const { provider, model } = pairFor(agent, override)
+    if (desktopApp() && provider === 'claude') {
+        // One-shot helpers may reuse the model. Each invocation gets an isolated process owner;
+        // the metadata-only model below is never invoked by either middleware path.
+        const create = () => {
+            const runtime = desktopClaudeRuntime(agent.resolved.connection?.id, connectionEnv(agent).CLAUDE_CODE_OAUTH_TOKEN ?? '', CLAUDE_HARNESS_ENV)
+            try { return { runtime, model: claudeProvider(agent, tools, mcpServers, undefined, options, runtime).languageModel(model) } }
+            catch (error) { void runtime.close(); throw error }
+        }
+        return wrapLanguageModel({ model: createClaudeCode().languageModel(model), middleware: {
+            specificationVersion: 'v3',
+            async wrapGenerate({ params }) {
+                const owned = create()
+                try { return await owned.model.doGenerate(params) } finally { await owned.runtime.close() }
+            },
+            async wrapStream({ params }) {
+                const owned = create()
+                try {
+                    const result = await owned.model.doStream(params), reader = result.stream.getReader()
+                    return { ...result, stream: new ReadableStream({
+                        async pull(controller) {
+                            try {
+                                const part = await reader.read()
+                                if (part.done) { await owned.runtime.close(); controller.close() }
+                                else controller.enqueue(part.value)
+                            } catch (error) { await owned.runtime.close(); controller.error(error) }
+                        },
+                        async cancel(reason) { try { await reader.cancel(reason) } finally { await owned.runtime.close() } },
+                    }) }
+                } catch (error) { await owned.runtime.close(); throw error }
+            },
+        } })
+    }
     return registryFor(agent, tools, mcpServers, options).languageModel(`${provider}:${model}`)
 }
 
@@ -496,8 +535,9 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     }
     if (provider === 'claude') {
         const capture = claudeContextCapture(agent.resolved.connection?.id)
-        const claude = claudeProvider(agent, tools, mcpServers, capture, { system, screenshots, claudeTools: agent.config.tools.web ? CLAUDE_RUN_TOOLS : [] }).languageModel(model)
-        return { model: wrapLanguageModel({ model: claude, middleware: [claudeScreenshotMiddleware, replies.middleware, cardTags, guard] }), close: noClose, contextUsage: capture.read, quickReplies: replies.read }
+        const desktopRuntime = desktopApp() ? desktopClaudeRuntime(agent.resolved.connection?.id, connectionEnv(agent).CLAUDE_CODE_OAUTH_TOKEN ?? '', CLAUDE_HARNESS_ENV) : undefined
+        const claude = claudeProvider(agent, tools, mcpServers, capture, { system, screenshots, claudeTools: agent.config.tools.web ? CLAUDE_RUN_TOOLS : [] }, desktopRuntime).languageModel(model)
+        return { model: wrapLanguageModel({ model: claude, middleware: [claudeScreenshotMiddleware, replies.middleware, cardTags, guard] }), close: desktopRuntime?.close ?? noClose, contextUsage: capture.read, quickReplies: replies.read }
     }
     // Asking for the reasoning and reading it back are both off the OpenAI chat format, so they are
     // wired here rather than in the registry: the one-shot calls that go through `modelFor`

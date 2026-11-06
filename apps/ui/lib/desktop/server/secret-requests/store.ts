@@ -137,7 +137,7 @@ function validateValues(input: DesktopSecretRequestDecision, fields: readonly De
     return { providedKeys: fields.filter(field => provided.has(field.key)).map(field => field.key), entries }
 }
 
-export function createDesktopSecretRequestStore(db: Client, crypto: DesktopSecretCrypto) {
+export function createDesktopSecretRequestStore(db: Client, crypto: DesktopSecretCrypto, options?: { credentialsChanged(agentId: string, keys: string[]): Promise<void> }) {
     async function openStaged(request: RequestRow, attemptId: string, payload: string): Promise<[string, string][]> {
         let opened: Uint8Array | undefined
         try {
@@ -241,6 +241,7 @@ export function createDesktopSecretRequestStore(db: Client, crypto: DesktopSecre
             if (existing.attemptId !== input.attemptId) refusal(409, 'This credential request already has a different receipt.')
             await assertAttempt(db, input, fingerprint)
             await authority.check()
+            if (existing.decision === 'save') await options?.credentialsChanged(request.source.agentId, existing.providedKeys)
             return existing
         }
         await authority.check()
@@ -291,6 +292,7 @@ export function createDesktopSecretRequestStore(db: Client, crypto: DesktopSecre
             await authority.check()
             authority.assertCurrent?.()
             await tx.commit()
+            if (input.operation === 'save') await options?.credentialsChanged(request.source.agentId, providedKeys)
             return { requestId: request.requestId, attemptId: input.attemptId, decision: input.operation, providedKeys, skippedKeys, summary, continuationRequestId, accepted: false, createdAt }
         } catch (error) { await tx.rollback().catch(() => undefined); throw error }
         finally { tx.close() }

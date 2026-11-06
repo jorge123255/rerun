@@ -215,6 +215,7 @@ export const desktopTemplateDetailFileSchema = z.strictObject({
     mediaType: z.string().max(127).regex(/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/).optional(),
 })
 export const desktopTemplateDetailCoworkerSchema = z.strictObject({
+    enabled: z.boolean().optional(),
     agentKey: desktopTemplateAgentKeySchema,
     name: z.string().min(1).max(60),
     description: z.string().max(2_000),
@@ -367,6 +368,7 @@ export type InitializeImportedSetup = (
 ) => Promise<{ revision: string }>
 
 export const desktopTemplateCommitCoworkerSchema = z.strictObject({
+    enabled: z.boolean().optional(),
     agentId: z.uuid(),
     engineAgentId: z.string().regex(/^i[a-f0-9]{31}$/),
     name: z.string().min(1).max(60),

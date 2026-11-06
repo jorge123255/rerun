@@ -1,3 +1,4 @@
+import { prepareTriggerHumanAdmission, withoutStoppedTriggerRequests } from '../../desktop/triggers/human.js'
 import { desktopDocumentSendSelectionSchema, desktopResolvedDocumentsSchema, desktopMcpSignInGuardSchema } from '@rerun/contracts'
 import { assertDesktopMcpSignInContinuation } from '../../desktop/mcp-sign-in/admission.js'
 import { readDesktopMcpSignInSource } from '../../desktop/mcp-sign-in/source.js'
@@ -206,7 +207,7 @@ chatRoutes.post('/chat', async c => {
             await assertImageModel(provider, agentId, resolvedAttachments, session.id)
             // Hold the session claim while checking the durable transcript: an ordinary chat
             // cannot append a new turn between this check and the atomic answer reservation.
-            const messages = await listMessages(agentId, session.id)
+            const messages = await withoutStoppedTriggerRequests(agentId, session.id, await listMessages(agentId, session.id))
             const pending = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
             const takeover = findDesktopTakeover(messages)
@@ -222,7 +223,10 @@ chatRoutes.post('/chat', async c => {
                 releaseSession(turn.runId)
                 return c.json({ error: 'Finish or skip the credential form before sending another message.', code: 'secret_pending' }, 409)
             }
-            if (['running', 'done'].includes((await readDesktopMcpSignInSource(agentId, session.id))?.status ?? '')) throw new HttpError(409, 'Finish or skip MCP sign-in before sending another message.')
+            if (queued.mcpSignIn) {
+                if (!hasDesktopToolGrant(currentAgent.config, 'mcp')) throw new HttpError(403, 'MCP tools are turned off for this coworker.')
+                await assertDesktopMcpSignInContinuation(agentId, session.id, queued.mcpSignIn, body.message, false)
+            } else if (['running', 'done'].includes((await readDesktopMcpSignInSource(agentId, session.id))?.status ?? '')) throw new HttpError(409, 'Finish or skip MCP sign-in before sending another message.')
             const service = decideDesktopServiceRequestTurn({ rows: messages, queued })
             if (service.kind === 'reject' || service.kind === 'block') {
                 releaseSession(turn.runId)
@@ -247,7 +251,8 @@ chatRoutes.post('/chat', async c => {
                 releaseSession(turn.runId)
                 return c.json({ error: pending ? questionPendingMessage : approval ? approvalPendingMessage : takeoverPendingMessage, code: pending ? 'question_pending' : approval ? 'approval_pending' : 'takeover_pending' }, 409)
             }
-            const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, attachments, body.author, body.desktopAttachments, false, body.desktopDocuments)
+            const triggerAdmission = await prepareTriggerHumanAdmission(agentId, turn)
+            const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, attachments, body.author, body.desktopAttachments, false, body.desktopDocuments, triggerAdmission)
             return streamChat(currentAgent, session.id, turn.runId, body.message, override, { provider, model }, {
                 source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...attachmentTrigger, ...documentTrigger, queuedUser,
             })
@@ -276,7 +281,7 @@ chatRoutes.post('/chat', async c => {
     if (desktopApp()) {
         try {
             await assertImageModel(provider, agentId, resolvedAttachments, session.id)
-            const messages = await listMessages(agentId, session.id)
+            const messages = await withoutStoppedTriggerRequests(agentId, session.id, await listMessages(agentId, session.id))
             const question = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
             const takeover = findDesktopTakeover(messages)

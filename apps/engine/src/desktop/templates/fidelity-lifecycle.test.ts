@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm, access } from 'node:fs/promises'
+import { mkdtemp, realpath, mkdir, writeFile, readFile, rm, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, afterAll, afterEach, expect, test } from 'vitest'
@@ -14,7 +14,7 @@ const roots:string[]=[]
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root,{recursive:true,force:true}))) })
 const id = (n:number) => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 async function fixture() {
-    const dataRoot=await mkdtemp(join(tmpdir(),'fidelity-library-')),agentsRoot=await mkdtemp(join(tmpdir(),'fidelity-agents-')); roots.push(dataRoot,agentsRoot)
+    const dataRoot=await realpath(await mkdtemp(join(tmpdir(),'fidelity-library-'))),agentsRoot=await realpath(await mkdtemp(join(tmpdir(),'fidelity-agents-'))); roots.push(dataRoot,agentsRoot)
     const folder=join(agentsRoot,'source'); await mkdir(join(folder,'workspace'),{recursive:true}); await mkdir(join(folder,'skills','demo'),{recursive:true})
     await writeFile(join(folder,'config.json'),JSON.stringify({name:'Fixture',verbosity:'detailed',setup:{required:false},connectionId:'secret-connection',tools:{browser:true}}),{mode:0o600})
     await writeFile(join(folder,'.env'),'API_TOKEN=private-value-must-stay\n',{mode:0o600})

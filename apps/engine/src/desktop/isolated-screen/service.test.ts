@@ -174,6 +174,8 @@ class FakeDocker implements DockerClient {
             const url = String(body.url)
             return encodeOk({ pageOptionsVersion: 1, status: 200, finalUrl: url, text: 'Hello', html: '<p>secret</p>', truncated: false, links: body.links ? [{ href: 'https://example.com/a', text: 'A' }] : [], linksTruncated: false, htmlBytes: 0, screenshotBytes: 0, screenshotWidth: 0, screenshotHeight: 0, exportErrors: [] })
         }
+        if (body.op === 'guest-shell' || body.op === 'guest-shell-inspect') return encodeOk({ requestId: body.commandId, status: 'done', stdout: 'ok', stderr: '', exitCode: 0, durationMs: 1 })
+        if (body.op === 'guest-shell-cancel') return encodeOk({ requestId: body.commandId, drained: true })
         if (body.op === 'location') {
             if (this.locationFails) return encodeFailure('no tab', false)
             return encodeOk({ url: this.locationUrl })
@@ -248,7 +250,7 @@ describe('isolated screen prerequisites', () => {
         docker.imageKind = { kind: 'missing' }
         const signal = new AbortController().signal
         await expect(service.status(owner, signal)).resolves.toEqual({ available: false, prerequisite: 'image-missing', state: 'absent' })
-        await expect(service.ensure(owner, signal)).rejects.toMatchObject({ kind: 'prerequisite', message: 'The isolated screen image rerun-desktop-guest:round33 is not built.' })
+        await expect(service.ensure(owner, signal)).rejects.toMatchObject({ kind: 'prerequisite', message: 'The isolated screen image rerun-desktop-guest:round34 is not built.' })
         expect(docker.runs).toEqual([])
         expect(docker.createdVolumes).toEqual([])
     })
@@ -888,5 +890,38 @@ describe('reviewed isolated installation control', () => {
         await expect(effect).rejects.toThrow()
         expect(box.docker.removedContainers).toContain(containerName(owner.engineAgentId))
         expect(box.docker.containers.has(containerName(owner.engineAgentId))).toBe(false)
+    })
+})
+
+describe('isolated command native authority and drain', () => {
+    const command = { op: 'guest-shell', commandId: 'a'.repeat(32), workspaceFingerprint: 'b'.repeat(64), fingerprint: 'c'.repeat(64), command: 'printf ok', cwd: '', timeoutMs: 1000 }
+    it('checks permission inside the native mutation lock before sending the command', async () => {
+        const box = await boot()
+        await expect(box.service.guestShell(box.target, command, box.signal, async () => { throw new Error('grant revoked') })).rejects.toThrow('grant revoked')
+        expect(box.docker.execs.filter(item => item.body.op === 'guest-shell')).toHaveLength(0)
+        await box.service.guestShell(box.target, command, box.signal, async () => {})
+        await box.service.guestShell(box.target, { op: 'guest-shell-inspect', commandId: command.commandId, workspaceFingerprint: command.workspaceFingerprint }, box.signal, async () => {})
+        const calls = box.docker.execs.filter(item => String(item.body.op).startsWith('guest-shell'))
+        expect(calls[0].body.commandId).toBe(calls[1].body.commandId)
+        expect(calls[0].body.requestId).not.toBe(calls[1].body.requestId)
+    })
+    it('inspection bypasses only the mutation lock, and Stop drains exactly the submitted guest', async () => {
+        const box = await boot(), controller = new AbortController()
+        box.docker.holdOps.add('guest-shell')
+        let submitted!: () => void
+        const started = new Promise<void>(resolve => { submitted = resolve }); box.docker.onHold = submitted
+        const task = box.service.guestShell(box.target, command, controller.signal, async () => {})
+        await started
+        expect((await box.service.guestShell(box.target, { op: 'guest-shell-inspect', commandId: command.commandId, workspaceFingerprint: command.workspaceFingerprint }, box.signal, async () => {})).requestId).toBe(command.commandId)
+        controller.abort(); await expect(task).rejects.toThrow()
+        expect(box.docker.removedContainers).toContain(containerName(owner.engineAgentId))
+        expect(box.docker.removedContainers).not.toContain(containerName(otherOwner.engineAgentId))
+    })
+    it('rejects a stale target before cancellation can reach a replacement guest', async () => {
+        const box = await boot(); await box.service.stop(box.target, box.signal)
+        const replacement = await box.service.ensure(owner, box.signal)
+        await expect(box.service.guestShell(box.target, { op: 'guest-shell-cancel', commandId: command.commandId, workspaceFingerprint: command.workspaceFingerprint }, box.signal, async () => {})).rejects.toThrow()
+        expect(box.docker.execs.filter(item => item.body.op === 'guest-shell-cancel')).toHaveLength(0)
+        expect((await box.service.running(owner, box.signal)).target).toEqual(replacement.target)
     })
 })

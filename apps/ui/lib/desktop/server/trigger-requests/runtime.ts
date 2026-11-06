@@ -43,7 +43,7 @@ export function createDesktopTriggerRequests(runtime: DesktopRuntime, db: Client
         const raw = await root.readDelivery(agent.engineAgentId, target.eventId, currentSignal)
         if (!raw) throw new DesktopHttpError(404, 'Webhook delivery not found')
         const event = desktopTriggerDeliveryReceiptSchema.parse(raw)
-        if (event.localAgentId !== agent.id || event.engineAgentId !== agent.engineAgentId || event.localSessionId !== session.id || event.engineSessionId !== session.engineSessionId || event.runId !== target.triggerRunId || event.slug !== target.slug) throw new DesktopHttpError(409, 'Webhook delivery identity changed')
+        if (event.eventId !== target.eventId || event.localAgentId !== agent.id || event.engineAgentId !== agent.engineAgentId || event.localSessionId !== session.id || event.engineSessionId !== session.engineSessionId || event.runId !== target.triggerRunId || event.slug !== target.slug) throw new DesktopHttpError(409, 'Webhook delivery identity changed')
         const run = await getRun(engineOf(runtime), agent.engineAgentId, target.triggerRunId, { signal: currentSignal })
         if (run.id !== target.triggerRunId || run.agentId !== agent.engineAgentId || run.sessionId !== session.engineSessionId || run.triggerSource !== 'trigger' || run.triggerSlug !== event.slug) throw new DesktopHttpError(409, 'Not an owned webhook source run')
         currentSignal.throwIfAborted()
@@ -54,7 +54,7 @@ export function createDesktopTriggerRequests(runtime: DesktopRuntime, db: Client
         const form = await readCanonicalTriggerForm(runtime, root, target.sessionId, currentSignal)
         if (!form) return null
         const source = sourceOf(form), records = await journal.list(target)
-        const runs = [...new Set([target.triggerRunId, ...records.filter(row => row.phase === 'accepted' && row.acceptedRunId).map(row => row.acceptedRunId!)])]
+        const runs = [...new Set([target.triggerRunId, ...(await root.readContinuationRuns?.(target,currentSignal) ?? []), ...records.filter(row => row.phase === 'accepted' && row.acceptedRunId).map(row => row.acceptedRunId!)])]
         if (runs.length > 65) throw new DesktopHttpError(409, 'Webhook continuation chain exceeds reconciliation bounds')
         const matches: { id: string; status: 'running' | 'done' | 'error' | 'cancelled' }[] = []
         for (const id of runs) {
@@ -120,6 +120,19 @@ export function createDesktopTriggerRequests(runtime: DesktopRuntime, db: Client
     }
     return {
         lifecycle, journal, discover, reconcileEvent,
+        async currentForSession(sessionId: string) {
+            const source = await root.resolveSessionSource(sessionId, signal())
+            if (source.kind === 'ordinary') return null
+            if (source.kind === 'unavailable') throw new DesktopHttpError(503, 'Webhook source identity is unavailable')
+            const records = await reconcileEvent(source.target)
+            const observation = await discover(source.target)
+            if (observation) {
+                const saved = await lifecycle.capture(observation.link)
+                return lifecycle.read(saved.link)
+            }
+            const latest = records.at(-1)
+            return latest ? lifecycle.read(latest.link) : null
+        },
         async captureForSession(sessionId: string) {
             const source = await root.resolveSessionSource(sessionId, signal())
             if (source.kind === 'unavailable') throw new DesktopHttpError(503, 'Webhook source identity is unavailable; no human decision was sent')

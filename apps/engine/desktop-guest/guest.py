@@ -20,7 +20,8 @@ import sys
 import threading
 import time
 from urllib.parse import urlsplit
-from guest_shell import GuestShellManager
+from guest_shell import GuestShellManager, GuestShellError
+import tool_install
 
 DISPLAY = ':1'
 SCREEN = '1920x1080x24'
@@ -378,8 +379,6 @@ def handle_client(client):
                     state['done'].set()
                     requests[request_id] = state
                 state['cancelled'] = True
-                if guest_shell_manager.owns(request_id):
-                    guest_shell_manager.cancel(request_id)
                 if state['client'] is not None:
                     try:
                         state['client'].shutdown(socket.SHUT_RDWR)
@@ -398,10 +397,15 @@ def handle_client(client):
             client.sendall(encode_frame({'ok': True}))
             state = None
             return
-        with action_lock:
+        if request.get('op') in ('guest-shell-inspect', 'guest-shell-cancel'):
             if state['cancelled'] or cancelled(client):
                 raise GuestError('The screen action was cancelled.', refusal=False)
             payload, binary = dispatch(request, client)
+        else:
+            with action_lock:
+                if state['cancelled'] or cancelled(client):
+                    raise GuestError('The screen action was cancelled.', refusal=False)
+                payload, binary = dispatch(request, client)
         client.sendall(encode_frame(payload, binary))
     except GuestError as error:
         try:
@@ -446,14 +450,17 @@ def dispatch(request, client):
     if not isinstance(request, dict):
         raise GuestError('The screen request was not valid.', refusal=True)
     op = request.get('op')
-    if op == 'guest-shell':
-        result = guest_shell_manager.execute(request)
-        result['ok'] = True
-        return result, b''
-    if op == 'guest-shell-inspect':
-        result = guest_shell_manager.inspect(request.get('requestId'))
-        result['ok'] = True
-        return result, b''
+    if op in ('guest-shell', 'guest-shell-inspect', 'guest-shell-cancel'):
+        try:
+            if op == 'guest-shell':
+                result = guest_shell_manager.execute(request, lambda: cancelled(client))
+            elif op == 'guest-shell-inspect':
+                result = guest_shell_manager.inspect(request)
+            else:
+                result = guest_shell_manager.cancel(request)
+            return {**result, 'ok': True}, b''
+        except (GuestShellError, tool_install.InstallError, OSError, ValueError) as error:
+            raise GuestError('The guest command could not be confirmed.', refusal=True) from error
     if op == 'ping':
         width, height = geometry()
         return {'ok': True, 'ready': True, 'width': width, 'height': height, 'launchers': launchers.capabilities() if launchers is not None else {'terminal': False, 'files': False}}, b''

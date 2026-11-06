@@ -1,7 +1,10 @@
 'use client'
 
+import { z } from 'zod'
+
 import { desktopTemplateCaptureResultSchema, desktopTemplateCreateDraftResultSchema, desktopTemplateDetailSchema, desktopTemplateInstallResultSchema, desktopTemplateListSchema, desktopTemplateOperationSchema, desktopTemplatePlanSchema, desktopTemplateReceiptSchema, desktopTemplateSourcesResultSchema, templateAgentSchema, type DesktopTemplatePlan } from '@rerun/contracts'
 import type { DesktopCapturePlanSet, DesktopCaptureSelection, DesktopCaptureWorkspace, DesktopTemplateDetail, DesktopTemplateDraft, DesktopTemplateIdentity, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt, DesktopTemplateSummary } from '@/components/desktop/templates/types'
+import { templateFidelityView } from '@/components/desktop/templates/fidelity-view'
 import { desktopTemplateInstallStateSchema, type DesktopTemplateInstallState } from './template-install-state'
 
 const UNKNOWN = 'Local template acknowledgement is unknown. Retry the same attempt.'
@@ -14,6 +17,7 @@ export function createDesktopTemplatesClient() {
     const controllers = new Set<AbortController>()
     const againRequests = new Map<string,string>()
     const plans = new Map<string, DesktopTemplatePlan>()
+    const drafts = new Map<string, DesktopTemplateDetail>()
     const installs = new Map<string, DesktopTemplateInstallIntent>()
     const installGenerations = new Map<string, number>()
     let closed = false
@@ -48,6 +52,7 @@ export function createDesktopTemplatesClient() {
         return {
             templateId: detail.templateId, revision: detail.revision, title: detail.title, tagline: '', category: 'other', updatedAt: detail.capturedAt,
             description: detail.proseWarning, capturedAt: detail.capturedAt,
+            ...templateFidelityView(detail),
             agents: detail.coworkers.map(coworker => templateAgentSchema.parse({ key: coworker.agentKey, name: coworker.name, description: coworker.description, setupRequired: coworker.setup.required,
                 skills: [...new Set(coworker.files.filter(file => file.kind === 'skill').map(file => file.path.split('/')[1]))].map(name => ({ name })) })),
             exclusions: detail.coworkers.flatMap(coworker => coworker.exclusions), unsupportedEntries: [],
@@ -67,7 +72,7 @@ export function createDesktopTemplatesClient() {
             plans.set(result.planRevision, result)
             return { planId: result.planRevision, revision: result.planRevision, plans: result.coworkers.map(coworker => ({
                 agentRowId: coworker.agentId, name: coworker.name, displayName: coworker.name, description: coworker.description, sourceRevision: coworker.sourceRevision,
-                included: coworker.included, blocked: coworker.blocked,
+                included: coworker.included, blocked: coworker.blocked, requirements: coworker.requirements ?? [],
                 files: [...coworker.selectableFiles, ...coworker.selectableSkills.flatMap(skill => skill.files)].map(file => ({
                     path: file.path,
                     bytes: file.bytes,
@@ -92,9 +97,24 @@ export function createDesktopTemplatesClient() {
         },
         async list(): Promise<DesktopTemplateSummary[]> {
             const result = desktopTemplateListSchema.parse(await request({ operation: 'list' }))
-            return Promise.all(result.templates.filter(template => template.status === 'captured' && template.revision).map(template => this.detail({ templateId: template.templateId, revision: template.revision! })))
+            drafts.clear()
+            return Promise.all(result.templates.map(template => {
+                if (template.status === 'captured' && template.revision) return this.detail({ templateId: template.templateId, revision: template.revision })
+                if (!template.draftRevision) throw new DesktopTemplateRequestError('Draft revision is unavailable. Refresh the library.', true)
+                const draft: DesktopTemplateDetail = { templateId: template.templateId, revision: template.draftRevision, draftRevision: template.draftRevision, title: template.title, tagline: 'Draft — not captured', category: 'other', updatedAt: '', agents: [], description: '', capturedAt: null, exclusions: [], unsupportedEntries: [] }
+                drafts.set(`${draft.templateId}:${draft.revision}`, draft)
+                return draft
+            }))
         },
-        async detail(template: DesktopTemplateIdentity): Promise<DesktopTemplateDetail> { return detailOf(await request({ operation: 'detail', templateId: template.templateId, revision: template.revision })) },
+        async detail(template: DesktopTemplateIdentity): Promise<DesktopTemplateDetail> {
+            const draft = drafts.get(`${template.templateId}:${template.revision}`)
+            if (draft) {
+                const current = desktopTemplateListSchema.parse(await request({ operation: 'list' })).templates.find(row => row.templateId === template.templateId)
+                if (!current || current.status !== 'draft' || current.draftRevision !== template.revision) throw new DesktopTemplateRequestError('The draft changed. Refresh the library.', true)
+                return draft
+            }
+            return detailOf(await request({ operation: 'detail', templateId: template.templateId, revision: template.revision }))
+        },
         async currentInstall(template: DesktopTemplateIdentity): Promise<DesktopTemplateInstallState> {
             const key = `${template.templateId}:${template.revision}`
             const generation = installGenerations.get(key) ?? 0
@@ -118,6 +138,13 @@ export function createDesktopTemplatesClient() {
             againRequests.delete(key)
             installs.delete(key)
             return { receiptId: result.receiptId, coworkers: result.coworkers }
+        },
+        async rollback(template: DesktopTemplateIdentity, requestId: string) {
+            const key = `${template.templateId}:${template.revision}`
+            if (installs.get(key)?.requestId !== requestId) throw new DesktopTemplateRequestError('This interrupted installation changed. Refresh its saved status.', true)
+            const result = z.strictObject({ status: z.literal('rolled-back'), requestId: z.uuid() }).parse(await fetchResponse(`${base}/rollback`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({requestId}) }))
+            if (result.requestId !== requestId) throw new DesktopTemplateRequestError(UNKNOWN,false)
+            installs.delete(key); againRequests.delete(key)
         },
         pendingInstall(template: DesktopTemplateIdentity): DesktopTemplateInstallIntent | null { return installs.get(`${template.templateId}:${template.revision}`) ?? null },
         async receipt(intent: DesktopTemplateInstallIntent) { return desktopTemplateReceiptSchema.parse(await request({ operation: 'receipt', requestId: intent.requestId })) },

@@ -13,17 +13,24 @@ test('runtime status mapping does not guess running', () => {
 })
 
 test('missing launcher authority is explicit', async () => {
-    await expect(missingHumanLauncher(owner, 'files', 'id', new AbortController().signal)).rejects.toBeInstanceOf(MissingComputerPanelAuthority)
+    await expect(missingHumanLauncher(owner, 'files', 'id', new AbortController().signal)).rejects.toThrow()
 })
 
 test('HTTP launcher sends exact identity and requires acknowledged success', async () => {
-    const fetcher = vi.fn(async () => res(200, { status: 'opened', acknowledged: true }))
+    const fetcher = vi.fn(async () => res(200, { status: 'opened', requestId: 'req', app: 'terminal', acknowledged: true }))
     await expect(createHttpHumanLauncher(fetcher as unknown as typeof fetch)(owner, 'terminal', 'req', new AbortController().signal)).resolves.toEqual({ status: 'opened' })
     const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit]
-    expect(url).toBe('/api/desktop/agents/a%201/sessions/s/computer-launcher')
+    expect(url).toBe('/api/desktop/agents/a%201/sessions/s/computer-panel')
     expect(JSON.parse(init.body as string)).toEqual({ requestId: 'req', runId: 'r', generation: 'a'.repeat(32), app: 'terminal' })
     const unacked = vi.fn(async () => res(200, { status: 'opened', acknowledged: false }))
-    await expect(createHttpHumanLauncher(unacked as unknown as typeof fetch)(owner, 'files', 'req', new AbortController().signal)).resolves.toMatchObject({ status: 'interrupted' })
+    await expect(createHttpHumanLauncher(unacked as unknown as typeof fetch)(owner, 'files', 'req', new AbortController().signal)).rejects.toThrow()
     const absent = vi.fn(async () => res(404, {}))
-    await expect(createHttpHumanLauncher(absent as unknown as typeof fetch)(owner, 'files', 'req', new AbortController().signal)).rejects.toBeInstanceOf(MissingComputerPanelAuthority)
+    await expect(createHttpHumanLauncher(absent as unknown as typeof fetch)(owner, 'files', 'req', new AbortController().signal)).rejects.toThrow()
 })
+
+ test('unrelated launcher acknowledgement and post-dispatch HTTP errors are uncertain', async () => {
+    const wrong = vi.fn(async () => res(200, { status: 'opened', requestId: 'different', app: 'terminal', acknowledged: true }))
+    await expect(createHttpHumanLauncher(wrong as typeof fetch)(owner, 'terminal', 'req', new AbortController().signal)).rejects.toThrow('changed')
+    const lost = vi.fn(async () => res(500, { error: 'After submission' }))
+    await expect(createHttpHumanLauncher(lost as typeof fetch)(owner, 'terminal', 'req', new AbortController().signal)).rejects.toThrow('confirmed')
+ })

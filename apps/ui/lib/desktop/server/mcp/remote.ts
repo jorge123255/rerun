@@ -1,4 +1,5 @@
 import 'server-only'
+import { emptyMcpMaterialLease, type DesktopMcpMaterialSource } from '../mcp-secret-references/lease'
 import { endpoint, type RemoteTool } from './model'
 import type { RemoteMcpStore } from './store'
 
@@ -48,7 +49,7 @@ export function decodeReply(text: string, mime: string, id: number): Record<stri
     if (!reply || reply.error || !reply.result || typeof reply.result !== 'object') throw new Error('MCP protocol request failed')
     return reply.result
 }
-export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, network: typeof fetch = fetch, oauthCredential?: (agent:string,name:string,revision:string,signal:AbortSignal)=>Promise<string|null>) {
+export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, network: typeof fetch = fetch, oauthCredential?: (agent:string,name:string,revision:string,signal:AbortSignal)=>Promise<string|null>, materials?: DesktopMcpMaterialSource) {
     const lifecycle = store.lifecycle
     const disconnect = lifecycle.disconnect
     async function operate(agent: string, name: string, revision: string, call?: { name:string; arguments:Record<string,unknown> }, stop?: AbortSignal) {
@@ -59,6 +60,9 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
         const timer = setTimeout(() => controller.abort(), call ? 120_000 : 20_000)
         const cancel = () => controller.abort()
         stop?.addEventListener('abort',cancel,{once:true}); if (stop?.aborted) cancel()
+        let material = emptyMcpMaterialLease()
+        try { if (materials) material = await materials(agent, name, revision, call ? 'invocation' : 'discovery', signal) }
+        catch (error) { controller.abort(); clearTimeout(timer); stop?.removeEventListener('abort',cancel); throw error }
         let bearer = '', session = '', id = 0, configuredUrl = '', configuredBearer = ''
         const execute = async () => {
         try {
@@ -66,6 +70,7 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
             const url = endpoint(first.url); configuredUrl = url
             async function guard() {
                 ticket.assertCurrent()
+                await material.check()
                 const [permission,current] = await abortable(Promise.all([access(agent),store.read(agent,name)]),signal)
                 ticket.assertCurrent()
                 if (!permission.enabled || !permission.granted || current.revision !== revision || current.url !== url || current.bearer !== configuredBearer) throw new Error('MCP permission or server changed')
@@ -78,7 +83,7 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
                 const requestId = ++id
                 const body = JSON.stringify({jsonrpc:'2.0',...(notification ? {} : {id:requestId}),method,params})
                 if (Buffer.byteLength(body) > 65536) throw new Error('MCP request exceeds limit')
-                const response = await network(url,{method:'POST', redirect:'manual',credentials:'omit', signal, headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','MCP-Protocol-Version':'2025-03-26',...(bearer ? {Authorization:`Bearer ${bearer}`} : {}),...(session ? {'Mcp-Session-Id':session} : {})},body})
+                const response = await network(url,{method:'POST', redirect:'manual',credentials:'omit', signal, headers:{...material.material.headers,'Content-Type':'application/json',Accept:'application/json, text/event-stream','MCP-Protocol-Version':'2025-03-26',...(bearer ? {Authorization:`Bearer ${bearer}`} : {}),...(session ? {'Mcp-Session-Id':session} : {})},body})
                 if (!response.ok) { if(response.body)await abortable(response.body.cancel(),signal); throw new Error('MCP HTTP request failed') }
                 const nextSession = response.headers.get('mcp-session-id')
                 if (nextSession) { if (!/^[\x21-\x7e]{1,1024}$/.test(nextSession)) throw new Error('Invalid MCP session'); session = nextSession }
@@ -95,7 +100,7 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
                     return value
                 }
                 await guard()
-                return redact(decoded) as Record<string,unknown>
+                return material.protect(redact(decoded)) as Record<string,unknown>
             }
             const init = await rpc('initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'rerun-desktop',version:'1.0.0'}})
             if (init.protocolVersion !== '2025-03-26') throw new Error('Unsupported MCP protocol version')
@@ -133,8 +138,9 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
                     const credential=oauthCredential?await abortable(store.readOAuth(agent,name),cleanupSignal):null
                     ticket.assertCurrent()
                     const sameCredential=!oauthCredential || !credential?.refreshPending && (credential?.accessToken ?? current.bearer)===bearer && (!credential || credential.resource===configuredUrl)
+                    await material.check()
                     if (sameCredential && permission.enabled && permission.granted && current.revision === revision && current.url === configuredUrl && current.bearer === configuredBearer) {
-                        const closed = await abortable(network(configuredUrl,{method:'DELETE',redirect:'manual',credentials:'omit',signal:cleanupSignal,headers:{'Mcp-Session-Id':session,'MCP-Protocol-Version':'2025-03-26',...(bearer ? {Authorization:`Bearer ${bearer}`} : {})}}),cleanupSignal)
+                        const closed = await abortable(network(configuredUrl,{method:'DELETE',redirect:'manual',credentials:'omit',signal:cleanupSignal,headers:{...material.material.headers,'Mcp-Session-Id':session,'MCP-Protocol-Version':'2025-03-26',...(bearer ? {Authorization:`Bearer ${bearer}`} : {})}}),cleanupSignal)
                         if(closed.body)await abortable(closed.body.cancel(),cleanupSignal)
                     }
                 } catch { /* Never log server errors or credentials. */ }
@@ -151,6 +157,7 @@ export function remoteMcpRuntime(store: RemoteMcpStore, access: McpAccess, netwo
         } finally {
             controller.abort(); clearTimeout(timer); stop?.removeEventListener('abort',cancel)
             bearer = ''
+            await material.release()
         }
         } finally { ticket.release() }
     }

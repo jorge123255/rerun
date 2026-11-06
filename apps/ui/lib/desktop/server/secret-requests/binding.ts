@@ -42,7 +42,11 @@ async function concretePorts(runtime: DesktopRuntime, sessionId: string, signal:
     const agent = await findDesktopAgent(db, session.agentId)
     if (!agent || agent.workspaceId !== 1) throw new DesktopHttpError(404, 'Coworker not found')
     const guardCurrent = watchDesktopSecretAuthority(runtime, agent.id, session.id)
-    const store = createDesktopSecretRequestStore(db, createDesktopSecretCrypto(masterKey))
+    const store = createDesktopSecretRequestStore(db, createDesktopSecretCrypto(masterKey), { credentialsChanged: async (id, keys) => {
+        const { getDesktopRemoteMcpService } = await import('../mcp-binding')
+        const service = await getDesktopRemoteMcpService(runtime)
+        for (const key of keys) await service.references.credentialChanged(id, key)
+    } })
     async function owner() {
         signal.throwIfAborted()
         const currentRuntime = await readDesktopRuntime()
@@ -115,4 +119,30 @@ export async function readDesktopSecretRequestView(runtime: DesktopRuntime, sess
     const signal = AbortSignal.any([AbortSignal.timeout(15_000), ...(options.signal ? [options.signal] : [])])
     const request = await desktopSecretRequestPorts(runtime, sessionId).read(sessionId, signal)
     return { request: request?.status === 'accepted' ? null : request }
+}
+
+/** Read-only admission probe: never stages a credential, dispatches a turn, or recovers an attempt. */
+export async function probeDesktopSecretAdmission(runtime: DesktopRuntime, sessionId: string, requestId: string, signal: AbortSignal): Promise<{ status: 'absent' | 'reserved' | 'unknown' } | { status: 'accepted'; continuationId: string }> {
+    try {
+        const db = await openDesktopDatabase(runtime.dataRoot), session = await findDesktopSession(db,sessionId)
+        const agent = session && await findDesktopAgent(db,session.agentId)
+        if (!session || !agent || agent.workspaceId !== 1) return { status:'unknown' }
+        const current = await readDesktopRuntime()
+        if (current.launchNonce !== runtime.launchNonce || current.dataRoot !== runtime.dataRoot || current.engine.origin !== runtime.engine.origin) return { status:'unknown' }
+        await assertCoworkerNotDeleting(db,agent.id)
+        const store = createDesktopSecretRequestStore(db,createDesktopSecretCrypto(masterKey))
+        const saved = await store.read(requestId)
+        if (!saved) return { status:'absent' }
+        if (saved.source.agentId !== agent.id || saved.source.sessionId !== sessionId) return { status:'unknown' }
+        if (!saved.receipt) return { status:saved.pendingAttempt ? 'reserved' : 'absent' }
+        const { source,receipt } = saved
+        const guard = { runId:source.runId,sourceMessageId:source.sourceMessageId,toolCallId:source.toolCallId,fingerprint:source.fingerprint }
+        signal.throwIfAborted()
+        const response = await chat(engineOf(runtime),agent.engineAgentId,{ sessionId:session.engineSessionId,message:receipt.summary,source:'dashboard',desktopQueuedTurn:{runId:receipt.continuationRequestId,secret:guard,replayOnly:true} })
+        try {
+            if (response.ok && response.headers.get('x-session-id') === session.engineSessionId && response.headers.get('x-run-id') === receipt.continuationRequestId) return {status:'accepted',continuationId:receipt.continuationRequestId}
+            if (response.status === 404 && (await response.clone().json().catch(()=>null))?.code === 'queued_turn_not_found') return {status:'reserved'}
+            return {status:'unknown'}
+        } finally { void response.body?.cancel().catch(()=>{}) }
+    } catch { return {status:'unknown'} }
 }

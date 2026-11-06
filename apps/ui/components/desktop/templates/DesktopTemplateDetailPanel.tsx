@@ -5,6 +5,7 @@ import { CardCarousel, ScrollFade, Stripes } from '@rerun/ui/primitives'
 import { TemplateBoardPreview } from '@rerun/ui/iso-grid'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Icon } from '@/components/ui/icon'
 import { ShieldCheck } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -12,6 +13,7 @@ import type { DesktopTemplatesClient } from '@/lib/desktop/templates-client'
 import { DesktopTemplateDetailAgentCard } from './DesktopTemplateDetailAgentCard'
 import type { DesktopTemplateDetail, DesktopTemplateInstallIntent, DesktopTemplateInstallReceipt, DesktopTemplateLibraryChange } from './types'
 import type { DesktopPortableTemplateActions } from '@/lib/desktop/portable-template-actions'
+import { DesktopTemplateDraftDelete } from './DesktopTemplateDraftDelete'
 import { DesktopTemplatePortableActions } from './DesktopTemplatePortableActions'
 import { DesktopTemplateFidelityReview } from './DesktopTemplateFidelityReview'
 import { useDesktopTemplateInstall } from './useDesktopTemplateInstall'
@@ -60,12 +62,16 @@ export function DesktopTemplateDetailPanel({ client, template, resume = null, on
             </div>
         </ScrollFade>
         <div className="border-t bg-muted/50 px-5 py-4 max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
-            {portableActions && <div className="mb-3"><DesktopTemplatePortableActions template={template} actions={portableActions} onLibraryChanged={onLibraryChanged ?? (() => undefined)} onPickImport={onPickImport} onSaveExport={onSaveExport} /></div>}
+            {portableActions && template.draftRevision && <DesktopTemplateDraftDelete templateId={template.templateId} revision={template.draftRevision} title={template.title} actions={portableActions} onDeleted={templateId => onLibraryChanged?.({ operation: 'delete', templateId })} />}
+            {portableActions && !template.draftRevision && <div className="mb-3"><DesktopTemplatePortableActions template={template} actions={portableActions} onLibraryChanged={onLibraryChanged ?? (() => undefined)} onPickImport={onPickImport} onSaveExport={onSaveExport} /></div>}
             {install.receipt && <p role="status" className="mb-2 text-center text-xs text-muted-foreground">Previously used · {install.receipt.coworkers.length} coworker{install.receipt.coworkers.length === 1 ? '' : 's'} still in this workspace</p>}
             {install.error && <p role="alert" className="mb-2 text-center text-xs text-destructive">{install.error}</p>}
             <Button type="button" className="w-full" loading={install.busy} disabled={!canInstall || install.busy} title={!canInstall ? 'Capture at least one coworker before installing.' : undefined} onClick={install.readFailed ? install.refresh : install.receipt ? install.again : install.run}>
-                {install.checking ? 'Checking previous use…' : install.readFailed ? 'Try again' : install.receipt ? 'Use again' : install.interrupted ? 'Retry installation' : 'Use template'}
+                {install.checking ? 'Checking previous use…' : install.readFailed ? 'Try again' : install.receipt ? 'Use again' : install.cleanupPending ? 'Retry cleanup' : install.interrupted ? 'Retry installation' : 'Use template'}
             </Button>
+            {install.interrupted && !install.cleanupPending && <ConfirmDialog title="Remove this unfinished installation?" description="This cancels the saved installation and removes only its unused, unchanged copies. Copies already on the board or containing new work are kept. You can use the template again after cleanup finishes." confirmLabel="Remove unfinished copies" onConfirm={() => void install.rollback()} pending={install.busy}>
+                <Button type="button" variant="ghost" className="mt-2 w-full" disabled={install.busy}>Remove unfinished copies</Button>
+            </ConfirmDialog>}
             <p className="mt-2 text-center text-[11px] text-muted-foreground">{canInstall ? 'Creates fresh coworkers with empty histories and tools switched off.' : 'Capture at least one coworker before installing this draft.'}</p>
         </div>
     </div>

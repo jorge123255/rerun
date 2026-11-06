@@ -40,6 +40,8 @@ test('a failed final authority check rolls back configuration, revision and rece
     await expect(adapter.apply(owner, server, identity(), guard, applied)).rejects.toThrow('Source stopped')
     expect((await db.execute('SELECT * FROM desktop_mcp_stdio')).rows).toEqual([])
     expect((await db.execute('SELECT * FROM desktop_self_mcp_effects')).rows).toEqual([])
+    expect((await db.execute('SELECT * FROM desktop_mcp_secret_reference_heads')).rows).toEqual([])
+    expect((await db.execute('SELECT * FROM desktop_mcp_secret_references')).rows).toEqual([])
     expect(await adapter.revision(owner)).toBe(0)
 })
 
@@ -60,7 +62,7 @@ test('preexisting equal configuration is never used as proof that this decision 
 
 test('unsupported references and credential-bearing existing connections cannot be silently replaced', async () => {
     const adapter = config()
-    const withReferences = { ...server, env: { API_TOKEN: '${API_TOKEN}' } }
+    const withReferences = { ...server, env: { API_TOKEN: 'prefix-${API_TOKEN}' } }
     await expect(adapter.apply(owner, withReferences, identity(), context(), applied)).rejects.toThrow('requirements')
     await db.execute({ sql: "INSERT INTO desktop_remote_mcp(id,transport,agent_id,name,url,revision,bearer) VALUES('remote-id','http',?,?,?,'saved-revision','sealed-existing')", args: [owner, 'remote', 'https://example.com/mcp'] })
     const remote: SelfMcpServerCandidate = { name: 'remote', transport: 'http', url: 'https://another.example.com/mcp', args: [], env: {}, headers: {} }
@@ -86,4 +88,22 @@ test('an effect cannot silently apply a candidate different from the human-revie
     const adapter = config()
     await expect(adapter.apply(owner, { ...server, args: ['--changed'] }, identity(), context(), applied)).rejects.toThrow('reviewed proposal')
     expect((await db.execute('SELECT * FROM desktop_mcp_stdio')).rows).toEqual([])
+})
+
+
+test('reviewed reference config, exact versions and pending outcome commit with the proposal receipt and survive reopen', async () => {
+    const candidate = { ...server, env: { API_TOKEN: '${API_TOKEN}' }, args: ['${ARG_TOKEN}'] }
+    const expected = identity(); expected.decision.fingerprint = selfMcpFingerprint(candidate)
+    await db.execute({ sql: "INSERT INTO desktop_secret_credentials(agent_id,key,version,sealed_value,updated_at) VALUES(?,?,?,?,?)", args: [owner, 'API_TOKEN', 4, 'opaque-test-envelope-not-opened', '2026-11-05'] })
+    const receipt = await config().apply(owner, candidate, expected, context(), applied)
+    expect(receipt.outcome).toBe('applied_pending_credentials')
+    const bindings = (await db.execute('SELECT secret_name,secret_version,status,config_revision FROM desktop_mcp_secret_references ORDER BY secret_name')).rows
+    expect(bindings).toMatchObject([{ secret_name: 'API_TOKEN', secret_version: 4, status: 'bound' }, { secret_name: 'ARG_TOKEN', secret_version: null, status: 'pending' }])
+    expect(bindings[0].config_revision).toBe((await db.execute('SELECT revision FROM desktop_mcp_stdio')).rows[0].revision)
+    await closeDesktopDatabase(directory); db = await openDesktopDatabase(directory)
+    expect(await config().find(owner, candidate.name)).toEqual(candidate)
+    expect(await config().recover(owner, expected)).toEqual({ state: 'applied', receipt })
+    expect(await config().connectivity(owner, candidate)).toBe('needs_credentials')
+    expect(await config().apply(owner, candidate, expected, context(), applied)).toEqual(receipt)
+    expect((await db.execute('SELECT * FROM desktop_mcp_secret_reference_heads')).rows).toHaveLength(1)
 })

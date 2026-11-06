@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link } from 'node:fs/promises'
+import { mkdtemp, realpath, mkdir, writeFile, readFile, rm, symlink, link } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, test } from 'vitest'
@@ -9,7 +9,7 @@ import { sealPortableManifest, writePortableArchive, readPortableArchive } from 
 import { sha256 } from './hash.js'
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive:true, force:true }))) })
-async function folder() { const root = await mkdtemp(join(tmpdir(),'template-fidelity-')); roots.push(root); return root }
+async function folder() { const root = await realpath(await mkdtemp(join(tmpdir(),'template-fidelity-'))); roots.push(root); return root }
 function manifest(bytes: Buffer) {
     return sealPortableManifest({ format:'desktop-portable-template', formatVersion:1, packageKey:'a'.repeat(32), title:'Fixture', capturedAt:'2026-11-05T00:00:00.000Z',
         proseWarning:'Selected instructions, files, and skills are copied as written. This capture does not prove they contain no secrets.', limits:DESKTOP_PORTABLE_TEMPLATE_LIMITS,

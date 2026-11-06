@@ -1,38 +1,30 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createDesktopGuestShellTransport } from './transport'
-import { encodeFrame } from '../isolated-screen/frame'
-import { containerName } from '../isolated-screen/identity'
-import type { DesktopGuestShellIdentity, DesktopGuestShellRequest } from './types'
-
-const identity: DesktopGuestShellRequest = {
-    agentId: 'agent', sessionId: 'session', runId: 'run', toolCallId: 'tool', requestId: '11111111-1111-4111-8111-111111111111',
-    guest: { engineAgentId: 'engine', launchNonce: 'launch', sessionGeneration: 'a'.repeat(32), workspaceFingerprint: 'b'.repeat(64) },
-    command: 'printf ok', timeoutMs: 120_000, cwd: '', packages: ['is-number@7.0.0'],
-}
-
-describe('desktop guest shell transport', () => {
-    it('uses the isolated RPC operation with exact request identity and validated result', async () => {
-        const exec = vi.fn(async (_name, _command, input) => {
-            const request = JSON.parse(input.subarray(8).toString())
-            expect(request).toMatchObject({ op: 'guest-shell', requestId: identity.requestId.replaceAll('-', ''), command: identity.command, cwd: '', packages: ['is-number@7.0.0'] })
-            return encodeFrame({ ok: true, requestId: identity.requestId, status: 'done', stdout: 'ok', stderr: '', exitCode: 0, durationMs: 1 })
-        })
-        const transport = createDesktopGuestShellTransport({ exec } as never)
-        const result = await transport.execute(identity, new AbortController().signal)
-        expect(result).toMatchObject({ status: 'done', stdout: 'ok', requestId: identity.requestId })
-        expect(exec).toHaveBeenCalledWith(containerName(identity.guest.engineAgentId), ['rerun-rpc'], expect.any(Buffer), expect.any(AbortSignal))
+import { createDesktopGuestShellTransport } from './transport.js'
+import { guestShellRequestId } from './tools.js'
+import type { DesktopGuestShellIdentity, DesktopGuestShellRequest } from './types.js'
+const identity: DesktopGuestShellRequest = { agentId: 'agent', sessionId: 'session', runId: 'run', toolCallId: 'provider-call', requestId: '11111111-1111-4111-8111-111111111111', guest: { engineAgentId: 'agent', launchNonce: 'launch', sessionGeneration: 'a'.repeat(32), workspaceFingerprint: 'b'.repeat(64) }, fingerprint: 'c'.repeat(64), command: 'printf ok', timeoutMs: 120000, cwd: '' }
+const commandId = identity.requestId.replaceAll('-', '')
+const response = { ok: true, requestId: commandId, status: 'done', stdout: 'ok', stderr: '', exitCode: 0, durationMs: 1 }
+describe('guest command transport', () => {
+    it('separates immutable command identity from fresh native RPC envelope identities', async () => {
+        const rpc = vi.fn(async (_identity: DesktopGuestShellIdentity, _body: Record<string, unknown>, _signal: AbortSignal) => response), transport = createDesktopGuestShellTransport(rpc)
+        expect(await transport.execute(identity, new AbortController().signal)).toEqual({ requestId: identity.requestId, status: 'done', stdout: 'ok', stderr: '', exitCode: 0, durationMs: 1 })
+        expect(rpc).toHaveBeenCalledWith(identity, expect.objectContaining({ op: 'guest-shell', commandId, fingerprint: identity.fingerprint }), expect.any(AbortSignal))
+        expect(rpc.mock.calls[0]?.[1]).not.toHaveProperty('requestId')
+        await transport.inspect(identity, new AbortController().signal)
+        expect(rpc.mock.calls[1]?.[1]).toMatchObject({ op: 'guest-shell-inspect', commandId })
     })
-
-    it('inspects and cancels without a second launch', async () => {
-        const exec = vi.fn(async (_name, _command, input) => {
-            const request = JSON.parse(input.subarray(8).toString())
-            if (request.op === 'cancel') return encodeFrame({ ok: true })
-            expect(request.op).toBe('guest-shell-inspect')
-            return encodeFrame({ ok: true, requestId: identity.requestId, status: 'unavailable', stdout: '', stderr: '', exitCode: null, durationMs: 0 })
-        })
-        const transport = createDesktopGuestShellTransport({ exec } as never)
-        expect((await transport.inspect(identity, new AbortController().signal)).status).toBe('unavailable')
-        await transport.cancel(identity, new AbortController().signal)
-        expect(exec).toHaveBeenCalledTimes(2)
+    it.each([{ ...response, requestId: 'e'.repeat(32) }, { ...response, ok: false }, { ...response, exitCode: -9 }, { ...response, extra: true }])('rejects a mismatched or malformed ACK before normalization', async reply => {
+        await expect(createDesktopGuestShellTransport(async () => reply).execute(identity, new AbortController().signal)).rejects.toThrow()
+    })
+    it('requires an exact positive drain acknowledgement for cancellation', async () => {
+        for (const reply of [{ ok: true }, { ok: true, requestId: 'e'.repeat(32), drained: true }, { ok: true, requestId: commandId, drained: false }]) await expect(createDesktopGuestShellTransport(async () => reply).cancel(identity, new AbortController().signal)).rejects.toThrow()
+        await expect(createDesktopGuestShellTransport(async () => ({ ok: true, requestId: commandId, drained: true })).cancel(identity, new AbortController().signal)).resolves.toBeUndefined()
+    })
+    it('derives a stable UUID from the complete invocation without requiring provider UUIDs', () => {
+        const id = guestShellRequestId('agent', 'session', 'run', 'functions.call-17')
+        expect(id).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-5[a-f0-9]{3}-a[a-f0-9]{3}-[a-f0-9]{12}$/)
+        expect(id).toBe(guestShellRequestId('agent', 'session', 'run', 'functions.call-17'))
+        expect(id).not.toBe(guestShellRequestId('agent', 'other', 'run', 'functions.call-17'))
     })
 })

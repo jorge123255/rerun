@@ -6,7 +6,7 @@ import type {
     DesktopGuestShellRequest,
 } from '@rerun/contracts'
 
-export type DesktopGuestShellAuthority = (identity: Omit<DesktopGuestShellIdentity, 'guest'>, signal: AbortSignal) => Promise<DesktopGuestShellIdentity['guest']>
+export type DesktopGuestShellAuthority = (identity: Omit<DesktopGuestShellIdentity, 'guest'>, signal: AbortSignal, phase?: 'execute' | 'inspect') => Promise<DesktopGuestShellIdentity['guest']>
 export type DesktopGuestShellPackageAuthority = (guest: DesktopGuestShellIdentity['guest'], packages: readonly string[], signal: AbortSignal) => Promise<readonly DesktopGuestShellPackageEvidence[]>
 
 export type DesktopGuestShellTransport = {
@@ -20,3 +20,5 @@ export type DesktopGuestShellStore = {
     complete(identity: DesktopGuestShellIdentity, receipt: DesktopGuestShellReceipt): Promise<void>
     read(requestId: string): Promise<DesktopGuestShellReceipt | null>
 }
+
+export type { DesktopGuestShellIdentity, DesktopGuestShellInput, DesktopGuestShellPackageEvidence, DesktopGuestShellReceipt, DesktopGuestShellResult, DesktopGuestShellRequest } from '@rerun/contracts'

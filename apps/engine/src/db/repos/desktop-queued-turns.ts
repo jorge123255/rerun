@@ -1,3 +1,4 @@
+import type { InStatement } from '@libsql/client'
 import { desktopDocumentContextParts, type DesktopDocumentSendSelection, type DesktopResolvedDocument, type DesktopMcpSignInGuard } from '@rerun/contracts'
 import type { DesktopForemanBinding, ForemanBrief, DesktopSecretRequestGuard, DesktopServiceRequestGuard, DesktopTakeoverGuard } from '@rerun/contracts'
 import { createHash } from 'node:crypto'
@@ -35,7 +36,7 @@ export async function getDesktopQueuedTurn(agentId: string, turn: QueuedTurn): P
 
 // The receipt, run and user text commit together before an HTTP acknowledgement. Even a crash
 // during provider preparation leaves the accepted prompt in history, and retries never resend it.
-export async function reserveDesktopQueuedTurn(agentId: string, turn: QueuedTurn, attachments?: DesktopWorkspaceAttachment[], author?: MessageAuthor, desktopAttachments?: DesktopResolvedAttachment[], initializeSession = false, desktopDocuments?: DesktopResolvedDocument[]): Promise<MessageRow> {
+export async function reserveDesktopQueuedTurn(agentId: string, turn: QueuedTurn, attachments?: DesktopWorkspaceAttachment[], author?: MessageAuthor, desktopAttachments?: DesktopResolvedAttachment[], initializeSession = false, desktopDocuments?: DesktopResolvedDocument[], atomicStatements: InStatement[] = []): Promise<MessageRow> {
     const { client } = await getSystemDb(agentId)
     const now = nowIso()
     const user: MessageRow = {
@@ -45,6 +46,7 @@ export async function reserveDesktopQueuedTurn(agentId: string, turn: QueuedTurn
     }
     if (initializeSession && (agentId !== 'foreman' || !turn.foreman || turn.foreman.binding.runId !== turn.runId)) throw new HttpError(409, 'Only the admitted Foreman can initialize this conversation.')
     await client.batch([
+        ...atomicStatements,
         ...(initializeSession ? [{ sql: "INSERT INTO sessions(id,agent_id,title,source,status,created_at,updated_at) VALUES(?,?,'Foreman','dashboard','open',?,?)", args: [turn.sessionId, agentId, now, now] }] : []),
         { sql: 'INSERT INTO runs (id, agent_id, session_id, started_at) VALUES (?,?,?,?)', args: [turn.runId, agentId, turn.sessionId, now] },
         { sql: 'INSERT INTO messages (id, session_id, role, content_json, created_at, author_id, author_name) VALUES (?,?,?,?,?,?,?)', args: [user.id, turn.sessionId, 'user', user.contentJson, now, user.authorId, user.authorName] },

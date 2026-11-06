@@ -51,7 +51,7 @@ export function presentComputerPanel(p: ComputerPanelProjection | null, view: Co
     if (reason) return { show: false, reason: 'runtime', runtimeReason: reason }
     const owner = ownerOf(p)
     if (!owner) return { show: false, reason: 'no-screen' }
-    if (dismissed.has(dismissKey(owner, p.takeover?.takeoverId ?? null))) return { show: false, reason: 'dismissed' }
+    if (dismissed.has(dismissKey(owner, null))) return { show: false, reason: 'dismissed' }
     const mode = p.humanDriving ? 'drive' : 'model'
     return { show: true, owner, site: p.current.liveScreen?.site ?? null, mode, takeover: p.takeover }
 }

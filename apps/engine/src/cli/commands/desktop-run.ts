@@ -1,3 +1,8 @@
+import { bindDesktopComputerPanel } from '../../desktop/computer-panel/binding.js'
+import { bindDesktopGuestShell } from '../../desktop/guest-shell/runtime.js'
+import { bindDesktopClaudePlanAuth } from '../../desktop/claude-plan/auth.js'
+import { stopDesktopClaudeWorkers } from '../../desktop/claude-plan/runtime.js'
+import { createDesktopTriggerToolRuntime } from '../../desktop/trigger-tools/runtime.js'
 import { ensureForeman } from '../../agents/foreman.js'
 import { bindDesktopForeman } from '../../desktop/foreman/binding.js'
 import { createDesktopForemanRoutes } from '../../desktop/foreman/routes.js'
@@ -19,7 +24,7 @@ import { reconcileInterruptedRuns } from '../../runtime/reconcile.js'
 import { abortAllRuns } from '../../runtime/run-control.js'
 import { closeAllMcp } from '../../tools/mcp-pool.js'
 import { env } from '../../config/env.js'
-import { desktopCodexAction } from '@rerun/contracts'
+import { desktopCodexAction, desktopClaudePlanActionSchema } from '@rerun/contracts'
 import { codexLoginAction, codexLoginStatus, stopCodexLogin } from '../../desktop/codex-login.js'
 import { desktopApp, desktopRouteAllowed } from '../../desktop/policy.js'
 import { bindDesktopSchedules } from '../../desktop/schedule-binding.js'
@@ -60,6 +65,7 @@ export async function desktopRunCommand(): Promise<void> {
     await initializeDesktopBrainStore()
     const lifetime = new AbortController()
     let triggers: Awaited<ReturnType<typeof createDesktopTriggerRuntime>> | undefined
+    let triggerTools: ReturnType<typeof createDesktopTriggerToolRuntime> | undefined
     let schedules: Awaited<ReturnType<typeof bindDesktopSchedules>> | undefined
     let scheduleTools: Awaited<ReturnType<typeof createDesktopScheduleToolRuntime>> | undefined
     let stopScheduler: ReturnType<typeof startScheduler> | undefined
@@ -80,6 +86,13 @@ export async function desktopRunCommand(): Promise<void> {
         return next()
     })
     const ready = { status: 'ready', protocolVersion: 1, launchNonce: runtime.launchNonce, buildId: runtime.buildId, workspaceId: 1 }
+    const claudeLogin = bindDesktopClaudePlanAuth(runtime.launchNonce)
+    app.get('/desktop/claude-login', async c => c.json(await claudeLogin.status()))
+    app.post('/desktop/claude-login', async c => {
+        const parsed = desktopClaudePlanActionSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: 'Invalid sign-in action.' }, 400)
+        return c.json(await claudeLogin.action(parsed.data, c.req.raw.signal))
+    })
     app.get('/desktop/codex-login', async c => c.json(await codexLoginStatus()))
     app.post('/desktop/codex-login', async c => {
         const parsed = desktopCodexAction.safeParse((await c.req.json().catch(() => null))?.action)
@@ -89,10 +102,13 @@ export async function desktopRunCommand(): Promise<void> {
     app.get('/health', c => initialized ? c.json(ready) : c.json({ status: 'starting' }, 503))
     await initializeComputerLaunchers()
     const screen = bindIsolatedScreen(runtime)
+    const computerPanel = bindDesktopComputerPanel(runtime)
+    const guestShell = bindDesktopGuestShell(runtime)
     const toolInstall = bindDesktopToolInstall(runtime)
     const foreman = bindDesktopForeman(runtime)
     const delegation = bindDesktopDelegation(runtime.launchNonce)
     installDesktopDelegation(delegation)
+    app.route('/desktop/computer-panel', computerPanel.routes)
     app.route('/desktop/foreman', createDesktopForemanRoutes())
     app.route('/desktop/tool-install', toolInstall.routes)
     app.route('/agents/:id/screen', screen.routes)
@@ -108,9 +124,10 @@ export async function desktopRunCommand(): Promise<void> {
         stopScheduler?.()
         const closed = new Promise<void>(done => server.close(() => done()))
         stopCodexLogin()
+        claudeLogin.stop()
         // Close admissions before waiting for any preparation. Callback delivery is best effort
         // during teardown; failure must never reopen either local service or prevent shutdown.
-        const closing = Promise.allSettled([schedules?.close(), triggers?.close(), delegation.close(), stopDesktopMcp(), stopDesktopSkillProposals(), screen.close().then(() => shutdownIsolatedScreens(AbortSignal.timeout(25_000))), shutdownDesktopSemanticMemory(), scheduleTools?.close(), toolInstall.close(), foreman.close()])
+        const closing = Promise.allSettled([schedules?.close(), Promise.resolve(triggerTools?.close()).then(() => triggers?.close()), delegation.close(), stopDesktopMcp(), stopDesktopSkillProposals(), screen.close().then(() => shutdownIsolatedScreens(AbortSignal.timeout(25_000))), shutdownDesktopSemanticMemory(), scheduleTools?.close(), toolInstall.close(), foreman.close(), computerPanel.close(), guestShell.close(), stopDesktopClaudeWorkers()])
         // Preparing scheduled runs already register a controller in runAgent. Signal those
         // before draining preparation, otherwise a stuck provider can prevent its own Stop.
         await Promise.allSettled([closing, abortAllRuns(), stopScheduler?.drain()])
@@ -146,6 +163,7 @@ export async function desktopRunCommand(): Promise<void> {
             if (stopping) return
             triggers = await createDesktopTriggerRuntime(runtime, { loopbackIngress: true })
             if (stopping) { await triggers.close().catch(() => {}); return }
+            triggerTools = createDesktopTriggerToolRuntime(triggers)
             await delegation.initialize()
             if (stopping) return
             initialized = true

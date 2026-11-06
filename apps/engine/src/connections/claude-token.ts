@@ -32,7 +32,7 @@ async function postRefresh(refreshToken: string): Promise<Response> {
         const delay = NETWORK_RETRY_DELAYS_MS[attempt]
         try {
             const res = await fetch(CLAUDE_OAUTH_TOKEN_URL, {
-                method: 'POST',
+                method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30_000),
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ grant_type: 'refresh_token', client_id: CLAUDE_OAUTH_CLIENT_ID, refresh_token: refreshToken }),
             })
@@ -45,15 +45,20 @@ async function postRefresh(refreshToken: string): Promise<Response> {
 }
 
 async function refresh(connection: LoadedConnection, refreshToken: string): Promise<void> {
+    const priorToken = connection.env[TOKEN_KEY]
     const res = await postRefresh(refreshToken)
     const data = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; expires_in?: number; error?: unknown; error_description?: unknown }
     if (!res.ok || !data.access_token) {
         // A 400/401 is a refresh token Anthropic no longer honours: every run on this connection now
         // fails with "OAuth access token has expired" until the user signs in again.
         const dead = res.status === 400 || res.status === 401
-        logger[dead ? 'error' : 'warn']({ connection: connection.id, status: res.status, error: data.error, description: data.error_description, hasAccessToken: !!data.access_token }, 'claude token refresh failed')
-        if (dead) recordCredentialRejected(connection.id)
-        lastFailedAt.set(connection.id, Date.now())
+        logger[dead ? 'error' : 'warn']({ connection: connection.id, status: res.status, hasAccessToken: !!data.access_token }, 'claude token refresh failed')
+        await withConnectionLock(connection.id, async () => {
+            const current = await readEnvFile(connectionEnvPath(connection.id))
+            if (current[TOKEN_KEY] !== priorToken || current[REFRESH_KEY] !== refreshToken) return
+            if (dead) recordCredentialRejected(connection.id)
+            lastFailedAt.set(connection.id, Date.now())
+        })
         return
     }
     logger.info({ connection: connection.id, hasNewRefreshToken: !!data.refresh_token, expiresIn: data.expires_in ?? null }, 'claude token refresh response ok')
@@ -62,9 +67,10 @@ async function refresh(connection: LoadedConnection, refreshToken: string): Prom
     const nextRefresh = data.refresh_token ?? refreshToken
     const expiresAt = typeof data.expires_in === 'number' ? Date.now() + data.expires_in * 1000 : undefined
 
-    await withConnectionLock(connection.id, async () => {
+    const applied = await withConnectionLock(connection.id, async () => {
         const path = connectionEnvPath(connection.id)
         const env = await readEnvFile(path)
+        if (env[TOKEN_KEY] !== priorToken || env[REFRESH_KEY] !== refreshToken) return false
         env[TOKEN_KEY] = nextToken
         env[REFRESH_KEY] = nextRefresh
         if (expiresAt !== undefined) env[EXPIRES_KEY] = String(expiresAt)
@@ -77,7 +83,9 @@ async function refresh(connection: LoadedConnection, refreshToken: string): Prom
         connection.env[REFRESH_KEY] = nextRefresh
         if (expiresAt !== undefined) connection.env[EXPIRES_KEY] = String(expiresAt)
         else delete connection.env[EXPIRES_KEY]
+        return true
     })
+    if (!applied) return
 
     forgetCredentialRejected(connection.id)
     lastFailedAt.delete(connection.id)
@@ -115,9 +123,9 @@ export async function ensureFreshClaudeToken(connection: LoadedConnection | null
     logger.info({ connection: connection.id, minutesLeft: Math.round(msLeft / 60_000) }, 'claude token: refreshing')
 
     const task = refresh(connection, refreshToken)
-        .catch(err => {
+        .catch(() => {
             lastFailedAt.set(connection.id, Date.now())
-            logger.warn({ connection: connection.id, err: (err as Error).message }, 'claude token refresh skipped')
+            logger.warn({ connection: connection.id }, 'claude token refresh skipped')
         })
         .finally(() => inFlight.delete(connection.id))
     inFlight.set(connection.id, task)

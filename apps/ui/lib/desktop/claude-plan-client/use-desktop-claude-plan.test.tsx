@@ -10,7 +10,7 @@ afterEach(async () => {
     document.body.innerHTML = ''
     vi.restoreAllMocks()
 })
-const attempt = (phase: DesktopClaudePlanAttempt['phase'], patch: Partial<DesktopClaudePlanAttempt> = {}): DesktopClaudePlanAttempt => ({ attemptId: 'attempt-1', phase, ...(phase === 'waiting' ? { authorizeUrl: 'https://claude.ai/oauth/authorize?state=opaque' } : {}), ...patch })
+const attempt = (phase: DesktopClaudePlanAttempt['phase'], patch: Partial<DesktopClaudePlanAttempt> = {}): DesktopClaudePlanAttempt => ({ connectionId: 'mac-claude', revision: '1', attemptId: 'attempt-1', phase, ...(phase === 'waiting' ? { authorizeUrl: 'https://claude.ai/oauth/authorize?state=opaque' } : {}), ...patch })
 
 function runtimeWith(overrides: Partial<DesktopClaudePlanRuntime> = {}): DesktopClaudePlanRuntime {
     return {
@@ -82,4 +82,20 @@ test('Cancel closes only the UI attempt and invalid runtime links are refused', 
     await act(async () => { await hook.value.cancel() })
     expect(runtime.cancel).toHaveBeenCalledWith('attempt-1', expect.any(AbortSignal))
     expect(hook.value.phase).toBe('idle')
+})
+
+test('a runtime replacement hides old state and rejects its late response', async () => {
+    let resolveOld!: (value: DesktopClaudePlanAttempt) => void
+    const old = runtimeWith({ submit: vi.fn(() => new Promise<DesktopClaudePlanAttempt>(resolve => { resolveOld = resolve })) })
+    const next = runtimeWith({ reconcile: vi.fn(async () => attempt('idle', { attemptId: null, revision: '0' })) })
+    let value!: ReturnType<typeof useDesktopClaudePlan>
+    function Harness({ runtime }: { runtime: DesktopClaudePlanRuntime }) { value = useDesktopClaudePlan({ runtime, onOpenAuthorization: vi.fn() }); return <span>{value.phase}</span> }
+    const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
+    await act(async () => root.render(<Harness runtime={old} />))
+    await act(async () => { void value.submit('old-code') })
+    await act(async () => root.render(<Harness runtime={next} />))
+    await act(async () => { resolveOld(attempt('connected')) })
+    expect(value.phase).toBe('idle'); expect(value.attemptId).toBe(null)
+    expect(old.cancel).toHaveBeenCalledWith('attempt-1', expect.any(AbortSignal))
+    expect(next.cancel).not.toHaveBeenCalled()
 })

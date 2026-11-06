@@ -1,12 +1,16 @@
 import { createClient, type Client } from '@libsql/client'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { desktopMcpSecretReferenceCanonical, type DesktopMcpSecretReferenceConfig } from '../../../../../../packages/contracts/src/desktop-mcp-secret-references'
+import { desktopMcpSecretReferenceCanonical, type DesktopMcpSecretReferenceConfig } from '@rerun/contracts'
 import { secretReferenceFingerprint } from '../../../../components/desktop/mcp-secret-references/editor-state'
 import { ensureDesktopMcpSecretReferenceSchema } from './schema'
 import { createDesktopMcpSecretReferenceStore, DesktopMcpSecretReferenceConflict } from './store'
 
 let db: Client
-afterEach(() => db?.close())
+let directory: string | undefined
+afterEach(() => { db?.close(); if (directory) rmSync(directory, { recursive: true, force: true }) })
 
 const config = (overrides: Partial<DesktopMcpSecretReferenceConfig> = {}): DesktopMcpSecretReferenceConfig => ({
     name: 'linear',
@@ -25,7 +29,9 @@ const BEARER = 'Bearer mine-token-value'
 const SEALED = 'sealed-row-must-stay-unread'
 
 async function setup() {
-    db = createClient({ url: ':memory:' })
+    // Transactions open another connection; use the same file as the real workspace.
+    directory = mkdtempSync(join(tmpdir(), 'rerun-secret-reference-'))
+    db = createClient({ url: `file:${join(directory, 'workspace.db')}` })
     await db.executeMultiple(`
         CREATE TABLE desktop_agents (id TEXT PRIMARY KEY);
         CREATE TABLE desktop_secret_credentials (
@@ -55,6 +61,7 @@ async function setup() {
     let revision = 0
     let failAfterWrite = false
     const store = createDesktopMcpSecretReferenceStore(db, {
+        captureAuthority: async () => () => {},
         authority: { currentOwner: async agentId => agentId === 'coworker' ? { agentId, enabled: true, deleting: false, selfMcpGranted: true, localMcpStdioGranted: true } : null },
         async commitPublicConfig(input) {
             await input.tx.execute({
@@ -62,7 +69,7 @@ async function setup() {
                 args: [input.agentId, input.serverName, input.expectedConfigRevision, desktopMcpSecretReferenceCanonical(input.config)],
             })
             if (failAfterWrite) throw new DesktopMcpSecretReferenceConflict()
-            if (input.expectedConfigRevision !== revision) throw new DesktopMcpSecretReferenceConflict()
+            if (input.expectedConfigRevision !== String(revision)) throw new DesktopMcpSecretReferenceConflict()
             revision += 1
             return { configRevision: input.expectedConfigRevision }
         },
@@ -70,7 +77,7 @@ async function setup() {
     return { store, failNext() { failAfterWrite = true } }
 }
 
-async function saveBody(value: DesktopMcpSecretReferenceConfig, saveId = 'save-1', expectedConfigRevision = 0, expectedBindingRevision = 0) {
+async function saveBody(value: DesktopMcpSecretReferenceConfig, saveId = 'save-1', expectedConfigRevision = '0', expectedBindingRevision = 0) {
     return {
         saveId,
         agentId: 'coworker',
@@ -127,4 +134,14 @@ test('a missing credential stays pending and records only its name and version s
     expect(String(rows.rows[0]?.secret_name)).toBe('OTHER_API_KEY')
     expect(rows.rows[0]?.secret_version ?? null).toBeNull()
     expect(String(rows.rows[0]?.status)).toBe('pending')
+})
+
+test('explicit recovery seals a missing save so a late original cannot apply', async () => {
+    const { store } = await setup()
+    const input = await saveBody(config(), 'late-save')
+    const closed = await store.reconcile(input)
+    expect(closed.status).toBe('not-saved')
+    expect((await store.save(input)).status).toBe('not-saved')
+    expect((await db.execute('SELECT * FROM port_log')).rows).toHaveLength(0)
+    expect((await store.receipt('coworker', input.saveId))?.status).toBe('not-saved')
 })

@@ -32,13 +32,14 @@ RUN apt-get update \
 COPY openbox.xml /usr/local/share/rerun/openbox.xml
 COPY guest.py /usr/local/lib/rerun/guest.py
 COPY tool_install.py /usr/local/lib/rerun/tool_install.py
+COPY guest_shell.py /usr/local/lib/rerun/guest_shell.py
 COPY computer_launchers.py /usr/local/lib/rerun/computer_launchers.py
 COPY entrypoint.sh /usr/local/bin/rerun-entrypoint
 COPY rerun-rpc /usr/local/bin/rerun-rpc
 COPY rerun-vnc /usr/local/bin/rerun-vnc
 
 RUN chmod 755 /usr/local/bin/rerun-entrypoint /usr/local/bin/rerun-rpc /usr/local/bin/rerun-vnc \
-    && chmod 644 /usr/local/lib/rerun/guest.py /usr/local/lib/rerun/computer_launchers.py /usr/local/lib/rerun/tool_install.py /usr/local/share/rerun/openbox.xml \
+    && chmod 644 /usr/local/lib/rerun/guest.py /usr/local/lib/rerun/guest_shell.py /usr/local/lib/rerun/computer_launchers.py /usr/local/lib/rerun/tool_install.py /usr/local/share/rerun/openbox.xml \
     && test -x /usr/bin/npm && test -x /usr/bin/thunar && test -x /usr/bin/xfce4-terminal && test -x /usr/bin/xprop
 
 VOLUME /var/lib/rerun/profile

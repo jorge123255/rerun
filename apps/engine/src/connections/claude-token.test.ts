@@ -301,3 +301,19 @@ describe('refreshing', () => {
         await third
     })
 })
+
+describe('refresh lineage after a replacement sign-in', () => {
+    it.each([200, 401])('does not overwrite or reject the new credential after stale response %s', async status => {
+        const cnx = await connection(expiring(0), `replaced-${status}`)
+        let answerRefresh!: (response: unknown) => void, entered!: () => void
+        const started = new Promise<void>(resolve => { entered = resolve })
+        fetchMock.mockImplementation(() => { entered(); return new Promise(resolve => { answerRefresh = resolve }) })
+        const pending = ensureFreshClaudeToken(cnx)
+        await started
+        await writeEnvFile(connectionEnvPath(cnx.id), { CLAUDE_CODE_OAUTH_TOKEN: 'replacement', CLAUDE_CODE_OAUTH_REFRESH_TOKEN: 'replacement-refresh' })
+        answerRefresh({ ok: status === 200, status, json: async () => status === 200 ? { access_token: 'stale-refresh-result', refresh_token: 'stale-refresh-token' } : { error: 'invalid_grant' } })
+        await pending
+        expect((await readEnvFile(connectionEnvPath(cnx.id))).CLAUDE_CODE_OAUTH_TOKEN).toBe('replacement')
+        expect(isCredentialRejected(cnx.id)).toBe(false)
+    })
+})

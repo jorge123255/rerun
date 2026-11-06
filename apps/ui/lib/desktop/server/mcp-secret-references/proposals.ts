@@ -4,7 +4,7 @@ import {
     desktopMcpRegistrationLink,
     desktopMcpSecretReferenceError,
     type DesktopMcpCredentialAuthority,
-} from '../../../../../../packages/contracts/src/desktop-mcp-secret-references'
+} from '@rerun/contracts'
 import type { DesktopMcpSecretLookup } from './lookup'
 
 export type DesktopMcpProposalLink =

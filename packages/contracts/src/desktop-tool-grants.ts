@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate'] as const
+export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -40,7 +40,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('cardFile', 'Show result files', 'Show this coworker’s existing text, Markdown, PNG, JPEG, WebP, SVG, GIF and AVIF images, WAV/MP3/M4A/Ogg/FLAC audio, MP4/WebM/MOV/M4V video or PDF documents as preview tiles in chat.', 'card_file'),
     supported('privateFileWrite', 'Edit workspace files', 'Create new text or Markdown files and make exact, conflict-checked edits in this coworker’s private Files. Existing names are never replaced by create.', 'fs_write', 'fs_edit'),
     supported('sharedFilesRead', 'Read shared files', 'Read and list text and Markdown files in the workspace shared folder. Every coworker with this permission sees the same shared documents.', 'shared_read', 'shared_list'),
-    pending('shell', 'Run commands', 'Run Rerun shell commands in a workspace.', 'Requires a confined engine command runner.', 'shell_exec'),
+    supported('guestShell', 'Run commands in isolated computer', 'Run shell programs in this coworker’s isolated Linux computer. Commands can change guest files, use its browser profile and network, and install software. This does not grant Mac file or host command access.', 'shell_exec', 'shell_inspect'),
     supported('webFetch', 'Read public web pages', 'Read public HTTP(S) text and HTML pages without cookies or saved files.', 'web_fetch'),
     supported('webSearch', 'Search public web', 'Search with the Brave Search key in Settings. Separate from native Codex search.', 'web_search'),
     pending('web', 'Download files', 'Download remote content.', 'Requires a reviewed download destination.', 'download'),
@@ -50,7 +50,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('skills', 'Skills', 'Create and use reusable procedures. Proposed changes wait for your review.', 'skill_list', 'skill_read', 'skill_read_file', 'skill_write_file', 'skill_delete_file', 'skill_create', 'skill_import', 'skill_edit', 'skill_update', 'skill_delete', 'skill_propose'),
     supported('schedule', 'Schedules', 'Run this coworker’s routines while Rerun is open. Configure and test tasks in Routines.'),
     supported('scheduleManage', 'Manage routines', 'Let this coworker read, create, edit and remove its scheduled tasks. Running routines uses the separate Schedules permission.', 'schedule_list', 'schedule_get', 'schedule_create', 'schedule_update', 'schedule_edit', 'schedule_delete'),
-    supported('trigger', 'Triggers', 'Manage URLs that start this coworker while Rerun is open on this Mac.', 'trigger_list', 'trigger_get', 'trigger_create', 'trigger_update', 'trigger_rotate_token', 'trigger_delete'),
+    supported('trigger', 'Triggers', 'Manage URLs that start this coworker while Rerun is open on this Mac.', 'trigger_list', 'trigger_get', 'trigger_create', 'trigger_update', 'trigger_edit', 'trigger_rotate_token', 'trigger_delete'),
     supported('delegate', 'Delegate tasks', 'Run isolated workers on separate tasks, with read-only public web access when granted.', 'delegate_tasks'),
     supported('callAgent', 'Call coworkers', 'Ask an allowed coworker to work in its own new chat, using its own model and permissions.', 'call_agent'),
     supported('browser', 'Use a browser', 'Read pages in this coworker’s isolated browser and ask you to take over. Requires Docker Desktop and Computer control.', 'browser_navigate', 'request_takeover'),

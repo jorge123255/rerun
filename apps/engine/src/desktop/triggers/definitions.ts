@@ -1,9 +1,9 @@
-import { lstat, mkdir, readdir, unlink } from 'node:fs/promises'
+import { lstat, mkdir, readdir, unlink, writeFile, rename, rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import matter from 'gray-matter'
 import { triggerFile, triggersDir } from '../../config/paths.js'
 import { readTrigger } from '../../triggers/loader.js'
 import { withKeyedLock } from '../../lib/lock.js'
-import { writeFileAtomic } from '../../lib/atomic-write.js'
 import { DESKTOP_TRIGGER_SLUG_RE } from '@rerun/contracts'
 import { desktopTriggerDefinitionRevision } from './lifecycle.js'
 import type { DesktopTriggerRecord } from './types.js'
@@ -33,15 +33,20 @@ export async function listDesktopTriggerDefinitions(id: string) {
     const records = await Promise.all(entries.filter(name => name.endsWith('.md') && DESKTOP_TRIGGER_SLUG_RE.test(name.slice(0, -3))).map(name => readDesktopTriggerDefinition(id, name.slice(0, -3))))
     return records.filter((row): row is DesktopTriggerRecord => row !== null)
 }
-export async function replaceDesktopTriggerDefinition(id: string, slug: string, expected: DesktopTriggerRecord | null, next: DesktopTriggerRecord | null) {
+export async function replaceDesktopTriggerDefinition(id: string, slug: string, expected: DesktopTriggerRecord | null, next: DesktopTriggerRecord | null, admission?: () => Promise<void>) {
     return withKeyedLock(`trigger:${id}:${slug}`, async () => {
         await safeRoot(id)
         const current = await readDesktopTriggerDefinition(id, slug)
         if (desktopTriggerDefinitionRevision(current) !== desktopTriggerDefinitionRevision(expected)) throw new Error('Trigger definition changed')
-        if (!next) { if (current) await unlink(triggerFile(id, slug)); return null }
+        if (!next) { await admission?.(); if (current) await unlink(triggerFile(id, slug)); return null }
         const record = { ...next, fireCount: current?.fireCount ?? next.fireCount, lastFiredAt: current?.lastFiredAt ?? next.lastFiredAt }
         const { body, connectionId, slug: _slug, ...frontmatter } = record
-        await writeFileAtomic(triggerFile(id, slug), matter.stringify(`\n${body.trim()}\n`, { ...frontmatter, connection: connectionId }))
+        const path = triggerFile(id, slug), temporary = `${path}.${randomUUID()}.tmp`
+        try {
+            await writeFile(temporary, matter.stringify(`\n${body.trim()}\n`, { ...frontmatter, connection: connectionId }), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+            await admission?.()
+            await rename(temporary, path)
+        } finally { await rm(temporary, { force: true }).catch(() => {}) }
         return readDesktopTriggerDefinition(id, slug)
     })
 }

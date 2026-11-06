@@ -33,6 +33,7 @@ export type DesktopForemanColumnProps = {
     openOnMount?: boolean
     refreshKey?: string | number
     composerTrailing?: ReactNode
+    focusRequest?: string
 }
 
 /**
@@ -49,14 +50,29 @@ export function DesktopForemanColumn({
     orbState = 'idle',
     headerActions,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing,
+    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest,
 }: DesktopForemanColumnProps) {
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
     const opened = useRef(false)
+    const column = useRef<HTMLDivElement>(null)
     useEffect(() => {
         if (openOnMount && foreman.restored && !opened.current) { opened.current = true; foreman.setOpen(true) }
     }, [openOnMount, foreman.restored, foreman.setOpen])
     const { ui } = foreman
+    useEffect(() => {
+        if (!focusRequest || !foreman.restored) return
+        if (!ui.open) { foreman.setOpen(true); return }
+        if (ui.tab !== 'assistant') { foreman.setTab('assistant'); return }
+        let focused = false
+        const focus = () => {
+            const target = column.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message the Foreman"]')
+            if (!focused && target?.isConnected && !target.disabled && !target.closest('[inert]')) { focused = true; target.focus({ preventScroll: true }); observer.disconnect() }
+        }
+        const observer = new MutationObserver(focus)
+        observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['inert'] })
+        queueMicrotask(focus)
+        return () => { focused = true; observer.disconnect() }
+    }, [focusRequest, foreman.restored, ui.open, ui.tab, foreman.setOpen, foreman.setTab])
     const onRoutines = ui.tab === 'routines'
     const plan = projectPlanCard(foreman.planSnapshot)
     const docked = ui.placement.mode === 'dock'
@@ -68,7 +84,7 @@ export function DesktopForemanColumn({
     }, [floating, ui.placement])
 
     return (
-        <div
+        <div ref={column}
             {...(!ui.open ? { inert: true } : {})}
             style={panelStyle}
             className={cn(
@@ -114,6 +130,9 @@ export function DesktopForemanColumn({
                         onConfirmPlan={foreman.confirmPlan}
                         onAskChanges={() => foreman.askChanges()}
                         onRetryDecision={foreman.retryDecision}
+                        onResumeBuild={() => void foreman.actOnBuild('resume')}
+                        onStopBuild={() => void foreman.actOnBuild('stop')}
+                        buildBusy={foreman.buildBusy}
                         onStartLead={foreman.startLead}
                         onOpenCreated={step => foreman.navigate({ kind: 'open_coworker', agentId: step.agentId, sessionId: step.sessionId })}
                         onOpenCoworker={input => foreman.navigate({ kind: 'open_coworker', agentId: input.agentId, sessionId: input.sessionId })}

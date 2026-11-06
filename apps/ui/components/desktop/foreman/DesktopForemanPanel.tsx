@@ -1,14 +1,16 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { DesktopForemanModelRef } from '@rerun/contracts'
+import type { DesktopForemanChatRef, DesktopForemanModelRef } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
 import { createDesktopForemanClient, desktopForemanMessages, readDesktopForemanState, type DesktopForemanClientState } from '@/lib/desktop/foreman-client/runtime-client'
 import { DesktopForemanColumn } from './DesktopForemanColumn'
 
+export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; signal: AbortSignal; settle: (error?: Error) => void }
 export type DesktopForemanPanelProps = {
+    command?: DesktopForemanCommand | null
     onOpenCoworker: (target: { agentId: string; sessionId?: string }) => void | Promise<void>
     onOpenBox: (spaceId: string) => void | Promise<void>
     onClose: () => void
@@ -33,6 +35,7 @@ export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
         })().catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Could not open Foreman.') })
         return () => controller.abort()
     }, [retry])
+    useEffect(() => { if (error && props.command) props.command.settle(new Error(error)) }, [error, props.command])
     if (initial) return <ConnectedForeman key={`${initial.chat.workspaceId}:${initial.chat.chatId}`} {...props} initial={initial} />
     return <section className={props.className} aria-label="Foreman"><div className="flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? 'Opening Foreman…'}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>Try again</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>Close</Button></div></section>
 }
@@ -68,10 +71,26 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         }
         return () => { cancelled = true; active.current = false; if (timer) clearTimeout(timer); events.close(); client.close() }
     }, [initial])
+    const consumed = useRef(new Set<string>())
+    const [focusRequest, setFocusRequest] = useState<string>()
+    useEffect(() => {
+        const command = props.command
+        if (!client || !command || consumed.current.has(command.id)) return
+        consumed.current.add(command.id)
+        const signal = command.signal
+        void (async () => {
+            signal.throwIfAborted()
+            if (command.chat.chatId !== initial.chat.chatId || command.chat.workspaceId !== initial.chat.workspaceId) throw new Error('Foreman conversation changed.')
+            if (command.text.trim() && !await client.ports.conversation.sendMessage(command.text.trim(), signal)) throw new Error('Foreman did not accept this message.')
+            if (!command.text.trim()) signal.throwIfAborted()
+            setFocusRequest(command.id)
+            command.settle()
+        })().catch(error => command.settle(error instanceof Error ? error : new Error('Could not ask Foreman.')))
+    }, [client, props.command, initial.chat.chatId, initial.chat.workspaceId])
     const close = useCallback(() => { if (active.current) current.current.onClose() }, [])
     if (!client) return <div role="status" className={props.className}>Opening Foreman…</div>
     return <DesktopForemanColumn
-        chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
+        focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf}
         className={props.className} onClose={close} openOnMount refreshKey={JSON.stringify(state.view)}
         headerActions={error ? <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span> : undefined}

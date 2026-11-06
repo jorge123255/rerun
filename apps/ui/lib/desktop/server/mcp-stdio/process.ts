@@ -10,9 +10,10 @@ export async function executableIdentity(path:string,signal:AbortSignal){
  if(actual!==path || !stat.isFile() || !(stat.mode&BigInt(0o111)) || stat.uid!==BigInt(0) && stat.uid!==BigInt(process.getuid?.()??-1))throw new Error('Choose a canonical, installed executable owned by this Mac user or root')
  return [stat.dev,stat.ino,stat.size,stat.mtimeNs,stat.ctimeNs].join(':')
 }
-export function spawnStdio(connection:StdioConnection,cwd:string,stop:AbortSignal,spawnProcess:StdioSpawn=spawn){
+export function spawnStdio(connection:StdioConnection,cwd:string,stop:AbortSignal,spawnProcess:StdioSpawn=spawn,explicitEnv:Record<string,string>={}){
  stop.throwIfAborted()
- const child=spawnProcess(connection.executable,connection.args,{cwd,env:{...stdioEnvironment},shell:false,detached:true,stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams
+ for(const [key,value] of Object.entries(explicitEnv))if(/^(?:HOME|PATH|TMPDIR|NODE_OPTIONS|NODE_PATH|ELECTRON_RUN_AS_NODE|DYLD_.*|LD_.*)$/i.test(key)||!/^[_A-Za-z][_A-Za-z0-9]*$/.test(key)||/[\0\r\n]/.test(value))throw new Error('Local MCP environment variable is not allowed')
+ const child=spawnProcess(connection.executable,connection.args,{cwd,env:{...stdioEnvironment,...explicitEnv},shell:false,detached:true,stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams
  const decoder=new TextDecoder('utf-8',{fatal:true}),pending=new Map<number,{resolve:(value:Record<string,unknown>)=>void;reject:(error:Error)=>void}>()
  let buffer='',bytes=0,errors=0,sequence=0,closed=false
  let killTimer:ReturnType<typeof setTimeout>|undefined

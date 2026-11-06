@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
+import { DesktopClaudeLogin } from './claude-plan/DesktopClaudeLogin'
 import { DesktopNotificationSettings } from './DesktopNotificationSettings'
 import { DesktopAuxiliarySettings } from './DesktopAuxiliarySettings'
 import { BaseUrlField } from '@/components/connections/BaseUrlField'
@@ -61,7 +62,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders 
 
     function saveKey(event: FormEvent) {
         event.preventDefault()
-        if (key.trim() && provider !== 'codex') void save({ action: 'key', provider, connectionId: current?.id, apiKey: key.trim() }, 'API key saved.')
+        if (key.trim() && provider !== 'codex' && provider !== 'claude') void save({ action: 'key', provider, connectionId: current?.id, apiKey: key.trim() }, 'API key saved.')
     }
 
     // A provider that was just added replaces its "add" option with the engine connection.
@@ -118,9 +119,9 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders 
                                 {missing.map(p => <option key={p} value={'add:' + p}>Connect {p === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[p]}</option>)}
                             </select>
                             <div className="flex items-center gap-2 text-sm"><ProviderIcon provider={provider} className="size-5" /><strong>{provider === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[provider]}</strong>
-                                {provider !== 'codex' && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
+                                {provider !== 'codex' && provider !== 'claude' && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
                             </div>
-                            {provider === 'codex' ? <DesktopCodexLogin connected={!!connection?.connected} modelCount={connection?.models.length ?? 0} onProviders={onProviders} /> : <form onSubmit={saveKey} className="space-y-2">
+                            {provider === 'codex' ? <DesktopCodexLogin connected={!!connection?.connected} modelCount={connection?.models.length ?? 0} onProviders={onProviders} /> : provider === 'claude' ? <DesktopClaudeLogin connected={!!connection?.connected} rejected={connection?.credentialRejected} onProviders={onProviders} /> : <form onSubmit={saveKey} className="space-y-2">
                                 <label htmlFor="desktop-api-key" className="text-sm font-medium">{connection ? 'Replacement API key' : 'API key'}</label>
                                 <div className="flex gap-2">
                                     <Input id="desktop-api-key" type="password" autoComplete="off" placeholder={CONNECTION_TOKEN_KEY[provider]} value={key} onChange={e => setKey(e.target.value)} />
@@ -135,7 +136,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders 
                                 {provider === 'openrouter' && <CustomModelList models={connection.extraModels} reserved={DEFAULT_CONNECTION_MODELS.openrouter} onChange={extras => changeModels(connection.models, extras)} />}
                             </div>}
                         </div>
-                        <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) with your subscription, or use an API key for the other providers.</p>
+                        <p className="text-sm text-muted-foreground">Connect ChatGPT (Codex) or Claude with your subscription, or use an API key for the other providers.</p>
                     </>}
                     {tab === 'Workspace' && <>
                         <form className="space-y-2 rounded-xl border p-4" onSubmit={e => {

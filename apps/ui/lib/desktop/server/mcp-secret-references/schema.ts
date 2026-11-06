@@ -5,7 +5,7 @@ export const desktopMcpSecretReferenceSchema = `
 CREATE TABLE IF NOT EXISTS desktop_mcp_secret_reference_heads (
     agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
     server_name TEXT NOT NULL,
-    config_revision INTEGER NOT NULL,
+    config_revision TEXT NOT NULL,
     binding_revision INTEGER NOT NULL,
     origin TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS desktop_mcp_secret_reference_heads (
 CREATE TABLE IF NOT EXISTS desktop_mcp_secret_references (
     agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
     server_name TEXT NOT NULL,
-    config_revision INTEGER NOT NULL,
+    config_revision TEXT NOT NULL,
     binding_revision INTEGER NOT NULL,
     field TEXT NOT NULL CHECK (field IN ('header', 'env', 'arg')),
     field_key TEXT NOT NULL,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS desktop_mcp_secret_reference_saves (
     save_id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
     server_name TEXT NOT NULL,
-    expected_config_revision INTEGER NOT NULL,
+    expected_config_revision TEXT NOT NULL,
     expected_binding_revision INTEGER NOT NULL,
     origin TEXT NOT NULL,
     body_fingerprint TEXT NOT NULL,

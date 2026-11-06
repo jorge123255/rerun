@@ -3,7 +3,7 @@ import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 
 export const desktopTheme = z.enum(['system', 'light', 'dark'])
 const apiProvider = z.enum(['openai', 'anthropic', 'google', 'openrouter'])
-export const desktopProvider = z.enum([...apiProvider.options, 'codex'])
+export const desktopProvider = z.enum([...apiProvider.options, 'codex', 'claude'])
 export type DesktopProvider = z.infer<typeof desktopProvider>
 const id = z.string().trim().min(1).max(256)
 export const settingsChange = z.discriminatedUnion('action', [

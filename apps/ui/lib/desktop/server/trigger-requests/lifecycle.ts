@@ -23,6 +23,7 @@ function view(observation: TriggerRequestObservation, row: TriggerRequestRecord)
 }
 function acknowledged(row: TriggerRequestRecord) {
     return new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1',
+        [row.link.kind === 'question' ? 'x-question-id' : row.link.kind === 'approval' ? 'x-approval-id' : row.link.kind === 'takeover' ? 'x-takeover-id' : row.link.kind === 'service' ? 'x-service-request-id' : 'x-secret-request-id']: row.link.requestId,
         'x-session-id': row.link.sessionId, 'x-run-id': row.acceptedRunId ?? row.continuationId, 'x-trigger-request-key': triggerRequestKey(row.link), 'cache-control': 'no-store' } })
 }
 function requireReady(observation: TriggerRequestObservation) {
@@ -106,14 +107,36 @@ export function createTriggerRequestLifecycle(journal: TriggerRequestJournal, po
                 return response
             })
         },
+        async recoverCanonical(key: string, attemptId: string, work: () => Promise<Response>): Promise<Response> {
+            const initial = await required(key)
+            return ports.withDecisionClaim(initial.link, async () => {
+                const row = await reconcileRow(await required(key))
+                if (row.link.kind !== 'secret' || row.continuationId !== attemptId) throw new DesktopHttpError(409, 'Credential retry belongs to another saved attempt')
+                if (row.phase === 'stopped' || row.phase === 'stop-uncertain' || row.phase === 'superseded') throw new DesktopHttpError(409, 'This webhook request was stopped or replaced')
+                if (row.phase !== 'accepted') {
+                    await ports.authorize(row.link, 'decision')
+                    const observation = await ports.observe(row.link)
+                    exact(observation, row.link); requireReady(observation)
+                    if (row.phase === 'pending') await journal.reserve(key, 'canonical:' + attemptId)
+                }
+                const response = await work(), receipt = await ports.receipt(row)
+                if (!response.ok || receipt.status !== 'accepted' || response.headers.get('x-session-id') !== row.link.sessionId || response.headers.get('x-run-id') !== receipt.continuationId) {
+                    void response.body?.cancel().catch(() => {})
+                    throw new DesktopHttpError(502, 'The saved credential continuation acknowledgement is unknown')
+                }
+                await journal.transition(key, 'accepted', receipt.continuationId)
+                response.headers.set('x-trigger-request-key', key)
+                return response
+            })
+        },
         async stop(key: string): Promise<void> {
             const row = await required(key)
             return ports.withDecisionClaim(row.link, async () => {
                 const current = await reconcileRow(await required(key))
                 if (current.phase === 'stopped') return
-                if (current.phase !== 'pending') throw new DesktopHttpError(409, 'Resolve the saved decision or Stop acknowledgement before taking a conflicting action')
+                if (current.phase !== 'pending' && current.phase !== 'stop-uncertain') throw new DesktopHttpError(409, 'Resolve the saved decision or Stop acknowledgement before taking a conflicting action')
                 await ports.authorize(current.link, 'stop')
-                await journal.transition(key, 'stop-uncertain')
+                if (current.phase === 'pending') await journal.transition(key, 'stop-uncertain')
                 await ports.stop(current)
                 await journal.transition(key, 'stopped')
             })

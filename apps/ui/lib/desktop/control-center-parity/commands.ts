@@ -35,7 +35,8 @@ export function buildParityCommands(snapshot:ParitySnapshot,page:ParityPage,quer
   const target=coworker(snapshot,page.agentId),source=snapshot.coworkers.find(a=>a.id===page.agentId)?.spaceId;if(!target||!source)return []
   for(const box of snapshot.boxes.filter(b=>b.id!==source))add({key:`move:${box.id}`,label:box.name,icon:{kind:'icon',icon:BoxIcon},group:'actions',intent:{kind:'move',target,sourceSpaceId:source,destination:{kind:'box',workspaceId:snapshot.workspace.id,spaceId:box.id,revision:box.revision}}})
  }
- return commands.filter(command=>command.key==='ask_assistant'&&text?scope==='all':searchItems([command],text).length>0)
+ const assistant=commands.filter(command=>command.key==='ask_assistant'&&text&&scope==='all')
+ return [...searchItems(commands.filter(command=>!(command.key==='ask_assistant'&&text)),text),...assistant]
 }
 export function parityCommandSections(commands:ParityCommand[],execute:(command:ParityCommand)=>void,page?:ParityPage):ControlSection[]{
  commands=commands.filter(c=>!c.omitted)
@@ -53,7 +54,7 @@ export function parityCommandSections(commands:ParityCommand[],execute:(command:
 }
 const aliases:Record<string,string>={'command-add_coworker':'new_agent','command-new_box':'new_box','command-company_brain':'company_brain','command-shared_files':'shared_files','command-model_settings':'ai_providers','command-workspace_settings':'workspace','command-recenter_board':'recenter_board','command-toggle_theme':'toggle_theme','command-notifications':'notifications','command-shortcuts':'shortcuts','coworker-notifications':'coworker-notifications','agent-desktop':'desktop','coworker-desktop':'desktop'}
 export function paritySemanticKey(id:string){if(id.startsWith('parity-'))return id.slice(7);if(id.startsWith('tab-'))return `panel:${id.slice(4)}`;if(id.startsWith('open-chat-'))return `chat:${id.slice(10)}`;if(id.startsWith('recent-chat-'))return `chat:${id.slice(12)}`;if(id.includes('-conversation-'))return `chat:${id.slice(id.indexOf('-conversation-')+14)}`;if(id.startsWith('move-'))return `move:${id.slice(5)}`;return aliases[id]??(id==='ask-assistant'?'ask_assistant':id.startsWith('command-')?id.slice(8):id)}
-export function mergeParitySections(existing:ControlSection[],additions:ControlSection[]):ControlSection[]{
+export function mergeParitySections(existing:ControlSection[],additions:ControlSection[],query=''):ControlSection[]{
  const seen=new Set(existing.flatMap(s=>s.rows.map(r=>paritySemanticKey(r.id))))
  const result=existing.map(section=>({...section,rows:[...section.rows]}))
  for(const section of additions){
@@ -79,7 +80,11 @@ export function mergeParitySections(existing:ControlSection[],additions:ControlS
   if(global>=0)return global
   return key==='desktop'?0:['coworker-move','agent-move'].includes(key)?1:key==='coworker-notifications'?2:1000
  }
- for(const section of result)if(['Actions','Settings','Open'].includes(section.heading))section.rows.sort((a,b)=>rank(a)-rank(b))
+ const {text}=parseQuery(query)
+ for(const section of result)if(['Actions','Settings','Open'].includes(section.heading)){
+  section.rows.sort((a,b)=>rank(a)-rank(b))
+  if(text)section.rows=searchItems(section.rows.map(row=>({...row,keywords:metadata.find(command=>command.id===paritySemanticKey(row.id))?.keywords??AGENT_TABS.filter(tab=>`panel:${tab.id}`===paritySemanticKey(row.id)).map(tab=>tab.description)})),text)
+ }
  return result.filter(section=>section.rows.length||section.loading)
 }
 

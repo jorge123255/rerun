@@ -1,10 +1,11 @@
+import { withoutStoppedTriggerRequests } from '../triggers/human.js'
 import { findDesktopSecretRequest, parseDesktopSecretToolInput, stripBridgePrefix, type DesktopSecretRequestGuard, type DesktopSecretRequestRow } from '@rerun/contracts'
 import { listMessages } from '../../db/repos/messages.js'
 import { getSystemDb } from '../../db/systemDb.js'
 import { HttpError } from '../../lib/errors.js'
 
 export async function readDesktopSecretSource(agentId: string, sessionId: string, expected?: DesktopSecretRequestGuard) {
-    let rows: DesktopSecretRequestRow[] = await listMessages(agentId, sessionId)
+    let rows: DesktopSecretRequestRow[] = expected ? await listMessages(agentId, sessionId) : await withoutStoppedTriggerRequests(agentId, sessionId, await listMessages(agentId, sessionId))
     if (expected) {
         const index = rows.findIndex(row => row.id === expected.sourceMessageId && row.role === 'assistant')
         if (index < 0) throw new HttpError(409, 'Credential request source no longer exists.')

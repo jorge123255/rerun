@@ -2,7 +2,7 @@ import { containerLabels, containerName, volumeLabels, volumeName, assertContain
 import { IsolatedScreenRefusal } from './refusal.js'
 import type { ScreenOwner } from './types.js'
 
-export const GUEST_IMAGE = 'rerun-desktop-guest:round33'
+export const GUEST_IMAGE = 'rerun-desktop-guest:round34'
 export const GUEST_PLATFORM = 'linux/arm64'
 
 const BANNED_EXACT = new Set(['--privileged', '--pid=host', '--network=host', '--network', '--publish', '-p', '-v', '--volume', '--platform', 'pull'])

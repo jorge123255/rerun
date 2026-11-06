@@ -11,12 +11,13 @@ import {
     redactDesktopMcpSecretText,
     type DesktopMcpSecretBinding,
     type DesktopMcpSecretReferenceConfig,
-} from '../../../../../../packages/contracts/src/desktop-mcp-secret-references'
+} from '@rerun/contracts'
 import { bindDesktopMcpSecretReferences } from './hooks'
 import type { DesktopMcpSecretLookup } from './lookup'
 import { linkDesktopMcpProposalCredentials } from './proposals'
-import { DesktopMcpSecretReferenceFailure, withDesktopMcpSecrets } from './resolve'
+import { type DesktopMcpResolvedMaterial, DesktopMcpSecretReferenceFailure, withDesktopMcpSecrets as resolveSecrets } from './resolve'
 
+const withDesktopMcpSecrets = <T>(input: Omit<Parameters<typeof resolveSecrets<T>>[0], 'head' | 'check'>) => resolveSecrets({ ...input, head: { configRevision: '4', bindingRevision: 2, origin: 'app://desktop', fingerprint: createHash('sha256').update(desktopMcpSecretReferenceCanonical(input.config as DesktopMcpSecretReferenceConfig)).digest('hex') }, check: async () => {} })
 const SECRET = 'linear-secret-value'
 const secretBytes = () => new TextEncoder().encode(SECRET)
 
@@ -41,7 +42,7 @@ const config = (overrides: Partial<DesktopMcpSecretReferenceConfig> = {}): Deskt
 const binding = (overrides: Partial<DesktopMcpSecretBinding> = {}): DesktopMcpSecretBinding => ({
     agentId: 'coworker',
     serverName: 'linear',
-    configRevision: 4,
+    configRevision: '4',
     bindingRevision: 2,
     field: 'header',
     fieldKey: 'Authorization',
@@ -59,18 +60,18 @@ const owner = async (agentId: string) => agentId === 'coworker'
 function memoryLookup(rows: Record<string, { version: number; value: string }>): DesktopMcpSecretLookup {
     return {
         async version(agentId, key, gate) {
-            gate.check()
+            await gate.check()
             if (agentId !== 'coworker') return { state: 'forbidden' }
             const row = rows[key]
             return row ? { state: 'present', version: row.version } : { state: 'missing' }
         },
-        async open(agentId, key, expectedVersion, gate, use) {
-            gate.check()
+        async open(agentId, key, expectedVersion, gate, invoke) {
+            await gate.check()
             if (agentId !== 'coworker') return { state: 'forbidden' }
             const row = rows[key]
             if (!row) return { state: 'missing' }
             if (row.version !== expectedVersion) return { state: 'rotated', version: row.version }
-            return { state: 'present', version: row.version, produced: await use(new TextEncoder().encode(row.value)) }
+            return { state: 'present', version: row.version, produced: await invoke(new TextEncoder().encode(row.value)) }
         },
     }
 }
@@ -134,7 +135,7 @@ describe('desktop MCP secret references', () => {
     it('passes a literal Authorization through once and resolves a bound reference without inheriting the process environment', async () => {
         const previousPath = process.env.PATH
         process.env.PATH = '/usr/bin'
-        const literalUse = vi.fn(async () => 'connected')
+        const literalUse = vi.fn(async (_material: DesktopMcpResolvedMaterial) => 'connected')
         const literal = await withDesktopMcpSecrets({
             agentId: 'coworker',
             serverName: 'linear',
@@ -152,7 +153,7 @@ describe('desktop MCP secret references', () => {
         expect(literalHeaders).toEqual({ Authorization: 'Bearer mine-token-value', Accept: 'application/json' })
         expect(Object.keys(literalHeaders)).toEqual(['Authorization', 'Accept'])
 
-        const resolvedUse = vi.fn(async () => `echo ${SECRET}`)
+        const resolvedUse = vi.fn(async (_material: DesktopMcpResolvedMaterial) => `echo ${SECRET}`)
         const resolved = await withDesktopMcpSecrets({
             agentId: 'coworker',
             serverName: 'files',
@@ -207,24 +208,26 @@ describe('desktop MCP secret references', () => {
             lookup: memoryLookup({ LINEAR_API_KEY: { version: 3, value: SECRET } }),
             use: async () => { throw new Error(`rejected ${SECRET} ${encoded}`) },
         }).catch(error => error as Error)
+        if (!(failure instanceof Error)) throw new Error('Expected a redacted exception')
         expect(failure.message).not.toContain(SECRET)
         expect(failure.message).not.toContain(encoded)
         expect(redactDesktopMcpSecretText(encoded, [secretBytes()])).toBe('[redacted]')
 
-        const mutate = vi.fn(async (_agent: string, _name: string, write: () => Promise<void>) => write())
+        const mutated = vi.fn()
+        const mutate = async <T>(_agent: string, _name: string, write: () => Promise<T>): Promise<T> => { mutated(); return write() }
         const disconnect = vi.fn()
         const markStale = vi.fn(async () => undefined)
         const hooks = bindDesktopMcpSecretReferences({
             lifecycle: { mutate, disconnect },
             lookup: memoryLookup({ LINEAR_API_KEY: { version: 9, value: SECRET } }),
             authority: { currentOwner: owner },
-            records: { bindings: async () => [binding()], serversForSecret: async () => ['linear'], markStale },
+            records: { head: async () => ({ configRevision: '4', bindingRevision: 2, origin: 'app://desktop', fingerprint: createHash('sha256').update(desktopMcpSecretReferenceCanonical(config())).digest('hex'), authority: 'reference', publicJson: JSON.stringify(config()) }), bindings: async () => [binding()], serversForSecret: async () => ['linear'], markStale },
         })
         const use = vi.fn()
-        const rotated = await hooks.beforeHttp({ agentId: 'coworker', serverName: 'linear', phase: 'discovery', config: config() }, use)
+        const rotated = await hooks.beforeHttp({ agentId: 'coworker', serverName: 'linear', phase: 'discovery', config: config(), configRevision: '4', check: async () => {} }, use)
         expect(rotated.ok).toBe(false)
         if (!rotated.ok) expect(rotated.code).toBe('rotated')
-        expect(mutate).toHaveBeenCalledTimes(1)
+        expect(mutated).toHaveBeenCalledTimes(1)
         expect(disconnect).not.toHaveBeenCalled()
         expect(use).not.toHaveBeenCalled()
         expect(markStale).toHaveBeenCalledWith('coworker', 'linear', 'LINEAR_API_KEY')

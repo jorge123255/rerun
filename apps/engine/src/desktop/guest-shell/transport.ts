@@ -1,47 +1,19 @@
-import { desktopGuestShellResultSchema } from '@rerun/contracts'
-import { decodeFrame, encodeFrame } from '../isolated-screen/frame.js'
-import { containerName } from '../isolated-screen/identity.js'
-import type { DockerClient } from '../isolated-screen/docker-cli.js'
-import type { DesktopGuestShellIdentity, DesktopGuestShellRequest, DesktopGuestShellResult } from './types.js'
-
-function requestHex(requestId: string): string {
-    return requestId.replaceAll('-', '')
-}
-
-function reason(value: unknown): string {
-    if (typeof value !== 'string' || !value || value.length > 200 || /[^\x20-\x7e]/.test(value)) return 'The guest command failed.'
-    if (value.includes('://') || value.includes('/Users') || value.includes('docker.sock') || value.includes('\\')) return 'The guest command failed.'
-    return value
-}
-
-function decode(blob: Buffer, requestId: string): DesktopGuestShellResult {
-    const { value } = decodeFrame(blob)
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('The guest returned an invalid command result.')
-    const record = value as Record<string, unknown>
-    if (record.ok !== true) throw new Error(reason(record.reason))
-    return desktopGuestShellResultSchema.parse({ ...record, requestId })
-}
-
-export function createDesktopGuestShellTransport(docker: DockerClient) {
+import { desktopGuestShellResultSchema, type DesktopGuestShellIdentity, type DesktopGuestShellRequest, type DesktopGuestShellResult } from '@rerun/contracts'
+import type { DesktopGuestShellTransport } from './types.js'
+export type DesktopGuestShellRpc = (identity: DesktopGuestShellIdentity, body: Record<string, unknown>, signal: AbortSignal) => Promise<Record<string, unknown>>
+const commandId = (identity: DesktopGuestShellIdentity) => identity.requestId.replaceAll('-', '')
+/** RPC envelopes get fresh identities in the native screen service; commandId is immutable. */
+export function createDesktopGuestShellTransport(rpc: DesktopGuestShellRpc): DesktopGuestShellTransport {
+    function decode(raw: Record<string, unknown>, identity: DesktopGuestShellIdentity): DesktopGuestShellResult {
+        const { ok, requestId, ...body } = raw
+        if (ok !== true || requestId !== commandId(identity)) throw new Error('Guest command acknowledgement changed.')
+        return desktopGuestShellResultSchema.parse({ ...body, requestId: identity.requestId })
+    }
     return {
-        async execute(identity: DesktopGuestShellRequest, signal: AbortSignal): Promise<DesktopGuestShellResult> {
-            const blob = await docker.exec(containerName(identity.guest.engineAgentId), ['rerun-rpc'], encodeFrame({
-                op: 'guest-shell',
-                requestId: requestHex(identity.requestId),
-                command: identity.command,
-                timeoutMs: identity.timeoutMs,
-                cwd: identity.cwd,
-                ...(identity.packages ? { packages: identity.packages } : {}),
-            }), signal)
-            return decode(blob, identity.requestId)
+        async execute(identity: DesktopGuestShellRequest, signal) {
+            return decode(await rpc(identity, { op: 'guest-shell', commandId: commandId(identity), fingerprint: identity.fingerprint, workspaceFingerprint: identity.guest.workspaceFingerprint, command: identity.command, timeoutMs: identity.timeoutMs, cwd: identity.cwd, ...(identity.expectedPackageEvidence ? { expectedPackageEvidence: identity.expectedPackageEvidence } : {}) }, signal), identity)
         },
-        async inspect(identity: DesktopGuestShellIdentity, signal: AbortSignal): Promise<DesktopGuestShellResult> {
-            const blob = await docker.exec(containerName(identity.guest.engineAgentId), ['rerun-rpc'], encodeFrame({ op: 'guest-shell-inspect', requestId: requestHex(identity.requestId) }), signal)
-            return decode(blob, identity.requestId)
-        },
-        async cancel(identity: DesktopGuestShellIdentity, signal: AbortSignal): Promise<void> {
-            const { value } = decodeFrame(await docker.exec(containerName(identity.guest.engineAgentId), ['rerun-rpc'], encodeFrame({ op: 'cancel', requestId: requestHex(identity.requestId) }), signal)
-            if (!value || typeof value !== 'object' || Array.isArray(value) || (value as Record<string, unknown>).ok !== true) throw new Error('Guest command cancellation was not acknowledged.')
-        },
+        async inspect(identity, signal) { return decode(await rpc(identity, { op: 'guest-shell-inspect', commandId: commandId(identity), workspaceFingerprint: identity.guest.workspaceFingerprint }, signal), identity) },
+        async cancel(identity, signal) { const result = await rpc(identity, { op: 'guest-shell-cancel', commandId: commandId(identity), workspaceFingerprint: identity.guest.workspaceFingerprint }, signal); if (result.ok !== true || result.requestId !== commandId(identity) || result.drained !== true) throw new Error('Guest command cancellation was not acknowledged.') },
     }
 }

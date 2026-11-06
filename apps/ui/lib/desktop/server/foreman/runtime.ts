@@ -413,6 +413,7 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
             const epoch = stopEpochs.get(request.buildId) ?? 0
             const stoppedAgain = () => (stopEpochs.get(request.buildId) ?? 0) !== epoch
             const resumed = (resumes.get(request.buildId) ?? Promise.resolve()).catch(() => {}).then(async () => {
+                let recoveryRefused = false
                 // Drain a possibly still-publishing attempt before inspecting its durable receipt.
                 // The Stop epoch also covers a second explicit Stop racing this recovery action.
                 await mutate(request.buildId, build => {
@@ -440,7 +441,21 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
                             for (const id of ids) {
                                 if (stoppedAgain() || (await loadBuild(request.buildId)).build.state === 'stopped') break
                                 try { await auth.creation.resumePending!(id) }
-                                catch { break } // Preserve uncertainty; never move on by guessing absence.
+                                catch (error) {
+                                    if (error instanceof ForemanRefusal) {
+                                        recoveryRefused = true
+                                        await mutate(request.buildId, (build, intents) => {
+                                            if (stoppedAgain() || build.state === 'stopped') return null
+                                            const item = build.items.find(item => intents.items[item.itemKey] === id)
+                                            if (item) setItem(build, item.itemKey, { state: 'failed', failure: error.failure, error: error.message })
+                                            const box = build.boxes.find(box => intents.boxes[box.boxKey] === id)
+                                            if (box) setBox(build, box.boxKey, { state: 'failed' })
+                                            if (intents.setup === id) build.setup = { ...build.setup, state: 'failed', error: error.message }
+                                            return build
+                                        })
+                                    }
+                                    break // Other failures remain uncertain until their receipt is known.
+                                }
                             }
                             await reconcileBuild(request.buildId)
                         })()
@@ -449,6 +464,16 @@ export function createForemanRuntime(input: { store: ForemanStore; authorities: 
                     }
                 }
                 if (stoppedAgain()) {
+                    await settleAction(request.requestId, fingerprint, request.buildId, 'acknowledged', null)
+                    return (await loadBuild(request.buildId)).build
+                }
+                if (recoveryRefused) {
+                    await mutate(request.buildId, build => {
+                        if (stoppedAgain() || build.state === 'stopped') return null
+                        settleUnstarted(build, 'interrupted', 'Not built after another item was refused. Retry when it is ready.')
+                        build.state = [...build.items,...build.boxes].some(item => item.state === 'uncertain' || item.state === 'creating') ? 'uncertain' : build.items.every(item => item.state === 'created') ? 'completed' : build.items.some(item => item.state === 'created') ? 'partial' : 'failed'
+                        return build
+                    })
                     await settleAction(request.requestId, fingerprint, request.buildId, 'acknowledged', null)
                     return (await loadBuild(request.buildId)).build
                 }

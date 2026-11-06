@@ -39,7 +39,7 @@ export async function readTemplateInstallIntent(db: Client, raw: unknown): Promi
             throw new DesktopHttpError(409, 'The saved installation could not be confirmed. Reopen the template and try again.')
         }
         if (receipt.status === 'refused') return { ...pending, status: 'refused' }
-        if (receipt.status !== 'installed') return pending
+        if (receipt.status !== 'installed') return { ...pending, ...(receipt.status === 'rolling-back' ? { cleanupPending: true as const } : {}) }
         if (receipt.template_id !== identity.templateId || receipt.revision !== identity.revision) throw new DesktopHttpError(409, 'The saved installation could not be confirmed.')
         const payload = z.object({ coworkers: z.array(z.object({ agentId: z.uuid(), engineAgentId: z.string().min(1) })).min(1).max(DESKTOP_TEMPLATE_LIMITS.maxCoworkers) }).parse(JSON.parse(String(receipt.payload)))
         const coworkers = []

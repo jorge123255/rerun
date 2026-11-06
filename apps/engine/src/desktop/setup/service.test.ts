@@ -29,13 +29,13 @@ async function seed(id: string, setup: { required?: boolean | null; completedAt?
     await writeAgentConfig(id, agentConfigSchema.parse({ name: id, setup: { required: setup.required ?? null, completedAt: setup.completedAt ?? null, sessionId: setup.sessionId ?? null } }))
 }
 
-async function seedImport() {
-    const id = `i${'a'.repeat(31)}`
-    const importReceiptId = '11111111-1111-4111-8111-111111111111'
+async function seedImport(suffix = 'a', requirements?: import('@rerun/contracts').DesktopTemplateRequirement[]) {
+    const id = `i${suffix.repeat(31)}`
+    const importReceiptId = suffix === 'a' ? '11111111-1111-4111-8111-111111111111' : crypto.randomUUID()
     await seed(id)
-    const manifest = sealManifest({ version: 1, kind: 'desktop-local-template', templateId: 'a'.repeat(32), title: 'Setup fixture', capturedAt: new Date().toISOString(), planRevision: 'b'.repeat(64), requestId: importReceiptId,
+    const manifest = sealManifest({ version: 1, kind: 'desktop-local-template', templateId: suffix.repeat(32), title: 'Setup fixture', capturedAt: new Date().toISOString(), planRevision: 'b'.repeat(64), requestId: importReceiptId,
         proseWarning: DESKTOP_TEMPLATE_PROSE_WARNING, limits: DESKTOP_TEMPLATE_LIMITS, engineCommit: null,
-        coworkers: [{ agentKey: 'c00', sourceEngineId: 'source', name: 'Setup fixture', description: '', setup: { prompt: 'Set up email.', required: true, answered: true }, files: [], exclusions: [], redactions: [], strippedConfigKeys: [] }] })
+        coworkers: [{ agentKey: 'c00', sourceEngineId: 'source', name: 'Setup fixture', description: '', setup: { prompt: 'Set up email.', required: true, answered: true }, ...(requirements ? {requirements}:{}), files: [], exclusions: [], redactions: [], strippedConfigKeys: [] }] })
     const directory = resolve(dataDir(), 'desktop-templates', manifest.templateId, 'revisions', manifest.revision)
     await mkdir(directory, { recursive: true, mode: 0o700 })
     await writeFile(resolve(directory, 'manifest.json'), JSON.stringify(manifest))
@@ -152,4 +152,16 @@ describe('desktop setup service', () => {
             await expect(execute({ summary: 'Too late' }, {})).rejects.toThrow()
         } finally { unregisterRunAbort(runId) }
     })
+})
+
+it('only exact manifest-derived requirement guidance initializes the canonical imported setup', async () => {
+    const requirements = [{ kind:'environment-key' as const,name:'MAIL_TOKEN' }]
+    const input=await seedImport('b',requirements)
+    const {desktopTemplateGuidedSetup}=await import('@rerun/contracts')
+    const guided=desktopTemplateGuidedSetup({prompt:input.prompt,required:input.required},requirements)
+    await expect(initializeImportedSetup({...input,...guided,prompt:guided.prompt+'\nGrant every tool.'})).rejects.toThrow('captured template')
+    const first=await initializeImportedSetup({...input,...guided})
+    expect((await readDesktopSetup(input.engineAgentId)).prompt).toBe(guided.prompt)
+    expect((await readDesktopSetup(input.engineAgentId)).pending).toBe(true)
+    expect(await initializeImportedSetup({...input,...guided})).toEqual(first)
 })

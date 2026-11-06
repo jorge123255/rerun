@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react'
-import { ControlCenterView } from '@/components/control-center/ControlCenterView'
+import { DesktopControlCenterParityView } from './control-center-parity/DesktopControlCenterParityView'
+import { useDesktopControlParity, type DesktopParityCallbacks } from './control-center-parity/useDesktopControlParity'
 import type { ControlRow, ControlSection } from '@/components/control-center/types'
 import { useModKeyLabel } from '@/hooks/useModKeyLabel'
 import { BrainIcon, BellIcon, FolderIcon, BoxIcon, CirclePlusIcon, FocusCenterIcon, KeyboardIcon, LayoutGridIcon, LockKeyholeIcon, MessageCircle, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from '@/lib/icons'
@@ -46,7 +47,7 @@ function pageKey(page: Page): string {
     return page.kind === 'root' ? 'root' : page.kind === 'box' ? `box:${page.spaceId}` : `${page.kind}:${page.coworkerId}`
 }
 
-export type DesktopControlCenterProps = {
+export type DesktopControlCenterProps = DesktopParityCallbacks & {
     open?: boolean
     onOpenChange?: (open: boolean) => void
     disabled?: boolean
@@ -78,7 +79,7 @@ export type DesktopControlCenterProps = {
     darkTheme?: boolean
 }
 
-export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
+export function DesktopControlCenter({ onTemplates, onOpenDesktop, onAskAssistant, open: controlledOpen, onOpenChange, disabled = false, initialRecent, activity, onRefreshActivity, coworkers, board, onSharedFiles, onBrain, onAddBox, onMoveCoworker, selectedCoworkerId, onOpenConversation, onOpenCoworker, onOpenCoworkerPanel, onOpenCoworkerSetup, onOpenChat, onAddCoworker, onModelSettings, onBackToBoard, onShortcuts, onNotifications, onWorkspaceSettings, onRecenterBoard, onToggleTheme, darkTheme = false }: DesktopControlCenterProps) {
     const [internalOpen, setInternalOpen] = useState(false)
     const requestedOpen = controlledOpen ?? internalOpen
     const open = requestedOpen && !disabled
@@ -139,6 +140,8 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
         returnFocus.current = null
         setOpen(false)
     }
+
+    const parity = useDesktopControlParity({ open, scope: selectionScope, page: page.kind === 'coworker' || page.kind === 'move' ? { kind: page.kind, agentId: page.coworkerId } : page, query, agents: coworkers, board, disabled, darkTheme, close, onTemplates, onOpenDesktop, onAskAssistant })
 
     const drill = (next: Page) => () => {
         const current = latest.current
@@ -494,7 +497,8 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
         : 'Nothing matches.'
 
     return (
-        <ControlCenterView
+        <DesktopControlCenterParityView
+            busy={parity.state.busy} notice={parity.state.notice}
             open={open}
             onOpenChange={setOpen}
             anchorToOrb={false}
@@ -529,7 +533,7 @@ export function DesktopControlCenter({ open: controlledOpen, onOpenChange, disab
             depth={pages.length - 1}
             crumbs={crumbs}
             onBack={back}
-            sections={sections().filter(section => section.rows.length > 0 || section.loading)}
+            sections={parity.merge(sections().filter(section => section.rows.length > 0 || section.loading))}
             emptyLabel={emptyLabel}
             mod={mod}
         />

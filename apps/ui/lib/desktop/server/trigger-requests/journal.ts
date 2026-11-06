@@ -18,6 +18,7 @@ export type TriggerRequestJournal = {
 }
 
 export const TRIGGER_REQUEST_MIGRATION_SQL = `
+CREATE TABLE IF NOT EXISTS desktop_trigger_workspace_identity (id INTEGER PRIMARY KEY CHECK(id=1),value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS desktop_trigger_request_links_v1 (
     link_key TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, agent_id TEXT NOT NULL,
     session_id TEXT NOT NULL, event_id TEXT NOT NULL, source_run_id TEXT NOT NULL,

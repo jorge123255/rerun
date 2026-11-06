@@ -97,7 +97,8 @@ function harness() {
         rotateTriggerToken: async () => { throw new Error('Use durable trigger definition CAS') },
         deleteTrigger: async () => { throw new Error('Use durable trigger definition CAS') },
         markFired: async () => { state.marks += 1; throw new Error('management tools must not mark fired') },
-        replaceTrigger: async (id, slug, expected, next) => {
+        replaceTrigger: async (id, slug, expected, next, admission) => {
+            await admission?.()
             if (state.failReplace) { state.failReplace = false; throw new Error('Trigger definition changed') }
             const current = bucket(id).get(slug) ?? null
             if (desktopTriggerDefinitionRevision(current) !== desktopTriggerDefinitionRevision(expected)) throw new Error('Trigger definition changed')
@@ -130,6 +131,38 @@ function harness() {
 }
 
 describe('desktop trigger tools', () => {
+    it('requires the read revision and binds original tool input on receipt replay', async () => {
+        const { bucket, call, state } = harness()
+        bucket('eng-1').set('hook', record({ slug: 'hook', body: 'Keep this.' }))
+        for (const [name, input] of [
+            ['trigger_update', { slug: 'hook', body: 'Overwrite' }],
+            ['trigger_edit', { slug: 'hook', oldString: 'Keep', newString: 'Change' }],
+            ['trigger_delete', { slug: 'hook' }],
+        ] as const) expect(await call(name, input, `missing-${name}`)).toBe(M.stale)
+        expect(state.writes).toBe(0)
+        const revision = desktopTriggerDefinitionRevision(bucket('eng-1').get('hook')!)
+        const input = { slug: 'hook', expectedRevision: revision, body: 'Exact update.' }
+        expect(await call('trigger_update', input, 'update-once')).toBe(M.replacedBody('hook', 10, 13))
+        expect(await call('trigger_update', { ...input, expectedRevision: 'other-revision' }, 'update-once')).toBe(M.conflict)
+        expect(await call('trigger_edit', { slug: 'hook', expectedRevision: revision, oldString: 'Keep this.', newString: 'Exact update.', replaceAll: false }, 'update-once')).toBe(M.conflict)
+        bucket('eng-1').set('hook', { ...bucket('eng-1').get('hook')!, body: 'Later human edit.' })
+        expect(await call('trigger_update', input, 'update-once')).toBe(M.replacedBody('hook', 10, 13))
+        expect(bucket('eng-1').get('hook')!.body).toBe('Later human edit.')
+        expect(state.writes).toBe(1)
+    })
+
+    it('refuses changed model or rotation confirmation under an existing invocation identity', async () => {
+        const { bucket, call, state } = harness()
+        const create = { name: 'Hook', description: '', body: 'Run.', provider: 'openai', model: 'gpt-5' }
+        await call('trigger_create', create, 'create-pinned')
+        expect(await call('trigger_create', { ...create, model: 'different' }, 'create-pinned')).toBe(M.conflict)
+        const revision = desktopTriggerDefinitionRevision(bucket('eng-1').get('hook')!)
+        await call('trigger_rotate_token', { slug: 'hook', confirmation: { slug: 'hook', revision, action: 'rotate' } }, 'rotate-pinned')
+        const token = bucket('eng-1').get('hook')!.token
+        expect(await call('trigger_rotate_token', { slug: 'hook', confirmation: { slug: 'hook', revision: 'changed', action: 'rotate' } }, 'rotate-pinned')).toBe(M.conflict)
+        expect(bucket('eng-1').get('hook')!.token).toBe(token)
+        expect(state.writes).toBe(2)
+    })
     it('keeps the local-only descriptions and prompt', () => {
         const { factory } = harness()
         const tools = factory.tools('eng-1', { runId: 'run-1', sessionId: 'session-1' })
@@ -200,17 +233,17 @@ describe('desktop trigger tools', () => {
         const intent = await store.findIntent('eng-1', requestId('eng-1', 'run-1', 'edit'))
         expect(intent?.kind).toBe('update')
         expect(JSON.parse(intent?.resultJson ?? '{}').token).toBe('secret-token-a')
-        expect(await call('trigger_edit', { slug: 'hook', oldString: 'inbox', newString: 'x' }, 'miss')).toBe(M.missingExcerpt('hook'))
-        expect(await call('trigger_edit', { slug: 'hook', oldString: 'Check', newString: 'Check' }, 'same-text')).toBe(M.identical)
-        expect(await call('trigger_edit', { slug: 'hook', oldString: '', newString: 'x' }, 'empty')).toBe(M.emptyExcerpt)
+        expect(await call('trigger_edit', { slug: 'hook', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('hook') ?? null), oldString: 'inbox', newString: 'x' }, 'miss')).toBe(M.missingExcerpt('hook'))
+        expect(await call('trigger_edit', { slug: 'hook', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('hook') ?? null), oldString: 'Check', newString: 'Check' }, 'same-text')).toBe(M.identical)
+        expect(await call('trigger_edit', { slug: 'hook', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('hook') ?? null), oldString: '', newString: 'x' }, 'empty')).toBe(M.emptyExcerpt)
     })
 
     it('refuses an ambiguous excerpt unless replaceAll is set', async () => {
         const { bucket, call } = harness()
         bucket('eng-1').set('hook', record({ slug: 'hook', body: 'a a' }))
-        expect(await call('trigger_edit', { slug: 'hook', oldString: 'a', newString: 'b' }, 'amb')).toBe(M.ambiguous('hook', 2))
+        expect(await call('trigger_edit', { slug: 'hook', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('hook') ?? null), oldString: 'a', newString: 'b' }, 'amb')).toBe(M.ambiguous('hook', 2))
         expect(bucket('eng-1').get('hook')?.body).toBe('a a')
-        expect(await call('trigger_edit', { slug: 'hook', oldString: 'a', newString: 'b', replaceAll: true }, 'all')).toBe('Edited trigger hook (2 replacements)')
+        expect(await call('trigger_edit', { slug: 'hook', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('hook') ?? null), oldString: 'a', newString: 'b', replaceAll: true }, 'all')).toBe('Edited trigger hook (2 replacements)')
         expect(bucket('eng-1').get('hook')?.body).toBe('b b')
     })
 
@@ -241,9 +274,9 @@ describe('desktop trigger tools', () => {
         expect(await call('trigger_create', { name: 'Lone', description: '', body: 'Run.', provider: 'openai' }, 'lone')).toBe(M.created('lone', 'POST'))
         expect(bucket('eng-1').get('lone')).toMatchObject({ provider: null, model: null })
         bucket('eng-1').set('pinned', record({ slug: 'pinned', provider: 'openai', model: 'gpt-5', connectionId: 'human-conn' }))
-        await call('trigger_update', { slug: 'pinned', description: 'kept' }, 'keep')
+        await call('trigger_update', { slug: 'pinned', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('pinned') ?? null), description: 'kept' }, 'keep')
         expect(bucket('eng-1').get('pinned')).toMatchObject({ provider: 'openai', model: 'gpt-5', connectionId: 'human-conn', description: 'kept' })
-        await call('trigger_update', { slug: 'pinned', provider: 'openai', model: 'gpt-5' }, 'clear')
+        await call('trigger_update', { slug: 'pinned', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('pinned') ?? null), provider: 'openai', model: 'gpt-5' }, 'clear')
         expect(bucket('eng-1').get('pinned')).toMatchObject({ provider: null, model: null, connectionId: null })
     })
 
@@ -291,9 +324,9 @@ describe('desktop trigger tools', () => {
         const { bucket, call, state } = harness()
         bucket('eng-1').set('hook', record({ slug: 'hook', body: 'Keep' }))
         state.failReplace = true
-        expect(await call('trigger_update', { slug: 'hook', body: 'Next' }, 'cas')).toBe(M.uncertain)
+        expect(await call('trigger_update', { slug: 'hook', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('hook') ?? null), body: 'Next' }, 'cas')).toBe(M.uncertain)
         expect(bucket('eng-1').get('hook')?.body).toBe('Keep')
-        expect(await call('trigger_update', { slug: 'hook', body: 'Next' }, 'cas')).toBe(M.replacedBody('hook', 4, 4))
+        expect(await call('trigger_update', { slug: 'hook', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('hook') ?? null), body: 'Next' }, 'cas')).toBe(M.replacedBody('hook', 4, 4))
         expect(bucket('eng-1').get('hook')?.body).toBe('Next')
     })
 
@@ -352,10 +385,10 @@ describe('desktop trigger tools', () => {
         })
         expect(await call('trigger_list', {}, 'list-2', 'eng-2')).toContain('Beta')
         expect(await call('trigger_list', {}, 'list-2', 'eng-2')).not.toContain('Alpha')
-        await call('trigger_update', { slug: 'hook', enabled: false }, 'disable')
+        await call('trigger_update', { slug: 'hook', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('hook') ?? null), enabled: false }, 'disable')
         expect(bucket('eng-1').get('hook')).toMatchObject({ enabled: false, token: 'secret-token-a' })
         expect((await store.listEvents('eng-1', 'hook')).map(event => event.eventId)).toEqual(['evt-1'])
-        expect(await call('trigger_delete', { slug: 'hook' }, 'delete')).toBe(M.deleted('hook'))
+        expect(await call('trigger_delete', { slug: 'hook', expectedRevision: desktopTriggerDefinitionRevision(bucket('eng-1').get('hook') ?? null) }, 'delete')).toBe(M.deleted('hook'))
         expect(bucket('eng-1').has('hook')).toBe(false)
         expect(bucket('eng-2').get('hook')?.token).toBe('secret-token-b')
         expect((await store.listEvents('eng-1', 'hook')).map(event => event.status)).toEqual(['finished'])

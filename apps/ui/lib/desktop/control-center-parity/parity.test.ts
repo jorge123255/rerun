@@ -87,3 +87,12 @@ it('a no-longer-pending To handle row never answers or opens another owner',()=>
  snapshot.coworkers[0]!.pending=false
  expect(intentIsCurrent(row.intent,snapshot)).toBe(false)
 })
+it('keeps original relevance ranking across existing and added commands',()=>{
+ const snapshot=fixture(),ports=actions(snapshot)
+ const commands=buildParityCommands(snapshot,{kind:'root'},'/key',ports)
+ expect(commands.filter(c=>c.group==='settings').map(c=>c.key).slice(0,2)).toEqual(['shortcuts','ai_providers'])
+ const additions=parityCommandSections(commands,()=>{})
+ const existing=[{id:'settings',heading:'Settings',rows:[{id:'command-model_settings',label:'Model settings',leading:commands.find(c=>c.key==='ai_providers')!.icon,onSelect:()=>{}},{id:'command-shortcuts',label:'Keyboard shortcuts',leading:commands.find(c=>c.key==='shortcuts')!.icon,onSelect:()=>{}}]}]
+ const merged=mergeParitySections(existing,additions,'/key')
+ expect(merged.find(s=>s.heading==='Settings')!.rows.map(row=>row.label).slice(0,2)).toEqual(['Keyboard shortcuts','Model settings'])
+})

@@ -92,7 +92,7 @@ export type DesktopTriggerAuthority = {
     deleteTrigger(engineAgentId: string, slug: string): Promise<void>
     markFired(engineAgentId: string, slug: string, firedAt: string): Promise<void>
     /** Exact definition CAS; statistics are preserved independently. */
-    replaceTrigger?(engineAgentId: string, slug: string, expected: DesktopTriggerRecord | null, next: DesktopTriggerRecord | null): Promise<DesktopTriggerRecord | null>
+    replaceTrigger?(engineAgentId: string, slug: string, expected: DesktopTriggerRecord | null, next: DesktopTriggerRecord | null, admission?: () => Promise<void>): Promise<DesktopTriggerRecord | null>
 }
 
 export type DesktopTriggerMutationIntent = {
@@ -104,6 +104,7 @@ export type DesktopTriggerMutationIntent = {
 export type DesktopTriggerMutationKind = 'create' | 'update' | 'rotate' | 'delete' | 'enable' | 'disable' | 'stop'
 
 export type DesktopTriggerStore = {
+    listHumanAdmissions?(engineAgentId: string, eventId: string, sessionId: string): Promise<{sourceRunId: string; runId: string}[]>
     initialize(engineAgentId: string): Promise<void>
     getRevision(engineAgentId: string, slug: string): Promise<string | null>
     bumpRevision(engineAgentId: string, slug: string): Promise<string>

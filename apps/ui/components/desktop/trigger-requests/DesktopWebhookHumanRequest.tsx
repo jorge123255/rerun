@@ -30,13 +30,16 @@ function WebhookHumanRequest(props: DesktopWebhookHumanRequestProps) {
     const latest = useRef(props); latest.current = props
     const view = state.view, request = view.request
     const unsettled = view.phase === 'uncertain' || view.phase === 'stop-uncertain'
+    const retrySaved = view.phase === 'uncertain' && active && !state.busy
     const locked = !active || state.busy || view.availability !== 'ready' || view.runStatus !== 'done' || view.phase !== 'pending'
     async function adopt(response: Response) {
         if (!latest.current.active || !sameTriggerResultOwner(view.link, latest.current.initial.link)) { void response.body?.cancel().catch(() => {}); return }
-        if (response.headers.get('x-session-id') !== view.link.sessionId) { void response.body?.cancel().catch(() => {}); throw new Error('Response belongs to a different conversation') }
-        await state.reconcile()
-        if (latest.current.active && sameTriggerResultOwner(view.link, latest.current.initial.link)) await latest.current.onAccepted(response, view)
-        else void response.body?.cancel().catch(() => {})
+        if (response.headers.get('x-session-id') !== view.link.sessionId || response.headers.get('x-trigger-request-key') !== view.key || !response.headers.get('x-run-id')) { void response.body?.cancel().catch(() => {}); throw new Error('Response belongs to a different conversation') }
+        if (latest.current.active && sameTriggerResultOwner(view.link, latest.current.initial.link)) {
+            // Replacing the form before adoption would unmount its client and abort this admitted response.
+            await latest.current.onAccepted(response, view)
+            if (latest.current.active && sameTriggerResultOwner(view.link, latest.current.initial.link)) await state.reconcile()
+        } else void response.body?.cancel().catch(() => {})
     }
     return <section aria-label="Webhook request" className="min-w-0 space-y-3" aria-busy={state.busy}>
         {props.payload && props.payload.eventId === view.link.eventId && props.payload.engineSessionId === view.link.engineSessionId && props.payload.value.slug === view.link.slug && <DesktopTriggerPayloadBlock payload={props.payload.value} />}
@@ -52,24 +55,24 @@ function WebhookHumanRequest(props: DesktopWebhookHumanRequestProps) {
         </div>}
         {request?.kind === 'question' && <DesktopQuestionCard question={request.value} disabled={locked && !(view.phase === 'uncertain' && !!request.value.attempt && active && !state.busy)} onAnswer={input => state.decide({ kind: 'question', input })} />}
         {request?.kind === 'approval' && <DesktopApprovalCard approval={request.value} disabled={locked && !(view.phase === 'uncertain' && !!request.value.attempt && active && !state.busy)} onDecide={input => state.decide({ kind: 'approval', input })} />}
-        {request?.kind === 'takeover' && <DesktopTakeoverCard key={view.key} takeover={request.value} disabled={locked} screen={props.takeover?.screen} live={props.takeover?.live} onAction={async input => {
+        {request?.kind === 'takeover' && <DesktopTakeoverCard key={view.key} takeover={request.value} disabled={locked && !(retrySaved && !!request.value.attempt)} screen={props.takeover?.screen} live={props.takeover?.live} onAction={async input => {
             if (input.action === 'done' || input.action === 'skip') await state.decide({ kind: 'takeover', input })
             else {
                 if (!props.takeover) throw new Error('The browser lease authority is unavailable. No input permission was granted.')
                 await props.takeover.onAction(request.value, input)
             }
         }} />}
-        {request?.kind === 'service' && (props.onOpenApps ? <DesktopServiceRequestBlock agentId={view.link.agentId} sessionId={view.link.sessionId} request={request.value} disabled={locked} inline onOpenApps={props.onOpenApps} onAccepted={async result => {
+        {request?.kind === 'service' && (props.onOpenApps ? <DesktopServiceRequestBlock agentId={view.link.agentId} sessionId={view.link.sessionId} request={request.value} disabled={locked && !(retrySaved && !!request.value.receipt)} inline onOpenApps={props.onOpenApps} onAccepted={async result => {
             if (result.agentId !== view.link.agentId || result.sessionId !== view.link.sessionId || result.serviceRequestId !== view.link.requestId) { result.cancelStream(); throw new Error('App request owner changed') }
             await adopt(result.response)
         }} /> : <p role="status" className="text-sm text-muted-foreground">App setup navigation is unavailable. Open the exact result chat to continue.</p>)}
-        {request?.kind === 'secret' && <DesktopSecretRequestBlock sessionId={view.link.sessionId} request={request.value} active={!locked} inline onAccepted={adopt} />}
+        {request?.kind === 'secret' && <DesktopSecretRequestBlock sessionId={view.link.sessionId} request={request.value} active={!locked || (retrySaved && (!!request.value.pendingAttempt || !!request.value.receipt))} inline onAccepted={adopt} />}
         {request?.kind === 'signin' && <div className="rounded-lg border border-border px-4 pt-3 pb-4 text-sm">
             <p className="font-medium">Sign in to {request.value.name}</p>
             <p className="mt-1 text-muted-foreground">{request.value.reason}</p>
             <p role="status" className="mt-2 text-muted-foreground">Authenticated MCP sign-in continuation is unavailable. No sign-in, connection or continuation was assumed.</p>
         </div>}
-        {view.phase === 'pending' && <Button type="button" size="sm" variant="ghost" disabled={!active || state.busy} onClick={() => { void state.stop().catch(() => {}) }}>Stop</Button>}
+        {(view.phase === 'pending' || view.phase === 'stop-uncertain') && <Button type="button" size="sm" variant="ghost" disabled={!active || state.busy} onClick={() => { void state.stop().catch(() => {}) }}>{view.phase === 'stop-uncertain' ? 'Retry Stop' : 'Stop'}</Button>}
     </section>
 }
 export function DesktopWebhookHumanRequest(props: DesktopWebhookHumanRequestProps) {

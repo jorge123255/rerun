@@ -13,6 +13,7 @@ import { canonicalRequestId, type TriggerRequestDecision, type TriggerRequestFor
 import type { TriggerRequestRecord } from './journal'
 
 export type TriggerRequestRootBindings = {
+    readContinuationRuns?: (link: TriggerRequestTarget, signal: AbortSignal) => Promise<string[]>
     workspaceIdentity: string
     resolveSessionSource: (sessionId: string, signal: AbortSignal) => Promise<{ kind: 'ordinary' } | { kind: 'trigger'; target: TriggerRequestTarget } | { kind: 'unavailable' }>
     readDelivery: (engineAgentId: string, eventId: string, signal: AbortSignal) => Promise<DesktopTriggerDeliveryReceipt | null>

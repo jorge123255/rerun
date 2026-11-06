@@ -102,3 +102,39 @@ it('bounds streamed state before accumulating a full oversized response', async 
     await expect(readDesktopForemanState()).rejects.toThrow('too large')
     expect(cancel).toHaveBeenCalled()
 })
+it('cancel before provider admission clears only its new pending send and never dispatches it', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    const abort = new AbortController()
+    let stopped = false
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        const response = await transport(url, init)
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        if (!stopped && body?.action === 'ui' && body.snapshot.pendingSend) { stopped = true; abort.abort() }
+        return response
+    })
+    const client = connect()
+    await expect(client.ports.conversation.sendMessage('from palette', abort.signal)).rejects.toThrow()
+    expect(bodies.filter(body => body.action === 'send')).toHaveLength(0)
+    expect(server.ui.snapshot?.pendingSend).toBeUndefined()
+    expect(await client.ports.conversation.sendMessage('next message')).toBe(true)
+})
+it('serializes explicit Ask against normal composer send and forwards cancellation to admitted transport', async () => {
+    const transport = vi.mocked(fetch).getMockImplementation()!
+    const abort = new AbortController()
+    let sent!: () => void
+    const admitted = new Promise<void>(resolve => { sent = resolve })
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+        if (init?.body && JSON.parse(String(init.body)).action === 'send') {
+            sent()
+            return new Promise<Response>((_resolve, reject) => init.signal!.addEventListener('abort', () => reject(new Error('cancelled transport')), { once: true }))
+        }
+        return transport(url, init)
+    })
+    const client = connect()
+    const first = client.ports.conversation.sendMessage('first', abort.signal)
+    const failure = expect(first).rejects.toThrow('cancelled transport')
+    await admitted
+    expect(await client.ports.conversation.sendMessage('second')).toBe(false)
+    abort.abort(); await failure
+    expect(server.ui.snapshot?.pendingSend?.text).toBe('first')
+})

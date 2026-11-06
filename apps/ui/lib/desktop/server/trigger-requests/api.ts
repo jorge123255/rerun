@@ -16,7 +16,9 @@ const mutation = z.discriminatedUnion('action', [
 export function createTriggerRequestsApi(open: (runtime: DesktopRuntime) => Promise<DesktopTriggerRequests>) {
     return {
         GET: (request: Request, sessionId: string) => desktopRoute(request, async runtime => {
-            const key = keySchema.parse(new URL(request.url).searchParams.get('key')), service = await open(runtime)
+            const rawKey = new URL(request.url).searchParams.get('key'), service = await open(runtime)
+            if (!rawKey) return Response.json({ request: await service.currentForSession(sessionId) }, { headers: { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' } })
+            const key = keySchema.parse(rawKey)
             const saved = await service.journal.get(key)
             if (!saved || saved.link.sessionId !== sessionId) throw new DesktopHttpError(404, 'Webhook request not found')
             const view = await service.lifecycle.read(saved.link)

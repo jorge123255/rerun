@@ -1,3 +1,5 @@
+import { DESKTOP_GUEST_SHELL_SCHEMA_SQL } from '../desktop/guest-shell/schema.js'
+import { DESKTOP_TRIGGER_HUMAN_SQL } from '../desktop/triggers/human-schema.js'
 import { DESKTOP_SCHEDULE_TOOL_SCHEMA_SQL } from '../desktop/schedule-tools/schema.js'
 import { desktopTriggerStateSchema } from '../desktop/triggers/state.js'
 import { mkdirSync, existsSync } from 'node:fs'
@@ -256,6 +258,8 @@ export const SYSTEM_DB_MIGRATIONS: SqliteMigration[] = [
         },
     },
     { version: 9, id: 'desktop-schedule-tool-intents', up: client => client.executeMultiple(DESKTOP_SCHEDULE_TOOL_SCHEMA_SQL) },
+    { version: 10, id: 'desktop-guest-shell-receipts', up: client => client.executeMultiple(DESKTOP_GUEST_SHELL_SCHEMA_SQL) },
+    { version: 11, id: 'desktop-trigger-human-admission', up: client => client.executeMultiple(DESKTOP_TRIGGER_HUMAN_SQL) },
 ]
 
 export const SYSTEM_DB_VERSION = latestVersion(SYSTEM_DB_MIGRATIONS)

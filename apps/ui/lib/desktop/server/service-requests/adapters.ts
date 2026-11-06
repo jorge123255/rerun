@@ -1,3 +1,4 @@
+import { withoutStoppedWebhookForms } from '../trigger-requests/stopped'
 import 'server-only'
 import { desktopServiceConnectionSchema, type DesktopServiceConnection, type DesktopServiceHealth, type DesktopServiceRequest, type DesktopServiceRequestCatalog } from '@rerun/contracts'
 import { findDesktopServiceRequest } from '@rerun/contracts'
@@ -104,7 +105,7 @@ export async function readDesktopServiceSource(runtime: DesktopRuntime, agent: D
     try {
         const messages = await getSessionMessages(engineOf(runtime), agent.engineAgentId, session.engineSessionId, { requireSuccess: true, signal })
         if (messages.some(message => message.sessionId !== session.engineSessionId)) throw new Error('Foreign conversation history')
-        return findDesktopServiceRequest(messages)
+        return findDesktopServiceRequest(await withoutStoppedWebhookForms(await openDesktopDatabase(runtime.dataRoot),agent.id,session.id,messages))
     } catch (cause) {
         if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Conversation not found')
         if (cause instanceof DesktopHttpError) throw cause

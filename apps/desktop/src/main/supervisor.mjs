@@ -92,6 +92,8 @@ export class RuntimeSupervisor extends EventEmitter {
                     ...shared, RERUN_HOST: '127.0.0.1', RERUN_PORT: String(enginePort), RERUN_API_KEY: this.identity.engineApiKey,
                     RERUN_DATA_DIR: engineRoot, RERUN_HUB_BASE_URL: runtime.app.origin, RERUN_DESKTOP: 'off',
                     RERUN_DESKTOP_CODEX_RUNNER: this.bundle.codexPath,
+                    RERUN_DESKTOP_CLAUDE_RUNNER: this.bundle.claudePath,
+                    RERUN_DESKTOP_CLAUDE_SANDBOX: this.bundle.claudeSandboxPath,
                     RERUN_DESKTOP_RENAME_HELPER: this.bundle.renameHelperPath,
                 }, runtime.launchNonce)
                 const ready = await this.waitForEngine(engine, runtime)

@@ -15,7 +15,7 @@ import {
     type DesktopMcpSecretReferenceConfig,
     type DesktopMcpSecretReferenceSave,
     type DesktopMcpSecretReferenceSaveResult,
-} from '../../../../../../packages/contracts/src/desktop-mcp-secret-references'
+} from '@rerun/contracts'
 
 export class DesktopMcpSecretReferenceConflict extends Error {
     readonly code = 'conflict' as const
@@ -33,14 +33,14 @@ export type DesktopMcpPublicConfigPort = {
     commit(input: {
         agentId: string
         serverName: string
-        expectedConfigRevision: number
+        expectedConfigRevision: string
         config: DesktopMcpSecretReferenceConfig
         tx: DesktopMcpSecretReferenceExecutor
-    }): Promise<{ configRevision: number }>
+    }): Promise<{ configRevision: string }>
 }
 
 type Head = {
-    configRevision: number
+    configRevision: string
     bindingRevision: number
     origin: string
     fingerprint: string
@@ -64,6 +64,7 @@ const notSaved = (save: Pick<DesktopMcpSecretReferenceSave, 'saveId' | 'agentId'
 })
 
 function replayed(stored: DesktopMcpSecretReferenceSaveResult): DesktopMcpSecretReferenceSaveResult {
+    if (stored.status === 'not-saved' || stored.status === 'conflict') return stored
     const storedStatus = stored.status === 'saved' || stored.status === 'pending' ? stored.status : stored.storedStatus
     return desktopMcpSecretReferenceSaveResultSchema.parse({ ...stored, status: 'replayed', ...(storedStatus ? { storedStatus } : {}) })
 }
@@ -76,7 +77,7 @@ async function readHead(tx: DesktopMcpSecretReferenceExecutor, agentId: string, 
     })).rows[0]
     if (!row) return null
     return {
-        configRevision: Number(row.config_revision),
+        configRevision: String(row.config_revision),
         bindingRevision: Number(row.binding_revision),
         origin: String(row.origin),
         fingerprint: String(row.fingerprint),
@@ -90,15 +91,42 @@ function sameAttempt(row: Record<string, unknown>, save: DesktopMcpSecretReferen
         && String(row.server_name) === save.serverName
         && String(row.origin) === save.origin
         && String(row.body_fingerprint) === save.fingerprint
-        && Number(row.expected_config_revision) === save.expectedConfigRevision
+        && String(row.expected_config_revision) === save.expectedConfigRevision
         && Number(row.expected_binding_revision) === save.expectedBindingRevision
 }
 
 export function createDesktopMcpSecretReferenceStore(db: Client, ports: {
     authority: DesktopMcpSecretReferenceAuthority
+    captureAuthority: (agentId: string) => Promise<() => void>
     commitPublicConfig: DesktopMcpPublicConfigPort['commit']
 }) {
     return {
+        async reconcile(input: DesktopMcpSecretReferenceSave): Promise<DesktopMcpSecretReferenceSaveResult> {
+            const save = desktopMcpSecretReferenceSaveSchema.parse(input)
+            const check = await ports.captureAuthority(save.agentId)
+            check()
+            const tx = await db.transaction('write')
+            try {
+                const row = (await tx.execute({ sql: 'SELECT * FROM desktop_mcp_secret_reference_saves WHERE save_id=?', args: [save.saveId] })).rows[0]
+                if (row) {
+                    if (!sameAttempt(row, save)) throw new DesktopMcpSecretReferenceConflict('This save does not match the previous attempt.')
+                    const result = desktopMcpSecretReferenceSaveResultSchema.parse(JSON.parse(String(row.result_json)))
+                    await tx.rollback()
+                    return result.status === 'not-saved' ? result : replayed(result)
+                }
+                const result = notSaved(save, 'This attempt was not applied and can no longer be submitted.')
+                await tx.execute({ sql: `INSERT INTO desktop_mcp_secret_reference_saves (save_id,agent_id,server_name,expected_config_revision,expected_binding_revision,origin,body_fingerprint,result_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, args: [save.saveId, save.agentId, save.serverName, save.expectedConfigRevision, save.expectedBindingRevision, save.origin, save.fingerprint, JSON.stringify(result), new Date().toISOString()] })
+                check(); await tx.commit()
+                return result
+            } catch (error) { await tx.rollback().catch(() => {}); throw error }
+            finally { tx.close() }
+        },
+        async receipt(agentId: string, saveId: string): Promise<DesktopMcpSecretReferenceSaveResult | null> {
+            const row = (await db.execute({ sql: 'SELECT agent_id,result_json FROM desktop_mcp_secret_reference_saves WHERE save_id=?', args: [saveId] })).rows[0]
+            if (!row) return null
+            if (String(row.agent_id) !== agentId) throw new DesktopMcpSecretReferenceConflict('This save belongs to another coworker.')
+            return replayed(desktopMcpSecretReferenceSaveResultSchema.parse(JSON.parse(String(row.result_json))))
+        },
         async head(agentId: string, serverName: string): Promise<Head | null> {
             return readHead(db, agentId, serverName)
         },
@@ -112,7 +140,7 @@ export function createDesktopMcpSecretReferenceStore(db: Client, ports: {
             return result.rows.map(row => desktopMcpSecretBindingSchema.parse({
                 agentId: String(row.agent_id),
                 serverName: String(row.server_name),
-                configRevision: Number(row.config_revision),
+                configRevision: String(row.config_revision),
                 bindingRevision: Number(row.binding_revision),
                 field: String(row.field),
                 fieldKey: String(row.field_key),
@@ -142,7 +170,7 @@ export function createDesktopMcpSecretReferenceStore(db: Client, ports: {
 
         async save(input: DesktopMcpSecretReferenceSave): Promise<DesktopMcpSecretReferenceSaveResult> {
             const parsed = desktopMcpSecretReferenceSaveSchema.safeParse(input)
-            if (!parsed.success) return notSaved({ saveId: 'rejected', agentId: 'rejected', serverName: 'rejected', expectedConfigRevision: 0, expectedBindingRevision: 0 }, 'The credential reference save is not valid.')
+            if (!parsed.success) return notSaved({ saveId: 'rejected', agentId: 'rejected', serverName: 'rejected', expectedConfigRevision: '0', expectedBindingRevision: 0 }, 'The credential reference save is not valid.')
             const save = parsed.data
             const issue = desktopMcpSecretReferencePublicIssue(save.config)
             if (issue) return notSaved(save, issue)
@@ -153,11 +181,14 @@ export function createDesktopMcpSecretReferenceStore(db: Client, ports: {
             const owner = await ports.authority.currentOwner(save.agentId)
             if (!owner || owner.agentId !== save.agentId || !owner.enabled || owner.deleting) return notSaved(save, 'Credential is not available to this coworker.')
 
+            const check = await ports.captureAuthority(save.agentId)
+            check()
             const tx = await db.transaction('write')
             const executor: DesktopMcpSecretReferenceExecutor = {
                 execute: statement => tx.execute(statement),
             }
             try {
+                check()
                 const existing = (await executor.execute({ sql: 'SELECT * FROM desktop_mcp_secret_reference_saves WHERE save_id = ?', args: [save.saveId] })).rows[0]
                 if (existing) {
                     if (!sameAttempt(existing, save)) {
@@ -180,7 +211,8 @@ export function createDesktopMcpSecretReferenceStore(db: Client, ports: {
                     config,
                     tx: executor,
                 })
-                if (!Number.isInteger(committed.configRevision) || committed.configRevision < 0) throw new DesktopMcpSecretReferenceConflict()
+                check()
+                if (typeof committed.configRevision !== 'string' || !committed.configRevision || committed.configRevision.length > 200) throw new DesktopMcpSecretReferenceConflict()
                 const names = [...new Set(plan.references.map(reference => reference.name))]
                 const versions = new Map<string, number>()
                 for (const name of names) {
@@ -242,6 +274,7 @@ export function createDesktopMcpSecretReferenceStore(db: Client, ports: {
                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     args: [save.saveId, save.agentId, save.serverName, save.expectedConfigRevision, save.expectedBindingRevision, save.origin, save.fingerprint, JSON.stringify(result), now],
                 })
+                check()
                 await tx.commit()
                 return result
             } catch (error) {

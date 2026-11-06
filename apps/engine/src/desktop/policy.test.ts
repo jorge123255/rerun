@@ -3,6 +3,22 @@ import { assertDesktopProvider, desktopRouteAllowed } from './policy.js'
 
 afterEach(() => vi.unstubAllEnvs())
 
+test('Claude requires its dedicated connection and both isolated bundled runtime paths', () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', '')
+    vi.stubEnv('RERUN_DESKTOP_CLAUDE_SANDBOX', '')
+    expect(() => assertDesktopProvider('claude', 'mac-claude')).toThrow()
+    expect(desktopRouteAllowed('GET', '/desktop/claude-login')).toBe(false)
+    vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', '/bundle/claude')
+    expect(() => assertDesktopProvider('claude', 'mac-claude')).toThrow()
+    vi.stubEnv('RERUN_DESKTOP_CLAUDE_SANDBOX', '/bundle/claude.sb')
+    expect(() => assertDesktopProvider('claude', 'mac-claude')).not.toThrow()
+    expect(() => assertDesktopProvider('claude', 'legacy-claude')).toThrow()
+    for (const method of ['GET', 'POST']) expect(desktopRouteAllowed(method, '/desktop/claude-login')).toBe(true)
+    for (const method of ['PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, '/desktop/claude-login')).toBe(false)
+    expect(desktopRouteAllowed('POST', '/desktop/claude-login/complete')).toBe(false)
+})
+
 test('desktop database browser routes allow exact operations in each scope and never raw SQL', () => {
     const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
     for (const prefix of ['/agents/a/data', '/shared/data']) {
@@ -124,4 +140,11 @@ test('MCP sign-in source lookup is only the owned-session POST boundary', () => 
     expect(desktopRouteAllowed('POST', '/agents/owner/sessions/chat/mcp-sign-in-source')).toBe(true)
     for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, '/agents/owner/sessions/chat/mcp-sign-in-source')).toBe(false)
     for (const path of ['/agents/foreman/sessions/chat/mcp-sign-in-source', '/agents/owner/mcp-sign-in-source', '/agents/owner/sessions/chat/mcp-sign-in-source/more']) expect(desktopRouteAllowed('POST', path)).toBe(false)
+})
+
+
+test('computer panel permits only authenticated control dispatch at its exact boundary', () => {
+    expect(desktopRouteAllowed('POST', '/desktop/computer-panel/control')).toBe(true)
+    for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) expect(desktopRouteAllowed(method, '/desktop/computer-panel/control')).toBe(false)
+    for (const path of ['/desktop/computer-panel', '/desktop/computer-panel/control/more', '/desktop/computer-panel/launch']) expect(desktopRouteAllowed('POST', path)).toBe(false)
 })

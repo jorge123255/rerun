@@ -1,3 +1,4 @@
+import { interceptDesktopWebhookDecision } from '@/lib/desktop/server/trigger-requests/binding'
 import { desktopServiceRequestMutationSchema } from '@rerun/contracts'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
@@ -34,7 +35,7 @@ export async function POST(request: Request, { params }: Params): Promise<Respon
                 await reserveDesktopServiceRetry(bound.db, bound.scope, input)
                 const response = input.action === 'progress'
                     ? Response.json(await progressDesktopServiceRequest(bound.db, bound.scope, ports, input), { headers: { 'cache-control': 'no-store' } })
-                    : await finishDesktopServiceRequest(bound.db, bound.scope, ports, input)
+                    : await interceptDesktopWebhookDecision(runtime, (await params).sessionId, { kind: 'service', input }) ?? await finishDesktopServiceRequest(bound.db, bound.scope, ports, input)
                 response.headers.set('x-service-request-attempt-id', input.requestId)
                 return response
             } catch (error) {

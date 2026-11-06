@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type ClipboardEvent } from 'react'
+import { useRef, useState, type ClipboardEvent } from 'react'
 import { ForemanTrack, type TrackStep } from '@/components/connections/plan-connect/ForemanTrack'
 import { nameStep } from '@/components/connections/plan-connect/NameStep'
 import { StepError } from '@/components/connections/plan-connect/step-bits'
@@ -27,7 +27,6 @@ export function DesktopClaudePlanSteps({ runtime, onOpenAuthorization, onDone, l
     initialName?: string
 }) {
     const oauth = useDesktopClaudePlan({ runtime, onOpenAuthorization })
-    useEffect(() => { void oauth.reconcile() }, [runtime])
     const [name, setName] = useState(initialName)
     const [saving, setSaving] = useState(false)
     const [nameError, setNameError] = useState<string | null>(null)
@@ -58,7 +57,10 @@ export function DesktopClaudePlanSteps({ runtime, onOpenAuthorization, onDone, l
                     </Button>
                 </TooltipDisabledReason>,
             },
-            { title: 'Paste the code', body: <CodeInput oauth={oauth} /> },
+            { title: 'Paste the code', body: <div className="space-y-2"><CodeInput oauth={oauth} />
+                {oauth.phase === 'error' && <Button type="button" size="sm" variant="outline" onClick={() => void oauth.reconcile()}>Check saved state</Button>}
+                {(oauth.phase === 'waiting' || oauth.phase === 'checking') && <Button type="button" size="sm" variant="ghost" onClick={() => void oauth.cancel()}>Cancel sign-in</Button>}
+            </div> },
             last,
         ]}
     />

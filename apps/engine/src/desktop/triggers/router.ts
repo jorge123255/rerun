@@ -1,3 +1,5 @@
+import { HttpError } from '../../lib/errors.js'
+import { readTriggerEventForSession, triggerHumanSourceSchema, assertTriggerHumanPermission, stopTriggerHumanRequest } from './human.js'
 import { Hono } from 'hono'
 import { desktopTriggerHistory } from './history.js'
 import { z } from 'zod'
@@ -8,7 +10,7 @@ import { dispatchDesktopTriggerFire } from './dispatch.js'
 import { desktopTriggerFireInputSchema } from '@rerun/contracts'
 import type { DesktopTriggerEngineBinding } from './binding.js'
 
-const requestSchema = z.strictObject({ launchNonce: z.string().min(1), op: z.enum(['list', 'get', 'create', 'update', 'rotate', 'delete', 'history', 'stop', 'fire']), localAgentId: z.string().min(1).max(200), engineAgentId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(), input: z.unknown().optional() })
+const requestSchema = z.strictObject({ launchNonce: z.string().min(1), op: z.enum(['list', 'get', 'create', 'update', 'rotate', 'delete', 'history', 'stop', 'fire', 'event', 'session', 'human-authorize', 'human-stop', 'human-stop-receipt', 'continuations']), localAgentId: z.string().min(1).max(200), engineAgentId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(), input: z.unknown().optional() })
 export function createDesktopTriggerRoutes(source: DesktopTriggerEngineBinding | (() => DesktopTriggerEngineBinding | null), launchNonce: string) {
     const router = new Hono()
     router.post('/manage', async c => {
@@ -30,7 +32,25 @@ export function createDesktopTriggerRoutes(source: DesktopTriggerEngineBinding |
             if (owner.localAgentId !== input.localAgentId || owner.engineAgentId !== input.engineAgentId || owner.deleting) return c.json({ error: 'Coworker identity changed' }, 409)
             const life = binding.lifecycle, id = input.engineAgentId
             let result: unknown
-            if (input.op === 'list') result = { triggers: await life.list(id) }
+            if (input.op === 'session') {
+                const query = z.strictObject({ sessionId: z.string().min(1) }).parse(input.input)
+                const event = await readTriggerEventForSession(id, query.sessionId)
+                if (event && event.localAgentId !== owner.localAgentId) throw new HttpError(409, 'Webhook owner changed')
+                if (event) { const { payloadPreview: _payload, ...safe } = event; result = { event: safe } } else result = { event: null }
+            } else if (input.op === 'event') {
+                const query = z.strictObject({ eventId: z.string().min(1) }).parse(input.input)
+                const event = await binding.store.getEvent(id, query.eventId)
+                if (event && event.localAgentId !== owner.localAgentId) throw new HttpError(409, 'Webhook owner changed')
+                if (event) { const { payloadPreview: _payload, ...safe } = event; result = { event: safe } } else result = { event: null }
+            } else if (input.op === 'human-authorize') { await assertTriggerHumanPermission(id, triggerHumanSourceSchema.parse(input.input)); result = { authorized: true } }
+            else if (input.op === 'human-stop' || input.op === 'human-stop-receipt') result = await stopTriggerHumanRequest(id, input.input, input.op === 'human-stop-receipt')
+            else if (input.op === 'continuations') {
+                const query = z.strictObject({ eventId: z.string().min(1), sessionId: z.string().min(1) }).parse(input.input)
+                const event = await readTriggerEventForSession(id, query.sessionId)
+                if (!event || event.eventId !== query.eventId || event.localAgentId !== owner.localAgentId) throw new HttpError(409, 'Webhook conversation changed')
+                result = { runs: (await binding.store.listHumanAdmissions?.(id,event.eventId,query.sessionId) ?? []).map(row=>row.runId) }
+            }
+            else if (input.op === 'list') result = { triggers: await life.list(id) }
             else if (input.op === 'history') result = await desktopTriggerHistory(binding, id, input.slug)
             else if (input.op === 'create') result = await life.create(id, input.input as never)
             else if (input.op === 'stop') result = await binding.stopRun(owner.localAgentId, id, input.input)
@@ -47,8 +67,8 @@ export function createDesktopTriggerRoutes(source: DesktopTriggerEngineBinding |
             }
             return c.json({ result })
         } catch (error) {
-            const status = error instanceof DesktopTriggerLifecycleError || error instanceof DesktopTriggerStopError ? error.status : 400
-            return c.json({ error: error instanceof DesktopTriggerLifecycleError || error instanceof DesktopTriggerStopError ? error.message : 'Trigger request failed' }, status as 400)
+            const status = error instanceof HttpError || error instanceof DesktopTriggerLifecycleError || error instanceof DesktopTriggerStopError ? error.status : 400
+            return c.json({ error: error instanceof HttpError || error instanceof DesktopTriggerLifecycleError || error instanceof DesktopTriggerStopError ? error.message : 'Trigger request failed' }, status as 400)
         }
     })
     return router

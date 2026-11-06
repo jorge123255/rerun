@@ -128,3 +128,16 @@ describe('webhook human request linkage', () => {
         expect((await f.journal.get(triggerRequestKey(link)))?.phase).toBe('uncertain')
     })
 })
+
+it('retries only the same explicit Stop after a restart before engine acknowledgement', async () => {
+    const f = fixture(); await f.lifecycle.capture(link)
+    f.ports.stop.mockRejectedValueOnce(new Error('connection lost before durable Stop'))
+    await expect(f.lifecycle.stop(triggerRequestKey(link))).rejects.toThrow()
+    const restarted = createTriggerRequestLifecycle(f.journal, f.ports)
+    await restarted.reconcile(triggerRequestKey(link))
+    expect(f.ports.stop).toHaveBeenCalledTimes(1)
+    await restarted.stop(triggerRequestKey(link))
+    expect((await f.journal.get(triggerRequestKey(link)))?.phase).toBe('stopped')
+    expect(f.ports.stop).toHaveBeenCalledTimes(2)
+    await expect(restarted.decide(triggerRequestKey(link),decision)).rejects.toThrow()
+})

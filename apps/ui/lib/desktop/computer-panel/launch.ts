@@ -23,6 +23,7 @@ export function createComputerLauncher(owner: ComputerPanelOwner, ports: Pick<Co
     const set = (next: LaunchAttempt | null) => { if (!disposed) { attempt = next; onChange(next) } }
     return {
         get attempt() { return attempt },
+        restore(saved: { requestId: string; app: 'terminal' | 'files' }) { if (!attempt || attempt.phase === 'failed') set({ phase: 'uncertain', ...saved, reason: UNCERTAIN }) },
         get ownerKey() { return key },
         async launch(app: 'terminal' | 'files'): Promise<void> {
             if (disposed || attempt?.phase === 'pending') return
@@ -38,7 +39,8 @@ export function createComputerLauncher(owner: ComputerPanelOwner, ports: Pick<Co
                 if (!live()) return
                 if (outcome.status === 'opened' || outcome.status === 'focused') set({ phase: 'acknowledged', requestId, app, outcome })
                 else if (outcome.status === 'interrupted') set({ phase: 'uncertain', requestId, app, reason: outcome.reason })
-                else set({ phase: 'failed', requestId, app, reason: outcome.reason })
+                else if ('reason' in outcome) set({ phase: 'failed', requestId, app, reason: outcome.reason })
+                else set({ phase: 'uncertain', requestId, app, reason: UNCERTAIN })
             } catch (error) {
                 if (!live()) return
                 if (error instanceof MissingComputerPanelAuthority) set({ phase: 'failed', requestId, app, reason: 'Opening this app from the panel is not available yet on this Mac.' })

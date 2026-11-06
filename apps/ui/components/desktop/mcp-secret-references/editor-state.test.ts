@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { expect, test } from 'vitest'
-import { desktopMcpSecretReferenceCanonical, type DesktopMcpSecretReferenceConfig } from '../../../../../packages/contracts/src/desktop-mcp-secret-references'
+import { desktopMcpSecretReferenceCanonical, desktopMcpSecretReferencePublicConfig, type DesktopMcpSecretReferenceConfig } from '@rerun/contracts'
 import { sameSecretReferenceOwner, secretReferenceEditorConfig, secretReferenceEditorSave, secretReferenceEditorSlot, secretReferenceFingerprint } from './editor-state'
 
 const TOKEN = 'sk-live-example-token-value'
@@ -21,7 +21,7 @@ test('review save keeps the bearer requirement and omits the existing secret', a
         agentId: 'coworker',
         origin: 'app://desktop',
         saveId: 'save-1',
-        expectedConfigRevision: 2,
+        expectedConfigRevision: '2',
         expectedBindingRevision: 0,
         base: base(),
         headersText: 'Accept=application/json\nX-Request=desk',
@@ -32,8 +32,8 @@ test('review save keeps the bearer requirement and omits the existing secret', a
     expect(saved.config.literalAuthorization).toBe(true)
     expect(saved.config.preservedLiteralKeys).toEqual([{ field: 'header', key: 'Authorization' }])
     expect(saved.config.headers).toEqual({ Accept: 'application/json', 'X-Request': 'desk' })
-    expect(saved.fingerprint).toBe(createHash('sha256').update(desktopMcpSecretReferenceCanonical(saved.config)).digest('hex'))
-    expect(saved.fingerprint).toBe(await secretReferenceFingerprint(saved.config))
+    expect(saved.fingerprint).toBe(createHash('sha256').update(desktopMcpSecretReferenceCanonical(desktopMcpSecretReferencePublicConfig(saved.config)!)).digest('hex'))
+    expect(saved.fingerprint).toBe(await secretReferenceFingerprint(desktopMcpSecretReferencePublicConfig(saved.config)!))
     expect(secretReferenceEditorSlot('coworker', 'linear')).toBe(secretReferenceEditorSlot('coworker', 'linear'))
     expect(secretReferenceEditorSlot('coworker', 'linear')).not.toBe(secretReferenceEditorSlot('other', 'linear'))
 })
@@ -52,7 +52,7 @@ test('an inline secret is rejected without echoing it, and a recovery from anoth
             saveId: 'save-1',
             agentId: 'coworker',
             serverName: 'linear',
-            expectedConfigRevision: 0,
+            expectedConfigRevision: '0',
             expectedBindingRevision: 0,
             origin: 'app://desktop',
             fingerprint: 'a'.repeat(64),

@@ -41,6 +41,7 @@ export async function authorizeDesktopTriggers(runtime: DesktopRuntime, db: Clie
     const result = await enabledOwner(runtime, db, id, signal)
     if (!(desktopRerunGrantsOf(result.detail.config.tools) as Record<string, boolean>).trigger) throw new DesktopHttpError(403, 'Enable Triggers in this coworker’s Tools')
     return result
+    return result
 }
 const identity = z.string().min(1).max(200)
 const envelope = z.strictObject({ event: z.literal('desktop.trigger'), launchNonce: identity, op: z.enum(['owner', 'authorize', 'setup', 'model', 'adopt']), payload: z.unknown() })

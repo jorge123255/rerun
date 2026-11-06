@@ -1,3 +1,4 @@
+import { DESKTOP_TRIGGER_HUMAN_SQL } from './human-schema.js'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import type { DesktopTriggerDeliveryReceipt, DesktopTriggerDeliveryStatus } from '@rerun/contracts'
@@ -99,7 +100,7 @@ export function createDesktopTriggerStore(getClient: (engineAgentId: string) => 
         if (!opening) {
             opening = (async () => {
                 const client = await getClient(engineAgentId)
-                await client.executeMultiple(desktopTriggerStateSchema)
+                await client.executeMultiple(desktopTriggerStateSchema + DESKTOP_TRIGGER_HUMAN_SQL)
                 const columns = new Set((await client.execute('PRAGMA table_info(desktop_trigger_events)')).rows.map(row => String(row.name)))
                 if (!columns.has('request_fingerprint')) await client.execute('ALTER TABLE desktop_trigger_events ADD COLUMN request_fingerprint TEXT')
                 if (!columns.has('pending_tool_call_id')) await client.execute('ALTER TABLE desktop_trigger_events ADD COLUMN pending_tool_call_id TEXT')
@@ -112,6 +113,10 @@ export function createDesktopTriggerStore(getClient: (engineAgentId: string) => 
     }
 
     return {
+        async listHumanAdmissions(id, eventId, sessionId) {
+            const client = await clientOf(id)
+            return (await client.execute({ sql:'SELECT source_run_id,run_id FROM desktop_trigger_human_admissions WHERE event_id=? AND session_id=? LIMIT 65', args:[eventId,sessionId] })).rows.map(row=>({sourceRunId:String(row.source_run_id),runId:String(row.run_id)}))
+        },
         async findIntent(engineAgentId, requestId) {
             const client = await clientOf(engineAgentId)
             const row = (await client.execute({ sql: 'SELECT intent_json,result_json FROM desktop_trigger_intents WHERE request_id=?', args: [requestId] })).rows[0]

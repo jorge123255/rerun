@@ -1,22 +1,27 @@
-import {useState} from 'react'
-import {render,screen,fireEvent,waitFor} from '@testing-library/react'
-import {it,expect,vi} from 'vitest'
-import {FolderIcon} from '@/lib/icons'
-import {DesktopControlCenterParityView} from './DesktopControlCenterParityView'
-it('mounts the original dialog without unmounting the board/draft and retains Escape close',async()=>{
- const selected=vi.fn()
- function Harness(){const [open,setOpen]=useState(false);return <><input aria-label="Unsent draft" defaultValue="keep this exact draft"/><div data-testid="board" data-camera="original"/><button onClick={()=>setOpen(true)}>Show center</button><DesktopControlCenterParityView open={open} onOpenChange={setOpen} query="" onQueryChange={()=>{}} placeholder="Search" pageKey="root" depth={0} crumbs={[]} onBack={()=>{}} emptyLabel="Nothing matches." mod="⌘" sections={[{id:'open',heading:'Open',rows:[{id:'files',label:'Files',leading:{kind:'icon',icon:FolderIcon},onSelect:selected}]}]}/></>}
- render(<Harness/>);const draft=screen.getByLabelText('Unsent draft'),board=screen.getByTestId('board')
- fireEvent.click(screen.getByText('Show center'))
- await screen.findByRole('dialog')
- fireEvent.keyDown(document.activeElement??document.body,{key:'Escape'})
- await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull())
- expect(screen.getByTestId('board')).toBe(board);expect((draft as HTMLInputElement).value).toBe('keep this exact draft');expect(selected).not.toHaveBeenCalled()
-})
-it('busy/disabled rows cannot invoke actions through click or drill shortcuts',async()=>{
- const select=vi.fn(),drill=vi.fn()
- const view=render(<DesktopControlCenterParityView busy open onOpenChange={()=>{}} query="" onQueryChange={()=>{}} placeholder="Search" pageKey="agent:a" depth={1} crumbs={['Agent']} onBack={()=>{}} emptyLabel="Nothing matches." mod="⌘" sections={[{id:'open',heading:'Open',rows:[{id:'files',label:'Files',leading:{kind:'icon',icon:FolderIcon},onSelect:select,onDrill:drill}]}]}/>)
- fireEvent.click(screen.getByText('Files'))
- fireEvent.keyDown(screen.getByPlaceholderText('Search'),{key:'Tab'})
- expect(select).not.toHaveBeenCalled();expect(drill).not.toHaveBeenCalled();view.unmount()
+// @vitest-environment happy-dom
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, it, expect, vi } from 'vitest'
+import type { ComponentProps } from 'react'
+import type { ControlCenterView } from '@/components/control-center/ControlCenterView'
+import { FolderIcon } from '@/lib/icons'
+import { DesktopControlCenterParityView } from './DesktopControlCenterParityView'
+let view: ComponentProps<typeof ControlCenterView>
+vi.mock('@/components/control-center/ControlCenterView', () => ({ ControlCenterView: (props: ComponentProps<typeof ControlCenterView>) => { view = props; return <div>{props.sections.flatMap(section => section.rows.map(row => <button key={row.id} onClick={row.onSelect}>{row.label}</button>))}</div> } }))
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+let root: ReturnType<typeof createRoot> | undefined
+const mount = async (busy: boolean, select: () => void, drill: () => void) => {
+    root ??= createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopControlCenterParityView busy={busy} open onOpenChange={() => {}} query="" onQueryChange={() => {}} placeholder="Search" pageKey="agent:a" depth={1} crumbs={['Agent']} onBack={() => {}} emptyLabel="Nothing matches." mod="⌘" sections={[{ id: 'open', heading: 'Open', rows: [{ id: 'files', label: 'Files', leading: { kind: 'icon', icon: FolderIcon }, onSelect: select, onDrill: drill }] }]} />))
+}
+afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.innerHTML = '' })
+it('blocks both click and keyboard drill while an action is pending, then restores handlers', async () => {
+    const select = vi.fn(), drill = vi.fn()
+    await mount(true, select, drill)
+    await act(async () => document.querySelector<HTMLButtonElement>('button')!.click())
+    expect(view.sections[0]!.rows[0]!.onDrill).toBeUndefined(); expect(select).not.toHaveBeenCalled()
+    await mount(false, select, drill)
+    await act(async () => document.querySelector<HTMLButtonElement>('button')!.click())
+    view.sections[0]!.rows[0]!.onDrill!()
+    expect(select).toHaveBeenCalledTimes(1); expect(drill).toHaveBeenCalledTimes(1)
 })

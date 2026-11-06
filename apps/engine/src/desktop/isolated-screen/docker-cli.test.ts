@@ -125,7 +125,7 @@ describe('docker cli', () => {
         await expect(client.version(signal())).resolves.toEqual({ kind: 'unreachable' })
         state.code = 1
         state.stdout = Buffer.alloc(0)
-        state.stderr = Buffer.from('Error: No such image: rerun-desktop-guest:round33\n')
+        state.stderr = Buffer.from('Error: No such image: rerun-desktop-guest:round34\n')
         await expect(client.image(signal())).resolves.toEqual({ kind: 'missing' })
         state.stderr = Buffer.from('Cannot connect to the Docker daemon')
         await expect(client.image(signal())).resolves.toEqual({ kind: 'unreachable' })

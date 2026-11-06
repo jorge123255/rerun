@@ -1,4 +1,6 @@
 import 'server-only'
+import { createCanonicalMcpSecretReferences } from './mcp-secret-references/binding'
+import type { DesktopMcpMaterialSource } from './mcp-secret-references/lease'
 import { z } from 'zod'
 import { createDesktopSelfMcpBinding } from './self-mcp/binding'
 import { desktopRerunToolCatalog, desktopCodexToolCatalog } from '@rerun/contracts'
@@ -87,7 +89,8 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         return { enabled: detail.config.enabled, granted: detail.config.tools.desktopToolGrants?.[grant] === true && (grant !== 'privateFileWrite' || detail.config.tools.filesystem === true) }
     }
     const oauth = loopbackMcpOAuth(store, access)
-    const remote = remoteMcpRuntime(store, access, fetch, oauth.credential)
+    const material: DesktopMcpMaterialSource = (...args) => references.material(...args)
+    const remote = remoteMcpRuntime(store, access, fetch, oauth.credential, material)
     const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' = 'mcp') => {
         const signal = AbortSignal.any([stop, entry.shutdown.signal, AbortSignal.timeout(5_000)])
         const owner = await abortable(localOwner(undefined, identity.engineAgentId), signal)
@@ -154,7 +157,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         current.check()
         return { cwd: current.workspaceRoot }
     }
-    const localRuntime = stdioRuntime(localStore, localAuthority)
+    const localRuntime = stdioRuntime(localStore, localAuthority, undefined, material)
     const localBridge = stdioEngineBridge(localRuntime, async (identity, signal, action) => {
         if (action !== 'release') return authorizeRun(identity, signal, 'localMcpStdio')
         return (await historicalOwner(identity, signal)).owner.id
@@ -189,7 +192,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     const serviceOAuth = createCanonicalServiceOAuth(runtime, installedServices, services, accounts, masterKey, entry.shutdown.signal)
     await serviceOAuth.reconcile()
     const sse = createDesktopSseBinding({
-        db, store, key: masterKey, shutdownSignal: entry.shutdown.signal, access, authorizeRun,
+        db, store, key: masterKey, shutdownSignal: entry.shutdown.signal, access, authorizeRun, materials: material,
         manage: async (owner, signal) => (await currentOwner(owner, signal)).check,
         refreshCredential: oauth.credential,
         account: (ref, action, run, signal) => serviceTransports.account(ref, action, run, signal),
@@ -206,6 +209,24 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     bindRemoteTransportDrain(store, async (owner, name) => {
         const row = await store.read(owner, name)
         if (row.transport === 'sse' && row.id) await sse.dispose(owner, row.id)
+    })
+    const references = createCanonicalMcpSecretReferences({
+        db, key: masterKey, origin: 'desktop-workspace-1', shutdown: entry.shutdown.signal,
+        async owner(id, signal) {
+            const current = await currentOwner(id, signal)
+            const grants = current.config.tools.desktopToolGrants
+            return { agentId: id, enabled: current.config.enabled, deleting: false, selfMcpGranted: grants?.mcp === true || grants?.localMcpStdio === true, localMcpStdioGranted: grants?.localMcpStdio === true, remoteMcpGranted: grants?.mcp === true, check: current.check }
+        },
+        mutate: (id, name, write) => store.lifecycle.mutate(id, name, () => localRuntime.transitionOwner(id, async () => { await sse.dispose(id); entry.shutdown.signal.throwIfAborted(); return write() })),
+        async configuration(id, name) {
+            const remote = (await store.list(id)).find(row => row.name === name)
+            const local = (await localStore.list(id)).find(row => row.name === name)
+            if (!!remote === !!local) throw new Error('MCP server is missing or ambiguous')
+            const common = { name, args: [] as string[], headers: {}, env: {}, oauth: false, literalAuthorization: false, preservedLiteralKeys: [] as { field: 'header' | 'env' | 'arg'; key: string }[] }
+            if (local) return { revision: local.revision, config: { ...common, transport: 'stdio' as const, command: local.executable, args: local.args } }
+            const hasOAuth = (await db.execute({ sql: 'SELECT name FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?', args: [id, name] })).rows.length > 0
+            return { revision: remote!.revision, config: { ...common, transport: remote!.transport ?? 'http', url: remote!.url, oauth: hasOAuth, literalAuthorization: remote!.hasBearer, preservedLiteralKeys: remote!.hasBearer ? [{ field: 'header' as const, key: 'Authorization' }] : [] } }
+        },
     })
     // Offline reconciliation verifies canonical owned skills without replaying remote work.
     await services.reconcileOwners(entry.shutdown.signal)
@@ -231,7 +252,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         })),
     })
     const bridge = desktopMcpBridge(store, remote, authorizeRun, sse)
-    return { store, runtime: remote, bridge, access, authorizeRun, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
+    return { store, references, runtime: remote, bridge, access, authorizeRun, shutdownSignal: entry.shutdown.signal, oauth, oauthApi: loopbackOAuthApi(oauth, access), api: remoteMcpApi(store, remote, access),
         localRuntime, localBridge, localApi: stdioApi(localStore, localRuntime, localAuthority), writebackApi: nativeWritebackApi(writeback),
         selfMcp, serviceOAuth, serviceTransports, services, servicesBridge, servicesApi: serviceApi(installedServices, services), accounts, sse }
 

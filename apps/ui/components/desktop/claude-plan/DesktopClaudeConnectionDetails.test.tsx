@@ -2,28 +2,30 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
+import type { DesktopClaudePlanAttempt } from '@/lib/desktop/claude-plan-client/use-desktop-claude-plan'
 import type { BoxConnection } from '@/lib/engine/types'
 import { DesktopClaudeConnectionDetails } from './DesktopClaudeConnectionDetails'
 
 vi.mock('@/components/connections/ModelBuckets', () => ({
     ModelBuckets: ({ connection, onModelsChange }: { connection: BoxConnection; onModelsChange: (models: string[]) => void }) => <div><span>{connection.models.join(',')}</span><button onClick={() => onModelsChange(['claude-opus-5-5'])}>Choose catalog model</button></div>,
 }))
-vi.mock('@/components/connections/plan-connect/ForemanTrack', () => ({ ForemanTrack: ({ steps }: { steps: { title: string }[] }) => <ol>{steps.map((step, index) => <li key={index}>{step.title}</li>)}</ol> }))
+vi.mock('@/components/connections/plan-connect/ForemanTrack', () => ({ ForemanTrack: ({ steps }: { steps: { title: string; body?: React.ReactNode }[] }) => <ol>{steps.map((step, index) => <li key={index}>{step.title}{step.body}</li>)}</ol> }))
 const roots: Root[] = []
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 afterEach(async () => {
     await act(async () => { for (const root of roots.splice(0)) root.unmount() })
     document.body.innerHTML = ''
     vi.restoreAllMocks()
 })
 const connection = (patch: Partial<BoxConnection> = {}): BoxConnection => ({
-    id: 'claude-1', name: 'Claude work', provider: 'claude', models: ['claude-opus-5-5'], extraModels: [], connected: true, credentialRejected: false, ...patch,
+    id: 'claude-1', name: 'Claude work', provider: 'claude', models: ['claude-opus-5-5'], extraModels: [], connected: true, credentialRejected: false, createdAt: '2026-11-05T00:00:00Z', planLimits: null, ...patch,
 })
 
 async function mount(current: BoxConnection, onDisconnect = vi.fn()) {
     const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
     await act(async () => root.render(<DesktopClaudeConnectionDetails
         connection={current} account={{ label: 'person@example.com' }} defaultModel={null}
-        runtime={{ start: vi.fn(), reconcile: vi.fn(), submit: vi.fn(), cancel: vi.fn() }}
+        runtime={{ start: vi.fn(), reconcile: vi.fn(async (): Promise<DesktopClaudePlanAttempt> => ({ connectionId: 'mac-claude', revision: '0', attemptId: null, phase: 'idle' })), submit: vi.fn(), cancel: vi.fn() }}
         onOpenAuthorization={vi.fn()} onModelsChange={vi.fn()} onDisconnect={onDisconnect} onBack={vi.fn()}
     />))
     return { onDisconnect }

@@ -59,6 +59,7 @@ export type DesktopCaptureSelection = {
 }
 
 export type DesktopTemplateSummary = DesktopTemplateIdentity & {
+    draftRevision?: string
     title: string
     tagline: string
     category: TemplateCategory

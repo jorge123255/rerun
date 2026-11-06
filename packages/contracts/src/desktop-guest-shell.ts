@@ -8,7 +8,7 @@ export const DESKTOP_GUEST_SHELL_TIMEOUT_MAX_MS = 600_000
 export const desktopGuestShellInputSchema = z.object({
     command: z.string().min(1).max(DESKTOP_GUEST_SHELL_COMMAND_MAX_CHARS).refine(value => !value.includes('\0'), 'Command contains a null byte.'),
     timeoutMs: z.number().int().positive().max(DESKTOP_GUEST_SHELL_TIMEOUT_MAX_MS).default(120_000),
-    cwd: z.string().max(256).default('').refine(value => !value.startsWith('/') && !value.includes('\\') && !value.includes('\0') && !value.split('/').includes('..'), 'Working directory must stay inside the guest workspace.'),
+    cwd: z.string().max(256).default('').refine(value => !value.startsWith('/') && !value.includes('\\') && !value.includes('\0') && (!value || value.split('/').every(part => part !== '' && part !== '.' && part !== '..')), 'Working directory must stay inside the guest workspace.'),
     packages: z.array(desktopToolInstallPackageSchema).max(8).optional(),
 }).strict()
 export type DesktopGuestShellInput = z.infer<typeof desktopGuestShellInputSchema>
@@ -23,7 +23,17 @@ export const desktopGuestShellIdentitySchema = z.object({
 }).strict()
 export type DesktopGuestShellIdentity = z.infer<typeof desktopGuestShellIdentitySchema>
 
+export const desktopGuestShellPackageEvidenceSchema = z.object({
+    package: desktopToolInstallPackageSchema,
+    manifestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    lockSha256: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict()
+export type DesktopGuestShellPackageEvidence = z.infer<typeof desktopGuestShellPackageEvidenceSchema>
+
+
 export const desktopGuestShellRequestSchema = desktopGuestShellIdentitySchema.extend({
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    expectedPackageEvidence: z.array(desktopGuestShellPackageEvidenceSchema).max(8).optional(),
     command: desktopGuestShellInputSchema.shape.command,
     timeoutMs: desktopGuestShellInputSchema.shape.timeoutMs,
     cwd: desktopGuestShellInputSchema.shape.cwd,
@@ -31,12 +41,6 @@ export const desktopGuestShellRequestSchema = desktopGuestShellIdentitySchema.ex
 }).strict()
 export type DesktopGuestShellRequest = z.infer<typeof desktopGuestShellRequestSchema>
 
-export const desktopGuestShellPackageEvidenceSchema = z.object({
-    package: desktopToolInstallPackageSchema,
-    manifestSha256: z.string().regex(/^[a-f0-9]{64}$/),
-    lockSha256: z.string().regex(/^[a-f0-9]{64}$/),
-}).strict()
-export type DesktopGuestShellPackageEvidence = z.infer<typeof desktopGuestShellPackageEvidenceSchema>
 
 export const desktopGuestShellResultSchema = z.object({
     requestId: z.string().uuid(),

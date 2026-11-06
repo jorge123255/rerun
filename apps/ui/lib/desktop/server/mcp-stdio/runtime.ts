@@ -1,4 +1,5 @@
 import 'server-only'
+import { emptyMcpMaterialLease, type DesktopMcpMaterialLease, type DesktopMcpMaterialSource } from '../mcp-secret-references/lease'
 import {createHash} from 'node:crypto'
 import {realpath} from 'node:fs/promises'
 import {abortable} from '../mcp/remote'
@@ -8,8 +9,8 @@ export type StdioRun={engineAgentId:string;sessionId:string;runId:string}
 export type StdioAuthority=(owner:string,action:'manage'|'use',run:StdioRun|undefined,signal:AbortSignal)=>Promise<{cwd:string}>
 type Tool={name:string;description?:string;inputSchema:Record<string,unknown>}
 type Process=ReturnType<typeof spawnStdio>
-type Entry={owner:string;name:string;revision:string;users:Set<string>;controller:AbortController;check:()=>void;release:()=>void;opening:Promise<{process:Process;tools:Tool[];fingerprint:string;cwd:string}>;process?:Process;tail:Promise<unknown>;cwd?:string;idle?:ReturnType<typeof setTimeout>}
-export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProcess?:StdioSpawn){
+type Entry={material?:DesktopMcpMaterialLease;owner:string;name:string;revision:string;users:Set<string>;controller:AbortController;check:()=>void;release:()=>void;opening:Promise<{process:Process;tools:Tool[];fingerprint:string;cwd:string}>;process?:Process;tail:Promise<unknown>;cwd?:string;idle?:ReturnType<typeof setTimeout>}
+export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProcess?:StdioSpawn,materials?:DesktopMcpMaterialSource){
  const entries=new Map<string,Entry>(),retired=new Set<Entry>();let closed=false
  const key=(owner:string,name:string)=>JSON.stringify([owner,name])
  const runKey=(run:StdioRun)=>JSON.stringify([run.engineAgentId,run.sessionId,run.runId])
@@ -18,11 +19,11 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
   // Keep ownership until drain succeeds. A failed drain must block a replacement and
   // remain visible to a later shutdown instead of disappearing with the live slot.
   for(const entry of selected){retired.add(entry);entry.controller.abort();clearTimeout(entry.idle);if(entries.get(key(entry.owner,entry.name))===entry)entries.delete(key(entry.owner,entry.name))}
-  await Promise.all(selected.map(async entry=>{await entry.opening.catch(()=>{});await entry.process?.drain();entry.release();retired.delete(entry)}))
+  await Promise.all(selected.map(async entry=>{await entry.opening.catch(()=>{});await entry.process?.drain();await entry.material?.release();entry.release();retired.delete(entry)}))
  }
  store.bindStop((owner,name)=>stopEntries(owner,name))
  function arm(entry:Entry){clearTimeout(entry.idle);entry.idle=setTimeout(()=>{void stopEntries(entry.owner,entry.name).catch(()=>{})},10*60_000);entry.idle.unref?.()}
- async function guard(entry:Entry,run:StdioRun|undefined,signal:AbortSignal){entry.check();signal.throwIfAborted();if(entry.process?.closed())throw new Error('Local MCP disconnected');const access=await abortable(authorize(entry.owner,'use',run,signal),signal),connection=await abortable(store.read(entry.owner,entry.name),signal);entry.check();signal.throwIfAborted();if(connection.revision!==entry.revision || entry.cwd!==undefined && access.cwd!==entry.cwd)throw new Error('Local connection changed');return {access,connection}}
+ async function guard(entry:Entry,run:StdioRun|undefined,signal:AbortSignal){entry.check();signal.throwIfAborted();await entry.material?.check();if(entry.process?.closed())throw new Error('Local MCP disconnected');const access=await abortable(authorize(entry.owner,'use',run,signal),signal),connection=await abortable(store.read(entry.owner,entry.name),signal);entry.check();signal.throwIfAborted();if(connection.revision!==entry.revision || entry.cwd!==undefined && access.cwd!==entry.cwd)throw new Error('Local connection changed');return {access,connection}}
  function connect(owner:string,name:string,revision:string,run:StdioRun|undefined):Entry{
   if(closed)throw new Error('Local MCP stopped')
   const slot=key(owner,name),existing=entries.get(slot)
@@ -34,7 +35,7 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
   entries.set(slot,entry)
   entry.opening=Promise.resolve().then(async()=>{
    const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(20_000)])
-   await abortable(Promise.all([...retired].filter(e=>e.owner===owner && e.name===name).map(async e=>{await e.process?.drain();e.release();retired.delete(e)})),signal)
+   await abortable(Promise.all([...retired].filter(e=>e.owner===owner && e.name===name).map(async e=>{await e.process?.drain();await e.material?.release();e.release();retired.delete(e)})),signal)
    const first=await guard(entry,run,signal)
    const cwd=await abortable(realpath(first.access.cwd),signal)
    if(cwd!==first.access.cwd)throw new Error('Local MCP working directory must be canonical')
@@ -43,7 +44,10 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
    if(final.access.cwd!==cwd)throw new Error('Local MCP owner changed')
    entry.cwd=cwd
    entry.check();signal.throwIfAborted()
-   const process=spawnStdio(first.connection,cwd,controller.signal,spawnProcess);entry.process=process
+   entry.material=materials?await materials(owner,name,revision,'discovery',controller.signal):emptyMcpMaterialLease()
+   await guard(entry,run,signal);entry.check();signal.throwIfAborted()
+   const resolved=entry.material.configured?{...first.connection,args:[...entry.material.material.args]}:first.connection
+   const process=spawnStdio(resolved,cwd,controller.signal,spawnProcess,entry.material.material.env);entry.process=process
    const stop=()=>controller.abort();signal.addEventListener('abort',stop,{once:true})
    try{
     const init=await process.rpc('initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'rerun-desktop',version:'1.0.0'}},signal)
@@ -59,10 +63,10 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
      if(page===7 || typeof response.nextCursor!=='string' || response.nextCursor.length>4096)throw new Error('Local tool pagination exceeds limit');cursor=response.nextCursor
     }
     await guard(entry,run,signal);entry.check();arm(entry)
-    return {process,tools,fingerprint,cwd}
+    return {process,tools:entry.material.protect(tools),fingerprint,cwd}
    }finally{signal.removeEventListener('abort',stop)}
   })
-  void entry.opening.catch(()=>{controller.abort();entry.process?.close();retired.add(entry);if(entries.get(slot)===entry)entries.delete(slot);void (async()=>{await entry.process?.drain();entry.release();retired.delete(entry)})().catch(()=>{})})
+  void entry.opening.catch(()=>{controller.abort();entry.process?.close();retired.add(entry);if(entries.get(slot)===entry)entries.delete(slot);void (async()=>{await entry.process?.drain();await entry.material?.release();entry.release();retired.delete(entry)})().catch(()=>{})})
   return entry
  }
  async function operation<T>(entry:Entry,run:StdioRun|undefined,stop:AbortSignal,work:(session:Awaited<Entry['opening']>,signal:AbortSignal)=>Promise<T>){
@@ -98,7 +102,7 @@ export function stdioRuntime(store:StdioStore,authorize:StdioAuthority,spawnProc
      await guard(entry,run,active);entry.check();active.throwIfAborted()
      const result=await session.process.rpc('tools/call',{name:tool.name,arguments:args},active)
      if(!Array.isArray(result.content) || result.isError!==undefined && typeof result.isError!=='boolean')throw new Error('Invalid local tool result')
-     return {source:'local_mcp_stdio',untrusted:true,result}
+     return {source:'local_mcp_stdio',untrusted:true,result:entry.material?.protect(result)??result}
     })})
    }
    if(definitions.length>256 || Buffer.byteLength(JSON.stringify(definitions))>1024*1024 || new Set(definitions.map(t=>t.name)).size!==definitions.length)throw new Error('Local tool catalog exceeds limit or collides')

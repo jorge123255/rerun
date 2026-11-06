@@ -11,11 +11,16 @@ const engineRequire = createRequire(join(resourcesDir, 'runtime/engine/package.j
 const adapter = createRequire(engineRequire.resolve('ai-sdk-provider-codex-cli'))
 const cli = createRequire(adapter.resolve('@openai/codex/package.json'))
 const platform = dirname(cli.resolve('@openai/codex-darwin-arm64/package.json'))
+const claudeAdapter = createRequire(engineRequire.resolve('ai-sdk-provider-claude-code'))
+const claudeSdk = createRequire(claudeAdapter.resolve('@anthropic-ai/claude-agent-sdk'))
+const claudePlatform = dirname(claudeSdk.resolve('@anthropic-ai/claude-agent-sdk-darwin-arm64/package.json'))
 const manifest = {
     protocolVersion: 1,
     buildId: stamp.buildId,
     sourceCommit: stamp.sourceCommit,
     codexPath: relative(resourcesDir, join(platform, 'vendor/aarch64-apple-darwin/bin/rerun-codex')),
+    claudePath: relative(resourcesDir, join(claudePlatform, 'claude')),
+    claudeSandboxPath: relative(resourcesDir, join(claudePlatform, 'rerun-claude.sb')),
     nodePath: 'runtime/node/bin/node',
     uiRoot: 'runtime/ui',
     engineEntry: 'runtime/engine/dist/cli/bin.js',

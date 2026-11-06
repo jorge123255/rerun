@@ -6,6 +6,13 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     if ((init?.method ?? 'GET') !== 'GET') return
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
     if (/^\/api\/desktop\/coworkers\/[^/]+\/document-attachments$/.test(url.pathname)) return Response.json({ attachments: [] })
+    if (/^\/api\/desktop\/sessions\/[^/]+\/trigger-requests$/.test(url.pathname)) return Response.json({ request: null })
+    if (url.pathname === '/api/desktop/foreman') {
+        const chat = { workspaceId: '1', chatId: 'fmc_background-fixture' }
+        return Response.json({ chat, sessionId: 'foreman-background-fixture', model: null, messages: [],
+            view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+            ui: { revision: 0, snapshot: null } })
+    }
     if (/^\/api\/desktop\/sessions\/[^/]+\/mcp-sign-in$/.test(url.pathname)) return Response.json({ request: null })
     if (/^\/api\/desktop\/sessions\/[^/]+\/tool-install$/.test(url.pathname) && url.searchParams.get('pending') === '1') return Response.json({ installations: [], more: false })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/schedule-tool-notices$/.test(url.pathname)) return Response.json({ notices: [] })
@@ -18,6 +25,11 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     if (/^\/api\/desktop\/sessions\/[^/]+\/takeover$/.test(url.pathname)) return Response.json({takeover:null})
     if (/^\/api\/desktop\/coworkers\/[^/]+\/mentions$/.test(url.pathname)) return Response.json({targets:[]})
     if (/^\/api\/desktop\/agents\/[^/]+\/sessions\/[^/]+\/browser-run$/.test(url.pathname)) return Response.json({trusted:null})
+    if (/^\/api\/desktop\/agents\/[^/]+\/sessions\/[^/]+\/computer-panel$/.test(url.pathname)) return Response.json({
+        workspaceId: '1', current: null, generation: null, coworker: { enabled: true, deleted: false }, takeover: null,
+        runtime: { kind: 'container-stopped' }, grants: { computer: false, browser: false, terminalLaunch: false, filesLaunch: false },
+        capability: { terminalInstalled: false, filesInstalled: false }, humanDriving: false, pending: null,
+    })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/native-writeback$/.test(url.pathname)) return Response.json({ files: [] })
     if (url.pathname === '/api/desktop/notifications') return Response.json(normalizeNotificationPrefs(undefined))
     if (url.pathname === '/api/desktop/notifications/events') return Response.json({ events: [], channels: { toast: false, sound: false }, unavailableAgentIds: [], checkedAt: '2026-11-05T00:00:00Z' })
@@ -29,6 +41,13 @@ export function desktopNativeReviewRead(input: RequestInfo | URL, init?: Request
     if ((init?.method ?? 'GET') !== 'GET') return
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
     if (/^\/api\/desktop\/coworkers\/[^/]+\/document-attachments$/.test(url.pathname)) return Response.json({ attachments: [] })
+    if (/^\/api\/desktop\/sessions\/[^/]+\/trigger-requests$/.test(url.pathname)) return Response.json({ request: null })
+    if (url.pathname === '/api/desktop/foreman') {
+        const chat = { workspaceId: '1', chatId: 'fmc_background-fixture' }
+        return Response.json({ chat, sessionId: 'foreman-background-fixture', model: null, messages: [],
+            view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+            ui: { revision: 0, snapshot: null } })
+    }
     if (/^\/api\/desktop\/sessions\/[^/]+\/mcp-sign-in$/.test(url.pathname)) return Response.json({ request: null })
     if (/^\/api\/desktop\/sessions\/[^/]+\/tool-install$/.test(url.pathname) && url.searchParams.get('pending') === '1') return Response.json({ installations: [], more: false })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/schedule-tool-notices$/.test(url.pathname)) return Response.json({ notices: [] })
@@ -41,5 +60,10 @@ export function desktopNativeReviewRead(input: RequestInfo | URL, init?: Request
     if (/^\/api\/desktop\/sessions\/[^/]+\/takeover$/.test(url.pathname)) return Response.json({takeover:null})
     if (/^\/api\/desktop\/coworkers\/[^/]+\/mentions$/.test(url.pathname)) return Response.json({targets:[]})
     if (/^\/api\/desktop\/agents\/[^/]+\/sessions\/[^/]+\/browser-run$/.test(url.pathname)) return Response.json({trusted:null})
+    if (/^\/api\/desktop\/agents\/[^/]+\/sessions\/[^/]+\/computer-panel$/.test(url.pathname)) return Response.json({
+        workspaceId: '1', current: null, generation: null, coworker: { enabled: true, deleted: false }, takeover: null,
+        runtime: { kind: 'container-stopped' }, grants: { computer: false, browser: false, terminalLaunch: false, filesLaunch: false },
+        capability: { terminalInstalled: false, filesInstalled: false }, humanDriving: false, pending: null,
+    })
     if (/^\/api\/desktop\/coworkers\/[^/]+\/native-writeback$/.test(url.pathname)) return Response.json({ files: [] })
 }

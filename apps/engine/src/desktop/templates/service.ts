@@ -25,13 +25,12 @@ import { writeExclusiveFile, ensurePrivateDir } from './files.js'
 import { canonicalJson, draftRevision, newTemplateId, sha256 } from './hash.js'
 import { inspectCoworker, type InspectedCoworker, type InspectedFile, type SkillOwnershipResolver } from './inspect.js'
 import { installManifest, publicDetail, readManifest, sealManifest, type TemplateManifest } from './install.js'
-import { withPortableLibraryLease } from './portable-lock.js'
 import { draftSchema, listTemplateIds, readOwnJson, replaceOwnJson, requestHome, templateHome, writeOwnJson, type TemplateDraft } from './store.js'
 
 export type TemplateRoots = { dataRoot: string; agentsRoot: string }
 export type TemplateIndex = {
-    get: (id: string) => Promise<{ name: string } | null>
-    insert: (id: string, name: string) => Promise<void>
+    get: (id: string) => Promise<{ name: string; createdAt?: string; status?: string } | null>
+    insert: (id: string, name: string, createdAt?: string) => Promise<void>
 }
 export type TemplateEngineOptions = {
     requirementNames?: (engineAgentId: string) => Promise<import('@rerun/contracts').DesktopTemplateRequirement[]>
@@ -176,11 +175,11 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
         get: async (id: string) => {
             const repo = await import('../../db/repos/agents.js')
             const row = await repo.getAgentIndex(id)
-            return row ? { name: row.name } : null
+            return row ? { name: row.name, createdAt: row.createdAt, status: row.status } : null
         },
-        insert: async (id: string, name: string) => {
-            const repo = await import('../../db/repos/agents.js')
-            await repo.insertAgentIndex(id, name)
+        insert: async (id: string, name: string, createdAt?: string) => {
+            const { raw } = await import('../../db/client.js')
+            await raw().execute({ sql: "INSERT INTO agents(id,name,status,created_at) VALUES(?,?,'idle',?)", args:[id,name,createdAt ?? new Date().toISOString()] })
         },
     }
 
@@ -427,7 +426,6 @@ export function createDesktopTemplateEngine(roots: TemplateRoots, index?: Templa
     }
     return { ...engine,
         createDraft: (...args: Parameters<typeof engine.createDraft>) => withPortableLibraryLease(roots.dataRoot, () => engine.createDraft(...args)),
-        capture: (input: Parameters<typeof engine.capture>[0]) => withPortableLibraryLease(roots.dataRoot, () => engine.capture(input)),
     }
 }
 
@@ -476,6 +474,7 @@ function choose(inspected: InspectedCoworker, selection: z.infer<typeof desktopT
     return {
         agentKey,
         sourceEngineId: inspected.engineAgentId,
+        enabled: inspected.config?.text ? JSON.parse(inspected.config.text).enabled !== false : true,
         name: inspected.name,
         description: inspected.description,
         setup: selection.setup ? { ...selection.setup, prompt: selection.setup.prompt.trim(), answered: true } : inspected.setup,

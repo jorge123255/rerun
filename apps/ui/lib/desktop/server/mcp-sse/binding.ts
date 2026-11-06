@@ -1,4 +1,5 @@
 import 'server-only'
+import type { DesktopMcpMaterialSource, DesktopMcpMaterialLease } from '../mcp-secret-references/lease'
 import { createHash, createHmac } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import type { DesktopMcpSseRef, DesktopMcpSseRequest } from '@rerun/contracts'
@@ -27,6 +28,7 @@ export type DesktopSseBindingDeps = {
     validateToolNames(owner: string, names: string[], signal: AbortSignal): Promise<void>
     account?: (ref: DesktopMcpSseRef, action: 'read' | 'use' | 'call' | 'close', run: McpRunIdentity | undefined, signal: AbortSignal) => Promise<{ server: RemoteServer & { id: string; transport: 'sse' }; bearer: string; credentialGeneration: string; check(): void } | null>
     network?: SseNetwork
+    materials?: DesktopMcpMaterialSource
 }
 
 function invocationId(owner: string, ref: DesktopMcpSseRef, run: McpRunIdentity, callId: string) {
@@ -37,7 +39,22 @@ function invocationId(owner: string, ref: DesktopMcpSseRef, run: McpRunIdentity,
 }
 
 export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
-    const credentials = new WeakMap<object, { ref: DesktopMcpSseRef; bearer: string }>()
+    const credentials = new WeakMap<object, { ref: DesktopMcpSseRef; bearer: string; material?: DesktopMcpMaterialLease }>()
+    const materials = new Map<string, Promise<DesktopMcpMaterialLease>>()
+    const materialKey = (ref: DesktopMcpSseRef) => JSON.stringify([ref.agentId, ref.name, ref.expectedRevision, ref.serverId])
+    async function secretMaterial(ref: DesktopMcpSseRef, signal: AbortSignal) {
+        if (!deps.materials) return undefined
+        const key = materialKey(ref)
+        let pending = materials.get(key)
+        if (!pending) { pending = deps.materials(ref.agentId, ref.name, ref.expectedRevision, 'invocation', deps.shutdownSignal, signal); materials.set(key, pending); void pending.catch(() => { if (materials.get(key) === pending) materials.delete(key) }) }
+        signal.throwIfAborted()
+        const lease = await pending
+        try { await lease.check(); signal.throwIfAborted(); return lease }
+        catch (error) { if (materials.get(key) === pending) materials.delete(key); await lease.release(); throw error }
+    }
+    async function releaseMaterials(owner?: string, serverId?: string) {
+        for (const [key, pending] of materials) { const [agent, , , server] = JSON.parse(key) as string[]; if (owner && agent !== owner || serverId && server !== serverId) continue; materials.delete(key); await pending.then(value => value.release()).catch(() => {}) }
+    }
     const fingerprint = (ref: DesktopMcpSseRef, bearer: string) => createHmac('sha256', deps.key()).update(JSON.stringify([ref, bearer])).digest('hex')
     async function credential(ref: DesktopMcpSseRef, signal: AbortSignal) {
         signal.throwIfAborted()
@@ -61,7 +78,7 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
         if (current.server.id !== ref.serverId || current.server.transport !== 'sse' || current.server.revision !== ref.expectedRevision) throw new SseFailure('changed')
         // Refresh before any SSE lifecycle admission, so a credential mutation cannot wait on its own stream.
         const token = await deps.store.readOAuth(ref.agentId, ref.name)
-        if (token && token.expiresAt <= Date.now() + 60_000) await runtime.dispose(ref.agentId, ref.serverId)
+        if (token && token.expiresAt <= Date.now() + 60_000) { await runtime.dispose(ref.agentId, ref.serverId); await releaseMaterials(ref.agentId, ref.serverId) }
         await deps.refreshCredential(ref.agentId, ref.name, ref.expectedRevision, signal)
         await credential(ref, signal)
     }
@@ -74,7 +91,10 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
             const current = await credential(saved.ref, signal)
             authority.check()
             if (('credentialGeneration' in current ? current.credentialGeneration : fingerprint(saved.ref, current.bearer)) !== authority.credentialGeneration || current.server.url !== authority.server.url) throw new SseFailure('changed')
-            return current.bearer ? { bearer: current.bearer } : {}
+            const material = await secretMaterial(saved.ref, signal)
+            authority.check()
+            if (material) saved.material = material
+            return { ...(current.bearer ? { bearer: current.bearer } : {}), ...(material ? { headers: material.material.headers } : {}) }
         },
     })
     const runtime = createSseRuntime({
@@ -95,12 +115,13 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
                 if (!permission.enabled || !permission.granted) throw new SseFailure('changed')
                 if (action === 'call' && (!run || await deps.authorizeRun(run, signal) !== ref.agentId)) throw new SseFailure('changed')
             }
+            const material = action === 'use' || action === 'call' ? await secretMaterial(ref, signal) : undefined
             const { server, bearer } = action === 'close' ? { server: await deps.store.read(ref.agentId, ref.name), bearer: '' } : await credential(ref, signal)
             if (server.id !== ref.serverId || server.transport !== 'sse' || server.revision !== ref.expectedRevision) throw new SseFailure('changed')
             signal.throwIfAborted()
             const handle = {}, check = () => { watch(); deps.shutdownSignal.throwIfAborted() }
             check()
-            credentials.set(handle, { ref, bearer })
+            credentials.set(handle, { ref, bearer, material })
             return { server: { ...server, id: ref.serverId, transport: 'sse', hasBearer: !!bearer }, credentialGeneration: fingerprint(ref, bearer), credentialHandle: handle, check }
         },
         protect(value, authority) {
@@ -120,7 +141,8 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
                 }
                 return item
             }
-            return redact(value)
+            const material = credentials.get(authority.credentialHandle as object)?.material
+            return material ? material.protect(redact(value)) : redact(value)
         },
         normalizeTool(tool) {
             const { schema, note } = toToolInputSchema(tool.inputSchema)
@@ -130,12 +152,15 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
         },
     }, createSsePoolState())
     const control = sseControlAdapter(runtime)
-    const settings = createSseSettings(deps.db, deps.store, deps.manage, runtime.dispose)
+    const dispose = async (owner?: string, serverId?: string) => { await runtime.dispose(owner, serverId); await releaseMaterials(owner, serverId) }
+    const settings = createSseSettings(deps.db, deps.store, deps.manage, dispose)
     return {
         runtime, settings,
         async control(input: DesktopMcpSseRequest, signal: AbortSignal) {
             if (input.operation === 'connect' || input.operation === 'probe') await preflight(input, signal)
-            return control(input, signal)
+            const result = await control(input, signal)
+            if (input.operation === 'disconnect') await releaseMaterials(input.agentId, input.serverId)
+            return result
         },
         async tools(owner: string, run: McpRunIdentity, signal: AbortSignal) {
             if (await deps.authorizeRun(run, signal) !== owner) throw new SseFailure('changed')
@@ -154,7 +179,7 @@ export function createDesktopSseBinding(deps: DesktopSseBindingDeps) {
         },
         releaseRun: runtime.releaseRun,
         releaseServerRun: runtime.releaseServerRun,
-        dispose: runtime.dispose,
-        shutdown: runtime.shutdown,
+        dispose,
+        async shutdown() { await runtime.shutdown(); await releaseMaterials() },
     }
 }

@@ -2,6 +2,9 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { findDesktopSecretRequest, type DesktopSecretRequestRow } from '@rerun/contracts'
 const fixture = vi.hoisted(() => ({ rows: [] as DesktopSecretRequestRow[], execute: vi.fn() }))
 vi.mock('../../db/repos/messages.js', () => ({ listMessages: async () => fixture.rows }))
+// These provenance fixtures are ordinary chats. Trigger-session Stop filtering is
+// exercised against the real journal in triggers/human.test.ts.
+vi.mock('../../db/repos/sessions.js', () => ({ getSession: async (agentId: string, id: string) => ({ agentId, id, source: 'dashboard' }) }))
 vi.mock('../../db/systemDb.js', () => ({ getSystemDb: async () => ({ client: { execute: fixture.execute } }) }))
 import { readDesktopSecretSource } from './source.js'
 const input = { secrets: [{ key: 'EXAMPLE_API_KEY', label: 'Example key' }] }

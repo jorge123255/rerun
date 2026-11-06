@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { DesktopClaudePlanRuntime } from '@/lib/desktop/claude-plan-client/use-desktop-claude-plan'
+import type { DesktopClaudePlanRuntime, DesktopClaudePlanAttempt } from '@/lib/desktop/claude-plan-client/use-desktop-claude-plan'
 import { DesktopClaudePlanSteps } from './DesktopClaudePlanSteps'
 import { DesktopClaudePlanDialog } from './DesktopClaudePlanDialog'
 
@@ -18,10 +18,10 @@ afterEach(async () => {
     vi.restoreAllMocks()
 })
 const runtime = (): DesktopClaudePlanRuntime & { submit: ReturnType<typeof vi.fn> } => ({
-    start: vi.fn(async () => ({ attemptId: 'attempt-1', phase: 'waiting', authorizeUrl: 'https://claude.ai/oauth/authorize?state=opaque' })),
-    reconcile: vi.fn(async () => ({ attemptId: 'attempt-1', phase: 'idle' })),
-    submit: vi.fn(async () => ({ attemptId: 'attempt-1', phase: 'connected' })),
-    cancel: vi.fn(async () => ({ attemptId: 'attempt-1', phase: 'idle' })),
+    start: vi.fn(async (): Promise<DesktopClaudePlanAttempt> => ({ connectionId: 'mac-claude', revision: '1', attemptId: 'attempt-1', phase: 'waiting', authorizeUrl: 'https://claude.ai/oauth/authorize?state=opaque' })),
+    reconcile: vi.fn(async (): Promise<DesktopClaudePlanAttempt> => ({ connectionId: 'mac-claude', revision: '1', attemptId: 'attempt-1', phase: 'idle' })),
+    submit: vi.fn(async (): Promise<DesktopClaudePlanAttempt> => ({ connectionId: 'mac-claude', revision: '1', attemptId: 'attempt-1', phase: 'connected' })),
+    cancel: vi.fn(async (): Promise<DesktopClaudePlanAttempt> => ({ connectionId: 'mac-claude', revision: '1', attemptId: 'attempt-1', phase: 'idle' })),
 })
 const click = async (label: string) => {
     const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === label)!
@@ -49,11 +49,11 @@ test('preserves Open, code, and Name it steps through connected completion', asy
     expect(onDone).toHaveBeenCalledWith('Claude work')
 })
 
-test('direct paste submits once and a failed exchange remains retryable', async () => {
+test('direct paste submits once and a failed exchange needs a new attempt', async () => {
     const auth = runtime()
     auth.submit
-        .mockResolvedValueOnce({ attemptId: 'attempt-1', phase: 'error', error: 'The code did not match. Try again.' })
-        .mockResolvedValueOnce({ attemptId: 'attempt-1', phase: 'connected' })
+        .mockResolvedValueOnce({ connectionId: 'mac-claude', revision: '1', attemptId: 'attempt-1', phase: 'error', error: 'The code did not match. Try again.' })
+        .mockResolvedValueOnce({ connectionId: 'mac-claude', revision: '1', attemptId: 'attempt-1', phase: 'connected' })
     const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
     await act(async () => root.render(<DesktopClaudePlanSteps runtime={auth} onOpenAuthorization={vi.fn()} onDone={vi.fn()} />))
     await click('Open Claude')
@@ -63,15 +63,19 @@ test('direct paste submits once and a failed exchange remains retryable', async 
     await act(async () => code.dispatchEvent(paste))
     expect(auth.submit).toHaveBeenCalledTimes(1)
     expect(document.body.textContent).toContain('The code did not match. Try again.')
-    await act(async () => code.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    await act(async () => code.dispatchEvent(paste))
+    expect(auth.submit).toHaveBeenCalledTimes(1)
+    await click('Open Claude again')
+    await act(async () => code.dispatchEvent(paste))
     expect(auth.submit).toHaveBeenCalledTimes(2)
 })
 
 test('Escape closes only the pending UI operation and never disconnects an existing login', async () => {
     const auth = runtime()
-    auth.reconcile = vi.fn(async () => ({ attemptId: 'attempt-1', phase: 'waiting', authorizeUrl: 'https://claude.ai/oauth/authorize?state=opaque' }))
+    auth.reconcile = vi.fn(async (): Promise<DesktopClaudePlanAttempt> => ({ connectionId: 'mac-claude', revision: '1', attemptId: 'attempt-1', phase: 'waiting', authorizeUrl: 'https://claude.ai/oauth/authorize?state=opaque' }))
     const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
-    await act(async () => root.render(<DesktopClaudePlanDialog open runtime={auth} onOpenAuthorization={vi.fn()} onOpenChange={vi.fn()} onDone={vi.fn()} />))
+    function Harness() { const [open, setOpen] = useState(true); return <DesktopClaudePlanDialog open={open} runtime={auth} onOpenAuthorization={vi.fn()} onOpenChange={setOpen} onDone={vi.fn()} /> }
+    await act(async () => root.render(<Harness />))
     await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
     expect(auth.cancel).toHaveBeenCalledWith('attempt-1', expect.any(AbortSignal))
 })

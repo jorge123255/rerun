@@ -1,5 +1,5 @@
 import 'server-only'
-import type { DesktopMcpSecretReferenceAuthority, DesktopMcpSecretReferencePhase, DesktopMcpSecretTransport } from '../../../../../../packages/contracts/src/desktop-mcp-secret-references'
+import type { DesktopMcpSecretReferenceAuthority, DesktopMcpSecretReferencePhase, DesktopMcpSecretTransport } from '@rerun/contracts'
 import type { DesktopMcpSecretLookup } from './lookup'
 import { withDesktopMcpSecrets, type DesktopMcpResolvedMaterial, type DesktopMcpSecretAdmission } from './resolve'
 import type { DesktopMcpSecretReferenceStore } from './store'
@@ -22,6 +22,8 @@ type DesktopMcpSecretAdmissionInput = {
     serverName: string
     phase: DesktopMcpSecretReferencePhase
     config: unknown
+    configRevision: string
+    check: () => void | Promise<void>
 }
 
 async function drain(lifecycle: DesktopMcpSecretLifecycle, records: Pick<DesktopMcpSecretReferenceStore, 'serversForSecret' | 'markStale'>, authority: DesktopMcpSecretReferenceAuthority, agentId: string, secretName: string) {
@@ -38,10 +40,19 @@ export function bindDesktopMcpSecretReferences(deps: {
     lifecycle: DesktopMcpSecretLifecycle
     lookup: DesktopMcpSecretLookup
     authority: DesktopMcpSecretReferenceAuthority
-    records: Pick<DesktopMcpSecretReferenceStore, 'bindings' | 'serversForSecret' | 'markStale'>
+    records: Pick<DesktopMcpSecretReferenceStore, 'head' | 'bindings' | 'serversForSecret' | 'markStale'>
 }): DesktopMcpSecretReferenceHooks {
     const admit = async <T>(transport: DesktopMcpSecretTransport, input: DesktopMcpSecretAdmissionInput, use: (material: DesktopMcpResolvedMaterial) => Promise<T>) => {
+        await input.check()
+        const head = await deps.records.head(input.agentId, input.serverName)
+        if (!head || head.configRevision !== input.configRevision) throw new Error('MCP credential configuration changed')
         const bindings = await deps.records.bindings(input.agentId, input.serverName)
+        const check = async () => {
+            await input.check()
+            const current = await deps.records.head(input.agentId, input.serverName)
+            if (!current || current.configRevision !== head.configRevision || current.bindingRevision !== head.bindingRevision || current.origin !== head.origin || current.fingerprint !== head.fingerprint) throw new Error('MCP credential configuration changed')
+            await input.check()
+        }
         const admission = await withDesktopMcpSecrets({
             agentId: input.agentId,
             serverName: input.serverName,
@@ -49,6 +60,8 @@ export function bindDesktopMcpSecretReferences(deps: {
             transport,
             config: input.config,
             bindings,
+            head,
+            check,
             authority: deps.authority,
             lookup: deps.lookup,
             use,

@@ -1,62 +1,60 @@
 'use client'
-
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ComputerPanelPorts, ComputerPanelProjection } from '@/lib/desktop/computer-panel/contract'
-import { dismissKey, launchAvailability, ownerKey, presentComputerPanel, type ComputerPanelView } from '@/lib/desktop/computer-panel/controller'
+import { dismissKey, launchAvailability, ownerKey, ownerOf, presentComputerPanel, type ComputerPanelView } from '@/lib/desktop/computer-panel/controller'
 import { createComputerLauncher, type LaunchAttempt } from '@/lib/desktop/computer-panel/launch'
-
 export type ReadComputerPanelProjection = (agentId: string, sessionId: string, signal: AbortSignal) => Promise<ComputerPanelProjection | null>
 export const COMPUTER_PANEL_POLL_MS = 2000
-
-/**
- * Follows one conversation's trusted projection. Polls only while visible (a hidden app holds no
- * request), drops late replies after a session change or unmount, and keeps manual dismissal per exact
- * owner in memory: duplicate projection events never reopen it. Never acquires a lease.
- */
 export function useComputerPanel(view: ComputerPanelView, read: ReadComputerPanelProjection, ports: Pick<ComputerPanelPorts, 'launchApp' | 'revalidateOwner'>, humanLaunchMounted: boolean, pollMs = COMPUTER_PANEL_POLL_MS) {
     const [projection, setProjection] = useState<ComputerPanelProjection | null>(null)
     const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set())
     const [attempt, setAttempt] = useState<LaunchAttempt | null>(null)
-    const readRef = useRef(read)
-    useEffect(() => { readRef.current = read }, [read])
-
+    const live = useRef({ view, read, ports }); live.current = { view, read, ports }
+    const enabled = view.active && view.selected && view.visible
     useEffect(() => {
-        let disposed = false, pending = false
-        const controller = new AbortController()
         setProjection(null)
-        const refresh = async () => {
-            if (disposed || pending || document.visibilityState !== 'visible') return
-            pending = true
+        if (!enabled) return
+        const controller = new AbortController()
+        let timer: ReturnType<typeof setTimeout> | undefined
+        async function refresh() {
+            if (controller.signal.aborted) return
             try {
-                const next = await readRef.current(view.agentId, view.sessionId, AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]))
-                if (!disposed) setProjection(next && next.current && (next.current.agentId !== view.agentId || next.current.sessionId !== view.sessionId) ? null : next)
-            } catch { if (!disposed) setProjection(null) }
-            finally { pending = false }
+                const next = await live.current.read(view.agentId, view.sessionId, AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]))
+                if (!controller.signal.aborted) setProjection(next?.current && (next.current.agentId !== view.agentId || next.current.sessionId !== view.sessionId) ? null : next)
+            } catch { if (!controller.signal.aborted) setProjection(null) }
+            if (!controller.signal.aborted) timer = setTimeout(() => void refresh(), pollMs)
         }
         void refresh()
-        const timer = setInterval(() => void refresh(), pollMs)
-        document.addEventListener('visibilitychange', refresh)
-        return () => { disposed = true; controller.abort(); clearInterval(timer); document.removeEventListener('visibilitychange', refresh) }
-    }, [view.agentId, view.sessionId, pollMs])
-
-    const presentation = presentComputerPanel(projection, view, dismissed)
-    const owner = presentation.show ? presentation.owner : null
+        return () => { controller.abort(); if (timer) clearTimeout(timer) }
+    }, [view.agentId, view.sessionId, enabled, pollMs])
+    const owner = projection?.current?.agentId === view.agentId && projection.current.sessionId === view.sessionId ? ownerOf(projection) : null
     const key = owner ? ownerKey(owner) : null
-
-    const portsRef = useRef(ports)
-    useEffect(() => { portsRef.current = ports }, [ports])
-    const launcher = useMemo(() => owner ? createComputerLauncher(owner, { launchApp: (...a) => portsRef.current.launchApp(...a), revalidateOwner: (...a) => portsRef.current.revalidateOwner(...a) }, setAttempt) : null,
-        // A new owner (run/generation/workspace) is a fresh launcher; late replies of the old one are dropped.
+    const launcher = useRef<ReturnType<typeof createComputerLauncher> | null>(null)
+    const retained = useRef(new Map<string, LaunchAttempt>())
+    useEffect(() => {
+        setAttempt(null)
+        if (!owner || !enabled) return
+        const captured = owner, capturedKey = ownerKey(captured)
+        const instance = createComputerLauncher(captured, {
+            revalidateOwner: (target, signal) => live.current.ports.revalidateOwner(target, signal),
+            launchApp: (target, app, requestId, signal) => live.current.ports.launchApp(target, app, requestId, signal),
+        }, next => {
+            if (next) retained.current.set(capturedKey, next); else retained.current.delete(capturedKey)
+            if (launcher.current === instance) setAttempt(next)
+        })
+        launcher.current = instance
+        const saved = retained.current.get(capturedKey)
+        if (saved?.phase === 'pending' || saved?.phase === 'uncertain') instance.restore(saved)
+        else if (projection?.pending) instance.restore(projection.pending)
+        return () => { instance.dispose(); if (launcher.current === instance) launcher.current = null }
+        // Owner is a value identity. Hiding the screen itself must not destroy its launcher receipt.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [key])
-    useEffect(() => { setAttempt(null); return () => launcher?.dispose() }, [launcher])
-
-    const dismiss = useCallback(() => {
-        if (!owner) return
-        setDismissed(prev => new Set(prev).add(dismissKey(owner, presentation.show ? presentation.takeover?.takeoverId ?? null : null)))
-    }, [owner, presentation])
+    }, [key, enabled])
+    useEffect(() => { if (projection?.pending) launcher.current?.restore(projection.pending) }, [projection?.pending])
+    const presentation = presentComputerPanel(projection, view, dismissed)
+    const dismiss = useCallback(() => { if (owner) setDismissed(previous => new Set(previous).add(dismissKey(owner, null))) }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
     const reopen = useCallback(() => setDismissed(new Set()), [])
-
-    return { projection, presentation, availability: launchAvailability(projection, humanLaunchMounted), attempt, launch: (app: 'terminal' | 'files') => void launcher?.launch(app), clearAttempt: () => launcher?.dismiss(), dismiss, reopen, wasDismissed: presentation.show === false && presentation.reason === 'dismissed' }
+    return { projection, presentation, availability: launchAvailability(projection, humanLaunchMounted), attempt,
+        launch: (app: 'terminal' | 'files') => { if (enabled) void launcher.current?.launch(app) }, clearAttempt: () => launcher.current?.dismiss(), dismiss, reopen,
+        wasDismissed: !presentation.show && presentation.reason === 'dismissed' }
 }

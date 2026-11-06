@@ -3,6 +3,8 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { tmpdir, userInfo } from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { createRequire } from 'node:module'
+import { dirname } from 'node:path'
 import { existsSync, output, repoRoot, resourcesDir } from './lib.mjs'
 import { readUiSharpManifest } from './ui-sharp.mjs'
 import { verifyPdfHelper } from './pdf-helper-probe.mjs'
@@ -16,7 +18,7 @@ const manifest = JSON.parse(await readFile(join(resourcesDir, 'runtime-manifest.
 check(manifest.protocolVersion === 1 && typeof manifest.buildId === 'string' && manifest.buildId.length > 0, 'manifest protocolVersion/buildId')
 
 const resolved = {}
-for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'renameHelperPath', 'pdfHelperPath', 'pdfTextHelperPath']) {
+for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'claudePath', 'claudeSandboxPath', 'renameHelperPath', 'pdfHelperPath', 'pdfTextHelperPath']) {
     const path = resolve(resourcesDir, manifest[field] ?? '')
     resolved[field] = path
     const rel = relative(resourcesDir, path)
@@ -50,6 +52,15 @@ try {
 } finally { await rm(probeHome, { recursive: true, force: true }) }
 
 const engineDir = join(resourcesDir, 'runtime', 'engine')
+const claudeProbe = await mkdtemp(join(tmpdir(), 'rerun-verify-claude-'))
+try {
+    await mkdir(join(claudeProbe, 'tmp'), { mode: 0o700 })
+    const requireEngine = createRequire(join(engineDir, 'package.json'))
+    const requireAdapter = createRequire(requireEngine.resolve('ai-sdk-provider-claude-code'))
+    const sdk = JSON.parse(await readFile(join(dirname(requireAdapter.resolve('@anthropic-ai/claude-agent-sdk')), 'package.json'), 'utf8'))
+    const version = await output('/usr/bin/sandbox-exec', ['-D', `PROFILE=${claudeProbe}`, '-D', `BINARY=${resolved.claudePath}`, '-f', resolved.claudeSandboxPath, resolved.claudePath, '--version'], { env: { PATH: '/usr/bin:/bin', HOME: claudeProbe, CLAUDE_CONFIG_DIR: claudeProbe, TMPDIR: join(claudeProbe, 'tmp') }, timeout: 15000 }).catch(() => '')
+    check(version === `${sdk.claudeCodeVersion} (Claude Code)`, 'isolated bundled Claude CLI matches the locked SDK')
+} finally { await rm(claudeProbe, { recursive: true, force: true }) }
 const uiDir = join(resourcesDir, 'runtime', 'ui')
 check(existsSync(join(uiDir, 'server.js')), 'ui server.js staged')
 check(!['components', 'test'].some(dir => existsSync(join(uiDir, dir))), 'compiled UI ships without source components or test fixtures')

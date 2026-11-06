@@ -209,3 +209,62 @@ test('real SQLite build recovery never replays during startup, then explicit Res
     expect((await db.execute('SELECT enabled FROM desktop_agents')).rows).toEqual([{enabled:0}])
     expect(state.runs.size).toBe(0)
 })
+
+
+test('a full Box is a definite creation refusal before any engine dispatch',async()=>{
+    const a=await bind(),input=await spec()
+    await db.execute({sql:'UPDATE desktop_spaces SET col_end=col_start+3,row_end=row_start+3 WHERE id=?',args:[input.spaceId]})
+    const originals=[]
+    for(let i=0;i<4;i++) originals.push(await a.creation.createCoworker({...input,requestId:randomUUID()}))
+    await expect(a.creation.createCoworker({...input,requestId:randomUUID()})).rejects.toMatchObject({failure:'creation_failed',message:expect.stringContaining('no room')})
+    expect(state.creations.size).toBe(4)
+    expect((await db.execute('SELECT id FROM desktop_agents')).rows).toEqual(expect.arrayContaining(originals.map(item=>({id:item.agentId}))))
+})
+
+test('a lost engine ACK stays uncertain when its Box fills, then recovers the exact saved coworker after space is freed',async()=>{
+    const space=(await readDesktopBoardState(db)).spaces[0]!
+    await db.execute({sql:'UPDATE desktop_spaces SET col_end=col_start+3,row_end=row_start+3 WHERE id=?',args:[space.id]})
+    const chat={workspaceId:'1',chatId:`fmc_${randomUUID()}`},binding={...chat,runId:randomUUID(),model:{connectionId:'codex-test',model:'terra'}}
+    async function core(){
+        const authority=await bind()
+        return createForemanRuntime({store:createForemanSqliteStore(db),companyName:async()=> 'Local team',authorities:{
+            ...authority,workspace:{currentWorkspaceId:async()=> '1',agentCount:async()=>Number((await db.execute('SELECT count(*) AS n FROM desktop_agents')).rows[0]!.n)},
+            run:{isLive:async()=>true,currentLive:async()=>({runId:binding.runId,model:binding.model}),isObserved:async()=>true,modelAvailable:async()=>true,sendFollowUp:async()=>{throw new Error('unexpected followup')},lookupFollowUp:async()=>({state:'absent'})},events:{publish:()=>{}},collectDiscovery:null,
+        }})
+    }
+    const first=await core(),shown=await first.recordShownPlan(binding,'lost-ack-full-box',{title:'Recover this researcher',boxes:[{name:space.name}],items:[{kind:'agent',name:'Researcher',role:'Finds useful sources',box:space.name}]})
+    state.loseCreateAck=true
+    const decision=await first.decide({decision:'confirm',requestId:randomUUID(),chat,planId:shown.revision.planId,revisionId:shown.revision.revisionId,digest:shown.revision.digest})
+    await first.runBuild(decision.buildId!)
+    expect((await first.readView(chat)).build?.state).toBe('uncertain')
+    const saved=(await db.execute("SELECT request_id,payload FROM desktop_foreman_creation_receipts WHERE kind='coworker'")).rows[0]!
+    const requestId=String(saved.request_id),payload=JSON.parse(String(saved.payload)) as {agentId:string;engineAgentId:string;input:unknown}
+    expect(payload.engineAgentId).toBe(`new-${requestId}`)
+    expect(state.agents.has(payload.engineAgentId)).toBe(true)
+    expect((await db.execute('SELECT id FROM desktop_agents')).rows).toHaveLength(0)
+    const authority=await bind()
+    for(let i=0;i<4;i++) await authority.creation.createCoworker({...await spec(),name:`Other coworker ${i}`})
+    const enginePosts=state.posts.filter(item=>item.path==='/desktop/agents/foreman-create').length
+
+    await reopen()
+    const restarted=await core(),resume={action:'resume' as const,requestId:randomUUID(),chat,buildId:decision.buildId!}
+    await restarted.reconcile()
+    await expect(restarted.buildAction(resume)).rejects.toMatchObject({code:'uncertain'})
+    const blocked=(await restarted.readView(chat)).build!
+    expect(blocked.state).toBe('uncertain')
+    expect(blocked.items[0]).toMatchObject({state:'uncertain',created:null,failure:null})
+    expect(await (await bind()).creation.lookupCoworker(requestId)).toEqual({state:'unknown'})
+    expect((await db.execute({sql:'SELECT state,payload FROM desktop_foreman_creation_receipts WHERE request_id=?',args:[requestId]})).rows[0]).toEqual({state:'pending',payload:saved.payload})
+    expect(state.posts.filter(item=>item.path==='/desktop/agents/foreman-create')).toHaveLength(enginePosts)
+    expect(state.creations.size).toBe(5)
+
+    // Expanding the same Box makes the original immutable request admissible again.
+    await db.execute({sql:'UPDATE desktop_spaces SET col_end=col_start+5 WHERE id=?',args:[space.id]})
+    await restarted.buildAction(resume)
+    await restarted.runBuild(decision.buildId!)
+    expect((await restarted.readView(chat)).build).toMatchObject({state:'completed',items:[{state:'created',created:{agentIds:[payload.agentId],spaceId:space.id}}]})
+    expect((await db.execute({sql:'SELECT id,engine_agent_id,enabled FROM desktop_agents WHERE id=?',args:[payload.agentId]})).rows).toEqual([{id:payload.agentId,engine_agent_id:payload.engineAgentId,enabled:0}])
+    expect(state.posts.filter(item=>item.path==='/desktop/agents/foreman-create'&&item.body.requestId===requestId).map(item=>item.body)).toEqual([payload.input,payload.input])
+    expect(state.creations.size).toBe(5)
+    expect(state.runs.size).toBe(0)
+})

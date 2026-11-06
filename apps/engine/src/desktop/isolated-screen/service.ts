@@ -74,7 +74,7 @@ function prerequisiteText(prerequisite: ScreenPrerequisite): string {
         case 'docker-missing': return 'Docker is not installed.'
         case 'daemon-unreachable': return 'Docker is not running.'
         case 'docker-wrong-arch': return 'Docker is not a linux/arm64 engine.'
-        case 'image-missing': return 'The isolated screen image rerun-desktop-guest:round33 is not built.'
+        case 'image-missing': return 'The isolated screen image rerun-desktop-guest:round34 is not built.'
         case 'image-wrong-arch': return 'The isolated screen image is not arm64.'
         case 'name-conflict': return CONFLICT
         case 'ready': return 'The screen is ready.'
@@ -239,6 +239,47 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
             })
         } catch (error) {
             // Package scripts can spawn descendants. Stopping the whole owned guest confirms drain.
+            if (submitted) await stop(target, AbortSignal.timeout(20000))
+            throw error
+        }
+    }
+
+    async function guestShell(target: ScreenTarget, body: Record<string, unknown>, signal: AbortSignal, authorize: (signal: AbortSignal) => Promise<void>) {
+        const op = body.op
+        if (!['guest-shell', 'guest-shell-inspect', 'guest-shell-cancel'].includes(String(op)) || !/^[a-f0-9]{32}$/.test(String(body.commandId)) || !/^[a-f0-9]{64}$/.test(String(body.workspaceFingerprint))) throw new IsolatedScreenRefusal('Invalid guest command identity.', 'refused')
+        if (op === 'guest-shell-cancel') {
+            // Cleanup uses the saved exact target and a fresh signal after Stop/revoke. It cannot start another guest.
+            try {
+                current(target); throwIfAborted(signal)
+                const result = (await guest(containerName(target.engineAgentId), body, signal)).value
+                if (result.requestId !== body.commandId || result.drained !== true) throw new IsolatedScreenRefusal('Command cancellation was not acknowledged.', 'closed')
+                current(target); throwIfAborted(signal)
+                return result
+            } catch (error) {
+                // A lost cancel acknowledgement is not success; drain this generation before returning uncertainty.
+                await stop(target, AbortSignal.timeout(20000))
+                throw error
+            }
+        }
+        if (op === 'guest-shell-inspect') {
+            await authorize(signal); current(target)
+            // Passive reads must remain available while execute holds the mutation lock.
+            const result = (await guestCall(target, body, signal)).value
+            await authorize(signal); current(target); throwIfAborted(signal)
+            return result
+        }
+        if (typeof body.command !== 'string' || !body.command || body.command.length > 16000 || body.command.includes('\0') || !Number.isInteger(body.timeoutMs) || Number(body.timeoutMs) < 1 || Number(body.timeoutMs) > 600000 || !/^[a-f0-9]{64}$/.test(String(body.fingerprint))) throw new IsolatedScreenRefusal('Invalid guest command.', 'refused')
+        let submitted = false
+        try {
+            return await action(target, signal, async (_live, active) => {
+                await authorize(active); current(target); throwIfAborted(active)
+                submitted = true
+                const result = (await guestCall(target, body, active)).value
+                if (result.requestId !== body.commandId || !['done', 'failed', 'timeout', 'cancelled'].includes(String(result.status))) throw new IsolatedScreenRefusal('Guest command drain is uncertain.', 'closed')
+                return result
+            })
+        } catch (error) {
+            // Arbitrary commands may detach descendants. On uncertain execution, stop the exact owned guest.
             if (submitted) await stop(target, AbortSignal.timeout(20000))
             throw error
         }
@@ -652,5 +693,5 @@ export function createIsolatedScreenService(deps: IsolatedScreenDeps): IsolatedS
         return result
     }
 
-    return { status, ensure, running, navigate, act, openBrowser, toolInstall, withLauncherControl, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }
+    return { status, ensure, running, navigate, act, openBrowser, toolInstall, guestShell, withLauncherControl, startTakeover, finishTakeover, stop, withViewer, reconcile, shutdown, dispose }
 }

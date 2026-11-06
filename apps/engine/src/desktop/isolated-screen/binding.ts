@@ -61,12 +61,16 @@ export function bindIsolatedScreen(runtime: { launchNonce: string; app: { origin
     return viewer
 }
 export async function ensureIsolatedScreen(engineAgentId: string, signal: AbortSignal) {
+    return ensureAuthorizedIsolatedScreen(engineAgentId, signal, active => requireComputerScreenGrant(engineAgentId, active))
+}
+/** Shared lifecycle registration for separately granted guest capabilities. Never bypasses its caller’s fresh authority. */
+export async function ensureAuthorizedIsolatedScreen(engineAgentId: string, signal: AbortSignal, authorize: (signal: AbortSignal) => Promise<void>) {
     signal = isolatedScreenSignal(engineAgentId, signal)
     const work = (async () => {
-    await requireComputerScreenGrant(engineAgentId, signal)
+    await authorize(signal)
     const result = await service().ensure(isolatedScreenOwner(engineAgentId), signal)
     targets.set(engineAgentId, result.target)
-    await requireComputerScreenGrant(engineAgentId, signal)
+    await authorize(signal)
     return result
     })()
     const set = starting.get(engineAgentId) ?? new Set(); starting.set(engineAgentId, set); set.add(work)

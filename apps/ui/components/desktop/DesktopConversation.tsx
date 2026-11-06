@@ -11,7 +11,7 @@ import { USER_BUBBLE_INK, USER_BUBBLE_SHAPE } from '@/components/chat/bubble-sty
 import { ArrowUpIcon, ChevronDownIcon, PlusIcon, SquareIcon, UploadIcon, UserRoundIcon, XIcon } from '@/lib/icons'
 import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
 import { useDesktopReplyFeedback } from '@/lib/desktop/reply-feedback'
-import { DesktopBrowserRun } from './browser-runs/DesktopBrowserRun'
+import { DesktopComputerPanel } from './computer-panel/DesktopComputerPanel'
 import { DesktopSelectedMentionText } from './mentions/DesktopSelectedMentionText'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
 import { DesktopVoiceComposer } from './voice/DesktopVoiceComposer'
@@ -95,10 +95,13 @@ import { desktopDraftRecord, holdDraftAdmission, isDesktopQuitting } from '@/lib
 import { desktopTakeoverViewSchema, type DesktopPendingTakeover, type DesktopTakeoverTerminal } from '@/lib/desktop/takeover'
 import { takeoverScreenApi } from '@/lib/desktop/takeover-screen'
 import { IsolatedScreenDialog } from './isolated-screen/IsolatedScreenDialog'
+import { useDesktopWebhookRequest } from './useDesktopWebhookRequest'
+import { DesktopWebhookHumanRequest } from './trigger-requests/DesktopWebhookHumanRequest'
+import type { TriggerRequestView } from '@/lib/desktop/trigger-requests/types'
 import { DesktopBrowserCard } from './isolated-screen/DesktopBrowserCard'
 
 type ServiceRequest = DesktopServiceRequestBlockProps['request']
-type AcceptedService = Parameters<DesktopServiceRequestBlockProps['onAccepted']>[0] & { secretRequestId?: string; mcpSignInRequestId?: string }
+type AcceptedService = Parameters<DesktopServiceRequestBlockProps['onAccepted']>[0] & { secretRequestId?: string; mcpSignInRequestId?: string; triggerRequestKind?: TriggerRequestView['link']['kind'] }
 class AcceptedResponseDecoder extends DefaultChatTransport<UIMessage> {
     decode(response: Response) { if (!response.body) throw new Error('The app response has no stream.'); return this.processResponseStream(response.body) }
 }
@@ -514,7 +517,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
     const generating = busy || runInFlight
     useEffect(() => {
-        if (!requestedPanel || !active || requestedPanel.agentId !== agent.id || handledPanel.current === requestedPanel) return
+        if (!requestedPanel || requestedPanel.panel === 'desktop' || !active || requestedPanel.agentId !== agent.id || handledPanel.current === requestedPanel) return
         if (isDesktopQuitting()) return
         // A freshly restored chat has not yet checked whether its engine is still replying.
         // Keep Settings closed until that read belongs to this session; Back/Close cancels it.
@@ -556,10 +559,22 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const [screenOpen, setScreenOpen] = useState<'manual' | 'request' | null>(null)
     const screenApi = useMemo(() => sessionId && takeover ? takeoverScreenApi(sessionId, takeover.id) : undefined, [sessionId, takeover?.id])
     useEffect(() => { setScreenOpen(null) }, [active, sessionId, takeover?.id])
+    useEffect(() => {
+        if (!requestedPanel || requestedPanel.panel !== 'desktop' || !active || agent.enabled === false || requestedPanel.agentId !== agent.id || handledPanel.current === requestedPanel || isDesktopQuitting()) return
+        handledPanel.current = requestedPanel
+        onPanelRequestHandled?.(requestedPanel)
+        setDetailPanel(null); setCardOpen(false); setScreenOpen('manual')
+    }, [requestedPanel, active, agent.id, agent.enabled, sessionId, onPanelRequestHandled])
     const serviceRequest = history.id === sessionId ? history.serviceRequest : undefined
     const secretRequest = history.id === sessionId ? history.secretRequest : undefined
     const mcpSignIn = history.id === sessionId ? history.mcpSignIn : undefined
     const mcpRequest = mcpSignIn?.request?.receipt?.accepted ? null : mcpSignIn?.request
+    const webhookRequest = useDesktopWebhookRequest(agent.id, sessionId, active && !draft.quitting, attempt)
+    const retainedWebhook = useRef<TriggerRequestView | null>(null)
+    const streamingWebhook = serviceStreaming && !!serviceStream.current?.triggerRequestKind && serviceStream.current.agentId === agent.id && serviceStream.current.sessionId === sessionId
+    if (!streamingWebhook) retainedWebhook.current = webhookRequest?.request && webhookRequest.link.kind !== 'signin' ? webhookRequest : null
+    const wrappedWebhook = retainedWebhook.current?.link.agentId === agent.id && retainedWebhook.current.link.sessionId === sessionId ? retainedWebhook.current : null
+    const webhookOwns = (kind: TriggerRequestView['link']['kind'], id: string | undefined) => !!wrappedWebhook && wrappedWebhook.link.kind === kind && wrappedWebhook.link.requestId === id
     const pendingRequest = question || approval || takeover || (serviceRequest ? { id: serviceRequest.serviceRequestId, toolCallId: serviceRequest.source.toolCallId } : null) || (secretRequest ? { id: secretRequest.requestId, toolCallId: secretRequest.source.toolCallId } : null) || (mcpRequest ? { id: mcpRequest.requestId, toolCallId: mcpRequest.source.toolCallId } : null)
     // Every pending request must be known before a later turn or an automatic queue flush.
     const requestBlocked = setupBlocked || !!sessionId && (question !== null || approval !== null || takeover !== null || serviceRequest !== null || secretRequest !== null || mcpSignIn === undefined || !!mcpRequest)
@@ -919,7 +934,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         const owns = () => serviceOwner.current.agentId === result.agentId && serviceOwner.current.sessionId === result.sessionId && serviceOwner.current.active
         if (!owns() || serviceStream.current) { result.cancelStream(); throw new Error('This conversation is no longer active.') }
         serviceStream.current = result
-        setHistory(current => current.id === result.sessionId ? {...current, ...(result.mcpSignInRequestId ? { mcpSignIn: null } : result.secretRequestId ? { secretRequest: null } : { serviceRequest: null })} : current)
+        setHistory(current => current.id === result.sessionId ? {...current, ...(result.triggerRequestKind === 'question' ? { question: null } : result.triggerRequestKind === 'approval' ? { approval: null } : result.triggerRequestKind === 'takeover' ? { takeover: null } : result.mcpSignInRequestId ? { mcpSignIn: null } : result.secretRequestId ? { secretRequest: null } : { serviceRequest: null })} : current)
         setMessages(history.transcript ?? messages)
         setServiceStreaming(true); setLiveSessionId(result.sessionId); setLiveRunId(result.requestId)
         try {
@@ -933,6 +948,38 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             if(serviceStream.current===result){serviceStream.current=null;setServiceStreaming(false);setAttempt(value=>value+1)}
         }
     }
+    const adoptWebhookResponse = async (response: Response, view: TriggerRequestView) => {
+        const runId = response.headers.get('x-run-id')
+        if (!serviceOwner.current.active || serviceOwner.current.agentId !== view.link.agentId || serviceOwner.current.sessionId !== view.link.sessionId || response.headers.get('x-session-id') !== view.link.sessionId || response.headers.get('x-trigger-request-key') !== view.key || !runId || !response.body) {
+            void response.body?.cancel().catch(() => {}); throw new Error('Webhook reply belongs to another request.')
+        }
+        // This response already represents the admitted continuation. Own its reader and adopt it directly.
+        const controller = new AbortController(), reader = response.body.getReader()
+        const cancelStream = () => { controller.abort(); void reader.cancel().catch(() => {}) }
+        const stream = new ReadableStream<Uint8Array>({
+            async pull(target) {
+                try { const part = await reader.read(); if (controller.signal.aborted || part.done) target.close(); else target.enqueue(part.value) }
+                catch (error) { target.error(error) }
+            },
+            cancel() { cancelStream() },
+        })
+        try {
+            await adoptServiceResponse({ agentId: view.link.agentId, sessionId: view.link.sessionId, serviceRequestId: view.link.requestId, requestId: runId,
+                triggerRequestKind: view.link.kind, ...(view.link.kind === 'secret' && { secretRequestId: view.link.requestId }),
+                response: new Response(stream, { status: response.status, headers: response.headers }), signal: controller.signal, cancelStream })
+        } finally { cancelStream(); try { reader.releaseLock() } catch { /* A pending reader cancellation owns release. */ } }
+    }
+    const renderWebhook = (screen?: ReactNode, live?: boolean) => wrappedWebhook && <DesktopWebhookHumanRequest initial={wrappedWebhook}
+        active={active && !draft.quitting && !inactive && (!generating || streamingWebhook) && !stopping && ready} onAccepted={adoptWebhookResponse} onOpenApps={openServiceApps}
+        onOpenResult={async target => {
+            if (!serviceOwner.current.active || target.agentId !== agent.id || target.sessionId !== sessionId) throw new Error('Webhook result chat changed.')
+            onSelectSession(target.sessionId)
+        }}
+        takeover={{ screen, live, onAction: async (request, input) => {
+            if (!active || request.id !== takeover?.id || request.id !== wrappedWebhook.link.requestId) throw new Error('Browser request changed.')
+            if (input.action === 'open') { setScreenOpen('request'); return }
+            throw new Error('Use the existing browser viewer to release input.')
+        } }} />
     useEffect(()=>{if(!busy)void setup.refresh()},[busy, attempt, setup.refresh])
     const lastMessage = transcript.at(-1)
     const quickReplyErrorIsRetryable = !!lastMessage && quickReplyRetry === lastMessage.id
@@ -1147,11 +1194,11 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         </div>
                     )})}
                     {sessionId && <DesktopToolInstallPending agentId={agent.id} sessionId={sessionId} messages={transcript} active={active && ready} disabled={draft.quitting || inactive || generating || stopping} />}
-                    {active && takeover && <DesktopBrowserCard key={takeover.id} agentId={agent.id} takeover={takeover} disabled={draft.quitting || inactive || generating || stopping || !ready} onAction={async payload => {
+                    {active && takeover && !webhookOwns('takeover', takeover.id) && <DesktopBrowserCard key={takeover.id} agentId={agent.id} takeover={takeover} disabled={draft.quitting || inactive || generating || stopping || !ready} onAction={async payload => {
                         if (payload.action === 'open') { setScreenOpen('request'); return }
                         if (payload.action === 'done' || payload.action === 'skip') await decideTakeover(payload)
                     }} />}
-                    {generating && (sessionId ? <DesktopBrowserRun key={sessionId} agentId={agent.id} sessionId={sessionId} active={active} takeoverPending={!!takeover} fullViewerOpen={screenOpen !== null} onOpen={() => setScreenOpen('manual')} fallback={<div className="text-sm text-muted-foreground">{agent.name} is working…</div>} /> : <div className="text-sm text-muted-foreground">{agent.name} is working…</div>)}
+                    {generating && (sessionId ? <DesktopComputerPanel key={sessionId} agentId={agent.id} sessionId={sessionId} active={active} takeoverPending={!!takeover} fullViewerOpen={screenOpen !== null} onOpen={() => setScreenOpen('manual')} fallback={<div className="text-sm text-muted-foreground">{agent.name} is working…</div>} /> : <div className="text-sm text-muted-foreground">{agent.name} is working…</div>)}
                     {stopError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopError}</div>}
                     {(error || historyError) && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
                         {historyError || error?.message}
@@ -1192,20 +1239,21 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 <QueuedMessagePill text={queued && !(draftQueues.current.has(queued.id) && input.trim() === queued.text && samePaths(attachmentPaths, desktopQueuedAttachmentPaths(queued))) ? desktopQueuedPreview(queued) : null}
                     busy={generating} pending={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || queue.pending || stopping || inactive || !!flushingQueue.current}
                     onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued && !isDesktopQuitting()) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
-                {serviceRequest && sessionId && <DesktopServiceRequestBlock agentId={agent.id} sessionId={sessionId} request={serviceRequest} inline disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onOpenApps={openServiceApps} onAccepted={adoptServiceResponse} />}
+                {active && wrappedWebhook && (wrappedWebhook.request?.kind === 'takeover' ? <DesktopBrowserCard agentId={agent.id} takeover={wrappedWebhook.request.value} disabled onAction={async () => {}} renderCard={renderWebhook} /> : renderWebhook())}
+                {serviceRequest && sessionId && !webhookOwns('service', serviceRequest.serviceRequestId) && <DesktopServiceRequestBlock agentId={agent.id} sessionId={sessionId} request={serviceRequest} inline disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onOpenApps={openServiceApps} onAccepted={adoptServiceResponse} />}
                 {mcpRequest && sessionId && <DesktopMcpSignInBlock sessionId={sessionId} request={mcpRequest} initialOAuth={mcpSignIn?.oauth} inline active={!draft.quitting && active && !inactive && !generating && !stopping && ready} onAccepted={(response, stream) => adoptServiceResponse({
                     agentId: agent.id, sessionId, serviceRequestId: mcpRequest.requestId, mcpSignInRequestId: mcpRequest.requestId,
                     requestId: response.headers.get('x-run-id')!, response, ...stream,
                 })} />}
-                {secretRequest && sessionId && <DesktopSecretRequestBlock sessionId={sessionId} request={secretRequest} inline active={!draft.quitting && active && (!inactive || !!secretRequest.receipt) && !generating && !stopping && ready} onAccepted={(response, stream) => adoptServiceResponse({
+                {secretRequest && sessionId && !webhookOwns('secret', secretRequest.requestId) && <DesktopSecretRequestBlock sessionId={sessionId} request={secretRequest} inline active={!draft.quitting && active && (!inactive || !!secretRequest.receipt) && !generating && !stopping && ready} onAccepted={(response, stream) => adoptServiceResponse({
                     agentId: agent.id, sessionId, serviceRequestId: secretRequest.requestId, secretRequestId: secretRequest.requestId,
                     requestId: response.headers.get('x-run-id')!, response, ...stream,
                 })} />}
                 {setup.error && <div role="alert" className="p-2 text-sm text-destructive">{setup.error}<Button type="button" size="sm" variant="ghost" onClick={()=>void setup.refresh()}>Retry setup</Button></div>}
                 {setupBlocked && <DesktopSetupGate agentId={agent.id} agentName={agent.name} apps={[]} canStart={modelReady} onStartBlocked={onOpenModelSettings} modelSlot={<Button type="button" variant="ghost" size="sm" onClick={onOpenModelSettings}>{modelLabel ?? 'Choose a model'}</Button>} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {setup.view?.skipped && <DesktopSetupSkippedBanner agentId={agent.id} canStart={modelReady} onStartBlocked={onOpenModelSettings} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
-                {question && <DesktopQuestionCard key={question.id} question={question} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
-                {approval && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
+                {question && !webhookOwns('question', question.id) && <DesktopQuestionCard key={question.id} question={question} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
+                {approval && !webhookOwns('approval', approval.id) && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
                 {documentPreview && <DesktopDocumentLightbox {...documentPreview} onIndexChange={index => setDocumentPreview(value => value ? { ...value, index } : null)} onClose={() => setDocumentPreview(null)} />}
                 <form ref={composerForm} onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>
                     {uploadDragOver && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] border border-dashed border-brand bg-background/85">

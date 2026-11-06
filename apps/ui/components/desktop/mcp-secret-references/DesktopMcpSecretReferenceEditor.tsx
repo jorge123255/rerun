@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
 import { PanelEditorShell, PanelEditorHeader, PanelEditorBody, PanelEditorFooter } from '@/components/ui/panel-editor'
-import { desktopMcpSecretReferenceReview, type DesktopMcpSecretReferenceConfig } from '../../../../../packages/contracts/src/desktop-mcp-secret-references'
+import { desktopMcpSecretReferenceReview, type DesktopMcpSecretReferenceConfig } from '@rerun/contracts'
 import {
     sameSecretReferenceAttempt,
     sameSecretReferenceOwner,
@@ -19,7 +19,7 @@ export type DesktopMcpSecretReferenceEditorProps = {
     agentId: string
     origin: string
     config: DesktopMcpSecretReferenceConfig
-    expectedConfigRevision: number
+    expectedConfigRevision: string
     expectedBindingRevision: number
     presence: { name: string; configured: boolean }[]
     readOnly?: boolean
@@ -102,6 +102,9 @@ function Editor({ agentId, origin, config, expectedConfigRevision, expectedBindi
                 return
             }
             if (result.status === 'conflict') {
+                await driver.journal.clear(slot, saveId, controller.signal)
+                if (!current()) return
+                setAttempt(null)
                 setError('The credential binding changed. Refresh before saving again.')
                 return
             }

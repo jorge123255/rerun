@@ -164,3 +164,22 @@ it('Escape inside a dialog leaves Foreman open; Escape from the board closes it'
     await act(async () => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
     expect(api.ui.open).toBe(false)
 })
+
+
+it('recovers a build explicitly, serializes clicks and retains its request after a lost acknowledgement', async () => {
+    const uncertain = {...build, state:'uncertain' as const}
+    vi.mocked(ports.plans.readConversationView).mockResolvedValue({...view(),build:uncertain,blocked:'build_uncertain'})
+    await render()
+    expect(ports.build.act).not.toHaveBeenCalled()
+    const response=deferred<Awaited<ReturnType<typeof ports.build.act>>>()
+    vi.mocked(ports.build.act).mockReturnValueOnce(response.promise)
+    await act(async()=>{void api.actOnBuild('resume');void api.actOnBuild('resume')})
+    expect(ports.build.act).toHaveBeenCalledTimes(1)
+    const first=vi.mocked(ports.build.act).mock.calls[0]![0]
+    await act(async()=>{response.reject(new Error('Lost acknowledgement'))})
+    vi.mocked(ports.build.act).mockResolvedValue(fromContractBuild(build,chat))
+    vi.mocked(ports.plans.readConversationView).mockResolvedValue({...view(),build})
+    await act(async()=>{await api.actOnBuild('resume')})
+    expect(vi.mocked(ports.build.act).mock.calls[1]![0]).toEqual(first)
+    expect(api.build?.status).toBe('completed')
+})

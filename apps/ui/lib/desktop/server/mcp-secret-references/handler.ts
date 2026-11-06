@@ -1,5 +1,5 @@
 import 'server-only'
-import { desktopMcpSecretReferenceError, desktopMcpSecretReferenceSaveSchema } from '../../../../../../packages/contracts/src/desktop-mcp-secret-references'
+import { desktopMcpSecretReferenceError, desktopMcpSecretReferenceSaveSchema } from '@rerun/contracts'
 import type { DesktopMcpSecretGate, DesktopMcpSecretLookup } from './lookup'
 import type { DesktopMcpSecretReferenceStore } from './store'
 
@@ -9,7 +9,7 @@ const json = (body: unknown, status: number) => Response.json(body, { status, he
 export type DesktopMcpSecretReferenceActor = { agentId: string; origin: string }
 
 export function createDesktopMcpSecretReferenceHandlers(deps: null | {
-    store: Pick<DesktopMcpSecretReferenceStore, 'save' | 'head' | 'bindings'>
+    store: Pick<DesktopMcpSecretReferenceStore, 'save' | 'head' | 'bindings' | 'receipt'>
     lookup: Pick<DesktopMcpSecretLookup, 'version'>
     gate: DesktopMcpSecretGate
 }) {
@@ -20,6 +20,13 @@ export function createDesktopMcpSecretReferenceHandlers(deps: null | {
             const agentId = url.searchParams.get('agentId') ?? ''
             const serverName = url.searchParams.get('serverName') ?? ''
             if (agentId !== actor.agentId) return json({ message: desktopMcpSecretReferenceError('forbidden').message }, 403)
+            const saveId = url.searchParams.get('saveId')
+            if (saveId) {
+                await deps.gate.check()
+                const receipt = await deps.store.receipt(actor.agentId, saveId)
+                await deps.gate.check()
+                return receipt ? json(receipt, 200) : json({ status: 'absent', saveId }, 404)
+            }
             const head = await deps.store.head(actor.agentId, serverName)
             if (!head || head.origin !== actor.origin) return json({ message: 'Credential references are not recorded for this server.' }, 404)
             const bindings = await deps.store.bindings(actor.agentId, serverName)
@@ -31,7 +38,7 @@ export function createDesktopMcpSecretReferenceHandlers(deps: null | {
                     name: binding.secretName,
                     field: binding.field,
                     key: binding.fieldKey,
-                    status: version.state === 'present' ? 'configured' as const : 'pending' as const,
+                    status: version.state === 'present' && binding.status === 'bound' && binding.secretVersion === version.version ? 'configured' as const : version.state === 'present' ? 'rotated' as const : 'pending' as const,
                     ...(version.state === 'present' ? { version: version.version } : {}),
                 })
             }

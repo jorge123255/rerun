@@ -85,7 +85,7 @@ export async function createDesktopSelfMcpBinding(runtime: DesktopRuntime, ports
         transports: ['http', 'sse', 'stdio'],
         async probe(owner, server, context) {
             await context.assertCurrent()
-            if (server.transport !== 'http' || config.requirements!(server).length) return { ok: false, needsCredentials: false, needsPermission: true, credentialsRejected: false, error: 'This configuration is not ready to connect.' }
+            if (server.transport !== 'http' || config.requirements!(server).length || Object.keys(server.headers).length || Object.keys(server.env).length || server.args.some(argument => argument.includes('${'))) return { ok: false, needsCredentials: false, needsPermission: true, credentialsRejected: false, error: 'This configuration is not ready to connect.' }
             let needsCredentials = false
             const temporary = { ...ports.remoteStore, lifecycle: remoteMcpLifecycle(), read: async () => ({ id: 'review-only', name: server.name, transport: 'http' as const, url: server.url!, revision: 'review-only', bearer: '' }), readOAuth: async () => null }
             const network: typeof fetch = async (input, init) => {

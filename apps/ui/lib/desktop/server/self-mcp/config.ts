@@ -1,11 +1,12 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client, Transaction } from '@libsql/client'
-import { selfMcpCanonicalInput } from '@rerun/contracts'
+import { desktopMcpSecretReferencePublicIssue, selfMcpCanonicalInput } from '@rerun/contracts'
 import { endpoint } from '../mcp/model'
 import { stdioInput } from '../mcp-stdio/store'
 import type { SelfMcpApplyIdentity, SelfMcpApplyReceipt, SelfMcpConfigAdapter, SelfMcpServerCandidate } from './adapters'
 import { selfMcpFingerprint } from './fingerprint'
+import { adoptDesktopMcpReferences } from '../mcp-secret-references/transaction'
 
 const activeEffects = new WeakMap<Client, Set<string>>()
 
@@ -16,7 +17,8 @@ export const selfMcpEffectIdentity = (identity: SelfMcpApplyIdentity) => JSON.st
 ])
 export function selfMcpConfigurationRequirements(server: SelfMcpServerCandidate): string[] {
     const requirements: string[] = []
-    if (Object.keys(server.env).length || Object.keys(server.headers).length || server.args.some(argument => argument.includes('${'))) requirements.push('This proposal uses credential references that this connection cannot resolve yet. Its full configuration is kept here; nothing will be saved without those bindings.')
+    const issue = desktopMcpSecretReferencePublicIssue(server)
+    if (issue) requirements.push(issue)
     if (server.transport === 'stdio') {
         if (/^(?:sh|bash|zsh|fish|csh|tcsh|ksh|env|sudo|npx|npm|pnpm|yarn|bunx|uvx|uv|pip|pip3|pipx|osascript|open|launchctl)$/.test(server.command?.split('/').pop() ?? '')) requirements.push('Shells and package runners are not supported as local MCP programs. Choose the installed server executable.')
         if (!stdioInput.safeParse({ name: server.name, executable: server.command, args: server.args }).success) requirements.push('Local programs need the absolute path of an installed executable. This review does not install packages or run shell commands.')
@@ -29,6 +31,7 @@ export function selfMcpConfigurationRequirements(server: SelfMcpServerCandidate)
 
 export function createSelfMcpConfigAdapter(ports: {
     db: Client
+    origin?: string
     managedNames: (owner: string) => Promise<string[]>
     /** Drains existing transports and holds their canonical mutation fences. */
     mutate: <T>(owner: string, name: string, write: () => Promise<T>) => Promise<T>
@@ -40,12 +43,17 @@ export function createSelfMcpConfigAdapter(ports: {
     const revision = async (owner: string, executor: Client | Transaction = db) => Number((await executor.execute({ sql: 'SELECT revision FROM desktop_self_mcp_config_revisions WHERE owner=?', args: [owner] })).rows[0]?.revision ?? 0)
     const find = async (owner: string, name: string): Promise<SelfMcpServerCandidate | null> => {
         const [remote, local] = await Promise.all([
-            db.execute({ sql: 'SELECT transport,name,url FROM desktop_remote_mcp WHERE agent_id=? AND name=?', args: [owner, name] }),
-            db.execute({ sql: 'SELECT name,executable,args FROM desktop_mcp_stdio WHERE owner=? AND name=?', args: [owner, name] }),
+            db.execute({ sql: 'SELECT transport,name,url,revision FROM desktop_remote_mcp WHERE agent_id=? AND name=?', args: [owner, name] }),
+            db.execute({ sql: 'SELECT name,executable,args,revision FROM desktop_mcp_stdio WHERE owner=? AND name=?', args: [owner, name] }),
         ])
         if (remote.rows.length && local.rows.length) throw new Error('This MCP name belongs to more than one connection. Resolve the conflict in settings.')
         const row = remote.rows[0] ?? local.rows[0]
         if (!row) return null
+        const head = (await db.execute({ sql: 'SELECT config_revision,public_json FROM desktop_mcp_secret_reference_heads WHERE agent_id=? AND server_name=?', args: [owner, name] })).rows[0]
+        if (head?.config_revision === row.revision) {
+            const config = JSON.parse(String(head.public_json))
+            return { name: config.name, transport: config.transport, ...(config.url ? { url: config.url } : {}), ...(config.command ? { command: config.command } : {}), args: config.args, env: config.env, headers: config.headers }
+        }
         return remote.rows.length ? { name: String(row.name), transport: String(row.transport) as 'http' | 'sse', url: String(row.url), args: [], env: {}, headers: {} }
             : { name: String(row.name), transport: 'stdio', command: String(row.executable), args: JSON.parse(String(row.args)), env: {}, headers: {} }
     }
@@ -67,7 +75,10 @@ export function createSelfMcpConfigAdapter(ports: {
             const authentication = (await db.execute({ sql: 'SELECT 1 FROM desktop_remote_mcp WHERE agent_id=? AND name=? AND bearer IS NOT NULL UNION ALL SELECT 1 FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?', args: [owner, server.name, owner, server.name] })).rows
             return !authentication.length && !!existing && selfMcpCanonicalInput(existing) === selfMcpCanonicalInput(server)
         },
-        async connectivity() { return 'unverified' },
+        async connectivity(owner, server) {
+            const rows = (await db.execute({ sql: 'SELECT r.status,r.secret_version,c.version FROM desktop_mcp_secret_references r LEFT JOIN desktop_secret_credentials c ON c.agent_id=r.agent_id AND c.key=r.secret_name WHERE r.agent_id=? AND r.server_name=?', args: [owner, server.name] })).rows
+            return rows.some(row => row.status !== 'bound' || row.secret_version !== row.version) ? 'needs_credentials' : 'unverified'
+        },
         async recover(owner, identity) {
             if (active!.has(activeKey(owner, identity.decision.id))) return { state: 'uncertain' }
             const row = (await db.execute({ sql: 'SELECT identity,receipt FROM desktop_self_mcp_effects WHERE owner=? AND decision_id=?', args: [owner, identity.decision.id] })).rows[0]
@@ -100,16 +111,19 @@ export function createSelfMcpConfigAdapter(ports: {
                     if (remote && server.transport === 'stdio' || local && server.transport !== 'stdio') throw new Error('This name uses another transport. Edit the connection in settings.')
                     const authentication = (await tx.execute({ sql: 'SELECT 1 FROM desktop_remote_mcp_oauth WHERE agent_id=? AND name=?', args: [owner, server.name] })).rows[0]
                     if (remote?.bearer || authentication) throw new Error('This connection already has credentials. Edit it in settings to preserve its authentication.')
+                    const canonicalRevision = randomUUID()
                     if (server.transport === 'stdio') {
                         const count = Number((await tx.execute({ sql: 'SELECT COUNT(*) AS n FROM desktop_mcp_stdio WHERE owner=?', args: [owner] })).rows[0].n)
                         if (!local && count >= 16) throw new Error('Too many local connections')
-                        await tx.execute({ sql: 'INSERT INTO desktop_mcp_stdio(owner,name,executable,args,revision) VALUES(?,?,?,?,?) ON CONFLICT(owner,name) DO UPDATE SET executable=excluded.executable,args=excluded.args,revision=excluded.revision', args: [owner, server.name, server.command!, JSON.stringify(server.args), randomUUID()] })
+                        await tx.execute({ sql: 'INSERT INTO desktop_mcp_stdio(owner,name,executable,args,revision) VALUES(?,?,?,?,?) ON CONFLICT(owner,name) DO UPDATE SET executable=excluded.executable,args=excluded.args,revision=excluded.revision', args: [owner, server.name, server.command!, JSON.stringify(server.args), canonicalRevision] })
                     } else {
                         const count = Number((await tx.execute({ sql: 'SELECT COUNT(*) AS n FROM desktop_remote_mcp WHERE agent_id=?', args: [owner] })).rows[0].n)
                         if (!remote && count >= 16) throw new Error('Too many remote connections')
-                        await tx.execute({ sql: 'INSERT INTO desktop_remote_mcp(id,transport,agent_id,name,url,revision,bearer) VALUES(?,?,?,?,?,?,NULL) ON CONFLICT(agent_id,name) DO UPDATE SET transport=excluded.transport,url=excluded.url,revision=excluded.revision,bearer=NULL', args: [remote?.id ?? randomUUID(), server.transport, owner, server.name, endpoint(server.url!), randomUUID()] })
+                        await tx.execute({ sql: 'INSERT INTO desktop_remote_mcp(id,transport,agent_id,name,url,revision,bearer) VALUES(?,?,?,?,?,?,NULL) ON CONFLICT(agent_id,name) DO UPDATE SET transport=excluded.transport,url=excluded.url,revision=excluded.revision,bearer=NULL', args: [remote?.id ?? randomUUID(), server.transport, owner, server.name, endpoint(server.url!), canonicalRevision] })
                     }
-                    const saved: SelfMcpApplyReceipt = { ...identity, ...result, configRevision: await revision(owner, tx) }
+                    const reference = await adoptDesktopMcpReferences(tx, { agentId: owner, serverName: server.name, configRevision: canonicalRevision, origin: ports.origin ?? 'desktop-workspace-1', config: server, check: () => { context.assertCommit?.(); context.signal.throwIfAborted() } })
+                    const outcome = reference.pending.length ? { outcome: 'applied_pending_credentials' as const, detail: 'The reviewed server was saved with pending credential references. Add those credentials and review the bindings in MCP settings before connecting.' } : result
+                    const saved: SelfMcpApplyReceipt = { ...identity, ...outcome, configRevision: await revision(owner, tx) }
                     if (saved.configRevision <= identity.decision.configRevision) throw new Error('The MCP configuration revision did not advance')
                     await tx.execute({ sql: 'INSERT INTO desktop_self_mcp_effects(owner,decision_id,identity,receipt) VALUES(?,?,?,?)', args: [owner, identity.decision.id, selfMcpEffectIdentity(identity), JSON.stringify(saved)] })
                     await context.assertCurrent(); context.assertCommit?.(); context.signal.throwIfAborted()

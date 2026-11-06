@@ -9,7 +9,7 @@ import type { SseAuthority, SseNetwork, SseWireResponse } from './types'
 
 export type SseNetworkBoundary = {
     resolvePublic(url: string, signal: AbortSignal): Promise<{ address: string; family: number }>
-    credential(authority: SseAuthority, signal: AbortSignal): Promise<{ bearer?: string }>
+    credential(authority: SseAuthority, signal: AbortSignal): Promise<{ bearer?: string; headers?: Record<string, string> }>
 }
 
 export function createPinnedSseNetwork(boundary: SseNetworkBoundary): SseNetwork {
@@ -28,7 +28,7 @@ export function createPinnedSseNetwork(boundary: SseNetworkBoundary): SseNetwork
                 method: input.method, signal: input.signal, agent: false as const, family: address.family, autoSelectFamily: false,
                 lookup: ((_host: unknown, _options: unknown, done: (error: null, address: string, family: number) => void) => done(null, address.address, address.family)) as RequestOptions['lookup'],
                 maxHeaderSize: 16_384,
-                headers: { Accept: input.method === 'GET' ? 'text/event-stream' : 'application/json',
+                headers: { ...credential.headers, Accept: input.method === 'GET' ? 'text/event-stream' : 'application/json',
                     'Accept-Encoding': 'identity', ...(input.body ? { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(input.body)) } : {}),
                     ...(credential.bearer ? { Authorization: `Bearer ${credential.bearer}` } : {}) },
             }

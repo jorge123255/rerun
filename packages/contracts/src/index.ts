@@ -109,3 +109,9 @@ export * from './desktop-service-oauth.js'
 export * from './desktop-service-transports.js'
 
 export * from './desktop-foreman.js'
+
+export * from './desktop-trigger-tools.js'
+export * from './desktop-template-fidelity.js'
+export * from './desktop-mcp-secret-references.js'
+export * from './desktop-claude-plan.js'
+export * from './desktop-guest-shell.js'

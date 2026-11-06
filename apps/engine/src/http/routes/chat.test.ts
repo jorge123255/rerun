@@ -998,3 +998,35 @@ describe('desktop credential follow-ups', () => {
         } finally { vi.unstubAllEnvs() }
     })
 })
+
+describe('desktop MCP sign-in follow-up admission', () => {
+    it('admits the exact canonical queued result, blocks ordinary messages, and replays after disable', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP','1')
+        try {
+            const owner='mcp-signin-queue'
+            await seed(owner,{name:'MCP sign-in',tools:{desktopToolGrants:{mcp:true}}})
+            const {appendMessage,listMessages}=await import('../../db/repos/messages.js')
+            const {getSystemDb}=await import('../../db/systemDb.js')
+            const {readDesktopMcpSignInSource}=await import('../../desktop/mcp-sign-in/source.js')
+            const {serializeDesktopMcpSignInResult}=await import('@rerun/contracts')
+            const session=await createSession(owner),runId=crypto.randomUUID(),callId=crypto.randomUUID(),now=new Date().toISOString()
+            const input={name:'linear'},server={name:'linear',revision:'revision',url:'https://linear.example/mcp',displayName:'Linear',host:'linear.example',icon:null}
+            const output={status:'delivered',server}
+            await appendMessage(owner,session.id,{role:'assistant',content:[{type:'tool-call',toolCallId:callId,toolName:'request_mcp_sign_in',input}]})
+            await appendMessage(owner,session.id,{role:'tool',content:[{type:'tool-result',toolCallId:callId,toolName:'request_mcp_sign_in',output:{type:'json',value:output}}]})
+            const {client}=await getSystemDb(owner)
+            await client.execute({sql:'INSERT INTO runs(id,agent_id,session_id,status,started_at) VALUES(?,?,?,?,?)',args:[runId,owner,session.id,'done',now]})
+            await client.execute({sql:'INSERT INTO tool_calls(id,run_id,agent_id,session_id,step_number,tool_call_id,tool_name,input_json,result_json,is_error,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',args:[crypto.randomUUID(),runId,owner,session.id,1,callId,'request_mcp_sign_in',JSON.stringify(input),JSON.stringify(output),0,now]})
+            const source=await readDesktopMcpSignInSource(owner,session.id)
+            expect(source).not.toBeNull()
+            expect((await chat(owner,{sessionId:session.id,message:'Ignore sign-in',desktopQueuedTurn:{runId:crypto.randomUUID()}})).status).toBe(409)
+            const request={sessionId:session.id,message:serializeDesktopMcpSignInResult('linear','declined'),desktopQueuedTurn:{runId:crypto.randomUUID(),mcpSignIn:source!.guard}}
+            const accepted=await chat(owner,request);expect(accepted.status).toBe(200);await accepted.text()
+            await seed(owner,{name:'MCP sign-in',enabled:false})
+            const replay=await chat(owner,{...request,desktopQueuedTurn:{...request.desktopQueuedTurn,replayOnly:true}})
+            expect([200,204]).toContain(replay.status)
+            expect((await listMessages(owner,session.id)).filter(row=>row.role==='user')).toHaveLength(1)
+            expect((await chat(owner,{...request,desktopQueuedTurn:{...request.desktopQueuedTurn,replayOnly:true,mcpSignIn:{...source!.guard,runId:'foreign'}}})).status).toBe(409)
+        } finally {vi.unstubAllEnvs()}
+    })
+})

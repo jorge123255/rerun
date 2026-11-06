@@ -5,7 +5,7 @@ import { FOREMAN_AGENT_ID } from '@rerun/contracts'
 import { desktopForemanTools } from '../desktop/foreman/binding.js'
 import { readDesktopDelegation } from '../desktop/delegation/binding.js'
 import { desktopDelegationChildTools } from '../desktop/delegation/child-scope.js'
-import { readDesktopTriggerRuntime } from '../desktop/triggers/runtime.js'
+import { readDesktopTriggerTools } from '../desktop/trigger-tools/binding.js'
 import type { ToolSet } from 'ai'
 import { filesystemTools } from './builtin/filesystem.js'
 import { sharedTools } from './builtin/shared.js'
@@ -77,12 +77,13 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         Object.assign(tools, readDesktopDelegation()?.tools(ctx) ?? {})
         Object.assign(tools, desktopSecretRequestTools(ctx))
         Object.assign(tools, desktopMcpSignInTools(ctx))
+        if (!ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'guestShell')) Object.assign(tools, readDesktopGuestShell()?.tools(ctx) ?? {})
         if (!ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'scheduleManage')) Object.assign(tools, readDesktopScheduleTools()?.tools(ctx.agent.id, ctx) ?? {})
         if (!ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'toolInstall')) Object.assign(tools, readDesktopToolInstall()?.tools(ctx) ?? {})
         Object.assign(tools, desktopSelfMcpTools(ctx))
         Object.assign(tools, desktopWebSearchTools(ctx, { search: desktopWebSearch }))
-        const triggers = readDesktopTriggerRuntime()
-        if (triggers && hasDesktopToolGrant(ctx.agent.config, 'trigger') && !ctx.agent.config.ephemeral) Object.assign(tools, triggers.toolFactory(ctx.agent.id, ctx))
+        const triggers = readDesktopTriggerTools()
+        if (triggers && hasDesktopToolGrant(ctx.agent.config, 'trigger') && !ctx.agent.config.ephemeral) Object.assign(tools, triggers.tools(ctx.agent.id, ctx))
         const calls = readDesktopCoworkerCallRuntime()
         if (calls && hasDesktopToolGrant(ctx.agent.config, 'callAgent') && !ctx.agent.config.ephemeral) Object.assign(tools, desktopCallAgentTools(ctx, calls))
         if (ctx.agent.config.setup?.required && ctx.agent.install && desktopSetupRunAllowed(ctx.agent, ctx.sessionId)) Object.assign(tools, desktopSetupTools(ctx))
@@ -153,3 +154,4 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         },
     }
 }
+import { readDesktopGuestShell } from '../desktop/guest-shell/runtime.js'

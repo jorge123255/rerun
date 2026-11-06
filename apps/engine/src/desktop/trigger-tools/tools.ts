@@ -20,6 +20,15 @@ import { desktopTriggerModelDecision } from './model.js'
 import { projectTriggerGet, projectTriggerList, scrubTriggerToolText } from './project.js'
 import type { DesktopTriggerToolAuthority, DesktopTriggerToolContext } from './types.js'
 
+function canonicalInput(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(canonicalInput)
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonicalInput(item)]))
+    return value
+}
+function invocationIdentity(context: DesktopTriggerToolContext | undefined, operation: string, input: unknown) {
+    return createHash('sha256').update(JSON.stringify([context?.sessionId, operation, canonicalInput(input)])).digest('hex')
+}
+
 const METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
 
 function requestIdFor(engineAgentId: string, runId: string, toolCallId: string): string {
@@ -61,6 +70,7 @@ export function createDesktopTriggerToolFactory(deps: {
     const projections = new Map<string, DesktopTriggerToolProjection>()
     function finish(key: string, operation: DesktopTriggerToolProjection['operation'], slugValue: string | null, outcome: DesktopTriggerToolProjection['outcome'], text: string, revision: string | null): string {
         const safe = scrubTriggerToolText(text)
+        if (projections.size >= 256) projections.delete(projections.keys().next().value!)
         projections.set(key, { outcome, operation, text: safe, slug: slugValue, revision })
         return safe
     }
@@ -132,7 +142,8 @@ export function createDesktopTriggerToolFactory(deps: {
                         provider: providerSchema.optional().describe('Model provider. Only with a model, and only when it is this coworker’s connected model. A named pin is not stored.'),
                         model: z.string().optional().describe('Model id. Only if the user asks for one, and only when it is this coworker’s connected model. Otherwise the trigger follows the coworker.'),
                     }),
-                    execute: async ({ name, description, body, methods, provider, model }, options) => run(options?.toolCallId ?? 'create', 'create', null, async () => {
+                    execute: async (original, options) => run(options?.toolCallId ?? 'create', 'create', null, async () => {
+                        const { name, description, body, methods, provider, model } = original
                         await guard()
                         if (name.length < 1 || name.length > 120) throw new DesktopTriggerToolError('rejected', M.nameLength)
                         if (description.length > 4000) throw new DesktopTriggerToolError('rejected', M.descriptionLength)
@@ -156,7 +167,7 @@ export function createDesktopTriggerToolFactory(deps: {
                             provider: null,
                             model: null,
                         }
-                        const created = await deps.lifecycle.create(engineAgentId, input, guard)
+                        const created = await deps.lifecycle.create(engineAgentId, input, guard, invocationIdentity(context, 'create', original))
                         return { text: M.created(created.slug, created.methods.join('/')), revision: created.revision, slug: created.slug }
                     }),
                 }),
@@ -164,7 +175,7 @@ export function createDesktopTriggerToolFactory(deps: {
                     description: D.trigger_update,
                     inputSchema: z.object({
                         slug: z.string(),
-                        expectedRevision: z.string().min(1).max(128).optional(),
+                        expectedRevision: z.string().min(1).max(128),
                         description: z.string().optional(),
                         body: z.string().optional(),
                         methods: z.array(triggerMethodSchema).optional(),
@@ -180,16 +191,17 @@ export function createDesktopTriggerToolFactory(deps: {
                         const methodError = methodsProblem(input.methods)
                         if (methodError) throw new DesktopTriggerToolError('rejected', methodError)
                         const requestId = idFor(options)
+                        if (!input.expectedRevision) throw new DesktopTriggerToolError('rejected', M.stale)
                         const prior = await deps.store.findIntent(engineAgentId, requestId)
                         let expectedRevision: string
                         let beforeBody = ''
                         if (prior?.before) {
-                            expectedRevision = desktopTriggerDefinitionRevision(prior.before)
+                            expectedRevision = input.expectedRevision
                             beforeBody = prior.before.body
                         } else {
                             const current = await deps.lifecycle.get(engineAgentId, input.slug, { includeToken: false })
                             if (input.expectedRevision && input.expectedRevision !== current.revision) throw new DesktopTriggerToolError('rejected', M.stale)
-                            expectedRevision = input.expectedRevision ?? current.revision
+                            expectedRevision = input.expectedRevision
                             beforeBody = current.body
                         }
                         let clearPins = false
@@ -204,7 +216,7 @@ export function createDesktopTriggerToolFactory(deps: {
                         if (input.methods !== undefined) raw.methods = asMethods(input.methods)
                         if (input.enabled !== undefined) raw.enabled = input.enabled
                         if (clearPins) { raw.connectionId = null; raw.provider = null; raw.model = null }
-                        const saved = await deps.lifecycle.update(engineAgentId, input.slug, raw, guard)
+                        const saved = await deps.lifecycle.update(engineAgentId, input.slug, raw, guard, invocationIdentity(context, 'update', input))
                         const text = input.body !== undefined && input.body !== beforeBody ? M.replacedBody(input.slug, beforeBody.length, input.body.length) : M.updated(input.slug)
                         return { text, revision: saved.revision }
                     }),
@@ -213,7 +225,7 @@ export function createDesktopTriggerToolFactory(deps: {
                     description: D.trigger_edit,
                     inputSchema: z.object({
                         slug: z.string(),
-                        expectedRevision: z.string().min(1).max(128).optional(),
+                        expectedRevision: z.string().min(1).max(128),
                         oldString: z.string().describe('The exact text to replace'),
                         newString: z.string().describe('The text to insert in its place'),
                         replaceAll: z.boolean().default(false).describe('Replace every occurrence instead of requiring a unique match'),
@@ -222,6 +234,7 @@ export function createDesktopTriggerToolFactory(deps: {
                         await guard()
                         if (!input.oldString) throw new DesktopTriggerToolError('rejected', M.emptyExcerpt)
                         const requestId = idFor(options)
+                        if (!input.expectedRevision) throw new DesktopTriggerToolError('rejected', M.stale)
                         const prior = await deps.store.findIntent(engineAgentId, requestId)
                         const replaceAll = input.replaceAll === true
                         // The lifecycle stores this as kind `update`. The model text stays `Edited trigger…`.
@@ -229,9 +242,9 @@ export function createDesktopTriggerToolFactory(deps: {
                             const body = replaceExcerpt(prior.before.body, input.oldString, input.newString, replaceAll)
                             const saved = await deps.lifecycle.update(engineAgentId, input.slug, {
                                 requestId,
-                                expectedRevision: desktopTriggerDefinitionRevision(prior.before),
+                                expectedRevision: input.expectedRevision,
                                 body,
-                            }, guard)
+                            }, guard, invocationIdentity(context, 'edit', input))
                             return { text: M.edited(input.slug, occurrences(prior.before.body, input.oldString)), revision: saved.revision }
                         }
                         const current = await deps.lifecycle.get(engineAgentId, input.slug, { includeToken: false })
@@ -245,9 +258,9 @@ export function createDesktopTriggerToolFactory(deps: {
                         if (instruction) throw new DesktopTriggerToolError('rejected', instruction)
                         const saved = await deps.lifecycle.update(engineAgentId, input.slug, {
                             requestId,
-                            expectedRevision: current.revision,
+                            expectedRevision: input.expectedRevision,
                             body,
-                        }, guard)
+                        }, guard, invocationIdentity(context, 'edit', input))
                         return { text: M.edited(input.slug, count), revision: saved.revision }
                     }),
                 }),
@@ -255,7 +268,7 @@ export function createDesktopTriggerToolFactory(deps: {
                     description: D.trigger_rotate_token,
                     inputSchema: z.object({
                         slug: z.string(),
-                        confirmation: desktopTriggerRotateConfirmationSchema.optional().describe('Required. Copy slug and revision from trigger_get and set action to rotate.'),
+                        confirmation: desktopTriggerRotateConfirmationSchema.describe('Required. Copy slug and revision from trigger_get and set action to rotate.'),
                     }),
                     execute: async ({ slug, confirmation }, options) => run(options?.toolCallId ?? `rotate:${slug}`, 'rotate', slug, async () => {
                         await guard()
@@ -270,7 +283,7 @@ export function createDesktopTriggerToolFactory(deps: {
                             if (!bound) return { text: M.rotateConfirm, revision: current.revision, outcome: 'rejected' }
                             expectedRevision = current.revision
                         }
-                        const rotated = await deps.lifecycle.rotate(engineAgentId, slug, { requestId, expectedRevision }, guard)
+                        const rotated = await deps.lifecycle.rotate(engineAgentId, slug, { requestId, expectedRevision }, guard, invocationIdentity(context, 'rotate', { slug, confirmation }))
                         return { text: M.rotated(slug), revision: rotated.revision }
                     }),
                 }),
@@ -278,16 +291,14 @@ export function createDesktopTriggerToolFactory(deps: {
                     description: D.trigger_delete,
                     inputSchema: z.object({
                         slug: z.string(),
-                        expectedRevision: z.string().min(1).max(128).optional(),
+                        expectedRevision: z.string().min(1).max(128),
                     }),
                     execute: async ({ slug, expectedRevision }, options) => run(options?.toolCallId ?? `delete:${slug}`, 'delete', slug, async () => {
                         await guard()
                         const requestId = idFor(options)
-                        const prior = await deps.store.findIntent(engineAgentId, requestId)
-                        const revision = prior?.before
-                            ? desktopTriggerDefinitionRevision(prior.before)
-                            : expectedRevision ?? (await deps.lifecycle.get(engineAgentId, slug, { includeToken: false })).revision
-                        const removed = await deps.lifecycle.remove(engineAgentId, slug, { requestId, expectedRevision: revision }, guard)
+                        if (!expectedRevision) throw new DesktopTriggerToolError('rejected', M.stale)
+                        const revision = expectedRevision
+                        const removed = await deps.lifecycle.remove(engineAgentId, slug, { requestId, expectedRevision: revision }, guard, invocationIdentity(context, 'delete', { slug, expectedRevision }))
                         return { text: M.deleted(slug), revision: removed.revision }
                     }),
                 }),

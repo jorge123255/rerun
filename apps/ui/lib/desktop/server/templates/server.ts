@@ -28,6 +28,7 @@ export type DesktopTemplateEngineClient = {
 }
 
 type InstallCoworker = {
+    enabled?: boolean
     agentId: string
     engineAgentId: string
     agentKey: string
@@ -183,6 +184,7 @@ export function createDesktopTemplateServer(input: {
         const fingerprint = fingerprintOf(input.foremanDisabled ? { ...operation, foremanDisabled: true } : operation)
         let existing = await row(operation.requestId)
         if (existing) sameFingerprint(existing, fingerprint, 'install')
+        if (existing && JSON.parse(String(existing.payload)).rollback) throw new DesktopHttpError(409, 'This installation was cancelled. Start a new installation instead.')
         const detail = await call(get(`/desktop/templates/${operation.templateId}?revision=${operation.revision}`), value => desktopTemplateDetailSchema.parse(value))
         if (detail.coworkers.length !== operation.positions.length) throw new DesktopHttpError(400, 'Choose one board position for each coworker in this template')
         if (!existing) {
@@ -194,6 +196,7 @@ export function createDesktopTemplateServer(input: {
                     agentId: randomUUID(),
                     engineAgentId: engineIdFor(operation.requestId, coworker.agentKey),
                     agentKey: coworker.agentKey,
+                    enabled: input.foremanDisabled ? false : coworker.enabled !== false,
                     name: coworker.name,
                     description: coworker.description,
                     ...importedTemplateSetup(coworker.setup, coworker.requirements),
@@ -226,7 +229,7 @@ export function createDesktopTemplateServer(input: {
                 revision: operation.revision,
                 spaceId: payload.spaceId,
                 coworkers: payload.coworkers.map(coworker => ({
-                    agentId: coworker.agentId, engineAgentId: coworker.engineAgentId, name: coworker.name, description: coworker.description, position: coworker.position,
+                    agentId: coworker.agentId, engineAgentId: coworker.engineAgentId, name: coworker.name, description: coworker.description, enabled: coworker.enabled !== false, position: coworker.position,
                 })),
                 signal,
             }) } catch(error) {
@@ -291,7 +294,7 @@ export function createDesktopTemplateServer(input: {
                 revision: operation.revision,
                 spaceId: payload.spaceId,
                 coworkers: payload.coworkers.map(coworker => ({
-                    agentId: coworker.agentId, engineAgentId: coworker.engineAgentId, name: coworker.name, description: coworker.description, position: coworker.position,
+                    agentId: coworker.agentId, engineAgentId: coworker.engineAgentId, name: coworker.name, description: coworker.description, enabled: coworker.enabled !== false, position: coworker.position,
                 })),
                 signal,
             })
@@ -386,16 +389,17 @@ export function createDesktopTemplateServer(input: {
             }
             return install(operation)
     }
-    return { handle: (operation: DesktopTemplateOperation) => {
-        if (!('requestId' in operation)) return handle(operation)
-        const state = globalThis as typeof globalThis & { desktopTemplateWrites?: Map<string, Promise<unknown>> }
-        const writes = state.desktopTemplateWrites ??= new Map()
-        const key = operation.requestId
-        const result = (writes.get(key) ?? Promise.resolve()).catch(() => {}).then(() => handle(operation))
-        writes.set(key, result)
-        void result.finally(() => { if (writes.get(key) === result) writes.delete(key) }).catch(() => {})
-        return result
-    } }
+    return { handle: (operation: DesktopTemplateOperation) => 'requestId' in operation ? withTemplateRequestWrite(operation.requestId, () => handle(operation)) : handle(operation) }
+
+}
+
+export function withTemplateRequestWrite<T>(requestId: string, action: () => Promise<T>): Promise<T> {
+    const state = globalThis as typeof globalThis & { desktopTemplateWrites?: Map<string, Promise<unknown>> }
+    const writes = state.desktopTemplateWrites ??= new Map()
+    const result = (writes.get(requestId) ?? Promise.resolve()).catch(() => {}).then(action)
+    writes.set(requestId, result)
+    void result.finally(() => { if (writes.get(requestId) === result) writes.delete(requestId) }).catch(() => {})
+    return result
 }
 
 export async function openDesktopTemplateServer(db: Client, engine: DesktopTemplateEngineClient, authority: {

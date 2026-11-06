@@ -131,7 +131,7 @@ export type DesktopMcpSecretReferenceRequirement = {
 const bindingSchema = z.object({
     agentId: z.string().min(1).max(DESKTOP_MCP_SECRET_REFERENCE_LIMITS.agentId),
     serverName: z.string().regex(MCP_SERVER_NAME_RE),
-    configRevision: z.number().int().nonnegative(),
+    configRevision: z.string().min(1).max(200),
     bindingRevision: z.number().int().nonnegative(),
     field: desktopMcpSecretReferenceFieldSchema,
     fieldKey: z.string().min(1).max(128),
@@ -148,7 +148,7 @@ export const desktopMcpSecretReferenceSaveResultSchema = z.object({
     saveId: z.string().min(1).max(DESKTOP_MCP_SECRET_REFERENCE_LIMITS.saveId),
     agentId: z.string().min(1).max(DESKTOP_MCP_SECRET_REFERENCE_LIMITS.agentId),
     serverName: z.string().regex(MCP_SERVER_NAME_RE),
-    configRevision: z.number().int().nonnegative(),
+    configRevision: z.string().min(1).max(200),
     bindingRevision: z.number().int().nonnegative(),
     authority: desktopMcpCredentialAuthoritySchema,
     pending: z.array(z.string().regex(SECRET_NAME_RE)).max(96),
@@ -476,27 +476,27 @@ function encodeHex(bytes: Uint8Array): string {
 }
 
 function needlesFor(bytes: Uint8Array): string[] {
-    if (bytes.byteLength < 4) return []
+    if (bytes.byteLength === 0) return []
     const needles = new Set<string>()
     const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
     const utf8 = new TextEncoder().encode(text)
     const same = utf8.byteLength === bytes.byteLength && utf8.every((byte, index) => byte === bytes[index])
-    if (same && text.length >= 4) {
+    if (same && text.length > 0) {
         needles.add(text)
         const escaped = JSON.stringify(text).slice(1, -1)
-        if (escaped.length >= 4) needles.add(escaped)
+        if (escaped.length > 0) needles.add(escaped)
         const encoded = encodeURIComponent(text)
-        if (encoded.length >= 4) needles.add(encoded)
+        if (encoded.length > 0) needles.add(encoded)
     }
     const base64 = encodeBase64(bytes)
     needles.add(base64)
     needles.add(base64.replace(/=+$/u, '').replaceAll('+', '-').replaceAll('/', '_'))
     const hex = encodeHex(bytes)
-    if (hex.length >= 8) {
+    if (hex.length > 0) {
         needles.add(hex)
         needles.add(hex.toUpperCase())
     }
-    return [...needles].filter(needle => needle.length >= 4).sort((a, b) => b.length - a.length)
+    return [...needles].filter(needle => needle.length > 0).sort((a, b) => b.length - a.length)
 }
 
 export function redactDesktopMcpSecretText(text: string, materials: readonly Uint8Array[]): string {
@@ -508,14 +508,20 @@ export function redactDesktopMcpSecretText(text: string, materials: readonly Uin
 }
 
 export function redactDesktopMcpSecretValue<T>(value: T, materials: readonly Uint8Array[]): T {
-    const seen = new WeakSet<object>()
+    const seen = new WeakMap<object, unknown>()
+    const active = new WeakSet<object>()
     const visit = (input: unknown): unknown => {
         if (typeof input === 'string') return redactDesktopMcpSecretText(input, materials)
         if (!input || typeof input !== 'object') return input
-        if (seen.has(input)) return input
-        seen.add(input)
-        if (Array.isArray(input)) return input.map(visit)
-        return Object.fromEntries(Object.entries(input).map(([key, entry]) => [redactDesktopMcpSecretText(key, materials), visit(entry)]))
+        if (active.has(input)) return '[redacted cycle]'
+        if (seen.has(input)) return seen.get(input)
+        const output: unknown[] | Record<string, unknown> = Array.isArray(input) ? [] : Object.create(null)
+        seen.set(input, output)
+        active.add(input)
+        if (Array.isArray(input)) for (const entry of input) (output as unknown[]).push(visit(entry))
+        else for (const [key, entry] of Object.entries(input)) (output as Record<string, unknown>)[redactDesktopMcpSecretText(key, materials)] = visit(entry)
+        active.delete(input)
+        return output
     }
     return visit(value) as T
 }
@@ -536,7 +542,7 @@ const saveObject = z.object({
     saveId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
     agentId: z.string().min(1).max(DESKTOP_MCP_SECRET_REFERENCE_LIMITS.agentId),
     serverName: z.string().regex(MCP_SERVER_NAME_RE),
-    expectedConfigRevision: z.number().int().nonnegative(),
+    expectedConfigRevision: z.string().min(1).max(200),
     expectedBindingRevision: z.number().int().nonnegative(),
     origin: z.string().min(1).max(DESKTOP_MCP_SECRET_REFERENCE_LIMITS.origin).refine(origin => !/[\u0000-\u0020\u007f]/u.test(origin) && !origin.includes('${')),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),

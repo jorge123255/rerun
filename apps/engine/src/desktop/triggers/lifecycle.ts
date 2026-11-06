@@ -36,12 +36,12 @@ export function createDesktopTriggerLifecycle(authority: DesktopTriggerAuthority
         authority.assertActive()
         return current
     }
-    async function mutate(id: string, slug: string, kind: 'create' | 'update' | 'rotate' | 'delete', input: { requestId: string; expectedRevision?: string }, prepare: (current: DesktopTriggerRecord | null) => DesktopTriggerRecord | null, admission?: () => Promise<void>): Promise<DesktopTrigger | { deleted: string; revision: string }> {
+    async function mutate(id: string, slug: string, kind: 'create' | 'update' | 'rotate' | 'delete', input: { requestId: string; expectedRevision?: string }, prepare: (current: DesktopTriggerRecord | null) => DesktopTriggerRecord | null, admission?: () => Promise<void>, requestIdentity?: string): Promise<DesktopTrigger | { deleted: string; revision: string }> {
         if (!DESKTOP_TRIGGER_SLUG_RE.test(slug)) throw new DesktopTriggerLifecycleError(400, 'Invalid trigger')
         return withAgentLock(id, async () => {
             await admission?.()
             const identity = await owner(id)
-            const fingerprint = createHash('sha256').update(JSON.stringify({ kind, slug, input })).digest('hex')
+            const fingerprint = createHash('sha256').update(JSON.stringify({ kind, slug, input, ...(requestIdentity ? { requestIdentity } : {}) })).digest('hex')
             let intent = await store.findIntent(id, input.requestId)
             if (intent && (intent.fingerprint !== fingerprint || intent.slug !== slug || intent.kind !== kind)) throw new DesktopTriggerLifecycleError(409, 'This request belongs to a different trigger change')
             if (intent?.resultJson) {
@@ -77,7 +77,7 @@ export function createDesktopTriggerLifecycle(authority: DesktopTriggerAuthority
             if (actual !== before && actual !== after) throw new DesktopTriggerLifecycleError(409, 'Trigger was replaced while its change was pending')
             await admission?.()
             if (actual !== after) {
-                if (authority.replaceTrigger) current = await authority.replaceTrigger(id, slug, intent.before, intent.after)
+                if (authority.replaceTrigger) current = await authority.replaceTrigger(id, slug, intent.before, intent.after, admission)
                 else {
                     // Compatibility for injected adapters; production uses exact file CAS below.
                     if (!intent.after) { await authority.deleteTrigger(id, slug); current = null }
@@ -105,22 +105,22 @@ export function createDesktopTriggerLifecycle(authority: DesktopTriggerAuthority
             if (!record) throw new DesktopTriggerLifecycleError(404, 'Trigger not found')
             return view(authority, identity.localAgentId, record, opts.includeToken === true)
         },
-        async create(id: string, raw: DesktopTriggerCreate, admission?: () => Promise<void>): Promise<DesktopTrigger> {
+        async create(id: string, raw: DesktopTriggerCreate, admission?: () => Promise<void>, requestIdentity?: string): Promise<DesktopTrigger> {
             const input = desktopTriggerCreateSchema.parse(raw), slug = slugify(input.name)
-            return mutate(id, slug, 'create', input, () => ({ slug, name: input.name, description: input.description, body: input.body, enabled: input.enabled ?? true, methods: input.methods, connectionId: input.connectionId ?? null, provider: input.provider, model: input.model, token: newDesktopTriggerToken(), createdAt: new Date().toISOString(), fireCount: 0, lastFiredAt: null }), admission) as Promise<DesktopTrigger>
+            return mutate(id, slug, 'create', input, () => ({ slug, name: input.name, description: input.description, body: input.body, enabled: input.enabled ?? true, methods: input.methods, connectionId: input.connectionId ?? null, provider: input.provider, model: input.model, token: newDesktopTriggerToken(), createdAt: new Date().toISOString(), fireCount: 0, lastFiredAt: null }), admission, requestIdentity) as Promise<DesktopTrigger>
         },
-        async update(id: string, slug: string, raw: DesktopTriggerUpdate, admission?: () => Promise<void>): Promise<DesktopTrigger> {
+        async update(id: string, slug: string, raw: DesktopTriggerUpdate, admission?: () => Promise<void>, requestIdentity?: string): Promise<DesktopTrigger> {
             const input = desktopTriggerUpdateSchema.parse(raw)
             return mutate(id, slug, 'update', input, current => {
                 const { requestId: _request, expectedRevision: _revision, ...changes } = input
                 return { ...current!, ...Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined)), token: current!.token || newDesktopTriggerToken() }
-            }, admission) as Promise<DesktopTrigger>
+            }, admission, requestIdentity) as Promise<DesktopTrigger>
         },
-        async rotate(id: string, slug: string, raw: unknown, admission?: () => Promise<void>): Promise<DesktopTrigger> {
-            return mutate(id, slug, 'rotate', desktopTriggerMutateSchema.parse(raw), current => ({ ...current!, token: newDesktopTriggerToken() }), admission) as Promise<DesktopTrigger>
+        async rotate(id: string, slug: string, raw: unknown, admission?: () => Promise<void>, requestIdentity?: string): Promise<DesktopTrigger> {
+            return mutate(id, slug, 'rotate', desktopTriggerMutateSchema.parse(raw), current => ({ ...current!, token: newDesktopTriggerToken() }), admission, requestIdentity) as Promise<DesktopTrigger>
         },
-        async remove(id: string, slug: string, raw: unknown, admission?: () => Promise<void>): Promise<{ deleted: string; revision: string }> {
-            return mutate(id, slug, 'delete', desktopTriggerMutateSchema.parse(raw), () => null, admission) as Promise<{ deleted: string; revision: string }>
+        async remove(id: string, slug: string, raw: unknown, admission?: () => Promise<void>, requestIdentity?: string): Promise<{ deleted: string; revision: string }> {
+            return mutate(id, slug, 'delete', desktopTriggerMutateSchema.parse(raw), () => null, admission, requestIdentity) as Promise<{ deleted: string; revision: string }>
         },
         async history(id: string, slug?: string) {
             await owner(id, true)

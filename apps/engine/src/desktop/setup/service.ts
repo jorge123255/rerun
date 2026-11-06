@@ -18,7 +18,7 @@ import { readManifest } from '../templates/install.js'
 import type { RunContext } from '../../runtime/context.js'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
-import { DESKTOP_TEMPLATE_LIMITS } from '@rerun/contracts'
+import { DESKTOP_TEMPLATE_LIMITS, desktopTemplateGuidedSetup } from '@rerun/contracts'
 import { publishSetupCompletion } from './complete-write.js'
 
 export type DesktopSetupRecord = {
@@ -208,7 +208,11 @@ export async function initializeImportedSetup(input: { agentId: string; engineAg
         }
         const manifest = await readManifest(dataDir(), binding.data.templateId, binding.data.revision)
         const source = manifest.coworkers.find(coworker => coworker.agentKey === binding.data.agentKey)
-        if (!source || source.setup.required !== input.required || source.setup.prompt.trim() !== input.prompt.trim()) throw conflict('Setup does not match the captured template revision.')
+        if (!source) throw conflict('Setup does not match the captured template revision.')
+        const guided = desktopTemplateGuidedSetup(source.setup, source.requirements)
+        const matchesCaptured = (source.setup.required === true) === input.required && source.setup.prompt.trim() === input.prompt.trim()
+        const matchesGuided = guided.required === input.required && guided.prompt.trim() === input.prompt.trim()
+        if (!matchesCaptured && !matchesGuided) throw conflict('Setup does not match the captured template revision.')
         const journal = await journalOf(input.engineAgentId)
         if (journal.active || Object.keys(journal.entries).length) throw conflict('This coworker’s setup has already been edited.')
         if (!prior) {

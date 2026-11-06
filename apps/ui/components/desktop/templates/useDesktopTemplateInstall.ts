@@ -20,6 +20,7 @@ export function useDesktopTemplateInstall({ client, template, resume = null, onI
     const [busy, setBusy] = useState(false)
     const [checking, setChecking] = useState(true)
     const [readFailed, setReadFailed] = useState(false)
+    const [cleanupPending, setCleanupPending] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [receipt, setReceipt] = useState<DesktopTemplateInstallReceipt | null>(null)
     const running = useRef<object | null>(null)
@@ -40,13 +41,14 @@ export function useDesktopTemplateInstall({ client, template, resume = null, onI
             const result = await client.currentInstall(template)
             if (!current()) return
             const previousIntent = resumed.current
+            setCleanupPending(result.status === 'pending' && result.cleanupPending === true)
             if (result.status === 'installed') {
                 setReceipt({ receiptId: result.receiptId, coworkers: result.coworkers })
                 resumed.current = null
             } else {
                 setReceipt(null)
                 resumed.current = result.status === 'pending' ? { templateId: result.templateId, revision: result.revision, requestId: result.requestId } : null
-                if (resumed.current) setError('The previous installation needs confirmation. Retry to finish that same installation.')
+                if (resumed.current) setError(result.status === 'pending' && result.cleanupPending ? 'Cleanup is unfinished. Retry cleanup of this same cancelled installation.' : 'The previous installation needs confirmation. Retry to finish that same installation.')
             }
             if (previousIntent?.requestId !== resumed.current?.requestId) callbacks.current.onInterrupted?.(resumed.current)
             ready.current = owner
@@ -108,6 +110,19 @@ export function useDesktopTemplateInstall({ client, template, resume = null, onI
         }
     }
 
+    async function rollback() {
+        if (running.current === owner || ready.current !== owner || !resumed.current || receipt) return
+        const request = ++epoch.current, intent = resumed.current
+        const current = () => activeOwner.current === owner && epoch.current === request
+        running.current=owner; setBusy(true); setError(null); setCleanupPending(true)
+        try {
+            await client.rollback(template,intent.requestId)
+            if (!current()) return
+            resumed.current=null; setCleanupPending(false); callbacks.current.onInterrupted?.(null)
+        } catch (cause) { if(current()) setError(cause instanceof Error ? cause.message : 'Could not finish cleanup. Retry this same cleanup.') }
+        finally { if(running.current===owner)running.current=null; if(current())setBusy(false) }
+    }
+
     const visible = stateOwner === owner
     return {
         busy: !visible || busy || checking,
@@ -117,7 +132,9 @@ export function useDesktopTemplateInstall({ client, template, resume = null, onI
         receipt: visible ? receipt : null,
         interrupted: visible && error !== null && receipt === null && resumed.current !== null,
         refresh,
-        run: () => run(false),
+        cleanupPending: visible && cleanupPending,
+        rollback,
+        run: () => cleanupPending ? rollback() : run(false),
         again: () => run(true),
     }
 }

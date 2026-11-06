@@ -53,6 +53,8 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
         controllers: new Set<AbortController>(), discoveryVersion: 0,
         earlyUi: {} as Partial<Pick<DesktopForemanPersistedUi, 'open' | 'tab' | 'placement'>>,
         sending: false,
+        buildAction: null as { action: 'stop' | 'resume'; requestId: string; buildId: string } | null,
+        buildBusy: false,
     // initialOpen is an initial value, never a command to reopen a closed panel.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }), [chat.workspaceId, chat.chatId, ports.persistence])
@@ -264,10 +266,36 @@ export function useDesktopForemanUi({ chat, ports, live, initialOpen = false, re
         catch (error) { if (valid(generation)) commit(state => ({ ...state, error: messageOf(error) }), false) }
     }, [ports.conversation, valid, commit, owner])
 
+    const actOnBuild = useCallback(async (action: 'stop' | 'resume') => {
+        const build = owner.state.build
+        if (isDesktopQuitting() || !valid() || !owner.state.restored || !build || owner.buildBusy) return
+        if (action === 'resume' && !['uncertain','stopped','failed','partial'].includes(build.status) && !['pending','uncertain'].includes(build.setup.state)) return
+        if (action === 'stop' && !['reserved','running','uncertain'].includes(build.status)) return
+        const generation = owner.generation, controller = new AbortController()
+        const prior = owner.buildAction
+        const request = prior?.action === action && prior.buildId === build.buildId ? prior : { action, buildId: build.buildId, requestId: createPlanDecisionRequestId() }
+        owner.buildAction = request; owner.buildBusy = true; owner.controllers.add(controller)
+        commit(state => ({ ...state, error: null }), false)
+        try {
+            const result = await ports.build.act({ ...request, chat: owner.chat }, controller.signal)
+            if (!valid(generation) || controller.signal.aborted) return
+            if ('error' in result) throw new Error(result.error)
+            if (!sameForemanChat(result, owner.chat) || result.buildId !== build.buildId) throw new Error('The build response belongs to another Foreman chat.')
+            owner.buildAction = null
+            commit(state => ({ ...state, build: result }))
+            setRefresh(n => n + 1)
+        } catch (error) {
+            if (valid(generation) && !controller.signal.aborted) commit(state => ({ ...state, error: messageOf(error) }), false)
+        } finally {
+            owner.controllers.delete(controller); owner.buildBusy = false
+            if (valid(generation)) redraw(n => n + 1)
+        }
+    }, [owner, valid, commit, ports.build])
+
     return {
         ui, restored, planSnapshot, build, discoveries, leadState, blocked, error,
         nextSteps: projectForemanNextSteps(build), live: isLiveForemanView(live),
-        setOpen, setTab, setDraft, setPlacement, sendMessage, stop,
+        setOpen, setTab, setDraft, setPlacement, sendMessage, stop, actOnBuild, buildBusy: owner.buildBusy,
         clearDecision: () => { if (owner.state.ui.decision.status !== 'pending' && owner.state.ui.decision.status !== 'uncertain') commit(state => ({ ...state, ui: { ...state.ui, decision: { status: 'idle' } } })) },
         confirmPlan: () => void submitDecision('confirm'), askChanges: (feedback?: string) => void submitDecision('ask_changes', feedback),
         retryDecision: () => { const request = retryPlanDecisionRequest(owner.state.ui.decision); if (request) void submitDecision(request.decision, request.decision === 'ask_changes' ? request.feedback : undefined) },

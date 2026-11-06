@@ -36,6 +36,9 @@ export function DesktopForemanChatLayer({
     onConfirmPlan,
     onAskChanges,
     onRetryDecision,
+    onResumeBuild,
+    onStopBuild,
+    buildBusy,
     onStartLead,
     onOpenCreated,
     onOpenCoworker,
@@ -57,6 +60,9 @@ export function DesktopForemanChatLayer({
     onConfirmPlan: () => void
     onAskChanges: () => void
     onRetryDecision?: () => void
+    onResumeBuild?: () => void
+    onStopBuild?: () => void
+    buildBusy?: boolean
     onStartLead: (step: Extract<DesktopForemanNextStep, { kind: 'start_lead' }>) => void | Promise<void>
     onOpenCreated: (step: Extract<DesktopForemanNextStep, { kind: 'open_created' }>) => void
     onOpenCoworker?: (input: { agentId: string; sessionId: string | null }) => void
@@ -105,7 +111,7 @@ export function DesktopForemanChatLayer({
                         />
                     )}
                     {build && (
-                        <DesktopForemanBuildProgress build={build} onOpenCoworker={onOpenCoworker} onOpenBox={onOpenBox} />
+                        <DesktopForemanBuildProgress build={build} onOpenCoworker={onOpenCoworker} onOpenBox={onOpenBox} onResume={onResumeBuild} onStop={onStopBuild} busy={buildBusy} />
                     )}
                     {nextSteps.length > 0 && !streaming && (
                         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28 }}>

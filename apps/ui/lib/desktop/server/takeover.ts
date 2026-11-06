@@ -1,3 +1,4 @@
+import { withoutStoppedWebhookForms } from './trigger-requests/stopped'
 import 'server-only'
 import { createHash } from 'node:crypto'
 import type { Client, Row } from '@libsql/client'
@@ -51,7 +52,7 @@ async function pendingTakeover(runtime: DesktopRuntime, target: Target, options:
     try {
         const messages = await getSessionMessages(engineOf(runtime), target.agent.engineAgentId, target.session.engineSessionId, { requireSuccess: true, ...(options.signal && { signal: options.signal }) })
         if (messages.some(message => message.sessionId !== target.session.engineSessionId)) throw new Error('Foreign conversation history')
-        return findDesktopTakeover(messages)
+        return findDesktopTakeover(await withoutStoppedWebhookForms(target.db,target.agent.id,target.session.id,messages))
     } catch (cause) {
         if (cause instanceof EngineRequestError && cause.status === 404) throw new DesktopHttpError(404, 'Conversation not found')
         throw new DesktopHttpError(502, 'Could not read this coworker’s takeover request. Try again.')

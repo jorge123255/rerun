@@ -105,15 +105,17 @@ test.each(['stopped', 'unacknowledged', 'revoked', 'remapped', 'unfinished-resta
     expect(network).not.toHaveBeenCalled()
 })
 
-test('a reference-based proposal remains intact and pending instead of silently dropping its environment', async () => {
+test('a human-approved reference proposal saves intact with a pending credential outcome and no process launch', async () => {
     const bound = await service(), candidate = { ...input, env: { TOKEN: '${EXAMPLE_API_KEY}' } }
     const result = await bound.propose({ identity: identity(), input: candidate, fingerprint: selfMcpFingerprint(candidate) })
     if (!('proposal' in result) || !result.proposal) throw new Error('Proposal missing')
     source = result.proposal; status = 'done'; sourceAcknowledged = true
     const review = await bound.review(agent.id, result.proposal.id)
     expect(review.proposal.input.env).toEqual(candidate.env)
-    expect(review.requirements.join(' ')).toContain('credential references')
-    expect((await bound.decide(agent.id, decision(result.proposal, review.configRevision))).outcome).toBe('failed')
-    expect((await bound.list(agent.id))[0].status).toBe('pending')
-    expect((await db.execute('SELECT * FROM desktop_mcp_stdio')).rows).toEqual([])
+    expect(review.requirements).toEqual([])
+    expect((await bound.decide(agent.id, decision(result.proposal, review.configRevision))).outcome).toBe('applied_pending_credentials')
+    expect((await bound.list(agent.id))[0].status).toBe('applied')
+    expect((await db.execute('SELECT name FROM desktop_mcp_stdio')).rows).toEqual([{ name: candidate.name }])
+    expect((await db.execute('SELECT secret_name,status FROM desktop_mcp_secret_references')).rows).toEqual([{ secret_name: 'EXAMPLE_API_KEY', status: 'pending' }])
+    expect(network).not.toHaveBeenCalled()
 })

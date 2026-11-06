@@ -121,6 +121,14 @@ describe('sqlite ladders', () => {
               9,
               "desktop-schedule-tool-intents",
             ],
+            [
+              10,
+              "desktop-guest-shell-receipts",
+            ],
+            [
+              11,
+              "desktop-trigger-human-admission",
+            ],
           ]
         `)
         expect(SHARED_DB_MIGRATIONS.map(s => [s.version, s.id])).toMatchInlineSnapshot(`
@@ -247,4 +255,21 @@ describe('brain.db v1 to v2', () => {
         const waiting = await client.execute("SELECT title, headline, highlights_json FROM brain_proposals WHERE id = 'p1'")
         expect(waiting.rows[0]).toMatchObject({ title: 'Pricing', headline: null, highlights_json: null })
     })
+})
+
+
+it('upgrades version9 with guest command receipts while preserving the original conversation across reopen', async () => {
+    const client = freshFile('v9-guest-shell')
+    await migrateSqlite(client, SYSTEM_DB_MIGRATIONS.filter(step => step.version <= 9), 'v9.db')
+    await client.execute("INSERT INTO sessions (id,agent_id,title,created_at,updated_at) VALUES ('s','a','Keep chat','then','then')")
+    await client.execute(`INSERT INTO messages (id,session_id,role,content_json,created_at) VALUES ('m','s','assistant','"Keep reply"','then')`)
+    await migrateSystemDb(client, 'v9.db')
+    await client.execute("INSERT INTO desktop_guest_shell_requests VALUES ('request','fingerprint','{}','{}','then','then')")
+    client.close()
+    const reopened = freshFile('v9-guest-shell')
+    await migrateSystemDb(reopened, 'v9.db')
+    expect((await reopened.execute("SELECT content_json FROM messages WHERE id='m'")).rows).toEqual([{ content_json: '"Keep reply"' }])
+    expect((await reopened.execute('SELECT request_id,fingerprint FROM desktop_guest_shell_requests')).rows).toEqual([{ request_id: 'request', fingerprint: 'fingerprint' }])
+    expect(await sqliteVersion(reopened)).toBe(SYSTEM_DB_VERSION)
+    reopened.close()
 })

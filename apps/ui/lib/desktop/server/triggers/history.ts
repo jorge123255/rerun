@@ -21,7 +21,7 @@ export async function projectDesktopTriggerHistory(runtime: DesktopRuntime, db: 
         const options = { signal: AbortSignal.any([AbortSignal.timeout(5000), ...(signal ? [signal] : [])]) }
         const unresolved = (await readDesktopQuestion(runtime, session.id, options)).question?.toolCallId === pending.toolCallId || (await readDesktopApproval(runtime, session.id, options)).approval?.toolCallId === pending.toolCallId || (await readDesktopTakeover(runtime, session.id, options)).takeover?.toolCallId === pending.toolCallId || await readPendingDesktopServiceToolCallView(runtime, session.id, options) === pending.toolCallId
         const secret = !unresolved && (await readDesktopSecretRequestView(runtime, session.id, options)).request?.source.toolCallId === pending.toolCallId
-        results.push(unresolved || secret ? item : { ...item, status: 'finished' as const })
+        results.push(unresolved || secret ? item : { ...item, status: 'uncertain' as const })
     }
     return results
 }

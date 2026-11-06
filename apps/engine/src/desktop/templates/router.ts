@@ -1,3 +1,4 @@
+import { rollbackDesktopTemplateInstall } from './rollback-binding.js'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { DESKTOP_PORTABLE_TEMPLATE_LIMITS, desktopPortableOperationSchema, desktopTemplateIdSchema, desktopTemplateRevisionSchema, desktopTemplateSelectionSchema } from '@rerun/contracts'
@@ -11,6 +12,7 @@ import { createDesktopPortableTemplateService } from './portable-service.js'
 import { createDesktopPortableFileStore } from './portable-files.js'
 import { readForemanTemplateImport } from './install.js'
 import { trustedSkillOwners } from '../service-skills/authority.js'
+import { readTrustedTemplateRequirements } from './requirements-authority.js'
 
 const draftBody = z.strictObject({ requestId: z.uuid(), title: z.string() })
 const planBody = z.strictObject({
@@ -45,6 +47,7 @@ function engine() {
     return createDesktopTemplateEngine({ dataRoot: dataDir(), agentsRoot: agentsDir() }, undefined, {
         includeBinary: true,
         requireTrustedOwnership: true,
+        requirementNames: readTrustedTemplateRequirements,
         skillOwnership: async ({ engineAgentId, slug }) => {
             let current = ownership.get(engineAgentId)
             if (!current) { current = trustedSkillOwners(join(agentsDir(), engineAgentId, 'workspace')); ownership.set(engineAgentId, current) }
@@ -106,6 +109,8 @@ desktopTemplateRoutes.post('/capture', async c => {
     if (!body.success) throw new HttpError(400, 'Invalid template request')
     return c.json({ status: 'captured' as const, ...(await engine().capture(body.data).catch(reject)) })
 })
+
+desktopTemplateRoutes.post('/rollback-install', async c => c.json(await rollbackDesktopTemplateInstall(await jsonBody(c.req.raw), { dataRoot:dataDir(), agentsRoot:agentsDir() }).catch(reject)))
 
 desktopTemplateRoutes.post('/install', async c => {
     const body = installBody.safeParse(await jsonBody(c.req.raw))

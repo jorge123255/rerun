@@ -7,7 +7,7 @@ import type {DesktopComputerLauncherOutcome as Outcome} from '@rerun/contracts'
 export const LAUNCHER_LIMITS={operationMs:25_000,guestMs:12_000,settleMs:2_000,attemptsPerGeneration:256} as const
 const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const sameTarget=(a:ScreenTarget,b:ScreenTarget)=>a.engineAgentId===b.engineAgentId&&a.launchNonce===b.launchNonce&&a.sessionGeneration===b.sessionGeneration
-export function createComputerLaunchers(ports:LauncherPorts,store:LauncherAttemptStore){
+export function createComputerLaunchers(ports:LauncherPorts,store:LauncherAttemptStore,options:{capture?:boolean}={}){
     async function open(invocation:LauncherInvocation,raw:unknown,stop:AbortSignal):Promise<Outcome>{
         const request=launcherRequestSchema.parse(raw)
         assertTarget(invocation.target)
@@ -34,7 +34,7 @@ export function createComputerLaunchers(ports:LauncherPorts,store:LauncherAttemp
             const outcome:Outcome={requestId:operation.requestId,app:request.app,status:reply.status,acknowledged:true}
             // Outcome is durable before screenshot publication. Screenshots are never replayed.
             await store.settle(attempt,outcome)
-            if(reply.status==='opened'||reply.status==='focused'){
+            if(options.capture!==false&&(reply.status==='opened'||reply.status==='focused')){
                 const frame=await control.capture(active)
                 await check()
                 const visible=guestLauncherReplySchema.parse(await control.guest({op:'computer-launcher',operationId,fingerprint,app:request.app,mode:'verify'},active))

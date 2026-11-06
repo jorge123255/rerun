@@ -64,6 +64,8 @@ export function commitDesktopTemplateInstall(db: Client, input: DesktopTemplateC
     return withRosterWrite(async () => {
         const tx = await db.transaction('write')
         try {
+            const request = (await tx.execute({ sql:'SELECT payload FROM desktop_template_requests WHERE request_id=? AND receipt_id=?',args:[parsed.requestId,parsed.receiptId] })).rows[0]
+            if (request && JSON.parse(String(request.payload)).rollback) throw new DesktopHttpError(409, 'This installation was cancelled')
             await assertVacant(tx, parsed)
             const now = new Date().toISOString()
             for (const coworker of parsed.coworkers) {
@@ -76,7 +78,7 @@ export function commitDesktopTemplateInstall(db: Client, input: DesktopTemplateC
                 }
                 await tx.execute({
                     sql: 'INSERT INTO desktop_agents (id, workspace_id, engine_agent_id, name, description, enabled, created_at, updated_at) VALUES (?,1,?,?,?,?,?,?)',
-                    args: [coworker.agentId, coworker.engineAgentId, coworker.name, coworker.description, internal?.enabled === false ? 0 : 1, now, now],
+                    args: [coworker.agentId, coworker.engineAgentId, coworker.name, coworker.description, internal?.enabled === false || coworker.enabled === false ? 0 : 1, now, now],
                 })
                 await tx.execute(desktopPlacementInsert({ agentId: coworker.agentId, spaceId: parsed.spaceId, col: coworker.position.col, row: coworker.position.row }))
             }

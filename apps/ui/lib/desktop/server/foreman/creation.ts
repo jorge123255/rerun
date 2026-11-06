@@ -251,7 +251,12 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
             }
             const agentId = uuid.parse(row.payload.agentId), engineAgentId = z.string().parse(row.payload.engineAgentId)
             return withRosterWrite(async () => {
-                const plan = await planDesktopAgentPlacement(db,body.spaceId)
+                const plan = await planDesktopAgentPlacement(db,body.spaceId).catch(error => {
+                    // This capacity check precedes any engine effect. A full/deleted Box is a
+                    // definite refusal, not a lost creation acknowledgement.
+                    if (!row.payload.input && error instanceof DesktopHttpError && [404,409].includes(error.status)) throw new ForemanRefusal('creation_failed',error.message)
+                    throw error
+                })
                 const board = await readDesktopBoardState(db)
                 const occupied = board.placements.filter(item => item.spaceId === body.spaceId).map(item => ({col:item.col,row:item.row}))
                 const reservations = await db.execute({sql:"SELECT board_col AS col,board_row AS row FROM desktop_duplicates WHERE completed=0 AND space_id=? UNION ALL SELECT board_col AS col,board_row AS row FROM desktop_creations WHERE phase='reserved' AND space_id=?",args:[body.spaceId,body.spaceId]})
@@ -267,7 +272,10 @@ export async function createDesktopForemanCreationAuthority(runtime: DesktopRunt
                     if (reserved.spaceId === body.spaceId) occupied.push(...reserved.coworkers.map(item=>item.position))
                 }
                 const position = firstVacantDesktopSpacePosition(plan.space,occupied)
-                if (!position) throw new DesktopHttpError(409,'That Box has no room left. Free a cell in it first.')
+                if (!position) {
+                    if (row.payload.input) throw uncertain()
+                    throw new ForemanRefusal('creation_failed','That Box has no room left. Free a cell in it first.')
+                }
                 let input = row.payload.input
                 if (!input) {
                     const connection = usableConnection((await readDesktopProviders(runtime)).connections,body.model)

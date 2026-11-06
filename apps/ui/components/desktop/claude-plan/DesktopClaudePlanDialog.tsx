@@ -11,14 +11,8 @@ export function DesktopClaudePlanDialog({ open, onOpenChange, runtime, onOpenAut
     onOpenAuthorization: (url: string) => void
     onDone: (name: string) => void | Promise<void>
 }) {
-    const close = (next: boolean) => {
-        onOpenChange(next)
-        if (next) return
-        void runtime.reconcile(null).then(attempt => {
-            if (attempt.phase !== 'connected' && attempt.phase !== 'idle') return runtime.cancel(attempt.attemptId)
-        }).catch(() => {})
-    }
-    return <Dialog open={open} onOpenChange={close}>
+    // Steps owns its captured attempt; unmount cancels that exact attempt only.
+    return <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-h-[85dvh] max-w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-lg">
             <DialogHeader>
                 <DialogTitle>Connect Claude</DialogTitle>

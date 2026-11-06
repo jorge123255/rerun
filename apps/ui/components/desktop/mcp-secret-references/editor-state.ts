@@ -6,7 +6,7 @@ import {
     type DesktopMcpSecretReferenceConfig,
     type DesktopMcpSecretReferenceSave,
     type DesktopMcpSecretReferenceSaveResult,
-} from '../../../../../packages/contracts/src/desktop-mcp-secret-references'
+} from '@rerun/contracts'
 
 export type SecretReferenceEditorAttempt = { kind: 'save'; change: DesktopMcpSecretReferenceSave }
 export type SecretReferenceEditorDriver = {
@@ -28,7 +28,7 @@ export function secretReferenceAttemptId(attempt: SecretReferenceEditorAttempt) 
 export function sameSecretReferenceOwner(attempt: SecretReferenceEditorAttempt, agentId: string, serverName: string) {
     return attempt.change.agentId === agentId && attempt.change.serverName === serverName
 }
-export function sameSecretReferenceAttempt(attempt: SecretReferenceEditorAttempt, agentId: string, serverName: string, expectedConfigRevision: number, expectedBindingRevision: number, origin: string) {
+export function sameSecretReferenceAttempt(attempt: SecretReferenceEditorAttempt, agentId: string, serverName: string, expectedConfigRevision: string, expectedBindingRevision: number, origin: string) {
     const change = attempt.change
     return sameSecretReferenceOwner(attempt, agentId, serverName)
         && change.expectedConfigRevision === expectedConfigRevision
@@ -91,7 +91,7 @@ export async function secretReferenceEditorSave(input: {
     agentId: string
     origin: string
     saveId: string
-    expectedConfigRevision: number
+    expectedConfigRevision: string
     expectedBindingRevision: number
     base: DesktopMcpSecretReferenceConfig
     headersText: string

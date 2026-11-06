@@ -1,100 +1,162 @@
-import { randomUUID } from 'node:crypto'
-import {
-    DESKTOP_CLAUDE_PLAN_AUTH_LIFETIME_MS,
-    type DesktopClaudePlanAttempt,
-    type DesktopClaudePlanAttemptAction,
-    type DesktopClaudePlanCompleteInput,
-    type DesktopClaudePlanCredentialCustody,
-    type DesktopClaudePlanOAuth,
-    type DesktopClaudePlanAttemptStore,
-} from '@rerun/contracts'
+import { createHash, randomBytes, randomUUID, createHmac } from 'node:crypto'
+import { z } from 'zod'
+import { DEFAULT_CONNECTION_MODELS, DESKTOP_CLAUDE_CONNECTION_ID as ID, DESKTOP_CLAUDE_PLAN_AUTH_LIFETIME_MS, desktopClaudePlanActionSchema, type DesktopClaudePlanAction, type DesktopClaudePlanSnapshot, type DesktopClaudePlanCredential } from '@rerun/contracts'
+import { connectionEnvPath } from '../../config/paths.js'
+import { readEnvFile, writeEnvFile } from '../../lib/env-file.js'
+import { createConnection } from '../../connections/store.js'
+import { findConnection, reloadConnection } from '../../connections/registry.js'
+import { withConnectionLock } from '../../connections/lock.js'
+import { forgetCredentialRejected } from '../../connections/credential-rejections.js'
+import { forgetPlanLimits } from '../../connections/plan-limits.js'
+import { desktopClaudeAvailable, stopDesktopClaudeWorkers } from './runtime.js'
 
-type Ports = { oauth: DesktopClaudePlanOAuth; custody: DesktopClaudePlanCredentialCustody; outcomes: DesktopClaudePlanAttemptStore }
-
-function next(attempt: DesktopClaudePlanAttempt, patch: Partial<DesktopClaudePlanAttempt>, now: () => string): DesktopClaudePlanAttempt {
-    return { ...attempt, ...patch, revision: String(Number(attempt.revision) + 1), updatedAt: now() }
+const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+const REDIRECT = 'https://platform.claude.com/oauth/code/callback'
+const TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
+const AUTH = 'RERUN_CLAUDE_LOGIN_STATE', GENERATION = 'RERUN_CLAUDE_CREDENTIAL_REVISION'
+const TOKEN = 'CLAUDE_CODE_OAUTH_TOKEN', REFRESH = 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', EXPIRES = 'CLAUDE_CODE_OAUTH_EXPIRES_AT'
+const stateSchema = z.object({
+    attemptId: z.string().uuid(), revision: z.string(), phase: z.enum(['waiting', 'checking', 'connected', 'cancelled', 'expired', 'error', 'disconnected']),
+    startId: z.string().uuid(), expires: z.number(), verifier: z.string().optional(), state: z.string().optional(), authorizeUrl: z.string().optional(),
+    requestId: z.string().uuid().optional(), fingerprint: z.string().optional(), predecessor: z.string(), launchNonce: z.string(),
+}).strict()
+type State = z.infer<typeof stateSchema>
+export type ClaudeAuthPorts = {
+    read(): Promise<Record<string, string>>
+    write(value: Record<string, string>): Promise<void>
+    lock<T>(work: () => Promise<T>): Promise<T>
+    exchange(code: string, verifier: string, state: string, signal: AbortSignal): Promise<DesktopClaudePlanCredential>
+    fingerprint(value: string): string
+    available(): boolean
+    beforeCredentialChange(): Promise<void>
+    changed(): Promise<void>
+    now(): number
+    launchNonce: string
 }
+const publicState = (state: State | null, env: Record<string, string>, now: number, launch: string): DesktopClaudePlanSnapshot => ({
+    connectionId: ID, attemptId: state?.attemptId ?? null, revision: state?.revision ?? '0',
+    phase: state?.phase === 'waiting' && state.expires <= now ? 'expired' : state?.phase === 'checking' && state.launchNonce !== launch ? 'error' : state?.phase ?? (env[TOKEN] ? 'connected' : 'idle'),
+    ...(state?.phase === 'waiting' && state.expires > now && state.authorizeUrl ? { authorizeUrl: state.authorizeUrl } : {}),
+    ...(state?.phase === 'checking' && state.launchNonce !== launch ? { error: 'Sign-in was interrupted. Start a new attempt.' } : state?.phase === 'error' ? { error: 'Claude sign-in could not be confirmed. Start a new attempt.' } : {}),
+    ...(env[TOKEN] ? { credentialRevision: env[GENERATION] ?? '0' } : {}),
+})
+function load(env: Record<string, string>): State | null { return env[AUTH] ? stateSchema.parse(JSON.parse(env[AUTH])) : null }
+const next = (state: State, patch: Partial<State>): State => ({ ...state, ...patch, revision: String(BigInt(state.revision) + 1n) })
+const same = (state: State | null, action: DesktopClaudePlanAction) => (state?.attemptId ?? null) === action.attemptId && (state?.revision ?? '0') === action.expectedRevision
+const safeFailure = () => new Error('Claude sign-in could not be confirmed. Check the saved state before trying again.')
 
-async function digest(value: unknown): Promise<string> {
-    const bytes = new TextEncoder().encode(JSON.stringify(value))
-    const hash = await globalThis.crypto.subtle.digest('SHA-256', bytes)
-    return Array.from(new Uint8Array(hash), item => item.toString(16).padStart(2, '0')).join('')
-}
-
-export function createDesktopClaudePlanAuth(ports: Ports, options: { now?: () => string } = {}) {
-    const now = options.now ?? (() => new Date().toISOString())
-
-    async function start(agentId: string): Promise<DesktopClaudePlanAttempt> {
-        const active = await ports.outcomes.active(agentId)
-        if (active && ['waiting', 'checking'].includes(active.phase)) return active
-        if (active?.phase === 'connected' && await ports.custody.load(agentId)) return active
-        const oauth = await ports.oauth.start()
-        const createdAt = now()
-        const attempt: DesktopClaudePlanAttempt = {
-            attemptId: await digest([agentId, oauth, createdAt, randomUUID()]),
-            agentId,
-            revision: '1',
-            phase: 'waiting',
-            authorizeUrl: oauth.authorizeUrl,
-            verifier: oauth.verifier,
-            state: oauth.state,
-            createdAt,
-            updatedAt: createdAt,
-            expiresAt: new Date(Date.parse(createdAt) + DESKTOP_CLAUDE_PLAN_AUTH_LIFETIME_MS).toISOString(),
-        }
-        const existing = await ports.outcomes.begin(attempt)
-        return existing === 'execute' ? ports.outcomes.complete(attempt).then(() => attempt) : existing
+export function createDesktopClaudePlanAuth(ports: ClaudeAuthPorts) {
+    const exchanges = new Map<string, AbortController>()
+    let stopped = false
+    const live = (signal?: AbortSignal) => { signal?.throwIfAborted(); if (stopped) throw new Error('Claude sign-in is stopping.') }
+    async function status(): Promise<DesktopClaudePlanSnapshot> {
+        const env = await ports.read()
+        return publicState(load(env), env, ports.now(), ports.launchNonce)
     }
-
-    async function status(attemptId: string): Promise<DesktopClaudePlanAttempt | null> {
-        const attempt = await ports.outcomes.read(attemptId)
-        if (!attempt || attempt.phase !== 'waiting' || !attempt.expiresAt || Date.parse(attempt.expiresAt) > Date.parse(now())) return attempt
-        const expired = next(attempt, { phase: 'expired', message: 'This sign-in code expired. Start a new one.' }, now)
-        await ports.outcomes.complete(expired)
-        return expired
-    }
-
-    async function complete(input: DesktopClaudePlanCompleteInput, signal?: AbortSignal): Promise<DesktopClaudePlanAttempt> {
-        const current = await ports.outcomes.read(input.attemptId)
-        if (!current || current.phase !== 'waiting' || current.verifier !== input.verifier || current.state !== input.state) throw new Error('This Claude sign-in is no longer waiting for a code. Start a new one.')
-        if (current.expiresAt && Date.parse(current.expiresAt) <= Date.parse(now())) {
-            const expired = next(current, { phase: 'expired', message: 'This sign-in code expired. Start a new one.' }, now)
-            await ports.outcomes.complete(expired)
-            return expired
-        }
-        const checking = next(current, { phase: 'checking' }, now)
-        await ports.outcomes.complete(checking)
+    async function action(raw: DesktopClaudePlanAction, signal: AbortSignal): Promise<DesktopClaudePlanSnapshot> {
+        const input = desktopClaudePlanActionSchema.parse(raw)
+        live(signal)
+        if (['start', 'complete', 'token'].includes(input.operation) && !ports.available()) throw new Error('The isolated Claude runtime is unavailable.')
+        let exchange: { state: State; code: string; controller: AbortController } | undefined
+        const initial = await ports.lock(async () => {
+            live(signal)
+            const env = await ports.read(), current = load(env)
+            if (current?.requestId === input.requestId && current.fingerprint === ports.fingerprint(JSON.stringify(input))) return publicState(current, env, ports.now(), ports.launchNonce)
+            if (input.operation === 'start' && current?.startId === input.requestId) return publicState(current, env, ports.now(), ports.launchNonce)
+            if (!same(current, input)) throw new Error('This Claude sign-in changed. Refresh it before continuing.')
+            const revision = String(BigInt(current?.revision ?? '0') + 1n)
+            if (input.operation === 'start') {
+                if (current) exchanges.get(current.attemptId)?.abort()
+                const verifier = randomBytes(32).toString('base64url'), state = randomBytes(32).toString('base64url')
+                const params = new URLSearchParams({ code: 'true', client_id: CLIENT_ID, response_type: 'code', redirect_uri: REDIRECT, scope: 'org:create_api_key user:profile user:inference', code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', state })
+                const created: State = { attemptId: randomUUID(), startId: input.requestId, revision, phase: 'waiting', expires: ports.now() + DESKTOP_CLAUDE_PLAN_AUTH_LIFETIME_MS, verifier, state, authorizeUrl: `https://claude.ai/oauth/authorize?${params}`, predecessor: env[GENERATION] ?? '0', launchNonce: ports.launchNonce }
+                live(signal); await ports.write({ ...env, [AUTH]: JSON.stringify(created) })
+                return publicState(created, env, ports.now(), ports.launchNonce)
+            }
+            if (input.operation === 'cancel') {
+                if (!current || !['waiting', 'checking'].includes(current.phase)) return publicState(current, env, ports.now(), ports.launchNonce)
+                exchanges.get(current.attemptId)?.abort()
+                const cancelled = next(current, { phase: 'cancelled', verifier: undefined, state: undefined, authorizeUrl: undefined, requestId: input.requestId, fingerprint: ports.fingerprint(JSON.stringify(input)) })
+                await ports.write({ ...env, [AUTH]: JSON.stringify(cancelled) })
+                return publicState(cancelled, env, ports.now(), ports.launchNonce)
+            }
+            if (input.operation === 'disconnect') {
+                if (current) exchanges.get(current.attemptId)?.abort()
+                if (current?.phase === 'checking') throw new Error('Cancel this sign-in before disconnecting.')
+                const disconnected: State = { ...(current ?? { attemptId: randomUUID(), startId: input.requestId, predecessor: env[GENERATION] ?? '0', expires: 0, launchNonce: ports.launchNonce }), revision, phase: 'disconnected', requestId: input.requestId, fingerprint: ports.fingerprint(JSON.stringify(input)), verifier: undefined, state: undefined, authorizeUrl: undefined }
+                for (const key of [TOKEN, REFRESH, EXPIRES]) delete env[key]
+                env[GENERATION] = String(BigInt(env[GENERATION] ?? '0') + 1n); env[AUTH] = JSON.stringify(disconnected)
+                live(signal); await ports.beforeCredentialChange(); live(signal); await ports.write(env); await ports.changed()
+                return publicState(disconnected, env, ports.now(), ports.launchNonce)
+            }
+            if (input.operation === 'token') {
+                if (!/^sk-ant-oat[a-z0-9-]*-[A-Za-z0-9_-]{20,}$/.test(input.token)) throw new Error('Paste a Claude setup-token value, not an API key.')
+                if (current) exchanges.get(current.attemptId)?.abort()
+                const connected: State = { ...(current ?? { attemptId: randomUUID(), startId: input.requestId, predecessor: env[GENERATION] ?? '0', expires: 0, launchNonce: ports.launchNonce }), revision, phase: 'connected', requestId: input.requestId, fingerprint: ports.fingerprint(JSON.stringify(input)), verifier: undefined, state: undefined, authorizeUrl: undefined }
+                env[TOKEN] = input.token; delete env[REFRESH]; delete env[EXPIRES]
+                env[GENERATION] = String(BigInt(env[GENERATION] ?? '0') + 1n); env[AUTH] = JSON.stringify(connected)
+                live(signal); await ports.beforeCredentialChange(); live(signal); await ports.write(env); await ports.changed()
+                return publicState(connected, env, ports.now(), ports.launchNonce)
+            }
+            if (!current || current.phase !== 'waiting' || !current.verifier || !current.state || current.expires <= ports.now()) throw new Error('This sign-in expired. Open Claude again.')
+            const checking = next(current, { phase: 'checking', requestId: input.requestId, fingerprint: ports.fingerprint(JSON.stringify(input)), launchNonce: ports.launchNonce })
+            const controller = new AbortController()
+            exchanges.set(current.attemptId, controller)
+            exchange = { state: checking, code: input.code, controller }
+            live(signal); await ports.write({ ...env, [AUTH]: JSON.stringify(checking) })
+            return publicState(checking, env, ports.now(), ports.launchNonce)
+        })
+        if (!exchange) return initial
+        const pending = exchange
         try {
-            const credential = await ports.oauth.exchange({ rawCode: input.rawCode, verifier: input.verifier, state: input.state, signal: signal ?? new AbortController().signal })
-            const saved = await ports.custody.save(current.agentId, credential)
-            const connected = next(checking, { phase: 'connected', credentialRevision: saved.revision }, now)
-            await ports.outcomes.complete(connected)
-            return connected
-        } catch (error) {
-            const failed = next(checking, { phase: 'error', message: error instanceof Error ? error.message.slice(0, 500) : 'Claude sign-in failed.' }, now)
-            await ports.outcomes.complete(failed)
-            return failed
-        }
+            const signalOfExchange = AbortSignal.any([signal, pending.controller.signal, AbortSignal.timeout(30000)])
+            const credential = await ports.exchange(pending.code, pending.state.verifier!, pending.state.state!, signalOfExchange)
+            return await ports.lock(async () => {
+                live(signalOfExchange)
+                const env = await ports.read(), current = load(env)
+                if (!current || current.attemptId !== pending.state.attemptId || current.revision !== pending.state.revision || current.phase !== 'checking' || (env[GENERATION] ?? '0') !== pending.state.predecessor) throw safeFailure()
+                const connected = next(current, { phase: 'connected', verifier: undefined, state: undefined, authorizeUrl: undefined })
+                env[TOKEN] = credential.accessToken
+                if (credential.refreshToken) env[REFRESH] = credential.refreshToken; else delete env[REFRESH]
+                if (credential.expiresAt) env[EXPIRES] = String(credential.expiresAt); else delete env[EXPIRES]
+                env[GENERATION] = String(BigInt(env[GENERATION] ?? '0') + 1n); env[AUTH] = JSON.stringify(connected)
+                live(signalOfExchange); await ports.beforeCredentialChange(); live(signalOfExchange); await ports.write(env); await ports.changed()
+                return publicState(connected, env, ports.now(), ports.launchNonce)
+            })
+        } catch {
+            await ports.lock(async () => {
+                const env = await ports.read(), current = load(env)
+                if (!current || current.attemptId !== pending.state.attemptId || current.revision !== pending.state.revision || current.phase !== 'checking') return
+                const failed = next(current, { phase: 'error', verifier: undefined, state: undefined, authorizeUrl: undefined })
+                await ports.write({ ...env, [AUTH]: JSON.stringify(failed) })
+            })
+            return status()
+        } finally { if (exchanges.get(pending.state.attemptId) === pending.controller) exchanges.delete(pending.state.attemptId) }
     }
+    return { status, action, stop: () => { stopped = true; for (const controller of exchanges.values()) controller.abort() } }
+}
 
-    async function cancel(input: DesktopClaudePlanAttemptAction): Promise<DesktopClaudePlanAttempt> {
-        const current = await ports.outcomes.read(input.attemptId)
-        if (!current || current.revision !== input.expectedRevision) throw new Error('This Claude sign-in changed. Refresh it and try again.')
-        if (!['waiting', 'checking'].includes(current.phase)) return current
-        const cancelled = next(current, { phase: 'cancelled' }, now)
-        await ports.outcomes.complete(cancelled)
-        return cancelled
-    }
-
-    async function disconnect(input: DesktopClaudePlanAttemptAction): Promise<DesktopClaudePlanAttempt> {
-        const current = await ports.outcomes.read(input.attemptId)
-        if (!current || current.revision !== input.expectedRevision) throw new Error('This Claude connection changed. Refresh it and try again.')
-        if (current.phase !== 'connected') return current
-        await ports.custody.clear(current.agentId)
-        const disconnected = next(current, { phase: 'disconnected', credentialRevision: undefined }, now)
-        await ports.outcomes.complete(disconnected)
-        return disconnected
-    }
-
-    return { start, status, complete, cancel, disconnect }
+async function exchangeCode(raw: string, verifier: string, state: string, signal: AbortSignal): Promise<DesktopClaudePlanCredential> {
+    const [code, suppliedState, extra] = raw.trim().split('#')
+    if (!code || extra || suppliedState && suppliedState !== state) throw safeFailure()
+    const response = await fetch(TOKEN_URL, { method: 'POST', redirect: 'error', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ grant_type: 'authorization_code', code, state: suppliedState ?? state, redirect_uri: REDIRECT, client_id: CLIENT_ID, code_verifier: verifier }) })
+    if (!response.ok) { await response.body?.cancel(); throw safeFailure() }
+    const reader = response.body?.getReader(); if (!reader) throw safeFailure()
+    let text = '', length = 0
+    try { for (;;) { const chunk = await reader.read(); if (chunk.done) break; length += chunk.value.byteLength; if (length > 32768) throw safeFailure(); text += new TextDecoder().decode(chunk.value) } }
+    finally { await reader.cancel().catch(() => {}) }
+    const value = z.object({ access_token: z.string().min(1).max(8192).regex(/^[\x21-\x7e]+$/), refresh_token: z.string().min(1).max(8192).regex(/^[\x21-\x7e]+$/).optional(), expires_in: z.number().positive().max(366 * 86400).optional() }).parse(JSON.parse(text))
+    return { accessToken: value.access_token, refreshToken: value.refresh_token, ...(value.expires_in ? { expiresAt: Date.now() + value.expires_in * 1000 } : {}) }
+}
+export function bindDesktopClaudePlanAuth(launchNonce: string) {
+    const ensure = async () => { if (!await findConnection(ID)) await createConnection({ name: 'Claude', provider: 'claude', models: DEFAULT_CONNECTION_MODELS.claude, extraModels: [], keys: {} }, ID) }
+    return createDesktopClaudePlanAuth({
+        launchNonce, available: desktopClaudeAvailable, now: Date.now,
+        read: async () => (await findConnection(ID)) ? readEnvFile(connectionEnvPath(ID)) : {},
+        write: async value => { await ensure(); await writeEnvFile(connectionEnvPath(ID), value) },
+        lock: work => withConnectionLock(ID, work), exchange: exchangeCode,
+        fingerprint: value => { const key = process.env.RERUN_DESKTOP_SECRET_KEY ?? ''; if (!/^[a-f0-9]{64}$/.test(key)) throw safeFailure(); return createHmac('sha256', Buffer.from(key, 'hex')).update(value).digest('hex') },
+        beforeCredentialChange: stopDesktopClaudeWorkers,
+        changed: async () => { forgetCredentialRejected(ID); forgetPlanLimits(ID); await reloadConnection(ID) },
+    })
 }

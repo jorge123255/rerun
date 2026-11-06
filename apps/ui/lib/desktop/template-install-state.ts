@@ -8,7 +8,7 @@ export const desktopTemplateInstallIdentitySchema = z.strictObject({
 
 export const desktopTemplateInstallStateSchema = z.union([
     desktopTemplateInstallIdentitySchema.extend({ status: z.literal('none') }),
-    desktopTemplateInstallIdentitySchema.extend({ status: z.enum(['pending', 'refused']), requestId: desktopTemplateRequestIdSchema }),
+    desktopTemplateInstallIdentitySchema.extend({ status: z.enum(['pending', 'refused']), requestId: desktopTemplateRequestIdSchema, cleanupPending: z.literal(true).optional() }),
     desktopTemplateInstallResultSchema.options[0],
 ])
 

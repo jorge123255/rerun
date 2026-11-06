@@ -15,7 +15,7 @@ describe('desktop guest shell input contract', () => {
     })
 
     it('rejects null bytes and over-limit timeout', () => {
-        expect(() => desktopGuestShellInputSchema.parse({ command: 'printf "a\\0b"' })).toThrow()
+        expect(() => desktopGuestShellInputSchema.parse({ command: 'printf "a' + String.fromCharCode(0) + 'b"' })).toThrow()
         expect(() => desktopGuestShellInputSchema.parse({ command: 'pwd', timeoutMs: 600_001 })).toThrow()
     })
 })

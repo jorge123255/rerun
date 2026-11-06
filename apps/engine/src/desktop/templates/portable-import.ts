@@ -113,6 +113,7 @@ async function importUnlocked(input: {
         const localCoworkers: TemplateManifest['coworkers'] = manifest.coworkers.map(coworker => ({
             agentKey: coworker.agentKey,
             sourceEngineId: `imported-${coworker.agentKey}`,
+            enabled: JSON.parse(members.find(item => item.agentKey === coworker.agentKey && item.path === 'config.json')!.bytes.toString('utf8')).enabled !== false,
             name: coworker.name,
             description: coworker.description,
             setup: {

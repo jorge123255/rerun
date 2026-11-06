@@ -30,7 +30,7 @@ export function triggerResultTarget(link: TriggerRequestLink) {
 export function sameTriggerResultOwner(a: TriggerRequestLink, b: TriggerRequestLink) {
     return a.workspaceId === b.workspaceId && a.agentId === b.agentId && a.engineAgentId === b.engineAgentId
         && a.sessionId === b.sessionId && a.engineSessionId === b.engineSessionId && a.eventId === b.eventId
-        && a.triggerRunId === b.triggerRunId && a.sourceRunId === b.sourceRunId && a.requestId === b.requestId
+        && a.slug === b.slug && a.triggerRunId === b.triggerRunId && a.sourceRunId === b.sourceRunId && a.requestId === b.requestId
         && a.kind === b.kind && a.toolCallId === b.toolCallId && a.sourceMessageId === b.sourceMessageId && a.fingerprint === b.fingerprint
 }
 

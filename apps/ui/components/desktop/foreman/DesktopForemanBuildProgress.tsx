@@ -13,10 +13,16 @@ export function DesktopForemanBuildProgress({
     build,
     onOpenCoworker,
     onOpenBox,
+    onResume,
+    onStop,
+    busy,
 }: {
     build: DesktopForemanBuildProgressView
     onOpenCoworker?: (input: { agentId: string; sessionId: string | null }) => void
     onOpenBox?: (spaceId: string) => void
+    onResume?: () => void
+    onStop?: () => void
+    busy?: boolean
 }) {
     const { items, partial, completedCount, failedCount, navigable } = projectBuildProgress(build)
 
@@ -61,6 +67,10 @@ export function DesktopForemanBuildProgress({
             {navigable.length === 0 && build.status === 'running' && (
                 <p className="text-xs text-muted-foreground">Coworkers are not started automatically after creation.</p>
             )}
+            <div className="flex gap-2">
+                {(['uncertain', 'stopped', 'failed', 'partial'].includes(build.status) || ['pending','uncertain'].includes(build.setup.state)) && onResume && <Button size="sm" variant="secondary" disabled={busy} onClick={onResume}>Check and retry</Button>}
+                {['reserved', 'running', 'uncertain'].includes(build.status) && onStop && <Button size="sm" variant="ghost" disabled={busy} onClick={onStop}>Stop building</Button>}
+            </div>
         </div>
     )
 }

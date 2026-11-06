@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ModelBuckets } from '@/components/connections/ModelBuckets'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
@@ -21,20 +21,22 @@ export function DesktopClaudeConnectionDetails({ connection, account, defaultMod
     onDisconnect: (connectionId: string) => Promise<{ success: boolean; error?: string } | void> | { success: boolean; error?: string } | void
     onBack: () => void
 }) {
-    const [error, setError] = useState<string | null>(null)
-    const [pending, setPending] = useState(false)
+    const owner = useMemo(() => ({ live: true }), [connection.id, runtime])
+    const active = useRef(owner); active.current = owner
+    const [state, setState] = useState({ owner, pending: false, error: null as string | null })
+    const { pending, error } = state.owner === owner ? state : { pending: false, error: null }
+    useEffect(() => { owner.live = true; return () => { owner.live = false } }, [owner])
     const rejected = connection.credentialRejected
     const connected = connection.connected && !rejected && !account?.unavailable
     const remove = async () => {
-        setPending(true)
-        setError(null)
+        setState({ owner, pending: true, error: null })
         try {
             const result = await onDisconnect(connection.id)
-            if (result && !result.success) { setError(result.error ?? 'Failed to remove the connection.'); setPending(false); return }
+            if (!owner.live || active.current !== owner) return
+            if (result && !result.success) { setState({ owner, pending: false, error: result.error ?? 'Failed to remove the connection.' }); return }
             onBack()
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : 'Failed to remove the connection.')
-            setPending(false)
+            if (owner.live && active.current === owner) setState({ owner, pending: false, error: cause instanceof Error ? cause.message : 'Failed to remove the connection.' })
         }
     }
     return <div className="flex min-h-0 flex-1 flex-col">

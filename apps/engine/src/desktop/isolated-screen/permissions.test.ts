@@ -45,3 +45,12 @@ it('drains reviewed installations when their independent grant or either self-im
     expect(screenPermissionsRevoked(before, config(grants, { selfImprovement: { enabled: true, allowToolInstall: true, autoMemory: false } }))).toBe(false)
     expect(desktopRerunGrantsOf(config({ computer: true, browser: true }).tools)).toMatchObject({ toolInstall: false, scheduleManage: false })
 })
+
+it('isolated commands are independent of screen input and only their revocation drains a command-only guest', () => {
+    const before = config({ guestShell: true })
+    expect(screenGranted(before)).toBe(false)
+    expect(screenPermissionsRevoked(before, config({ guestShell: true }, { description: 'Updated instructions' }))).toBe(false)
+    expect(screenPermissionsRevoked(before, config({ guestShell: false }))).toBe(true)
+    expect(screenPermissionsRevoked(before, config({ guestShell: true }, { enabled: false }))).toBe(true)
+    expect(desktopRerunGrantsOf(config({}).tools).guestShell).toBe(false)
+})

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { describe, expect, test } from 'vitest'
 import { createForemanRuntime, ForemanError } from './runtime'
+import { ForemanRefusal } from './authority'
+import type { ForemanTx } from './store'
 import { binding, chat, fakeAuthorities, memoryForemanStore, twoCoworkerPlan } from './runtime.test-support'
 
 function setup(options?: Parameters<typeof fakeAuthorities>[0]) {
@@ -346,4 +348,93 @@ test('explicit recovery drains the current exact attempt and a later Stop preven
     expect(fake.calls.filter(call => call.kind === 'coworker').map(call => call.name)).toEqual(['Enquiries'])
     expect((await runtime.readView(chat)).build?.items[0].state).toBe('created')
     expect((await runtime.readView(chat)).build?.items[1].state).toBe('stopped')
+})
+
+test.each(['failed', 'partial', 'unknown', 'stop-race'] as const)('a definite recovery refusal parks queued siblings and preserves %s state', async mode => {
+    const { runtime, fake, store } = setup()
+    const pendingName = mode === 'partial' ? 'Returns' : 'Enquiries'
+    const create = fake.authorities.creation.createCoworker
+    let pendingId = ''
+    fake.authorities.creation.createCoworker = async input => {
+        if (input.name !== pendingName) return create(input)
+        pendingId = input.requestId
+        fake.calls.push({ kind: 'coworker', requestId: input.requestId, name: input.name })
+        fake.receipts.set(input.requestId, { state: 'unknown' })
+        throw new Error('Lost reply before the creation authority could establish capacity')
+    }
+    const { revision } = await runtime.recordShownPlan(binding, `refusal-${mode}`, {
+        ...twoCoworkerPlan,
+        items: [...twoCoworkerPlan.items, { kind: 'agent', name: 'Waiting', role: 'Waits for the first two coworkers', box: 'Sales' }],
+    })
+    const decision = await runtime.decide(confirm(revision)), buildId = decision.buildId!
+    await runtime.runBuild(buildId)
+    expect((await runtime.readView(chat)).build?.state).toBe('uncertain')
+    expect(pendingId).not.toBe('')
+    let otherUnknownId: string | undefined
+    if (mode === 'unknown') {
+        // A saved unresolved publication must remain blocked even if a different
+        // request is now proved never to have been created.
+        await store.transaction(async tx => {
+            const row = (await tx.build(buildId))!
+            otherUnknownId = row.intents.items[row.build.items[1]!.itemKey]
+            fake.receipts.set(otherUnknownId!, { state: 'unknown' })
+            row.build.items[1]!.state = 'uncertain'
+            expect(await tx.updateBuild(row.build, row.version)).toBe(true)
+        })
+    }
+    const originalIntents = structuredClone(store.state().builds[0]!.intents)
+    const originalCalls = structuredClone(fake.calls), recoveryCalls: string[] = []
+    fake.authorities.creation.resumePending = async requestId => {
+        recoveryCalls.push(requestId)
+        expect(requestId).toBe(pendingId)
+        throw new ForemanRefusal('creation_failed', 'That Box has no room left.')
+    }
+
+    let release!: () => void, entered!: () => void, readsBeforePause = 0, refusedProgress = 0
+    const paused = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    if (mode === 'stop-race') {
+        const transact = store.transaction.bind(store)
+        store.transaction = async <T>(work: (tx: ForemanTx) => Promise<T>): Promise<T> => {
+            if (readsBeforePause > 0 && --readsBeforePause === 0) { entered(); await gate }
+            return transact(work)
+        }
+        const publish = fake.authorities.events.publish
+        fake.authorities.events.publish = event => {
+            publish(event)
+            if (event.type === 'build_progress' && event.build.state === 'running' && event.build.items.some(item => item.state === 'failed') && ++refusedProgress === 2) {
+                // The first read returns reconciliation. Pause the next read: the
+                // final refusal mutation, after its outer Stop-epoch check.
+                readsBeforePause = 2
+            }
+        }
+    }
+    const request = { action: 'resume' as const, requestId: randomUUID(), chat, buildId }
+    const recovering = runtime.buildAction(request)
+    if (mode === 'stop-race') {
+        await paused
+        try {
+            const stopped = await runtime.buildAction({ action: 'stop', requestId: randomUUID(), chat, buildId })
+            expect(stopped.state).toBe('stopped')
+        } finally { release() }
+    }
+    const result = await recovering
+    expect(result.state).toBe(mode === 'unknown' ? 'uncertain' : mode === 'stop-race' ? 'stopped' : mode)
+    expect(result.items.find(item => item.title === pendingName)).toMatchObject({state:'failed',failure:'creation_failed',error:'That Box has no room left.'})
+    expect(result.items.find(item => item.title === 'Waiting')?.state).toBe('stopped')
+    if (mode === 'partial') expect(result.items[0]).toMatchObject({state:'created',created:{agentIds:['agent-Enquiries']}})
+    if (mode === 'unknown') {
+        expect(result.items[1]?.state).toBe('uncertain')
+        expect(fake.receipts.get(otherUnknownId!)).toEqual({state:'unknown'})
+    }
+    expect(recoveryCalls).toEqual([pendingId])
+    expect(fake.calls).toEqual(originalCalls)
+    expect(store.state().builds[0]!.intents).toEqual(originalIntents)
+    // An acknowledged action and a cold runtime read cannot repeat recovery.
+    await runtime.buildAction(request)
+    const restarted = createForemanRuntime({store,authorities:fake.authorities,companyName:async()=> 'Reloop'})
+    await restarted.reconcile()
+    expect((await restarted.readView(chat)).build?.state).toBe(result.state)
+    expect(recoveryCalls).toEqual([pendingId])
+    expect(fake.calls).toEqual(originalCalls)
 })

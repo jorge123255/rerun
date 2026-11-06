@@ -66,6 +66,7 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
     let state = initial, revision = initial.ui.revision
     let lastUi: DesktopForemanPersistedUi = initial.ui.snapshot ?? emptyUi(initial.chat)
     let pendingSend = initial.ui.snapshot?.pendingSend
+    let sending = false
     let closed = false, refreshing: Promise<DesktopForemanClientState> | undefined
     const requests = new Set<AbortController>()
     const discoveryListeners = new Set<(event: Extract<DesktopForemanLiveEvent, { type: 'discovery' }>['event']) => void>()
@@ -126,25 +127,33 @@ export function createDesktopForemanClient(initial: DesktopForemanClientState, o
             },
         },
         conversation: {
-            sendMessage: async text => {
-                owned(chat)
-                if (isDesktopQuitting()) return false
-                const picked = options.modelChoice?.()
-                const choice = pendingSend && picked === undefined ? pendingSend.modelChoice : picked ?? null
-                if (pendingSend && (pendingSend.text !== text || JSON.stringify(pendingSend.modelChoice) !== JSON.stringify(choice))) throw new Error('Retry the previous message with its original model before sending a different message.')
-                if (!await flushDesktopForemanUiSaves()) throw new Error('Save this Foreman draft before sending.')
-                owned(chat)
-                if (isDesktopQuitting()) return false
-                pendingSend ??= { requestId: createPlanDecisionRequestId(), text, modelChoice: choice }
-                await saveForemanUiIfMatching(ports.persistence, lastUi)
-                owned(chat)
-                if (isDesktopQuitting()) return false
-                const receipt = z.strictObject({ runId: z.string().min(1).max(128) }).parse(await act({ action: 'send', chat, requestId: pendingSend.requestId, text: pendingSend.text, ...(pendingSend.modelChoice ? { modelChoice: pendingSend.modelChoice } : {}) }))
-                if (receipt.runId !== pendingSend.requestId) throw new Error('Foreman acknowledged a different message.')
-                pendingSend = undefined
-                await saveForemanUiIfMatching(ports.persistence, lastUi)
-                changed()
-                return true
+            sendMessage: async (text, signal) => {
+                owned(chat); signal?.throwIfAborted()
+                if (isDesktopQuitting() || sending) return false
+                sending = true
+                let reserved = false, dispatched = false
+                try {
+                    const picked = options.modelChoice?.()
+                    const choice = pendingSend && picked === undefined ? pendingSend.modelChoice : picked ?? null
+                    if (pendingSend && (pendingSend.text !== text || JSON.stringify(pendingSend.modelChoice) !== JSON.stringify(choice))) throw new Error('Retry the previous message with its original model before sending a different message.')
+                    if (!await flushDesktopForemanUiSaves()) throw new Error('Save this Foreman draft before sending.')
+                    signal?.throwIfAborted(); owned(chat)
+                    if (isDesktopQuitting()) return false
+                    if (!pendingSend) { pendingSend = { requestId: createPlanDecisionRequestId(), text, modelChoice: choice }; reserved = true }
+                    await saveForemanUiIfMatching(ports.persistence, lastUi)
+                    signal?.throwIfAborted(); owned(chat)
+                    if (isDesktopQuitting()) throw new Error('Rerun is closing.')
+                    dispatched = true
+                    const receipt = z.strictObject({ runId: z.string().min(1).max(128) }).parse(await act({ action: 'send', chat, requestId: pendingSend.requestId, text: pendingSend.text, ...(pendingSend.modelChoice ? { modelChoice: pendingSend.modelChoice } : {}) }, signal))
+                    if (receipt.runId !== pendingSend.requestId) throw new Error('Foreman acknowledged a different message.')
+                    pendingSend = undefined
+                    await saveForemanUiIfMatching(ports.persistence, lastUi)
+                    changed()
+                    return true
+                } catch (error) {
+                    if (reserved && !dispatched) { pendingSend = undefined; await saveForemanUiIfMatching(ports.persistence, lastUi) }
+                    throw error
+                } finally { sending = false }
             },
             stop: async () => { owned(chat); z.strictObject({ ok: z.literal(true) }).parse(await act({ action: 'stop', chat })); changed() },
         },

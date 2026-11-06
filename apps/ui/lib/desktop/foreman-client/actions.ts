@@ -11,7 +11,7 @@ import type { DesktopForemanChatRef, DesktopForemanBinding } from './identity'
 import type { DesktopForemanPersistedUi, DesktopForemanPersistence } from './persistence'
 
 export type DesktopForemanConversationCallbacks = {
-    sendMessage: (text: string) => boolean | Promise<boolean>
+    sendMessage: (text: string, signal?: AbortSignal) => boolean | Promise<boolean>
     stop: () => void | Promise<void>
     focusComposer?: () => void
 }
