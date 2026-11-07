@@ -26,7 +26,9 @@ with the coding branch's refresh, owner and draft safeguards.
 
 That establishes source coverage of the Rerun Desktop Preview coding checkpoint.
 Separate worktrees or uncommitted agent deliveries are not automatically part of
-this app. The latest source still needs its own packaged/native acceptance.
+this app. The installed preview has now passed the bounded native/restart check
+on `0bddbc5cd689a8d62bfbe6d6d3a82f42281f2c62`; see the
+[exact build and native QA report](desktop-native-qa-2026-11-06.md).
 
 ## Reviewed repairs in this branch
 
@@ -54,8 +56,10 @@ must still be checked separately.
 The integration owner runs all tests, builds and Mac acceptance. Helpers review source
 and author changes without running checks.
 
-The last full suites apply to the frozen repair patch above, before the admission
-follow-up and coding-branch reconciliation:
+The following historical full-suite results apply to the frozen repair patch
+above, before the admission follow-up and coding-branch reconciliation. Their
+packaging/native blockers describe that earlier validation, not the installed
+preview checked below:
 
 | Check | Result | Limit |
 | --- | --- | --- |
@@ -97,6 +101,40 @@ older full-suite counts are not attributed to a different final source tree.
   this reconciliation. Historical full-suite and installed-build evidence keeps
   its original source/build identity.
 
+## Installed Mac build and restart checks
+
+The canonical installed preview is now built from
+`0bddbc5cd689a8d62bfbe6d6d3a82f42281f2c62`, build
+`0bddbc5c-desktop-0.1.0`. The real production renderer build, production
+typecheck, engine build, bundled native-runtime verification, source receipts,
+installation and strict signature verification passed. The signing certificate
+matches the previous preview. Local packaging explicitly disables publishing.
+
+Native QA found and repaired two additional defects: attachment/voice ownership
+incorrectly compared a local database row ID with the external workspace ID,
+blocking valid chats in workspace 2; and repeated sharing incorrectly rejected
+the server's valid retained-archive review. Four negative witnesses reproduced
+those failures before the fixes. The ownership/service slice passed 38 tests;
+the repeated-share UI/server slice passed 24 tests. Packaging dispatch checks
+passed all four tests. These overlap earlier slices and are not added to full
+suite totals.
+
+Using the existing isolated QA workspace and its own Codex login, the integration
+owner verified the board/side-panel layout, same-position return, separate chat
+drafts including a full-editor draft, real `gpt-6.1-sol` replies, model/default
+reasoning retention and a fresh reply after full quit/reopen. Retained archive
+review, cancelled import, immediate successful import refresh and persistence
+of the disconnected/default-off copy also passed. No fresh password or sign-in
+was needed. My workspace was restored with its saved chats, drafts, notes and
+user coworker configurations preserved. The managed Foreman gained only two
+explicit disabled permission defaults.
+
+This is an authorized update of the installed preview, using a private rollback
+backup and an existing isolated workspace. It does not implement an automated
+temporary-profile startup seam or establish clean-machine/release acceptance.
+See the [full bounded native report](desktop-native-qa-2026-11-06.md) for exact
+identities, test scope and preservation counts.
+
 ## Known incomplete or disabled features
 
 Share memories/private database aggregate activation; named connection selection;
@@ -117,13 +155,13 @@ negative refusal test does not complete any of these features.
 - [ ] Review any additional agent handoffs against their exact commits.
 - [ ] Add a documented isolated native profile with provider/network side effects
   disabled before startup; preserve the normal workspace and signing identity.
-- [ ] Complete a reproducible renderer build, including font availability.
-- [ ] Package a separate QA build and verify board → coworker side-panel chat →
-  Codex reply → close to the same board position.
-- [ ] Fully quit/reopen that build and verify chat/draft/model/reasoning/settings/
-  permission persistence and owner isolation.
-- [ ] Record the exact tested app/source identity and remaining gaps here before
-  marking a preview ready for download.
+- [x] Complete a reproducible renderer build, including font availability.
+- [x] Package from a clean build worktree, update the canonical preview and verify
+  board → coworker side-panel chat → Codex reply → close to the same board position.
+- [x] Fully quit/reopen that build and verify the bounded chat/draft/model/default
+  reasoning/settings/permission and imported-owner persistence workflow.
+- [x] Record the exact tested app/source identity and remaining gaps here. A
+  downloadable release is still not marked ready.
 
 Keep current status in this file. Preserve older acceptance reports as historical
 evidence; do not carry their accepted status onto an untested new build or reduce

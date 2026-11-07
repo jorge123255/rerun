@@ -52,10 +52,18 @@ Node runtime and native helpers for Apple-silicon macOS. Packaging requires the
 Mac build tools and a stable preview signing identity; the signing helper checks
 the existing identity so repeated updates can retain Keychain continuity.
 
-The current app entry point still selects the normal `Rerun Desktop
-Preview` profile. A documented temporary-profile startup with side effects
-disabled before launch remains a prerequisite for repeatable isolated native QA.
-No new installer or Mac acceptance is claimed by this checkpoint.
+The current app entry point still selects the normal `Rerun Desktop Preview`
+profile. The November 6 update used a private backup, the existing isolated QA
+workspace and its own authorized Codex login; it did not create a second visible
+app or treat `--user-data-dir` as a temporary-profile seam. Its production build,
+stable signature, board/chat/import and full-restart checks passed on
+`0bddbc5cd689a8d62bfbe6d6d3a82f42281f2c62`. The
+[native QA report](../../docs/desktop-native-qa-2026-11-06.md) records the exact
+scope and original-workspace preservation results.
+
+A documented temporary-profile startup with side effects disabled before launch
+remains future work for fully automated isolated QA. This local preview update
+is not a downloadable or notarized release.
 
 Before a downloadable build is marked ready, the integration owner must verify the actual app:
 
