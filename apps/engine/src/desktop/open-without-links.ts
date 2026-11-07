@@ -27,7 +27,7 @@ export async function readBoundedFileWithoutLinks(path: string, maxBytes: number
     const file = await openWithoutLinks(path)
     try {
         const initial = await file.stat({ bigint: true })
-        if (!initial.isFile() || initial.nlink !== 1n || initial.size > maxBytes) throw new Error('Unsafe file')
+        if (!initial.isFile() || initial.nlink !== BigInt(1) || initial.size > maxBytes) throw new Error('Unsafe file')
         const bytes = Buffer.alloc(Number(initial.size) + 1)
         let length = 0
         while (length < bytes.length) {
@@ -38,7 +38,7 @@ export async function readBoundedFileWithoutLinks(path: string, maxBytes: number
         const current = await openWithoutLinks(path)
         try {
             const info = await current.stat({ bigint: true })
-            if (info.dev !== initial.dev || info.ino !== initial.ino || info.nlink !== 1n
+            if (info.dev !== initial.dev || info.ino !== initial.ino || info.nlink !== BigInt(1)
                 || info.size !== initial.size || info.ctimeNs !== initial.ctimeNs || BigInt(length) !== initial.size) {
                 throw new Error('File changed during read')
             }
