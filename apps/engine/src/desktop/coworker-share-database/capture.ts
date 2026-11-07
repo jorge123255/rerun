@@ -6,7 +6,7 @@ import {
     type DesktopCoworkerShareDatabasePackage,
     type DesktopCoworkerShareDatabaseTable,
     type DesktopCoworkerShareDatabaseView,
-} from '../../../../../packages/contracts/src/desktop-coworker-share-database.ts'
+} from '@rerun/contracts'
 import { DesktopCoworkerShareDatabaseError } from './errors.ts'
 import {
     measurePackage,

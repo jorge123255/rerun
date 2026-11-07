@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, link, realpath, rmdir, unlink, type FileHandle } from 'node:fs/promises'
+import { lstat, mkdir, open, link, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { openWithoutLinks } from '../open-without-links.js'
+import { recordCreatedWorkspaceDirectory, removeCreatedWorkspaceDirectories, type CreatedWorkspaceDirectory } from '../created-workspace-directories.js'
 import { DownloadTooLargeError } from './errors.js'
 import { DOWNLOAD_LIMIT_BYTES } from './limits.js'
 import { downloadPathParts } from './path.js'
@@ -16,6 +17,10 @@ const otherUser = () => new Error('This file belongs to another user. It was lef
 const clash = (name: string) => new Error(`This folder already has a file named “${name}”. The existing file was kept.`)
 const uncertain = () => new Error('The download result could not be confirmed. Check Files before retrying.')
 const unavailable = () => new Error('Download publication is only available on this Mac.')
+
+function sameOwner(statUid: number, expected: bigint): boolean {
+    return BigInt(statUid) === expected
+}
 
 function currentUid(): bigint {
     if (typeof process.getuid !== 'function') throw unavailable()
@@ -54,14 +59,8 @@ async function pinDirectory(directory: string): Promise<{ pinned: string; close:
 async function assertRealDirectory(directory: string, uid: bigint): Promise<void> {
     const info = await lstat(directory).catch(error => { throw mapLink(error) })
     if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
-    if (info.uid !== uid) throw otherUser()
+    if (!sameOwner(info.uid, uid)) throw otherUser()
     if (await realpath(directory) !== directory) throw outside()
-}
-
-async function removeCreated(created: string[]): Promise<void> {
-    for (const directory of [...created].reverse()) {
-        await rmdir(directory).catch(() => {})
-    }
 }
 
 /**
@@ -75,7 +74,7 @@ export async function publishDownload(workspaceRoot: string, relativePath: strin
     const uid = currentUid()
     const root = resolve(workspaceRoot)
     if (basename(root) !== 'workspace') throw unavailable()
-    const created: string[] = []
+    const created: CreatedWorkspaceDirectory[] = []
     try {
         await ensureWorkspace(root, uid, signal, created)
         let parent = root
@@ -87,12 +86,12 @@ export async function publishDownload(workspaceRoot: string, relativePath: strin
         signal.throwIfAborted()
         await stage(parent, parts[parts.length - 1] ?? '', bytes, signal)
     } catch (error) {
-        await removeCreated(created)
+        await removeCreatedWorkspaceDirectories(created)
         throw error
     }
 }
 
-async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, created: string[]): Promise<void> {
+async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, created: CreatedWorkspaceDirectory[]): Promise<void> {
     signal.throwIfAborted()
     const info = await lstat(root).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -105,8 +104,9 @@ async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, c
         try {
             signal.throwIfAborted()
             try {
-                await mkdir(at(pin.pinned, 'workspace'))
-                created.push(root)
+                const target = at(pin.pinned, 'workspace')
+                await mkdir(target)
+                created.push(await recordCreatedWorkspaceDirectory(root, target))
             } catch (error) {
                 if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw mapLink(error)
             }
@@ -115,13 +115,13 @@ async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, c
         }
     }
     await assertRealDirectory(root, uid)
-    if (created.at(-1) === root) {
+    if (created.at(-1)?.path === root) {
         const again = await lstat(root)
         if (again.isSymbolicLink() || !again.isDirectory()) throw outside()
     }
 }
 
-async function ensureChild(parent: string, name: string, child: string, uid: bigint, signal: AbortSignal, created: string[]): Promise<void> {
+async function ensureChild(parent: string, name: string, child: string, uid: bigint, signal: AbortSignal, created: CreatedWorkspaceDirectory[]): Promise<void> {
     const info = await lstat(child).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
         throw mapLink(error)
@@ -129,7 +129,7 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
     if (info?.isSymbolicLink()) throw outside()
     if (info && !info.isDirectory()) throw outside()
     if (info) {
-        if (info.uid !== uid) throw otherUser()
+        if (!sameOwner(info.uid, uid)) throw otherUser()
         if (await realpath(child) !== child) throw outside()
         return
     }
@@ -138,8 +138,9 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
     try {
         signal.throwIfAborted()
         try {
-            await mkdir(at(pin.pinned, name))
-            created.push(child)
+            const target = at(pin.pinned, name)
+            await mkdir(target)
+            created.push(await recordCreatedWorkspaceDirectory(child, target))
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw mapLink(error)
         }
@@ -147,7 +148,7 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
         await pin.close()
     }
     const made = await lstat(child).catch(error => { throw mapLink(error) })
-    if (made.isSymbolicLink() || !made.isDirectory() || made.uid !== uid || await realpath(child) !== child) throw outside()
+    if (made.isSymbolicLink() || !made.isDirectory() || !sameOwner(made.uid, uid) || await realpath(child) !== child) throw outside()
 }
 
 async function stage(parent: string, name: string, bytes: Uint8Array, signal: AbortSignal): Promise<void> {

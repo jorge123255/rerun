@@ -7,11 +7,12 @@ import {
     desktopTeamReadTooLarge,
     type DesktopTeamMemberStatus,
     type DesktopTeamWaitingSessionStatus,
-} from '../../../../../packages/contracts/src/desktop-team-reads.ts'
+} from '@rerun/contracts'
 import type { DesktopTeamActivity, DesktopTeamRunView, DesktopTeamScheduleView, DesktopTeamToolCallView, DesktopTeamTriggerView } from './ports.js'
 
 const WAITING = new Set<string>(DESKTOP_TEAM_WAITING_SESSION_STATUSES)
 const SECRET_KEY = /^(url|urls|token|tokens|secret|secrets|password|authorization|api[-_]?key|webhook|webhookurl|webhook_url)$/i
+const JSON_CONTAINER = /^\s*(?:\{|\[)/
 
 export function desktopTeamMemberStatus(facts: {
     switchedOff: boolean
@@ -51,12 +52,22 @@ export function desktopTeamTruncateField(value: string | null, limit = DESKTOP_T
 
 function scrubLoose(value: string): string {
     return value
-        .replace(/\bBearer\s+\S+/g, 'Bearer [omitted]')
-        .replace(/([?&](?:token|secret|api_key|apikey|password)=)[^&\s]+/gi, '$1[omitted]')
+        .replace(/\bBearer[ \t]+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [omitted]')
+        .replace(/([?&](?:token|secret|api_key|apikey|password)=)[^&\s"'\\]+/gi, '$1[omitted]')
 }
 
 export function desktopTeamScrub(value: unknown): unknown {
-    if (typeof value === 'string') return scrubLoose(value)
+    if (typeof value === 'string') {
+        // Some tools return serialized JSON inside the stored result. Keep the
+        // string envelope while removing secrets from the structure it contains.
+        if (JSON_CONTAINER.test(value)) {
+            let parsed: unknown
+            try { parsed = JSON.parse(value) }
+            catch { return scrubLoose(value) }
+            return JSON.stringify(desktopTeamScrub(parsed))
+        }
+        return scrubLoose(value)
+    }
     if (Array.isArray(value)) return value.map(item => desktopTeamScrub(item))
     if (!value || typeof value !== 'object') return value
     const out: Record<string, unknown> = {}
@@ -110,14 +121,16 @@ export function desktopTeamTriggerView(row: {
     token?: string
     url?: string | null
 }): DesktopTeamTriggerView {
-    let body = row.body ?? ''
-    if (row.token) body = body.split(row.token).join('[omitted]')
-    if (row.url) body = body.split(row.url).join('[omitted]')
+    const redact = (value: string) => {
+        if (row.url) value = value.split(row.url).join('[omitted]')
+        if (row.token) value = value.split(row.token).join('[omitted]')
+        return value
+    }
     return {
         slug: row.slug,
-        name: row.name,
-        description: row.description ?? '',
-        body,
+        name: redact(row.name),
+        description: redact(row.description ?? ''),
+        body: redact(row.body ?? ''),
         methods: [...row.methods],
         enabled: row.enabled,
         fireCount: row.fireCount,
@@ -160,6 +173,14 @@ export function desktopTeamRunView(run: {
     }
 }
 
+function scrubToolCallJson(value: string | null): string | null {
+    if (typeof value !== 'string') return null
+    let parsed: unknown
+    try { parsed = JSON.parse(value) }
+    catch { return JSON_CONTAINER.test(value) ? null : scrubLoose(value) }
+    return JSON.stringify(desktopTeamScrub(parsed))
+}
+
 export function desktopTeamToolCallView(call: {
     stepNumber: number
     toolName: string
@@ -171,8 +192,8 @@ export function desktopTeamToolCallView(call: {
     return {
         step: call.stepNumber,
         tool: call.toolName,
-        input: desktopTeamTruncateField(typeof call.inputJson === 'string' ? scrubLoose(call.inputJson) : null),
-        result: desktopTeamTruncateField(typeof call.resultJson === 'string' ? scrubLoose(call.resultJson) : null),
+        input: desktopTeamTruncateField(scrubToolCallJson(call.inputJson)),
+        result: desktopTeamTruncateField(scrubToolCallJson(call.resultJson)),
         isError: call.isError === true || call.isError === 1,
         durationMs: call.durationMs,
     }

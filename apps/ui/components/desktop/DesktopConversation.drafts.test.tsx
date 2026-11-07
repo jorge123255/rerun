@@ -15,6 +15,13 @@ const chat = vi.hoisted(() => ({ messages: [] as UIMessage[], status: 'ready', e
 let transportFetch: typeof fetch
 vi.mock('@ai-sdk/react', () => ({ useChat: ({ transport }: { transport: { fetch: typeof fetch } }) => { transportFetch = transport.fetch; return chat } }))
 vi.mock('./DesktopModelSelector', () => ({ DesktopModelSelector: ({ onReady }: { onReady?: (ready: boolean) => void }) => { useEffect(() => onReady?.(true), [onReady]); return null } }))
+// Keep the real dialog, conversation admission and durable draft writer. Replace only
+// TipTap's browser layout so edits and a same-event shortcut can be driven deterministically.
+vi.mock('@rerun/ui/rich-text-editor', () => ({ RichTextEditor: ({ value, onChange, onSubmitShortcut }: { value: string; onChange: (text: string) => void; onSubmitShortcut?: () => void }) =>
+    <textarea aria-label="Expanded message" value={value} onInput={event => onChange(event.currentTarget.value)} onKeyDown={event => {
+        if (event.metaKey && event.key === 'Enter') { event.preventDefault(); onSubmitShortcut?.() }
+    }} />,
+}))
 vi.mock('./DesktopAttachmentPicker', async original => ({
     ...await original<typeof import('./DesktopAttachmentPicker')>(),
     DesktopAttachmentPicker: ({ disabled, onChange }: { disabled: boolean; paths: readonly string[]; onChange: (paths: string[]) => void }) =>
@@ -152,6 +159,58 @@ test('a saved text and file draft hydrates before sending and survives a fresh m
     await remount()
     expect(composer().value).toBe('Saved ordinary draft, edited')
     expect(button('Remove attachment notes.md')).toBeDefined()
+})
+
+test('typing in the expanded editor joins the canonical Quit flush before the dialog closes', async () => {
+    stored = { revision: 1, text: 'Original long draft. '.repeat(20) }
+    await render(); await click('Open the full editor')
+    const expanded = document.querySelector<HTMLTextAreaElement>('[aria-label="Expanded message"]')!
+    expect(expanded).not.toBeNull()
+    const edited = 'The first expanded edit must survive while the dialog is open.'
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(expanded, edited)
+        expanded.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(document.querySelector('[aria-label="Expanded message"]')).not.toBeNull()
+    expect(stored.text).toBe(edited)
+    await act(async () => { expect(await flushDesktopDrafts()).toBe(true) })
+    expect(stored.text).toBe(edited)
+    cancelDraftShutdown()
+    await remount()
+    expect(composer().value).toBe(edited)
+    expect(posts).toHaveLength(0)
+})
+
+test('the expanded editor submits the exact latest edit once even before its next render', async () => {
+    stored = { revision: 1, text: 'Original long draft. '.repeat(20) }
+    await render(); await click('Open the full editor')
+    const expanded = document.querySelector<HTMLTextAreaElement>('[aria-label="Expanded message"]')!
+    const edited = 'Send this edited text, rather than the original long draft.'
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(expanded, edited)
+        expanded.dispatchEvent(new Event('input', { bubbles: true }))
+        expanded.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true }))
+    })
+    expect(posts).toHaveLength(1)
+    expect(posts[0]).toMatchObject({ agentId: agent.id, sessionId: 'one', text: edited })
+    expect(stored.text).toBe('')
+    expect(document.querySelector('[aria-label="Expanded message"]')).toBeNull()
+})
+
+test('closing the expanded editor keeps its first edit and does not send it', async () => {
+    stored = { revision: 1, text: 'Original long draft. '.repeat(20) }
+    await render(); await click('Open the full editor')
+    const expanded = document.querySelector<HTMLTextAreaElement>('[aria-label="Expanded message"]')!
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(expanded, 'Keep the edited draft')
+        expanded.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === 'Cancel')!
+    expect(cancel).toBeDefined()
+    await act(async () => { cancel.click() })
+    expect(composer().value).toBe('Keep the edited draft')
+    expect(stored.text).toBe('Keep the edited draft')
+    expect(posts).toHaveLength(0)
 })
 
 test('clicking a suggested reply preserves the persisted ordinary text and file draft', async () => {

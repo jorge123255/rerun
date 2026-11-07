@@ -3,10 +3,10 @@ import {
     type DesktopCoworkerShareDatabasePreview,
     type DesktopCoworkerShareDatabaseTable,
     type DesktopCoworkerShareDatabaseView,
-} from '../../../../../packages/contracts/src/desktop-coworker-share-database.ts'
+} from '@rerun/contracts'
 import { measurePackage, normalizeTable, normalizeView, packageDigest, type DesktopCoworkerShareDatabaseTableInput, type DesktopCoworkerShareDatabaseViewInput } from './normalize.ts'
 import { DesktopCoworkerShareDatabaseError } from './errors.ts'
-import { DESKTOP_COWORKER_SHARE_DATABASE_LIMITS } from '../../../../../packages/contracts/src/desktop-coworker-share-database.ts'
+import { DESKTOP_COWORKER_SHARE_DATABASE_LIMITS } from '@rerun/contracts'
 
 export function previewDesktopCoworkerShareDatabase(
     tablesInput: readonly DesktopCoworkerShareDatabaseTableInput[],

@@ -201,6 +201,10 @@ describe('data-dir ladder', () => {
               7,
               "desktop-external-mcp",
             ],
+            [
+              8,
+              "desktop-api-connections",
+            ],
           ]
         `)
     })

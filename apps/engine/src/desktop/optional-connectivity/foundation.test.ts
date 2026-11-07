@@ -73,8 +73,8 @@ describe('optional connectivity foundation', () => {
     })
 
     it('authorizes one webhook delivery without scheduling, replaying, or granting tools', async () => {
-        const secrets = vi.fn(async () => 'correct-token')
-        const deliveries = vi.fn(async () => ({ state: 'absent' as const }))
+        const secrets = { read: vi.fn(async () => 'correct-token') }
+        const deliveries = { find: vi.fn(async () => ({ state: 'absent' as const })) }
         const admission = createIncomingWebhookAdmission({ secrets, deliveries })
         const signal = new AbortController().signal
         const fire = { token: 'correct-token', method: 'POST' as const, body: '{}', bodyBytes: 2 }
@@ -82,11 +82,11 @@ describe('optional connectivity foundation', () => {
         expect(await admission.admit({ enabled: true, scheme: 'token', workspaceId: 1, targetId: 'hook', eventKey: 'evt-1', fire: { ...fire, token: 'wrong' }, signal })).toMatchObject({ outcome: 'refused', scheduled: false })
         const ok = await admission.admit({ enabled: true, scheme: 'token', workspaceId: 1, targetId: 'hook', eventKey: 'evt-1', fire, signal })
         expect(ok).toEqual({ outcome: 'authorized', scheduled: false, grantsTools: false, replay: false })
-        const replay = createIncomingWebhookAdmission({ secrets, deliveries: async () => ({ state: 'known', eventId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', status: 'done' }) })
+        const replay = createIncomingWebhookAdmission({ secrets, deliveries: { find: async () => ({ state: 'known', eventId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', status: 'done' }) } })
         expect(await replay.admit({ enabled: true, scheme: 'token', workspaceId: 1, targetId: 'hook', eventKey: 'evt-1', fire, signal })).toMatchObject({ outcome: 'duplicate', replay: true, scheduled: false })
-        const unknown = createIncomingWebhookAdmission({ secrets, deliveries: async () => ({ state: 'unknown' }) })
+        const unknown = createIncomingWebhookAdmission({ secrets, deliveries: { find: async () => ({ state: 'unknown' }) } })
         expect(await unknown.admit({ enabled: true, scheme: 'token', workspaceId: 1, targetId: 'hook', eventKey: 'evt-1', fire, signal })).toMatchObject({ outcome: 'uncertain', scheduled: false })
-        const missing = createIncomingWebhookAdmission({ secrets: async () => null, deliveries })
+        const missing = createIncomingWebhookAdmission({ secrets: { read: async () => null }, deliveries })
         expect(await missing.admit({ enabled: true, scheme: 'token', workspaceId: 1, targetId: 'hook', eventKey: 'evt-2', fire, signal })).toMatchObject({ outcome: 'unavailable' })
         const stopped = new AbortController()
         stopped.abort()

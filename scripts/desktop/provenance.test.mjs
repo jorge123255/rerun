@@ -8,12 +8,13 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { writeStamp, stampMatches, requireStamp } from './provenance.mjs'
 
-test('the actual package entry forwards forced builds to all stages without launching a builder for stage-only', async () => {
+test('the actual package entry forces stages, skips stage-only packaging and disables publishing for local targets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rerun-package-dispatch-'))
     try {
         const report = join(root, 'dispatched.jsonl')
-        const stub = `import { appendFileSync } from 'node:fs'; export const repoRoot='/synthetic'; export const flag=name=>process.argv.includes(name); export const buildId=async()=> 'synthetic'; export const output=async()=> ''; export async function run(command,args){appendFileSync(process.env.PROVENANCE_TEST_REPORT,JSON.stringify({command,args})+'\\n')}`
-        const hook = `export async function load(url,context,next){if(url===${JSON.stringify(new URL('./lib.mjs', import.meta.url).href)})return {format:'module',shortCircuit:true,source:${JSON.stringify(stub)}};return next(url,context)}`
+        const stub = `import { appendFileSync } from 'node:fs'; export const repoRoot='/synthetic'; export const flag=name=>process.argv.includes(name); export const buildId=async()=> 'synthetic'; export const output=async()=> ''; export async function run(command,args,options){appendFileSync(process.env.PROVENANCE_TEST_REPORT,JSON.stringify({command,args,options})+'\\n')}`
+        const signing = `export async function previewSigningArguments(){return ['-c.mac.identity=offline-fixture']}`
+        const hook = `export async function load(url,context,next){if(url===${JSON.stringify(new URL('./lib.mjs', import.meta.url).href)})return {format:'module',shortCircuit:true,source:${JSON.stringify(stub)}};if(url===${JSON.stringify(new URL('./signing.mjs', import.meta.url).href)})return {format:'module',shortCircuit:true,source:${JSON.stringify(signing)}};return next(url,context)}`
         const loader = join(root, 'loader.mjs')
         await writeFile(loader, hook)
         execFileSync(process.execPath, ['--loader', loader, fileURLToPath(new URL('./package.mjs', import.meta.url)), '--stage-only', '--build'], { env: { ...process.env, PROVENANCE_TEST_REPORT: report }, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -28,6 +29,22 @@ test('the actual package entry forwards forced builds to all stages without laun
         assert(pdfStage >= 0 && pdfStage < calls.findIndex(call => call.args[0].endsWith('/write-manifest.mjs')))
         assert(calls.some(call => call.args[0].endsWith('/stage-engine.mjs')))
         assert(!calls.some(call => call.command === 'npx'))
+        // Exercise the actual entry point under CI flags. All commands and signing
+        // discovery are intercepted: no builder, native probe or Keychain is run.
+        for (const [input, target] of [[[], ['--mac', '--arm64']], [['--dmg'], ['--mac', 'dmg']]]) {
+            await writeFile(report, '')
+            const outputDir = join(root, 'artifacts')
+            execFileSync(process.execPath, ['--loader', loader, fileURLToPath(new URL('./package.mjs', import.meta.url)), ...input, '--output-dir', outputDir], {
+                env: { ...process.env, CI: 'true', GITHUB_ACTIONS: 'true', PROVENANCE_TEST_REPORT: report },
+                stdio: ['ignore', 'pipe', 'pipe'],
+            })
+            const packaged = (await readFile(report, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+            const builders = packaged.filter(call => call.command === 'npx')
+            assert.equal(builders.length, 1)
+            assert.deepEqual(builders[0].args, ['--yes', 'electron-builder@26.18.1', ...target, '--publish', 'never', '--config', 'electron-builder.yml', '-c.mac.identity=offline-fixture', `-c.directories.output=${outputDir}`])
+            assert.deepEqual(builders[0].options, { cwd: '/synthetic/apps/desktop' })
+            assert.equal(packaged.filter(call => call.command === '/usr/bin/codesign').length, 1)
+        }
     } finally { await rm(root, { recursive: true, force: true }) }
 })
 

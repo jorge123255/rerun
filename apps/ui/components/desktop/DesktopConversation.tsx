@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import { useChat } from '@ai-sdk/react'
 import { useRunReconnect } from '@/hooks/useRunReconnect'
 import { isLongMessage } from '@/lib/composer'
@@ -31,7 +32,7 @@ import { cn } from '@/lib/utils'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
-import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, type DesktopVoiceSendReceipt } from '@rerun/contracts'
+import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, parseVoiceMessage, type DesktopVoiceSendReceipt } from '@rerun/contracts'
 import { DesktopServiceRequestBlock, type DesktopServiceRequestBlockProps } from './service-requests/DesktopServiceRequestBlock'
 import { DesktopServiceRequestReceipt } from './service-requests/DesktopServiceRequestReceipt'
 import { DesktopMcpSignInBlock } from './mcp-sign-in/DesktopMcpSignInBlock'
@@ -79,7 +80,7 @@ import { DesktopUploadChips } from './DesktopUploadChips'
 import { DesktopImageUploadChips } from './DesktopImageUploadChips'
 import { ChatAttachmentChip } from '@/components/chat/ChatAttachmentChip'
 import { MessageAttachments } from '@/components/chat/MessageAttachments'
-import { DESKTOP_IMAGE_UPLOAD_ACCEPT, desktopImageKindForName } from '@/lib/desktop/composer-image'
+import { DESKTOP_IMAGE_UPLOAD_ACCEPT } from '@/lib/desktop/composer-image'
 import { useDesktopComposerImageUploads } from '@/lib/desktop/use-composer-image-uploads'
 import { DESKTOP_UPLOAD_ACCEPT } from '@/lib/desktop/composer-upload'
 import { useDesktopComposerUploads } from '@/lib/desktop/use-composer-uploads'
@@ -396,7 +397,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             release()
         })
         batchUpload.current = work
-    }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion, documents.add, tabUid])
+    }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion, documents.add, tabUid, reportUploadNotice])
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; mcpSignIn?: DesktopMcpSignInResponse | null; error?: string; loadedGeneration?: number; lastError?: string | null; activeRunId?: string | null; runsUnavailable?: boolean }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null, mcpSignIn: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer | DesktopTakeoverTerminal; onAccepted?: () => void; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
@@ -1167,19 +1168,36 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         unknownUploads ? `${unknownUploads} attachment${unknownUploads > 1 ? 's' : ''} may already be in this coworker’s Files. Check Files, then dismiss ${unknownUploads > 1 ? 'these upload statuses' : 'this upload status'} before sending.` : '',
     ].filter(Boolean).join(' ')
 
+    const lastUserIndex = transcript.findLastIndex(message => message.role === 'user')
+    const savedRetryAnswer = lastUserIndex < 0 ? undefined : transcript.findLast((message, index) =>
+        index > lastUserIndex && message.role === 'assistant' && message.id.startsWith('engine-'))
+    const terminalUser = lastUserIndex >= 0 && lastUserIndex === transcript.length - 1 ? transcript[lastUserIndex] : undefined
+    const retryMetadata = terminalUser?.metadata
+    const plainRetry = retryMetadata == null || typeof retryMetadata === 'object' && !Array.isArray(retryMetadata)
+        && Object.keys(retryMetadata).every(key => key === 'createdAt' || key === 'authorId')
+    // The raw text path cannot reconstruct attachment, mention, or voice authority.
+    const retryText = terminalUser && plainRetry && terminalUser.parts.every(part => part.type === 'text') ? lastUserText(transcript) : ''
+    const canRetry = active && canRegenerate && !pendingRequest && !uploadsActive && !preparingSend
+        && !regenerationSource && !history.runsUnavailable
+        && (!!savedRetryAnswer || modelReady && !!retryText && !parseVoiceMessage(retryText))
     const recovery = useDesktopChatRecovery({
         scope: { agentId: agent.id, tabUid: tabUid ?? null, sessionId, liveSessionId: liveSessionId ?? sessionId, runId: engineRunning.id === sessionId ? engineRunning.runId ?? null : null, requestId: null, modelRevision },
         error: reconnecting ? null : error?.message ?? null,
         failedRun: engineRunning.id === sessionId && engineRunning.failedRunId ? { runId: engineRunning.failedRunId, error: engineRunning.failedRunError ?? null } : null,
-        canRetry: transcript.some(message => message.role === 'user'),
+        canRetry,
         active,
         ports: {
-            retryLastTurn: () => {
-                const assistant = [...transcript].reverse().find(message => message.role === 'assistant' && message.id.startsWith('engine-'))
-                if (canRegenerate && assistant) void regenerateReply(assistant.id)
-                else {
-                    const text = lastUserText(transcript)
-                    if (text && sessionId) void sendMessage({ text }, { body: { agentId: agent.id, sessionId } })
+            retryLastTurn: async () => {
+                if (!canRetry || !sessionId || isDesktopQuitting() || preparingSubmit.current
+                    || uploadsBusy() || pendingAttachment.current || regenerating.current || quickReplyRequest.current) return
+                if (savedRetryAnswer) return regenerateReply(savedRetryAnswer.id)
+                preparingSubmit.current = true
+                const release = holdDraftAdmission()
+                try {
+                    await sendMessage({ text: retryText }, { body: { agentId: agent.id, sessionId } })
+                } finally {
+                    preparingSubmit.current = false
+                    release()
                 }
             },
             continueRun: () => { if (sessionId) void sendMessage({ text: 'Continue where you left off.' }, { body: { agentId: agent.id, sessionId } }) },
@@ -1338,7 +1356,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         message={recovery.notice.message}
                         agentId={agent.id}
                         sessionId={sessionId}
-                        onRetry={() => recovery.act('retry')}
+                        onRetry={canRetry ? () => recovery.act('retry') : undefined}
                         onContinue={() => recovery.act('continue')}
                         onStopRun={() => recovery.act('stop')}
                         onNewConversation={() => recovery.act('new-conversation')}
@@ -1395,12 +1413,14 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 {question && !webhookOwns('question', question.id) && <DesktopQuestionCard key={question.id} question={question} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onAnswer={answerQuestion} />}
                 {approval && !webhookOwns('approval', approval.id) && <DesktopApprovalCard key={approval.id} approval={approval} disabled={draft.quitting || !active || inactive || generating || stopping || !ready} onDecide={decideApproval} />}
                 {documentPreview && <DesktopDocumentLightbox {...documentPreview} onIndexChange={index => setDocumentPreview(value => value ? { ...value, index } : null)} onClose={() => setDocumentPreview(null)} />}
-                <MarkdownEditorDialog key={editorSession} open={editorOpen} onOpenChange={setEditorOpen} initialValue={input} title="Write your message" description="Room to structure a long message. Enter starts a new line." hint="Send with Cmd + Enter" closeLabel="Cancel" submitLabel="Send" submitIcon={<SendIcon className="size-4" />} submitting={preparingSend || stopping}
+                <MarkdownEditorDialog key={editorSession} open={active && editorOpen} onOpenChange={setEditorOpen} initialValue={input} title="Write your message" description="Room to structure a long message. Enter starts a new line." hint="Send with Cmd + Enter" closeLabel="Cancel" submitLabel="Send" submitIcon={<SendIcon className="size-4" />} submitting={preparingSend || stopping}
+                    onDraftChange={setInput}
                     onClose={markdown => { setInput(markdown); queueMicrotask(() => composerForm.current?.querySelector('textarea')?.focus()) }}
                     onSubmit={markdown => {
-                        setInput(markdown)
-                        setEditorOpen(false)
-                        if (inactive || generating || stopping || draft.quitting || !ready || uploadsActive || preparingSend || !!pendingRequest) return
+                        // The normal form admission compares the current draft with its render's
+                        // snapshot. Publish edited text before dispatching that form's submit.
+                        flushSync(() => { setInput(markdown); setEditorOpen(false) })
+                        if (!active || inactive || generating || stopping || draft.quitting || !ready || uploadsActive || preparingSend || !!pendingRequest) return
                         composerForm.current?.requestSubmit()
                     }} />
                 <form ref={composerForm} onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>

@@ -11,8 +11,8 @@ import {
     type DesktopCoworkerShareDatabaseTable,
     type DesktopCoworkerShareDatabaseValue,
     type DesktopCoworkerShareDatabaseView,
-} from '../../../../../packages/contracts/src/desktop-coworker-share-database.ts'
-import { tableViewConfigSchema } from '../../../../../packages/contracts/src/table-view.ts'
+} from '@rerun/contracts'
+import { tableViewConfigSchema } from '@rerun/contracts'
 import { DesktopCoworkerShareDatabaseError } from './errors.ts'
 import { canonicalJson, sha256Hex } from './hash.ts'
 

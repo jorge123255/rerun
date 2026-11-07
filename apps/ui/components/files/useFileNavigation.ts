@@ -23,6 +23,7 @@ export type FileNavigation<T> = {
     goHome: () => void
     setShowHidden: (update: (previous: boolean) => boolean) => void
     reload: () => void
+    refreshCurrent: () => void
 }
 
 export function useFileNavigation<T>({ list, initialPath = '', initialShowHidden = false, onDirectoryLoaded }: UseFileNavigationOptions<T>): FileNavigation<T> {
@@ -82,6 +83,11 @@ export function useFileNavigation<T>({ list, initialPath = '', initialShowHidden
         void load(currentPath)
     }, [load, currentPath])
 
+    // A background update should leave a pending folder selection in place.
+    const refreshCurrent = useCallback(() => {
+        if (requestedPath === currentPath) void load(currentPath)
+    }, [requestedPath, currentPath, load])
+
     return {
         currentPath,
         entries: directory?.entries ?? [],
@@ -96,5 +102,6 @@ export function useFileNavigation<T>({ list, initialPath = '', initialShowHidden
         goHome,
         setShowHidden,
         reload,
+        refreshCurrent,
     }
 }

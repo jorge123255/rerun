@@ -1,5 +1,6 @@
 import 'server-only'
-import { listRuns, reconnectRun, type EngineRun } from '@/lib/engine/client'
+import { listRuns, reconnectRun } from '@/lib/engine/client'
+import type { EngineRun } from '@/lib/engine/types'
 import { DesktopHttpError } from './auth'
 import { desktopResumeDecision, desktopRunRecovery, type DesktopOwnedRun, type DesktopRunRecovery } from '../chat-resume'
 import { openDesktopDatabase } from './database'

@@ -104,6 +104,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const workspaceDialogEpoch = useRef(0)
     const workspaceDialogLease = useRef({ active: workspaceDialogActive, workspaceId: runtimeWorkspaceId })
     workspaceDialogLease.current = { active: workspaceDialogActive, workspaceId: runtimeWorkspaceId }
+    const workspaceMounted = useRef(true)
+    const importedCoworkerReads = useRef(new Map<string, Promise<{ agents: DesktopAgentView[]; imported: DesktopAgentView } | null>>())
+    useEffect(() => { workspaceMounted.current = true; return () => { workspaceMounted.current = false } }, [])
     useEffect(() => () => { workspaceDialogEpoch.current++; workspaceDialogLease.current.active = false }, [])
     useEffect(() => {
         if (workspaceDialogActive) { workspaceDialogWasOpen.current = true; return }
@@ -563,20 +566,50 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const openExternalMcp = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) { rememberWorkspaceDialogFocus(); setExternalMcpOpen(true) } }
     const openServers = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) { rememberWorkspaceDialogFocus(); setServersOpen(true) } }
     const openImportCoworker = () => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) { rememberWorkspaceDialogFocus(); setImportCoworkerOpen(true) } }
+    function ownsImportedCoworkerWorkspace(workspaceId: number | null) {
+        return workspaceId !== null && workspaceMounted.current && workspaceDialogLease.current.workspaceId === workspaceId && !isDesktopQuitting()
+    }
+    function readImportedCoworker(agentId: string, workspaceId: number | null) {
+        const current = () => ownsImportedCoworkerWorkspace(workspaceId)
+        if (!current()) return Promise.resolve(null)
+        const key = JSON.stringify([workspaceId, agentId])
+        const pending = importedCoworkerReads.current.get(key)
+        if (pending) return pending
+        // An acknowledgement and Open can overlap. Share the canonical read so that
+        // the board refresh in either path cannot cancel the other's navigation.
+        const read = (async () => {
+            const result = await json<{ agents: DesktopAgentView[] }>(await fetch('/api/desktop/agents', { cache: 'no-store', signal: AbortSignal.timeout(15_000) }))
+            if (!current()) return null
+            const imported = result.agents.find(agent => agent.id === agentId)
+            if (!imported) throw new Error('The saved coworker could not be read from the board yet.')
+            const refreshed = await boardState.refresh()
+            if (!current()) return null
+            if (initialData.board && !refreshed) throw new Error('The saved coworker’s board position could not be refreshed yet.')
+            return { agents: result.agents, imported }
+        })().finally(() => { importedCoworkerReads.current.delete(key) })
+        importedCoworkerReads.current.set(key, read)
+        return read
+    }
+    async function refreshImportedCoworker(agentId: string) {
+        const workspaceId = runtimeWorkspaceId
+        // The acknowledged copy belongs to the workspace, even if Done closes its dialog
+        // before this read finishes. Closing the dialog must not select a chat or cancel it.
+        const current = () => ownsImportedCoworkerWorkspace(workspaceId)
+        try {
+            const result = await readImportedCoworker(agentId, workspaceId)
+            if (result && current()) mergeBoardAgents(result.agents)
+        } catch (cause) { if (current()) toast.error('The fresh copy is saved, but the board could not refresh.', { description: cause instanceof Error ? cause.message : 'Reopen this workspace to read it.' }) }
+    }
     async function openImportedCoworker(agentId: string) {
         if (!workspaceDialogLease.current.active || isDesktopQuitting()) return
         const epoch = workspaceDialogEpoch.current
         const workspaceId = workspaceDialogLease.current.workspaceId
-        const current = () => epoch === workspaceDialogEpoch.current && workspaceDialogLease.current.active && workspaceDialogLease.current.workspaceId === workspaceId && !isDesktopQuitting()
+        const current = () => epoch === workspaceDialogEpoch.current && workspaceDialogLease.current.active && ownsImportedCoworkerWorkspace(workspaceId)
         const selectedAtStart = selectedAgentRef.current
         try {
-            const result = await json<{ agents: DesktopAgentView[] }>(await fetch('/api/desktop/agents', { cache: 'no-store', signal: AbortSignal.timeout(15_000) }))
-            if (!current()) return
-            const imported = result.agents.find(agent => agent.id === agentId)
-            if (!imported || imported.enabled !== false) throw new Error('The fresh disabled coworker could not be confirmed on the board.')
-            const refreshed = await boardState.refresh()
-            if (!current()) return
-            if (initialData.board && !refreshed) throw new Error('The fresh coworker’s board position could not be refreshed.')
+            const result = await readImportedCoworker(agentId, workspaceId)
+            if (!result || !current()) return
+            if (result.imported.enabled !== false) throw new Error('The fresh disabled coworker could not be confirmed on the board.')
             if (selectedAgentRef.current !== selectedAtStart || deletedAgents.current.has(agentId)) return
             mergeBoardAgents(result.agents)
             workspaceDialogReturnFocus.current = null
@@ -691,8 +724,8 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             {workspaceDialogActive && runtimeWorkspaceId === null && <DesktopWorkspaceDialogStatus title={shareTarget ? `Share ${shareTarget.name}` : importCoworkerOpen ? 'Import coworker' : serversOpen ? 'Servers' : 'API keys & MCP'} error={workspaceIdentityError} onClose={closeWorkspaceDialogs} onRetry={() => setWorkspaceIdentityAttempt(value => value + 1)} />}
             {runtimeWorkspaceId !== null && externalMcpOpen && <DesktopExternalMcpDialog workspaceId={runtimeWorkspaceId} open onOpenChange={next => { if (!next) closeWorkspaceDialogs() }} />}
             {runtimeWorkspaceId !== null && serversOpen && <DesktopServersNavigation key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId} onClose={closeWorkspaceDialogs} />}
-            {runtimeWorkspaceId !== null && shareTarget && <DesktopCoworkerShareLauncher key={`${runtimeWorkspaceId}:${shareTarget.id}`} workspaceId={runtimeWorkspaceId} agentId={shareTarget.id} agentName={shareTarget.name} onClose={closeWorkspaceDialogs} onOpenCoworker={agentId => { void openImportedCoworker(agentId) }} />}
-            {runtimeWorkspaceId !== null && importCoworkerOpen && <DesktopPortableCoworkerImport key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId} onClose={closeWorkspaceDialogs} onOpenCoworker={agentId => { void openImportedCoworker(agentId) }} />}
+            {runtimeWorkspaceId !== null && shareTarget && <DesktopCoworkerShareLauncher key={`${runtimeWorkspaceId}:${shareTarget.id}`} workspaceId={runtimeWorkspaceId} agentId={shareTarget.id} agentName={shareTarget.name} onClose={closeWorkspaceDialogs} onImported={refreshImportedCoworker} onOpenCoworker={agentId => { void openImportedCoworker(agentId) }} />}
+            {runtimeWorkspaceId !== null && importCoworkerOpen && <DesktopPortableCoworkerImport key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId} onClose={closeWorkspaceDialogs} onImported={refreshImportedCoworker} onOpenCoworker={agentId => { void openImportedCoworker(agentId) }} />}
             <DesktopNotificationDelivery
                 visibleSessionId={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !creating && !controlCenterOpen && !busy && !boardInteraction && visibleSession?.agentId === selectedAgentId ? visibleSession.sessionId : null}
                 onOpenConversation={target => {

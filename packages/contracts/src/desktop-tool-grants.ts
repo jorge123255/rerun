@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { foremanAgentFileCatalogEntries } from './desktop-foreman-agent-files'
+import { foremanAgentFileCatalogEntries } from './desktop-foreman-agent-files.js'
 
 export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'tableViewWrite', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'download', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate', 'teamRead', 'vision', 'notify', 'foremanAgentFilesRead', 'foremanAgentFilesWrite'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
@@ -43,7 +43,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('sharedFilesRead', 'Read shared files', 'Read, list and search text and Markdown files in the workspace shared folder. Every coworker with this permission sees the same shared documents.', 'shared_read', 'shared_list', 'shared_search'),
     supported('sharedFilesWrite', 'Edit shared files', 'Create and edit text and Markdown files in the workspace shared folder. Changes are visible to coworkers with shared-file access.', 'shared_write', 'shared_edit'),
     supported('guestShell', 'Run commands in isolated computer', 'Run shell programs in this coworker’s isolated Linux computer. Commands can change guest files, use its browser profile and network, and install software. This does not grant Mac file or host command access.', 'shell_exec', 'shell_inspect'),
-    supported('webFetch', 'Read public web pages', 'Read public HTTP(S) text and HTML pages without cookies or saved files.', 'web_fetch'),
+    supported('webFetch', 'Read public web pages', 'Read public HTTP(S) text and HTML pages without cookies. A full copy can be saved when Edit workspace files is enabled.', 'web_fetch'),
     supported('webSearch', 'Search public web', 'Search with the Brave Search key in Settings. Separate from native Codex search.', 'web_search'),
     supported('download', 'Download files', 'Download a public file into this coworker’s Files. The file is not executed or unpacked.', 'download'),
     supported('db', 'Private database', 'Read and change structured records in this coworker’s private database.', 'db_query', 'db_execute', 'db_schema'),
@@ -74,11 +74,13 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     nested('self', 'toolInstall', 'Propose package installations', 'Propose exact npm package versions for your review. Approval runs package scripts only inside this coworker’s isolated computer; it does not install anything on your Mac.', 'tool_install'),
     nested('self', 'selfMcpRegister', 'Propose MCP servers', 'Let this coworker suggest tool connections for your review. Approval and tool access use separate permissions; proposing never installs packages or launches programs.', 'mcp_register'),
     nested('self', 'verbositySet', 'Change reply length', 'Let this coworker durably change how long its answers are, from minimal to detailed.', 'verbosity_set'),
-    supported('mcp', 'Custom MCP servers', 'Use tools from this coworker’s configured HTTPS MCP servers. Configure connections in MCP servers.'),
+    supported('mcp', 'Custom MCP servers',
+        'Use this coworker’s configured HTTPS MCP servers, inspect their status, and ask you to sign in. Device-code fallback requires a separately approved desktop adapter.',
+        'request_mcp_sign_in', 'mcp_login', 'mcp_login_complete', 'mcp_status'),
     supported('localMcpStdio', 'Local MCP programs', 'Run explicitly configured programs as your Mac user. These programs can access your Mac files and network. Saving a connection does not enable this permission.'),
     supported('nativeWriteback', 'Review temporary file changes', 'Keep proposed text and Markdown changes from native Codex edits for your review. Each file requires approval before it changes this coworker’s Files.'),
     pending('foreman', 'Foreman', 'Build a team and work across coworkers.', 'Requires the board’s Foreman runtime and workspace authorization.'),
-    ...foremanAgentFileCatalogEntries,
+    ...foremanAgentFileCatalogEntries.map(entry => ({ ...entry, tools: [...entry.tools] })),
 ]
 
 export const desktopCodexToolCatalog: DesktopToolCatalogEntry[] = [

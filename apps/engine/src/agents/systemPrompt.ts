@@ -219,7 +219,9 @@ function turnClosers(agent: LoadedAgent, takeover: boolean): TurnClosers {
         request_approval: tools.requestApproval,
         suggest_service: desktopApp() ? agent.config.enabled && hasDesktopToolGrant(agent.config, 'suggestService') : tools.suggestService,
         request_secret: desktopApp() ? agent.config.enabled && hasDesktopToolGrant(agent.config, 'requestSecret') : tools.requestSecret,
-        request_mcp_sign_in: !desktopApp() && selfImprovement.enabled,
+        request_mcp_sign_in: desktopApp()
+            ? agent.config.enabled && !agent.config.ephemeral && hasDesktopToolGrant(agent.config, 'mcp')
+            : selfImprovement.enabled,
         request_takeover: takeover,
     }
     return {

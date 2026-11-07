@@ -32,7 +32,7 @@ function includeMember(path: string, ownership: string, include: DesktopCoworker
 }
 
 function exclusionReason(path: string, ownership: string): 'credentials' | 'history' | 'memory' | 'database' | 'connector-skill' | 'service-registry' | 'native-grant' | 'routine' | 'webhook' | 'system-skill' {
-    if (path === '.env' || path === 'data/system.db') return 'credentials'
+    if (path === '.env' || path === 'data/system.db' || scanPathForSecrets(path).length) return 'credentials'
     if (path.startsWith('memory/')) return 'memory'
     if (path === 'data/agent.db') return 'database'
     if (path.startsWith('schedules/')) return 'routine'
@@ -111,8 +111,9 @@ export function createDesktopCoworkerImportPlan(_manifest: DesktopCoworkerSnapsh
 }
 
 export function createDesktopCoworkerSharePlan(source: DesktopCoworkerShareSource): DesktopCoworkerSharePlan {
-    const count = (prefix: string) => source.members.filter(member => member.path.startsWith(prefix))
-    const sum = (paths: string[]) => source.members.filter(member => paths.includes(member.path)).reduce((total, member) => total + member.bytes.length, 0)
+    const eligible = source.members.filter(member => includeMember(member.path, member.ownership, { memories: true, database: true, files: true }))
+    const count = (prefix: string) => eligible.filter(member => member.path.startsWith(prefix))
+    const sum = (paths: string[]) => eligible.filter(member => paths.includes(member.path)).reduce((total, member) => total + member.bytes.length, 0)
     return {
         agentName: source.name,
         warnings: ['Selected instructions, files, skills and binary assets are copied as written. Binary files are not text-scanned for secrets.', 'The Box database and the Box shared files stay here: a copy starts with an empty one.'],

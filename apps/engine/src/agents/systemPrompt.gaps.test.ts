@@ -301,10 +301,13 @@ describe('buildSystemPrompt for the foreman', () => {
         expect(prompt).toContain('the first message you write to the user ends your turn')
     })
 
-    it('adds the bridge note and the message-first order on claude', async () => {
+    it('adds the bridge note and orders the closing card before the final message on claude', async () => {
         const prompt = await buildSystemPrompt(foreman(), { source: 'chat' }, 'claude')
         expect(prompt).toContain('<bridged_tools>')
-        expect(prompt).toContain('A turn ends in this order, your message first')
+        const order = prompt.match(/<turn_order>\n([\s\S]*?)\n<\/turn_order>/)?.[1] ?? ''
+        expect(order).toMatch(/the calls first: .*at most one card that asks the user something \(.*ask_user.*\); \d\) your message, complete/)
+        expect(order).toContain('as the last thing you write')
+        expect(order).not.toContain('your message first')
     })
 })
 

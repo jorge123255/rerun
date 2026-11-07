@@ -3,6 +3,8 @@ import { withAgentLock } from '../agents/lock.js'
 import type { RunContext } from '../runtime/context.js'
 import { beginDesktopAgentWork } from './agent-lifecycle.js'
 import { hasDesktopToolGrant, requireDesktopToolGrant } from './tool-grants.js'
+import { isolatedScreenOwner } from './isolated-screen/binding.js'
+import { desktopWebFetchContinuationPublisher, webFetchRunGeneration } from './web-fetch-continuation/index.js'
 import { executeWebFetch, webFetchDescription, webFetchInputSchema } from './web-fetch/index.js'
 
 export function desktopWebFetchTools(ctx: RunContext): ToolSet {
@@ -19,9 +21,32 @@ export function desktopWebFetchTools(ctx: RunContext): ToolSet {
                 signal.throwIfAborted()
                 const release = beginDesktopAgentWork(ctx.agent.id)
                 try {
+                    const continuation = (() => {
+                        if (!ctx.runId || !options.toolCallId) return undefined
+                        try {
+                            return {
+                                identity: {
+                                    engineAgentId: ctx.agent.id,
+                                    sessionId: ctx.sessionId,
+                                    runId: ctx.runId,
+                                    toolCallId: options.toolCallId,
+                                    target: {
+                                        engineAgentId: ctx.agent.id,
+                                        launchNonce: isolatedScreenOwner(ctx.agent.id).launchNonce,
+                                        sessionGeneration: webFetchRunGeneration(ctx.runId),
+                                    },
+                                    url: webFetchInputSchema.parse(input).url,
+                                },
+                                publish: desktopWebFetchContinuationPublisher,
+                            }
+                        } catch {
+                            return undefined
+                        }
+                    })()
                     const result = await executeWebFetch(input, {
                         coworkerId: ctx.agent.id,
                         signal,
+                        ...(continuation ? { continuation } : {}),
                         assertPermission: async id => {
                             if (id !== ctx.agent.id) throw new Error('This web request belongs to another coworker.')
                             // Read current persisted permission under the same short lock used

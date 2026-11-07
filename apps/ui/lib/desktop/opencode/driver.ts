@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { DesktopOpencodeRefresh, DesktopOpencodeWindow } from '@rerun/contracts'
 import type { DesktopOpencodeAuthoritySnapshot } from '../server/opencode/authority'
 
-export type { DesktopOpencodeAuthoritySnapshot as DesktopOpencodeConnectionSnapshot }
+export type DesktopOpencodeConnectionSnapshot = DesktopOpencodeAuthoritySnapshot
 export const desktopOpencodeConnectionSnapshotSchema = z.strictObject({
     workspaceId: z.number().int().positive(),
     owner: z.string().min(1),

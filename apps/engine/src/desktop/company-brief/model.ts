@@ -9,6 +9,7 @@ import { ensureCliAuth } from '../../connections/cli-auth.js'
 import { readDesktopForemanBinding } from '../foreman/binding.js'
 import { assertDesktopRunAdmission } from '../workspace-admission.js'
 import { HttpError } from '../../lib/errors.js'
+import { beginDesktopApiConnectionWork } from '../api-connections/admission.js'
 
 export type CompanyBriefModel = {
     confirm(selection: CompanyBriefModelRef): Promise<boolean>
@@ -47,30 +48,36 @@ export function openDesktopCompanyBriefModel(): CompanyBriefModel {
     return {
         confirm: confirmExplicitCompanyBriefModel,
         async complete({ selection, prompt, signal }) {
-            const admission = assertDesktopRunAdmission()
-            signal.throwIfAborted()
-            if (!await confirmExplicitCompanyBriefModel(selection)) return null
-            const connection = await findConnection(selection.connectionId)
-            if (!connection) return null
-            // modelFor is the existing one-shot path used for memory reconciliation/compaction.
-            // Codex uses the packaged isolated exec runner; Claude gets an owned isolated runner
-            // with teardown. No Rerun tools or native tool grants are supplied to this call.
-            const source = await getAgent(selection.agentId ?? FOREMAN_AGENT_ID)
-            const agent = { ...source, env: {}, resolved: { provider: selection.provider, model: selection.model, connection } }
-            assertDesktopRunAdmission(admission)
-            const release = await ensureCliAuth(selection.provider, connection)
+            const releaseWork = beginDesktopApiConnectionWork()
+            if (!releaseWork) throw new HttpError(409, 'A provider connection is being removed. Nothing new was started.')
             try {
+                const admission = assertDesktopRunAdmission()
                 signal.throwIfAborted()
                 if (!await confirmExplicitCompanyBriefModel(selection)) return null
+                const connection = await findConnection(selection.connectionId)
+                if (!connection) return null
+                // modelFor is the existing one-shot path used for memory reconciliation/compaction.
+                // Codex uses the packaged isolated exec runner; Claude gets an owned isolated runner
+                // with teardown. No Rerun tools or native tool grants are supplied to this call.
+                const source = await getAgent(selection.agentId ?? FOREMAN_AGENT_ID)
+                const agent = { ...source, env: {}, resolved: { provider: selection.provider, model: selection.model, connection } }
                 assertDesktopRunAdmission(admission)
-                const result = await generateText({
-                    model: modelFor(agent), prompt, maxOutputTokens: 16_000,
-                    maxRetries: 0, abortSignal: signal,
-                    providerOptions: { openai: { store: false } },
-                })
-                signal.throwIfAborted()
-                return await confirmExplicitCompanyBriefModel(selection) ? result.text : null
-            } finally { release() }
+                const release = await ensureCliAuth(selection.provider, connection)
+                try {
+                    signal.throwIfAborted()
+                    if (!await confirmExplicitCompanyBriefModel(selection)) return null
+                    if (await findConnection(selection.connectionId) !== connection) return null
+                    assertDesktopRunAdmission(admission)
+                    const result = await generateText({
+                        model: modelFor(agent), prompt, maxOutputTokens: 16_000,
+                        maxRetries: 0, abortSignal: signal,
+                        providerOptions: { openai: { store: false } },
+                    })
+                    signal.throwIfAborted()
+                    const current = await confirmExplicitCompanyBriefModel(selection) && await findConnection(selection.connectionId) === connection
+                    return current ? result.text : null
+                } finally { release() }
+            } finally { releaseWork() }
         },
     }
 }

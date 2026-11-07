@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
+import type { DesktopCompanyProfileClient } from '@/lib/desktop/company-profile/client'
 import { profileAttempt, profileChat, profileView } from '@/lib/desktop/company-profile/test-fixtures'
 import { DesktopCompanyProfileBoardPreview } from './DesktopCompanyProfileBoardPreview'
+import { DesktopCompanyProfile } from './DesktopCompanyProfile'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
@@ -35,15 +37,34 @@ test('sourced name, description, offering, audience, industry and citations use 
     expect(document.querySelector('a[href="https://retalk.example/about"]')).toBeTruthy()
 })
 
-test('pending and cancelled outcomes remain truthful and compact keeps one finding', async () => {
-    await render({ ...profileView, enrichment: profileAttempt('enrich', 'pending') }, true)
+test('the mounted profile keeps pending/cancelled controls truthful while its compact preview keeps one finding', async () => {
+    const pending = profileAttempt('enrich', 'pending')
+    const cancelled = profileAttempt('enrich', 'cancelled')
+    let view = { ...profileView, enrichment: pending }
+    const api: DesktopCompanyProfileClient = {
+        read: vi.fn(async () => view),
+        decide: vi.fn(async () => profileAttempt('decide')),
+        enrich: vi.fn(async () => profileAttempt('enrich')),
+        cancel: vi.fn(async input => {
+            expect(input).toEqual({ requestId: pending.requestId, chat: profileChat })
+            view = { ...profileView, enrichment: cancelled }
+            return cancelled
+        }),
+    }
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopCompanyProfile chat={profileChat} client={api} active emptyWorkspace onboarding draftRevision={3} compact />))
     expect(document.body.textContent).toContain('Reading the public website…')
     expect(document.body.textContent).toContain('Stop analysis')
     expect(document.body.textContent).not.toContain('What you sell')
-    await act(async () => root!.unmount())
-    document.body.replaceChildren()
-    await render({ ...profileView, enrichment: profileAttempt('enrich', 'cancelled') }, true)
+    expect(document.body.textContent).toContain('Found you')
+    expect(api.decide).not.toHaveBeenCalled()
+    expect(api.enrich).not.toHaveBeenCalled()
+    const stop = [...document.querySelectorAll('button')].find(button => button.textContent === 'Stop analysis')!
+    await act(async () => { stop.click() })
+    expect(api.cancel).toHaveBeenCalledOnce()
     expect(document.body.textContent).toContain('Company analysis stopped.')
     expect(document.body.textContent).toContain('Try again')
     expect(document.body.textContent).not.toContain('Reading the public website…')
+    expect(document.body.textContent).not.toContain('What you sell')
+    expect(api.enrich).not.toHaveBeenCalled()
 })

@@ -21,6 +21,8 @@ async function fakeResources() {
     await writeFile(join(root, 'runtime', 'engine', 'dist', 'cli', 'bin.js'), 'fake')
     await writeFile(join(root, 'main', 'ui-host.mjs'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-codex'), 'fake')
+    await writeFile(join(root, 'runtime', 'rerun-claude'), 'fake')
+    await writeFile(join(root, 'runtime', 'rerun-claude.sb'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-rename-entry'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-render-pdf'), 'fake')
     await writeFile(join(root, 'runtime', 'rerun-pdf-text'), 'fake')
@@ -33,6 +35,8 @@ async function fakeResources() {
         engineEntry: 'runtime/engine/dist/cli/bin.js',
         uiHost: 'main/ui-host.mjs',
         codexPath: 'runtime/rerun-codex',
+        claudePath: 'runtime/rerun-claude',
+        claudeSandboxPath: 'runtime/rerun-claude.sb',
         renameHelperPath: 'runtime/rerun-rename-entry',
         pdfHelperPath: 'runtime/rerun-render-pdf',
         pdfTextHelperPath: 'runtime/rerun-pdf-text',
@@ -71,6 +75,8 @@ test('loadBundle resolves the packaged UI host from the manifest inside resource
         assert.equal(bundle.uiHost, await realpath(resolve(root, 'main', 'ui-host.mjs')))
         assert(existsSync(bundle.uiHost))
         assert(!bundle.uiHost.includes('.asar'))
+        assert.equal(bundle.claudePath, await realpath(resolve(root, 'runtime', 'rerun-claude')))
+        assert.equal(bundle.claudeSandboxPath, await realpath(resolve(root, 'runtime', 'rerun-claude.sb')))
         assert.equal(bundle.pdfHelperPath, await realpath(resolve(root, 'runtime', 'rerun-render-pdf')))
         assert.equal(bundle.pdfTextHelperPath, await realpath(resolve(root, 'runtime', 'rerun-pdf-text')))
     } finally { await rm(root, { recursive: true, force: true }) }
@@ -114,7 +120,7 @@ test('the supervisor launches the UI child through the real resource path, never
             return { ok: true, json: async () => ({ ...runtime, status: 'ready' }) }
         }
         let port = 55000
-        const identity = { version: 1, installId: 'install-layout-test', engineApiKey: 'a'.repeat(64), encryptionKey: 'b'.repeat(64) }
+        const identity = { version: 1, installId: '11111111-1111-4111-8111-111111111111', engineApiKey: 'a'.repeat(64), encryptionKey: 'b'.repeat(64) }
         const supervisor = new RuntimeSupervisor({ bundle, root: dataRoot, identity, launch, fetcher, port: async () => ++port })
         const runtime = await supervisor.start()
         assert.equal(runtime.app.origin, 'http://127.0.0.1:55001')

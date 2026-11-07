@@ -1,12 +1,13 @@
 import { expect, it } from 'vitest'
 import type { ConnectionUsage, CreateConnectionInput, DesktopApiPendingRun, UpdateConnectionInput, UpdateConnectionKeysInput } from '@rerun/contracts'
 import type { LoadedConnection } from '../../connections/types.js'
-import { createDesktopApiConnectionService, type DesktopApiConnectionAuthority } from './service'
+import { createDesktopApiConnectionService, DesktopApiConnectionRefusal, desktopApiConnectionFingerprint, type DesktopApiConnectionAuthority } from './service'
 import { memoryDesktopApiConnectionStore } from './store'
+import { beginDesktopApiConnectionRemoval, beginDesktopApiConnectionWork, desktopApiConnectionRemovalAvailable } from './admission.js'
 
 let sequence = 0
-const ids = () => `cnx_test-${++sequence}`
-const revisions = () => `rev_test-${++sequence}`
+const ids = () => `cnx_test-${String(++sequence).padStart(8, '0')}`
+const revisions = () => `rev_test-${String(++sequence).padStart(8, '0')}`
 const now = () => new Date('2026-11-06T00:00:00.000Z')
 
 function authority(): DesktopApiConnectionAuthority {
@@ -48,6 +49,8 @@ function authority(): DesktopApiConnectionAuthority {
         async clearDefault() { currentDefault = null },
         async pendingRuns(id) { return pending.get(id) ?? [] },
         async stopAndDrain(id) { pending.set(id, []) },
+        removalAvailable: () => true,
+        withRemoval: async (_id, effect) => effect(),
         setPending(id, runs) { pending.set(id, runs) },
         setUsage(id, usage) { usages.set(id, usage) },
         connection(id) { return connections.get(id) },
@@ -69,14 +72,15 @@ it('creates distinct siblings with redacted views and binds execution to the sel
     const second = await service.create(createInput('OpenAI work', 'sk-second'))
     expect(first.connection!.connectionId).not.toBe(second.connection!.connectionId)
     expect(first.connection!.revision).not.toBe(second.connection!.revision)
-    const catalog = await service.list(1)
+    const catalog = await service.list()
     expect(catalog.connections).toHaveLength(2)
     expect(JSON.stringify(catalog)).not.toContain('sk-first')
     expect(JSON.stringify(catalog)).not.toContain('sk-second')
     const selected = await service.select({ requestId: crypto.randomUUID(), workspaceId: 1, connectionId: second.connection!.connectionId, expectedRevision: second.connection!.revision, model: 'gpt-5', source: 'workspace', runId: 'run-1', sessionId: 'session-1' })
     expect(selected.connection!.connectionId).toBe(second.connection!.connectionId)
     const snapshot = await service.executionSnapshot({ connectionId: second.connection!.connectionId, source: 'workspace', runId: 'run-1', sessionId: 'session-1', requestId: 'request-1' })
-    expect(snapshot.connectionRevision).toBe(second.connection!.revision)
+    expect(selected.connection!.revision).not.toBe(second.connection!.revision)
+    expect(snapshot.connectionRevision).toBe(selected.connection!.revision)
     expect((await service.credentialForSnapshot(snapshot)).secret).toBe('sk-second')
 })
 
@@ -84,8 +88,8 @@ it('refuses to remove the selected default model while preserving the sibling', 
     const { service, authority } = harness()
     const first = await service.create(createInput('First', 'sk-first'))
     const second = await service.create(createInput('Second', 'sk-second'))
-    await service.select({ requestId: crypto.randomUUID(), workspaceId: 1, connectionId: second.connection!.connectionId, expectedRevision: second.connection!.revision, model: 'gpt-5', source: 'workspace', runId: 'run-1', sessionId: 'session-1' })
-    const result = await service.models({ requestId: crypto.randomUUID(), workspaceId: 1, connectionId: second.connection!.connectionId, expectedRevision: second.connection!.revision, models: [], extraModels: [], expectedDefault: { connectionId: second.connection!.connectionId, model: 'gpt-5' } })
+    const selected = await service.select({ requestId: crypto.randomUUID(), workspaceId: 1, connectionId: second.connection!.connectionId, expectedRevision: second.connection!.revision, model: 'gpt-5', source: 'workspace', runId: 'run-1', sessionId: 'session-1' })
+    const result = await service.models({ requestId: crypto.randomUUID(), workspaceId: 1, connectionId: second.connection!.connectionId, expectedRevision: selected.connection!.revision, models: [], extraModels: [], expectedDefault: { connectionId: second.connection!.connectionId, model: 'gpt-5' } })
     expect(result.status).toBe('refused')
     expect(authority.connection(first.connection!.connectionId)!.config.models).toEqual(['gpt-5'])
     expect(authority.connection(second.connection!.connectionId)!.config.models).toEqual(['gpt-5'])
@@ -168,4 +172,107 @@ it('reconciles an ambiguous removal without releasing or deleting twice', async 
     expect((await service.remove(input)).status).toBe('uncertain')
     expect((await service.remove(input)).status).toBe('saved')
     expect(deletions).toBe(1)
+})
+
+it('preserves an unresolved create reservation across fresh service instances without another effect', async () => {
+    const { service, authority, store } = harness()
+    const create = authority.create
+    let effects = 0
+    authority.create = async (input, id) => { effects++; await create(input, id); throw Error('effect outcome unavailable') }
+    const input = createInput('Uncertain', 'offline-uncertain-secret')
+    const first = await service.create(input)
+    const restored = createDesktopApiConnectionService({ authority, store, connectionId: ids, revision: revisions, now, custodyKey: () => Buffer.alloc(32, 9) })
+    const again = await restored.create(input)
+    expect(again.status).toBe('uncertain')
+    expect(again.receipt.connectionId).toBe(first.receipt.connectionId)
+    expect(again.receipt.connectionRevision).toBe(first.receipt.connectionRevision)
+    expect(effects).toBe(1)
+})
+
+it('recovers a committed credential change using the reserved revision after receipt failure', async () => {
+    const { service, store, authority } = harness()
+    const created = await service.create(createInput('Credential recovery', 'offline-old-secret'))
+    const updateKeys = authority.updateKeys
+    let updates = 0
+    authority.updateKeys = async (id, input) => { updates++; return updateKeys(id, input) }
+    const finish = store.finish
+    let failure = true
+    store.finish = async (receipt, result) => { if (failure) { failure = false; throw Error('lost completion') }; return finish(receipt, result) }
+    const input = { requestId: crypto.randomUUID(), workspaceId: 1, connectionId: created.connection!.connectionId, expectedRevision: created.connection!.revision, secret: 'offline-new-secret' }
+    const first = await service.credential(input)
+    const restored = createDesktopApiConnectionService({ authority, store, connectionId: ids, revision: revisions, now, custodyKey: () => Buffer.alloc(32, 9) })
+    const recovered = await restored.credential(input)
+    expect(first.status).toBe('uncertain')
+    expect(recovered.status).toBe('saved')
+    expect(recovered.receipt.connectionRevision).toBe(first.receipt.connectionRevision)
+    expect(updates).toBe(1)
+})
+
+it('discriminates changed credentials with custody HMAC and rejects same-request replacement', async () => {
+    const key = Buffer.alloc(32, 9)
+    const input = createInput('HMAC fixture', 'offline-first-credential')
+    const first = desktopApiConnectionFingerprint(input, key)
+    expect(first).not.toBe(desktopApiConnectionFingerprint({ ...input, secret: 'offline-second-credential' }, key))
+    expect(first).not.toBe(desktopApiConnectionFingerprint(input, Buffer.alloc(32, 8)))
+    expect(first).not.toContain(input.secret)
+    const { service } = harness()
+    await service.create(input)
+    await expect(service.create({ ...input, secret: 'offline-second-credential' })).rejects.toThrow('identity changed')
+})
+
+it('refuses missing custody before reserving a secret-bearing request', async () => {
+    const { authority, store } = harness()
+    let reserved = 0
+    const reserve = store.reserve
+    store.reserve = async (receipt, result) => { reserved++; return reserve(receipt, result) }
+    const service = createDesktopApiConnectionService({ authority, store, connectionId: ids, revision: revisions, now, custodyKey: () => null })
+    expect((await service.create(createInput('No custody', 'offline-secret'))).status).toBe('refused')
+    expect(reserved).toBe(0)
+    expect(await authority.list()).toHaveLength(0)
+})
+
+it('refuses removal if exclusive admission authority is unavailable', async () => {
+    const { service, authority } = harness()
+    const created = await service.create(createInput('Keep protected', 'offline-secret'))
+    const input = { requestId: crypto.randomUUID(), workspaceId: 1, connectionId: created.connection!.connectionId, expectedRevision: created.connection!.revision }
+    authority.withRemoval = undefined
+    expect((await service.removalPlan(1, input.connectionId)).canRemove).toBe(false)
+    expect((await service.remove(input)).status).toBe('refused')
+    expect(authority.connection(input.connectionId)).toBeTruthy()
+})
+
+it('keeps an incomplete durable reservation uncertain without inventing a replacement identity', async () => {
+    const { service, authority, store } = harness()
+    const input = createInput('Incomplete reservation', 'offline-secret')
+    await store.reserve({ version: 1, requestId: input.requestId, kind: 'create', status: 'uncertain', workspaceId: 1, connectionId: null, connectionRevision: null,
+        fingerprint: desktopApiConnectionFingerprint(input, Buffer.alloc(32, 9)), message: 'Offline incomplete fixture', createdAt: now().toISOString(), updatedAt: now().toISOString() }, null)
+    const result = await service.create(input)
+    expect(result.status).toBe('uncertain')
+    expect(result.receipt.connectionId).toBeNull()
+    expect(result.receipt.connectionRevision).toBeNull()
+    expect(await authority.list()).toHaveLength(0)
+})
+
+it('holds exclusive admission through deletion, not only through the initial drain', async () => {
+    const { service, authority } = harness()
+    authority.removalAvailable = desktopApiConnectionRemovalAvailable
+    authority.withRemoval = async (_id, effect) => {
+        const release = beginDesktopApiConnectionRemoval()
+        if (!release) throw new DesktopApiConnectionRefusal('Workspace is busy')
+        try { return await effect() } finally { release() }
+    }
+    const created = await service.create(createInput('Exclusive deletion', 'offline-secret'))
+    let deleting!: () => void
+    let finishEffect!: () => void
+    const entered = new Promise<void>(resolve => { deleting = resolve })
+    const held = new Promise<void>(resolve => { finishEffect = resolve })
+    const remove = authority.delete
+    authority.delete = async id => { deleting(); await held; return remove(id) }
+    const pending = service.remove({ requestId: crypto.randomUUID(), workspaceId: 1, connectionId: created.connection!.connectionId, expectedRevision: created.connection!.revision })
+    await entered
+    const racingWork = beginDesktopApiConnectionWork()
+    try { expect(racingWork).toBeNull() } finally { racingWork?.(); finishEffect() }
+    expect((await pending).status).toBe('saved')
+    const nextWork = beginDesktopApiConnectionWork()
+    try { expect(nextWork).not.toBeNull() } finally { nextWork?.() }
 })

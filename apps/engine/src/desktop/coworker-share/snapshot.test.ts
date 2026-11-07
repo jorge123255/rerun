@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { createDesktopCoworkerImportPlan, createDesktopCoworkerSnapshot, type DesktopCoworkerShareSource } from './snapshot'
+import { createDesktopCoworkerImportPlan, createDesktopCoworkerSharePlan, createDesktopCoworkerSnapshot, type DesktopCoworkerShareSource } from './snapshot'
 import { readPortableArchive } from '../templates/portable-package'
 
 const binary = Buffer.from([0, 1, 2, 255, 254, 128, 0])
@@ -22,6 +22,18 @@ const source = (revision = 'a'.repeat(64)): DesktopCoworkerShareSource => ({
         { path: 'schedules/daily.json', bytes: Buffer.from('{"enabled":true}'), kind: 'config', binary: false, textScanned: true, flagged: [], ownership: 'user' },
         { path: 'triggers/hook.json', bytes: Buffer.from('{"enabled":true}'), kind: 'config', binary: false, textScanned: true, flagged: [], ownership: 'user' },
     ],
+})
+
+test('share review file counts match the eligible archive members', async () => {
+    const current = source()
+    const file = (path: string, ownership: 'user' | 'system') => ({ path, bytes: Buffer.from('fixture'), kind: 'text' as const, binary: false, textScanned: true, flagged: [], ownership })
+    current.members.push(file('workspace/.rerun-backup-note.md', 'user'), file('workspace/key.pem', 'user'), file('workspace/system.txt', 'system'), file('workspace/.ordinary-note.md', 'user'))
+    const snapshot = await createDesktopCoworkerSnapshot(current, { memories: false, database: false, files: true })
+    const files = snapshot.members.filter(member => member.path.startsWith('workspace/'))
+    expect(createDesktopCoworkerSharePlan(current).contents.files).toEqual({ count: files.length, bytes: files.reduce((sum, file) => sum + file.bytes.length, 0) })
+    expect(files.map(file => file.path)).toContain('workspace/.ordinary-note.md')
+    expect(files.map(file => file.path)).not.toContain('workspace/.rerun-backup-note.md')
+    expect(files.map(file => file.path)).not.toContain('workspace/system.txt')
 })
 
 test('selects only reviewed content and preserves selected binary bytes', async () => {

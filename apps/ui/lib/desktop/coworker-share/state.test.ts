@@ -13,6 +13,19 @@ test('review identity refuses changed workspace, source, choices and manifest di
     expect(isDesktopCoworkerShareResultCurrent(reviewed, { ...shareReview, manifest: { ...shareReview.manifest, contentDigest: '9'.repeat(64) } })).toBe(false)
 })
 
+test('an existing archive remains reviewable only for the same owner, source, choices and package', () => {
+    const reviewed = { input: exportInput, result: { ...shareReview, reused: true } }
+    expect(isDesktopCoworkerShareReviewCurrent(reviewed, exportInput)).toBe(true)
+    for (const changed of [
+        { ...exportInput, agentId: 'another-owner' },
+        { ...exportInput, workspaceId: 2 },
+        { ...exportInput, sourceRevision: '2'.repeat(64) },
+        { ...exportInput, include: { ...exportInput.include, files: true } },
+    ]) expect(isDesktopCoworkerShareReviewCurrent(reviewed, changed)).toBe(false)
+    expect(isDesktopCoworkerShareReviewCurrent({ ...reviewed, result: { ...reviewed.result, reviewId: '9'.repeat(64) } }, exportInput)).toBe(false)
+    expect(isDesktopCoworkerShareResultCurrent(reviewed, { ...shareReview, archiveSha256: '9'.repeat(64) })).toBe(false)
+})
+
 test('only nonempty selected buckets trigger the original data confirmation', () => {
     expect(desktopCoworkerShareCarriedData(sharePlan, { memories: false, database: false, files: false })).toEqual([])
     expect(desktopCoworkerShareCarriedData(sharePlan, { memories: true, database: true, files: true })).toEqual([

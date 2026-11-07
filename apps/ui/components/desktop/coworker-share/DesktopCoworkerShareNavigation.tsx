@@ -7,7 +7,7 @@ import type { DesktopCoworkerShareSectionBindings } from '@/lib/desktop/coworker
 import { DesktopCoworkerImportDialog } from './DesktopCoworkerImportDialog'
 import { DesktopCoworkerShareDialog } from './DesktopCoworkerShareDialog'
 
-export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName, sourceRevision, open, onOpenChange, importSnapshot = null, onImportSnapshotChange, onOpenCoworker, attempts, sectionBindings = null }: {
+export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName, sourceRevision, open, onOpenChange, importSnapshot = null, onImportSnapshotChange, onImported, onOpenCoworker, attempts, sectionBindings = null }: {
     workspaceId: number
     agentId: string
     agentName: string
@@ -16,6 +16,7 @@ export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName
     onOpenChange: (open: boolean) => void
     importSnapshot?: string | null
     onImportSnapshotChange?: (snapshotId: string | null) => void
+    onImported?: (agentId: string) => void | Promise<void>
     onOpenCoworker?: (agentId: string) => void
     attempts?: DesktopCoworkerShareAttempts
     sectionBindings?: DesktopCoworkerShareSectionBindings | null
@@ -59,6 +60,7 @@ export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName
             attempts={attemptStore}
             targetWorkspaceId={workspaceId}
             snapshotId={snapshot}
+            onImported={onImported}
             onOpenCoworker={onOpenCoworker}
         />}
     </>}

@@ -41,7 +41,7 @@ function messageOf(error: unknown, fallback: string): string {
 }
 
 /** Explicit stale/rotated search capability vs generic provider failure. */
-function searchFailureOf(error: unknown, providerFailure: boolean): Extract<DesktopWebSearchOutcome, { status: 'error' | 'uncertain' }> {
+function searchFailureOf(error: unknown, providerFailure: boolean): { status: 'error' | 'uncertain'; message: string } {
     const raw = error instanceof Error ? error.message : ''
     if (raw === 'Search capability changed after the provider request.') {
         return { status: 'uncertain', message: 'Search capability changed during the request. The search was not repeated.' }

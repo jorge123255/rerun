@@ -20,7 +20,7 @@ export function exportPath(value: string, kind: ScreenExportArtifact['kind']): s
     if (typeof value !== 'string' || value.length === 0 || value.length > 1024 || /[\\\p{Cc}]/u.test(value)
         || checked.some(part => !part || (cache ? part === '.' || part === '..' : part.startsWith('.')) || part.length > (cache ? 200 : 120))
         || !(kind === 'screenshot' ? value.endsWith('.png') : cache
-            ? new RegExp(`\\.browser-[a-f0-9]{32}\\.${kind === 'page-metadata' ? 'meta' : 'html'}\\.txt$`).test(value)
+            ? new RegExp(`\\.(?:browser|served)-[a-f0-9]{32}\\.${kind === 'page-metadata' ? 'meta' : 'html'}\\.txt$`).test(value)
             : value.endsWith(kind === 'page-metadata' ? '.browser.meta.txt' : '.browser.html.txt'))) throw unavailable()
     return value
 }
