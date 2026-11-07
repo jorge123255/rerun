@@ -1,7 +1,7 @@
 import { coworkerWorkspace } from '@/lib/desktop/server/coworker-files'
 import { desktopRoute } from '@/lib/desktop/server/http'
-import { FilesImportError } from '../../../../../../../../../engine/src/desktop/files-import/errors'
-import { publishFilesImport } from '../../../../../../../../../engine/src/desktop/files-import/publish'
+import { FilesImportError } from '../../../../../../../../engine/src/desktop/files-import/errors'
+import { publishFilesImport } from '../../../../../../../../engine/src/desktop/files-import/publish'
 import { MAX_UPLOAD_FILE_BYTES } from '@rerun/contracts'
 
 export const dynamic = 'force-dynamic'

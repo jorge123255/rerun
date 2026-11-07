@@ -6,7 +6,7 @@ import {
     DESKTOP_TEAM_READ_DESCRIPTIONS as D,
     DESKTOP_TEAM_READ_LIMIT,
     DESKTOP_TEAM_READ_MESSAGES as M,
-} from '../../../../../packages/contracts/src/desktop-team-reads.ts'
+} from '@rerun/contracts'
 import { desktopTeamAgentIdProblem, desktopTeamMemberStatus, desktopTeamPayload, desktopTeamRunLimit, desktopTeamScrub, desktopTeamTruncateField } from './project.js'
 import type { DesktopTeamActivity, DesktopTeamAdmit, DesktopTeamCaller, DesktopTeamDirectory, DesktopTeamMember, DesktopTeamReadAck, DesktopTeamReadToolContext, DesktopTeamReads } from './ports.js'
 

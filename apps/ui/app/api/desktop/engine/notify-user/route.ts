@@ -1,5 +1,5 @@
 import { authenticateDesktopEngineRequest } from '@/lib/desktop/server/auth'
-import { desktopNotifyUserReceiptSchema } from '../../../../../../../engine/src/desktop/notify-tools/contract'
+import { desktopNotifyUserReceiptSchema } from '../../../../../../engine/src/desktop/notify-tools/contract'
 
 export const dynamic = 'force-dynamic'
 

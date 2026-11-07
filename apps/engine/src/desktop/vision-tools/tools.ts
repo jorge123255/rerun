@@ -1,4 +1,4 @@
-import { tool, type ModelMessage, type ToolSet } from 'ai'
+import { tool, type LanguageModel, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { deadlineSignal, raceAbort } from '../../lib/abort.js'
 import { readAgentConfig } from '../../agents/loader.js'
@@ -12,9 +12,9 @@ const VISION_TIMEOUT_MS = 10 * 60 * 1000
 
 export type DesktopVisionPorts = {
     selectedModel(agent: LoadedAgent): ModelOverride | undefined | null
-    modelFor(agent: LoadedAgent, override: ModelOverride | undefined, sessionId: string): unknown
+    modelFor(agent: LoadedAgent, override: ModelOverride | undefined, sessionId: string): LanguageModel
     ensureAuth(agent: LoadedAgent): Promise<() => void>
-    generateText(input: { model: unknown; messages: ModelMessage[]; abortSignal: AbortSignal }): Promise<{ text: string }>
+    generateText(input: { model: LanguageModel; messages: ModelMessage[]; abortSignal: AbortSignal }): Promise<{ text: string }>
     readConfig?(agentId: string): Promise<AgentConfig | null>
 }
 

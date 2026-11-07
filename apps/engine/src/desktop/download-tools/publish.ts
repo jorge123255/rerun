@@ -17,6 +17,10 @@ const clash = (name: string) => new Error(`This folder already has a file named 
 const uncertain = () => new Error('The download result could not be confirmed. Check Files before retrying.')
 const unavailable = () => new Error('Download publication is only available on this Mac.')
 
+function sameOwner(statUid: number, expected: bigint): boolean {
+    return BigInt(statUid) === expected
+}
+
 function currentUid(): bigint {
     if (typeof process.getuid !== 'function') throw unavailable()
     return BigInt(process.getuid())
@@ -54,7 +58,7 @@ async function pinDirectory(directory: string): Promise<{ pinned: string; close:
 async function assertRealDirectory(directory: string, uid: bigint): Promise<void> {
     const info = await lstat(directory).catch(error => { throw mapLink(error) })
     if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
-    if (info.uid !== uid) throw otherUser()
+    if (!sameOwner(info.uid, uid)) throw otherUser()
     if (await realpath(directory) !== directory) throw outside()
 }
 
@@ -129,7 +133,7 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
     if (info?.isSymbolicLink()) throw outside()
     if (info && !info.isDirectory()) throw outside()
     if (info) {
-        if (info.uid !== uid) throw otherUser()
+        if (!sameOwner(info.uid, uid)) throw otherUser()
         if (await realpath(child) !== child) throw outside()
         return
     }
@@ -147,7 +151,7 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
         await pin.close()
     }
     const made = await lstat(child).catch(error => { throw mapLink(error) })
-    if (made.isSymbolicLink() || !made.isDirectory() || made.uid !== uid || await realpath(child) !== child) throw outside()
+    if (made.isSymbolicLink() || !made.isDirectory() || !sameOwner(made.uid, uid) || await realpath(child) !== child) throw outside()
 }
 
 async function stage(parent: string, name: string, bytes: Uint8Array, signal: AbortSignal): Promise<void> {

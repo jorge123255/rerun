@@ -16,7 +16,7 @@ describe('served web-fetch continuation', () => {
             expect(call.artifacts[0].path).toBe(path)
             expect(call.artifacts[1].path).toBe(path.replace(/\.html\.txt$/, '.meta.txt'))
             const metadata = JSON.parse(call.artifacts[1].bytes.toString())
-            expect(metadata).toMatchObject({ url: page.url, views: { served: { file: path, savedAt, status: 200, contentType: page.contentType, xRobotsTag: 'noindex', byteLength: Buffer.byteLength(page.body) } })
+            expect(metadata).toMatchObject({ url: page.url, views: { served: { file: path, savedAt, status: 200, contentType: page.contentType, xRobotsTag: 'noindex', byteLength: Buffer.byteLength(page.body) } } })
             expect(metadata.views.served.sha256).toBe(createHash('sha256').update(page.body).digest('hex'))
             return { status: 'saved', files: call.artifacts.map(item => ({ kind: item.kind, path: item.path, sha256: item.sha256, byteLength: item.bytes.length })) }
         }

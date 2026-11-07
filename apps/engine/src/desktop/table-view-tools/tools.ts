@@ -1,16 +1,16 @@
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import type { AgentConfig, TableView, TableViewInput } from '@rerun/contracts'
-import { withAgentLock } from '../agents/lock.js'
-import { readAgentConfig } from '../agents/loader.js'
-import { AGENT_HIDDEN_TABLES, getAgentDb } from '../db/agentDb.js'
-import { getSharedDb, SHARED_HIDDEN_TABLES } from '../db/sharedDb.js'
-import { tableDisplayInput, tableTargetInput } from '../tools/builtin/table-card.js'
-import type { RunContext } from '../runtime/context.js'
+import { withAgentLock } from '../../agents/lock.js'
+import { readAgentConfig } from '../../agents/loader.js'
+import { AGENT_HIDDEN_TABLES, getAgentDb } from '../../db/agentDb.js'
+import { getSharedDb, SHARED_HIDDEN_TABLES } from '../../db/sharedDb.js'
+import { tableDisplayInput, tableTargetInput } from '../../tools/builtin/table-card.js'
+import type { RunContext } from '../../runtime/context.js'
 import { beginDesktopAgentWork } from '../agent-lifecycle.js'
 import { DATA_DEADLINE_MS } from '../data-executor.js'
 import { hasDesktopDataGrant } from '../data-tools.js'
-import { deleteDesktopTableView, DesktopTableViewCommitUnknownError, saveDesktopTableView } from './store'
+import { deleteDesktopTableView, DesktopTableViewCommitUnknownError, saveDesktopTableView } from './store.js'
 
 export type DesktopTableViewAuthorization = (config: AgentConfig) => boolean
 export type DesktopTableViewScope = 'agent' | 'shared'
@@ -29,6 +29,11 @@ async function requireScope(ctx: RunContext, scope: DesktopTableViewScope, autho
     ctx.abortSignal?.throwIfAborted()
     if (!config?.enabled || !authorized(config)) throw new Error('Saved view editing is turned off for this coworker.')
     if (!hasDesktopDataGrant(config, scope === 'shared' ? 'sharedDb' : 'db')) throw new Error('This database is turned off for this coworker.')
+}
+
+function tableViewScope(value: unknown): DesktopTableViewScope {
+    if (value !== 'agent' && value !== 'shared') throw new Error('That view does not name a private or shared database.')
+    return value
 }
 
 function productionAdapters(authorized: DesktopTableViewAuthorization): DesktopTableViewAdapters {
@@ -94,8 +99,9 @@ export function desktopTableViewTools(
                     return await withAdmission(ctx, async () => {
                         const release = beginDesktopAgentWork(ctx.agent.id)
                         try {
-                            await requireScope(ctx, scope, authorized)
-                            const view = await ports.save(ctx, scope, { table, ...input })
+                            const named = tableViewScope(scope)
+                            await requireScope(ctx, named, authorized)
+                            const view = await ports.save(ctx, named, { table, ...input })
                             return `Saved the ${view.layout} view "${view.name}" on ${table}. The user sees it as a tab of the table in the app; show it in the chat with card_table and view "${view.name}".`
                         } finally { release() }
                     })
@@ -114,8 +120,9 @@ export function desktopTableViewTools(
                     return await withAdmission(ctx, async () => {
                         const release = beginDesktopAgentWork(ctx.agent.id)
                         try {
-                            await requireScope(ctx, scope, authorized)
-                            return await ports.delete(ctx, scope, table, name)
+                            const named = tableViewScope(scope)
+                            await requireScope(ctx, named, authorized)
+                            return await ports.delete(ctx, named, table, name)
                                 ? `Deleted the view "${name}" of ${table}.`
                                 : `${table} has no view named "${name}".`
                         } finally { release() }

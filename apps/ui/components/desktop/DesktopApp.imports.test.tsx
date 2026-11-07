@@ -73,6 +73,7 @@ async function mount() {
         if (url === '/api/desktop/agents') return deferredAgents
         if (url === '/api/desktop/spaces') return Response.json({ board: importedBoard() })
         if (url === '/api/desktop/settings') return Response.json({ connections: [],default: null,runtimeWorkspaceId: 2 })
+        if (url === '/api/desktop/workspaces/2/board-camera') return Response.json({ workspaceId: 2, revision: 0, camera: { pan: { x: 0, y: 0 }, zoom: 1 } })
         if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
         if (url === '/api/desktop/pending-inbox') return Response.json({ items: [],unavailableAgentIds: [],checkedAt: '2026-11-06T00:00:00Z' })
         if (url === '/api/desktop/completions') return Response.json({ items: [],unavailableAgentIds: [],enabledAt: '2026-11-06T00:00:00Z',checkedAt: '2026-11-06T00:00:00Z',nextCursor: null })

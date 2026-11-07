@@ -5,7 +5,7 @@ import {
     DESKTOP_TEAM_READ_PERMISSION,
     DESKTOP_TEAM_READ_TOOL_NAMES,
     desktopTeamReadGrantOn,
-} from '../../../../../packages/contracts/src/desktop-team-reads.ts'
+} from '@rerun/contracts'
 import { readDesktopTeamAdmit, readDesktopTeamActivity, readDesktopTeamRun, readDesktopTeamSchedules, readDesktopTeamTriggers } from './adapters.js'
 import { bindDesktopTeamReads, readDesktopTeamReads, unbindDesktopTeamReads } from './binding.js'
 import { readDesktopTeamReadGrant } from './grant.js'

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, test } from 'vitest'
 import { FxFilesLoading, FxMemoriesLoading, FxSettingsLoading, FxSchedulesLoading, FxToolsLoading } from './PanelLoadingSkeletons'
 test('five real original skeleton compositions remain accessible, inert and non-interactive', () => {
-    for (const view of [<FxFilesLoading />, <FxMemoriesLoading />, <FxSettingsLoading />, <FxSchedulesLoading />, <FxToolsLoading />]) {
+    for (const view of [<FxFilesLoading key="files" />, <FxMemoriesLoading key="memories" />, <FxSettingsLoading key="settings" />, <FxSchedulesLoading key="schedules" />, <FxToolsLoading key="tools" />]) {
         const html = renderToStaticMarkup(view)
         expect(html).toContain('role="status"'); expect(html).toContain('aria-busy="true"'); expect(html).toContain('aria-hidden="true"')
         expect(html).toContain('motion-reduce:animate-none'); expect(html).not.toMatch(/<(button|input|textarea|select)\b/)

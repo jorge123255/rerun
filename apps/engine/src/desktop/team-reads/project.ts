@@ -7,7 +7,7 @@ import {
     desktopTeamReadTooLarge,
     type DesktopTeamMemberStatus,
     type DesktopTeamWaitingSessionStatus,
-} from '../../../../../packages/contracts/src/desktop-team-reads.ts'
+} from '@rerun/contracts'
 import type { DesktopTeamActivity, DesktopTeamRunView, DesktopTeamScheduleView, DesktopTeamToolCallView, DesktopTeamTriggerView } from './ports.js'
 
 const WAITING = new Set<string>(DESKTOP_TEAM_WAITING_SESSION_STATUSES)

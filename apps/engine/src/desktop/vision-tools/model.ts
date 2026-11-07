@@ -1,4 +1,5 @@
 import { generateText } from 'ai'
+import { DESKTOP_OPENCODE_PROVIDER } from '@rerun/contracts'
 import { ensureCliAuth } from '../../connections/cli-auth.js'
 import { modelFor, type ModelOverride } from '../../agents/providers.js'
 import type { LoadedAgent } from '../../agents/types.js'
@@ -11,7 +12,7 @@ type VisionConnection = LoadedAgent['resolved']['connection'] & { providerModels
 
 export function desktopVisionModelFor(agent: LoadedAgent): ModelOverride | undefined | null {
     const { provider, model, connection } = agent.resolved
-    if (provider !== 'opencode') return undefined
+    if (String(provider) !== DESKTOP_OPENCODE_PROVIDER) return undefined
     const catalog = (connection as VisionConnection)?.providerModels
     if (!catalog?.length) return null
     const current = catalog.find(candidate => candidate.id === model)
@@ -22,7 +23,7 @@ export function desktopVisionModelFor(agent: LoadedAgent): ModelOverride | undef
 export function canonicalDesktopVisionModelPort(): DesktopVisionPorts {
     return {
         selectedModel: desktopVisionModelFor,
-        modelFor: (agent, override, sessionId) => modelFor(agent, override, undefined, undefined, { claudeTools: ['Read'], sessionId }),
+        modelFor: (agent, override) => modelFor(agent, override, undefined, undefined, { claudeTools: ['Read'] }),
         ensureAuth: agent => ensureCliAuth(agent.resolved.provider, agent.resolved.connection),
         generateText,
     }

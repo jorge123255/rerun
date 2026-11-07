@@ -296,10 +296,12 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const { heads, request } = useFileThumbnails({ read: readTextHead, resetKey: textHeadKey })
     const writeImport = useCallback(async (item: { path: string; bytes: Uint8Array; signal: AbortSignal; onProgress: (loaded: number, total: number) => void }) => {
         item.onProgress(0, item.bytes.byteLength)
+        const copy = new ArrayBuffer(item.bytes.byteLength)
+        new Uint8Array(copy).set(item.bytes)
         const response = await fetch(`${base}/import?path=${encodeURIComponent(item.path)}`, {
             method: 'POST',
             headers: { 'content-type': 'application/octet-stream' },
-            body: item.bytes,
+            body: copy,
             signal: item.signal,
         })
         const payload: unknown = await response.json().catch(() => null)

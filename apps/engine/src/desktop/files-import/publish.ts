@@ -28,6 +28,10 @@ const aborted = () => new FilesImportError(0, FILES_IMPORT_ABORTED, 'aborted')
 const unavailable = () => new FilesImportError(400, FILES_IMPORT_UNAVAILABLE, 'unavailable')
 const tooLarge = () => new FilesImportError(413, `This file is larger than the ${MAX_UPLOAD_FILE_BYTES / 1024 / 1024} MB upload limit.`, 'too_large')
 
+function sameOwner(statUid: number, expected: bigint): boolean {
+    return BigInt(statUid) === expected
+}
+
 function currentUid(): bigint {
     if (typeof process.getuid !== 'function') throw unavailable()
     return BigInt(process.getuid())
@@ -70,7 +74,7 @@ async function assertRealDirectory(directory: string, uid: bigint): Promise<void
         throw mapLink(error)
     })
     if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
-    if (info.uid !== uid) throw otherUser()
+    if (!sameOwner(info.uid, uid)) throw otherUser()
     if (await realpath(directory) !== directory) throw outside()
 }
 
@@ -150,7 +154,7 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
     if (info?.isSymbolicLink()) throw outside()
     if (info && !info.isDirectory()) throw outside()
     if (info) {
-        if (info.uid !== uid) throw otherUser()
+        if (!sameOwner(info.uid, uid)) throw otherUser()
         if (await realpath(child) !== child) throw outside()
         return
     }
@@ -168,7 +172,7 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
         await pin.close()
     }
     const madeInfo = await lstat(child).catch(error => { throw mapLink(error) })
-    if (madeInfo.isSymbolicLink() || !madeInfo.isDirectory() || madeInfo.uid !== uid || await realpath(child) !== child) throw outside()
+    if (madeInfo.isSymbolicLink() || !madeInfo.isDirectory() || !sameOwner(madeInfo.uid, uid) || await realpath(child) !== child) throw outside()
 }
 
 async function stage(
