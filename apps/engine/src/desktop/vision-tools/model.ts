@@ -24,7 +24,7 @@ export function desktopVisionModelFor(agent: LoadedAgent): ModelOverride | undef
 export function canonicalDesktopVisionModelPort(): DesktopVisionPorts {
     return {
         selectedModel: desktopVisionModelFor,
-        modelFor: (agent, override) => modelFor(agent, override, undefined, undefined, { claudeTools: ['Read'] }),
+        modelFor: (agent, override) => modelFor(agent, override, undefined, undefined, { desktopVision: true }),
         ensureAuth: agent => ensureCliAuth(agent.resolved.provider, agent.resolved.connection),
         generateText,
     }

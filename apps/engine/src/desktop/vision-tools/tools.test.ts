@@ -59,13 +59,16 @@ it('enforces the vision grant and active run identity', async () => {
     expect(value.generateText).not.toHaveBeenCalled()
 })
 
-it('rejects reserved paths and never fakes a successful analysis after Stop', async () => {
+it('rejects an in-flight analysis after Stop', async () => {
     await fixture()
-    const stopped = ports({ generateText: vi.fn(() => new Promise(() => {})) })
     const controller = new AbortController()
+    const reason = new DOMException('Stopped vision', 'AbortError')
+    const stopped = ports({ generateText: vi.fn(() => {
+        controller.abort(reason)
+        return new Promise(() => {})
+    }) })
     const current = { ...ctx(), abortSignal: controller.signal }
     const pending = (desktopVisionTools(current, stopped).vision_analyze as any).execute({ imagePath: 'chat-uploads/small.png', prompt: 'x' }, { toolCallId: 'call-1', messages: [] })
-    setTimeout(() => controller.abort(), 20)
-    await expect(pending).rejects.toBeDefined()
+    await expect(pending).rejects.toBe(reason)
     expect(stopped.generateText).toHaveBeenCalledOnce()
 })
