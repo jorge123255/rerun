@@ -80,7 +80,7 @@ import { DesktopUploadChips } from './DesktopUploadChips'
 import { DesktopImageUploadChips } from './DesktopImageUploadChips'
 import { ChatAttachmentChip } from '@/components/chat/ChatAttachmentChip'
 import { MessageAttachments } from '@/components/chat/MessageAttachments'
-import { DESKTOP_IMAGE_UPLOAD_ACCEPT, desktopImageKindForName } from '@/lib/desktop/composer-image'
+import { DESKTOP_IMAGE_UPLOAD_ACCEPT } from '@/lib/desktop/composer-image'
 import { useDesktopComposerImageUploads } from '@/lib/desktop/use-composer-image-uploads'
 import { DESKTOP_UPLOAD_ACCEPT } from '@/lib/desktop/composer-upload'
 import { useDesktopComposerUploads } from '@/lib/desktop/use-composer-uploads'
@@ -397,7 +397,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
             release()
         })
         batchUpload.current = work
-    }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion, documents.add, tabUid])
+    }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion, documents.add, tabUid, reportUploadNotice])
     const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; mcpSignIn?: DesktopMcpSignInResponse | null; error?: string; loadedGeneration?: number; lastError?: string | null; activeRunId?: string | null; runsUnavailable?: boolean }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null, mcpSignIn: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer | DesktopTakeoverTerminal; onAccepted?: () => void; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)

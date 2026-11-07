@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, lstat, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, lstat, readFile, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, test } from 'node:test'
@@ -7,7 +7,11 @@ import { assertDesktopValidationIsolation, createDesktopValidationIsolation, rea
 
 const parents = new Set()
 afterEach(async () => { for (const parent of parents) await rm(parent, { recursive: true, force: true }); parents.clear() })
-async function parent() { const value = await mkdtemp(join(tmpdir(), 'rerun-validation-contract-')); parents.add(value); return value }
+async function parent() {
+    const value = await realpath(await mkdtemp(join(tmpdir(), 'rerun-validation-contract-')))
+    parents.add(value)
+    return value
+}
 
 test('creates a fresh verified temp profile with no production data or provider credentials', async () => {
     const root = join(await parent(), 'profile')
