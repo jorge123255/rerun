@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { realpathSync } from 'node:fs'
 import test from 'node:test'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { desktopValidationFlagValue, validateDesktopValidationProfile } from './contract.mjs'
 
 test('only an explicit validation flag opts in; missing, empty and repeated flags refuse', () => {
@@ -11,13 +14,14 @@ test('only an explicit validation flag opts in; missing, empty and repeated flag
 })
 
 test('profile contract distinguishes verified paths from unproven network enforcement', () => {
+    const profileRoot = join(realpathSync(tmpdir()), 'rerun-validation-a')
     const profile = validateDesktopValidationProfile({
         version: 1,
         validationId: '11111111-1111-4111-8111-111111111111',
-        profileRoot: '/private/tmp/rerun-validation-a',
-        dataRoot: '/private/tmp/rerun-validation-a/data',
-        engineRoot: '/private/tmp/rerun-validation-a/data/workspaces/1/engine',
-        homeRoot: '/private/tmp/rerun-validation-a/home',
+        profileRoot,
+        dataRoot: join(profileRoot, 'data'),
+        engineRoot: join(profileRoot, 'data', 'workspaces', '1', 'engine'),
+        homeRoot: join(profileRoot, 'home'),
         partition: 'validation-11111111-1111-4111-8111-111111111111',
         providers: 'empty-by-fresh-profile',
         externalNetwork: 'waiting-for-launch-enforcement',

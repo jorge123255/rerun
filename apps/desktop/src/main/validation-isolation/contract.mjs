@@ -56,7 +56,7 @@ function assertTemporaryRoot(profileRoot) {
 export function validateDesktopValidationProfile(input) {
     const profileRoot = assertTemporaryRoot(input.profileRoot)
     if (input.version === undefined) return profileRoot
-    if (input.version !== DESKTOP_VALIDATION_CONTRACT_VERSION || !UUID.test(input.validationId) throw desktopValidationProfileError('Unsupported validation profile identity.')
+    if (input.version !== DESKTOP_VALIDATION_CONTRACT_VERSION || !UUID.test(input.validationId)) throw desktopValidationProfileError('Unsupported validation profile identity.')
     const dataRoot = resolve(profileRoot, 'data')
     const engineRoot = resolve(dataRoot, 'workspaces', '1', 'engine')
     const homeRoot = resolve(profileRoot, 'home')

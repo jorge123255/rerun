@@ -16,7 +16,10 @@ clearCachedEnvForTests()
 const agentId = 'reader'
 const options = { messages: [], toolCallId: 'call-1' }
 const config = (search: boolean) => ({ name: agentId, tools: { workspaceSearch: search } })
-const call = async (input: { pattern: string; path?: string; maxResults?: number }, signal?: AbortSignal) => (desktopPrivateRegexTools({ agent: { id: agentId, config: await import('../../agents/loader.js').then(m => m.readAgentConfig(agentId)), abortSignal: signal } } as never).fs_search as any).execute(input, options)
+const call = async (input: { pattern: string; path?: string; maxResults?: number }, signal?: AbortSignal) => {
+    const path = input.path === undefined ? '.' : input.path
+    return (desktopPrivateRegexTools({ agent: { id: agentId, config: await import('../../agents/loader.js').then(m => m.readAgentConfig(agentId)), abortSignal: signal } } as never).fs_search as any).execute({ ...input, path }, options)
+}
 
 beforeAll(async () => {
     const configFile = configPath(agentId)
@@ -52,6 +55,8 @@ describe('private regex semantics', () => {
         expect(await call({ pattern: 'does-not-match' })).toBe('No matches.')
         expect(await call({ pattern: '[' })).toContain('Invalid regular expression:')
         expect(await call({ pattern: 'one', path: 'missing' })).toBe('Path not found: missing')
+        await expect(call({ pattern: 'one', path: '/tmp/outside' })).rejects.toThrow('Use a relative directory')
+        await expect(call({ pattern: 'one', path: '../outside' })).rejects.toThrow('Use a relative directory')
     })
 
     it('allows ordinary hidden assets while excluding reserved and dependency directories', async () => {
