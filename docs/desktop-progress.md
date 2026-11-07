@@ -5,7 +5,7 @@
 The `desktop/macos-preview` branch tracks the reviewed PR4 integration repairs
 and current development status. See the [Mac development tracker](desktop-macos-status.md)
 and [app README](../apps/desktop/README.md) for source identity, actual checks,
-pending coding-branch reconciliation and the next native QA steps.
+coding-branch reconciliation and the next native QA steps.
 
 The entries below are historical acceptance records for their named builds.
 They do not establish acceptance of this new source checkpoint or an updated

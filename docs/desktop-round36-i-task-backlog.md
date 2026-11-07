@@ -1,5 +1,8 @@
 # Round 36 I — Prioritized task backlog (post–Round36 A–H)
 
+**Root reconciliation, November 6:** This is the author's source-time audit, not the current installed verdict. `desktop-round36-integration.md` supersedes old C35-pending, unbound RD36 P0.1–P0.4 and five-read C statements. Installed `34c9cf39` has the complete received C catalog/bridge and accepted local read-only MCP, shared mutation and offline Share slices; remote gateway/transition, memories/database transfer and external service gates remain explicit. Approximate package arithmetic here does not replace the canonical 21 unchecked whole-group subtotal. Existing template cleanup, guest install and RD37-owned transcript/provider/profile work must not be allocated again as absent implementation.
+
+
 **Rules:** excludes duplicate allocation of assigned Round36 A–H implementation lanes. Unfinished A–H requirements appear as **root activation / dependency** packages only.  
 **Not acceptance.** Root owns repairs, checklist count edits, all execution checks and release.
 
@@ -133,6 +136,7 @@ Priority bands: **P0** blocks trust/safety or unblocks multiple lanes; **P1** cl
 - **Refs:** upstream `ai-sdk-provider-codex-cli` patch; keep Codex 0.166.0
 
 ### P2.8 Cron exception containment port
+- **Follow-up audit:** still missing in the engine; RD37 I excludes it. Carry root-owned UP-01 from `desktop-upstream-pr38-audit-20261106.md`; do not infer completion from the broad compatibility assignment.
 - **Outcome:** one bad saved routine cannot stop the scheduler tick  
 - **Owner:** root; based on official `dev` delta beyond fork (static note only)
 

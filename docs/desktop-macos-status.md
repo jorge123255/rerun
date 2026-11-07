@@ -18,12 +18,15 @@ Publishing this development branch does not approve or update any of them.
 The [PR4 QA comment](https://github.com/jorge123255/rerun/pull/4#issuecomment-6699248691)
 records the original validation and frozen-repair results.
 
-The local coding branch `desktop/m1` was at
-`208038f5a24606c8834e7bdc1f352e81fa615c8e` when this checkpoint was prepared.
-It has four commits outside this checkpoint's ancestry: a coworker-import refresh
-fix and three integration/parity documentation updates. They remain pending
-reconciliation. This branch does not claim to contain those commits or every
-other agent's later delivery.
+This branch also incorporates the complete committed coding branch `desktop/m1`
+through `208038f5a24606c8834e7bdc1f352e81fa615c8e`, including its coworker-import
+refresh fix and three integration/parity documentation updates. The merge
+preserves the newer import-result classifier and share-section gates together
+with the coding branch's refresh, owner and draft safeguards.
+
+That establishes source coverage of the Rerun Desktop Preview coding checkpoint.
+Separate worktrees or uncommitted agent deliveries are not automatically part of
+this app. The latest source still needs its own packaged/native acceptance.
 
 ## Reviewed repairs in this branch
 
@@ -51,8 +54,8 @@ must still be checked separately.
 The integration owner runs all tests, builds and Mac acceptance. Helpers review source
 and author changes without running checks.
 
-The last full suites apply to the frozen repair patch above, before the narrow
-admission follow-up:
+The last full suites apply to the frozen repair patch above, before the admission
+follow-up and coding-branch reconciliation:
 
 | Check | Result | Limit |
 | --- | --- | --- |
@@ -80,6 +83,20 @@ older full-suite counts are not attributed to a different final source tree.
 - No packaging, installation, live provider call or native/restart acceptance was
   performed for this publication checkpoint.
 
+## Coding-branch reconciliation checks
+
+- **82 distinct UI tests passed**: 68 App/import/share/external-MCP/section tests
+  plus 14 workspace-dialog tests. This includes preserving the selected chat,
+  unsent draft, board camera and owner while an imported coworker refreshes.
+- A strengthened import regression rejects a partial result even if it contains
+  a coworker ID: it must not refresh the board as a successful installation.
+- Full workspace typecheck: passed. Focused lint: zero errors, 17 warnings.
+- The engine/dependency source is unchanged by this coding-branch sync; the
+  earlier 96 connection/runtime checks remain associated with that source.
+- The full UI suite and native/package/restart acceptance were not repeated for
+  this reconciliation. Historical full-suite and installed-build evidence keeps
+  its original source/build identity.
+
 ## Known incomplete or disabled features
 
 Share memories/private database aggregate activation; named connection selection;
@@ -95,8 +112,9 @@ negative refusal test does not complete any of these features.
 
 ## Next work, in order
 
-- [ ] Reconcile the coding branch's import-refresh fix and current parity audit,
-  then review any additional agent handoffs against their exact commits.
+- [x] Reconcile all four coding-branch commits through `208038f5`, including the
+  import-refresh fix and current parity audit.
+- [ ] Review any additional agent handoffs against their exact commits.
 - [ ] Add a documented isolated native profile with provider/network side effects
   disabled before startup; preserve the normal workspace and signing identity.
 - [ ] Complete a reproducible renderer build, including font availability.

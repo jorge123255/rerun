@@ -166,7 +166,7 @@ And everything else a colleague needs:
 - 🏠 **Your own servers**: attach the machine your coworkers run on in one command
 - ♾️ **No limits**: as many coworkers and seats as you want, nothing to pay
 
-## macOS app — fork development preview
+## Rerun Desktop Preview — macOS development
 
 The Mac app is being developed on this fork's `desktop/macos-preview` branch.
 See [Rerun for macOS](apps/desktop/README.md) for the app source and shared

@@ -1,6 +1,6 @@
-# Rerun for macOS — development preview
+# Rerun Desktop Preview for macOS
 
-This is the macOS desktop app being developed on
+This is Rerun Desktop Preview, the macOS app being developed on
 [our fork](https://github.com/jorge123255/rerun/tree/desktop/macos-preview).
 The `desktop/macos-preview` branch is the checkpoint for reviewed integration
 work. The [Mac development status](../../docs/desktop-macos-status.md) records
