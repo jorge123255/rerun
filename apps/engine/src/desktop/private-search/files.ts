@@ -91,6 +91,7 @@ async function listDirectory(ctx: RunContext, path: string): Promise<{ entries: 
 }
 
 export async function desktopPrivateRegexSearch(ctx: RunContext, path: string, pattern: string, maxResults: number): Promise<string> {
+    await requireDesktopToolGrant(ctx, 'workspaceSearch')
     try {
         new RegExp(pattern)
     } catch (error) {
