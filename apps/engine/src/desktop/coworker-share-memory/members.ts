@@ -1,4 +1,4 @@
-import type { DesktopCoworkerShareMemoryPackage } from '../../../../../packages/contracts/src/desktop-coworker-share-memory.ts'
+import type { DesktopCoworkerShareMemoryPackage } from '@rerun/contracts'
 import { memoryMemberPath, parseMemoryMarkdown, renderMemoryMarkdown } from './serialize.ts'
 
 export type DesktopCoworkerShareMemoryArchiveMember = {

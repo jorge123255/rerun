@@ -312,12 +312,12 @@ export function desktopOpencodeModelRows(input: {
     const enabled = new Set(input.enabledModelIds)
     const retiredIds = input.source === 'live' ? input.enabledModelIds.filter(id => desktopOpencodePlanOf(id) && !listed.has(id)) : []
     const rows = [
-        ...input.models.map(model => ({ model, retired: false })),
+        ...input.models.map(model => ({ model, retired: false, id: model.id })),
         ...retiredIds.map(id => ({ model: null as DesktopOpencodeModel | null, retired: true, id })),
     ]
     return rows
         .map(row => {
-            const id = row.model?.id ?? row.id!
+            const id = row.id
             const plan = row.model?.plan ?? desktopOpencodePlanOf(id)!
             const consoleLocked = plan === 'console' && !input.consoleEnabled
             return {

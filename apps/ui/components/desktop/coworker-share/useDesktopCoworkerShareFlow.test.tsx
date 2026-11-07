@@ -46,6 +46,32 @@ test('defaults exclude private data and Cancel creates no share', async () => {
     expect(mounted.attemptStore.listExport({ workspaceId: 1, agentId: 'agent-a' })).toEqual([])
 })
 
+test('reopening an exported coworker permits the same retained archive after a new explicit review', async () => {
+    const api = client({
+        review: vi.fn().mockResolvedValueOnce(shareReview).mockResolvedValue({ ...shareReview, reused: true }),
+        export: vi.fn().mockResolvedValueOnce(shareReview).mockResolvedValue({ ...shareReview, reused: true }),
+    })
+    const store = attempts(), first = await mount(api, store)
+    await act(async () => { await first.flow().reviewContent() })
+    await act(async () => first.flow().setApproved(true))
+    await act(async () => { await first.flow().exportShare() })
+    expect(first.flow().step).toBe('success')
+    await act(async () => root!.unmount()); root = undefined
+
+    const reopened = await mount(api, store)
+    await act(async () => { await reopened.flow().reviewContent() })
+    expect(reopened.flow().stale).toBe(false)
+    expect(reopened.flow().approved).toBe(false)
+    await act(async () => { await reopened.flow().exportShare() })
+    expect(api.export).toHaveBeenCalledTimes(1)
+    await act(async () => reopened.flow().setApproved(true))
+    await act(async () => { await reopened.flow().exportShare() })
+    expect(api.export).toHaveBeenCalledTimes(2)
+    expect(reopened.flow().step).toBe('success')
+    expect(reopened.flow().exported?.result).toMatchObject({ reused: true, manifest: { packageKey: shareReview.manifest.packageKey } })
+    expect(store.listExport({ workspaceId: 1, agentId: 'agent-a' })).toEqual([])
+})
+
 test('changed content blocks stale confirmation and retains choices for a new review', async () => {
     const api = client()
     const mounted = await mount(api)

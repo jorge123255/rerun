@@ -49,7 +49,11 @@ export async function createDesktopVoiceRuntime(runtime: DesktopRuntime, db: Cli
     async function baseOwner(scope: DesktopVoiceScope, signal: AbortSignal, mutable: boolean) {
         desktopVoiceScopeSchema.parse(scope); current(signal)
         const agent = await findDesktopAgent(db, scope.agentId)
-        if (!agent || agent.workspaceId !== runtime.workspaceId || mutable && !agent.enabled) throw unavailable()
+        // The authenticated runtime opens this database from its own data root.
+        // Inside that database the coworker row is workspace 1. The external
+        // runtime workspace id is not a second row id, and a row stored under
+        // another workspace id is not this database's owner.
+        if (!agent || agent.workspaceId !== 1 || mutable && !agent.enabled) throw unavailable()
         await assertCoworkerNotDeleting(db, agent.id)
         const engine = await ports.agent(agent.engineAgentId, signal)
         current(signal)

@@ -31,7 +31,7 @@ export function useDesktopCompanyProfile({ chat, client, active = true, draftRev
     const operations = useRef(new Map<DesktopCompanyProfileKind, Operation>())
     const running = useRef(new Map<DesktopCompanyProfileKind, Promise<DesktopCompanyProfileAttempt | null>>())
 
-    const read = useCallback(async (): Promise<boolean> {
+    const read = useCallback(async (): Promise<boolean> => {
         const generation = epoch.current
         const version = ++readVersion.current
         const controller = new AbortController()

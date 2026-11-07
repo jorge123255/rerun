@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { ChatErrorKind } from '@/lib/chat-error'
@@ -15,7 +15,8 @@ afterEach(async () => {
     vi.restoreAllMocks()
 })
 
-async function mount(kind: ChatErrorKind, message: string, handlers: Record<string, ReturnType<typeof vi.fn>> = {}, sessionId: string | null = 'session-1') {
+type Handlers = Partial<Omit<ComponentProps<typeof DesktopProviderErrorNotice>, 'kind' | 'message' | 'agentId' | 'sessionId'>>
+async function mount(kind: ChatErrorKind, message: string, handlers: Handlers = {}, sessionId: string | null = 'session-1') {
     const root = createRoot(document.body.appendChild(document.createElement('div'))); roots.push(root)
     await act(async () => root.render(
         <DesktopProviderErrorNotice kind={kind} message={message} agentId="agent-1" sessionId={sessionId}
@@ -97,7 +98,7 @@ test('a refused model opens the recovery picker and saves a conversation-scoped 
 })
 
 test('an unsent conversation routes the pick through onConversationChoice instead of patching', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify(modelView), { status: 200 }))
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(modelView), { status: 200 }))
     vi.stubGlobal('fetch', fetcher)
     const onConversationChoice = vi.fn()
     const onModelSaved = vi.fn()

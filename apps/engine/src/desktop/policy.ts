@@ -19,6 +19,13 @@ export function assertDesktopProvider(provider: string, id?: string): void {
 }
 
 export function desktopRouteAllowed(method: string, path: string): boolean {
+    // Named API changes require F's revision/receipt authority, including on
+    // case-insensitive filesystems. Encoded aliases also fail the strict id below.
+    if ((method === 'PATCH' || method === 'DELETE') && /^\/connections\/cnx_/i.test(path)) return false
+    if (/^\/desktop\/api-connections\/(?:catalog|removal)$/.test(path)) return method === 'GET'
+    if (/^\/desktop\/api-connections\/(?:create|rename|models|credential|remove)$/.test(path)) return method === 'POST'
+    // Named default selection still lacks its root authorizer and stays closed.
+    if (path === '/desktop/foreman/file-permissions') return method === 'GET' || method === 'PATCH'
     if (path === '/desktop/external-mcp/keys') return method === 'GET' || method === 'POST'
     if (path === '/desktop/external-mcp/listener') return method === 'GET'
     if (/^\/desktop\/external-mcp\/(?:keys\/revoke|listener\/enable|listener\/disable|recheck)$/.test(path)) return method === 'POST'

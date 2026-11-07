@@ -11,7 +11,7 @@ import { useDesktopCoworkerImportFlow } from './useDesktopCoworkerImportFlow'
 let root: Root | undefined
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.replaceChildren() })
 
-async function mount(overrides: Partial<DesktopCoworkerShareClient> = {}, targetWorkspaceId = 2) {
+async function mount(overrides: Partial<DesktopCoworkerShareClient> = {}, targetWorkspaceId = 2, onImported?: (agentId: string) => void | Promise<void>) {
     const api = {
         plan: vi.fn(), review: vi.fn(), export: vi.fn(), preview: vi.fn(async () => shareManifest), downloadUrl: vi.fn(),
         import: vi.fn(async () => ({ status: 'imported' as const, importedAgentId: 'fresh-a' })), revoke: vi.fn(), dispose: vi.fn(), ...overrides,
@@ -19,7 +19,7 @@ async function mount(overrides: Partial<DesktopCoworkerShareClient> = {}, target
     const attempts = createDesktopCoworkerShareAttempts()
     let flow!: ReturnType<typeof useDesktopCoworkerImportFlow>
     function Probe() {
-        flow = useDesktopCoworkerImportFlow({ client: api, attempts, targetWorkspaceId, snapshotId: shareManifest.packageKey })
+        flow = useDesktopCoworkerImportFlow({ client: api, attempts, targetWorkspaceId, snapshotId: shareManifest.packageKey, onImported })
         return null
     }
     root = createRoot(document.body.appendChild(document.createElement('div')))
@@ -53,18 +53,22 @@ test('lost import acknowledgement recovers the same fresh copy without navigatio
 
 test('a destination failure is not an added coworker and a later success does not import twice', async () => {
     const api = { import: vi.fn()
-        .mockResolvedValueOnce({ status: 'partial', reason: 'Two tables were not installed.' })
+        .mockResolvedValueOnce({ status: 'partial', importedAgentId: 'incomplete-copy', reason: 'Two tables were not installed.' })
         .mockResolvedValueOnce({ status: 'imported', importedAgentId: 'fresh-a' }) } as Partial<DesktopCoworkerShareClient>
-    const mounted = await mount(api)
+    const onImported = vi.fn()
+    const mounted = await mount(api, 2, onImported)
     await act(async () => mounted.flow().setApproved(true))
     await act(async () => { await mounted.flow().importFresh() })
     expect(mounted.flow().importedAgentId).toBeNull()
     expect(mounted.flow().error).toBe('Two tables were not installed.')
+    expect(onImported).not.toHaveBeenCalled()
     expect(mounted.attempts.listImport({ targetWorkspaceId: 2, snapshotId: shareManifest.packageKey })).toHaveLength(1)
     await act(async () => { await mounted.flow().importFresh() })
     expect(mounted.flow().importedAgentId).toBe('fresh-a')
+    expect(onImported).toHaveBeenCalledExactlyOnceWith('fresh-a')
     await act(async () => { await mounted.flow().importFresh() })
     expect(mounted.api.import).toHaveBeenCalledTimes(2)
+    expect(onImported).toHaveBeenCalledTimes(1)
 })
 
 test('a changed portable file keeps the saved attempt', async () => {
@@ -84,4 +88,40 @@ test('another workspace cannot consume the saved import attempt', async () => {
     await act(async () => { await first.flow().importFresh() })
     expect(first.attempts.listImport({ targetWorkspaceId: 3, snapshotId: shareManifest.packageKey })).toEqual([])
     expect(first.attempts.listImport({ targetWorkspaceId: 2, snapshotId: shareManifest.packageKey })).toHaveLength(1)
+})
+
+test('an exact ACK notifies once per workspace/copy even if recovery-intent cleanup requires the same retry', async () => {
+    const onImported = vi.fn()
+    const mounted = await mount({},2,onImported)
+    vi.spyOn(mounted.attempts,'forgetImport').mockImplementationOnce(() => { throw new Error('Receipt cleanup interrupted') })
+    await act(async () => mounted.flow().setApproved(true))
+    await act(async () => { await mounted.flow().importFresh() })
+    expect(onImported).toHaveBeenCalledExactlyOnceWith('fresh-a')
+    await act(async () => { await mounted.flow().importFresh() })
+    expect(mounted.api.import).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(mounted.api.import).mock.calls[0]![0]).toEqual(vi.mocked(mounted.api.import).mock.calls[1]![0])
+    expect(onImported).toHaveBeenCalledTimes(1)
+})
+
+test('foreign recovery scope never imports or notifies the current board', async () => {
+    const onImported = vi.fn(), mounted = await mount({},2,onImported)
+    await act(async () => { await mounted.flow().recoverImport({ requestId: 'foreign-attempt',snapshotId: shareManifest.packageKey,expectedDigest: shareManifest.contentDigest,targetWorkspaceId: 3 }) })
+    expect(mounted.api.import).not.toHaveBeenCalled(); expect(onImported).not.toHaveBeenCalled()
+    expect(mounted.flow().error).toContain('another workspace')
+})
+
+test('an ACK arriving after the import view changes workspace cannot notify the new board', async () => {
+    let release!: (value: { status: 'imported'; importedAgentId: string }) => void
+    const api = { preview: vi.fn(async () => shareManifest),import: vi.fn(() => new Promise(resolve => { release = resolve })) } as unknown as DesktopCoworkerShareClient
+    const attempts = createDesktopCoworkerShareAttempts(), onImported = vi.fn()
+    let flow!: ReturnType<typeof useDesktopCoworkerImportFlow>
+    function Probe({ workspaceId }: { workspaceId: number }) { flow = useDesktopCoworkerImportFlow({ client: api,attempts,targetWorkspaceId: workspaceId,snapshotId: shareManifest.packageKey,onImported }); return null }
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<Probe workspaceId={2} />))
+    await act(async () => flow.setApproved(true))
+    let importing!: Promise<boolean>
+    await act(async () => { importing = flow.importFresh() })
+    await act(async () => root!.render(<Probe workspaceId={3} />))
+    await act(async () => { release({ status: 'imported',importedAgentId: 'old-workspace-copy' }); await importing })
+    expect(onImported).not.toHaveBeenCalled(); expect(flow.importedAgentId).toBeNull()
 })

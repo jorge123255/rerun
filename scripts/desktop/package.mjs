@@ -27,7 +27,7 @@ if (flag('--stage-only')) {
     const builderArgs = flag('--dmg') ? ['--mac', 'dmg'] : ['--mac', '--arm64']
     console.log(`\n--- electron-builder ${builderArgs.join(' ')}`)
     const signingArgs = await previewSigningArguments()
-    await run('npx', ['--yes', 'electron-builder@26.18.1', ...builderArgs, '--config', 'electron-builder.yml', ...signingArgs, ...(outputDir ? [`-c.directories.output=${outputDir}`] : [])], { cwd: join(repoRoot, 'apps', 'desktop') })
+    await run('npx', ['--yes', 'electron-builder@26.18.1', ...builderArgs, '--publish', 'never', '--config', 'electron-builder.yml', ...signingArgs, ...(outputDir ? [`-c.directories.output=${outputDir}`] : [])], { cwd: join(repoRoot, 'apps', 'desktop') })
     const packagedApp = join(outputDir ?? join(repoRoot, 'apps', 'desktop', 'release'), 'mac-arm64', 'Rerun Desktop Preview.app')
     await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', packagedApp])
     console.log(`\npackage complete: ${outputDir ?? 'apps/desktop/release'}`)

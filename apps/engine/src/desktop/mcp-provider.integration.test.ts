@@ -5,31 +5,40 @@ import { agentConfigSchema, connectionConfigSchema } from '@rerun/contracts'
 import type { RunContext } from '../runtime/context.js'
 import type { LoadedAgent } from '../agents/types.js'
 
-const captured = vi.hoisted(() => ({ settings: [] as Record<string, any>[], config: undefined as unknown }))
+const captured = vi.hoisted(() => ({ settings: [] as Record<string, any>[], claude: [] as Record<string, any>[], config: undefined as unknown, generate: vi.fn(), stream: vi.fn() }))
 vi.mock('../config/env.js', () => ({ env: () => ({ RERUN_HUB_BASE_URL: 'http://127.0.0.1:3123', RERUN_API_KEY: 'engine-only', RERUN_DATA_DIR: '/fixture-only', RERUN_LOG_LEVEL: 'silent' }) }))
 vi.mock('../agents/lock.js', () => ({ withAgentLock: async (_id: string, action: () => Promise<unknown>) => action() }))
 vi.mock('../agents/loader.js', () => ({ readAgentConfig: async () => captured.config }))
 vi.mock('./agent-lifecycle.js', () => ({ beginDesktopAgentWork: () => () => {} }))
 vi.mock('./codex-runtime.js', () => ({ signedInFlag: 'RERUN_CHATGPT_CONNECTED', DESKTOP_CODEX_ID: 'mac-chatgpt', desktopCodexAvailable: () => true, desktopCodexRuntime: () => ({ codexPath: '/fixture/codex', cwd: '/fixture/work', env: {} }) }))
+vi.mock('../agents/process-env.js', () => ({ agentProcessEnv: () => ({ cwd: '/fixture/work', env: {} }) }))
+vi.mock('./claude-plan/runtime.js', async original => ({ ...await original<typeof import('./claude-plan/runtime.js')>(), desktopClaudeAvailable: () => true, desktopClaudeRuntime: () => ({ settings: { cwd: '/fixture/claude', env: {} }, close: async () => {} }) }))
 vi.mock('ai-sdk-provider-codex-cli', async original => {
     const actual = await original<typeof import('ai-sdk-provider-codex-cli')>()
     return { ...actual, createCodexAppServer: (options: { defaultSettings: Record<string, any> }) => {
         captured.settings.push(options.defaultSettings)
-        return Object.assign((modelId: string) => ({ specificationVersion: 'v3', provider: 'codex', modelId, supportedUrls: {}, doGenerate: vi.fn(), doStream: vi.fn() }), { close: async () => {} })
+        return Object.assign((modelId: string) => ({ specificationVersion: 'v3', provider: 'codex', modelId, supportedUrls: {}, doGenerate: captured.generate, doStream: captured.stream }), { close: async () => {} })
+    } }
+})
+vi.mock('ai-sdk-provider-claude-code', async original => {
+    const actual = await original<typeof import('ai-sdk-provider-claude-code')>()
+    return { ...actual, createClaudeCode: (options: { defaultSettings: Record<string, any> }) => {
+        captured.claude.push(options.defaultSettings)
+        return { languageModel: (modelId: string) => ({ specificationVersion: 'v3', provider: 'claude', modelId, supportedUrls: {}, doGenerate: captured.generate, doStream: captured.stream }) }
     } }
 })
 import { buildTools } from '../tools/registry.js'
 import { resolveModel } from '../agents/providers.js'
 
-afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); captured.settings.length = 0 })
+afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); captured.settings.length = 0; captured.claude.length = 0; captured.generate.mockClear(); captured.stream.mockClear() })
 const catalogId = '00000000-0000-4000-8000-000000000001', capabilityId = '00000000-0000-4000-8000-000000000002'
-function setup(name = 'public_add') {
+function setup(name = 'public_add', provider: 'codex' | 'claude' = 'codex') {
     vi.stubEnv('RERUN_DESKTOP_APP', '1')
-    const config = agentConfigSchema.parse({ name: 'MCP coworker', provider: 'codex', model: 'fixture', tools: { desktopToolGrants: { mcp: true, workspaceList: true } } })
+    const config = agentConfigSchema.parse({ name: 'MCP coworker', provider, model: 'fixture', tools: { desktopToolGrants: { mcp: true, workspaceList: true } } })
     captured.config = config
     const agent = {
         id: 'engine-owner', config, soul: '', install: '', env: {},
-        resolved: { provider: 'codex', model: 'fixture', connection: { id: 'mac-chatgpt', config: connectionConfigSchema.parse({ name: 'ChatGPT', provider: 'codex', createdAt: '2026-11-04T00:00:00.000Z' }), env: { RERUN_CHATGPT_CONNECTED: '1' } } },
+        resolved: { provider, model: 'fixture', connection: { id: provider === 'codex' ? 'mac-chatgpt' : 'mac-claude', config: connectionConfigSchema.parse({ name: provider === 'codex' ? 'ChatGPT' : 'Claude', provider, createdAt: '2026-11-04T00:00:00.000Z' }), env: provider === 'codex' ? { RERUN_CHATGPT_CONNECTED: '1' } : { CLAUDE_CODE_OAUTH_TOKEN: 'fixture-only-token' } } },
     } as LoadedAgent
     const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
         const body = JSON.parse(String(init.body))
@@ -39,6 +48,63 @@ function setup(name = 'public_add') {
     const ctx = { agent, sessionId: 'session', runId: 'run', abortSignal: new AbortController().signal, logger: { warn: vi.fn() } } as unknown as RunContext
     return { agent, ctx, fetcher }
 }
+
+function admittedNames(provider: 'codex' | 'claude'): string[] {
+    return provider === 'codex'
+        ? (captured.settings.at(-1)!.mcpServers?.rerun?.tools ?? []).map((entry: { name: string }) => entry.name)
+        : (captured.claude.at(-1)!.allowedTools ?? []).map((name: string) => name.replace(/^mcp__rerun__/, ''))
+}
+
+test.each(['codex', 'claude'] as const)('registry-built MCP sign-in reaches the actual %s filter only while its grant remains enabled', async provider => {
+    const { agent, ctx, fetcher } = setup('public_add', provider)
+    const built = await buildTools(ctx)
+    try {
+        expect(built.tools.request_mcp_sign_in).toBeDefined()
+        const granted = resolveModel(agent, undefined, built.tools)
+        expect(admittedNames(provider)).toContain('request_mcp_sign_in')
+        if (provider === 'codex') expect(captured.settings.at(-1)!.configOverrides['mcp_servers.rerun.enabled_tools']).toContain('request_mcp_sign_in')
+        await granted.close()
+        agent.config.tools.desktopToolGrants = { workspaceList: true, mcp: false }
+        const revoked = resolveModel(agent, undefined, built.tools)
+        expect(admittedNames(provider)).not.toContain('request_mcp_sign_in')
+        await revoked.close()
+    } finally { await built.close() }
+    // Construction/admission can read the mocked catalog and release it, but never starts
+    // OAuth, invokes a remote MCP action or asks either mocked model for a response.
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init.body)).action)).toEqual(['catalog', 'release'])
+    expect(captured.generate).not.toHaveBeenCalled()
+    expect(captured.stream).not.toHaveBeenCalled()
+})
+
+test.each(['missing', 'off'] as const)('the %s MCP grant keeps sign-in absent from the registry and Codex bridge', async state => {
+    const { agent, ctx, fetcher } = setup()
+    agent.config.tools.desktopToolGrants = state === 'missing' ? { workspaceList: true } : { workspaceList: true, mcp: false }
+    const built = await buildTools(ctx)
+    try {
+        expect(built.tools.request_mcp_sign_in).toBeUndefined()
+        const resolved = resolveModel(agent, undefined, built.tools)
+        expect(admittedNames('codex')).not.toContain('request_mcp_sign_in')
+        await resolved.close()
+    } finally { await built.close() }
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(captured.generate).not.toHaveBeenCalled()
+    expect(captured.stream).not.toHaveBeenCalled()
+})
+
+test('MCP sign-in is not built without a live run or for a Foreman/ephemeral tool scope', async () => {
+    const { agent, ctx, fetcher } = setup()
+    await expect(buildTools({ ...ctx, runId: undefined })).rejects.toThrow('MCP requires an active, cancellable run')
+    agent.config.kind = 'foreman'
+    const foreman = await buildTools(ctx)
+    try { expect(foreman.tools.request_mcp_sign_in).toBeUndefined() }
+    finally { await foreman.close() }
+    agent.config.kind = 'user'
+    agent.config.ephemeral = true
+    await expect(buildTools(ctx)).rejects.toThrow('Unowned ephemeral tool scope')
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(captured.generate).not.toHaveBeenCalled()
+    expect(captured.stream).not.toHaveBeenCalled()
+})
 
 test('registry-built MCP tools reach the actual Codex filter, while a copied/prefix-matching tool cannot', async () => {
     const { ctx, agent } = setup()

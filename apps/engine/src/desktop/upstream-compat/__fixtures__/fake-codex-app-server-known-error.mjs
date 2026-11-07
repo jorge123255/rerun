@@ -5,7 +5,7 @@ const THREAD_ID = 'thread-known'
 const TURN_ID = 'turn-known'
 const failure = {
     message: 'Upstream HTTP connection failed while talking to Codex.',
-    codexErrorInfo: { httpConnectionFailed: 502 },
+    codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 502 } },
     additionalDetails: null,
 }
 

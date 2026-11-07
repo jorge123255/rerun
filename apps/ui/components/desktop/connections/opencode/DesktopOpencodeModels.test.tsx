@@ -5,6 +5,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopOpencodeModel, DesktopOpencodeRefresh } from '@rerun/contracts'
 import { DesktopOpencodeModels } from './DesktopOpencodeModels'
 
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 let root: Root | undefined
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.innerHTML = '' })
 
@@ -42,9 +44,10 @@ it('protects the default model and requires explicit Console opt-in', async () =
 })
 
 it('keeps retired selected models visible for removal and filters both plans', async () => {
-    const onModelsChange = await mount({ catalog: catalog([model('go/deepseek-v4-pro', 'DeepSeek V4 Pro')]), enabledModelIds: ['go/deepseek-v4-pro', 'go/retired'], defaultModelId: 'go/deepseek-v4-pro' })
+    const onModelsChange = await mount({ catalog: catalog([model('go/deepseek-v4-pro', 'DeepSeek V4 Pro'), model('go/kimi-k3', 'Kimi K3'), model('console/gpt-5', 'GPT-5')]), enabledModelIds: ['go/deepseek-v4-pro', 'go/retired'], defaultModelId: 'go/deepseek-v4-pro' })
     expect(document.body.textContent).toContain('go/retired')
     expect(document.body.textContent).toContain('No longer offered by OpenCode')
+    expect(document.body.textContent).toContain('Kimi K3')
     await click('Turn off go/retired')
     expect(onModelsChange).toHaveBeenCalledWith({ enabledModelIds: ['go/deepseek-v4-pro'], consoleEnabled: false })
     const search = document.querySelector<HTMLInputElement>('input[aria-label="Search models"]')!
@@ -53,5 +56,7 @@ it('keeps retired selected models visible for removal and filters both plans', a
         search.dispatchEvent(new Event('input', { bubbles: true }))
     })
     expect(document.body.textContent).toContain('Console, paid with your credits')
+    expect(document.body.textContent).toContain('GPT-5')
+    expect(document.body.textContent).not.toContain('DeepSeek V4 Pro')
     expect(document.body.textContent).not.toContain('Kimi K3')
 })

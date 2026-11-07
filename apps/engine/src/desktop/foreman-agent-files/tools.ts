@@ -1,6 +1,6 @@
 import { tool, type ToolSet } from 'ai'
 import { FOREMAN_AGENT_ID } from '@rerun/contracts'
-import { FOREMAN_AGENT_FILE_COPY, foremanAgentFileEditInput, foremanAgentFileGrantOn, foremanAgentFileListInput, foremanAgentFileReadInput, foremanAgentFileSearchInput, foremanAgentFileWriteInput, type ForemanAgentFileGrantId } from './contract.js'
+import { FOREMAN_AGENT_FILE_COPY, foremanAgentFileEditInput, foremanAgentFileGrantOn, foremanAgentFileListInput, foremanAgentFileReadInput, foremanAgentFileSearchInput, foremanAgentFileWriteInput, type ForemanAgentFileGrantId, type ForemanAgentFilePublishResult } from './contract.js'
 import { readAgentConfig } from '../../agents/loader.js'
 import { desktopDeletionActive } from '../agent-lifecycle.js'
 import { listAgentIndex } from '../../db/repos/agents.js'
@@ -17,7 +17,7 @@ export type ForemanAgentFilePorts = {
     readText: (coworkerId: string, path: string, signal: AbortSignal) => Promise<string>
     list: (coworkerId: string, path: string, signal: AbortSignal) => Promise<{ entries: { name: string; directory: boolean }[]; truncated: boolean }>
     search: (coworkerId: string, path: string, pattern: string, maxResults: number, signal: AbortSignal) => Promise<string>
-    publish: (body: ForemanAgentFilePublication, signal: AbortSignal) => Promise<{ status: 'saved' | 'unchanged'; path?: string; message: string }>
+    publish: (body: ForemanAgentFilePublication, signal: AbortSignal) => Promise<ForemanAgentFilePublishResult>
 }
 
 function productionPorts(ctx: RunContext): ForemanAgentFilePorts {
@@ -72,7 +72,9 @@ export function foremanAgentFileTools(ctx: RunContext, ports: ForemanAgentFilePo
             execute: async ({ coworker: target, path }) => {
                 try {
                     await admitted(ctx, ports, 'foremanAgentFilesRead', signal())
-                    return await ports.readText(await coworker(ports, target), path, signal())
+                    const value = await ports.readText(await coworker(ports, target), path, signal())
+                    await admitted(ctx, ports, 'foremanAgentFilesRead', signal())
+                    return value
                 } catch (error) { return fail(error) }
             },
         })
@@ -83,6 +85,7 @@ export function foremanAgentFileTools(ctx: RunContext, ports: ForemanAgentFilePo
                 try {
                     await admitted(ctx, ports, 'foremanAgentFilesRead', signal())
                     const listed = await ports.list(await coworker(ports, target), path, signal())
+                    await admitted(ctx, ports, 'foremanAgentFilesRead', signal())
                     const names = listed.entries.map(entry => entry.name + (entry.directory ? '/' : ''))
                     if (listed.truncated) names.push('(listing limit reached)')
                     return names.join('\n') || '(empty)'
@@ -95,7 +98,9 @@ export function foremanAgentFileTools(ctx: RunContext, ports: ForemanAgentFilePo
             execute: async ({ coworker: target, path, pattern, maxResults }) => {
                 try {
                     await admitted(ctx, ports, 'foremanAgentFilesRead', signal())
-                    return await ports.search(await coworker(ports, target), path, pattern, maxResults, signal())
+                    const value = await ports.search(await coworker(ports, target), path, pattern, maxResults, signal())
+                    await admitted(ctx, ports, 'foremanAgentFilesRead', signal())
+                    return value
                 } catch (error) { return fail(error) }
             },
         })
@@ -112,6 +117,8 @@ export function foremanAgentFileTools(ctx: RunContext, ports: ForemanAgentFilePo
                     const id = await coworker(ports, target)
                     const arguments_ = foremanAgentFileWriteArguments(path, content)
                     const result = await ports.publish({ engineAgentId: id, sessionId: ctx.sessionId, runId: ctx.runId!, toolCallId: options.toolCallId, tool: 'fs_write', arguments: arguments_ }, active)
+                    if (result.status === 'unknown') deny(FOREMAN_AGENT_FILE_COPY.unknown)
+                    if (result.status === 'refused') deny(result.message)
                     return JSON.stringify(result)
                 } catch (error) { return fail(error) }
             },
@@ -127,6 +134,8 @@ export function foremanAgentFileTools(ctx: RunContext, ports: ForemanAgentFilePo
                     const id = await coworker(ports, target)
                     const arguments_ = foremanAgentFileEditArguments(path, oldString, newString, replaceAll)
                     const result = await ports.publish({ engineAgentId: id, sessionId: ctx.sessionId, runId: ctx.runId!, toolCallId: options.toolCallId, tool: 'fs_edit', arguments: arguments_ }, active)
+                    if (result.status === 'unknown') deny(FOREMAN_AGENT_FILE_COPY.unknown)
+                    if (result.status === 'refused') deny(result.message)
                     return JSON.stringify(result)
                 } catch (error) { return fail(error) }
             },

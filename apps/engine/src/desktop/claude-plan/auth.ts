@@ -94,7 +94,9 @@ export function projectDesktopClaudePlanSnapshot(state: State | null, env: Recor
 const publicState = projectDesktopClaudePlanSnapshot
 function load(env: Record<string, string>): State | null { return env[AUTH] ? stateSchema.parse(JSON.parse(env[AUTH])) : null }
 const next = (state: State, patch: Partial<State>): State => ({ ...state, ...patch, revision: String(BigInt(state.revision) + 1n) })
-const same = (state: State | null, action: DesktopClaudePlanAction) => (state?.attemptId ?? null) === action.attemptId && (state?.revision ?? '0') === action.expectedRevision
+// Mutations carry the public identity. A linked generation has no pending attempt even
+// though its durable audit state still retains the UUID of the completed attempt.
+const same = (state: DesktopClaudePlanSnapshot, action: DesktopClaudePlanAction) => state.attemptId === action.attemptId && state.revision === action.expectedRevision
 const safeFailure = () => new Error('Claude sign-in could not be confirmed. Check the saved state before trying again.')
 
 export function createDesktopClaudePlanAuth(ports: ClaudeAuthPorts) {
@@ -115,7 +117,7 @@ export function createDesktopClaudePlanAuth(ports: ClaudeAuthPorts) {
             const env = await ports.read(), current = load(env)
             if (current?.requestId === input.requestId && current.fingerprint === ports.fingerprint(JSON.stringify(input))) return publicState(current, env, ports.now(), ports.launchNonce)
             if (input.operation === 'start' && current?.startId === input.requestId) return publicState(current, env, ports.now(), ports.launchNonce)
-            if (!same(current, input)) throw new Error('This Claude sign-in changed. Refresh it before continuing.')
+            if (!same(publicState(current, env, ports.now(), ports.launchNonce), input)) throw new Error('This Claude sign-in changed. Refresh it before continuing.')
             const revision = String(BigInt(current?.revision ?? '0') + 1n)
             if (input.operation === 'start') {
                 if (current) exchanges.get(current.attemptId)?.abort()
