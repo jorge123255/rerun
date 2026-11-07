@@ -53,7 +53,7 @@ test('each coworker’s Files browses folders and previews its own identically n
         await flush()
         await click('Show hidden files')
         await flush()
-        expect([...document.querySelectorAll('[role="dialog"] li')].map(li => li.textContent)).toContain('.env')
+        expect(document.querySelector('[data-files-name=".env"]')).toBeTruthy()
         await click('Done')
     }
     expect(fetcher.mock.calls.every(([url]) => !String(url).match(/method|PUT|DELETE/))).toBe(true)

@@ -1,5 +1,6 @@
 import { desktopBrainSemanticTools } from '../desktop/brain-semantic/tool.js'
-import { desktopMcpSignInTools } from '../desktop/mcp-sign-in/request-sign-in.js'
+import { desktopMcpLoginTools } from '../desktop/mcp-login-tools/tools.js'
+import { desktopPrivateRegexTools } from '../desktop/private-search/tools.js'
 import { readDesktopScheduleTools } from '../desktop/schedule-tools/binding.js'
 import { readDesktopToolInstall } from '../desktop/tool-install/binding.js'
 import { FOREMAN_AGENT_ID } from '@rerun/contracts'
@@ -106,7 +107,8 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         const tools: ToolSet = { ...screen.tools, ...desktopWorkspaceReadTools(ctx), ...desktopPrivateFileTools(ctx), ...desktopSharedFileTools(ctx), ...desktopSharedMutationTools(ctx), ...desktopMemoryTools(ctx), ...desktopQuestionTools(ctx), ...desktopApprovalTools(ctx), ...desktopSuggestServiceTools(ctx), ...desktopCardFileTools(ctx), ...desktopTableCardTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'cardTable')), ...desktopTableViewTools(ctx, config => config.enabled && hasDesktopToolGrant(config, 'tableViewWrite')), ...desktopSelfInstructionTools(ctx), ...desktopWebFetchTools(ctx), ...desktopDownloadTools(ctx), ...desktopDbTools(ctx), ...desktopSharedDbTools(ctx), ...desktopSkillTools(ctx), ...desktopBrainTools(ctx), ...desktopBrainSemanticTools(ctx) }
         Object.assign(tools, readDesktopDelegation()?.tools(ctx) ?? {})
         Object.assign(tools, desktopSecretRequestTools(ctx))
-        Object.assign(tools, desktopMcpSignInTools(ctx))
+        if (hasDesktopToolGrant(ctx.agent.config, 'workspaceSearch')) Object.assign(tools, desktopPrivateRegexTools(ctx))
+        Object.assign(tools, desktopMcpLoginTools(ctx))
         if (!ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'guestShell')) Object.assign(tools, readDesktopGuestShell()?.tools(ctx) ?? {})
         if (!ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'scheduleManage')) Object.assign(tools, readDesktopScheduleTools()?.tools(ctx.agent.id, ctx) ?? {})
         if (!ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'toolInstall')) Object.assign(tools, readDesktopToolInstall()?.tools(ctx) ?? {})

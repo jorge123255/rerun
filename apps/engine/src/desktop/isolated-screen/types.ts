@@ -80,7 +80,7 @@ export type ScreenComputerInput = {
 export type ScreenNavigate = { url: string; links?: boolean; timeoutMs?: number; screenshotPath?: string }
 
 export type ScreenExportArtifact = {
-    kind: 'rendered-html' | 'screenshot' | 'page-metadata'
+    kind: 'rendered-html' | 'served-html' | 'screenshot' | 'page-metadata'
     path: string
     mediaType: 'text/plain' | 'image/png'
     bytes: Buffer
