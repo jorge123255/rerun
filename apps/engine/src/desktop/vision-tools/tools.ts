@@ -35,25 +35,32 @@ export function desktopVisionTools(ctx: RunContext, ports: DesktopVisionPorts = 
             }),
             execute: async ({ imagePath, prompt }, { abortSignal }) => {
                 if (!ctx.runId) throw new Error('Vision analysis requires an active run.')
+                const runSignal = ctx.abortSignal ?? abortSignal
+                runSignal?.throwIfAborted()
                 await requireDesktopVisionGrant(ctx, ports)
                 let messages: ModelMessage[]
                 try {
                     messages = await desktopVisionImageMessages(ctx, imagePath, prompt)
                 } catch (error) {
-                    ctx.abortSignal?.throwIfAborted()
+                    runSignal?.throwIfAborted()
                     return `Could not read ${imagePath} as an image: ${(error as Error).message}`
                 }
+                runSignal?.throwIfAborted()
                 const seeing = ports.selectedModel(ctx.agent)
                 if (seeing === null) return NO_VISION_MODEL
-                const runSignal = ctx.abortSignal ?? abortSignal
                 const signal = deadlineSignal(timeoutMs, runSignal)
-                let release = () => {}
+                let auth: Promise<() => void> | undefined
+                let release: (() => void) | undefined
                 try {
-                    await requireDesktopVisionGrant(ctx, ports)
-                    release = await ports.ensureAuth(ctx.agent)
-                    await requireDesktopVisionGrant(ctx, ports)
+                    await raceAbort(requireDesktopVisionGrant(ctx, ports), signal)
+                    signal.throwIfAborted()
+                    auth = ports.ensureAuth(ctx.agent)
+                    release = await raceAbort(auth, signal)
+                    await raceAbort(requireDesktopVisionGrant(ctx, ports), signal)
                     signal.throwIfAborted()
                     const { text } = await raceAbort(ports.generateText({ model: ports.modelFor(ctx.agent, seeing, ctx.sessionId), messages, abortSignal: signal }), signal)
+                    await raceAbort(requireDesktopVisionGrant(ctx, ports), signal)
+                    signal.throwIfAborted()
                     return text || '(the model returned no text)'
                 } catch (error) {
                     if (runSignal?.aborted) throw error
@@ -63,7 +70,8 @@ export function desktopVisionTools(ctx: RunContext, ports: DesktopVisionPorts = 
                     }
                     return `Vision analysis failed (the configured model may not support images): ${(error as Error).message}`
                 } finally {
-                    release()
+                    if (release) release()
+                    else void auth?.then(releaseLate => releaseLate()).catch(() => {})
                 }
             },
         }),

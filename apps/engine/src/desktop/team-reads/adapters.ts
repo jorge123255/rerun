@@ -1,4 +1,7 @@
-import { isPathSegment, schedulesDir, triggersDir } from '../../config/paths.js'
+import { realpath } from 'node:fs/promises'
+import { join, relative } from 'node:path'
+import { dataDir, isPathSegment, schedulesDir, triggersDir } from '../../config/paths.js'
+import { openWithoutLinks, readBoundedFileWithoutLinks } from '../open-without-links.js'
 import { desktopTeamActivityFrom, desktopTeamRunView, desktopTeamScheduleView, desktopTeamToolCallView, desktopTeamTriggerView } from './project.js'
 import type { DesktopTeamActivity, DesktopTeamAdmitContext, DesktopTeamReadAck, DesktopTeamReads, DesktopTeamRunDetail, DesktopTeamRunView, DesktopTeamScheduleView, DesktopTeamToolCallView, DesktopTeamTriggerView } from './ports.js'
 
@@ -6,6 +9,7 @@ type DirStat = { isSymbolicLink: boolean; isDirectory: boolean }
 
 const uncertain = { acknowledgement: 'uncertain' as const }
 const ready = <T>(value: T): DesktopTeamReadAck<T> => ({ acknowledgement: 'ready', value })
+const MAX_SCHEDULE_BYTES = 256 * 1024
 
 function missing(error: unknown): boolean {
     return (error as NodeJS.ErrnoException).code === 'ENOENT'
@@ -29,10 +33,24 @@ export type DesktopTeamScheduleDeps = {
 
 function defaultScheduleDeps(): DesktopTeamScheduleDeps {
     return {
-        async lstat(id) { return directoryStat(schedulesDir(id)) },
+        async lstat(id) {
+            try {
+                const root = dataDir()
+                const path = join(await realpath(root), relative(root, schedulesDir(id)))
+                const handle = await openWithoutLinks(path, true)
+                await handle.close()
+                return { isDirectory: true, isSymbolicLink: false }
+            } catch (error) {
+                if (missing(error)) return null
+                throw error
+            }
+        },
         async list(id) {
             const { listSchedules } = await import('../../schedules/loader.js')
-            return listSchedules(id)
+            const root = dataDir()
+            const canonical = await realpath(root)
+            return listSchedules(id, async path =>
+                (await readBoundedFileWithoutLinks(join(canonical, relative(root, path)), MAX_SCHEDULE_BYTES)).toString('utf8'))
         },
     }
 }

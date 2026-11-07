@@ -80,7 +80,10 @@ export const DESKTOP_TEAM_READ_PROMPT = 'team_status, team_list_schedules, team_
  * Root runs these. A row whose workspace_id differs is a refusal, not an empty team.
  * If lookup returns more than one row, treat it as unavailable rather than picking one.
  */
-export const DESKTOP_TEAM_DIRECTORY_CALLER_SQL = 'SELECT id, workspace_id, engine_agent_id, enabled FROM desktop_agents WHERE engine_agent_id = ?'
+export const DESKTOP_TEAM_DIRECTORY_CALLER_SQL = `SELECT a.id, a.workspace_id, a.engine_agent_id
+FROM desktop_agents a
+WHERE a.engine_agent_id = ? AND a.enabled = 1
+  AND NOT EXISTS(SELECT 1 FROM desktop_deletions d WHERE d.agent_id = a.id)`
 
 export const DESKTOP_TEAM_DIRECTORY_MEMBER_SQL = `SELECT a.id, a.workspace_id, a.engine_agent_id, a.name, a.enabled,
        c.handle AS handle,

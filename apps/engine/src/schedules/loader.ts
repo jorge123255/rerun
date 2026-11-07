@@ -4,7 +4,7 @@ import matter from 'gray-matter'
 import { providerSchema, type MessageAuthor, type Provider } from '@rerun/contracts'
 import { scheduleFile, schedulesDir } from '../config/paths.js'
 import { writeFileAtomic } from '../lib/atomic-write.js'
-import { assertComputableTiming } from './next-run.js'
+import { assertComputableTiming, isSchedulePauseWithoutTimingChange } from './next-run.js'
 import { nowIso, slugify } from '../lib/ids.js'
 import { withKeyedLock } from '../lib/lock.js'
 import { authorMetadata, sendNotification } from '../runtime/notify.js'
@@ -88,7 +88,7 @@ export function scheduleExists(agentId: string, slug: string): boolean {
     return existsSync(scheduleFile(agentId, slug))
 }
 
-export async function listSchedules(agentId: string): Promise<Schedule[]> {
+export async function listSchedules(agentId: string, readDefinition = (path: string) => readFile(path, 'utf8')): Promise<Schedule[]> {
     const root = schedulesDir(agentId)
     if (!existsSync(root)) return []
     const entries = await readdir(root, { withFileTypes: true })
@@ -96,7 +96,7 @@ export async function listSchedules(agentId: string): Promise<Schedule[]> {
     for (const entry of entries) {
         if (!entry.isFile() || !entry.name.endsWith('.md')) continue
         const slug = entry.name.slice(0, -3)
-        schedules.push(toSchedule(slug, await readFile(scheduleFile(agentId, slug), 'utf8')))
+        schedules.push(toSchedule(slug, await readDefinition(scheduleFile(agentId, slug))))
     }
     return schedules
 }
@@ -161,7 +161,7 @@ export async function updateScheduleAt(agentId: string, slug: string, patch: Sch
         const current = await readScheduleForUpdate(agentId, slug)
         const defined = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as SchedulePatch
         const next: Schedule = { ...current, ...defined }
-        assertComputableTiming(next, new Date())
+        if (!isSchedulePauseWithoutTimingChange(defined)) assertComputableTiming(next, new Date())
         await writeFileAtomic(scheduleFile(agentId, slug), serialize(next))
         return next
     })

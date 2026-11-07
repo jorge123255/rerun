@@ -153,6 +153,29 @@ describe('desktop schedule tool lifecycle', () => {
         expect(await files.read('eng-1', 'digest')).toMatchObject({ body: 'Check inbox. Summarize inbox.', description: '' })
     })
 
+    it('pauses a routine whose saved cron no longer computes without accepting a timing edit', async () => {
+        const { files, lifecycle, writes } = harness()
+        const legacy = definition({ slug: 'legacy', name: 'Legacy', body: 'Keep', cron: '0 9 * * 1' })
+        files.seed('eng-1', legacy)
+        const compute = vi.spyOn(timing, 'computeNextRun').mockReturnValue({ ok: false })
+        try {
+            const paused = await lifecycle.update('eng-1', 'legacy', {
+                requestId: '00000000-0000-4000-8000-000000000160',
+                expectedRevision: desktopScheduleDefinitionRevision(legacy),
+                enabled: false,
+            })
+            expect(paused.outcome).toBe('committed')
+            expect(await files.read('eng-1', 'legacy')).toEqual({ ...legacy, enabled: false })
+            await expect(lifecycle.update('eng-1', 'legacy', {
+                requestId: '00000000-0000-4000-8000-000000000161', expectedRevision: paused.revision!, enabled: true,
+            })).rejects.toThrow(M.invalidCron(legacy.cron!))
+            await expect(lifecycle.update('eng-1', 'legacy', {
+                requestId: '00000000-0000-4000-8000-000000000162', expectedRevision: paused.revision!, enabled: false, cron: '* * * * *',
+            })).rejects.toThrow(M.invalidCron('* * * * *'))
+            expect(writes()).toBe(1)
+        } finally { compute.mockRestore() }
+    })
+
     it('edits one exact excerpt and preserves a fired one-shot stamp', async () => {
         const { lifecycle, files } = harness()
         files.seed('eng-1', definition({ slug: 'digest', name: 'Digest', body: 'Check inbox.', cron: '0 8 * * *', lastRunAt: '2026-09-29T08:00:00.000Z', enabled: false }))

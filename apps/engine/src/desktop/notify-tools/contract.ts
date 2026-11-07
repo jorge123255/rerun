@@ -18,6 +18,8 @@ export const desktopNotifyUserReceiptSchema = z.strictObject({
     nativeStatus: z.enum(['shown', 'unavailable', 'failed', 'unknown']),
     reason: z.string().max(400).optional(),
     createdAt: z.string().min(1).max(40),
+}).refine(receipt => receipt.status === (receipt.nativeStatus === 'unavailable' ? 'failed' : receipt.nativeStatus), {
+    message: 'Native notification acknowledgement is inconsistent.',
 })
 export type DesktopNotifyUserReceipt = z.infer<typeof desktopNotifyUserReceiptSchema>
 

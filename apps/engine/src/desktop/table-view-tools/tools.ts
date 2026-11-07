@@ -3,12 +3,13 @@ import { z } from 'zod'
 import type { AgentConfig, TableView, TableViewInput } from '@rerun/contracts'
 import { withAgentLock } from '../../agents/lock.js'
 import { readAgentConfig } from '../../agents/loader.js'
+import { agentDataDbPath, dataDir, sharedDbPath } from '../../config/paths.js'
 import { AGENT_HIDDEN_TABLES, getAgentDb } from '../../db/agentDb.js'
 import { getSharedDb, SHARED_HIDDEN_TABLES } from '../../db/sharedDb.js'
 import { tableDisplayInput, tableTargetInput } from '../../tools/builtin/table-card.js'
 import type { RunContext } from '../../runtime/context.js'
 import { beginDesktopAgentWork } from '../agent-lifecycle.js'
-import { DATA_DEADLINE_MS } from '../data-executor.js'
+import { DATA_DEADLINE_MS, prepareDesktopDataFile, verifyDesktopDataFile } from '../data-executor.js'
 import { hasDesktopDataGrant } from '../data-tools.js'
 import { deleteDesktopTableView, DesktopTableViewCommitUnknownError, saveDesktopTableView } from './store.js'
 
@@ -37,17 +38,28 @@ function tableViewScope(value: unknown): DesktopTableViewScope {
 }
 
 function productionAdapters(authorized: DesktopTableViewAuthorization): DesktopTableViewAdapters {
-    const scope = async (ctx: RunContext, scope: DesktopTableViewScope) => scope === 'shared'
-        ? { client: await getSharedDb(), hidden: SHARED_HIDDEN_TABLES }
-        : { client: await getAgentDb(ctx.agent.id), hidden: AGENT_HIDDEN_TABLES }
+    const scope = async (ctx: RunContext, scopeName: DesktopTableViewScope) => {
+        const shared = scopeName === 'shared'
+        const pin = await prepareDesktopDataFile(dataDir(), shared ? sharedDbPath() : agentDataDbPath(ctx.agent.id))
+        ctx.abortSignal?.throwIfAborted()
+        const client = shared ? await getSharedDb() : await getAgentDb(ctx.agent.id)
+        const verify = () => verifyDesktopDataFile(pin)
+        await verify()
+        return {
+            client,
+            hidden: shared ? SHARED_HIDDEN_TABLES : AGENT_HIDDEN_TABLES,
+            signal: ctx.abortSignal,
+            beforeTransaction: verify,
+            beforeCommit: verify,
+            afterCommit: async () => { await verify(); await requireScope(ctx, scopeName, authorized) },
+        }
+    }
     return {
         save: async (ctx, scopeName, { table, ...input }) => saveDesktopTableView({
-            ...(await scope(ctx, scopeName)), table, input, signal: ctx.abortSignal,
-            afterCommit: () => requireScope(ctx, scopeName, authorized),
+            ...(await scope(ctx, scopeName)), table, input,
         }),
         delete: async (ctx, scopeName, table, name) => deleteDesktopTableView({
-            ...(await scope(ctx, scopeName)), table, name, signal: ctx.abortSignal,
-            afterCommit: () => requireScope(ctx, scopeName, authorized),
+            ...(await scope(ctx, scopeName)), table, name,
         }),
     }
 }

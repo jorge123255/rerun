@@ -53,6 +53,13 @@ describe('validated production table-view store', () => {
         expect(await deleteDesktopTableView({ ...scope(), name: 'Pipeline' })).toBe(false)
     })
 
+    it('does not delete a sibling whose ID is the same as the requested view name', async () => {
+        const sibling = await saveView(db, 'deals', { name: 'Pipeline', layout: 'table' })
+        await saveView(db, 'deals', { name: sibling.id, layout: 'table' })
+        expect(await deleteDesktopTableView({ ...scope(), name: sibling.id })).toBe(true)
+        expect((await listViews(db, 'deals')).map(row => row.id)).toEqual([sibling.id])
+    })
+
     it('reports post-commit authorization loss as unknown without reversing or repeating the effect', async () => {
         let calls = 0
         await expect(saveDesktopTableView({

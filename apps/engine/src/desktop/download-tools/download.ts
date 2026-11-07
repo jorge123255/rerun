@@ -1,6 +1,6 @@
 import { isIP } from 'node:net'
 import { z } from 'zod'
-import { deadlineSignal } from '../../lib/abort.js'
+import { deadlineSignal, raceAbort } from '../../lib/abort.js'
 import { isFailureStatus } from '../../tools/host-breaker.js'
 import { isPublicAddress, publicUrl } from '../web-fetch/public-url.js'
 import { DownloadPermissionError, DownloadTooLargeError } from './errors.js'
@@ -73,9 +73,9 @@ export async function executeDownload(input: unknown, deps: DownloadDependencies
     await deps.assertPermission()
     if (deps.signal.aborted) throw deps.signal.reason ?? new Error('Cancelled')
     try {
-        await publishDownload(deps.workspaceRoot, parsed.path, body.bytes, deadline)
+        await publishDownload(deps.workspaceRoot, parsed.path, body.bytes, deadline, () => raceAbort(deps.assertPermission(), deadline))
     } catch (error) {
-        if (deps.signal.aborted) throw error
+        if (deps.signal.aborted || error instanceof DownloadPermissionError) throw error
         if (error instanceof DownloadTooLargeError) return { text: error.message, failed: false, saved: false }
         const message = error instanceof Error ? error.message : 'Download failed'
         const kept = message.includes('existing file was kept') || message.includes('outside') || message.includes('reserved') || message.includes('could not be confirmed') || message.includes('another user') || message.includes('only available on this Mac') || message === EXECUTABLE_DOWNLOAD_MESSAGE

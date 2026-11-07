@@ -16,7 +16,7 @@ import { ArrowUpIcon, ChevronDownIcon, Maximize2Icon, PlusIcon, SendIcon, Square
 import { MarkdownEditorDialog } from '@/components/ui/markdown-editor-dialog'
 import { DesktopConversationFind } from './DesktopConversationFind'
 import { DesktopProviderErrorNotice } from './chat/recovery/DesktopProviderErrorNotice'
-import { planFxAttachmentBatch } from '@/lib/desktop/fx-repairs/attachment-overflow'
+import { formatFxDocumentRejections, planFxAttachmentBatch } from '@/lib/desktop/fx-repairs/attachment-overflow'
 import { useDesktopChatRecovery } from '@/lib/desktop/chat-recovery/use-desktop-chat-recovery'
 import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
 import { useDesktopReplyFeedback } from '@/lib/desktop/reply-feedback'
@@ -380,17 +380,22 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         // One ordered drain preserves mixed text/image selection order. Every next file still
         // belongs to the captured tab; closing it or beginning Quit cancels the remaining batch.
         const work = (async () => {
+            let documentRejected = false
             for (const { kind, files: group } of groups) {
                 if (uploadScope.current !== scope || !scope.live || isDesktopQuitting()) break
                 if (kind === 'image') await imageUploads.start(group)
                 else if (kind === 'document') {
                     if (!tabUid) throw new Error('Open a saved chat tab before adding documents.')
                     const added = await Promise.resolve(documents.add(group))
-                    for (const outcome of added.outcomes) if (outcome.status === 'rejected') reportUploadNotice(outcome.message)
+                    const rejections = formatFxDocumentRejections(added)
+                    if (rejections.length) {
+                        documentRejected = true
+                        reportUploadNotice(rejections.join(' '))
+                    }
                 }
                 else await textUploads.start(group)
             }
-            return failures[0] === textUploads.failureVersion() && failures[1] === imageUploads.failureVersion()
+            return !documentRejected && failures[0] === textUploads.failureVersion() && failures[1] === imageUploads.failureVersion()
         })().finally(() => {
             batchNotices.current = null
             if (batchUpload.current === work) { batchUpload.current = null; setBatchActive(false) }

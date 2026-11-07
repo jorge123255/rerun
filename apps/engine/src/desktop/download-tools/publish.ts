@@ -37,7 +37,7 @@ function mapLink(error: unknown): unknown {
     return error
 }
 
-async function pinDirectory(directory: string): Promise<{ pinned: string; close: () => Promise<void> }> {
+async function pinDirectory(directory: string) {
     let handle: FileHandle
     try {
         handle = await openWithoutLinks(directory, true)
@@ -49,7 +49,7 @@ async function pinDirectory(directory: string): Promise<{ pinned: string; close:
         const info = await handle.stat({ bigint: true })
         if (!info.isDirectory() || info.uid !== currentUid()) throw info.isDirectory() ? otherUser() : outside()
         const pinned = process.platform === 'darwin' ? `/.vol/${info.dev}/${info.ino}` : `/proc/self/fd/${handle.fd}`
-        return { pinned, close: () => handle.close() }
+        return { pinned, dev: info.dev, ino: info.ino, close: () => handle.close() }
     } catch (error) {
         await handle.close()
         throw error
@@ -67,7 +67,7 @@ async function assertRealDirectory(directory: string, uid: bigint): Promise<void
  * Create-only publication into a coworker workspace (`…/workspace`).
  * link(2) does not replace an existing name, including a symlink. Staging names are `.rerun-download-*`.
  */
-export async function publishDownload(workspaceRoot: string, relativePath: string, bytes: Uint8Array, signal: AbortSignal): Promise<void> {
+export async function publishDownload(workspaceRoot: string, relativePath: string, bytes: Uint8Array, signal: AbortSignal, assertPermission: () => Promise<void>): Promise<void> {
     signal.throwIfAborted()
     const parts = downloadPathParts(relativePath)
     if (bytes.byteLength > DOWNLOAD_LIMIT_BYTES) throw new DownloadTooLargeError(bytes.byteLength)
@@ -84,7 +84,7 @@ export async function publishDownload(workspaceRoot: string, relativePath: strin
             await ensureChild(dirname(parent), part, parent, uid, signal, created)
         }
         signal.throwIfAborted()
-        await stage(parent, parts[parts.length - 1] ?? '', bytes, signal)
+        await stage(parent, parts[parts.length - 1] ?? '', bytes, signal, assertPermission)
     } catch (error) {
         await removeCreatedWorkspaceDirectories(created)
         throw error
@@ -151,7 +151,7 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
     if (made.isSymbolicLink() || !made.isDirectory() || !sameOwner(made.uid, uid) || await realpath(child) !== child) throw outside()
 }
 
-async function stage(parent: string, name: string, bytes: Uint8Array, signal: AbortSignal): Promise<void> {
+async function stage(parent: string, name: string, bytes: Uint8Array, signal: AbortSignal, assertPermission: () => Promise<void>): Promise<void> {
     if (!name) throw outside()
     await assertRealDirectory(parent, currentUid())
     const existing = await lstat(join(parent, name)).catch(error => {
@@ -161,6 +161,14 @@ async function stage(parent: string, name: string, bytes: Uint8Array, signal: Ab
     if (existing) throw clash(name)
     const tempName = `${STAGING_PREFIX}${randomBytes(12).toString('hex')}`
     const pin = await pinDirectory(parent)
+    const assertCurrentParent = async () => {
+        const current = await pinDirectory(parent).catch(() => { throw outside() })
+        try {
+            if (current.dev !== pin.dev || current.ino !== pin.ino) throw outside()
+        } finally {
+            await current.close()
+        }
+    }
     let tempPath: string | null = null
     try {
         signal.throwIfAborted()
@@ -179,6 +187,8 @@ async function stage(parent: string, name: string, bytes: Uint8Array, signal: Ab
             signal.throwIfAborted()
             await handle.writeFile(bytes)
             await handle.sync()
+            await assertPermission()
+            await assertCurrentParent()
             signal.throwIfAborted()
             try {
                 await link(tempPath, at(pin.pinned, name))
@@ -190,6 +200,7 @@ async function stage(parent: string, name: string, bytes: Uint8Array, signal: Ab
                 if (created.isSymbolicLink() || staged.isSymbolicLink() || created.ino !== staged.ino || created.dev !== staged.dev) {
                     throw uncertain()
                 }
+                await assertCurrentParent()
             } catch (error) {
                 if (published) {
                     const [created, staged] = await Promise.all([

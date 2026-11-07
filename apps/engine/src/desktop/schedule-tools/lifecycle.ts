@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { computeNextRun, isValidTimezone } from '../../schedules/next-run.js'
+import { computeNextRun, isSchedulePauseWithoutTimingChange, isValidTimezone } from '../../schedules/next-run.js'
 import { DESKTOP_SCHEDULE_TOOL_MESSAGES as M, type DesktopScheduleToolNotice, type DesktopScheduleToolOutcome, type DesktopScheduleToolProjection } from '@rerun/contracts'
 import { slugify } from '../../lib/ids.js'
 import { withAgentLock } from '../../agents/lock.js'
@@ -305,7 +305,7 @@ export function createDesktopScheduleLifecycle(input: {
                     next.provider = null
                     next.model = null
                 }
-                assertTiming(next.cron, next.runAt, next.timezone, false, now())
+                if (!isSchedulePauseWithoutTimingChange(raw)) assertTiming(next.cron, next.runAt, next.timezone, false, now())
                 return next
             }, async () => {
                 await admission?.()

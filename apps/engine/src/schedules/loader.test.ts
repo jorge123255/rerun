@@ -246,6 +246,18 @@ describe('concurrent writes', () => {
 
 
 describe('compute validation before schedule publication', () => {
+    it('pauses a malformed legacy routine without changing its timing', async () => {
+        await rawSchedule('legacy', 'name: Legacy\ncron: not cron\ntimezone: Not/AZone')
+        const before = await readSchedule(id, 'legacy')
+        const paused = await updateScheduleAt(id, 'legacy', { enabled: false })
+        expect(paused).toEqual({ ...before, enabled: false })
+        expect(await readSchedule(id, 'legacy')).toEqual(paused)
+        await expect(updateScheduleAt(id, 'legacy', { enabled: true })).rejects.toThrow('Invalid timezone')
+        await expect(updateScheduleAt(id, 'legacy', { enabled: false, timezone: 'Still/Invalid' })).rejects.toThrow('Invalid timezone')
+        expect(await readSchedule(id, 'legacy')).toEqual(paused)
+        expect(sent).toEqual([])
+    })
+
     it('refuses bad cron or timezone without creating a file or notification', async () => {
         await expect(writeSchedule(id, { name: 'Bad', body: 'Keep', cron: 'not cron', timezone: 'UTC' })).rejects.toThrow('Invalid cron expression')
         await expect(writeSchedule(id, { name: 'Bad', body: 'Keep', cron: '0 9 * * *', timezone: 'Not/AZone' })).rejects.toThrow('Invalid timezone')

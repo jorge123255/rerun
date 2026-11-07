@@ -14,7 +14,7 @@ export function desktopNotifyTools(ctx: RunContext, ports: { deliver: (input: De
     return {
         notify_user: tool({
             description:
-                'Send the user something they must see out-of-band (they may not be watching this conversation): a result they have to review, a risk you spotted, a decision they should know about. It flags the conversation as unread until they acknowledge it, so reserve it for what genuinely deserves their attention and never use it for a running commentary on your work. Do NOT use it to announce that you finished or that something failed: the end of a run and its errors are notified automatically. This does NOT pause you and does NOT wait for a reply: it only delivers a message, then you keep going. When you need an answer, call ask_user; a go-ahead, request_approval; a service or a credential, suggest_service or request_secret.',
+                'Request a desktop notification for a result, risk, or decision that needs the user’s attention. The current desktop callback reports delivery as unconfirmed. Report an unknown receipt as unconfirmed and make at most one attempt for each notification. Keep working after the receipt. Use ask_user for an answer, request_approval for a go-ahead, suggest_service for a service, or request_secret for a credential.',
             inputSchema: z.object({
                 message: z.string().max(MAX_MESSAGE_LENGTH).describe('The human-readable message to show the user.'),
                 kind: z.enum(['info']).default('info').describe('Always info: this tool has exactly one purpose, asking the user to look at something.'),

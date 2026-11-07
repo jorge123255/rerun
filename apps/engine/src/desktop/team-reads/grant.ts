@@ -1,6 +1,8 @@
-import { lstat, readFile } from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import { desktopTeamReadGrantOn } from '@rerun/contracts'
-import { configPath, isPathSegment } from '../../config/paths.js'
+import { configPath, dataDir, isPathSegment } from '../../config/paths.js'
+import { readBoundedFileWithoutLinks } from '../open-without-links.js'
 
 export type DesktopTeamGrantStat = { isFile: boolean; isSymbolicLink: boolean; nlink: number; size: number }
 
@@ -10,6 +12,13 @@ export type DesktopTeamGrantIo = {
 }
 
 const MAX_CONFIG_BYTES = 1_000_000
+
+function grantFromConfig(raw: string): boolean {
+    const config: unknown = JSON.parse(raw)
+    if (!desktopTeamReadGrantOn(config)) return false
+    const { enabled = true, ephemeral = false } = config as { enabled?: unknown; ephemeral?: unknown }
+    return enabled === true && ephemeral === false
+}
 
 /**
  * Fresh read of this coworker's config file. `agentConfigSchema` drops unknown grant ids, so the
@@ -21,25 +30,15 @@ export async function readDesktopTeamReadGrant(agentId: string, io: DesktopTeamG
     try { stat = await io.lstat(agentId) } catch { return false }
     if (!stat || !stat.isFile || stat.isSymbolicLink || stat.nlink !== 1 || stat.size > MAX_CONFIG_BYTES) return false
     try {
-        return desktopTeamReadGrantOn(JSON.parse(await io.readFile(agentId)))
+        return grantFromConfig(await io.readFile(agentId))
     } catch { return false }
 }
 
-function diskIo(): DesktopTeamGrantIo {
-    return {
-        async lstat(agentId) {
-            try {
-                const stat = await lstat(configPath(agentId))
-                return { isFile: stat.isFile(), isSymbolicLink: stat.isSymbolicLink(), nlink: stat.nlink, size: stat.size }
-            } catch (error) {
-                if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-                throw error
-            }
-        },
-        readFile(agentId) { return readFile(configPath(agentId), 'utf8') },
-    }
-}
-
-export function readDesktopTeamReadGrantFromDisk(agentId: string): Promise<boolean> {
-    return readDesktopTeamReadGrant(agentId, diskIo())
+export async function readDesktopTeamReadGrantFromDisk(agentId: string): Promise<boolean> {
+    if (!isPathSegment(agentId)) return false
+    try {
+        const root = dataDir()
+        const path = join(await realpath(root), relative(root, configPath(agentId)))
+        return grantFromConfig((await readBoundedFileWithoutLinks(path, MAX_CONFIG_BYTES)).toString('utf8'))
+    } catch { return false }
 }

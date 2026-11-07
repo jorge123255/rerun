@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -7,10 +7,24 @@ import { executeDownload } from './download.js'
 import { DownloadPermissionError } from './errors.js'
 import type { PublicBinaryRead, PublicBinaryReader } from './types.js'
 
-// Authored for the integration owner. This lane does not run them.
+const { afterStagingSync } = vi.hoisted(() => ({ afterStagingSync: vi.fn<() => Promise<void>>() }))
+vi.mock('node:fs/promises', async importOriginal => {
+    const fs = await importOriginal<typeof import('node:fs/promises')>()
+    const open: typeof fs.open = async (...args) => {
+        const handle = await fs.open(...args)
+        if (typeof args[0] === 'string' && args[0].includes('/.rerun-download-')) {
+            const sync = handle.sync.bind(handle)
+            handle.sync = async () => { await sync(); await afterStagingSync() }
+        }
+        return handle
+    }
+    return { ...fs, open }
+})
+
 const roots: string[] = []
 afterEach(async () => {
     vi.restoreAllMocks()
+    afterStagingSync.mockReset()
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -179,6 +193,36 @@ describe('public binary download', () => {
             signal: signal(), workspaceRoot: root, read, assertPermission: async () => { throw new DownloadPermissionError('This tool is turned off for this coworker.') },
         })).rejects.toThrow('turned off')
         expect(read).not.toHaveBeenCalled()
+    })
+
+    it('refuses publication when permission is revoked while bytes are staged', async () => {
+        const root = await workspace()
+        let granted = true
+        afterStagingSync.mockImplementationOnce(async () => { granted = false })
+        await expect(executeDownload({ url: 'https://example.com/a.bin', path: 'assets/a.bin' }, {
+            signal: signal(), workspaceRoot: root, read: reader(body([1])),
+            assertPermission: async () => {
+                if (!granted) throw new DownloadPermissionError('This tool is turned off for this coworker.')
+            },
+        })).rejects.toThrow('turned off')
+        expect(afterStagingSync).toHaveBeenCalledOnce()
+        await expect(lstat(join(root, 'assets'))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it('refuses to publish into a directory moved outside the workspace during staging', async () => {
+        const root = await workspace()
+        const parent = join(root, 'assets')
+        const moved = join(root, '..', 'moved-assets')
+        await mkdir(parent)
+        afterStagingSync.mockImplementationOnce(async () => {
+            await rename(parent, moved)
+            await mkdir(parent)
+        })
+        const result = await run(root, 'assets/a.bin', reader(body([1])))
+        expect(afterStagingSync).toHaveBeenCalledOnce()
+        expect(result).toMatchObject({ saved: false, failed: true })
+        expect(await readdir(moved)).toEqual([])
+        expect(await readdir(parent)).toEqual([])
     })
 
     it('stays unavailable until root binds download permission', () => {

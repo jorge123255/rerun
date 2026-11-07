@@ -21,6 +21,7 @@ type Scope = { client: Client; hidden: string[]; table: string }
 type Lifecycle = {
     signal?: AbortSignal
     beforeTransaction?: () => Promise<void>
+    beforeCommit?: () => Promise<void>
     afterCommit?: () => Promise<void>
 }
 
@@ -54,6 +55,7 @@ async function write<T>(
         const current = await exactView(tx as unknown as Client, scope.table, name, scope.hidden)
         if (!sameView(expected, current)) throw new DesktopTableViewConflictError()
         result = await operation(tx as unknown as Client)
+        await lifecycle.beforeCommit?.()
         lifecycle.signal?.throwIfAborted()
         await tx.commit()
     } catch (error) {
@@ -83,5 +85,5 @@ export async function deleteDesktopTableView(input: Scope & { name: string } & L
     assertUserTable(input.table)
     const expected = await exactView(input.client, input.table, input.name, input.hidden)
     if (!expected) return false
-    return write(input, input.name, expected, input, client => deleteView(client, input.table, input.name))
+    return write(input, input.name, expected, input, client => deleteView(client, input.table, input.name, 'name'))
 }

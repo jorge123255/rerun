@@ -1,3 +1,7 @@
+import { createClient } from '@libsql/client'
+import { link, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     DESKTOP_TEAM_READ_DESCRIPTIONS,
@@ -6,9 +10,11 @@ import {
     DESKTOP_TEAM_READ_TOOL_NAMES,
     desktopTeamReadGrantOn,
 } from '@rerun/contracts'
+import { clearCachedEnvForTests } from '../../config/env.js'
 import { readDesktopTeamAdmit, readDesktopTeamActivity, readDesktopTeamRun, readDesktopTeamSchedules, readDesktopTeamTriggers } from './adapters.js'
 import { bindDesktopTeamReads, readDesktopTeamReads, unbindDesktopTeamReads } from './binding.js'
-import { readDesktopTeamReadGrant } from './grant.js'
+import { desktopTeamDirectory } from './directory.js'
+import { readDesktopTeamReadGrant, readDesktopTeamReadGrantFromDisk } from './grant.js'
 import { desktopTeamActivityFrom, desktopTeamMemberStatus, desktopTeamRunLimit, desktopTeamScheduleView, desktopTeamToolCallView, desktopTeamTriggerView, desktopTeamTruncateField } from './project.js'
 import { createDesktopTeamReadTools } from './tools.js'
 import type { DesktopTeamActivity, DesktopTeamMember, DesktopTeamReadAck, DesktopTeamReadToolContext, DesktopTeamReads, DesktopTeamToolCallView } from './ports.js'
@@ -89,6 +95,53 @@ describe('desktop team read grant', () => {
         const readFile = vi.fn(async () => JSON.stringify({ tools: { team: true, desktopToolGrants: { teamRead: true, callAgent: true } } }))
         expect(await readDesktopTeamReadGrant('eng-a', { lstat: async () => ({ isFile: true, isSymbolicLink: false, nlink: 1, size: 80 }), readFile })).toBe(true)
         expect(readFile).toHaveBeenCalledTimes(1)
+    })
+
+    it('refuses a granted config when its coworker is disabled or reached through an ancestor link', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'desktop-team-grant-'))
+        const previous = process.env.RERUN_DATA_DIR
+        process.env.RERUN_DATA_DIR = root
+        clearCachedEnvForTests()
+        try {
+            const granted = { enabled: true, tools: { desktopToolGrants: { teamRead: true } } }
+            const owner = join(root, 'agents', 'eng-owner')
+            await mkdir(owner, { recursive: true })
+            await writeFile(join(owner, 'config.json'), JSON.stringify(granted))
+            await symlink(owner, join(root, 'agents', 'eng-alias'), 'dir')
+            expect(await readDesktopTeamReadGrantFromDisk('eng-owner')).toBe(true)
+            expect.soft(await readDesktopTeamReadGrantFromDisk('eng-alias')).toBe(false)
+            await writeFile(join(owner, 'config.json'), JSON.stringify({ ...granted, enabled: false }))
+            expect(await readDesktopTeamReadGrantFromDisk('eng-owner')).toBe(false)
+        } finally {
+            if (previous === undefined) delete process.env.RERUN_DATA_DIR
+            else process.env.RERUN_DATA_DIR = previous
+            clearCachedEnvForTests()
+            await rm(root, { recursive: true, force: true })
+        }
+    })
+
+    it('does not bind disabled or deleting catalog callers', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'desktop-team-catalog-'))
+        const previous = process.env.RERUN_DESKTOP_DATA_DIR
+        process.env.RERUN_DESKTOP_DATA_DIR = root
+        const db = createClient({ url: `file:${join(root, 'app.db')}` })
+        try {
+            await db.executeMultiple(`
+                CREATE TABLE desktop_agents (id TEXT PRIMARY KEY, workspace_id INTEGER, engine_agent_id TEXT UNIQUE, enabled INTEGER);
+                CREATE TABLE desktop_deletions (agent_id TEXT PRIMARY KEY);
+                INSERT INTO desktop_agents VALUES ('pub-a', 1, 'eng-a', 1), ('pub-b', 1, 'eng-b', 0), ('pub-c', 1, 'eng-c', 1);
+                INSERT INTO desktop_deletions VALUES ('pub-c');
+            `)
+            const directory = desktopTeamDirectory()
+            expect(await directory.caller('eng-a')).toEqual({ workspaceId: '1', publicId: 'pub-a', engineAgentId: 'eng-a' })
+            expect.soft(await directory.caller('eng-b')).toBeNull()
+            expect(await directory.caller('eng-c')).toBeNull()
+        } finally {
+            db.close()
+            if (previous === undefined) delete process.env.RERUN_DESKTOP_DATA_DIR
+            else process.env.RERUN_DESKTOP_DATA_DIR = previous
+            await rm(root, { recursive: true, force: true })
+        }
     })
 })
 
@@ -203,6 +256,43 @@ describe('desktop team read tools', () => {
         expect(box.runs).toHaveBeenLastCalledWith('eng-b', 200)
     })
 
+    it.each(['grant revoked', 'run finished', 'stopped'] as const)('discards saved output when the caller is %s during the read', async change => {
+        let allowed = true
+        const controller = new AbortController()
+        const box = harness({ grant: async () => allowed })
+        box.run.mockImplementationOnce(async () => {
+            await Promise.resolve()
+            if (change === 'grant revoked') allowed = false
+            if (change === 'run finished') box.admit.mockResolvedValue('refused')
+            if (change === 'stopped') controller.abort()
+            return ready(runRow({ output: 'synthetic private output' }))
+        })
+        await expect(box.call('team_get_run', { agentId: 'pub-b', runId: 'run-b' }, { ...base, abortSignal: controller.signal }))
+            .rejects.toThrow(change === 'grant revoked' ? M.switchedOff : M.runClosed)
+        expect(box.run).toHaveBeenCalledOnce()
+    })
+
+    it('does not read saved data when the grant was revoked during target resolution', async () => {
+        let allowed = true
+        const box = harness({ grant: async () => allowed, lookup: () => {
+            allowed = false
+            return { kind: 'member', member: person() }
+        } })
+        await expect(box.call('team_list_schedules', { agentId: 'pub-b' })).rejects.toThrow(M.switchedOff)
+        expect(box.schedules).not.toHaveBeenCalled()
+    })
+
+    it('does not read telemetry when the grant was revoked during the saved output read', async () => {
+        let allowed = true
+        const box = harness({ grant: async () => allowed })
+        box.run.mockImplementationOnce(async () => {
+            allowed = false
+            return ready(runRow())
+        })
+        await expect(box.call('team_get_run', { agentId: 'pub-b', runId: 'run-b', includeToolCalls: true })).rejects.toThrow(M.switchedOff)
+        expect(box.toolCalls).not.toHaveBeenCalled()
+    })
+
     it('strips trigger secrets and does not execute a saved run', async () => {
         const box = harness()
         const triggers = await box.call('team_list_triggers', { agentId: 'pub-b' })
@@ -264,6 +354,33 @@ describe('desktop team read tools', () => {
 })
 
 describe('desktop team read adapters', () => {
+    it('reads ordinary schedules and refuses a hard-linked schedule or linked coworker directory', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'desktop-team-schedules-'))
+        const original = process.env.RERUN_DATA_DIR
+        process.env.RERUN_DATA_DIR = root
+        clearCachedEnvForTests()
+        try {
+            const owner = join(root, 'agents', 'eng-b')
+            const schedules = join(owner, 'schedules')
+            await mkdir(schedules, { recursive: true })
+            await writeFile(join(schedules, 'daily.md'), '---\nname: Daily\n---\nReview the workspace.')
+            expect(await readDesktopTeamSchedules('eng-b')).toMatchObject({
+                acknowledgement: 'ready', value: [{ name: 'Daily', body: 'Review the workspace.' }],
+            })
+            const foreign = join(root, 'foreign.md')
+            await writeFile(foreign, '---\nname: Foreign\n---\nPrivate fixture content.')
+            await link(foreign, join(schedules, 'foreign.md'))
+            expect(await readDesktopTeamSchedules('eng-b')).toEqual({ acknowledgement: 'uncertain' })
+            await symlink(owner, join(root, 'agents', 'eng-alias'), 'dir')
+            expect(await readDesktopTeamSchedules('eng-alias')).toEqual({ acknowledgement: 'uncertain' })
+        } finally {
+            if (original === undefined) delete process.env.RERUN_DATA_DIR
+            else process.env.RERUN_DATA_DIR = original
+            clearCachedEnvForTests()
+            await rm(root, { recursive: true, force: true })
+        }
+    })
+
     it('does not follow a schedule alias or retry a failed definition read', async () => {
         const list = vi.fn(async () => [])
         expect(await readDesktopTeamSchedules('eng-b', { lstat: async () => ({ isSymbolicLink: true, isDirectory: true }), list })).toEqual({ acknowledgement: 'uncertain' })

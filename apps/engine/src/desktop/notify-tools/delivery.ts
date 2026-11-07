@@ -10,8 +10,9 @@ export class DesktopNotifyUserDeliveryError extends Error {
 }
 
 export async function deliverDesktopUserNotification(input: DesktopNotifyUserAdmission, signal: AbortSignal): Promise<DesktopNotifyUserReceipt> {
-    const config = env(), url = new URL(config.RERUN_HUB_BASE_URL ?? '')
-    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/' || url.search || url.hash || url.username || url.password || !config.RERUN_API_KEY) {
+    const config = env()
+    const url = config.RERUN_HUB_BASE_URL && URL.canParse(config.RERUN_HUB_BASE_URL) ? new URL(config.RERUN_HUB_BASE_URL) : null
+    if (!url || url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/' || url.search || url.hash || url.username || url.password || !config.RERUN_API_KEY) {
         throw new DesktopNotifyUserDeliveryError('Native notification delivery is unavailable.', 'unknown')
     }
     const body = JSON.stringify(input)
@@ -26,6 +27,10 @@ export async function deliverDesktopUserNotification(input: DesktopNotifyUserAdm
             redirect: 'error',
             credentials: 'omit',
         }), signal)
+        if (!response.ok) {
+            void response.body?.cancel().catch(() => {})
+            throw new DesktopNotifyUserDeliveryError('Native notification acknowledgement is unknown.', 'unknown')
+        }
         const reader = response.body?.getReader()
         if (!reader) throw new DesktopNotifyUserDeliveryError('Native notification returned no acknowledgement.', 'unknown')
         const chunks: Uint8Array[] = []
@@ -42,7 +47,13 @@ export async function deliverDesktopUserNotification(input: DesktopNotifyUserAdm
                 if (size > 32_768) throw new DesktopNotifyUserDeliveryError('Native notification acknowledgement exceeds its limit.', 'unknown')
                 chunks.push(part.value)
             }
-            return desktopNotifyUserReceiptSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+            const receipt = desktopNotifyUserReceiptSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+            if (receipt.notificationId !== input.notificationId || receipt.eventKey !== input.eventKey
+                || receipt.agentId !== input.agentId || receipt.sessionId !== input.sessionId
+                || receipt.runId !== input.runId || receipt.message !== input.message) {
+                throw new DesktopNotifyUserDeliveryError('Native notification acknowledgement did not match this request.', 'unknown')
+            }
+            return receipt
         } finally {
             signal.removeEventListener('abort', cancel)
             void reader.cancel().catch(() => {})

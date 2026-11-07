@@ -35,3 +35,8 @@ export function assertComputableTiming(timing: { cron: string | null; timezone: 
     if (timing.timezone && !isValidTimezone(timing.timezone)) throw new ScheduleTimingError('timezone')
     if (timing.cron && !computeNextRun({ cron: timing.cron, timezone: timing.timezone }, from).ok) throw new ScheduleTimingError('cron')
 }
+
+/** Allow recovery of an existing routine by disabling it while preserving its stored timing. */
+export function isSchedulePauseWithoutTimingChange(patch: { enabled?: boolean; cron?: string | null; runAt?: string | null; timezone?: string | null }): boolean {
+    return patch.enabled === false && patch.cron === undefined && patch.runAt === undefined && patch.timezone === undefined
+}

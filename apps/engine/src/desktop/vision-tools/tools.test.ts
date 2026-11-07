@@ -89,3 +89,47 @@ it('rejects an in-flight analysis after Stop', async () => {
     await expect(pending).rejects.toBe(reason)
     expect(stopped.generateText).toHaveBeenCalledOnce()
 })
+
+it('stops waiting for authentication and releases a late lease', async () => {
+    await fixture()
+    const controller = new AbortController()
+    const reason = new DOMException('Stopped during vision authentication', 'AbortError')
+    const release = vi.fn()
+    let entered!: () => void
+    const authEntered = new Promise<void>(resolve => { entered = resolve })
+    let finishAuth!: (release: () => void) => void
+    const auth = new Promise<() => void>(resolve => { finishAuth = resolve })
+    const value = ports({ ensureAuth: vi.fn(() => { entered(); return auth }) })
+    const current = { ...ctx(), abortSignal: controller.signal }
+    const outcome = Promise.resolve((desktopVisionTools(current, value).vision_analyze as any).execute(
+        { imagePath: 'chat-uploads/small.png', prompt: 'x' },
+        { toolCallId: 'call-1', messages: [] },
+    )).then(result => ({ result }), error => ({ error }))
+    await authEntered
+    controller.abort(reason)
+    const resultBeforeAuth = await Promise.race([outcome, new Promise(resolve => setImmediate(() => resolve('still waiting')))])
+    finishAuth(release)
+    await expect(outcome).resolves.toEqual({ error: reason })
+    expect(resultBeforeAuth).toEqual({ error: reason })
+    expect(value.generateText).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledOnce()
+})
+
+it('withholds a result if vision is revoked during analysis', async () => {
+    await fixture()
+    let granted = true
+    const value = ports({
+        readConfig: vi.fn(async () => ({ enabled: true, tools: { vision: true, filesystem: true, desktopToolGrants: { vision: granted } } }) as any),
+        generateText: vi.fn(async () => {
+            granted = false
+            return { text: 'A private image result' }
+        }),
+    })
+    const result = await (desktopVisionTools(ctx(), value).vision_analyze as any).execute(
+        { imagePath: 'chat-uploads/small.png', prompt: 'x' },
+        { toolCallId: 'call-1', messages: [] },
+    )
+    expect(result).toContain('Vision analysis is turned off')
+    expect(result).not.toContain('A private image result')
+    expect(value.generateText).toHaveBeenCalledOnce()
+})

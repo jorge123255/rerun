@@ -38,7 +38,9 @@ function stop(ctx: DesktopTeamReadToolContext): void {
 async function once<T>(ctx: DesktopTeamReadToolContext, read: () => Promise<T>): Promise<T> {
     stop(ctx)
     try {
-        return await read()
+        const result = await read()
+        stop(ctx)
+        return result
     } catch (error) {
         if (error instanceof Error && (error.message === M.runClosed || error.message === M.unavailable || error.message === M.switchedOff)) throw error
         if (ctx.abortSignal?.aborted) throw new Error(M.runClosed)
@@ -61,13 +63,23 @@ export function createDesktopTeamReadTools(input: DesktopTeamReadBindingInput) {
     assertAuthority(input)
     const { grant, admit, directory, reads } = input
 
-    async function authorize(ctx: DesktopTeamReadToolContext): Promise<DesktopTeamCaller> {
-        stop(ctx)
+    async function requireActiveAuthority(ctx: DesktopTeamReadToolContext): Promise<void> {
         const allowed = await once(ctx, () => grant(ctx.agent.id))
         if (allowed !== true) throw new Error(M.switchedOff)
         const admission = await once(ctx, () => admit({ agentId: ctx.agent.id, runId: ctx.runId, sessionId: ctx.sessionId }))
         if (admission === 'uncertain') throw new Error(M.unavailable)
         if (admission !== 'ok') throw new Error(M.runClosed)
+    }
+
+    async function guardedRead<T>(ctx: DesktopTeamReadToolContext, read: () => Promise<T>): Promise<T> {
+        await requireActiveAuthority(ctx)
+        const result = await once(ctx, read)
+        await requireActiveAuthority(ctx)
+        return result
+    }
+
+    async function authorize(ctx: DesktopTeamReadToolContext): Promise<DesktopTeamCaller> {
+        await requireActiveAuthority(ctx)
         const caller = await once(ctx, () => directory.caller(ctx.agent.id))
         if (caller === 'uncertain') throw new Error(M.unavailable)
         if (!caller || caller.engineAgentId !== ctx.agent.id || !caller.workspaceId) throw new Error(M.workspaceUnbound)
@@ -76,7 +88,7 @@ export function createDesktopTeamReadTools(input: DesktopTeamReadBindingInput) {
 
     async function target(ctx: DesktopTeamReadToolContext, caller: DesktopTeamCaller, id: string): Promise<DesktopTeamMember> {
         if (desktopTeamAgentIdProblem(id)) throw new Error(M.malformed)
-        const found = await once(ctx, () => directory.lookup(caller.workspaceId, id))
+        const found = await guardedRead(ctx, () => directory.lookup(caller.workspaceId, id))
         if (found.kind === 'uncertain') throw new Error(M.unavailable)
         if (found.kind === 'other-workspace') throw new Error(M.otherWorkspace)
         if (found.kind !== 'member') throw new Error(M.notFound)
@@ -118,7 +130,7 @@ export function createDesktopTeamReadTools(input: DesktopTeamReadBindingInput) {
 
     async function memberStatus(ctx: DesktopTeamReadToolContext, member: DesktopTeamMember) {
         if (!member.configured || !member.engineAgentId || member.reachable === false) return statusOf(member, null, false)
-        const activity = unwrap(await once(ctx, () => reads.activity(member.engineAgentId)))
+        const activity = unwrap(await guardedRead(ctx, () => reads.activity(member.engineAgentId)))
         return statusOf(member, activity, true)
     }
 
@@ -133,7 +145,7 @@ export function createDesktopTeamReadTools(input: DesktopTeamReadBindingInput) {
                         if (parsed.agentId !== undefined && desktopTeamAgentIdProblem(parsed.agentId)) throw new Error(M.malformed)
                         const caller = await authorize(ctx)
                         if (parsed.agentId === undefined) {
-                            const members = unwrap(await once(ctx, () => directory.members(caller.workspaceId)))
+                            const members = unwrap(await guardedRead(ctx, () => directory.members(caller.workspaceId)))
                             const agents = []
                             for (const member of members) agents.push(await memberStatus(ctx, member))
                             return finish('team_status', { checkedAt: new Date().toISOString(), agents })
@@ -149,7 +161,7 @@ export function createDesktopTeamReadTools(input: DesktopTeamReadBindingInput) {
                         const parsed = parse(targetInput, args)
                         const caller = await authorize(ctx)
                         const member = await target(ctx, caller, parsed.agentId)
-                        const schedules = unwrap(await once(ctx, () => reads.schedules(engineId(member))))
+                        const schedules = unwrap(await guardedRead(ctx, () => reads.schedules(engineId(member))))
                         return finish('team_list_schedules', { schedules })
                     },
                 }),
@@ -160,7 +172,7 @@ export function createDesktopTeamReadTools(input: DesktopTeamReadBindingInput) {
                         const parsed = parse(targetInput, args)
                         const caller = await authorize(ctx)
                         const member = await target(ctx, caller, parsed.agentId)
-                        const triggers = unwrap(await once(ctx, () => reads.triggers(engineId(member))))
+                        const triggers = unwrap(await guardedRead(ctx, () => reads.triggers(engineId(member))))
                         return finish('team_list_triggers', { triggers })
                     },
                 }),
@@ -172,7 +184,7 @@ export function createDesktopTeamReadTools(input: DesktopTeamReadBindingInput) {
                         const caller = await authorize(ctx)
                         const member = await target(ctx, caller, parsed.agentId)
                         const limit = desktopTeamRunLimit(parsed.limit)
-                        const listed = unwrap(await once(ctx, () => reads.runs(engineId(member), limit)))
+                        const listed = unwrap(await guardedRead(ctx, () => reads.runs(engineId(member), limit)))
                         return finish('team_list_runs', { runs: listed })
                     },
                 }),
@@ -185,10 +197,10 @@ export function createDesktopTeamReadTools(input: DesktopTeamReadBindingInput) {
                         const caller = await authorize(ctx)
                         const member = await target(ctx, caller, parsed.agentId)
                         const id = engineId(member)
-                        const run = unwrap(await once(ctx, () => reads.run(id, parsed.runId)))
+                        const run = unwrap(await guardedRead(ctx, () => reads.run(id, parsed.runId)))
                         if (!run) throw new Error(M.runNotFound)
                         if (parsed.includeToolCalls !== true) return finish('team_get_run', run)
-                        const toolCalls = unwrap(await once(ctx, () => reads.toolCalls(id, parsed.runId)))
+                        const toolCalls = unwrap(await guardedRead(ctx, () => reads.toolCalls(id, parsed.runId)))
                         return finish('team_get_run', { ...run, toolCalls: toolCalls.map(call => ({ ...call, input: desktopTeamTruncateField(call.input), result: desktopTeamTruncateField(call.result) })) })
                     },
                 }),
