@@ -96,6 +96,28 @@ test('a small image uses the desktop image route and a refusal falls back to the
     expect(tile('photo.png')?.querySelector('.uppercase')?.textContent).toBe('png')
 })
 
+test('an in-place image revision gives a previously refused thumbnail a fresh URL', async () => {
+    const photo = entry('photo.png', 'file', 100, '12:34')
+    const revision = '2026-11-03T12:00:00.000Z'
+    await render({ entries: [{ ...photo, modifiedAt: revision }] })
+    const image = tile('photo.png')?.querySelector('img')
+    const first = new URL(image!.getAttribute('src')!, 'http://127.0.0.1')
+    expect(first.searchParams.get('revision')).toBe(revision)
+    await act(async () => image!.dispatchEvent(new Event('error')))
+    expect(tile('photo.png')?.querySelector('img')).toBeNull()
+
+    await render({ entries: [{ ...photo, modifiedAt: revision }] })
+    expect(tile('photo.png')?.querySelector('img')).toBeNull()
+
+    const nextRevision = '2026-11-03T12:00:01.000Z'
+    await render({ entries: [{ ...photo, modifiedAt: nextRevision }] })
+    const next = new URL(tile('photo.png')!.querySelector('img')!.getAttribute('src')!, 'http://127.0.0.1')
+    expect(next.pathname).toBe(first.pathname)
+    expect(next.searchParams.get('path')).toBe('photo.png')
+    expect(next.searchParams.get('identity')).toBe('12:34')
+    expect(next.searchParams.get('revision')).toBe(nextRevision)
+})
+
 test('a text head replaces the extension badge, and an empty head does not', async () => {
     await render({
         entries: [entry('notes.md', 'file'), entry('plain.txt', 'file')],

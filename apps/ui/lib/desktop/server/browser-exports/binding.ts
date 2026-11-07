@@ -6,6 +6,7 @@ import { boundedText } from '../mcp/remote'
 import { createDesktopBrowserExports } from './service'
 import { ensureDesktopBrowserExportsSchema } from './schema'
 import { screenExportIdentity, type ScreenExportCall } from '../../../../../engine/src/desktop/isolated-screen/transport'
+import { webFetchRunGeneration } from '../../../../../engine/src/desktop/web-fetch-continuation/continuation'
 
 const artifactSchema = z.strictObject({ kind: z.enum(['rendered-html', 'served-html', 'screenshot', 'page-metadata']), path: z.string().max(1024),
     mediaType: z.enum(['text/plain', 'image/png']), bytes: z.string().max(8 * 1024 * 1024), sha256: z.string().regex(/^[a-f0-9]{64}$/), width: z.number().int().optional(), height: z.number().int().optional() })
@@ -39,6 +40,15 @@ export async function handleDesktopBrowserExports(request: Request): Promise<Res
             return Response.json(await entry.service.read(call, signal), { headers: { 'cache-control': 'no-store' } })
         }
         if (!body.artifacts?.length) throw new DesktopHttpError(400, 'Browser exports are missing.')
+        const kinds = new Set(body.artifacts.map(item => item.kind))
+        if (mode === 'web_fetch') {
+            if (call.navigation || call.target.sessionGeneration !== webFetchRunGeneration(call.runId)
+                || body.artifacts.length !== 2 || !kinds.has('served-html') || !kinds.has('page-metadata')) {
+                throw new DesktopHttpError(400, 'Invalid web fetch publication.')
+            }
+        } else if (kinds.has('served-html')) {
+            throw new DesktopHttpError(400, 'Invalid browser publication.')
+        }
         const artifacts = body.artifacts.map(item => {
             const bytes = Buffer.from(item.bytes, 'base64')
             if (bytes.toString('base64') !== item.bytes) throw new DesktopHttpError(400, 'Invalid browser file data.')

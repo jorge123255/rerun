@@ -89,8 +89,19 @@ describe('private regex semantics', () => {
 
     it('allows ordinary hidden assets while excluding reserved and dependency directories', async () => {
         expect(await call({ pattern: 'ordinary hidden' })).toBe('.hidden/ordinary.md:1: ordinary hidden receipt')
+        expect(await call({ path: '.hidden', pattern: 'ordinary hidden' })).toBe('.hidden/ordinary.md:1: ordinary hidden receipt')
         expect(await call({ pattern: 'secret' })).toBe('No matches.')
     })
+
+    it.each(['.git', 'node_modules/pkg', 'nested/.Git', 'nested/Node_Modules/pkg'])(
+        'refuses an explicitly selected excluded directory %s',
+        async (path) => {
+            const directory = join(workspaceDir(agentId), path)
+            await mkdir(directory, { recursive: true })
+            await writeFile(join(directory, 'secret.md'), 'secret receipt\n')
+            await expect(call({ path, pattern: 'secret' })).rejects.toThrow('Use a relative directory')
+        },
+    )
 
     it('bounds results and matching line length', async () => {
         await writeFile(join(workspaceDir(agentId), 'docs', 'many.md'), `one\none\none\n${'x'.repeat(400)}one\n`)
@@ -146,5 +157,25 @@ describe('private regex semantics', () => {
         } finally {
             dispatch.mockRestore()
         }
+    })
+
+    it('reports an incomplete scan after reaching the directory budget', async () => {
+        const path = 'many-directories'
+        const root = join(workspaceDir(agentId), path)
+        for (let index = 0; index < 32; index++) {
+            await mkdir(join(root, String(index).padStart(2, '0')), { recursive: true })
+        }
+        await writeFile(join(root, '31', 'marker.md'), 'target\n')
+        expect(await call({ path, pattern: 'target' })).toBe('No matches in scanned files.\n(search stopped at scan limits)')
+    })
+
+    it.each([
+        { path: 'many-entries', count: 513, prefix: '.rerun-', body: '' },
+        { path: 'many-files', count: 129, prefix: '', body: '\0' },
+    ])('reports an incomplete scan in $path', async ({ path, count, prefix, body }) => {
+        const root = join(workspaceDir(agentId), path)
+        await mkdir(root)
+        await Promise.all(Array.from({ length: count }, (_, index) => writeFile(join(root, `${prefix}${index}.txt`), body)))
+        expect(await call({ path, pattern: 'target' })).toBe('No matches in scanned files.\n(search stopped at scan limits)')
     })
 })

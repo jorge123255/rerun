@@ -9,9 +9,15 @@ import type { RunContext } from '../../runtime/context.js'
 
 class WorkspaceSearchError extends Error {}
 
+const excludedDirectories = new Set(['.git', 'node_modules'])
+
 export function desktopPrivateSearchPathAllowed(path: string): boolean {
     if (path === '.') return true
-    return !!path && path.length <= 4096 && !isAbsolute(path) && !/[\\\p{Cc}]/u.test(path) && path.split('/').every(part => !!part && part !== '.' && part !== '..' && !part.toLowerCase().startsWith('.rerun'))
+    if (!path || path.length > 4096 || isAbsolute(path) || /[\\\p{Cc}]/u.test(path)) return false
+    return path.split('/').every(part => {
+        const lower = part.toLowerCase()
+        return !!part && part !== '.' && part !== '..' && !excludedDirectories.has(lower) && !lower.startsWith('.rerun')
+    })
 }
 
 async function readText(ctx: RunContext, path: string): Promise<string | null> {
@@ -62,7 +68,10 @@ async function listDirectory(ctx: RunContext, path: string): Promise<{ entries: 
         if (error.code === 'ENOENT') return null
         throw new WorkspaceSearchError('That directory is unavailable.')
     })
-    if (!handle) return null
+    if (!handle) {
+        await requireDesktopToolGrant(ctx, 'workspaceSearch')
+        return null
+    }
     try {
         const original = await handle.stat({ bigint: true })
         if (!original.isDirectory()) throw new WorkspaceSearchError('Directory not found.')
@@ -72,7 +81,6 @@ async function listDirectory(ctx: RunContext, path: string): Promise<{ entries: 
         let truncated = false
         for await (const item of await opendir(pinned)) {
             if (++visited > 512) { truncated = true; break }
-            if (item.name === 'node_modules' || item.name === '.git') continue
             if (!desktopPrivateSearchPathAllowed(item.name)) continue
             if (item.isFile() || item.isDirectory()) entries.push({ name: item.name, directory: item.isDirectory() })
         }
@@ -104,21 +112,27 @@ export async function desktopPrivateRegexSearch(ctx: RunContext, path: string, p
     const directories = [path]
     const hits: string[] = []
     let files = 0
-    for (const folder of directories) {
+    let scanLimited = false
+    scan: for (const folder of directories) {
         if (hits.length >= maxResults) break
         const listing = await listDirectory(ctx, folder)
         if (!listing) {
             if (folder === path) return `Path not found: ${path}`
             throw new WorkspaceSearchError('That directory is unavailable.')
         }
-        const { entries } = listing
-        for (const entry of entries) {
+        scanLimited ||= listing.truncated
+        for (const entry of listing.entries) {
             const relative = folder === '.' ? entry.name : `${folder}/${entry.name}`
             if (entry.directory) {
                 if (directories.length < 32) directories.push(relative)
+                else scanLimited = true
                 continue
             }
-            if (++files > 128 || hits.length >= maxResults) return `${hits.join('\n')}\n(truncated at ${maxResults} results)`
+            if (files === 128) {
+                scanLimited = true
+                break scan
+            }
+            files++
             const text = await readText(ctx, relative)
             if (text === null) continue
             const lines = text.split('\n')
@@ -128,6 +142,8 @@ export async function desktopPrivateRegexSearch(ctx: RunContext, path: string, p
             if (hits.length >= maxResults) break
         }
     }
-    if (!hits.length) return 'No matches.'
-    return hits.join('\n') + (hits.length >= maxResults ? `\n(truncated at ${maxResults} results)` : '')
+    await requireDesktopToolGrant(ctx, 'workspaceSearch')
+    const result = hits.length ? hits.join('\n') : scanLimited ? 'No matches in scanned files.' : 'No matches.'
+    if (hits.length >= maxResults) return `${result}\n(truncated at ${maxResults} results)`
+    return scanLimited ? `${result}\n(search stopped at scan limits)` : result
 }

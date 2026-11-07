@@ -86,11 +86,9 @@ function DesktopFileThumb({ entry, path, imageUrl, textHead, onRequestText, onIm
     const ref = useRef<HTMLDivElement>(null)
     const visible = useGridVisible(ref)
     const wantsText = desktopFilesWantsTextThumb(entry)
-    const requestRef = useRef(onRequestText)
-    requestRef.current = onRequestText
     useEffect(() => {
-        if (visible && wantsText && textHead === undefined) requestRef.current?.(path)
-    }, [visible, wantsText, textHead, path])
+        if (visible && wantsText && textHead === undefined) onRequestText?.(path)
+    }, [visible, wantsText, textHead, path, onRequestText])
 
     if (entry.type === 'dir') {
         return <div ref={ref} data-files-thumb="folder" data-files-kind="dir"><FolderGlyph /></div>
@@ -171,7 +169,7 @@ export function DesktopFilesGrid({
             )}
             {shown.map(entry => {
                 const path = desktopFilesChildPath(currentPath, entry.name)
-                const imageUrl = desktopFilesImageThumbUrl(filesBase, path, entry.identity, entry.size)
+                const imageUrl = desktopFilesImageThumbUrl(filesBase, path, entry.identity, entry.size, entry.modifiedAt)
                 const shownImage = imageUrl && !failedUrls.has(imageUrl) ? imageUrl : null
                 const selected = selectedName === entry.name
                 const thumb = (

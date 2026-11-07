@@ -29,6 +29,7 @@ vi.mock('ai-sdk-provider-claude-code', async original => {
 })
 import { buildTools } from '../tools/registry.js'
 import { resolveModel } from '../agents/providers.js'
+import { isDesktopMcpLoginTool } from './mcp-login-tools/admission.js'
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); captured.settings.length = 0; captured.claude.length = 0; captured.generate.mockClear(); captured.stream.mockClear() })
 const catalogId = '00000000-0000-4000-8000-000000000001', capabilityId = '00000000-0000-4000-8000-000000000002'
@@ -129,6 +130,19 @@ test('registry-built MCP tools reach the actual Codex filter, while a copied/pre
 test('registry rejects an MCP name colliding with an existing built-in and releases its catalog', async () => {
     const { ctx, fetcher } = setup('fs_list')
     await expect(buildTools(ctx)).rejects.toThrow('conflicts with a built-in')
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init.body)).action)).toEqual(['catalog', 'release'])
+})
+
+test.each(['mcp_login', 'mcp_login_complete', 'mcp_status'])('keeps %s available when a remote tool has the same name', async name => {
+    const { ctx, agent, fetcher } = setup(name)
+    const built = await buildTools(ctx)
+    try {
+        expect(isDesktopMcpLoginTool(built.tools[name], name, agent.id)).toBe(true)
+        const resolved = resolveModel(agent, undefined, built.tools)
+        try {
+            expect(admittedNames('codex').filter(admitted => admitted === name)).toEqual([name])
+        } finally { await resolved.close() }
+    } finally { await built.close() }
     expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init.body)).action)).toEqual(['catalog', 'release'])
 })
 

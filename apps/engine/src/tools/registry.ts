@@ -1,4 +1,5 @@
 import { desktopBrainSemanticTools } from '../desktop/brain-semantic/tool.js'
+import { isDesktopMcpLoginTool } from '../desktop/mcp-login-tools/admission.js'
 import { desktopMcpLoginTools } from '../desktop/mcp-login-tools/tools.js'
 import { desktopPrivateRegexTools } from '../desktop/private-search/tools.js'
 import { readDesktopScheduleTools } from '../desktop/schedule-tools/binding.js'
@@ -123,8 +124,17 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         if (hasDesktopToolGrant(ctx.agent.config, 'vision')) Object.assign(tools, desktopVisionTools(ctx))
         if (hasDesktopToolGrant(ctx.agent.config, 'notify')) Object.assign(tools, desktopNotifyTools(ctx))
         if (ctx.agent.config.setup?.required && ctx.agent.install && desktopSetupRunAllowed(ctx.agent, ctx.sessionId)) Object.assign(tools, desktopSetupTools(ctx))
+        function withoutMcpLoginCollisions(adapterTools: ToolSet | undefined): ToolSet {
+            // The three new names are reserved when their built-in is actually present.
+            return Object.fromEntries(Object.entries(adapterTools ?? {}).filter(([name]) => {
+                if (name === 'request_mcp_sign_in' || !isDesktopMcpLoginTool(tools[name], name, ctx.agent.id)) return true
+                ctx.logger.warn({ tool: name }, 'desktop MCP tool conflicts with built-in login tool')
+                return false
+            }))
+        }
         const remote = await desktopMcpTools(ctx)
-        if (Object.keys(remote.tools).some(name => Object.hasOwn(tools, name))) {
+        const remoteTools = withoutMcpLoginCollisions(remote.tools)
+        if (Object.keys(remoteTools).some(name => Object.hasOwn(tools, name))) {
             await remote.close()
             throw new Error('An MCP tool conflicts with a built-in tool. Rename the MCP server.')
         }
@@ -132,12 +142,14 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         let services: Awaited<ReturnType<typeof desktopServiceTools>> | undefined
         try {
             if (hasDesktopToolGrant(ctx.agent.config, 'localMcpStdio')) local = await desktopStdioTools(ctx, () => requireDesktopToolGrant(ctx, 'localMcpStdio'))
-            const merged = { ...tools, ...remote.tools }
-            if (Object.keys(local?.tools ?? {}).some(name => Object.hasOwn(merged, name))) throw new Error('A local MCP tool conflicts with another tool. Rename the MCP server.')
-            const existing = { ...merged, ...local?.tools }
+            const merged = { ...tools, ...remoteTools }
+            const localTools = withoutMcpLoginCollisions(local?.tools)
+            if (Object.keys(localTools).some(name => Object.hasOwn(merged, name))) throw new Error('A local MCP tool conflicts with another tool. Rename the MCP server.')
+            const existing = { ...merged, ...localTools }
             if (hasDesktopToolGrant(ctx.agent.config, 'services')) services = await desktopServiceTools(ctx)
-            if (Object.keys(services?.tools ?? {}).some(name => Object.hasOwn(existing, name))) throw new Error('An app tool conflicts with another tool.')
-            return { tools: { ...existing, ...services?.tools }, close: async () => { try { await services?.close() } finally { try { await local?.close() } finally { try { await remote.close() } finally { screen.release() } } } } }
+            const serviceTools = withoutMcpLoginCollisions(services?.tools)
+            if (Object.keys(serviceTools).some(name => Object.hasOwn(existing, name))) throw new Error('An app tool conflicts with another tool.')
+            return { tools: { ...existing, ...serviceTools }, close: async () => { try { await services?.close() } finally { try { await local?.close() } finally { try { await remote.close() } finally { screen.release() } } } } }
         } catch (error) { try { await services?.close() } finally { try { await local?.close() } finally { try { await remote.close() } finally { screen.release() } } }; throw error }
     }
     const cfg = ctx.agent.config.tools

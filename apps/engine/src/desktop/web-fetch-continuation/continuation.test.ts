@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import { saveWebFetchContinuation, servedHtmlPath, webFetchContinuationNote, type WebFetchContinuationPublisher } from './continuation'
+import { saveWebFetchContinuation, servedHtmlPath, webFetchContinuationNote, webFetchRunGeneration, type WebFetchContinuationPublisher } from './continuation'
 
-const identity = { engineAgentId: 'reader', sessionId: 'session-1', runId: 'run-1', toolCallId: 'call-1', target: { engineAgentId: 'reader', launchNonce: 'launch-1', sessionGeneration: 'run-1' }, url: 'https://example.com/blog/post.html' }
+const identity = { engineAgentId: 'reader', sessionId: 'session-1', runId: 'run-1', toolCallId: 'call-1', target: { engineAgentId: 'reader', launchNonce: 'launch-1', sessionGeneration: webFetchRunGeneration('run-1') }, url: 'https://example.com/blog/post.html' }
 const page = { url: 'https://example.com/blog/post.html', finalUrl: 'https://example.com/blog/post.html', status: 200, contentType: 'text/html; charset=utf-8', xRobotsTag: 'noindex', body: '<html>whole page</html>' }
 const savedAt = '2026-11-06T00:00:00.000Z'
 
@@ -22,7 +22,7 @@ describe('served web-fetch continuation', () => {
         }
         const result = await saveWebFetchContinuation({ identity, page, publish, now: () => savedAt }, new AbortController().signal)
         expect(result).toEqual({ saved: true, path })
-        expect(webFetchContinuationNote(true, result)).toBe(`\nSaved whole: ${path} (read or grep it for anything this result leaves out)`)
+        expect(webFetchContinuationNote(true, result)).toBe(`\nSaved whole: ${path} (use this exact path with fs_read if workspace file reading is enabled)`)
     })
 
     it('does not claim a saved copy for unknown, refused or unavailable publication', async () => {

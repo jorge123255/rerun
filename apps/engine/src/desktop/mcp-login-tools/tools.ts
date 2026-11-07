@@ -16,7 +16,7 @@ export type LoginToolPort = {
 function render(response: LoginResponse): string {
     const result = response.result
     if (result.action === 'status') return result.servers.length ? result.servers.map(row => {
-        if (row.status === 'connected') return `connected ${row.name} (${row.transport}): ${row.tools.length} tools — ${row.tools.join(', ')}`
+        if (row.status === 'connected') return `connected ${row.name} (${row.transport}): ${row.tools.length} tools reported by the server — ${row.tools.join(', ')}`
         return `${row.status} ${row.name} (${row.transport}): ${row.reason === 'permission_required' ? 'separate permission required' : row.reason === 'transport_unavailable' ? 'status adapter unavailable' : 'check permission, configuration and server'}`
     }).join('\n') : 'No HTTPS MCP servers registered. Local MCP programs use a separate permission and status.'
     const { name, view } = result
@@ -48,7 +48,7 @@ export function createDesktopMcpLoginTools(identity: LoginRequest['identity'], r
     const tools: ToolSet = {
         mcp_login: tool({ description: 'Fallback device-code sign-in for a registered MCP server, only with a separately recorded human approval. First use request_mcp_sign_in and its Connect card. Never supply a URL, credential or approval yourself.', inputSchema: z.object({ name: loginNameSchema }).strict(), execute: (input, options) => execute('start', input.name, options) }),
         mcp_login_complete: tool({ description: 'Reconcile a pending device-code sign-in only after the user confirms completion. Never treats a saved credential or an uncertain acknowledgement as a working connection.', inputSchema: z.object({ name: loginNameSchema }).strict(), execute: (input, options) => execute('complete', input.name, options) }),
-        mcp_status: tool({ description: 'Check current registered HTTPS MCP connections and model-visible tool names. Local MCP programs are not included. Does not start authorization, install servers or execute their tools.', inputSchema: z.object({}).strict(), execute: (_input, options) => execute('status', undefined, options) }),
+        mcp_status: tool({ description: 'Check configured HTTPS MCP connections and the tool names reported by each server. Reported tools may be unavailable in the current run. Does not include local programs, start authorization, install servers or execute their tools.', inputSchema: z.object({}).strict(), execute: (_input, options) => execute('status', undefined, options) }),
     }
     for (const name of ['mcp_login', 'mcp_login_complete', 'mcp_status'] as const) markMcpLoginTool(tools[name]!, owner.engineAgentId, name)
     return tools

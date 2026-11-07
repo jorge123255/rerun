@@ -4,7 +4,7 @@ import type { RunContext } from '../runtime/context.js'
 import { beginDesktopAgentWork } from './agent-lifecycle.js'
 import { hasDesktopToolGrant, requireDesktopToolGrant } from './tool-grants.js'
 import { isolatedScreenOwner } from './isolated-screen/binding.js'
-import { desktopWebFetchContinuationPublisher } from './web-fetch-continuation/index.js'
+import { desktopWebFetchContinuationPublisher, webFetchRunGeneration } from './web-fetch-continuation/index.js'
 import { executeWebFetch, webFetchDescription, webFetchInputSchema } from './web-fetch/index.js'
 
 export function desktopWebFetchTools(ctx: RunContext): ToolSet {
@@ -33,7 +33,7 @@ export function desktopWebFetchTools(ctx: RunContext): ToolSet {
                                     target: {
                                         engineAgentId: ctx.agent.id,
                                         launchNonce: isolatedScreenOwner(ctx.agent.id).launchNonce,
-                                        sessionGeneration: ctx.runId,
+                                        sessionGeneration: webFetchRunGeneration(ctx.runId),
                                     },
                                     url: webFetchInputSchema.parse(input).url,
                                 },

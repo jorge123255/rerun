@@ -13,6 +13,7 @@ export type DesktopFilesGridEntry = {
     type: 'file' | 'dir'
     size: number
     identity?: string
+    modifiedAt?: string
 }
 
 /** Reserved aliases stay out of the grid. Ordinary hidden names such as `.env` stay. */
@@ -36,13 +37,14 @@ export function desktopFilesWantsTextThumb(entry: DesktopFilesGridEntry): boolea
  * Same-origin Files image route for a thumbnail, or null when the tile must stay a glyph.
  * Does not fetch. A later refusal is the image element's error, not a successful thumb.
  */
-export function desktopFilesImageThumbUrl(filesBase: string, path: string, identity: string | undefined, size: number): string | null {
+export function desktopFilesImageThumbUrl(filesBase: string, path: string, identity: string | undefined, size: number, revision?: string): string | null {
     if (!filesBase.startsWith('/api/desktop/agents/') || !filesBase.endsWith('/files') || filesBase.includes('?') || filesBase.includes('#')) return null
     const name = path.includes('/') ? path.slice(path.lastIndexOf('/') + 1) : path
     if (!name || name.includes('\\') || name.includes('\0') || filePreviewKind(name) !== 'image') return null
     if (!Number.isSafeInteger(size) || size < 1 || size > THUMB_IMAGE_MAX_BYTES) return null
     const params = new URLSearchParams({ path })
     if (identity) params.set('identity', identity)
+    if (revision) params.set('revision', revision)
     return `${filesBase}/image?${params.toString()}`
 }
 

@@ -109,7 +109,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         return ((await response.json()) as { entries: Entry[] }).entries
     }, [base])
 
-    const { currentPath, entries, loading, busy, showHidden, navigate, enter, goUp, goHome, setShowHidden, reload } = useFileNavigation<Entry>({ list })
+    const { currentPath, entries, loading, busy, showHidden, navigate, enter, goUp, goHome, setShowHidden, reload, refreshCurrent } = useFileNavigation<Entry>({ list })
     const [editingPath, setEditingPath] = useState<string | null>(null)
 
     useEffect(() => {
@@ -283,7 +283,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     // Keyed on the path (as FileDetail does), so opening another file leaves the editor by itself.
     const editing = !!preview && editingPath === preview.path
 
-    const textHeadKey = `${agent.id}\0${currentPath}\0${entries.map(entry => `${entry.type}:${entry.name}:${entry.size}:${entry.identity ?? ''}`).join('\0')}`
+    const textHeadKey = `${agent.id}\0${currentPath}\0${entries.map(entry => `${entry.type}:${entry.name}:${entry.size}:${entry.identity ?? ''}:${entry.modifiedAt}`).join('\0')}`
     const readTextHead = useCallback(async (path: string) => {
         try {
             const response = await fetch(`${base}/read?path=${encodeURIComponent(path)}`, { cache: 'no-store' })
@@ -322,7 +322,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         disabled: pending || loading || busy || !!error,
         write: writeImport,
         onRejected: message => setNotice({ ok: false, folder: currentPath, text: message }),
-        onFileSaved: () => { void reload() },
+        onFileSaved: refreshCurrent,
     })
 
     if (preview && 'conflict' in preview) {

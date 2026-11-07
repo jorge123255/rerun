@@ -180,9 +180,9 @@ export class FilesImportQueue {
         this.pump()
     }
 
-    clearFinished() {
+    clearSettled() {
         for (const [id, job] of [...this.jobs]) {
-            if (job.status === 'done') this.jobs.delete(id)
+            if (job.status === 'done' || job.status === 'error') this.jobs.delete(id)
         }
         this.publish(true)
     }

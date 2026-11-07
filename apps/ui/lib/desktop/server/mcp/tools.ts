@@ -14,8 +14,19 @@ export async function remoteMcpTools(agent: string, store: RemoteMcpStore, runti
         if (server.transport === 'sse') continue
         const current=runtime.watch(agent,server.name)
         currentCatalog.push(current)
-        validations.push(async()=>{current();await runtime.validate(agent,server.name,server.revision,signal);current()})
-        const listed = await runtime.probe(agent,server.name,server.revision,signal)
+        const validate = async () => {
+            signal.throwIfAborted()
+            current()
+            await runtime.validate(agent, server.name, server.revision, signal)
+            signal.throwIfAborted()
+            current()
+        }
+        validations.push(validate)
+        const listed = await runtime.probe(agent, server.name, server.revision, signal).catch(async () => {
+            // A server that needs sign-in must leave the chat's sign-in tool reachable.
+            await validate()
+            return { tools: [] }
+        })
         for (const tool of listed.tools ?? []) {
             const name = `${server.name}_${tool.name}`
             if (names.has(name)) throw new Error('Conflicting MCP tool names; rename a server')

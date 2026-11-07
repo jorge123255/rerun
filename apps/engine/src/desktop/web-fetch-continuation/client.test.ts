@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { servedHtmlPath } from './continuation'
+import { servedHtmlPath, webFetchRunGeneration } from './continuation'
 
 vi.mock('../../config/env.js', () => ({ env: () => ({ RERUN_HUB_BASE_URL: 'http://127.0.0.1:41000', RERUN_API_KEY: 'synthetic-key' }) }))
 vi.mock('../isolated-screen/binding.js', () => ({ isolatedScreenOwner: () => ({ engineAgentId: 'reader', launchNonce: 'launch-1' }) }))
 
 import { desktopWebFetchContinuationPublisher } from './client'
 
-const identity = { engineAgentId: 'reader', sessionId: 'session-1', runId: 'run-1', toolCallId: 'call-1', target: { engineAgentId: 'reader', launchNonce: 'launch-1', sessionGeneration: 'a'.repeat(32) }, url: 'https://example.com/' }
+const identity = { engineAgentId: 'reader', sessionId: 'session-1', runId: 'run-1', toolCallId: 'call-1', target: { engineAgentId: 'reader', launchNonce: 'launch-1', sessionGeneration: webFetchRunGeneration('run-1') }, url: 'https://example.com/' }
 const bytes = Buffer.from('whole')
 const artifact = { kind: 'served-html' as const, path: servedHtmlPath(identity.url, identity), mediaType: 'text/plain' as const, bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
 
