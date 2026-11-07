@@ -49,7 +49,9 @@ export async function createDesktopVoiceRuntime(runtime: DesktopRuntime, db: Cli
     async function baseOwner(scope: DesktopVoiceScope, signal: AbortSignal, mutable: boolean) {
         desktopVoiceScopeSchema.parse(scope); current(signal)
         const agent = await findDesktopAgent(db, scope.agentId)
-        if (!agent || agent.workspaceId !== runtime.workspaceId || mutable && !agent.enabled) throw unavailable()
+        // The authenticated runtime selects the database; each database keeps
+        // its own workspace row 1, including runtime workspaces 2 and later.
+        if (!agent || agent.workspaceId !== 1 || mutable && !agent.enabled) throw unavailable()
         await assertCoworkerNotDeleting(db, agent.id)
         const engine = await ports.agent(agent.engineAgentId, signal)
         current(signal)

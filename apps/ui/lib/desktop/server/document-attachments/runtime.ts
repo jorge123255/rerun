@@ -26,7 +26,9 @@ export async function createDesktopDocumentRuntime(runtime: DesktopRuntime, db: 
     async function baseOwner(scope: DesktopDocumentScope, signal: AbortSignal, mutable = true) {
         desktopDocumentScopeSchema.parse(scope); current(signal)
         const local = await findDesktopAgent(db, scope.agentId)
-        if (!local || local.workspaceId !== runtime.workspaceId || mutable && !local.enabled) throw unavailable()
+        // The authenticated runtime selects the database; its local workspace
+        // row stays 1 even when the filesystem workspace identity is higher.
+        if (!local || local.workspaceId !== 1 || mutable && !local.enabled) throw unavailable()
         await assertCoworkerNotDeleting(db, local.id)
         const engine = ports.agent ? await ports.agent(local.engineAgentId, signal) : await getAgent(engineOf(runtime), local.engineAgentId).then(row => ({ id: row.id, enabled: row.config.enabled }))
         const fresh = await findDesktopAgent(db, local.id)
