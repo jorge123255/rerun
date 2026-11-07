@@ -5,7 +5,7 @@ import type { DynamicToolUIPart } from 'ai'
 import { expect, test } from 'vitest'
 import { DesktopToolStep } from './DesktopToolStep'
 
-globalThis.IS_REACT_ACT_ENVIRONMENT = true
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 async function mount(part: DynamicToolUIPart) {
     const container = document.body.appendChild(document.createElement('div'))
     const root = createRoot(container)
