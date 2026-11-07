@@ -1,5 +1,5 @@
-import { abortable } from '../web-fetch/transport.js'
-import { createDesktopMcpLoginBackend, type RemoteLoginService } from './backend.js'
+import { abortable } from '../web-fetch/transport.ts'
+import { createDesktopMcpLoginBackend, type RemoteLoginService } from './backend.ts'
 
 export type McpLoginRoutePorts<Runtime> = {
     authenticate(request: Request): Promise<Runtime>

@@ -108,7 +108,7 @@ test('Import file posts one file to the coworker’s current folder and reports 
         Object.defineProperty(input, 'files', { configurable: true, value: [new File(['x'], 'brief.md')] })
         await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })) })
         await flush()
-        expect(document.body.textContent).toContain(id === 'alice' ? 'Imported' : clash)
+        expect(document.body.textContent).toContain(id === 'alice' ? '1 file imported' : clash)
         await click('Done')
         await flush()
     }

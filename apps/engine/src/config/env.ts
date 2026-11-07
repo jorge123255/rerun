@@ -33,6 +33,11 @@ export function env(): Env {
 
 // The key and the hub of a server that paired itself are only known once the data-dir is read,
 // after the first modules have read the environment: they are set here, on both copies.
+/** Tests set `RERUN_DATA_DIR` after another file has already cached the default home directory. */
+export function clearCachedEnvForTests(): void {
+    cached = null
+}
+
 export function setEnv(values: Partial<Pick<Env, 'RERUN_API_KEY' | 'RERUN_HUB_BASE_URL'>>): void {
     for (const [key, value] of Object.entries(values)) if (value !== undefined) process.env[key] = value
     if (cached) cached = { ...cached, ...values }

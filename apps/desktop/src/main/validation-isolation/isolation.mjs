@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { DESKTOP_VALIDATION_CONTRACT_VERSION, DESKTOP_VALIDATION_PROVIDER_ENV_KEYS, desktopValidationProfileError, validateDesktopValidationProfile } from './contract'
+import { DESKTOP_VALIDATION_CONTRACT_VERSION, DESKTOP_VALIDATION_PROVIDER_ENV_KEYS, desktopValidationProfileError, validateDesktopValidationProfile } from './contract.mjs'
 
 function environmentFor(profile) {
     return {

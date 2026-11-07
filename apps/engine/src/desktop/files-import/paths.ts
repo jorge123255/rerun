@@ -4,7 +4,7 @@ import {
     FILES_IMPORT_EXECUTABLE,
     FILES_IMPORT_RESERVED,
     FilesImportError,
-} from './errors.js'
+} from './errors.ts'
 
 /**
  * Launchable names, same set the public-download packet refuses.

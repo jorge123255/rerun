@@ -1,12 +1,13 @@
-import { expect, test } from 'vitest'
-import { desktopValidationFlagValue, desktopValidationProfileError, validateDesktopValidationProfile } from './contract'
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { desktopValidationFlagValue, validateDesktopValidationProfile } from './contract.mjs'
 
 test('only an explicit validation flag opts in; missing, empty and repeated flags refuse', () => {
-    expect(desktopValidationFlagValue(['node', 'app'])).toBeNull()
-    expect(desktopValidationFlagValue(['--rerun-validation-profile=/tmp/rerun-validation-a'])).toBe('/tmp/rerun-validation-a')
-    expect(() => desktopValidationFlagValue(['--rerun-validation-profile='])).toThrow('requires an absolute path')
-    expect(() => desktopValidationFlagValue(['--rerun-validation-profile=/tmp/a', '--rerun-validation-profile=/tmp/b'])).toThrow('only once')
-    expect(() => desktopValidationFlagValue(['--rerun-validation-profile=relative/path'])).toThrow('absolute path')
+    assert.equal(desktopValidationFlagValue(['node', 'app']), null)
+    assert.equal(desktopValidationFlagValue(['--rerun-validation-profile=/tmp/rerun-validation-a']), '/tmp/rerun-validation-a')
+    assert.throws(() => desktopValidationFlagValue(['--rerun-validation-profile=']), /requires an absolute path/)
+    assert.throws(() => desktopValidationFlagValue(['--rerun-validation-profile=/tmp/a', '--rerun-validation-profile=/tmp/b']), /only once/)
+    assert.throws(() => desktopValidationFlagValue(['--rerun-validation-profile=relative/path']), /absolute path/)
 })
 
 test('profile contract distinguishes verified paths from unproven network enforcement', () => {
@@ -22,12 +23,12 @@ test('profile contract distinguishes verified paths from unproven network enforc
         externalNetwork: 'waiting-for-launch-enforcement',
         loopback: 'ephemeral-only',
     })
-    expect(profile.externalNetwork).toBe('waiting-for-launch-enforcement')
-    expect(profile.providers).toBe('empty-by-fresh-profile')
+    assert.equal(profile.externalNetwork, 'waiting-for-launch-enforcement')
+    assert.equal(profile.providers, 'empty-by-fresh-profile')
 })
 
 test('production and non-temporary roots are refused', () => {
     for (const profileRoot of ['/', process.env.HOME ?? '/Users/test', `${process.env.HOME ?? '/Users/test'}/.rerun`, '/Users/test/Library/Application Support/Rerun Desktop Preview', '/var/tmp/not-the-system-temp-root']) {
-        expect(() => validateDesktopValidationProfile({ profileRoot }), desktopValidationProfileError).toThrow()
+        assert.throws(() => validateDesktopValidationProfile({ profileRoot }))
     }
 })
