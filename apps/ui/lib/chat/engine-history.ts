@@ -11,6 +11,7 @@ import { encodePeaks } from '@/lib/voice/peaks'
 import { parseVoiceMessage } from '@/lib/voice/marker'
 import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
 import { projectDesktopHistoricalCard } from '@/components/desktop/tool-presentations/select'
+import { projectDesktopToolStatus } from '@/components/desktop/tool-presentations/status'
 import { desktopTableCardOf } from '@/lib/desktop/table-card'
 import { desktopFileCardOf } from '@/lib/desktop/file-card'
 import { desktopSkillProposalIdOf } from '@/lib/desktop/skill-proposal-source'
@@ -237,6 +238,10 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
             if (historical) return {
                 type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
                 state: 'output-available' as const, input: historical.input, output: historical.output,
+            }
+            if (toolName === 'notify_user') return {
+                type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                state: projectDesktopToolStatus(part) === 'failed' ? 'output-error' as const : part.state, input: {},
             }
             const view = desktopToolPresentation(part.toolName, part.input, part.output)
             const formInput = toolName === 'ask_user' ? desktopQuestionInput(part.input)

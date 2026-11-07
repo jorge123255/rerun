@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createClient } from '@libsql/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 let root: string
@@ -102,4 +103,40 @@ it('serializes same-revision canonical mutations before either losing file effec
     expect(current?.env.OPENAI_API_KEY).toBe('offline-original-key')
     expect(winner.catalog?.connections.find(connection => connection.connectionId === id)).toEqual(winner.connection)
     expect(await store.revision(1, id)).toBe(winner.receipt.connectionRevision)
+})
+
+it('does not let a concurrent catalog read consume a newly created connection revision', async () => {
+    const { DESKTOP_API_CONNECTIONS_SCHEMA_SQL, sqliteDesktopApiConnectionStore } = await import('./store.js')
+    const db = createClient({ url: `file:${join(root, 'api-connections.db')}` })
+    try {
+        await db.executeMultiple(DESKTOP_API_CONNECTIONS_SCHEMA_SQL)
+        const authority = canonicalDesktopApiConnectionAuthority({ workspaceId: 1, pendingRuns: async () => [], stopAndDrain: async () => {} })
+        const store = sqliteDesktopApiConnectionStore(db)
+        const id = 'cnx_fixture-catalog-race', revision = 'rev_fixture-created'
+        const service = createDesktopApiConnectionService({ authority, store, connectionId: () => id,
+            revision: () => revision, now: () => new Date('2026-11-06T00:00:00.000Z'), custodyKey: () => Buffer.alloc(32, 6) })
+        let published!: () => void
+        let proceed!: () => void
+        const visible = new Promise<void>(resolve => { published = resolve })
+        const hold = new Promise<void>(resolve => { proceed = resolve })
+        const create = authority.create
+        authority.create = async (input, connectionId) => {
+            const created = await create(input, connectionId)
+            published()
+            await hold
+            return created
+        }
+        const input = { requestId: crypto.randomUUID(), workspaceId: 1, name: 'Catalog race fixture', provider: 'openai' as const,
+            models: ['fixture-model'], extraModels: [], secret: 'offline-fixture-only' }
+        const creation = service.create(input)
+        try {
+            await Promise.race([visible, creation.then(() => { throw new Error('Create completed before publishing its connection') })])
+            expect((await service.list()).connections.map(connection => connection.connectionId)).toContain(id)
+        } finally {
+            proceed()
+            await creation
+        }
+        expect(await creation).toMatchObject({ status: 'saved', connection: { connectionId: id, revision } })
+        expect(await service.create(input)).toMatchObject({ status: 'saved', recovered: true, connection: { connectionId: id, revision } })
+    } finally { db.close() }
 })

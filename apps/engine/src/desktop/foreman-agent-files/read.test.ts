@@ -46,3 +46,19 @@ test('stopped reads and a symlinked workspace stay refused', async () => {
     await symlink(join(root, 'elsewhere'), join(root, 'agents', 'other', 'workspace'))
     await expect(listCoworkerVisible('other', '.', signal())).rejects.toThrow()
 })
+
+test('reports a bounded listing when hidden entries exhaust the directory scan', async () => {
+    const crowded = join(workspace, 'crowded')
+    await mkdir(crowded)
+    for (let index = 0; index < 1025; index++) await mkdir(join(crowded, `.hidden-${index}`))
+    expect(await listCoworkerVisible('target', 'crowded', signal())).toEqual({ entries: [], truncated: true })
+})
+
+test('stops searching an empty directory tree after the directory budget', async () => {
+    const deepest = join(workspace, 'deep', ...Array<string>(130).fill('level'))
+    await mkdir(deepest, { recursive: true })
+    await writeFile(join(deepest, 'note.txt'), 'UNSCANNED_FOREMAN_MARKER')
+    const result = await searchCoworkerVisibleText('target', 'deep', 'UNSCANNED_FOREMAN_MARKER', 20, signal())
+    expect(result).not.toContain('UNSCANNED_FOREMAN_MARKER')
+    expect(result).toContain('search limit reached')
+})

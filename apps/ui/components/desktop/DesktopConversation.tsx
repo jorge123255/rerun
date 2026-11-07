@@ -32,7 +32,7 @@ import { cn } from '@/lib/utils'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
-import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, type DesktopVoiceSendReceipt } from '@rerun/contracts'
+import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, parseVoiceMessage, type DesktopVoiceSendReceipt } from '@rerun/contracts'
 import { DesktopServiceRequestBlock, type DesktopServiceRequestBlockProps } from './service-requests/DesktopServiceRequestBlock'
 import { DesktopServiceRequestReceipt } from './service-requests/DesktopServiceRequestReceipt'
 import { DesktopMcpSignInBlock } from './mcp-sign-in/DesktopMcpSignInBlock'
@@ -1168,19 +1168,36 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
         unknownUploads ? `${unknownUploads} attachment${unknownUploads > 1 ? 's' : ''} may already be in this coworker’s Files. Check Files, then dismiss ${unknownUploads > 1 ? 'these upload statuses' : 'this upload status'} before sending.` : '',
     ].filter(Boolean).join(' ')
 
+    const lastUserIndex = transcript.findLastIndex(message => message.role === 'user')
+    const savedRetryAnswer = lastUserIndex < 0 ? undefined : transcript.findLast((message, index) =>
+        index > lastUserIndex && message.role === 'assistant' && message.id.startsWith('engine-'))
+    const terminalUser = lastUserIndex >= 0 && lastUserIndex === transcript.length - 1 ? transcript[lastUserIndex] : undefined
+    const retryMetadata = terminalUser?.metadata
+    const plainRetry = retryMetadata == null || typeof retryMetadata === 'object' && !Array.isArray(retryMetadata)
+        && Object.keys(retryMetadata).every(key => key === 'createdAt' || key === 'authorId')
+    // The raw text path cannot reconstruct attachment, mention, or voice authority.
+    const retryText = terminalUser && plainRetry && terminalUser.parts.every(part => part.type === 'text') ? lastUserText(transcript) : ''
+    const canRetry = active && canRegenerate && !pendingRequest && !uploadsActive && !preparingSend
+        && !regenerationSource && !history.runsUnavailable
+        && (!!savedRetryAnswer || modelReady && !!retryText && !parseVoiceMessage(retryText))
     const recovery = useDesktopChatRecovery({
         scope: { agentId: agent.id, tabUid: tabUid ?? null, sessionId, liveSessionId: liveSessionId ?? sessionId, runId: engineRunning.id === sessionId ? engineRunning.runId ?? null : null, requestId: null, modelRevision },
         error: reconnecting ? null : error?.message ?? null,
         failedRun: engineRunning.id === sessionId && engineRunning.failedRunId ? { runId: engineRunning.failedRunId, error: engineRunning.failedRunError ?? null } : null,
-        canRetry: transcript.some(message => message.role === 'user'),
+        canRetry,
         active,
         ports: {
-            retryLastTurn: () => {
-                const assistant = [...transcript].reverse().find(message => message.role === 'assistant' && message.id.startsWith('engine-'))
-                if (canRegenerate && assistant) void regenerateReply(assistant.id)
-                else {
-                    const text = lastUserText(transcript)
-                    if (text && sessionId) void sendMessage({ text }, { body: { agentId: agent.id, sessionId } })
+            retryLastTurn: async () => {
+                if (!canRetry || !sessionId || isDesktopQuitting() || preparingSubmit.current
+                    || uploadsBusy() || pendingAttachment.current || regenerating.current || quickReplyRequest.current) return
+                if (savedRetryAnswer) return regenerateReply(savedRetryAnswer.id)
+                preparingSubmit.current = true
+                const release = holdDraftAdmission()
+                try {
+                    await sendMessage({ text: retryText }, { body: { agentId: agent.id, sessionId } })
+                } finally {
+                    preparingSubmit.current = false
+                    release()
                 }
             },
             continueRun: () => { if (sessionId) void sendMessage({ text: 'Continue where you left off.' }, { body: { agentId: agent.id, sessionId } }) },
@@ -1339,7 +1356,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                         message={recovery.notice.message}
                         agentId={agent.id}
                         sessionId={sessionId}
-                        onRetry={() => recovery.act('retry')}
+                        onRetry={canRetry ? () => recovery.act('retry') : undefined}
                         onContinue={() => recovery.act('continue')}
                         onStopRun={() => recovery.act('stop')}
                         onNewConversation={() => recovery.act('new-conversation')}

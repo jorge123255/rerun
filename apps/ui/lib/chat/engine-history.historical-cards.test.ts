@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { EngineMessage } from '@/lib/engine/types'
 import { selectDesktopHistoricalCard } from '@/components/desktop/tool-presentations/select'
+import { projectDesktopToolStatus } from '@/components/desktop/tool-presentations/status'
 import { publicDesktopHistory, transformEngineMessages } from './engine-history'
 
 const KEY = `sk-${'a'.repeat(24)}`
@@ -30,6 +31,17 @@ describe('real saved-history projection into historical card selection', () => {
         expect(JSON.stringify(history)).not.toContain('private-run')
         expect(publicDesktopHistory(history)).toEqual(history)
         expect(JSON.stringify(rows)).toBe(unchanged)
+    })
+
+    it('does not present an unconfirmed notification as done or publish its receipt metadata', () => {
+        const output = JSON.stringify({ status: 'unknown', nativeStatus: 'unknown', metadata: { destination: 'private-workflow-destination' } })
+        const rows = saved('notify_user', { message: 'Review this' }, { type: 'text', value: output })
+        const transformed = transformEngineMessages(rows, { desktopSummaries: true })
+        expect.soft(projectDesktopToolStatus(transformed[0].parts[0])).toBe('unknown')
+        const { history, card } = reopen(rows)
+        expect.soft(projectDesktopToolStatus(history[0].parts[0])).toBe('unknown')
+        expect(card).toBeNull()
+        expect(JSON.stringify(history)).not.toContain('private-workflow-destination')
     })
 
     it.each(['mcp_register', 'mcp_login'])('reopens a confirmed %s with only a name, host and recorded outcome', toolName => {

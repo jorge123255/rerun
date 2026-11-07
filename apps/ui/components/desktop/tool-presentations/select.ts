@@ -2,6 +2,7 @@ import { BRAIN_CHANGE_NOTES, brainChangeHeadline, brainChangeOf, brainSlugSchema
 import { redactHistoricalText } from './redact'
 import {
     DESKTOP_HISTORICAL_OUTPUT_BOUND,
+    DESKTOP_NOTIFICATION_DELIVERED,
     desktopHistoricalCallId,
     desktopHistoricalToolName,
     projectDesktopToolStatus,
@@ -11,8 +12,7 @@ import {
     type DesktopHistoricalToolSource,
 } from './status'
 
-export const DESKTOP_NOTIFICATION_DELIVERED = 'Notification sent to the user.'
-export const DESKTOP_NOTIFICATION_UNDELIVERED = 'Notification not delivered'
+export { DESKTOP_NOTIFICATION_DELIVERED, DESKTOP_NOTIFICATION_UNDELIVERED } from './status'
 const NOTIFICATION_MESSAGE_LIMIT = 16_000
 
 export type DesktopHistoricalCard =
@@ -73,10 +73,6 @@ function notificationCard(part: DesktopHistoricalToolSource, identity: DesktopHi
     const input = inputRecord(part.input)
     const message = input && typeof input.message === 'string' ? input.message : ''
     if (!message.trim() || message.length > NOTIFICATION_MESSAGE_LIMIT) return null
-    const output = boundedString(part.output)
-    if (output == null) return null
-    if (output.includes(DESKTOP_NOTIFICATION_UNDELIVERED)) return null
-    if (output.trim() !== DESKTOP_NOTIFICATION_DELIVERED) return null
     const shown = redactHistoricalText(message).trim()
     if (!shown) return null
     return { kind: 'notification', toolCallId, message: shown, identity, status: 'succeeded' }

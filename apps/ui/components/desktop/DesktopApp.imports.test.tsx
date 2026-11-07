@@ -5,6 +5,7 @@ import { MotionConfig } from 'motion/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DesktopApp } from './DesktopApp'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
+import { fxCameraWriteSchema } from '@/lib/desktop/fx-repairs/board-camera'
 import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 import { desktopBackgroundRead } from '@/test/desktop-background-fixture'
@@ -21,10 +22,11 @@ vi.mock('@rerun/ui/foreman', () => ({ PARKED_ORB_SIZE: 40,PARKED_ORB_SIZE_MOBILE
 // outcome and closes exactly as Done does; the App and its canonical refresh stay real.
 vi.mock('./DesktopWorkspaceDialogs', async importOriginal => {
     const actual = await importOriginal<typeof import('./DesktopWorkspaceDialogs')>()
-    return { ...actual,DesktopPortableCoworkerImport: ({ workspaceId,onImported,onClose }: ComponentProps<typeof actual.DesktopPortableCoworkerImport>) => <div role="dialog" aria-label="Fixture offline import" data-import-workspace={workspaceId}>
+    return { ...actual,DesktopPortableCoworkerImport: ({ workspaceId,onImported,onOpenCoworker,onClose }: ComponentProps<typeof actual.DesktopPortableCoworkerImport>) => <div role="dialog" aria-label="Fixture offline import" data-import-workspace={workspaceId}>
         <button type="button" onClick={() => { void onImported?.(importedId) }}>Acknowledge import</button>
         <button type="button" onClick={() => { void onImported?.(importedId) }}>Acknowledge recovered import</button>
         <button type="button" onClick={onClose}>Done importing</button>
+        <button type="button" onClick={() => onOpenCoworker(importedId)}>Open fresh copy</button>
         <button type="button" onClick={onClose}>Cancel importing</button>
     </div> }
 })
@@ -56,9 +58,11 @@ const cameraTransform = () => {
     return layer.style.transform
 }
 
-async function mount() {
+async function mount({ holdBoard = false } = {}) {
     let releaseAgents!: (response: Response) => void
     const deferredAgents = new Promise<Response>(resolve => { releaseAgents = resolve })
+    let releaseBoard!: () => void
+    const deferredBoard = new Promise<void>(resolve => { releaseBoard = resolve })
     const requests: { url: string; method: string }[] = []
     const unexpected: string[] = []
     const drafts = createDesktopDraftFixture(), recent = createDesktopRecentFixture()
@@ -69,9 +73,28 @@ async function mount() {
         requests.push({ url,method })
         const shared = recent.handle(input,init) ?? drafts.handle(input,init)
         if (shared) return shared
+        if (holdBoard && method === 'PUT' && url === '/api/desktop/workspaces/2/board-camera') {
+            const { workspaceId, requestId, expectedRevision, camera } = fxCameraWriteSchema.parse(JSON.parse(String(init?.body)))
+            return Response.json({ status: 'saved', requestId, snapshot: { workspaceId, revision: expectedRevision + 1, camera } })
+        }
         if (method !== 'GET') { unexpected.push(`${method} ${url}`); throw new Error('Import acknowledgement cannot send, enable, edit or move anything') }
-        if (url === '/api/desktop/agents') return deferredAgents
-        if (url === '/api/desktop/spaces') return Response.json({ board: importedBoard() })
+        if (url === '/api/desktop/agents') {
+            if (holdBoard && requests.filter(request => request.url === url).length > 1) return Response.json({ agents: [original,imported] })
+            return (await deferredAgents).clone()
+        }
+        if (url === '/api/desktop/spaces') {
+            if (holdBoard) await new Promise<void>((resolve, reject) => {
+                const signal = init?.signal
+                const abort = () => reject(signal?.reason)
+                if (signal?.aborted) { abort(); return }
+                signal?.addEventListener('abort', abort, { once: true })
+                void deferredBoard.then(() => {
+                    signal?.removeEventListener('abort', abort)
+                    resolve()
+                })
+            })
+            return Response.json({ board: importedBoard() })
+        }
         if (url === '/api/desktop/settings') return Response.json({ connections: [],default: null,runtimeWorkspaceId: 2 })
         if (url === '/api/desktop/workspaces/2/board-camera') return Response.json({ workspaceId: 2, revision: 0, camera: { pan: { x: 0, y: 0 }, zoom: 1 } })
         if (url === '/api/desktop/board-activity') return Response.json({ agents: {} })
@@ -85,7 +108,10 @@ async function mount() {
     }))
     root = createRoot(document.body.appendChild(document.createElement('div')))
     await act(async () => root!.render(<MotionConfig reducedMotion="always"><DesktopApp initialData={{ profile: { id: 1,displayName: 'Local' },workspace: { id: 1,name: 'Second workspace' },runtimeWorkspaceId: 2,theme: 'system',connections: [],default: null,agents: [original],board: initialBoard() }} /></MotionConfig>))
-    return { requests,unexpected,flush,releaseAgents: async () => { await act(async () => releaseAgents(Response.json({ agents: [original,imported] }))) } }
+    return { requests,unexpected,flush,
+        releaseAgents: async () => { await act(async () => releaseAgents(Response.json({ agents: [original,imported] }))) },
+        releaseBoard: async () => { await act(async () => releaseBoard()) },
+    }
 }
 
 async function openOriginalChat() {
@@ -139,6 +165,23 @@ it('Cancel performs no canonical import refresh and preserves the selected chat 
     expect(draft.value).toBe('The exact existing unsent draft')
     expect(cameraTransform()).toBe(camera)
     expect(fixture.flush).not.toHaveBeenCalled(); expect(fixture.unexpected).toEqual([])
+})
+
+it('opening an acknowledged copy shares its in-flight roster and board refresh', async () => {
+    const fixture = await mount({ holdBoard: true })
+    await openOriginalChat()
+    await openImport()
+    await click(button('Acknowledge import'))
+    await click(button('Open fresh copy'))
+    // An independent Open read would already be waiting for the board. Completing
+    // the acknowledgement's roster read next must not cancel that navigation.
+    await fixture.releaseAgents()
+    await fixture.releaseBoard()
+    expect(document.querySelector('[data-import-test-chat]')?.getAttribute('data-import-test-chat')).toBe(importedId)
+    expect(document.querySelector('[aria-label="Fixture offline import"]')).toBeNull()
+    expect(fixture.requests.filter(request => request.url === '/api/desktop/agents')).toHaveLength(1)
+    expect(fixture.requests.filter(request => request.url === '/api/desktop/spaces')).toHaveLength(1)
+    expect(fixture.unexpected).toEqual([])
 })
 
 it('ignores a canonical import refresh that returns after the workspace App unmounts', async () => {
