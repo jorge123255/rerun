@@ -9,8 +9,8 @@ import { useDesktopCoworkerImportFlow } from './useDesktopCoworkerImportFlow'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
-beforeEach(() => localStorage.clear())
-afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.replaceChildren(); localStorage.clear() })
+beforeEach(() => vi.stubGlobal('localStorage', undefined))
+afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.replaceChildren(); vi.unstubAllGlobals() })
 
 async function mount(overrides: Partial<DesktopCoworkerShareClient> = {}, targetWorkspaceId = 2, onImported?: (agentId: string) => void | Promise<void>) {
     const api = {

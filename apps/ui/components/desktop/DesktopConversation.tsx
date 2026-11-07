@@ -80,7 +80,7 @@ import { DesktopUploadChips } from './DesktopUploadChips'
 import { DesktopImageUploadChips } from './DesktopImageUploadChips'
 import { ChatAttachmentChip } from '@/components/chat/ChatAttachmentChip'
 import { MessageAttachments } from '@/components/chat/MessageAttachments'
-import { DESKTOP_IMAGE_ATTACHMENT_MAX_FILES, DESKTOP_IMAGE_UPLOAD_ACCEPT, desktopImageKindForName } from '@/lib/desktop/composer-image'
+import { DESKTOP_IMAGE_UPLOAD_ACCEPT } from '@/lib/desktop/composer-image'
 import { useDesktopComposerImageUploads } from '@/lib/desktop/use-composer-image-uploads'
 import { DESKTOP_UPLOAD_ACCEPT } from '@/lib/desktop/composer-upload'
 import { useDesktopComposerUploads } from '@/lib/desktop/use-composer-uploads'
@@ -91,7 +91,7 @@ import { QueuedMessagePill } from '@/components/chat/QueuedMessagePill'
 import { shouldFlush, shouldKeepQueued } from '@/lib/chat/queued-message'
 import { desktopQueuedAttachmentSelections as desktopQueuedAttachmentPaths, desktopQueuedPreview, type DesktopQueuedMessage } from '@/lib/desktop/queued-message'
 import { useDesktopQueuedMessage } from '@/lib/desktop/use-queued-message'
-import { DESKTOP_ATTACHMENT_MAX_FILES, HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf as desktopAttachmentPathsOf, parseScheduledRun, type DesktopAttachmentFields, type DesktopAttachmentSelection, type DesktopImageSnapshot } from '@rerun/contracts'
+import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf as desktopAttachmentPathsOf, parseScheduledRun, type DesktopAttachmentFields, type DesktopAttachmentSelection, type DesktopImageSnapshot } from '@rerun/contracts'
 import { desktopQuestionViewSchema, type DesktopPendingQuestion, type DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import { DesktopToolInstallPending } from './tool-install/DesktopToolInstallPending'
 import { DesktopQuestionCard } from './DesktopQuestionCard'
@@ -370,12 +370,6 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     const uploadGate = useRef(false)
     const beginUpload = useCallback((files: File[]) => {
         if (!files.length || uploadGate.current || batchUpload.current || preparingSubmit.current || isDesktopQuitting()) return
-        const textCount = files.filter(file => !desktopImageKindForName(file.name) && /\.(txt|md)$/i.test(file.name)).length
-        const imageCount = files.filter(file => desktopImageKindForName(file.name)).length
-        if (textCount > DESKTOP_ATTACHMENT_MAX_FILES || imageCount > DESKTOP_IMAGE_ATTACHMENT_MAX_FILES) {
-            reportUploadNotice(`Choose up to ${DESKTOP_ATTACHMENT_MAX_FILES} files and ${DESKTOP_IMAGE_ATTACHMENT_MAX_FILES} images`)
-            return
-        }
         const groups = planFxAttachmentBatch(files)
         const scope = uploadScope.current
         const release = holdDraftAdmission()

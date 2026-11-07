@@ -25,7 +25,7 @@ function ports(overrides: Partial<DesktopVisionPorts> = {}) {
         modelFor: vi.fn(() => ({})),
         ensureAuth: vi.fn(async () => () => {}),
         generateText: vi.fn(async () => ({ text: 'a ring on a white background' })),
-        readConfig: vi.fn(async () => ({ enabled: true, tools: { vision: true, filesystem: true } }) as any),
+        readConfig: vi.fn(async () => ({ enabled: true, tools: { vision: true, filesystem: true, desktopToolGrants: { vision: true } } }) as any),
         ...overrides,
     } as DesktopVisionPorts
 }
@@ -52,11 +52,28 @@ it('does not call a model when no selected model can see', async () => {
 
 it('enforces the vision grant and active run identity', async () => {
     await fixture()
-    const value = ports({ readConfig: vi.fn(async () => ({ enabled: true, tools: { vision: false, filesystem: true } }) as any) })
-    await expect((desktopVisionTools(ctx(false), value).vision_analyze as any).execute({ imagePath: 'chat-uploads/small.png', prompt: 'x' }, { toolCallId: 'call-1', messages: [] })).rejects.toThrow()
+    const value = ports({ readConfig: vi.fn(async () => ({ enabled: true, tools: { vision: true, filesystem: true, desktopToolGrants: { vision: false } } }) as any) })
+    await expect((desktopVisionTools(ctx(), value).vision_analyze as any).execute({ imagePath: 'chat-uploads/small.png', prompt: 'x' }, { toolCallId: 'call-1', messages: [] })).rejects.toThrow('Vision analysis is turned off')
     const withoutRun = { ...ctx(), runId: undefined }
     await expect((desktopVisionTools(withoutRun, value).vision_analyze as any).execute({ imagePath: 'chat-uploads/small.png', prompt: 'x' }, { toolCallId: 'call-1', messages: [] })).rejects.toThrow()
     expect(value.generateText).not.toHaveBeenCalled()
+})
+
+it('does not send the image if vision is revoked during provider authentication', async () => {
+    await fixture()
+    let granted = true
+    const release = vi.fn()
+    const value = ports({
+        readConfig: vi.fn(async () => ({ enabled: true, tools: { vision: true, filesystem: true, desktopToolGrants: { vision: granted } } }) as any),
+        ensureAuth: vi.fn(async () => {
+            granted = false
+            return release
+        }),
+    })
+    const result = await (desktopVisionTools(ctx(), value).vision_analyze as any).execute({ imagePath: 'chat-uploads/small.png', prompt: 'x' }, { toolCallId: 'call-1', messages: [] })
+    expect(result).toContain('Vision analysis is turned off')
+    expect(value.generateText).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledOnce()
 })
 
 it('rejects an in-flight analysis after Stop', async () => {

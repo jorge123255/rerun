@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { Worker } from 'node:worker_threads'
@@ -78,6 +78,15 @@ describe('private regex semantics', () => {
         await expect(call({ pattern: 'one', path: '../outside' })).rejects.toThrow('Use a relative directory')
     })
 
+    it('does not disclose whether a child exists beyond a symlink', async () => {
+        const outside = join(root, 'outside-link-target')
+        await mkdir(join(outside, 'present'), { recursive: true })
+        await symlink(outside, join(workspaceDir(agentId), 'linked'), 'dir')
+        for (const path of ['linked/present', 'linked/missing']) {
+            await expect(call({ pattern: 'one', path })).rejects.toThrow(/^That directory is unavailable\.$/)
+        }
+    })
+
     it('allows ordinary hidden assets while excluding reserved and dependency directories', async () => {
         expect(await call({ pattern: 'ordinary hidden' })).toBe('.hidden/ordinary.md:1: ordinary hidden receipt')
         expect(await call({ pattern: 'secret' })).toBe('No matches.')
@@ -97,6 +106,23 @@ describe('private regex semantics', () => {
             await expect(call({ pattern: 'one' })).rejects.toThrow('turned off')
             await expect(call({ pattern: 'one', path: 'missing' })).rejects.toThrow('turned off')
         } finally {
+            await writeAgentConfig(agentId, grantedConfig)
+        }
+    })
+
+    it('discards matches if access is revoked while the regex worker is running', async () => {
+        const path = 'last-file'
+        await mkdir(join(workspaceDir(agentId), path))
+        await writeFile(join(workspaceDir(agentId), path, 'notes.md'), 'Receipt 42\n')
+        const postMessage = Worker.prototype.postMessage
+        const dispatch = vi.spyOn(Worker.prototype, 'postMessage').mockImplementationOnce(function (this: Worker, message, transferList) {
+            void writeAgentConfig(agentId, config(false)).then(() => postMessage.call(this, message, transferList))
+        })
+        try {
+            await expect(call({ pattern: 'Receipt', path })).rejects.toThrow('turned off')
+            expect(dispatch).toHaveBeenCalledOnce()
+        } finally {
+            dispatch.mockRestore()
             await writeAgentConfig(agentId, grantedConfig)
         }
     })
