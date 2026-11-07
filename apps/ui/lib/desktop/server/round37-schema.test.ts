@@ -28,7 +28,7 @@ test('migration34 preserves prior data and the same saved profile attempt after 
     const reopened = createClient({ url }); clients.push(reopened)
     await initializeDesktopRound37(reopened)
     expect((await reopened.execute('SELECT version,id FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([
-        { version: 33, id: 'external-mcp-ui-attempts' }, { version: 34, id: 'company-profile-derived-attempts' },
+        { version: 33, id: 'external-mcp-ui-attempts' }, { version: 34, id: 'company-profile-derived-attempts' }, { version: 35, id: 'fx-board-camera' },
     ])
     expect((await reopened.execute('SELECT text FROM original_drafts')).rows).toEqual([{ text: 'Keep this draft' }])
     expect((await createSqliteDesktopCompanyProfileStore(reopened, { schemaReady: true }).get(attempt.requestId))?.attempt).toEqual(attempt)

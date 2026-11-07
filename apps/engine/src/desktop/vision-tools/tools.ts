@@ -39,6 +39,7 @@ export function desktopVisionTools(ctx: RunContext, ports: DesktopVisionPorts = 
                 try {
                     messages = await desktopVisionImageMessages(ctx, imagePath, prompt)
                 } catch (error) {
+                    ctx.abortSignal?.throwIfAborted()
                     return `Could not read ${imagePath} as an image: ${(error as Error).message}`
                 }
                 const seeing = ports.selectedModel(ctx.agent)
