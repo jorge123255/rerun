@@ -1,5 +1,5 @@
 import { lstat, mkdir, mkdtemp, rm, readdir, readFile, realpath } from 'node:fs/promises'
-import { basename, join, relative, resolve, sep } from 'node:path'
+import { basename, join, relative, resolve } from 'node:path'
 import { tmpdir, userInfo } from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -9,6 +9,7 @@ import { existsSync, output, repoRoot, resourcesDir } from './lib.mjs'
 import { readUiSharpManifest } from './ui-sharp.mjs'
 import { verifyPdfHelper } from './pdf-helper-probe.mjs'
 import { verifyPdfTextHelper } from './pdf-text-probe.mjs'
+import { runtimeSymlinkIsContained } from './runtime-symlinks.mjs'
 
 const execFileAsync = promisify(execFile)
 const failures = []
@@ -113,8 +114,7 @@ async function scan(dir) {
             if (['.git', '.svn', '.hg'].includes(entry.name)) offenders.push(path)
             else await scan(path)
         } else if (entry.isSymbolicLink()) {
-            const target = await realpath(path).catch(() => null)
-            if (target && relative(await realpath(resourcesDir), target).startsWith('..' + sep)) escapees.push(path)
+            if (!await runtimeSymlinkIsContained(resourcesDir, path)) escapees.push(path)
         } else if (forbidden.test(entry.name) || secretExt.test(entry.name)) {
             offenders.push(path)
         }
@@ -122,7 +122,7 @@ async function scan(dir) {
 }
 await scan(resourcesDir)
 check(offenders.length === 0, `no secrets/vcs files staged${offenders.length ? ` (${offenders.join(', ')})` : ''}`)
-check(escapees.length === 0, `no symlinks escape resources${escapees.length ? ` (${escapees.join(', ')})` : ''}`)
+check(escapees.length === 0, `all symlinks resolve inside resources${escapees.length ? ` (${escapees.join(', ')})` : ''}`)
 
 if (failures.length) {
     console.error(`\n${failures.length} verification failure(s)`)
