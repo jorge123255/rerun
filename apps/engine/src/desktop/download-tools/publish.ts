@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, open, link, realpath, rmdir, unlink, type FileHandle } from 'node:fs/promises'
+import { lstat, mkdir, open, link, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { openWithoutLinks } from '../open-without-links.js'
+import { recordCreatedWorkspaceDirectory, removeCreatedWorkspaceDirectories, type CreatedWorkspaceDirectory } from '../created-workspace-directories.js'
 import { DownloadTooLargeError } from './errors.js'
 import { DOWNLOAD_LIMIT_BYTES } from './limits.js'
 import { downloadPathParts } from './path.js'
@@ -62,12 +63,6 @@ async function assertRealDirectory(directory: string, uid: bigint): Promise<void
     if (await realpath(directory) !== directory) throw outside()
 }
 
-async function removeCreated(created: string[]): Promise<void> {
-    for (const directory of [...created].reverse()) {
-        await rmdir(directory).catch(() => {})
-    }
-}
-
 /**
  * Create-only publication into a coworker workspace (`…/workspace`).
  * link(2) does not replace an existing name, including a symlink. Staging names are `.rerun-download-*`.
@@ -79,7 +74,7 @@ export async function publishDownload(workspaceRoot: string, relativePath: strin
     const uid = currentUid()
     const root = resolve(workspaceRoot)
     if (basename(root) !== 'workspace') throw unavailable()
-    const created: string[] = []
+    const created: CreatedWorkspaceDirectory[] = []
     try {
         await ensureWorkspace(root, uid, signal, created)
         let parent = root
@@ -91,12 +86,12 @@ export async function publishDownload(workspaceRoot: string, relativePath: strin
         signal.throwIfAborted()
         await stage(parent, parts[parts.length - 1] ?? '', bytes, signal)
     } catch (error) {
-        await removeCreated(created)
+        await removeCreatedWorkspaceDirectories(created)
         throw error
     }
 }
 
-async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, created: string[]): Promise<void> {
+async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, created: CreatedWorkspaceDirectory[]): Promise<void> {
     signal.throwIfAborted()
     const info = await lstat(root).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -109,8 +104,9 @@ async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, c
         try {
             signal.throwIfAborted()
             try {
-                await mkdir(at(pin.pinned, 'workspace'))
-                created.push(root)
+                const target = at(pin.pinned, 'workspace')
+                await mkdir(target)
+                created.push(await recordCreatedWorkspaceDirectory(root, target))
             } catch (error) {
                 if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw mapLink(error)
             }
@@ -119,13 +115,13 @@ async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, c
         }
     }
     await assertRealDirectory(root, uid)
-    if (created.at(-1) === root) {
+    if (created.at(-1)?.path === root) {
         const again = await lstat(root)
         if (again.isSymbolicLink() || !again.isDirectory()) throw outside()
     }
 }
 
-async function ensureChild(parent: string, name: string, child: string, uid: bigint, signal: AbortSignal, created: string[]): Promise<void> {
+async function ensureChild(parent: string, name: string, child: string, uid: bigint, signal: AbortSignal, created: CreatedWorkspaceDirectory[]): Promise<void> {
     const info = await lstat(child).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
         throw mapLink(error)
@@ -142,8 +138,9 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
     try {
         signal.throwIfAborted()
         try {
-            await mkdir(at(pin.pinned, name))
-            created.push(child)
+            const target = at(pin.pinned, name)
+            await mkdir(target)
+            created.push(await recordCreatedWorkspaceDirectory(child, target))
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw mapLink(error)
         }

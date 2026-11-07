@@ -9,9 +9,9 @@ import {
 import { readDesktopTeamAdmit, readDesktopTeamActivity, readDesktopTeamRun, readDesktopTeamSchedules, readDesktopTeamTriggers } from './adapters.js'
 import { bindDesktopTeamReads, readDesktopTeamReads, unbindDesktopTeamReads } from './binding.js'
 import { readDesktopTeamReadGrant } from './grant.js'
-import { desktopTeamActivityFrom, desktopTeamMemberStatus, desktopTeamRunLimit, desktopTeamScheduleView, desktopTeamTriggerView, desktopTeamTruncateField } from './project.js'
+import { desktopTeamActivityFrom, desktopTeamMemberStatus, desktopTeamRunLimit, desktopTeamScheduleView, desktopTeamToolCallView, desktopTeamTriggerView, desktopTeamTruncateField } from './project.js'
 import { createDesktopTeamReadTools } from './tools.js'
-import type { DesktopTeamActivity, DesktopTeamMember, DesktopTeamReadAck, DesktopTeamReadToolContext, DesktopTeamReads } from './ports.js'
+import type { DesktopTeamActivity, DesktopTeamMember, DesktopTeamReadAck, DesktopTeamReadToolContext, DesktopTeamReads, DesktopTeamToolCallView } from './ports.js'
 
 const ready = <T>(value: T): DesktopTeamReadAck<T> => ({ acknowledgement: 'ready', value })
 const base: DesktopTeamReadToolContext = { agent: { id: 'eng-a' }, runId: 'run-a', sessionId: 'sess-a' }
@@ -42,7 +42,7 @@ function harness(options: { grant?: (id: string) => Promise<boolean>; admit?: 'o
     const triggers = vi.fn(async () => ready([desktopTeamTriggerView({ slug: 'hook', name: 'Hook', description: '', body: 'Run', methods: ['POST'], enabled: true, fireCount: 2, lastFiredAt: null, token: 'sekret-token', url: 'https://hooks.example/t/sekret-token' })]))
     const runs = vi.fn(async (_id: string, limit: number) => ready([runRow({ steps: limit })]))
     const run = vi.fn(async () => ready(runRow()))
-    const toolCalls = vi.fn(async () => ready([{ step: 1, tool: 'web_fetch', input: 'x'.repeat(2001), result: 'Bearer sekret-token', isError: false, durationMs: 4 }]))
+    const toolCalls = vi.fn(async (): Promise<DesktopTeamReadAck<DesktopTeamToolCallView[]>> => ready([{ step: 1, tool: 'web_fetch', input: 'x'.repeat(2001), result: 'Bearer sekret-token', isError: false, durationMs: 4 }]))
     const readActivity = vi.fn(async () => ready(activity({ running: [{ runId: 'live', sessionId: 'sess-b', trigger: 'chat', startedAt: 't', steps: 3 }], lastFinished: { runId: 'old', status: 'error', finishedAt: 'e', error: 'boom' } })))
     const startRun = vi.fn()
     const reads = { schedules, triggers, runs, run, toolCalls, activity: readActivity, startRun } as DesktopTeamReads & { startRun: ReturnType<typeof vi.fn> }
@@ -105,7 +105,7 @@ describe('desktop team read projection', () => {
     })
 
     it('drops trigger secrets and clamps run limits', () => {
-        const trigger = desktopTeamTriggerView({ slug: 'hook', name: 'Hook', body: 'token sekret-token url https://hooks.example/t', methods: ['POST'], enabled: true, fireCount: 1, lastFiredAt: null, token: 'sekret-token', url: 'https://hooks.example/t' })
+        const trigger = desktopTeamTriggerView({ slug: 'hook', name: 'Hook sekret-token', description: 'Visit https://hooks.example/t', body: 'token sekret-token url https://hooks.example/t', methods: ['POST'], enabled: true, fireCount: 1, lastFiredAt: null, token: 'sekret-token', url: 'https://hooks.example/t' })
         expect(JSON.stringify(trigger)).not.toContain('sekret-token')
         expect(JSON.stringify(trigger)).not.toContain('https://hooks.example/t')
         expect(trigger).not.toHaveProperty('token')
@@ -230,6 +230,29 @@ describe('desktop team read tools', () => {
         const switched = await off.call('team_status', {}) as { agents: Array<{ status: string; running: unknown[] }> }
         expect(switched.agents[0]?.status).toBe('switched_off')
         expect(switched.agents[0]?.running).toHaveLength(1)
+    })
+
+    it('omits nested credentials from persisted tool-call JSON without damaging safe fields', async () => {
+        const box = harness()
+        box.toolCalls.mockResolvedValueOnce(ready([desktopTeamToolCallView({
+            stepNumber: 1, toolName: 'example', isError: false, durationMs: 4,
+            inputJson: JSON.stringify({ command: 'read', args: [{ token: 'fixture-token', label: 'safe' }], password: 'fixture-password' }),
+            resultJson: JSON.stringify({ apiKey: 'fixture-key', text: 'Bearer fixture-bearer', query: 'lookup?token=fixture-query' }),
+        })]))
+        const result = await box.call('team_get_run', { agentId: 'pub-b', runId: 'run-b', includeToolCalls: true }) as { toolCalls: Array<{ input: string; result: string }> }
+        expect(JSON.parse(result.toolCalls[0]!.input)).toEqual({ command: 'read', args: [{ label: 'safe' }] })
+        expect(JSON.parse(result.toolCalls[0]!.result)).toEqual({ text: 'Bearer [omitted]', query: 'lookup?token=[omitted]' })
+    })
+
+    it('scrubs JSON string results and omits malformed structured telemetry', async () => {
+        const call = desktopTeamToolCallView({
+            stepNumber: 1, toolName: 'mcp_example', isError: false, durationMs: 4,
+            inputJson: '{"token":"damaged-row-secret"',
+            resultJson: JSON.stringify(JSON.stringify({ content: [{ text: JSON.stringify({ apiKey: 'fixture-key', title: 'safe' }) }] })),
+        })
+        expect.soft(call.input).toBeNull()
+        const result = JSON.parse(JSON.parse(call.result!))
+        expect(JSON.parse(result.content[0].text)).toEqual({ title: 'safe' })
     })
 
     it('refuses an oversized result instead of returning part of it', async () => {
