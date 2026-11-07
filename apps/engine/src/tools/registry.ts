@@ -119,7 +119,7 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         const calls = readDesktopCoworkerCallRuntime()
         if (calls && hasDesktopToolGrant(ctx.agent.config, 'callAgent') && !ctx.agent.config.ephemeral) Object.assign(tools, desktopCallAgentTools(ctx, calls))
         const teamReads = readDesktopTeamReads()
-        if (teamReads && !ctx.agent.config.ephemeral) Object.assign(tools, teamReads.tools(ctx))
+        if (teamReads && !ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'teamRead')) Object.assign(tools, teamReads.tools(ctx))
         if (hasDesktopToolGrant(ctx.agent.config, 'vision')) Object.assign(tools, desktopVisionTools(ctx))
         if (hasDesktopToolGrant(ctx.agent.config, 'notify')) Object.assign(tools, desktopNotifyTools(ctx))
         if (ctx.agent.config.setup?.required && ctx.agent.install && desktopSetupRunAllowed(ctx.agent, ctx.sessionId)) Object.assign(tools, desktopSetupTools(ctx))

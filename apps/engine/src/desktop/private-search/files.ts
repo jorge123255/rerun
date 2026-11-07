@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs'
 import { opendir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { DESKTOP_ATTACHMENT_MAX_BYTES } from '@rerun/contracts'
@@ -56,10 +55,14 @@ async function readText(ctx: RunContext, path: string): Promise<string | null> {
     }
 }
 
-async function listDirectory(ctx: RunContext, path: string): Promise<{ entries: { name: string; directory: boolean }[]; truncated: boolean }> {
+async function listDirectory(ctx: RunContext, path: string): Promise<{ entries: { name: string; directory: boolean }[]; truncated: boolean } | null> {
     await requireDesktopToolGrant(ctx, 'workspaceSearch')
     const target = await workspacePath(ctx.agent.id, path).catch(() => { throw new WorkspaceSearchError('That directory is unavailable.') })
-    const handle = await openWithoutLinks(target, true)
+    const handle = await openWithoutLinks(target, true).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null
+        throw new WorkspaceSearchError('That directory is unavailable.')
+    })
+    if (!handle) return null
     try {
         const original = await handle.stat({ bigint: true })
         if (!original.isDirectory()) throw new WorkspaceSearchError('Directory not found.')
@@ -91,19 +94,24 @@ async function listDirectory(ctx: RunContext, path: string): Promise<{ entries: 
 }
 
 export async function desktopPrivateRegexSearch(ctx: RunContext, path: string, pattern: string, maxResults: number): Promise<string> {
+    await requireDesktopToolGrant(ctx, 'workspaceSearch')
     try {
         new RegExp(pattern)
     } catch (error) {
         return `Invalid regular expression: ${(error as Error).message}`
     }
     if (!desktopPrivateSearchPathAllowed(path)) throw new WorkspaceSearchError('Use a relative directory in this coworker’s workspace.')
-    if (!existsSync(await workspacePath(ctx.agent.id, path))) return `Path not found: ${path}`
     const directories = [path]
     const hits: string[] = []
     let files = 0
     for (const folder of directories) {
         if (hits.length >= maxResults) break
-        const { entries } = await listDirectory(ctx, folder)
+        const listing = await listDirectory(ctx, folder)
+        if (!listing) {
+            if (folder === path) return `Path not found: ${path}`
+            throw new WorkspaceSearchError('That directory is unavailable.')
+        }
+        const { entries } = listing
         for (const entry of entries) {
             const relative = folder === '.' ? entry.name : `${folder}/${entry.name}`
             if (entry.directory) {
@@ -115,6 +123,7 @@ export async function desktopPrivateRegexSearch(ctx: RunContext, path: string, p
             if (text === null) continue
             const lines = text.split('\n')
             const found = await sharedRegexLines(lines, pattern, maxResults - hits.length, ctx.abortSignal)
+            await requireDesktopToolGrant(ctx, 'workspaceSearch')
             for (const index of found) hits.push(`${relative}:${index + 1}: ${lines[index].trim().slice(0, 300)}`)
             if (hits.length >= maxResults) break
         }

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createDesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
 import type { DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
 import { shareManifest } from './test-fixtures'
@@ -9,7 +9,8 @@ import { useDesktopCoworkerImportFlow } from './useDesktopCoworkerImportFlow'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
-afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.replaceChildren() })
+beforeEach(() => vi.stubGlobal('localStorage', undefined))
+afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.replaceChildren(); vi.unstubAllGlobals() })
 
 async function mount(overrides: Partial<DesktopCoworkerShareClient> = {}, targetWorkspaceId = 2, onImported?: (agentId: string) => void | Promise<void>) {
     const api = {

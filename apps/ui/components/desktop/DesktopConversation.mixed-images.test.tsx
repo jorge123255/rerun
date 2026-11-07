@@ -4,7 +4,7 @@ import { act, StrictMode, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { UIMessage } from 'ai'
-import { desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, type DesktopAttachmentFields, type DesktopImageSnapshot } from '@rerun/contracts'
+import { DESKTOP_ATTACHMENT_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, type DesktopAttachmentFields, type DesktopImageSnapshot } from '@rerun/contracts'
 import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
 import { composerTestPng } from '@/lib/desktop/server/composer-image.test-fixtures'
 import { DesktopConversation } from './DesktopConversation'
@@ -232,11 +232,15 @@ test('mixed unfinished statuses hydrate independently without losing either fami
     expect(imports).toEqual([])
 })
 
-test('a selection above the combined limit imports nothing and leaves a clear notice', async () => {
+test('a mixed over-limit selection imports valid siblings and names the rejected files', async () => {
+    const oversized = new File([new Uint8Array(DESKTOP_ATTACHMENT_MAX_BYTES + 1)], 'oversized.txt', { type: 'text/plain' })
+    const textFiles = Array.from({ length: 10 }, (_, i) => txt(`file-${i}.txt`))
+    const image = png('keep.png')
     await render(); await drain()
-    await pick(Array.from({ length: 15 }, (_, i) => txt(`file-${i}.txt`))); await drain()
-    expect(imports).toEqual([])
-    expect(container.textContent).toContain('Choose up to 10 files and 4 images')
+    await pick([oversized, ...textFiles, txt('overflow.txt'), image]); await drain()
+    expect(imports).toEqual([...textFiles.map(file => file.name), image.name])
+    expect(container.textContent).toContain('“oversized.txt” Files can be up to 32 KiB.')
+    expect(container.textContent).toContain('“overflow.txt” You can attach up to 10 files.')
     expect(chat.sendMessage).not.toHaveBeenCalled()
 })
 
