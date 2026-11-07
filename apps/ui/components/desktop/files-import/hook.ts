@@ -24,27 +24,9 @@ export function useFilesImportQueue({ rootDir, write, disabled = false, onReject
     const disabledRef = useRef(disabled)
     const rejectedRef = useRef(onRejected)
     const savedRef = useRef(onFileSaved)
-    const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-    const mounted = useRef(false)
+    const queueRef = useRef<FilesImportQueue | null>(null)
     const [items, setItems] = useState<FilesImportItem[]>([])
     const [dragOver, setDragOver] = useState(false)
-    const queueRef = useRef<FilesImportQueue | null>(null)
-    if (!queueRef.current) {
-        queueRef.current = new FilesImportQueue({
-            write: request => writeRef.current(request),
-            onChange: items => { if (mounted.current) setItems(items) },
-            onRejected: message => rejectedRef.current?.(message),
-            onFileSaved: item => {
-                if (!mounted.current || !filesImportShouldReload(rootRef.current, item)) return
-                const dir = item.dir
-                if (reloadTimer.current) clearTimeout(reloadTimer.current)
-                reloadTimer.current = setTimeout(() => {
-                    reloadTimer.current = null
-                    if (rootRef.current === dir) savedRef.current?.(item)
-                }, FILES_IMPORT_RELOAD_MS)
-            },
-        })
-    }
 
     useEffect(() => {
         writeRef.current = write
@@ -54,22 +36,37 @@ export function useFilesImportQueue({ rootDir, write, disabled = false, onReject
         savedRef.current = onFileSaved
     })
 
-    const queue = queueRef.current
     useEffect(() => {
-        mounted.current = true
+        let mounted = true
+        let reloadTimer: ReturnType<typeof setTimeout> | undefined
+        const queue = new FilesImportQueue({
+            write: request => writeRef.current(request),
+            onChange: items => { if (mounted) setItems(items) },
+            onRejected: message => rejectedRef.current?.(message),
+            onFileSaved: item => {
+                if (!mounted || !filesImportShouldReload(rootRef.current, item)) return
+                if (reloadTimer) clearTimeout(reloadTimer)
+                reloadTimer = setTimeout(() => {
+                    reloadTimer = undefined
+                    if (rootRef.current === item.dir) savedRef.current?.(item)
+                }, FILES_IMPORT_RELOAD_MS)
+            },
+        })
+        queueRef.current = queue
         return () => {
-            mounted.current = false
-            if (reloadTimer.current) clearTimeout(reloadTimer.current)
-            reloadTimer.current = null
+            mounted = false
+            queueRef.current = null
+            if (reloadTimer) clearTimeout(reloadTimer)
             queue.cancelAll()
         }
-    }, [queue])
+    }, [])
 
     const active = items.some(item => item.status === 'queued' || item.status === 'uploading' || item.status === 'finishing')
     const totalProgress = useMemo(() => filesImportTotalProgress(items), [items])
 
     const enqueueEntries = (entries: UploadEntry[]) => {
-        if (!mounted.current || disabledRef.current || entries.length === 0) return []
+        const queue = queueRef.current
+        if (!queue || disabledRef.current || entries.length === 0) return []
         return queue.enqueue(filesImportEntries(entries), rootRef.current)
     }
 
@@ -87,16 +84,17 @@ export function useFilesImportQueue({ rootDir, write, disabled = false, onReject
     const onDrop = (event: React.DragEvent) => {
         event.preventDefault()
         setDragOver(false)
-        if (disabledRef.current || !event.dataTransfer.types.includes('Files')) return
+        const queue = queueRef.current
+        if (!queue || disabledRef.current || !event.dataTransfer.types.includes('Files')) return
         const dropDir = rootRef.current
         void entriesFromDataTransfer(event.dataTransfer).then(entries => {
-            if (mounted.current && entries.length) queue.enqueue(filesImportEntries(entries), dropDir)
+            if (queueRef.current === queue && entries.length) queue.enqueue(filesImportEntries(entries), dropDir)
         })
     }
 
     const dismiss = () => {
-        if (active) queue.cancelAll()
-        else queue.clearSettled()
+        if (active) queueRef.current?.cancelAll()
+        else queueRef.current?.clearSettled()
     }
 
     return {
@@ -108,9 +106,9 @@ export function useFilesImportQueue({ rootDir, write, disabled = false, onReject
         onDragOver,
         onDragLeave,
         onDrop,
-        cancel: (id: string) => queue.cancel(id),
-        retry: (id: string) => queue.retry(id),
+        cancel: (id: string) => queueRef.current?.cancel(id),
+        retry: (id: string) => queueRef.current?.retry(id),
         dismiss,
-        receipt: () => queue.receipt(),
+        receipt: () => queueRef.current?.receipt() ?? { items: [], savedCount: 0, failedCount: 0, active: false },
     }
 }
