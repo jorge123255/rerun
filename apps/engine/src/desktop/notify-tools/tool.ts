@@ -4,8 +4,8 @@ import type { RunContext } from '../../runtime/context.js'
 import { authorMetadata } from '../../runtime/notify.js'
 import { beginDesktopAgentWork } from '../agent-lifecycle.js'
 import { hasDesktopToolGrant, requireDesktopToolGrant } from '../tool-grants.js'
-import { desktopNotifyUserEventKey, type DesktopNotifyUserAdmission, type DesktopNotifyUserReceipt } from './contract'
-import { deliverDesktopUserNotification } from './delivery'
+import { desktopNotifyUserEventKey, type DesktopNotifyUserAdmission, type DesktopNotifyUserReceipt } from './contract.js'
+import { deliverDesktopUserNotification } from './delivery.js'
 
 const MAX_MESSAGE_LENGTH = 16_000
 

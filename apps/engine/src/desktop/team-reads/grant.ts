@@ -1,5 +1,5 @@
 import { lstat, readFile } from 'node:fs/promises'
-import { desktopTeamReadGrantOn } from '../../../../../packages/contracts/src/desktop-team-reads.ts'
+import { desktopTeamReadGrantOn } from '@rerun/contracts'
 import { configPath, isPathSegment } from '../../config/paths.js'
 
 export type DesktopTeamGrantStat = { isFile: boolean; isSymbolicLink: boolean; nlink: number; size: number }

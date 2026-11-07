@@ -1,5 +1,5 @@
-import { abortable } from '../web-fetch/transport.js'
-import { loginRequestSchema, loginResponseSchema, safeVerificationUri, type DeviceView, type LoginIdentity, type LoginRequest, type LoginResponse } from './contract.js'
+import { abortable } from '../web-fetch/transport.ts'
+import { loginRequestSchema, loginResponseSchema, safeVerificationUri, type DeviceView, type LoginIdentity, type LoginRequest, type LoginResponse } from './contract.ts'
 
 type Registration = { name: string; revision: string; url: string; transport?: 'http' | 'sse'; hasBearer: boolean }
 type Target = { owner: string; identity: LoginIdentity; name: string; revision: string; url: string }

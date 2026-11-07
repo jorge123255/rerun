@@ -296,20 +296,26 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     const { heads, request } = useFileThumbnails({ read: readTextHead, resetKey: textHeadKey })
     const writeImport = useCallback(async (item: { path: string; bytes: Uint8Array; signal: AbortSignal; onProgress: (loaded: number, total: number) => void }) => {
         item.onProgress(0, item.bytes.byteLength)
+        const { buffer, byteOffset, byteLength } = item.bytes
+        const body = buffer instanceof ArrayBuffer ? new Uint8Array(buffer, byteOffset, byteLength) : Uint8Array.from(item.bytes)
         const response = await fetch(`${base}/import?path=${encodeURIComponent(item.path)}`, {
             method: 'POST',
             headers: { 'content-type': 'application/octet-stream' },
-            body: item.bytes,
+            body,
             signal: item.signal,
         })
         const payload: unknown = await response.json().catch(() => null)
-        if (!response.ok || !payload || typeof payload !== 'object' || !('saved' in payload)) {
+        if (!response.ok) {
             const record = payload && typeof payload === 'object' ? payload as { error?: unknown; code?: unknown } : {}
             const code = typeof record.code === 'string' ? record.code : 'http'
             throw new FilesImportWriteError(typeof record.error === 'string' ? record.error : 'Import failed.', code as never, response.status)
         }
+        if (!payload || typeof payload !== 'object' || !('saved' in payload) || payload.saved !== true
+            || !('path' in payload) || typeof payload.path !== 'string') {
+            throw new FilesImportWriteError('The file import result could not be confirmed. Check Files before retrying.', 'unconfirmed', response.status)
+        }
         item.onProgress(item.bytes.byteLength, item.bytes.byteLength)
-        return { saved: true as const, path: String((payload as { path?: unknown }).path ?? item.path) }
+        return { saved: true as const, path: payload.path }
     }, [base])
     const imports = useFilesImportQueue({
         rootDir: currentPath,

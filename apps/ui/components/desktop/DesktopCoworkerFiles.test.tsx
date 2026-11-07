@@ -77,18 +77,20 @@ test('a refused path shows the server’s message instead of contents', async ()
     act(() => root.unmount())
 })
 
-test('Import file posts one file to the coworker’s current folder and reports a kept duplicate', async () => {
-    const posts: { agent: string; path: string; name: string }[] = []
-    const base = engineFor({ alice: '', bob: '' })
+test('Import file accepts exact acknowledgements and reports duplicate or unconfirmed writes', async () => {
+    const posts: { agent: string; path: string }[] = []
+    const clash = 'This folder already has a file named “brief.md”. The existing file was kept; rename yours and import it again.'
+    const unconfirmed = 'The file import result could not be confirmed. Check Files before retrying.'
+    const base = engineFor({ alice: '', bob: '', carol: '' })
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        if (init?.method === 'POST') {
-            const form = init.body as FormData
-            const file = form.get('file') as File
-            const agent = decodeURIComponent(String(input).split('/')[4])
-            posts.push({ agent, path: String(form.get('path')), name: file.name })
-            return agent === 'bob'
-                ? Response.json({ error: `This folder already has a file named “${file.name}”. The existing file was kept; rename yours and import it again.` }, { status: 409 })
-                : Response.json({ path: `docs/${file.name}`, name: file.name }, { status: 201 })
+        const url = new URL(String(input), 'http://127.0.0.1')
+        if (init?.method === 'POST' && url.pathname.endsWith('/files/import')) {
+            const agent = decodeURIComponent(url.pathname.split('/')[4])
+            const path = url.searchParams.get('path') ?? ''
+            posts.push({ agent, path })
+            if (agent === 'bob') return Response.json({ error: clash, code: 'clash' }, { status: 409 })
+            if (agent === 'carol') return Response.json({ saved: false }, { status: 201 })
+            return Response.json({ saved: true, path, bytes: 1 }, { status: 201 })
         }
         return base(input)
     })
@@ -96,23 +98,21 @@ test('Import file posts one file to the coworker’s current folder and reports 
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
-    for (const id of ['alice', 'bob']) {
+    for (const [id, notice] of [['alice', '1 file imported'], ['bob', clash], ['carol', unconfirmed]]) {
         await act(async () => { root.render(<DesktopConversation key={id} agent={coworker(id)} sessionId={null} sessions={[]} onSelectSession={() => {}} onChatSession={() => {}} />) })
         await click('Files')
         await flush()
         await click('docs')
         await flush()
-        const input = document.querySelector<HTMLInputElement>('[data-testid="import-file-input"]')!
-        expect(input.accept).toContain('.md')
-        expect(input.multiple).toBe(false)
+        const input = document.querySelector<HTMLInputElement>('[data-testid="files-import-file-input"]')!
+        expect(input).not.toBeNull()
         Object.defineProperty(input, 'files', { configurable: true, value: [new File(['x'], 'brief.md')] })
         await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })) })
         await flush()
-        const notice = document.querySelector('[data-testid="import-notice"]')?.textContent
-        expect(notice).toBe(id === 'alice' ? 'Imported “brief.md” into docs.' : 'This folder already has a file named “brief.md”. The existing file was kept; rename yours and import it again.')
+        expect(document.body.textContent).toContain(notice)
         await click('Done')
         await flush()
     }
-    expect(posts).toEqual([{ agent: 'alice', path: 'docs', name: 'brief.md' }, { agent: 'bob', path: 'docs', name: 'brief.md' }])
+    expect(posts).toEqual(['alice', 'bob', 'carol'].map(agent => ({ agent, path: 'docs/brief.md' })))
     await act(async () => root.unmount())
 })

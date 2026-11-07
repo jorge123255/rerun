@@ -310,7 +310,7 @@ test.each(['replaced', 'failed'] as const)('an import-triggered %s listing canno
         await act(async () => { root.render(<DesktopCoworkerFiles agent={alice} />) })
         await click('Files')
         await flush()
-        const input = document.querySelector<HTMLInputElement>('[data-testid="import-file-input"]')!
+        const input = document.querySelector<HTMLInputElement>('[data-testid="files-import-file-input"]')!
         Object.defineProperty(input, 'files', { configurable: true, value: [new File(['imported'], 'new.md')] })
         await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })) })
         await click('alpha.md')
@@ -324,7 +324,8 @@ test.each(['replaced', 'failed'] as const)('an import-triggered %s listing canno
         })
         expect(button('Save changes')?.disabled).toBe(false)
 
-        await act(async () => { finishImport(Response.json({ path: 'new.md' })) })
+        await act(async () => { finishImport(Response.json({ saved: true, path: 'new.md' })) })
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 500)) })
         await flush()
         expect(listings).toBe(2)
         expect(reads).toBe(1)

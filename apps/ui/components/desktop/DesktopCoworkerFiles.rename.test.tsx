@@ -220,7 +220,7 @@ test('an in-flight rename blocks folder actions and every Files dismissal until 
     await change(field, 'plan.md')
     await key(field, 'Enter')
     expect(document.querySelector('[role="status"]')?.textContent).toBe('Renaming…')
-    for (const name of ['Workspace home', 'docs', '..', 'child', 'brief.md', 'Show hidden files', 'Import file', 'Refresh files']) expect(button(name)?.disabled, name).toBe(true)
+    for (const name of ['Workspace home', 'docs', '..', 'child', 'brief.md', 'Show hidden files', 'Import', 'Refresh files']) expect(button(name)?.disabled, name).toBe(true)
     for (const dismiss of ['Done', 'Close', 'Escape', 'Outside']) {
         if (dismiss === 'Escape') await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
         else if (dismiss === 'Outside') await act(async () => { document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', button: 0 })) })

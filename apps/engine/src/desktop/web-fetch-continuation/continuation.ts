@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { browserPageBase, PAGE_EXPORT_ROOT, PAGE_METADATA_MAX } from '../isolated-screen/export-metadata.js'
-import type { ScreenExportCall, ScreenExportPublisher } from '../isolated-screen/transport.js'
-import type { ScreenExportArtifact, ScreenSavedExports } from '../isolated-screen/types.js'
+import { browserPageBase, PAGE_EXPORT_ROOT, PAGE_METADATA_MAX } from '../isolated-screen/export-metadata.ts'
+import type { ScreenExportCall, ScreenExportPublisher } from '../isolated-screen/transport.ts'
+import type { ScreenExportArtifact, ScreenSavedExports } from '../isolated-screen/types.ts'
 
 export type WebFetchContinuationPublisher = ScreenExportPublisher
 export type WebFetchContinuationIdentity = Omit<ScreenExportCall, 'artifacts' | 'navigation'>

@@ -1,6 +1,6 @@
-import { env } from '../config/env.js'
-import { abortable } from './web-fetch/transport.js'
-import { desktopNotifyUserReceiptSchema, type DesktopNotifyUserAdmission, type DesktopNotifyUserReceipt } from './contract'
+import { env } from '../../config/env.js'
+import { abortable } from '../web-fetch/transport.js'
+import { desktopNotifyUserReceiptSchema, type DesktopNotifyUserAdmission, type DesktopNotifyUserReceipt } from './contract.js'
 
 export class DesktopNotifyUserDeliveryError extends Error {
     constructor(message: string, readonly status: 'unknown') {
@@ -12,10 +12,10 @@ export class DesktopNotifyUserDeliveryError extends Error {
 export async function deliverDesktopUserNotification(input: DesktopNotifyUserAdmission, signal: AbortSignal): Promise<DesktopNotifyUserReceipt> {
     const config = env(), url = new URL(config.RERUN_HUB_BASE_URL ?? '')
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/' || url.search || url.hash || url.username || url.password || !config.RERUN_API_KEY) {
-        throw new DesktopNotifyUserDeliveryError('Native notification delivery is unavailable.')
+        throw new DesktopNotifyUserDeliveryError('Native notification delivery is unavailable.', 'unknown')
     }
     const body = JSON.stringify(input)
-    if (Buffer.byteLength(body) > 200_000) throw new DesktopNotifyUserDeliveryError('Notification input exceeds its limit.')
+    if (Buffer.byteLength(body) > 200_000) throw new DesktopNotifyUserDeliveryError('Notification input exceeds its limit.', 'unknown')
     signal.throwIfAborted()
     try {
         const response = await abortable(fetch(`${url.origin}/api/desktop/engine/notify-user`, {
@@ -27,7 +27,7 @@ export async function deliverDesktopUserNotification(input: DesktopNotifyUserAdm
             credentials: 'omit',
         }), signal)
         const reader = response.body?.getReader()
-        if (!reader) throw new DesktopNotifyUserDeliveryError('Native notification returned no acknowledgement.')
+        if (!reader) throw new DesktopNotifyUserDeliveryError('Native notification returned no acknowledgement.', 'unknown')
         const chunks: Uint8Array[] = []
         let size = 0
         const cancel = () => { void reader.cancel().catch(() => {}) }
@@ -39,7 +39,7 @@ export async function deliverDesktopUserNotification(input: DesktopNotifyUserAdm
                 signal.throwIfAborted()
                 if (part.done) break
                 size += part.value.byteLength
-                if (size > 32_768) throw new DesktopNotifyUserDeliveryError('Native notification acknowledgement exceeds its limit.')
+                if (size > 32_768) throw new DesktopNotifyUserDeliveryError('Native notification acknowledgement exceeds its limit.', 'unknown')
                 chunks.push(part.value)
             }
             return desktopNotifyUserReceiptSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
@@ -49,6 +49,6 @@ export async function deliverDesktopUserNotification(input: DesktopNotifyUserAdm
         }
     } catch (error) {
         if (error instanceof DesktopNotifyUserDeliveryError) throw error
-        throw new DesktopNotifyUserDeliveryError(error instanceof Error ? error.message : 'Native notification acknowledgement is unknown.')
+        throw new DesktopNotifyUserDeliveryError(error instanceof Error ? error.message : 'Native notification acknowledgement is unknown.', 'unknown')
     }
 }

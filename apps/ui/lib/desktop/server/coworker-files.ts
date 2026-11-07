@@ -97,7 +97,7 @@ export async function listCoworkerFiles(runtime: DesktopRuntime, agentId: string
 
 // Listing and reading can recover an interrupted save. Order those mutations with imports,
 // other saves and deletion, including requests admitted through a different route bundle.
-function withCoworkerFiles<T>(runtime: DesktopRuntime, agentId: string, action: () => Promise<T>): Promise<T> {
+export function withCoworkerFiles<T>(runtime: DesktopRuntime, agentId: string, action: () => Promise<T>): Promise<T> {
     return withRosterWrite(async () => {
         await assertCoworkerNotDeleting(await openDesktopDatabase(runtime.dataRoot), agentId)
         return action()
