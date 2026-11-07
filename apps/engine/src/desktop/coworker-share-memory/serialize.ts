@@ -3,7 +3,7 @@ import {
     DESKTOP_COWORKER_SHARE_MEMORY_LIMITS,
     desktopCoworkerShareMemoryNoteSchema,
     type DesktopCoworkerShareMemoryNote,
-} from '../../../../../packages/contracts/src/desktop-coworker-share-memory.ts'
+} from '@rerun/contracts'
 import { DesktopCoworkerShareMemoryError } from './errors.ts'
 import { canonicalJson, sha256Hex } from './hash.ts'
 

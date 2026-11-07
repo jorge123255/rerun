@@ -10,6 +10,7 @@ import { parseScheduledRun } from '@/lib/schedules/scheduled-run'
 import { encodePeaks } from '@/lib/voice/peaks'
 import { parseVoiceMessage } from '@/lib/voice/marker'
 import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
+import { projectDesktopHistoricalCard } from '@/components/desktop/tool-presentations/select'
 import { desktopTableCardOf } from '@/lib/desktop/table-card'
 import { desktopFileCardOf } from '@/lib/desktop/file-card'
 import { desktopSkillProposalIdOf } from '@/lib/desktop/skill-proposal-source'
@@ -231,6 +232,11 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
                     type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
                     state: 'output-available' as const, input: {}, output: JSON.stringify(card),
                 }
+            }
+            const historical = projectDesktopHistoricalCard(part)
+            if (historical) return {
+                type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                state: 'output-available' as const, input: historical.input, output: historical.output,
             }
             const view = desktopToolPresentation(part.toolName, part.input, part.output)
             const formInput = toolName === 'ask_user' ? desktopQuestionInput(part.input)

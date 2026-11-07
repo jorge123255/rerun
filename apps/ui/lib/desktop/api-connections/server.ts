@@ -14,9 +14,23 @@ import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
 import { sendApiConnectionOperation, type ApiConnectionsApi, type ApiConnectionOperation, type ApiConnectionRoutes } from './client'
 
+function allowedEnginePath(path: string, mutation: boolean): boolean {
+    if (!path.startsWith('/') || path.startsWith('//') || /[\\#]/.test(path)
+        || [...path].some(character => character.charCodeAt(0) <= 0x20 || character.charCodeAt(0) === 0x7f)) return false
+    const url = new URL(path, 'http://desktop.invalid')
+    if (url.origin !== 'http://desktop.invalid' || url.pathname !== path.split('?')[0]) return false
+    if (mutation) return !url.search && /^\/desktop\/api-connections\/(?:create|rename|models|credential|select|remove)$/.test(url.pathname)
+    const keys = [...url.searchParams.keys()]
+    const workspace = url.searchParams.get('workspaceId') ?? ''
+    if (!/^[1-9]\d*$/.test(workspace) || !Number.isSafeInteger(Number(workspace))) return false
+    if (url.pathname === '/desktop/api-connections/catalog') return keys.length === 1 && keys[0] === 'workspaceId'
+    return url.pathname === '/desktop/api-connections/removal' && keys.length === 2 && new Set(keys).size === 2
+        && keys.includes('workspaceId') && keys.includes('connectionId') && desktopApiConnectionIdSchema.safeParse(url.searchParams.get('connectionId')).success
+}
+
 export function createApiConnectionsEngineProxy(runtime: DesktopRuntime, routes: ApiConnectionRoutes): ApiConnectionsApi {
     async function read<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal, input?: unknown): Promise<T> {
-        if (!path.startsWith('/') || path.startsWith('//') || /[?#\\]/.test(path)) throw new DesktopHttpError(503, 'The local connection service is unavailable.')
+        if (!allowedEnginePath(path, input !== undefined)) throw new DesktopHttpError(503, 'The local connection service is unavailable.')
         try {
             return await engineRequest({ baseUrl: runtime.engine.origin, apiKey: runtime.engine.apiKey }, path, {
                 method: input === undefined ? 'GET' : 'POST', cache: 'no-store', redirect: 'error',

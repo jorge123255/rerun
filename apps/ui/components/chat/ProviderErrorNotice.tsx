@@ -21,6 +21,8 @@ const ICONS: Record<NoticeKind, ComponentType<{ className?: string }>> = {
     provider_error: ServerIcon,
     interrupted: RotateCwIcon,
     run_in_flight: RotateCwIcon,
+    thinking_replay: RotateCwIcon,
+    session_gone: UnplugIcon,
     generic: AlertTriangleIcon,
 }
 
@@ -97,7 +99,7 @@ export function ProviderErrorNotice({ kind, message, onSwitchModel, onOpenConnec
     }
 
     return (
-        <div className="relative mb-2 space-y-2.5 overflow-hidden rounded-lg px-4 pt-3 pb-4">
+        <div role="alert" className="relative mb-2 space-y-2.5 overflow-hidden rounded-lg px-4 pt-3 pb-4">
             <BorderBeam animated pattern="arcs" tone="red" glow width={1} duration={7} />
             <div className="flex items-center gap-2.5 text-sm">
                 <Icon size="sm" tone="red" icon={icon} className="bg-red-500/10 text-foreground" />

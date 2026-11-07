@@ -4,6 +4,7 @@ import type { DesktopRuntime } from '../runtime'
 import { DesktopHttpError } from '../auth'
 import { privateFileReceiptSchema } from '../private-file-tools/schema'
 import { FOREMAN_AGENT_FILE_COPY } from './contract'
+import { desktopRouteAllowed } from '../../../../../engine/src/desktop/policy'
 
 const mocks = vi.hoisted(() => ({ runtime: vi.fn(), open: vi.fn(), read: vi.fn(), save: vi.fn(), create: vi.fn() }))
 vi.mock('server-only', () => ({}))
@@ -14,7 +15,7 @@ vi.mock('../coworker-files', () => ({ readPrivateCoworkerFile: mocks.read, saveC
 import { handleDesktopForemanAgentFilePublication } from './publish'
 
 const runtime = {
-    protocolVersion: 1, workspaceId: 1, dataRoot: '/foreman-agent-files-test', launchNonce: 'launch', buildId: 'test',
+    protocolVersion: 1, workspaceId: 1, dataRoot: '/foreman-agent-files-test', launchNonce: '11111111-1111-4111-8111-111111111111', buildId: 'test',
     app: { origin: 'http://127.0.0.1:3001', sessionToken: 'browser-session-token-is-not-the-engine-key' },
     engine: { origin: 'http://127.0.0.1:3002', apiKey: 'engine-only' },
 } as DesktopRuntime
@@ -29,11 +30,13 @@ function request(body: unknown = writeBody, headers: Record<string, string> = { 
     })
 }
 
-function engine(granted = true, status = 'running') {
+function engine(granted = true, status = 'running', identity = { workspaceId: String(runtime.workspaceId), launchNonce: runtime.launchNonce }) {
     fetches = []
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
         fetches.push(String(url))
-        if (String(url).endsWith('/agents/foreman')) return Response.json({ id: 'foreman', config: { kind: 'foreman', enabled: true, tools: { desktopToolGrants: granted ? { foremanAgentFilesWrite: true } : {} } } })
+        // Use the actual native allowlist rather than a permissive getAgent stub.
+        if (!desktopRouteAllowed(init?.method ?? 'GET', new URL(String(url)).pathname)) return Response.json({ error: 'Native route refused' }, { status: 403 })
+        if (String(url).endsWith('/desktop/foreman/file-permissions')) return Response.json({ ...identity, grants: { foremanAgentFilesRead: false, foremanAgentFilesWrite: granted } })
         if (String(url).endsWith('/runs/run')) return Response.json({ id: 'run', agentId: 'foreman', sessionId: 'session', status })
         if (String(url).endsWith('/agents/notes')) return Response.json({ id: 'notes' })
         return new Response('missing', { status: 404 })
@@ -51,7 +54,10 @@ beforeEach(async () => {
     mocks.runtime.mockResolvedValue(runtime)
     mocks.open.mockResolvedValue(db)
     mocks.read.mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }))
-    mocks.create.mockResolvedValue({ path: 'note.md', name: 'note.md' })
+    mocks.create.mockImplementation(async () => {
+        mocks.read.mockResolvedValue({ content: 'hello', hash: 'hash', identity: '1:2', truncated: false })
+        return { path: 'note.md', name: 'note.md' }
+    })
     engine()
 })
 
@@ -62,6 +68,33 @@ test('a browser session cannot publish a coworker file', async () => {
     expect(response.status).toBe(401)
     expect(mocks.create).not.toHaveBeenCalled()
     expect(fetches).toEqual([])
+})
+
+test('publication composes with native route policy while generic managed-Foreman reads remain closed', async () => {
+    expect(desktopRouteAllowed('GET', '/agents/foreman')).toBe(false)
+    expect(desktopRouteAllowed('GET', '/desktop/foreman/file-permissions')).toBe(true)
+    const response = await handleDesktopForemanAgentFilePublication(request())
+    expect(await response.json()).toMatchObject({ status: 'saved', path: 'note.md' })
+    expect(fetches.some(url => new URL(url).pathname === '/agents/foreman')).toBe(false)
+    expect(fetches.some(url => new URL(url).pathname === '/desktop/foreman/file-permissions')).toBe(true)
+})
+
+test('a permission snapshot from another workspace or launch cannot authorize publication', async () => {
+    engine(true, 'running', { workspaceId: '2', launchNonce: runtime.launchNonce })
+    expect((await (await handleDesktopForemanAgentFilePublication(request())).json()).status).toBe('refused')
+    engine(true, 'running', { workspaceId: '1', launchNonce: '22222222-2222-4222-8222-222222222222' })
+    expect((await (await handleDesktopForemanAgentFilePublication(request())).json()).status).toBe('refused')
+    expect(mocks.create).not.toHaveBeenCalled()
+})
+
+test('an aliased or multiply linked existing text path is refused before publication', async () => {
+    mocks.read.mockRejectedValue(new Error('Not a singly linked owned document.'))
+    const create = await handleDesktopForemanAgentFilePublication(request())
+    expect((await create.json()).status).toBe('refused')
+    const edit = await handleDesktopForemanAgentFilePublication(request({ ...writeBody, tool: 'fs_edit', arguments: { path: 'note.md', oldString: 'a', newString: 'b' } }))
+    expect((await edit.json()).status).toBe('refused')
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.save).not.toHaveBeenCalled()
 })
 
 test('non-text and hidden paths are refused before any publication', async () => {
@@ -103,6 +136,11 @@ test('a missing edit is a refusal and a create publishes once', async () => {
     expect(mocks.create).toHaveBeenCalledTimes(1)
     const replay = await handleDesktopForemanAgentFilePublication(request())
     expect(await replay.json()).toMatchObject({ status: 'saved', path: 'note.md' })
+    expect(mocks.create).toHaveBeenCalledTimes(1)
+    // A completed receipt survives a later move; reconciliation must not inspect or recreate it.
+    mocks.read.mockRejectedValue(new DesktopHttpError(404, 'File not found'))
+    const movedReplay = await handleDesktopForemanAgentFilePublication(request())
+    expect(await movedReplay.json()).toMatchObject({ status: 'saved', path: 'note.md' })
     expect(mocks.create).toHaveBeenCalledTimes(1)
 })
 

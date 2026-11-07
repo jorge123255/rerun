@@ -16,6 +16,7 @@ import { resumeStreamResponse, toResumableStreamResponse } from '../../runtime/s
 import { assertDesktopProvider, desktopApp } from '../policy.js'
 import { readDesktopForemanBinding } from './binding.js'
 import type { createDesktopForemanBridge } from './bridge.js'
+import { createForemanFilePermissionRoutes } from '../foreman-agent-files/permissions.js'
 export const desktopForemanChatSchema = z.strictObject({
     binding: foremanBindingSchema.extend({ runId: z.uuid() }), sessionId: z.uuid(),
     text: z.string().min(1).max(20_000).refine(value => !!value.trim()),
@@ -23,8 +24,10 @@ export const desktopForemanChatSchema = z.strictObject({
     replayOnly: z.boolean().optional(),
 })
 function identified(response: Response, sessionId: string, runId: string) { response.headers.set('x-session-id', sessionId); response.headers.set('x-run-id', runId); return response }
-export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof createDesktopForemanBridge> | undefined = readDesktopForemanBinding) {
+export function createDesktopForemanRoutes(readBinding: () => ReturnType<typeof createDesktopForemanBridge> | undefined = readDesktopForemanBinding, permissionContext?: { workspaceId: string | number; launchNonce: string }) {
     const routes = new Hono()
+    const permissionBinding = permissionContext ? readBinding() : undefined
+    routes.route('/', createForemanFilePermissionRoutes(permissionContext, () => !!permissionBinding && readBinding() === permissionBinding && permissionBinding.workspaceId === String(permissionContext!.workspaceId)))
     routes.post('/chat', async c => {
         try {
             if (!desktopApp()) throw new HttpError(404, 'Desktop Foreman is unavailable.')

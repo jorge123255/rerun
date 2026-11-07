@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import {
     EMPTY_DRAFT,
@@ -234,6 +234,36 @@ describe('company profile runtime identity and replay', () => {
         const closing = service.close()
         gate.resolve({ status: 'succeeded', decision: { industry: 'saas', confidence: 0.9, source: 'inference' }, inference: null })
         await closing
+        expect((await pending).status).toBe('cancelled')
+    })
+
+    it('cannot admit work that resumes from a saved-request read after close', async () => {
+        const { service, store, calls } = fixture()
+        const gate = deferred<null>()
+        vi.spyOn(store, 'get').mockImplementationOnce(() => gate.promise)
+        const insert = vi.spyOn(store, 'insert')
+        const pending = service.decide({ requestId: randomUUID(), identity: desktopCompanyProfileIdentities(baseSession).decision! })
+        const rejected = expect(pending).rejects.toMatchObject({ code: 'closed' })
+        await service.close()
+        gate.resolve(null)
+        await rejected
+        expect(insert).not.toHaveBeenCalled()
+        expect(calls.decide).toBe(0)
+    })
+
+    it('concurrent close callers both wait for the same late inference to drain', async () => {
+        const gate = deferred<DesktopCompanyProfileEngineOutcome>(), started = deferred<void>()
+        const { service } = fixture({ decide: async () => { started.resolve(); return gate.promise } })
+        const pending = service.decide({ requestId: randomUUID(), identity: desktopCompanyProfileIdentities(baseSession).decision! })
+        await started.promise
+        let finished = 0
+        const first = service.close().then(() => { finished++ })
+        const second = service.close().then(() => { finished++ })
+        await Promise.resolve()
+        expect(finished).toBe(0)
+        gate.resolve({ status: 'succeeded', decision: { industry: 'saas', confidence: 0.9, source: 'inference' }, inference: null })
+        await Promise.all([first, second])
+        expect(finished).toBe(2)
         expect((await pending).status).toBe('cancelled')
     })
 

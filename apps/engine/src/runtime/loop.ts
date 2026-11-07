@@ -218,7 +218,14 @@ export async function runAgent(agent: LoadedAgent, sessionId: string, userText: 
         // Let the canonical settlement close it without ever starting a provider.
         if (!runId) throw error
     }
-    const release = beginDesktopAgentWork(agent.id)
+    let release = () => {}
+    try { release = beginDesktopAgentWork(agent.id) }
+    catch (error) {
+        // A connection-removal/deletion barrier may close admission after a chat
+        // or headless caller reserved its row. Settle that row without a provider.
+        if (!runId) throw error
+        admission = null
+    }
     try { return await runTurn(agent, sessionId, userText, override, writer, runId, trigger, release, admission) }
     catch (error) { release(); throw error }
 }
@@ -243,6 +250,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     let agent = baseAgent
     let { connection, provider, model } = baseAgent.resolved
     let closeTools = async (): Promise<void> => {}
+    let releaseConnectionAdmission = () => {}
     let nativeWorker: DesktopNativeWorker | undefined
     let closeModel = async (): Promise<void> => {}
     let appendP: Promise<unknown> = Promise.resolve()
@@ -420,7 +428,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     const settle = async (settlement: Settlement): Promise<RunOutcome> => {
         if (settled) return settledPromise
         settled = true
-        return performSettlement(settlement).finally(releaseAgentWork)
+        return performSettlement(settlement).finally(() => { releaseConnectionAdmission(); releaseAgentWork() })
     }
 
     // The thread is only worth resuming once it holds the same turns as the session: the marker is
@@ -446,6 +454,10 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         // itself stays the shared instance, so a token refreshed here is refreshed for everyone.
         assertDesktopRunAdmission(admission)
         const resolved = await resolveRunModel(baseAgent, override)
+        if (desktopApp()) {
+            const { admitDesktopApiConnectionRun } = await import('../desktop/api-connections/run-authority.js')
+            releaseConnectionAdmission = await admitDesktopApiConnectionRun({ connectionId: resolved.connection?.id, expectedConnection: resolved.connection ?? undefined, runId: run.id, sessionId, agentId: baseAgent.id })
+        }
         agent = resolved === baseAgent.resolved ? baseAgent : { ...baseAgent, resolved }
         ;({ connection, provider, model } = resolved)
         assertDesktopProvider(provider, resolved.connection?.id)

@@ -271,7 +271,16 @@ describe('buildSystemPrompt provider notes', () => {
         expect(prompt).not.toContain('A turn ends in this order, your message first')
     })
 
-    it.each(['claude', 'rerun', 'anthropic'] as const)('puts the message before the closing calls on %s', async provider => {
+    it.each(['claude', 'anthropic'] as const)('puts the closing card before the final message on %s', async provider => {
+        const prompt = await buildSystemPrompt(agent, { source: 'chat' }, provider)
+        const order = prompt.match(/<turn_order>\n([\s\S]*?)\n<\/turn_order>/)?.[1] ?? ''
+        expect(order).toMatch(/the calls first: .*at most one card that asks the user something \(.*ask_user.*\); \d\) your message, complete/)
+        expect(order).toContain('as the last thing you write')
+        expect(order).not.toContain('your message first')
+    })
+
+    it('puts the message before closing calls for an unresolved non-Claude/non-GPT Rerun alias', async () => {
+        const provider = 'rerun'
         const prompt = await buildSystemPrompt(agent, { source: 'chat' }, provider)
         expect(prompt).toContain('A turn ends in this order, your message first')
         expect(prompt).not.toContain('the first message you write to the user ends your turn')
@@ -374,8 +383,14 @@ describe('quick replies section', () => {
     })
 
     it('keeps the replies out of the turn order, which only orders the cards', async () => {
-        expect(await buildSystemPrompt(agent, { source: 'chat' }, 'codex')).toMatch(/the calls first: .*at most one card that asks the user something \(.*ask_user.*\); \d\) your message, complete/)
-        expect(await buildSystemPrompt(agent, { source: 'chat' }, 'claude')).toMatch(/A turn ends in this order, your message first: 1\) your message.*\) at most one card that asks the user something/)
+        for (const provider of ['codex', 'claude', 'anthropic'] as const) {
+            const prompt = await buildSystemPrompt(agent, { source: 'chat' }, provider)
+            const order = prompt.match(/<turn_order>\n([\s\S]*?)\n<\/turn_order>/)?.[1] ?? ''
+            expect(order).toMatch(/the calls first: .*at most one card that asks the user something \(.*ask_user.*\); \d\) your message, complete/)
+            expect(order).not.toContain('quick_replies')
+        }
+        const fallback = await buildSystemPrompt(agent, { source: 'chat' }, 'rerun')
+        expect(fallback).toMatch(/A turn ends in this order, your message first: 1\) your message.*\) at most one card that asks the user something/)
     })
 
     it('stays out of a sub-agent, and out of an agent with the switch off', async () => {

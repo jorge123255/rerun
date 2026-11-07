@@ -206,7 +206,7 @@ export function DesktopCustomProviderPage({ workspaceId, identity = null, takenN
     const keyRequired = keyRequiredFor(preset)
     const secretSaved = Boolean(saved?.configuredSecret) && !draft.clearSecret
     const ready = connectReady({ name: draft.name, baseUrl: draft.baseUrl, keyRequired, secretSaved, apiKey: draft.apiKey, asksModel: saved ? false : draft.asksModel, modelId: draft.modelId })
-    const foreign = Boolean(identity) && identity.workspaceId !== workspaceId
+    const foreign = identity != null && identity.workspaceId !== workspaceId
     const showAdd = !saved && !identity && !foreign
 
     function bumpProbe() {

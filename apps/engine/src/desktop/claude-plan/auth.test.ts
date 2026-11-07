@@ -98,6 +98,8 @@ describe('canonical desktop Claude sign-in', () => {
         const token = `sk-ant-oat01-${'x'.repeat(32)}`
         const connected = await auth.action({ ...action('start', first), operation: 'token', token }, signal())
         expect(connected.phase).toBe('connected'); expect(f.saved[TOKEN]).toBe(token)
+        expect(connected.attemptId).toBeNull()
+        await expect(auth.action(action('disconnect', first), signal())).rejects.toThrow('changed')
         const disconnected = await auth.action(action('disconnect', connected), signal())
         expect(disconnected.phase).toBe('disconnected'); expect(f.saved[TOKEN]).toBeUndefined()
         expect(f.parts.beforeCredentialChange).toHaveBeenCalledTimes(2)
@@ -138,9 +140,14 @@ describe('canonical desktop Claude sign-in', () => {
     it('successful replacement drains workers before swapping the token and bumps generation', async () => {
         const f = fixture(); f.seed({ [TOKEN]: 'old-access', RERUN_CLAUDE_CREDENTIAL_REVISION: '1' })
         const order: string[] = []
-        f.parts.beforeCredentialChange = vi.fn(async () => { order.push('drain') })
+        f.parts.beforeCredentialChange = vi.fn(async () => { expect(f.saved[TOKEN]).toBe('old-access'); order.push('drain') })
         const originalWrite = f.parts.write
-        f.parts.write = vi.fn(async value => { order.push('write'); await originalWrite(value) })
+        f.parts.write = vi.fn(async value => {
+            // Waiting/checking attempt state is durable before exchange. Only a change to
+            // credential material must wait for old workers to drain.
+            order.push(value[TOKEN] !== f.saved[TOKEN] ? 'credential-write' : 'attempt-write')
+            await originalWrite(value)
+        })
         const auth = createDesktopClaudePlanAuth(f.parts)
         const waiting = await auth.action(action('start', await auth.status()), signal())
         const connected = await auth.action(finish(waiting), signal())
@@ -149,7 +156,9 @@ describe('canonical desktop Claude sign-in', () => {
         expect(connected.pendingAttempt).toBeUndefined()
         expect(f.saved[TOKEN]).toBe('fresh-access')
         expect(order.indexOf('drain')).toBeGreaterThan(-1)
-        expect(order.indexOf('write')).toBeGreaterThan(order.indexOf('drain'))
+        expect(order.indexOf('attempt-write')).toBeLessThan(order.indexOf('drain'))
+        expect(order.filter(step => step === 'credential-write')).toHaveLength(1)
+        expect(order.indexOf('credential-write')).toBeGreaterThan(order.indexOf('drain'))
     })
 
     it('disconnect drains then deletes the active token; late exchange cannot restore it', async () => {

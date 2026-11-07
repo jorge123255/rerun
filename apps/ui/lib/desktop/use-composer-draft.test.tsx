@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useLayoutEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { useDesktopComposerDraft } from './use-composer-draft'
@@ -14,8 +14,9 @@ const saved = new Map<string, DesktopComposerDraft>()
 let read: (uid: string) => Promise<Response>
 
 function Probe({ uid }: { uid?: string }) {
-    current = useDesktopComposerDraft(agentId, uid, restored)
-    return <span>{current.loaded ? current.text : 'Loading'}{current.quitting ? ' Frozen' : ''}</span>
+    const value = useDesktopComposerDraft(agentId, uid, restored)
+    useLayoutEffect(() => { current = value })
+    return <span>{value.loaded ? value.text : 'Loading'}{value.quitting ? ' Frozen' : ''}</span>
 }
 const render = (uid?: string) => act(async () => { root.render(<Probe uid={uid} />) })
 beforeEach(() => {

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useLayoutEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { EngineSkillProposal } from '@/lib/engine/types'
@@ -13,7 +13,11 @@ const proposal = (status: EngineSkillProposal['status'] = 'proposed'): EngineSki
 const snapshot = (row = proposal()) => ({ availability: 'complete' as const, proposals: [row] })
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes }); return { promise, resolve } }
 let latest: ReturnType<typeof useCoworkerSkillProposals>, root: ReturnType<typeof createRoot>, container: HTMLDivElement
-function Harness({ owner, session, active }: { owner: string; session: string; active: boolean }) { latest = useCoworkerSkillProposals(owner, { sessionId: session, active, mode: 'chat' }); return <div>{[...latest.proposals.values()].map(row => row.status).join(',')}:{latest.pendingId}</div> }
+function Harness({ owner, session, active }: { owner: string; session: string; active: boolean }) {
+    const value = useCoworkerSkillProposals(owner, { sessionId: session, active, mode: 'chat' })
+    useLayoutEffect(() => { latest = value })
+    return <div>{[...value.proposals.values()].map(row => row.status).join(',')}:{value.pendingId}</div>
+}
 const render = (owner = 'alice', session = 'local-session', active = true) => act(async () => { root.render(<Harness owner={owner} session={session} active={active} />) })
 beforeEach(() => {
     vi.useFakeTimers(); vi.clearAllMocks(); state.quit = false; state.quitListeners.clear()

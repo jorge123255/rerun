@@ -171,7 +171,7 @@ export type WalkEntry = { path: string; kind: 'file' | 'link' | 'other' }
 /** Native journals, backups, locks and service metadata are never portable user files. */
 export function isReservedTemplateMetadataPath(path: string): boolean {
     const parts = path.split('/')
-    const prefix = parts[0] === 'workspace' ? '.rerun' : parts[0] === 'skills' ? '.rerun-skill-' : null
+    const prefix = parts[0] === 'workspace' || parts[0] === 'skills' ? '.rerun' : null
     return prefix !== null && parts.slice(1).some(part => part.normalize('NFKC').toLowerCase().startsWith(prefix))
 }
 

@@ -9,7 +9,7 @@ async function collectProviderErrors(codexPath: string): Promise<unknown[]> {
     const provider = createCodexAppServer({ defaultSettings: { codexPath, minCodexVersion: '0.144.0', logger: false } })
     const errors: unknown[] = []
     try {
-        const result = streamText({ model: provider('gpt-5.6-sol'), prompt: 'hello', onError: ({ error }) => void errors.push(error) })
+        const result = streamText({ model: provider('gpt-5.6-sol'), prompt: 'hello', maxRetries: 0, abortSignal: AbortSignal.timeout(5_000), onError: ({ error }) => void errors.push(error) })
         for await (const part of result.fullStream) if (part.type === 'error') errors.push(part.error)
     } catch (error) {
         errors.push(error)

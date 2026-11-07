@@ -105,6 +105,7 @@ const { mergeRunStream } = await import('./run-stream-merge.js')
 const { closeSystemDb } = await import('../db/systemDb.js')
 const { migrate } = await import('../db/migrate.js')
 const { agentConfigSchema } = await import('../agents/types.js')
+const { RERUN_MODEL } = await import('@rerun/contracts')
 const { writeAgentConfig } = await import('../agents/config-write.js')
 const { agentDir, workspaceDir } = await import('../config/paths.js')
 const { getAgent } = await import('../agents/registry.js')
@@ -167,12 +168,16 @@ const completions = () => sent.filter(n => ['agent.message.completed', 'agent.sc
 describe('run loop paths', () => {
     beforeAll(async () => {
         await migrate()
+        // Credential tests below create usable box connections and invalidate
+        // cached agents. Keep ordinary loop/curator turns on the mocked provider
+        // instead of falling through to one of those OAuth test credentials.
+        const model = { provider: 'rerun', model: RERUN_MODEL }
         await mkdir(agentDir(id), { recursive: true })
-        await writeAgentConfig(id, agentConfigSchema.parse({ name: 'paths' }))
+        await writeAgentConfig(id, agentConfigSchema.parse({ name: 'paths', ...model }))
         await mkdir(agentDir(quietId), { recursive: true })
-        await writeAgentConfig(quietId, agentConfigSchema.parse({ name: 'quiet', selfImprovement: { enabled: false } }))
+        await writeAgentConfig(quietId, agentConfigSchema.parse({ name: 'quiet', ...model, selfImprovement: { enabled: false } }))
         await mkdir(agentDir(offId), { recursive: true })
-        await writeAgentConfig(offId, agentConfigSchema.parse({ name: 'off', selfImprovement: { enabled: false }, tools: { quickReplies: false } }))
+        await writeAgentConfig(offId, agentConfigSchema.parse({ name: 'off', ...model, selfImprovement: { enabled: false }, tools: { quickReplies: false } }))
     })
 
     afterEach(() => {

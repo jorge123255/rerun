@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { foremanAgentFileCatalogEntries } from './desktop-foreman-agent-files'
+import { foremanAgentFileCatalogEntries } from './desktop-foreman-agent-files.js'
 
 export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate', 'foremanAgentFilesRead', 'foremanAgentFilesWrite'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode'] as const
@@ -72,11 +72,11 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     nested('self', 'toolInstall', 'Propose package installations', 'Propose exact npm package versions for your review. Approval runs package scripts only inside this coworker’s isolated computer; it does not install anything on your Mac.', 'tool_install'),
     nested('self', 'selfMcpRegister', 'Propose MCP servers', 'Let this coworker suggest tool connections for your review. Approval and tool access use separate permissions; proposing never installs packages or launches programs.', 'mcp_register'),
     nested('self', 'verbositySet', 'Change reply length', 'Let this coworker durably change how long its answers are, from minimal to detailed.', 'verbosity_set'),
-    supported('mcp', 'Custom MCP servers', 'Use tools from this coworker’s configured HTTPS MCP servers. Configure connections in MCP servers.'),
+    supported('mcp', 'Custom MCP servers', 'Use tools from this coworker’s configured HTTPS MCP servers. Configure connections in MCP servers.', 'request_mcp_sign_in'),
     supported('localMcpStdio', 'Local MCP programs', 'Run explicitly configured programs as your Mac user. These programs can access your Mac files and network. Saving a connection does not enable this permission.'),
     supported('nativeWriteback', 'Review temporary file changes', 'Keep proposed text and Markdown changes from native Codex edits for your review. Each file requires approval before it changes this coworker’s Files.'),
     pending('foreman', 'Foreman', 'Build a team and work across coworkers.', 'Requires the board’s Foreman runtime and workspace authorization.'),
-    ...foremanAgentFileCatalogEntries,
+    ...foremanAgentFileCatalogEntries.map(entry => ({ ...entry, tools: [...entry.tools] })),
 ]
 
 export const desktopCodexToolCatalog: DesktopToolCatalogEntry[] = [
