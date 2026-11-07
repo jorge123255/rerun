@@ -15,7 +15,9 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
     const runtimeFile = resolve(dataRoot, 'runtime.json')
     const engineRoot = resolve(dataRoot, 'workspaces/1/engine')
     const home = resolve(dataRoot, 'home')
+    const installId = randomUUID()
     await Promise.all([mkdir(engineRoot, { recursive: true }), mkdir(home, { recursive: true })])
+    await writeFile(resolve(engineRoot, 'desktop-owner.json'), JSON.stringify({ installId, workspaceId: 1 }), { mode: 0o600 })
     let child, runtime, releaseReply
     let output = ''
     let notifyProvider

@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import sharp from 'sharp'
+import { clearCachedEnvForTests } from '../../config/env.js'
 import { desktopVisionImageMessages, desktopVisionPathAllowed, resolveDesktopVisionImage } from './files'
 
 const root = mkdtempSync(resolve(tmpdir(), 'desktop-vision-files-'))
 process.env.RERUN_DATA_DIR = root
+clearCachedEnvForTests()
 const agentId = 'viewer'
 const uploads = resolve(root, 'agents', agentId, 'workspace', 'chat-uploads')
 mkdirSync(uploads, { recursive: true })

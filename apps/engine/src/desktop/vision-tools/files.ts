@@ -24,6 +24,15 @@ export async function resolveDesktopVisionImage(agentId: string, imagePath: stri
     if (!mediaType) throw new Error(`Unsupported image type: ${imagePath}`)
     const info = await lstat(target)
     if (info.isSymbolicLink() || !info.isFile() || info.size > DESKTOP_VISION_INPUT_MAX_BYTES) throw new Error(`Image exceeds the ${DESKTOP_VISION_INPUT_MAX_BYTES / 1024 / 1024} MiB input limit: ${imagePath}`)
+    const bytes = await readFile(target)
+    try {
+        const { default: sharp } = await import('sharp')
+        const meta = await sharp(bytes).metadata()
+        if (!meta.width || !meta.height) throw new Error('unreadable')
+    } catch (error) {
+        if (error instanceof Error && error.message.startsWith('Image exceeds')) throw error
+        throw new Error('The file is not a readable image.')
+    }
     return { target, mediaType }
 }
 

@@ -3,11 +3,13 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
+import { clearCachedEnvForTests } from '../../config/env.js'
 import { desktopVisionTools, type DesktopVisionPorts } from './tools'
 import { NO_VISION_MODEL } from './model'
 
 const root = mkdtempSync(resolve(tmpdir(), 'desktop-vision-tools-'))
 process.env.RERUN_DATA_DIR = root
+clearCachedEnvForTests()
 const agentId = 'viewer'
 const uploads = resolve(root, 'agents', agentId, 'workspace', 'chat-uploads')
 mkdirSync(uploads, { recursive: true })
@@ -28,7 +30,7 @@ function ports(overrides: Partial<DesktopVisionPorts> = {}) {
     } as DesktopVisionPorts
 }
 function ctx(vision = true): any {
-    return { agent: { id: agentId, resolved: { provider: 'openai' }, config: { enabled: true, tools: { vision, filesystem: true } }, sessionId: 'session-1', runId: 'run-1', logger: { warn: () => {} } }
+    return { agent: { id: agentId, resolved: { provider: 'openai' }, config: { enabled: true, tools: { vision, filesystem: true } } }, sessionId: 'session-1', runId: 'run-1', logger: { warn: () => {} } }
 }
 
 it('analyzes an owned image with the selected model and releases auth', async () => {
