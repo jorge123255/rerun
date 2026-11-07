@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, lstat, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, lstat, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, test } from 'node:test'
@@ -49,4 +49,40 @@ test('cleanup removes only the verified temporary validation profile', async () 
     })
     assert.equal(result, 'done')
     await assert.rejects(() => lstat(root), error => error && error.code === 'ENOENT')
+})
+
+test('a linked parent is refused before creating a directory at its target', async () => {
+    const dir = await parent()
+    const outside = await parent()
+    const link = join(dir, 'linked')
+    await symlink(outside, link, 'dir')
+    await assert.rejects(() => createDesktopValidationIsolation({ root: join(link, 'nested', 'profile') }), /linked path/)
+    await assert.rejects(() => lstat(join(outside, 'nested')), { code: 'ENOENT' })
+})
+
+test('cleanup cannot be redirected by changing the callback profile', async () => {
+    const dir = await parent()
+    const root = join(dir, 'profile')
+    const sibling = join(dir, 'sibling')
+    await mkdir(sibling)
+    await writeFile(join(sibling, 'keep'), 'keep')
+    await withDesktopValidationIsolation({ root }, async ({ profile }) => {
+        profile.profileRoot = sibling
+        profile.dataRoot = join(sibling, 'data')
+        profile.engineRoot = join(profile.dataRoot, 'workspaces', '1', 'engine')
+        profile.homeRoot = join(sibling, 'home')
+    })
+    assert.equal(await readFile(join(sibling, 'keep'), 'utf8'), 'keep')
+    await assert.rejects(() => lstat(root), { code: 'ENOENT' })
+})
+
+test('cleanup refuses to remove a replacement at the original profile path', async () => {
+    const dir = await parent()
+    const root = join(dir, 'profile')
+    await assert.rejects(() => withDesktopValidationIsolation({ root }, async () => {
+        await rename(root, join(dir, 'original'))
+        await mkdir(root)
+        await writeFile(join(root, 'keep'), 'keep')
+    }), /profile changed before cleanup/)
+    assert.equal(await readFile(join(root, 'keep'), 'utf8'), 'keep')
 })

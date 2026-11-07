@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { DESKTOP_VALIDATION_CONTRACT_VERSION, DESKTOP_VALIDATION_PROVIDER_ENV_KEYS, desktopValidationProfileError, validateDesktopValidationProfile } from './contract.mjs'
 
 function environmentFor(profile) {
@@ -12,6 +12,22 @@ function environmentFor(profile) {
         RERUN_DESKTOP_VALIDATION_ID: profile.validationId,
         NEXT_TELEMETRY_DISABLED: '1',
         NODE_ENV: 'production',
+    }
+}
+
+async function statIfPresent(path) {
+    try { return await lstat(path) }
+    catch (error) {
+        if (error.code === 'ENOENT') return null
+        throw error
+    }
+}
+
+async function assertCanonicalAncestor(path) {
+    const stat = await statIfPresent(path)
+    if (!stat) return assertCanonicalAncestor(dirname(path))
+    if (!stat.isDirectory() || await realpath(path) !== path) {
+        throw desktopValidationProfileError('Validation profile must not use a linked path.')
     }
 }
 
@@ -34,6 +50,7 @@ export async function assertDesktopValidationIsolation(created) {
 
 export async function createDesktopValidationIsolation({ root, validationId = randomUUID() }) {
     const profileRoot = validateDesktopValidationProfile({ profileRoot: root })
+    await assertCanonicalAncestor(profileRoot)
     await mkdir(profileRoot, { recursive: true, mode: 0o700 })
     const actualRoot = await realpath(profileRoot)
     if (actualRoot !== profileRoot) throw desktopValidationProfileError('Validation profile must not use a linked path.')
@@ -70,9 +87,16 @@ export async function readDesktopValidationManifest(path) {
 
 export async function withDesktopValidationIsolation({ root }, work) {
     const created = await createDesktopValidationIsolation({ root })
+    const { profileRoot } = created.profile
+    const original = await lstat(profileRoot)
     try { return await work(created) }
     finally {
-        validateDesktopValidationProfile(created.profile)
-        await rm(created.profile.profileRoot, { recursive: true, force: true })
+        const current = await statIfPresent(profileRoot)
+        if (current) {
+            if (!current.isDirectory() || current.dev !== original.dev || current.ino !== original.ino || await realpath(profileRoot) !== profileRoot) {
+                throw desktopValidationProfileError('Validation profile changed before cleanup.')
+            }
+            await rm(profileRoot, { recursive: true, force: true })
+        }
     }
 }
