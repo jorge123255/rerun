@@ -166,6 +166,14 @@ And everything else a colleague needs:
 - 🏠 **Your own servers**: attach the machine your coworkers run on in one command
 - ♾️ **No limits**: as many coworkers and seats as you want, nothing to pay
 
+## macOS app — fork development preview
+
+The Mac app is being developed on this fork's `desktop/macos-preview` branch.
+See [Rerun for macOS](apps/desktop/README.md) for the app source and shared
+architecture, and the [Mac development tracker](docs/desktop-macos-status.md)
+for reviewed repairs, executed checks and remaining native QA. This is a
+development checkpoint; an installable release has not been accepted.
+
 ## 🚀 Quick start
 
 Let an AI install it for you:

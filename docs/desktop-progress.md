@@ -1,5 +1,16 @@
 # Rerun Mac delivery checklist
 
+## Current fork checkpoint — November 6, 2026
+
+The `desktop/macos-preview` branch tracks the reviewed PR4 integration repairs
+and current development status. See the [Mac development tracker](desktop-macos-status.md)
+and [app README](../apps/desktop/README.md) for source identity, actual checks,
+pending coding-branch reconciliation and the next native QA steps.
+
+The entries below are historical acceptance records for their named builds.
+They do not establish acceptance of this new source checkpoint or an updated
+installed app. Keep their evidence and counts intact.
+
 ## Round 30 — root navigation accepted; new lanes prepared
 
 Root completed Control Center coworker Open → Apps acceptance from the board and after full restart in installed product `b0f9899`. The original shared-tab navigation was already wired; root corrected its stale test and verified owner isolation, selected chat, exact drafts and board state. All 41 navigation checks and UI typecheck pass. The original 23 chats/88 messages are unchanged. No product rebuild was necessary. [Acceptance](desktop-round30-control-apps-acceptance.md).
