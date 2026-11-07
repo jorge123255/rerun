@@ -1,15 +1,20 @@
+import { mkdtempSync, rmSync } from 'node:fs'
 import { createClient, type Client } from '@libsql/client'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { listViews, saveView } from '../../db/tableViews.js'
 import { deleteDesktopTableView, DesktopTableViewCommitUnknownError, DesktopTableViewConflictError, saveDesktopTableView } from './store'
 
 let db: Client
+let directory = ''
 beforeEach(async () => {
-    db = createClient({ url: 'file::memory:' })
+    directory = mkdtempSync(join(tmpdir(), 'desktop-table-views-'))
+    db = createClient({ url: `file:${join(directory, 'views.db')}` })
     await db.execute('CREATE TABLE deals (name TEXT, stage TEXT, amount INTEGER)')
     await db.execute("INSERT INTO deals VALUES ('A', 'New', 100), ('B', 'Won', 300)")
 })
-afterEach(() => { db.close() })
+afterEach(() => { db.close(); rmSync(directory, { recursive: true, force: true }) })
 
 const scope = () => ({ client: db, hidden: [], table: 'deals' })
 

@@ -3,7 +3,7 @@ import { constants } from 'node:fs'
 import { link, lstat, mkdir, open, realpath, rmdir, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { MAX_UPLOAD_FILE_BYTES } from '@rerun/contracts'
-import { openWithoutLinks } from '../open-without-links.js'
+import { openWithoutLinks } from '../open-without-links.ts'
 import {
     FILES_IMPORT_ABORTED,
     FILES_IMPORT_OTHER_USER,
@@ -12,8 +12,8 @@ import {
     FILES_IMPORT_UNCONFIRMED,
     FilesImportError,
     filesImportClash,
-} from './errors.js'
-import { filesImportParts, filesImportTooLarge } from './paths.js'
+} from './errors.ts'
+import { filesImportParts, filesImportTooLarge } from './paths.ts'
 
 const STAGING_PREFIX = '.rerun-import-'
 // Darwin O_NOFOLLOW_ANY. It already covers every component and must not be combined with O_NOFOLLOW.

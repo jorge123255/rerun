@@ -5,6 +5,7 @@ import { readAgentConfig } from '../../agents/loader.js'
 import type { AgentConfig, LoadedAgent } from '../../agents/types.js'
 import type { ModelOverride } from '../../agents/providers.js'
 import type { RunContext } from '../../runtime/context.js'
+import { hasDesktopToolGrant } from '../tool-grants.js'
 import { desktopVisionImageMessages } from './files.js'
 import { canonicalDesktopVisionModelPort, NO_VISION_MODEL } from './model.js'
 
@@ -20,7 +21,7 @@ export type DesktopVisionPorts = {
 
 async function requireDesktopVisionGrant(ctx: RunContext, ports: DesktopVisionPorts) {
     const current = await (ports.readConfig ?? readAgentConfig)(ctx.agent.id)
-    if (!current?.enabled || !current.tools.vision || !current.tools.filesystem) throw new Error('Vision analysis is turned off for this coworker.')
+    if (!current?.enabled || !hasDesktopToolGrant(current, 'vision')) throw new Error('Vision analysis is turned off for this coworker.')
     ctx.abortSignal?.throwIfAborted()
 }
 
@@ -39,6 +40,7 @@ export function desktopVisionTools(ctx: RunContext, ports: DesktopVisionPorts = 
                 try {
                     messages = await desktopVisionImageMessages(ctx, imagePath, prompt)
                 } catch (error) {
+                    ctx.abortSignal?.throwIfAborted()
                     return `Could not read ${imagePath} as an image: ${(error as Error).message}`
                 }
                 const seeing = ports.selectedModel(ctx.agent)
@@ -49,6 +51,8 @@ export function desktopVisionTools(ctx: RunContext, ports: DesktopVisionPorts = 
                 try {
                     await requireDesktopVisionGrant(ctx, ports)
                     release = await ports.ensureAuth(ctx.agent)
+                    await requireDesktopVisionGrant(ctx, ports)
+                    signal.throwIfAborted()
                     const { text } = await raceAbort(ports.generateText({ model: ports.modelFor(ctx.agent, seeing, ctx.sessionId), messages, abortSignal: signal }), signal)
                     return text || '(the model returned no text)'
                 } catch (error) {

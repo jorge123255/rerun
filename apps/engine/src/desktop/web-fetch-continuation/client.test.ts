@@ -7,7 +7,7 @@ vi.mock('../isolated-screen/binding.js', () => ({ isolatedScreenOwner: () => ({ 
 
 import { desktopWebFetchContinuationPublisher } from './client'
 
-const identity = { engineAgentId: 'reader', sessionId: 'session-1', runId: 'run-1', toolCallId: 'call-1', target: { engineAgentId: 'reader', launchNonce: 'launch-1', sessionGeneration: 'run-1' }, url: 'https://example.com/' }
+const identity = { engineAgentId: 'reader', sessionId: 'session-1', runId: 'run-1', toolCallId: 'call-1', target: { engineAgentId: 'reader', launchNonce: 'launch-1', sessionGeneration: 'a'.repeat(32) }, url: 'https://example.com/' }
 const bytes = Buffer.from('whole')
 const artifact = { kind: 'served-html' as const, path: servedHtmlPath(identity.url, identity), mediaType: 'text/plain' as const, bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
 

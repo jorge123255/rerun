@@ -3,13 +3,13 @@ import type { TableView } from '@rerun/contracts'
 import { desktopTableViewTools } from './tools'
 
 const config = { current: null as any }
-vi.mock('../agents/loader.js', () => ({ readAgentConfig: async () => config.current }))
+vi.mock('../../agents/loader.js', () => ({ readAgentConfig: async () => config.current }))
 
 const ctx = () => ({ agent: { id: 'agent-views', config: config.current }, abortSignal: new AbortController().signal }) as any
 const view: TableView = { id: 'view-1', table: 'deals', name: 'Pipeline', position: 0, layout: 'table' }
 
 beforeEach(() => {
-    config.current = { enabled: true, tools: { desktopToolGrants: { db: true, sharedDb: true } }
+    config.current = { enabled: true, tools: { desktopToolGrants: { db: true, sharedDb: true, tableViewWrite: true } } }
 })
 
 function adapters() {

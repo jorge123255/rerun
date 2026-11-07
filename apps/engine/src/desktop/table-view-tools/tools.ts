@@ -101,7 +101,8 @@ export function desktopTableViewTools(
                         try {
                             const named = tableViewScope(scope)
                             await requireScope(ctx, named, authorized)
-                            const view = await ports.save(ctx, named, { table, ...input })
+                            const layout = input.layout ?? 'table'
+                            const view = await ports.save(ctx, named, { ...input, table, layout })
                             return `Saved the ${view.layout} view "${view.name}" on ${table}. The user sees it as a tab of the table in the app; show it in the chat with card_table and view "${view.name}".`
                         } finally { release() }
                     })

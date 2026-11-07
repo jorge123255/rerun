@@ -3,6 +3,7 @@ import { withAgentLock } from '../../agents/lock.js'
 import { workspaceDir } from '../../config/paths.js'
 import type { RunContext } from '../../runtime/context.js'
 import { beginDesktopAgentWork } from '../agent-lifecycle.js'
+import { hasDesktopToolGrant } from '../tool-grants.js'
 import { desktopDownloadPermissionBound, requireBoundDownloadPermission } from './binding.js'
 import { downloadInputSchema, executeDownload } from './download.js'
 import { DownloadPermissionError } from './errors.js'
@@ -12,7 +13,7 @@ export const DOWNLOAD_TOOL_DESCRIPTION = 'Download a public HTTP(S) file into th
 
 export function desktopDownloadTools(ctx: RunContext): ToolSet {
     // Catalog stays pending until root binds requireDesktopToolGrant(..., 'download').
-    if (!desktopDownloadPermissionBound()) return {}
+    if (!desktopDownloadPermissionBound() || !hasDesktopToolGrant(ctx.agent.config, 'download')) return {}
     return {
         download: tool({
             description: DOWNLOAD_TOOL_DESCRIPTION,
