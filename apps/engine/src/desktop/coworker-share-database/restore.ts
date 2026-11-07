@@ -5,7 +5,7 @@ import {
     type DesktopCoworkerShareDatabaseRestoreResult,
     type DesktopCoworkerShareDatabaseTable,
     type DesktopCoworkerShareDatabaseView,
-} from '../../../../../packages/contracts/src/desktop-coworker-share-database.ts'
+} from '@rerun/contracts'
 import { DesktopCoworkerShareDatabaseError } from './errors.ts'
 import { digestTable, digestView, logicalCreateTableSql, packageDigest } from './normalize.ts'
 

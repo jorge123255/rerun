@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, expect, test, vi, type Mock } from 'vitest'
 import type { CustomProviderChange, CustomProviderIdentity, CustomProviderModel, CustomProviderProbe, CustomProviderSnapshot } from '@rerun/contracts'
 import { OTHER_WORKSPACE, RETIRED_MODEL, DEFAULT_LOCK } from '@/lib/desktop/custom-providers'
 import { DesktopCustomProviderPage, type DesktopCustomProviderPageProps } from './DesktopCustomProviderPage'
@@ -61,26 +61,32 @@ async function flush() {
     for (let i = 0; i < 8; i += 1) await act(async () => { await Promise.resolve() })
 }
 
-function adapter(over: Partial<{ read: DesktopCustomProviderPageProps['adapter'] extends infer T ? T extends { read: infer R } ? R : never : never }> = {}) {
-    const read = vi.fn(async (id: CustomProviderIdentity) => ({ ok: true as const, value: { ...snapshot({ revision: id.revision }), workspaceId: id.workspaceId, connectionId: id.connectionId } }))
-    const change = vi.fn(async (body: CustomProviderChange) => {
+type Adapter = NonNullable<DesktopCustomProviderPageProps['adapter']>
+function adapter() {
+    const read = vi.fn<Adapter['read']>(async id => ({ ok: true, value: { ...snapshot({ revision: id.revision }), workspaceId: id.workspaceId, connectionId: id.connectionId } }))
+    const change = vi.fn<Adapter['change']>(async body => {
         const next = body.action === 'create' ? { workspaceId: body.workspaceId, connectionId: body.connectionId, revision: 1 } : { ...body.identity, revision: body.identity.revision + (body.action === 'disconnect' ? 0 : 1) }
         return { ok: true as const, value: { requestId: body.requestId, identity: next, action: body.action, status: 'recorded' as const, recovered: false } }
     })
-    const probeFn = vi.fn(async () => ({ ok: true as const, value: probe() }))
-    const probeDraft = vi.fn(async (body: { requestId: string; workspaceId: number; manualModel?: string }) => ({
+    const probeFn = vi.fn<Adapter['probe']>(async () => ({ ok: true, value: probe() }))
+    const probeDraft = vi.fn<Adapter['probeDraft']>(async body => ({
         ok: true as const,
         value: { requestId: body.requestId, workspaceId: body.workspaceId, status: 'unavailable' as const, models: [] as CustomProviderModel[], problem: 'not_listed' as const, manualModel: body.manualModel ?? null, manualUsable: Boolean(body.manualModel), observedAt: 1 },
     }))
-    return { read, change, probe: probeFn, probeDraft, ...over }
+    return { read, change, probe: probeFn, probeDraft }
 }
 
-async function mount(props: Partial<DesktopCustomProviderPageProps> = {}) {
+type MountProps = Partial<Omit<DesktopCustomProviderPageProps, 'adapter' | 'onBack' | 'onReceipt'>> & {
+    adapter?: ReturnType<typeof adapter>
+    onBack?: Mock<DesktopCustomProviderPageProps['onBack']>
+    onReceipt?: Mock<NonNullable<DesktopCustomProviderPageProps['onReceipt']>>
+}
+async function mount(props: MountProps = {}) {
     const root = createRoot(document.body.appendChild(document.createElement('div')))
     roots.push(root)
     const client = props.adapter ?? adapter()
-    const onBack = props.onBack ?? vi.fn()
-    const onReceipt = props.onReceipt ?? vi.fn()
+    const onBack = props.onBack ?? vi.fn<DesktopCustomProviderPageProps['onBack']>()
+    const onReceipt = props.onReceipt ?? vi.fn<NonNullable<DesktopCustomProviderPageProps['onReceipt']>>()
     await act(async () => root.render(<DesktopCustomProviderPage workspaceId={1} takenNames={[]} onBack={onBack} onReceipt={onReceipt} adapter={client} {...props} />))
     await flush()
     return { root, client, onBack, onReceipt, rerender: async (next: Partial<DesktopCustomProviderPageProps>) => { await act(async () => root.render(<DesktopCustomProviderPage workspaceId={1} takenNames={[]} onBack={onBack} onReceipt={onReceipt} adapter={client} {...props} {...next} />)); await flush() } }

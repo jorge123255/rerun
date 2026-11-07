@@ -4,7 +4,10 @@ import { createConnection, patchConnection, updateConnectionKeys, deleteConnecti
 import { connectionUsage, releaseConnection } from '../../connections/release.js'
 import { clearBoxDefault, readBoxDefault, writeBoxDefault } from '../../connections/default.js'
 import type { DesktopApiPendingRun } from '@rerun/contracts'
-import type { DesktopApiConnectionAuthority } from './service.js'
+import { DesktopApiConnectionRefusal, type DesktopApiConnectionAuthority } from './service.js'
+import { beginDesktopApiConnectionRemoval, beginDesktopApiConnectionWork, desktopApiConnectionRemovalAvailable } from './admission.js'
+import { withConnectionLock } from '../../connections/lock.js'
+import { withDesktopApiConnectionMutationLock } from './mutation-lock.js'
 
 export function canonicalDesktopApiConnectionAuthority({ workspaceId, pendingRuns, stopAndDrain }: {
     workspaceId: number
@@ -26,6 +29,22 @@ export function canonicalDesktopApiConnectionAuthority({ workspaceId, pendingRun
         clearDefault: clearBoxDefault,
         pendingRuns,
         ...(stopAndDrain ? { stopAndDrain } : {}),
+        withMutation: async effect => {
+            const release = beginDesktopApiConnectionWork()
+            if (!release) throw new DesktopApiConnectionRefusal('A connection is being removed. Nothing was saved.')
+            // Separate from the file-store lock: the whole current/effect/revision/
+            // receipt sequence is one mutation, even though its file effect has
+            // released its narrower connection lock before the revision write.
+            try { return await withDesktopApiConnectionMutationLock(workspaceId, effect) } finally { release() }
+        },
+        removalAvailable: desktopApiConnectionRemovalAvailable,
+        withRemoval: async (connectionId, effect) => {
+            const release = beginDesktopApiConnectionRemoval()
+            if (!release) throw new DesktopApiConnectionRefusal('Wait for workspace replies and background work to finish before removing this connection.')
+            // releaseConnection edits agent/default pointers, and deleteConnection
+            // removes the directory; neither re-enters the connection lock.
+            try { return await withConnectionLock(connectionId, effect) } finally { release() }
+        },
     }
 }
 

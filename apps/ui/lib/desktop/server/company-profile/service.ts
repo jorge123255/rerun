@@ -57,6 +57,7 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
     const controllers = new Map<string, AbortController>()
     const now = () => ports.now?.() ?? new Date().toISOString()
     let closed = false
+    let closing: Promise<void> | null = null
 
     function assertOpen(): void {
         if (closed) throw new DesktopCompanyProfileError('closed', 'Company profile inference is closed.')
@@ -80,48 +81,43 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
         const fingerprint = desktopCompanyProfileFingerprint(kind, identity, collect)
         const requestId = work(fingerprint)
         const prior = await existing(requestId, fingerprint)
+        assertOpen()
         if (prior) return prior
         const latest = await ports.store.latest(identity.chat, kind)
+        assertOpen()
         if (latest?.status === 'succeeded' && sameIdentity(latest.identity, identity)) return latest
         const identityKey = `${kind}:${identity.chat.workspaceId}:${identity.chat.chatId}:${identity.draftRevision}:${identity.inputDigest}`
         const current = identityFlights.get(identityKey)
         if (current) return current
         const flight = (async () => {
-            await ports.canonical.read(identity.chat)
-            const createdAt = now()
-            let attempt = desktopCompanyProfileAttemptSchema.parse({
-                contractVersion: 1,
-                requestId,
-                kind,
-                identity,
-                status: 'pending',
-                progress: { stage: 'queued', sources: [], updatedAt: createdAt },
-                outcome: null,
-                evidence: [],
-                modelCalled: false,
-                createdAt,
-                updatedAt: createdAt,
-            })
-            const inserted = await ports.store.insert(attempt, fingerprint)
-            if (inserted === 'exists') {
-                const saved = await existing(requestId, fingerprint)
-                if (!saved) throw new DesktopCompanyProfileError('conflict', 'Company profile admission was not confirmed.')
-                return saved
-            }
             const controller = new AbortController()
             controllers.set(requestId, controller)
             const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal
             const stop = () => controller.abort()
             parent?.addEventListener('abort', stop, { once: true })
             try {
-                attempt = await execute(attempt, collect, signal)
+                await ports.canonical.read(identity.chat)
+                assertOpen()
+                signal.throwIfAborted()
+                const createdAt = now()
+                const attempt = desktopCompanyProfileAttemptSchema.parse({
+                    contractVersion: 1, requestId, kind, identity, status: 'pending',
+                    progress: { stage: 'queued', sources: [], updatedAt: createdAt },
+                    outcome: null, evidence: [], modelCalled: false, createdAt, updatedAt: createdAt,
+                })
+                const inserted = await ports.store.insert(attempt, fingerprint)
+                if (inserted === 'exists') {
+                    const saved = await existing(requestId, fingerprint)
+                    if (!saved) throw new DesktopCompanyProfileError('conflict', 'Company profile admission was not confirmed.')
+                    return saved
+                }
+                return await execute(attempt, collect, signal)
             } finally {
                 controllers.delete(requestId)
                 flights.delete(requestId)
                 identityFlights.delete(identityKey)
                 parent?.removeEventListener('abort', stop)
             }
-            return attempt
         })()
         flights.set(requestId, flight)
         identityFlights.set(identityKey, flight)
@@ -130,6 +126,7 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
 
     async function execute(attempt: DesktopCompanyProfileAttempt, collect: boolean, signal: AbortSignal): Promise<DesktopCompanyProfileAttempt> {
         try {
+            signal.throwIfAborted()
             if (attempt.kind === 'decide') return await decide(attempt, signal)
             return await enrich(attempt, collect, signal)
         } catch (error) {
@@ -154,8 +151,10 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
         const selection = await ports.models.decision(attempt.identity.chat)
         if (!selection) return settle(attempt, unavailableOutcome('missing_configuration', 'decide', null), [], false)
         attempt = await progress(attempt, 'analyzing_evidence', [], true)
+        signal.throwIfAborted()
         const outcome = await ports.engine.decide({ requestId: attempt.requestId, identity: attempt.identity, input, model: selection }, signal)
         await ports.canonical.require(attempt.identity, 'decide')
+        signal.throwIfAborted()
         return settleEngineOutcome(attempt, outcome, null, [], null)
     }
 
@@ -190,8 +189,10 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
             return settle(attempt, unavailableOutcome('missing_configuration', 'enrich', profile), evidence, attempt.modelCalled)
         }
         attempt = await progress(attempt, 'analyzing_evidence', sources, true)
+        signal.throwIfAborted()
         const outcome = await ports.engine.enrich({ requestId: attempt.requestId, identity: attempt.identity, evidence, model: selection }, signal)
         context = await ports.canonical.require(attempt.identity, 'enrich')
+        signal.throwIfAborted()
         attempt = await progress(attempt, 'projecting_profile', sources, true)
         return settleEngineOutcome(attempt, outcome, context, evidence, sources)
     }
@@ -234,6 +235,7 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
         modelCalled: boolean,
         sources?: DesktopCompanyProfileSourceProgress[],
     ): Promise<DesktopCompanyProfileAttempt> {
+        if (closed || controllers.get(attempt.requestId)?.signal.aborted) outcome = cancelledOutcome()
         const settled = desktopCompanyProfileAttemptSchema.parse({
             ...attempt,
             status: outcome.status,
@@ -347,10 +349,11 @@ export function createDesktopCompanyProfileService(ports: DesktopCompanyProfileS
             }
         },
         async close(): Promise<void> {
-            if (closed) return
+            if (closing) return closing
             closed = true
+            closing = Promise.all([...flights.values()].map(flight => flight.catch(() => {}))).then(() => {})
             for (const controller of controllers.values()) controller.abort()
-            await Promise.all([...flights.values()].map(flight => flight.catch(() => {})))
+            return closing
         },
     }
 }

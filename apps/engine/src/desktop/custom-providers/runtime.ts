@@ -1,8 +1,11 @@
 import { createOpenAI } from '@ai-sdk/openai'
-import { generateText, streamText, wrapLanguageModel } from 'ai'
+import { generateText, streamText, wrapLanguageModel, type Prompt } from 'ai'
 import { CUSTOM_DEFAULT_CONTEXT_WINDOW, type CustomProviderAuthority, type CustomProviderIdentity, type CustomProviderModel, type CustomProviderProbe } from '@rerun/contracts'
 import { openrouterReasoningMiddleware } from '../../agents/openrouter-reasoning.js'
 import { createPinnedProviderFetch, endpointBase } from './network.js'
+
+type CustomGenerateInput = Omit<Parameters<typeof generateText>[0], 'model' | 'prompt' | 'messages'> & Prompt
+type CustomStreamInput = Omit<Parameters<typeof streamText>[0], 'model' | 'prompt' | 'messages'> & Prompt
 
 export function parseCustomModels(body: unknown): CustomProviderModel[] {
     const rows = Array.isArray(body) ? body : body && typeof body === 'object' && 'data' in body && Array.isArray(body.data) ? body.data : null
@@ -52,12 +55,12 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
         }
     return {
         model: resolveModel,
-        async oneShot(identity: CustomProviderIdentity, modelId: string, input: Omit<Parameters<typeof generateText>[0], 'model'>, stop: AbortSignal) {
+        async oneShot(identity: CustomProviderIdentity, modelId: string, input: CustomGenerateInput, stop: AbortSignal) {
             const bound = await resolveModel(identity, modelId, stop)
             try { const result = await generateText({ ...input, model: bound.model, abortSignal: AbortSignal.any([bound.signal, input.abortSignal ?? stop]) }); await authority.assertCurrent(identity, bound.signal); return result }
             finally { bound.close() }
         },
-        async stream(identity: CustomProviderIdentity, modelId: string, input: Omit<Parameters<typeof streamText>[0], 'model'>, stop: AbortSignal) {
+        async stream(identity: CustomProviderIdentity, modelId: string, input: CustomStreamInput, stop: AbortSignal) {
             const bound = await resolveModel(identity, modelId, stop)
             try { return { result: streamText({ ...input, model: bound.model, abortSignal: AbortSignal.any([bound.signal, input.abortSignal ?? stop]) }), close: bound.close, contextWindow: bound.contextWindow, vision: bound.vision } }
             catch { bound.close(); throw new Error('Custom stream could not start.') }
@@ -66,7 +69,7 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
             const bound = await lease(identity, AbortSignal.any([stop, AbortSignal.timeout(30_000)]))
             let status: CustomProviderProbe['status'] = 'unavailable', models: CustomProviderModel[] = [], problem: CustomProviderProbe['problem'] = 'not_listed', manualUsable = false
             try {
-                const headers = bound.key ? { Authorization: `Bearer ${bound.key}` } : {}
+                const headers: Record<string, string> = bound.key ? { Authorization: `Bearer ${bound.key}` } : {}
                 try {
                     const response = await bound.network(`${endpointBase(bound.snapshot.config)}/models`, { headers, signal: bound.signal })
                     if (response.status === 401 || response.status === 403) problem = 'unauthorized'

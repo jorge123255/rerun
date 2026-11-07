@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useLayoutEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopCompanyProfileAttempt, DesktopCompanyProfileView } from '@rerun/contracts'
@@ -24,7 +24,8 @@ function clientWith(overrides: Partial<DesktopCompanyProfileClient> = {}): Deskt
 async function mount(client: DesktopCompanyProfileClient) {
     let flow!: ReturnType<typeof useDesktopCompanyProfile>
     function Probe({ revision = 3 }: { revision?: number }) {
-        flow = useDesktopCompanyProfile({ chat: profileChat, client, active: true, draftRevision: revision })
+        const value = useDesktopCompanyProfile({ chat: profileChat, client, active: true, draftRevision: revision })
+        useLayoutEffect(() => { flow = value })
         return null
     }
     root = createRoot(document.body.appendChild(document.createElement('div')))
@@ -39,13 +40,9 @@ test('restoring a saved view is observational and never starts inference', async
     expect(client.decide).not.toHaveBeenCalled()
     expect(client.enrich).not.toHaveBeenCalled()
     expect(mounted.flow().view).toEqual(profileView)
-    await act(async () => root!.render(<ProbeReplacement client={client} />))
+    await mounted.rerender(3)
     expect(client.read).toHaveBeenCalledOnce()
 })
-function ProbeReplacement({ client }: { client: DesktopCompanyProfileClient }) {
-    useDesktopCompanyProfile({ chat: profileChat, client, active: true, draftRevision: 3 })
-    return null
-}
 
 test('explicit decide and enrich bind exact identities and recover the same request after an unknown acknowledgement', async () => {
     const client = clientWith({ decide: vi.fn()

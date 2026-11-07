@@ -49,7 +49,7 @@ export function createDesktopApiConnectionRouter(): Hono {
     app.get('/catalog', async c => {
         const requested = Number(c.req.query('workspaceId'))
         sameWorkspace(requested)
-        return c.json(await (await service()).list(requested))
+        return c.json(await (await service()).list())
     })
     app.get('/removal', async c => {
         const requested = Number(c.req.query('workspaceId'))

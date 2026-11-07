@@ -47,7 +47,7 @@ test('browser takeover renders with original waiting metadata and opens its exac
 test('lists pending question and approval rows, opens a navigation hit, and stops polling on unmount', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-    let reply: () => Response = () => Response.json({ items: [question, approval], unavailableAgentIds: [], checkedAt })
+    const reply: () => Response = () => Response.json({ items: [question, approval], unavailableAgentIds: [], checkedAt })
     const fetcher = routedFetch(() => reply())
     vi.stubGlobal('fetch', fetcher)
     const container = document.createElement('div'); document.body.append(container)

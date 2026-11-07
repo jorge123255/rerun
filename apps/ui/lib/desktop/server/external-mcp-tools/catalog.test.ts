@@ -9,7 +9,18 @@ it('pairs every bound tool with a B scope and effect flag that match', () => {
         expect(tool.effect).toBe(scope !== 'mcp:read')
         const original = ACCOUNT_TOOL_DEFS.find(def => def.name === tool.name)
         expect(original?.description).toBeTruthy()
-        expect(tool.description.startsWith(original!.description.slice(0, 20)) || tool.description === original!.description || tool.name === 'read_skill_file').toBe(true)
+        if (tool.name === 'create_agent' || tool.name === 'update_agent') {
+            expect(tool.description).toBe(tool.name === 'create_agent'
+                ? 'Create a coworker from its name and soul. Local creation uses workspace defaults and also requires runs:send. Tool grants and self-improvement are not accepted on this call; they stay on the Mac Tools panel.'
+                : 'Update a coworker’s name, description, soul, handle, Box, verbosity, or model. Tool grants and self-improvement are not accepted on this call.')
+            const schema = tool.inputSchema as { properties?: Record<string, unknown>; additionalProperties?: boolean }
+            expect(schema.additionalProperties).toBe(false)
+            for (const field of ['tools', 'selfImprovement', 'mcpServers', 'desktopToolGrants', 'desktopCodexGrants', 'desktopWorkspaceRead']) expect(schema.properties).not.toHaveProperty(field)
+        } else if (tool.name === 'read_skill_file') {
+            expect(tool.description).toBe(original!.description + ' Local adapter accepts offset 0 only.')
+        } else {
+            expect(tool.description).toBe(original!.description)
+        }
     }
 })
 

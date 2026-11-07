@@ -3,6 +3,7 @@ import { abortable } from '../web-fetch/transport.js'
 import { isolatedScreenOwner } from '../isolated-screen/binding.js'
 import { screenExportIdentity, validateScreenExportResult, type ScreenExportCall, type ScreenExportPublisher } from '../isolated-screen/transport.js'
 import type { ScreenSavedExports } from '../isolated-screen/types.js'
+import type { WebFetchContinuationPublisher } from './continuation.js'
 
 async function post(call: ScreenExportCall, signal: AbortSignal): Promise<ScreenSavedExports> {
     const config = env(), url = new URL(config.RERUN_HUB_BASE_URL ?? '')

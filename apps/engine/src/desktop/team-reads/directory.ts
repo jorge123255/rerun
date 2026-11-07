@@ -4,7 +4,7 @@ import {
     DESKTOP_TEAM_DIRECTORY_CALLER_SQL,
     DESKTOP_TEAM_DIRECTORY_LOOKUP_SQL,
     DESKTOP_TEAM_DIRECTORY_MEMBER_SQL,
-} from '../../../../../packages/contracts/src/desktop-team-reads.ts'
+} from '@rerun/contracts'
 import type { DesktopTeamDirectory, DesktopTeamMember } from './ports.js'
 
 function openDesktopCatalog(): Client | null {

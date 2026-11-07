@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import { constants } from 'node:fs'
-import { link, lstat, mkdir, open, realpath, rmdir, unlink, type FileHandle } from 'node:fs/promises'
+import { link, lstat, mkdir, open, realpath, unlink, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { MAX_UPLOAD_FILE_BYTES } from '@rerun/contracts'
-import { openWithoutLinks } from '../open-without-links.js'
+import { recordCreatedWorkspaceDirectory, removeCreatedWorkspaceDirectories, type CreatedWorkspaceDirectory } from '../created-workspace-directories.ts'
+import { openWithoutLinks } from '../open-without-links.ts'
 import {
     FILES_IMPORT_ABORTED,
     FILES_IMPORT_OTHER_USER,
@@ -12,8 +13,8 @@ import {
     FILES_IMPORT_UNCONFIRMED,
     FilesImportError,
     filesImportClash,
-} from './errors.js'
-import { filesImportParts, filesImportTooLarge } from './paths.js'
+} from './errors.ts'
+import { filesImportParts, filesImportTooLarge } from './paths.ts'
 
 const STAGING_PREFIX = '.rerun-import-'
 // Darwin O_NOFOLLOW_ANY. It already covers every component and must not be combined with O_NOFOLLOW.
@@ -27,6 +28,10 @@ const uncertain = () => new FilesImportError(500, FILES_IMPORT_UNCONFIRMED, 'unc
 const aborted = () => new FilesImportError(0, FILES_IMPORT_ABORTED, 'aborted')
 const unavailable = () => new FilesImportError(400, FILES_IMPORT_UNAVAILABLE, 'unavailable')
 const tooLarge = () => new FilesImportError(413, `This file is larger than the ${MAX_UPLOAD_FILE_BYTES / 1024 / 1024} MB upload limit.`, 'too_large')
+
+function sameOwner(statUid: number, expected: bigint): boolean {
+    return BigInt(statUid) === expected
+}
 
 function currentUid(): bigint {
     if (typeof process.getuid !== 'function') throw unavailable()
@@ -70,12 +75,8 @@ async function assertRealDirectory(directory: string, uid: bigint): Promise<void
         throw mapLink(error)
     })
     if (info.isSymbolicLink() || !info.isDirectory()) throw outside()
-    if (info.uid !== uid) throw otherUser()
+    if (!sameOwner(info.uid, uid)) throw otherUser()
     if (await realpath(directory) !== directory) throw outside()
-}
-
-async function removeCreated(created: string[]): Promise<void> {
-    for (const directory of [...created].reverse()) await rmdir(directory).catch(() => {})
 }
 
 /**
@@ -97,7 +98,7 @@ export async function publishFilesImport(
     const uid = currentUid()
     const root = resolve(workspaceRoot)
     if (basename(root) !== 'workspace') throw unavailable()
-    const created: string[] = []
+    const created: CreatedWorkspaceDirectory[] = []
     try {
         await ensureWorkspace(root, uid, signal, created)
         let parent = root
@@ -110,14 +111,14 @@ export async function publishFilesImport(
         await stage(parent, parts[parts.length - 1] ?? '', bytes, signal, onProgress)
         return { saved: true, path: relativePath, bytes: bytes.byteLength }
     } catch (error) {
-        await removeCreated(created)
+        await removeCreatedWorkspaceDirectories(created)
         if (error instanceof FilesImportError) throw error
         if (signal.aborted) throw aborted()
         throw mapLink(error)
     }
 }
 
-async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, created: string[]): Promise<void> {
+async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, created: CreatedWorkspaceDirectory[]): Promise<void> {
     if (signal.aborted) throw aborted()
     const info = await lstat(root).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
@@ -130,8 +131,9 @@ async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, c
         try {
             if (signal.aborted) throw aborted()
             try {
-                await mkdir(at(pin.pinned, 'workspace'))
-                created.push(root)
+                const target = at(pin.pinned, 'workspace')
+                await mkdir(target)
+                created.push(await recordCreatedWorkspaceDirectory(root, target))
             } catch (error) {
                 if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw mapLink(error)
             }
@@ -142,7 +144,7 @@ async function ensureWorkspace(root: string, uid: bigint, signal: AbortSignal, c
     await assertRealDirectory(root, uid)
 }
 
-async function ensureChild(parent: string, name: string, child: string, uid: bigint, signal: AbortSignal, created: string[]): Promise<void> {
+async function ensureChild(parent: string, name: string, child: string, uid: bigint, signal: AbortSignal, created: CreatedWorkspaceDirectory[]): Promise<void> {
     const info = await lstat(child).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
         throw mapLink(error)
@@ -150,7 +152,7 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
     if (info?.isSymbolicLink()) throw outside()
     if (info && !info.isDirectory()) throw outside()
     if (info) {
-        if (info.uid !== uid) throw otherUser()
+        if (!sameOwner(info.uid, uid)) throw otherUser()
         if (await realpath(child) !== child) throw outside()
         return
     }
@@ -159,8 +161,9 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
     try {
         if (signal.aborted) throw aborted()
         try {
-            await mkdir(at(pin.pinned, name))
-            created.push(child)
+            const target = at(pin.pinned, name)
+            await mkdir(target)
+            created.push(await recordCreatedWorkspaceDirectory(child, target))
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw mapLink(error)
         }
@@ -168,7 +171,7 @@ async function ensureChild(parent: string, name: string, child: string, uid: big
         await pin.close()
     }
     const madeInfo = await lstat(child).catch(error => { throw mapLink(error) })
-    if (madeInfo.isSymbolicLink() || !madeInfo.isDirectory() || madeInfo.uid !== uid || await realpath(child) !== child) throw outside()
+    if (madeInfo.isSymbolicLink() || !madeInfo.isDirectory() || !sameOwner(madeInfo.uid, uid) || await realpath(child) !== child) throw outside()
 }
 
 async function stage(

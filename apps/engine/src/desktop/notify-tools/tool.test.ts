@@ -2,10 +2,15 @@ import { expect, test, vi } from 'vitest'
 import { desktopNotifyTools } from './tool'
 import { desktopNotifyUserEventKey } from './contract'
 
+const saved = vi.hoisted(() => ({ config: null as any }))
+vi.mock('../../agents/loader.js', () => ({ readAgentConfig: async () => saved.config }))
+
 const receipt = { notificationId: 'notify:a:s:r:c', eventKey: 'notify-user:a:s:r:c', attemptId: '11111111-1111-4111-8111-111111111111', agentId: 'a', sessionId: 's', runId: 'r', message: 'Review', metadata: null, status: 'shown' as const, nativeStatus: 'shown' as const, createdAt: '2026-11-06T00:00:00.000Z' }
 
 function context() {
-    return { agent: { id: 'a', config: { name: 'Ada', enabled: true, tools: { desktopToolGrants: { notify: true } } }, sessionId: 's', runId: 'r', abortSignal: new AbortController().signal } as any
+    const config = { name: 'Ada', enabled: true, tools: { desktopToolGrants: { notify: true } } }
+    saved.config = config
+    return { agent: { id: 'a', config }, sessionId: 's', runId: 'r', abortSignal: new AbortController().signal } as any
 }
 
 test('uses the original info-only nonblocking input and exact owner identity', async () => {

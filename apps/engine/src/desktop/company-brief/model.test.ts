@@ -1,10 +1,11 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import type { CompanyBriefModelRef } from '@rerun/contracts'
 const state = vi.hoisted(() => ({ selected: 'gpt-6.1-terra', calls: [] as unknown[], releases: 0, authority: true }))
+const connection = vi.hoisted(() => ({ id: 'mac-chatgpt', config: { provider: 'codex' }, env: { RERUN_CHATGPT_CONNECTED: '1' } }))
 vi.mock('../../agents/registry.js', () => ({ getAgent: async () => ({ id: 'foreman', config: { enabled: true, tools: {} }, env: { DO_NOT_BORROW: 'secret' }, soul: '', install: '', resolved: {} }) }))
 vi.mock('../../agents/availability.js', () => ({ isUsable: () => true }))
 vi.mock('../../connections/default.js', () => ({ readBoxDefault: async () => ({ connectionId: 'mac-chatgpt', model: state.selected }) }))
-vi.mock('../../connections/registry.js', () => ({ findConnection: async () => ({ id: 'mac-chatgpt', config: { provider: 'codex' }, env: { RERUN_CHATGPT_CONNECTED: '1' } }) }))
+vi.mock('../../connections/registry.js', () => ({ findConnection: async () => connection }))
 vi.mock('../../connections/cli-auth.js', () => ({ ensureCliAuth: async () => () => { state.releases++ } }))
 vi.mock('../../agents/providers.js', () => ({ modelFor: (agent: unknown) => { state.calls.push(agent); return { fixture: true } } }))
 vi.mock('../foreman/binding.js', () => ({ readDesktopForemanBinding: () => ({ workspaceId: '2', request: async () => ({ ok: state.authority }) }) }))

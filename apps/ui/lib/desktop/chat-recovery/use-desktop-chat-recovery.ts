@@ -14,7 +14,7 @@ export type DesktopChatRecoveryInput = {
 
 export function useDesktopChatRecovery(input: DesktopChatRecoveryInput): { notice: DesktopRecoveryNotice | null; act: (action: DesktopRecoveryAction) => boolean; clear: () => void } {
     const controller = useRef<DesktopChatRecoveryController | null>(null)
-    const [, setRevision] = useState(0)
+    const [revision, setRevision] = useState(0)
     const scopeKey = JSON.stringify([input.scope.agentId, input.scope.tabUid, input.scope.sessionId, input.scope.liveSessionId, input.scope.runId, input.scope.requestId, input.scope.modelRevision])
     const ports = useRef(input.ports)
     ports.current = input.ports
@@ -24,6 +24,8 @@ export function useDesktopChatRecovery(input: DesktopChatRecoveryInput): { notic
     scope.current = input.scope
     const failedRun = useRef(input.failedRun)
     failedRun.current = input.failedRun
+    const active = useRef(input.active)
+    active.current = input.active
 
     if (!controller.current) {
         controller.current = new DesktopChatRecoveryController(
@@ -53,6 +55,7 @@ export function useDesktopChatRecovery(input: DesktopChatRecoveryInput): { notic
     }, [input.active, input.error, input.failedRun?.runId, input.failedRun?.error, scopeKey])
 
     const act = useCallback((action: DesktopRecoveryAction) => {
+        if (!active.current) return false
         const handled = controller.current?.act(action) ?? false
         setRevision(n => n + 1)
         return handled
@@ -63,6 +66,6 @@ export function useDesktopChatRecovery(input: DesktopChatRecoveryInput): { notic
         setRevision(n => n + 1)
     }, [])
 
-    const notice = useMemo(() => controller.current?.view() ?? null, [scopeKey, input.error, input.failedRun, input.active])
+    const notice = useMemo(() => input.active ? controller.current?.view() ?? null : null, [revision, scopeKey, input.error, input.failedRun, input.active])
     return { notice, act, clear }
 }

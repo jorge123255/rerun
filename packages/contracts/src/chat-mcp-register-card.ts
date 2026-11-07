@@ -2,9 +2,9 @@ import { unwrapToolOutputEnvelope } from './tool-output.js'
 
 export type McpRegisterCard = { name: string; url?: string; outcome: 'saved' | 'failed'; failure?: string }
 
-// The engine answers mcp_register and mcp_login in prose written for the model. Every refusal of
-// mcp_register says "Nothing was saved", which is the one sentence this relies on.
-const NOT_SAVED = 'Nothing was saved'
+// Only a confirmed save may produce an Added card. The desktop adapter also returns
+// pending proposals, which must stay in the review flow rather than claim a save.
+const NOT_SAVED = /nothing (?:was|is) (?:proposed or )?saved/i
 
 function outputText(output: unknown): string {
     const value = unwrapToolOutputEnvelope(output)
@@ -23,12 +23,19 @@ export function mcpRegisterCardOf(toolName: string, input: unknown, output: unkn
     const url = typeof args.url === 'string' ? args.url : undefined
     const text = outputText(output)
     if (toolName === 'mcp_register') {
-        if (text.includes(NOT_SAVED)) return { name: args.name, url, outcome: 'failed', failure: failureOf(text) }
-        return { name: args.name, url, outcome: 'saved' }
+        if (/^Proposed MCP server /i.test(text)) return null
+        if (NOT_SAVED.test(text)) return { name: args.name, url, outcome: 'failed', failure: failureOf(text) }
+        if (text === `Saved ${args.name}.` || text.startsWith(`Connected and registered MCP server "${args.name}" (`)
+            || text.startsWith(`Registered MCP server "${args.name}" (`) && text.includes('but it requires sign-in.')) {
+            return { name: args.name, url, outcome: 'saved' }
+        }
+        return null
     }
     if (toolName === 'mcp_login') {
-        if (text.startsWith('No MCP server named') || text.includes('stdio-based')) return null
-        return { name: args.name, outcome: 'saved' }
+        // Login starts only for a previously registered server. Saved describes that
+        // registration, not completed authentication; retain the original card behavior.
+        return text === `Saved ${args.name}.` || text.startsWith(`Ask the user to open this URL and sign in to "${args.name}":`)
+            ? { name: args.name, outcome: 'saved' } : null
     }
     return null
 }

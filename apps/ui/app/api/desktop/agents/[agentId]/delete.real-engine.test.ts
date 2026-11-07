@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
 import { disposableRunEngine } from '@/test/desktop-run-engine.mjs'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
+import { planDesktopAgentPlacement } from '@/lib/desktop/server/spaces'
 import { createDesktopAgent, findDesktopAgent, listDesktopSessions } from '@/lib/desktop/server/store'
 import { readDesktopHistory } from '@/lib/desktop/server/engine'
 import { createAgent, createConnection, getAgent, setBoxDefault } from '@/lib/engine/client'
@@ -16,7 +17,10 @@ import { DELETE } from './route'
 test.runIf(process.env.RERUN_RUN_HISTORY_ACCEPTANCE === '1')('deletes an idle copy permanently while its original and exact saved chat survive restart', async () => {
     const env = { ...process.env }
     const root = await mkdtemp(join(tmpdir(), 'rerun-real-delete-'))
-    const fixture = await disposableRunEngine(root, undefined, { replyForRequest: (index: number) => index === 1 ? 'Original saved answer.' : 'Copy saved answer.' })
+    const fixture = await disposableRunEngine(root, undefined, {
+        emptyDocker: true,
+        replyForRequest: index => index === 1 ? 'Original saved answer.' : 'Copy saved answer.',
+    })
     const request = (path: string, method = 'GET', body?: unknown) => new Request(`${fixture.runtime.app.origin}${path}`, {
         method, headers: { host: new URL(fixture.runtime.app.origin).host, origin: fixture.runtime.app.origin,
             cookie: `rerun-desktop-session=${fixture.runtime.app.sessionToken}`, 'content-type': 'application/json' }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -46,7 +50,8 @@ test.runIf(process.env.RERUN_RUN_HISTORY_ACCEPTANCE === '1')('deletes an idle co
         })
         const originalSessions = await listDesktopSessions(db, original.id)
         const requestId = crypto.randomUUID()
-        const placement = { requestId, position: { col: 1, row: 1 } }
+        const { space, position } = await planDesktopAgentPlacement(db, original.spaceId)
+        const placement = { requestId, position, spaceId: space.id }
         const duplicated = await duplicate(request(`/api/desktop/agents/${original.id}/duplicate`, 'POST', placement), params(original.id))
         expect(duplicated.status).toBe(201)
         const { agent: copied } = await duplicated.json()

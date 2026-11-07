@@ -66,9 +66,11 @@ export async function patchConnection(id: string, patch: UpdateConnectionInput &
 }
 
 export async function updateConnectionKeys(id: string, { set, remove }: UpdateConnectionKeysInput): Promise<string[]> {
-    assertDesktopProvider((await getConnection(id)).config.provider, id)
-    if (id === RERUN_CONNECTION_ID) throw badRequest('The Rerun connection is keyless')
     return withConnectionLock(id, async () => {
+        // Recheck after the lock: a queued edit cannot recreate a connection
+        // whose removal finished while this request was waiting.
+        assertDesktopProvider((await getConnection(id)).config.provider, id)
+        if (id === RERUN_CONNECTION_ID) throw badRequest('The Rerun connection is keyless')
         const path = connectionEnvPath(id)
         const next = await readEnvFile(path)
         for (const key of remove) delete next[key]

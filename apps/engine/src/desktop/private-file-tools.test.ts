@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { ToolSet } from 'ai'
 import type { RunContext } from '../runtime/context.js'
 const state = vi.hoisted(() => ({enabled: true, granted: true, filesystem: true, hub: 'http://127.0.0.1:3123', release: vi.fn()}))
-vi.mock('../config/env.js', () => ({env: () => ({RERUN_HUB_BASE_URL: state.hub, RERUN_API_KEY: 'engine-only'})}))
+vi.mock('../config/env.js', () => ({env: () => ({RERUN_HUB_BASE_URL: state.hub, RERUN_API_KEY: 'engine-only', RERUN_LOG_LEVEL: 'info'})}))
 vi.mock('../agents/loader.js', () => ({readAgentConfig: async () => ({enabled: state.enabled, tools: {filesystem: state.filesystem, desktopToolGrants: {privateFileWrite: state.granted}}})}))
 vi.mock('./agent-lifecycle.js', () => ({beginDesktopAgentWork: () => state.release}))
 import { desktopPrivateFileTools } from './private-file-tools.js'

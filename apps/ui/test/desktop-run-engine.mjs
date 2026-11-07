@@ -9,13 +9,21 @@ const defaultReply = () => 'A completed local run.'
 /** @type {(index: number) => Array<{ id: string; name: string; input: unknown }>} */
 const noToolCalls = () => []
 
-export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.1:3189', { replyForRequest = defaultReply, toolCallsForRequest = noToolCalls } = {}) {
+/**
+ * @param {string} dataRoot
+ * @param {string} [appOrigin]
+ * @param {{replyForRequest?: typeof defaultReply, toolCallsForRequest?: typeof noToolCalls, triggerCallback?: (request: Request) => Promise<Response>, emptyDocker?: boolean}} [options]
+ */
+export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.1:3189', options = {}) {
+    const { replyForRequest = defaultReply, toolCallsForRequest = noToolCalls, triggerCallback, emptyDocker } = options
     const apiKey = randomBytes(32).toString('hex')
     const encryptionKey = randomBytes(32).toString('hex')
     const runtimeFile = resolve(dataRoot, 'runtime.json')
     const engineRoot = resolve(dataRoot, 'workspaces/1/engine')
     const home = resolve(dataRoot, 'home')
+    const installId = randomUUID()
     await Promise.all([mkdir(engineRoot, { recursive: true }), mkdir(home, { recursive: true })])
+    await writeFile(resolve(engineRoot, 'desktop-owner.json'), JSON.stringify({ installId, workspaceId: 1 }), { mode: 0o600 })
     let child, runtime, releaseReply
     let output = ''
     let notifyProvider
@@ -24,18 +32,65 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
     const providerModels = []
     const providerTools = []
     const waiting = []
+    let coworkerCallEpoch
+    const callbackPaths = new Set(['/api/webhooks/engine', '/api/desktop/internal/delegation', '/api/desktop/internal/mcp', '/api/desktop/internal/triggers'])
     const provider = createServer(async (req, res) => {
-        // This disposable callback server owns no MCP processes. The real engine
-        // still requires an authenticated drain acknowledgement during shutdown.
-        if (req.url === '/api/desktop/internal/mcp' && req.method === 'POST') {
+        if (req.method !== 'POST') return res.writeHead(404).end()
+        if (callbackPaths.has(req.url)) {
+            if (!runtime || req.headers.host !== new URL(appOrigin).host) return res.writeHead(403).end()
             if (req.headers.authorization !== `Bearer ${apiKey}`) return res.writeHead(401).end()
             const bytes = []
-            for await (const chunk of req) bytes.push(chunk)
-            const body = JSON.parse(Buffer.concat(bytes))
-            if (body.action !== 'shutdown') return res.writeHead(400).end()
-            return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ stopped: true }))
+            let length = 0
+            let body
+            try {
+                for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+                    length += chunk.length
+                    if (length > 512_000) return res.writeHead(413).end()
+                    bytes.push(chunk)
+                }
+                body = JSON.parse(Buffer.concat(bytes).toString('utf8'))
+            } catch {
+                return res.writeHead(400).end()
+            }
+            if (!body || typeof body !== 'object' || Array.isArray(body)) return res.writeHead(400).end()
+            const acknowledge = result => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(result))
+
+            // Approval and question continuations prove the canonical conversation source
+            // through the real trigger owner route, even when the conversation is ordinary chat.
+            if (req.url === '/api/desktop/internal/triggers' && triggerCallback && body.event === 'desktop.trigger' && body.op === 'owner') {
+                if (body.launchNonce !== runtime.launchNonce) return res.writeHead(409).end()
+                const response = await triggerCallback(new Request(appOrigin + req.url, {
+                    method: 'POST',
+                    headers: { host: req.headers.host, authorization: req.headers.authorization, 'content-type': 'application/json' },
+                    body: Buffer.concat(bytes),
+                }))
+                return res.writeHead(response.status, Object.fromEntries(response.headers)).end(Buffer.from(await response.arrayBuffer()))
+            }
+
+            // These chat fixtures own no coworker calls, delegations, schedules or MCP processes.
+            // Acknowledge only the lifecycle operations the real engine needs for the empty stores.
+            if (req.url === '/api/desktop/internal/mcp' && body.action === 'shutdown') {
+                return acknowledge({ stopped: true })
+            }
+            if (req.url === '/api/webhooks/engine' && body.event === 'desktop.schedule.shutdown') {
+                return acknowledge({ ok: true, persisted: true })
+            }
+            if (req.url === '/api/webhooks/engine' && body.event === 'desktop.coworker-call' && body.op === 'adopt-epoch') {
+                if (body.launchNonce !== runtime.launchNonce) return res.writeHead(409).end()
+                const { epoch, payload } = body
+                if (typeof epoch !== 'string' || !epoch || payload?.epoch !== epoch || typeof payload?.now !== 'string') return res.writeHead(400).end()
+                if (coworkerCallEpoch !== undefined && coworkerCallEpoch !== epoch) return res.writeHead(409).end()
+                coworkerCallEpoch = epoch
+                return acknowledge({ ok: true, result: true })
+            }
+            if (req.url === '/api/desktop/internal/delegation' && body.operation === 'record-list') {
+                if (body.launchNonce !== runtime.launchNonce) return res.writeHead(409).end()
+                if (!body.data || typeof body.data !== 'object' || Array.isArray(body.data) || Object.keys(body.data).length) return res.writeHead(400).end()
+                return acknowledge({ result: [] })
+            }
+            return res.writeHead(404).end()
         }
-        if (req.url !== '/v1/chat/completions' || req.method !== 'POST') return res.writeHead(404).end()
+        if (req.url !== '/v1/chat/completions') return res.writeHead(404).end()
         const body = []
         for await (const piece of req) body.push(piece)
         const payload = JSON.parse(Buffer.concat(body))
@@ -69,6 +124,7 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
         await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve))
         const port = reservation.address().port
         await new Promise(resolve => reservation.close(resolve))
+        coworkerCallEpoch = undefined
         runtime = { protocolVersion: /** @type {1} */ (1), launchNonce: randomUUID(), buildId: 'run-history-acceptance', workspaceId: /** @type {1} */ (1), dataRoot,
             app: { origin: appOrigin, sessionToken: randomBytes(32).toString('hex') }, engine: { origin: `http://127.0.0.1:${port}`, apiKey } }
         await writeFile(runtimeFile, JSON.stringify(runtime), { mode: 0o600 })
@@ -79,7 +135,8 @@ export async function disposableRunEngine(dataRoot, appOrigin = 'http://127.0.0.
         Object.assign(env, { HOME: home, RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_SECRET_KEY: encryptionKey, RERUN_DESKTOP_RUNTIME_FILE: runtimeFile,
             RERUN_DATA_DIR: engineRoot, RERUN_PORT: String(port), RERUN_HOST: '127.0.0.1', RERUN_API_KEY: apiKey, RERUN_HUB_BASE_URL: appOrigin, RERUN_LOG_LEVEL: 'error' })
         output = ''
-        child = fork(engineEntry, ['desktop-run'], { execArgv: [], env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
+        const execArgv = emptyDocker ? ['--import', new URL('./desktop-empty-docker.mjs', import.meta.url).href] : []
+        child = fork(engineEntry, ['desktop-run'], { execArgv, env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
         for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk.toString()).slice(-8000) })
         await new Promise((resolve, reject) => {
             const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error(`Engine startup timed out: ${output}`)) }, 20000)

@@ -1,4 +1,4 @@
-// Authored for the integration owner. This lane does not run it.
+import { renameSync, symlinkSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -86,5 +86,18 @@ describe('coworker Files import publication', () => {
         controller.abort()
         await expect(publishFilesImport(root, 'a.txt', body(1), controller.signal)).rejects.toMatchObject({ code: 'aborted', kind: 'aborted' })
         await expect(lstat(join(root, 'a.txt'))).rejects.toThrow()
+    })
+
+    it('does not follow a swapped ancestor while rolling back a cancelled import', async () => {
+        const root = await workspace()
+        const outside = await parentDir()
+        await mkdir(join(outside, 'sub'))
+        const controller = new AbortController()
+        await expect(publishFilesImport(root, 'docs/sub/a.txt', body(1), controller.signal, () => {
+            renameSync(join(root, 'docs'), join(root, 'moved'))
+            symlinkSync(outside, join(root, 'docs'), 'dir')
+            controller.abort()
+        })).rejects.toMatchObject({ code: 'aborted' })
+        expect((await lstat(join(outside, 'sub'))).isDirectory()).toBe(true)
     })
 })

@@ -47,7 +47,10 @@ test('read and write grants are separate and default off', () => {
     expect(Object.keys(foremanAgentFileTools(context()))).toEqual([])
     expect(Object.keys(foremanAgentFileTools(context({ foremanAgentFilesRead: true })))).toEqual(['agent_files_read', 'agent_files_list', 'agent_files_search'])
     expect(Object.keys(foremanAgentFileTools(context({ foremanAgentFilesWrite: true })))).toEqual(['agent_files_write', 'agent_files_edit'])
-    expect(Object.keys(foremanAgentFileTools(context({ foremanAgentFilesRead: true }), 'other'))).toEqual([])
+    expect(Object.keys(foremanAgentFileTools(context({ foremanAgentFilesRead: true }, 'agent-7')))).toEqual([])
+    const managed = context({ foremanAgentFilesRead: true, foremanAgentFilesWrite: true })
+    expect(Object.keys(foremanAgentFileTools({ ...managed, agent: { ...managed.agent, id: 'agent-7' } }))).toEqual([])
+    expect(Object.keys(foremanAgentFileTools({ ...managed, agent: { ...managed.agent, config: { ...managed.agent.config, kind: 'user' } } }))).toEqual([])
 })
 
 test('descriptions disclose historical workspace documents', () => {
@@ -118,4 +121,19 @@ test('a publication body identifies the target and call without a secret', async
     const edited = await tools.agent_files_edit!.execute!({ coworker: 'solo', path: 'note.md', oldString: 'hello', newString: 'goodbye' }, { ...call, toolCallId: 'call-2' })
     expect(edited).toContain('saved')
     expect(used.published[1]).toMatchObject({ engineAgentId: 'solo', tool: 'fs_edit', toolCallId: 'call-2' })
+})
+
+test('resolved unknown/refused publications never become successful tool output', async () => {
+    const used = ports({ publish: async () => ({ status: 'unknown', message: 'No acknowledgement.' }) })
+    const tools = foremanAgentFileTools(context({ foremanAgentFilesWrite: true }), used)
+    await expect(tools.agent_files_write!.execute!({ coworker: 'solo', path: 'note.md', content: 'hello' }, call)).rejects.toThrow(FOREMAN_AGENT_FILE_COPY.unknown)
+    used.publish = async () => ({ status: 'refused', message: FOREMAN_AGENT_FILE_COPY.nonTextWrite })
+    await expect(tools.agent_files_write!.execute!({ coworker: 'solo', path: 'note.md', content: 'hello' }, call)).rejects.toThrow(FOREMAN_AGENT_FILE_COPY.nonTextWrite)
+})
+
+test('revocation while a read resolves discards the result', async () => {
+    let granted = true
+    const used = ports({ config: async () => ({ kind: 'foreman', enabled: true, tools: { desktopToolGrants: { foremanAgentFilesRead: granted } } }), readText: async () => { granted = false; return 'discarded' } })
+    const tools = foremanAgentFileTools(context({ foremanAgentFilesRead: true }), used)
+    await expect(tools.agent_files_read!.execute!({ coworker: 'solo', path: 'note.md' }, call)).rejects.toThrow(FOREMAN_AGENT_FILE_COPY.off)
 })

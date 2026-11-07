@@ -8,4 +8,5 @@ export type CoworkerTools = Record<DesktopToolGroup, CoworkerToolRow[]>
 export const coworkerToolPatch = z.strictObject({ group: z.enum(['rerun', 'codex']), id: z.string(), enabled: z.boolean() })
 export type CoworkerToolPatch = z.infer<typeof coworkerToolPatch>
 
-export const coworkerToolCatalogs = { rerun: desktopRerunToolCatalog, codex: desktopCodexToolCatalog }
+// Managed Foreman has its own explicit permission control, not an ordinary coworker row.
+export const coworkerToolCatalogs = { rerun: desktopRerunToolCatalog.filter(row => row.id !== 'foremanAgentFilesRead' && row.id !== 'foremanAgentFilesWrite'), codex: desktopCodexToolCatalog }

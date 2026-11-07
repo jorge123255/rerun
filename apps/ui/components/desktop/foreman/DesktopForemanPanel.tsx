@@ -16,6 +16,7 @@ import { DesktopCompanyResearch } from './company-brief/DesktopCompanyResearch'
 import { DesktopForemanColumn } from './DesktopForemanColumn'
 import { useDesktopForemanIntake } from '@/lib/desktop/foreman-intake'
 import { createDesktopForemanIntakeClient } from '@/lib/desktop/foreman-intake/client'
+import { DesktopForemanFilePermissions } from './DesktopForemanFilePermissions'
 
 export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; signal: AbortSignal; settle: (error?: Error) => void }
 export type DesktopForemanPanelProps = {
@@ -140,7 +141,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         dockFeed={dockFeed} voiceSlot={voiceSlot} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)}
         streaming={!!state.view.live} orbState={state.view.live ? 'thinking' : 'idle'} agentNameOf={props.agentNameOf}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
-        headerActions={error ? <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span> : undefined}
+        headerActions={<><DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} />{error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}</>}
         composerTrailing={props.composerTrailing ?? <span className="truncate text-xs text-muted-foreground">{state.model?.model ?? props.workspaceModel ?? 'Workspace default'}</span>}
     /></>
 }

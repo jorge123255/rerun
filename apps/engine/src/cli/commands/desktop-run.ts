@@ -151,7 +151,7 @@ export async function desktopRunCommand(): Promise<void> {
     const delegation = bindDesktopDelegation(runtime.launchNonce)
     installDesktopDelegation(delegation)
     app.route('/desktop/computer-panel', computerPanel.routes)
-    app.route('/desktop/foreman', createDesktopForemanRoutes())
+    app.route('/desktop/foreman', createDesktopForemanRoutes(undefined, { workspaceId: runtime.workspaceId, launchNonce: runtime.launchNonce }))
     app.route('/desktop/external-mcp', createDesktopExternalMcpRouter(getExternalMcpService))
     app.route('/desktop/tool-install', toolInstall.routes)
     app.route('/agents/:id/screen', screen.routes)

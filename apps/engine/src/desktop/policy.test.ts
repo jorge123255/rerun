@@ -3,6 +3,34 @@ import { assertDesktopProvider, desktopRouteAllowed } from './policy.js'
 
 afterEach(() => vi.unstubAllEnvs())
 
+test('named API management and Foreman permission routes admit only exact intended methods', () => {
+    const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+    for (const path of ['/desktop/api-connections/catalog', '/desktop/api-connections/removal']) {
+        for (const method of methods) expect(desktopRouteAllowed(method, path)).toBe(method === 'GET')
+    }
+    for (const action of ['create', 'rename', 'models', 'credential', 'remove']) {
+        for (const method of methods) expect(desktopRouteAllowed(method, `/desktop/api-connections/${action}`)).toBe(method === 'POST')
+    }
+    for (const path of ['/desktop/api-connections', '/desktop/api-connections/select', '/desktop/api-connections/create/more', '/desktop/api-connections/receipt']) {
+        for (const method of methods) expect(desktopRouteAllowed(method, path)).toBe(false)
+    }
+    for (const method of methods) expect(desktopRouteAllowed(method, '/desktop/foreman/file-permissions')).toBe(method === 'GET' || method === 'PATCH')
+    for (const method of methods) expect(desktopRouteAllowed(method, '/desktop/foreman/file-permissions/more')).toBe(false)
+})
+
+test('generic connection mutations cannot bypass named API receipts through raw, case or encoded aliases', () => {
+    for (const id of ['cnx_fixture-target', 'CNX_FIXTURE-TARGET', '%63nx_fixture-target', 'cnx%5ffixture-target', 'cnx_fixture%2dtarget']) {
+        for (const method of ['PATCH', 'DELETE']) for (const suffix of ['', '/keys']) {
+            expect(desktopRouteAllowed(method, `/connections/${id}${suffix}`)).toBe(false)
+        }
+    }
+    for (const id of ['legacy-openai', 'mac-chatgpt', 'mac-claude']) {
+        expect(desktopRouteAllowed('PATCH', `/connections/${id}`)).toBe(true)
+        expect(desktopRouteAllowed('PATCH', `/connections/${id}/keys`)).toBe(true)
+    }
+    expect(desktopRouteAllowed('PUT', '/connections/default')).toBe(true)
+})
+
 test('Claude requires its dedicated connection and both isolated bundled runtime paths', () => {
     vi.stubEnv('RERUN_DESKTOP_APP', '1')
     vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', '')

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useLayoutEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { useDesktopControlCenterChats } from './use-control-center-chats'
@@ -12,8 +12,9 @@ const data = (agentId: string, title = agentId): DesktopControlCenterChats => ({
     agentId, openChats: [{ agentId, tabUid: `${agentId}-tab`, sessionId: null, title }], recentChats: [], recentStatus: 'ok', hasMore: false,
 })
 function Probe({ agentId, active, scope }: { agentId: string; active: boolean; scope: string }) {
-    current = useDesktopControlCenterChats(agentId, active, scope)
-    return <span>{current.loading ? 'Loading' : current.failed ? 'Failed' : current.data?.agentId}</span>
+    const value = useDesktopControlCenterChats(agentId, active, scope)
+    useLayoutEffect(() => { current = value })
+    return <span>{value.loading ? 'Loading' : value.failed ? 'Failed' : value.data?.agentId}</span>
 }
 const render = (agentId = 'ada', active = true, scope = agentId) => act(async () => { root.render(<Probe agentId={agentId} active={active} scope={scope} />) })
 beforeEach(() => { container = document.body.appendChild(document.createElement('div')); root = createRoot(container) })
