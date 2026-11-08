@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { dataDir, pathSegment } from '../config/paths.js'
 import { HttpError, notFound } from '../lib/errors.js'
 import { desktopApp } from './policy.js'
+import { beginDesktopApiConnectionWork } from './api-connections/admission.js'
 
 const work = new Map<string, number>()
 const deleting = new Set<string>()
@@ -45,11 +46,14 @@ export function beginDesktopAgentWork(id: string): () => void {
     const key = keyOf(id)
     if (deleting.has(key) || desktopDeletionPending(id)) throw new HttpError(409, 'This coworker is being deleted. Try again.')
     assertDesktopAgentNotDeleted(id)
+    const releaseConnectionWork = beginDesktopApiConnectionWork()
+    if (!releaseConnectionWork) throw new HttpError(409, 'A provider connection is being removed. Try again when it finishes.')
     work.set(key, (work.get(key) ?? 0) + 1)
     let released = false
     return () => {
         if (released) return
         released = true
+        releaseConnectionWork()
         const count = (work.get(key) ?? 1) - 1
         if (count) work.set(key, count)
         else work.delete(key)

@@ -11,9 +11,9 @@ function snapshot(over: Partial<DesktopOpencodeAuthoritySnapshot> = {}): Desktop
     return { workspaceId: 1, owner: 'owner', connectionId: 'oc', connectionRevision: 'rev-1', apiKey: 'oc_sk_test', consoleEnabled: false, enabledModelIds: ['go/deepseek-v4-pro'], defaultModelId: 'go/deepseek-v4-pro', state: 'active', launchNonce: 'launch-1', ...over }
 }
 
-function ports(over: Partial<DesktopOpencodePorts> = {}): DesktopOpencodePorts & { execute: ReturnType<typeof vi.fn> } {
-    const execute = vi.fn(async () => saved)
-    return { authority: { current: async () => snapshot() }, store: memoryDesktopOpencodeStore(), execute, ...over, execute: over.execute ?? execute }
+function ports(over: Partial<DesktopOpencodePorts> = {}) {
+    const execute = vi.fn<NonNullable<DesktopOpencodePorts['execute']>>(over.execute ?? (async () => saved))
+    return { authority: { current: async () => snapshot() }, store: memoryDesktopOpencodeStore(), ...over, execute } satisfies DesktopOpencodePorts
 }
 
 describe('desktop OpenCode publisher', () => {

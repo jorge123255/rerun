@@ -4,7 +4,7 @@ import { act, StrictMode, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { UIMessage } from 'ai'
-import { desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, type DesktopAttachmentFields, type DesktopImageSnapshot } from '@rerun/contracts'
+import { DESKTOP_ATTACHMENT_MAX_BYTES, desktopAttachmentFieldsOf, desktopAttachmentSelectionsOf, type DesktopAttachmentFields, type DesktopDocumentAttachment, type DesktopImageSnapshot } from '@rerun/contracts'
 import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
 import { composerTestPng } from '@/lib/desktop/server/composer-image.test-fixtures'
 import { DesktopConversation } from './DesktopConversation'
@@ -25,6 +25,7 @@ let importFile: (name: string, image: boolean, signal?: AbortSignal | null) => P
 let stored: DesktopAttachmentFields & { revision: number; text: string }
 let attempts: { id: string; name: string; size: number }[]
 let savedMessages: UIMessage[]
+let savedDocuments: DesktopDocumentAttachment[]
 const pngBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
 const imageOf = (name = 'picture.png'): DesktopImageSnapshot => ({ sha256: '1'.repeat(64), name, path: name, mediaType: 'image/png', width: 1, height: 1, byteLength: pngBytes.length })
 const txt = (name: string) => new File(['text'], name, { type: 'text/plain' })
@@ -52,15 +53,29 @@ const success = (name: string, image: boolean) => Response.json({ path: name, na
 beforeEach(() => {
     cancelDraftShutdown()
     agent = { id: `mixed-${crypto.randomUUID()}`, name: 'Mixed reader', description: '', createdAt: '', updatedAt: '' }
-    imports = []; attempts = []; savedMessages = []; stored = { revision: 0, text: '' }
+    imports = []; attempts = []; savedMessages = []; savedDocuments = []; stored = { revision: 0, text: '' }
     importFile = async (name, image) => success(name, image)
     chat.messages = []; chat.status = 'ready'; chat.error = undefined
     chat.sendMessage.mockReset().mockResolvedValue(undefined)
     chat.setMessages.mockClear()
     vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 1, height: 1, close() {} })))
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         const url = new URL(String(input), 'http://local'), method = init?.method ?? 'GET'
+        if (url.pathname === `/api/desktop/coworkers/${agent.id}/document-attachments`) {
+            if (method === 'GET') return Response.json({ attachments: savedDocuments.filter(document =>
+                document.scope.tabUid === url.searchParams.get('tabUid') && document.scope.sessionId === url.searchParams.get('sessionId'),
+            ) })
+            const { operation, attachmentId, agentId, tabUid, sessionId, name, position, audioBase64 } = JSON.parse(String(init?.body))
+            if (operation !== 'upload') throw new Error('Unexpected document request')
+            const attachment: DesktopDocumentAttachment = {
+                attachmentId, scope: { agentId, tabUid, sessionId }, name, position, kind: 'pdf', mimeType: 'application/pdf',
+                byteLength: atob(audioBase64).length, sha256: 'a'.repeat(64), conversion: { mode: 'pdf-text', state: 'pending' },
+                admitted: false, selected: true, uploaded: true, revision: crypto.randomUUID(), createdAt: 'now', updatedAt: 'now',
+            }
+            savedDocuments.push(attachment)
+            return Response.json({ attachment })
+        }
+        const nativeReview = desktopNativeReviewRead(input, init); if (nativeReview) return nativeReview
         if (url.pathname.endsWith('/upload-attempts')) {
             if (method === 'GET') return Response.json({ attempts })
             const body = JSON.parse(String(init?.body))
@@ -232,12 +247,55 @@ test('mixed unfinished statuses hydrate independently without losing either fami
     expect(imports).toEqual([])
 })
 
-test('a selection above the combined limit imports nothing and leaves a clear notice', async () => {
+test('a mixed over-limit selection imports valid siblings and names the rejected files', async () => {
+    const oversized = new File([new Uint8Array(DESKTOP_ATTACHMENT_MAX_BYTES + 1)], 'oversized.txt', { type: 'text/plain' })
+    const textFiles = Array.from({ length: 10 }, (_, i) => txt(`file-${i}.txt`))
+    const image = png('keep.png')
     await render(); await drain()
-    await pick(Array.from({ length: 15 }, (_, i) => txt(`file-${i}.txt`))); await drain()
-    expect(imports).toEqual([])
-    expect(container.textContent).toContain('Choose up to 10 files and 4 images')
+    await pick([oversized, ...textFiles, txt('overflow.txt'), image]); await drain()
+    expect(imports).toEqual([...textFiles.map(file => file.name), image.name])
+    expect(container.textContent).toContain('“oversized.txt” Files can be up to 32 KiB.')
+    expect(container.textContent).toContain('“overflow.txt” You can attach up to 10 files.')
     expect(chat.sendMessage).not.toHaveBeenCalled()
+})
+
+test('a mixed selection beyond fourteen names every refused document and restores the accepted siblings', async () => {
+    const docs = Array.from({ length: 12 }, (_, index) => new File(['sample'], `sample-${index + 1}.pdf`, { type: 'application/pdf' }))
+    const accepted = docs.slice(0, 10).map(file => file.name)
+    await render('saved', 'overflow-tab'); await drain()
+    await pick([txt('one.txt'), ...docs, png('keep.png'), txt('two.md')]); await drain()
+    expect(imports).toEqual(['one.txt', 'keep.png', 'two.md'])
+    expect(savedDocuments.map(document => document.name)).toEqual(accepted)
+    const alerts = [...container.querySelectorAll('[role="alert"]')].map(node => node.textContent).join(' ')
+    expect(alerts).toContain('"sample-11.pdf": Attachments can be up to 10 documents.')
+    expect(alerts).toContain('"sample-12.pdf": Attachments can be up to 10 documents.')
+    expect(chat.sendMessage).not.toHaveBeenCalled()
+
+    await act(async () => { root.unmount() }); forgetCoworkerDrafts(agent.id); root = createRoot(container)
+    await render('saved', 'overflow-tab'); await drain()
+    expect([...container.querySelectorAll<HTMLSpanElement>('span[title$=".pdf"]')].map(node => node.title)).toEqual(accepted)
+    expect(container.querySelector('img[alt="keep.png"]')).not.toBeNull()
+    expect(savedDocuments.map(document => document.name)).toEqual(accepted)
+    expect(imports).toEqual(['one.txt', 'keep.png', 'two.md'])
+})
+
+test('a document rejection drops a waiting send but leaves the draft available for an explicit send', async () => {
+    let release!: () => void
+    importFile = (name, image) => new Promise(resolve => { release = () => resolve(success(name, image)) })
+    await render('saved', 'document-send-tab'); await drain()
+    await type('Review both files')
+    await pick([txt('one.txt'), new File([], 'empty.pdf', { type: 'application/pdf' })]); await flush()
+    expect(imports).toEqual(['one.txt'])
+    await submit()
+    expect(chat.sendMessage).not.toHaveBeenCalled()
+    await act(async () => { release() }); await drain()
+    expect(savedDocuments).toEqual([])
+    expect(container.textContent).toContain('empty.pdf')
+    expect(composer().value).toBe('Review both files')
+    expect(chat.sendMessage).not.toHaveBeenCalled()
+
+    await submit(); await drain()
+    expect(chat.sendMessage).toHaveBeenCalledOnce()
 })
 
 

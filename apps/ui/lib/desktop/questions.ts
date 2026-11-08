@@ -13,7 +13,10 @@ export const desktopQuestionAnswerSchema = z.discriminatedUnion('action', [
 export type DesktopQuestionAnswer = z.infer<typeof desktopQuestionAnswerSchema>
 export type DesktopQuestionPayload = z.infer<typeof desktopQuestionPayloadSchema>
 
-const questionItem = z.object({ question: z.string(), options: z.array(z.string()), multiple: z.boolean().optional() })
+// Additive presentation compatibility only: pending question IDs and receipt fingerprints
+// continue to come from the untouched engine question/guard, never from this view schema.
+const questionOption = z.object({ label: z.string(), description: z.string().optional() }).strict()
+const questionItem = z.object({ question: z.string(), header: z.string().optional(), options: z.array(z.union([z.string(), questionOption])), multiple: z.boolean().optional() })
 export const desktopPendingQuestionSchema = z.object({
     id: questionId,
     messageId: z.string().min(1),

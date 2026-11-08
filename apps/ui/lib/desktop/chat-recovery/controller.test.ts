@@ -25,7 +25,7 @@ function controller(current: () => DesktopRecoveryScope, p: DesktopRecoveryPorts
 describe('desktop chat recovery controller', () => {
     it('classifies a missing engine session as session_gone and offers only a new conversation', () => {
         const p = ports()
-        let current = scope()
+        const current = scope()
         const c = controller(() => current, p)
         const notice = c.observe('session not found for this agent')
         expect(notice?.kind).toBe('session_gone')

@@ -10,7 +10,8 @@ export type ProposedFile={path:string;before:BeforeFile|null;after:string;afterH
 /** Review-only receipt for scratch paths that cannot enter portable/live text publish. Never carries file bytes. */
 export type UnsupportedNativeFile={path:string;reason:'binary-or-non-text';parents:readonly ParentIdentity[]}
 export type NativeWritebackBundle={id:string;engineAgentId:string;sessionId:string;runId:string;files:readonly ProposedFile[];unsupported:readonly UnsupportedNativeFile[]}
-export type NativeBaseline={id:string;files:ReadonlyMap<string,BeforeFile>;parents:ReadonlyMap<string,string>}
+type NativeNonTextBaseline={version:string;size:bigint}
+export type NativeBaseline={id:string;files:ReadonlyMap<string,BeforeFile>;parents:ReadonlyMap<string,string>;nonText:ReadonlyMap<string,NativeNonTextBaseline>}
 export const digest=(text:string)=>createHash('sha256').update(text).digest('hex')
 export function pathSafe(path:string){return !!path && path.length<=1024 && !/[\\\p{Cc}]/u.test(path) && path.split('/').every(p=>!!p && !p.startsWith('.') && p!=='node_modules')}
 export function allowedTextPath(path:string){return pathSafe(path) && /\.(txt|md)$/i.test(path)}
@@ -66,11 +67,14 @@ async function scan(root:string){
  return {files,unsupported,dirs}
 }
 export async function captureNativeBaseline(ctx:RunContext,scratch:string,guard:()=>Promise<void>):Promise<NativeBaseline>{
- const root=await workspaceRoot(ctx.agent.id),listing=await scan(scratch),files=new Map<string,BeforeFile>(),parents=new Map<string,string>();let bytes=0
+ const root=await workspaceRoot(ctx.agent.id),listing=await scan(scratch),files=new Map<string,BeforeFile>(),parents=new Map<string,string>(),nonText=new Map<string,NativeNonTextBaseline>();let bytes=0
  for(const folder of listing.dirs){await guard();const handle=await openWithoutLinks(join(root,folder),true);try{const stat=await handle.stat({bigint:true});parents.set(folder,`${stat.dev}:${stat.ino}`)}finally{await handle.close()}}
  for(const path of listing.files){await guard();const [original,copied]=await Promise.all([read(join(root,path),32*1024),read(join(scratch,path),32*1024)]);if(original.sha256!==copied.sha256)throw new Error('Source changed during native snapshot');bytes+=Buffer.byteLength(original.text);if(bytes>1024*1024)throw new Error('Proposal snapshot limit exceeded');files.set(path,Object.freeze(original))}
+ // A copied binary has a different inode from its source. Preserve only its own
+ // initial scratch metadata to prove that the native run left it unchanged.
+ for(const path of listing.unsupported){await guard();const metadata=await nonTextMeta(join(scratch,path));if(metadata)nonText.set(path,Object.freeze(metadata))}
  await guard()
- return {id:randomUUID(),files,parents}
+ return {id:randomUUID(),files,parents,nonText}
 }
 function parentChain(path:string,baseline:NativeBaseline){
  const parts=path.split('/').slice(0,-1),folders=[''];for(let i=1;i<=parts.length;i++)folders.push(parts.slice(0,i).join('/'))
@@ -79,7 +83,8 @@ function parentChain(path:string,baseline:NativeBaseline){
 }
 export async function captureNativeChanges(ctx:RunContext,scratch:string,baseline:NativeBaseline):Promise<NativeWritebackBundle>{
  if(!ctx.runId)throw new Error('Proposal requires exact run identity')
- const root=await workspaceRoot(ctx.agent.id),listing=await scan(scratch),files:ProposedFile[]=[],unsupported:UnsupportedNativeFile[]=[];let bytes=0
+ await workspaceRoot(ctx.agent.id)
+ const listing=await scan(scratch),files:ProposedFile[]=[],unsupported:UnsupportedNativeFile[]=[];let bytes=0
  for(const path of listing.files){
   const before=baseline.files.get(path)??null,parents=parentChain(path,baseline)
   if(!parents)continue
@@ -93,9 +98,9 @@ export async function captureNativeChanges(ctx:RunContext,scratch:string,baselin
   if(!parents)continue
   const scratchMeta=await nonTextMeta(join(scratch,path))
   if(!scratchMeta)continue
-  const originalMeta=await nonTextMeta(join(root,path))
+  const before=baseline.nonText.get(path)
   // Added or metadata-changed non-text only. Unchanged copies stay silent. No bytes retained.
-  if(originalMeta && originalMeta.version===scratchMeta.version && originalMeta.size===scratchMeta.size)continue
+  if(before && before.version===scratchMeta.version && before.size===scratchMeta.size)continue
   unsupported.push(Object.freeze({path,reason:'binary-or-non-text' as const,parents}))
  }
  return Object.freeze({id:baseline.id,engineAgentId:ctx.agent.id,sessionId:ctx.sessionId,runId:ctx.runId,files:Object.freeze(files),unsupported:Object.freeze(unsupported)})

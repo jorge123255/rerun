@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentConfigSchema } from '../agents/types.js'
 import { withAgentLock } from '../agents/lock.js'
+import { clearCachedEnvForTests } from '../config/env.js'
 import type { RunContext } from '../runtime/context.js'
 
 vi.mock('../agents/loader.js', () => ({ readAgentConfig: vi.fn() }))
 vi.mock('./agent-lifecycle.js', () => ({ beginDesktopAgentWork: vi.fn() }))
+vi.mock('./isolated-screen/binding.js', () => ({
+    isolatedScreenOwner: (engineAgentId: string) => ({ engineAgentId, launchNonce: 'fixture-launch' }),
+}))
 vi.mock('./web-fetch/transport.js', async importOriginal => ({
     ...await importOriginal<typeof import('./web-fetch/transport.js')>(), readPublicPage: vi.fn(),
 }))
@@ -53,6 +57,12 @@ beforeEach(() => {
         signal.throwIfAborted()
         return page
     })
+})
+
+afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    clearCachedEnvForTests()
 })
 
 describe('desktop web_fetch admission and lifecycle', () => {
@@ -151,4 +161,43 @@ describe('desktop web_fetch admission and lifecycle', () => {
         await expect(call(ctx)).rejects.toThrow('[404]')
         expect(activeWork).toBe(0)
     })
+
+    it.each(['17d9ec6c-d414-4867-824b-52d3d6956910', 'abcdefghijklmnopqrstu'])(
+        'publishes the full page from a real-shaped desktop run ID %s',
+        async runId => {
+            vi.stubEnv('RERUN_HUB_BASE_URL', 'http://127.0.0.1:41000')
+            vi.stubEnv('RERUN_API_KEY', 'fixture-key')
+            clearCachedEnvForTests()
+            current.tools.filesystem = true
+            current.tools.desktopToolGrants = { webFetch: true, privateFileWrite: true, workspaceRead: true }
+            const ctx = { ...context(new AbortController().signal), runId, sessionId: 'fixture-session' }
+            const fullPage = `${'x'.repeat(50_000)}tail-of-page`
+            readPage.mockResolvedValue({ ...page, body: fullPage, bytes: Buffer.byteLength(fullPage) })
+            const fetcher = vi.fn(async (_url: string, request: RequestInit) => {
+                const { artifacts } = JSON.parse(String(request.body)) as {
+                    artifacts: Array<{ kind: string; path: string; sha256: string; bytes: string }>
+                }
+                const files = artifacts.map(({ kind, path, sha256, bytes }) => ({
+                    kind, path, sha256, byteLength: Buffer.from(bytes, 'base64').length,
+                }))
+                return Response.json({ status: 'saved', files })
+            })
+            vi.stubGlobal('fetch', fetcher)
+
+            const result = await call(ctx)
+            expect(fetcher).toHaveBeenCalledOnce()
+            const [url, request] = fetcher.mock.calls[0]
+            expect(url).toBe('http://127.0.0.1:41000/api/desktop/engine/browser-exports')
+            const published = JSON.parse(String(request.body))
+            expect(published).toMatchObject({
+                operation: 'publish-web-fetch',
+                call: { runId, sessionId: ctx.sessionId, toolCallId: 'web-test', target: { sessionGeneration: expect.stringMatching(/^[a-f0-9]{32}$/) } },
+            })
+            expect(published.artifacts.map((item: { kind: string }) => item.kind)).toEqual(['served-html', 'page-metadata'])
+            const { path, bytes } = published.artifacts[0]
+            expect(Buffer.from(bytes, 'base64').toString()).toBe(fullPage)
+            expect(result).not.toContain('tail-of-page')
+            expect(result).toContain(`Saved whole: ${path} (use this exact path with fs_read if workspace file reading is enabled)`)
+        },
+    )
 })

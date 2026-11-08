@@ -4,7 +4,7 @@ import {
     type DesktopCoworkerShareMemoryNote,
     type DesktopCoworkerShareMemoryPackage,
     type DesktopCoworkerShareMemoryRestoreResult,
-} from '../../../../../packages/contracts/src/desktop-coworker-share-memory.ts'
+} from '@rerun/contracts'
 import { DesktopCoworkerShareMemoryError } from './errors.ts'
 import { digestNoteContent, packageDigest } from './serialize.ts'
 

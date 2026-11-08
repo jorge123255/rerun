@@ -22,3 +22,27 @@ export async function openWithoutLinks(path: string, directory = false): Promise
         throw error
     }
 }
+
+export async function readBoundedFileWithoutLinks(path: string, maxBytes: number): Promise<Buffer> {
+    const file = await openWithoutLinks(path)
+    try {
+        const initial = await file.stat({ bigint: true })
+        if (!initial.isFile() || initial.nlink !== BigInt(1) || initial.size > maxBytes) throw new Error('Unsafe file')
+        const bytes = Buffer.alloc(Number(initial.size) + 1)
+        let length = 0
+        while (length < bytes.length) {
+            const { bytesRead } = await file.read(bytes, length, bytes.length - length, null)
+            if (!bytesRead) break
+            length += bytesRead
+        }
+        const current = await openWithoutLinks(path)
+        try {
+            const info = await current.stat({ bigint: true })
+            if (info.dev !== initial.dev || info.ino !== initial.ino || info.nlink !== BigInt(1)
+                || info.size !== initial.size || info.ctimeNs !== initial.ctimeNs || BigInt(length) !== initial.size) {
+                throw new Error('File changed during read')
+            }
+        } finally { await current.close() }
+        return bytes.subarray(0, length)
+    } finally { await file.close() }
+}

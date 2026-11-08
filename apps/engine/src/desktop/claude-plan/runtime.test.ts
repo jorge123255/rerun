@@ -5,10 +5,10 @@ const binary = '/app/resources/claude/claude', sandbox = '/app/resources/claude/
 const options = () => ({ command: binary, args: ['--print', '--output-format', 'stream-json'], cwd: profile, env: { HOME: '/Users/person', NODE_OPTIONS: '--require=/private/evil.js', ANTHROPIC_API_KEY: 'ambient-key', CLAUDE_CODE_OAUTH_REFRESH_TOKEN: 'ambient-refresh', HTTPS_PROXY: 'http://attacker/' }, signal: new AbortController().signal })
 describe('Claude process isolation', () => {
     it('uses only the bundled binary and isolated profile, ignoring ambient SDK environment', () => {
-        const spec = desktopClaudeSpawnSpec(binary, sandbox, profile, 'account-access', { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' }, options())
+        const spec = desktopClaudeSpawnSpec(binary, sandbox, profile, 'account-access', { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', NODE_ENV: 'development' }, options())
         expect(spec.command).toBe('/usr/bin/sandbox-exec')
         expect(spec.args).toEqual(['-D', `PROFILE=${profile}`, '-D', `BINARY=${binary}`, '-f', sandbox, binary, ...options().args])
-        expect(spec.env).toMatchObject({ HOME: profile, CLAUDE_CONFIG_DIR: profile, CLAUDE_CODE_OAUTH_TOKEN: 'account-access' })
+        expect(spec.env).toMatchObject({ NODE_ENV: 'production', HOME: profile, CLAUDE_CONFIG_DIR: profile, CLAUDE_CODE_OAUTH_TOKEN: 'account-access' })
         for (const forbidden of ['NODE_OPTIONS', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'HTTPS_PROXY']) expect(spec.env).not.toHaveProperty(forbidden)
     })
     it('refuses an ambient CLI, another cwd, permission bypass, and an aborted run', () => {

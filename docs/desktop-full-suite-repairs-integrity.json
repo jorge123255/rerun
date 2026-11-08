@@ -1,0 +1,13 @@
+{
+  "sha": "01666bf15f10e46fe27efa0abba42b10c5001cfb",
+  "parent": "32895be9efed6a043747986c5b0942850627995f",
+  "branch": "cursor/desktop-full-suite-repairs-3a08",
+  "baseBranch": "repair/pr13-private-search",
+  "command": "git status --porcelain && git rev-parse HEAD",
+  "cwd": "/agent/repos/rerun",
+  "status": "clean",
+  "exit": 0,
+  "porcelain": "",
+  "contractsSrcEmit": [],
+  "note": "Engine, UI, packaging, desktop, and opt-in commands ran on this source tree immediately before the commit. No source file changed between those commands and this SHA. This JSON is documentation added after that commit."
+}

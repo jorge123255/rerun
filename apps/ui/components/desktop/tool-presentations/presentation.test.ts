@@ -43,7 +43,7 @@ test('projects pending, running, succeeded, failed, cancelled, and unknown witho
 })
 
 test('redacts credentials and bounds oversized historical text', () => {
-    const raw = `key ${KEY} gh ${GH} slack ${SLACK} Bearer ${BEARER} cookie: session=abc password=${PASSWORD} https://user:pass@example.com/a ${PRIVATE_KEY} ${'x'.repeat(5000)}`
+    const raw = `key ${KEY} gh ${GH} slack ${SLACK} Bearer ${BEARER} cookie: session=abc password=${PASSWORD} https://user:pass@example.com/a ${PRIVATE_KEY}\n${'x'.repeat(5000)}`
     const clean = redactHistoricalText(raw)
     expect(clean).not.toContain(KEY)
     expect(clean).not.toContain(GH)

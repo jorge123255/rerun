@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { request } from '@/lib/engine/client'
 import { createScreenExportPublisher, createScreenExportReader, screenExportIdentity, validateScreenExportManifest, type ScreenExportAuthority, type ScreenExportDependencies, type ScreenExportIdentity, type ScreenExportReceipt, type ScreenExportReconciler } from '../../../../../engine/src/desktop/isolated-screen/transport'
 import { browserHtmlPath, PAGE_RETENTION } from '../../../../../engine/src/desktop/isolated-screen/export-metadata'
+import { servedHtmlPath } from '../../../../../engine/src/desktop/web-fetch-continuation/continuation'
 import type { ScreenExportCall } from '../../../../../engine/src/desktop/isolated-screen/transport'
 import type { ScreenSavedExports } from '../../../../../engine/src/desktop/isolated-screen/types'
 import { getDesktopRemoteMcpService } from '../mcp-binding'
@@ -20,7 +21,7 @@ const ownerSchema = z.object({ id: z.string(), config: z.object({ enabled: z.boo
 const sourceSchema = z.object({ id: z.string(), agentId: z.string(), sessionId: z.string().optional() }).passthrough()
 const rootOf = (authority: ScreenExportAuthority) => (JSON.parse(authority.workspaceIdentity) as [string, string, string])[0]
 
-export function createDesktopBrowserExports(runtime: DesktopRuntime, db: Client) {
+export function createDesktopBrowserExports(runtime: DesktopRuntime, db: Client, options: { webFetch?: boolean } = {}) {
     async function authorize(input: ScreenExportIdentity, signal: AbortSignal, reading = false): Promise<ScreenExportAuthority> {
         const call = screenExportIdentity(input)
         signal.throwIfAborted()
@@ -40,11 +41,17 @@ export function createDesktopBrowserExports(runtime: DesktopRuntime, db: Client)
             ])
             if (session.id !== call.sessionId || session.agentId !== call.engineAgentId || run.id !== call.runId || run.agentId !== call.engineAgentId || run.sessionId !== call.sessionId) throw denied()
         } else {
-            if (call.target.launchNonce !== runtime.launchNonce || !grants.browser || !grants.computer) throw denied()
+            if (call.target.launchNonce !== runtime.launchNonce) throw denied()
             const service = await getDesktopRemoteMcpService(runtime)
-            if (await service.authorizeRun(call, signal, 'privateFileWrite') !== ownerId) throw denied()
-            const status = await request(conn, `${prefix}/screen/status?launchNonce=${encodeURIComponent(runtime.launchNonce)}`, { signal }, value => z.object({ running: z.literal(true), driving: z.literal(false), sessionGeneration: z.string() }).passthrough().parse(value))
-            if (status.sessionGeneration !== call.target.sessionGeneration) throw denied()
+            if (options.webFetch) {
+                if (!grants.webFetch || !grants.privateFileWrite) throw denied()
+                if (await service.authorizeRun(call, signal, 'privateFileWrite') !== ownerId) throw denied()
+            } else {
+                if (!grants.browser || !grants.computer) throw denied()
+                if (await service.authorizeRun(call, signal, 'privateFileWrite') !== ownerId) throw denied()
+                const status = await request(conn, `${prefix}/screen/status?launchNonce=${encodeURIComponent(runtime.launchNonce)}`, { signal }, value => z.object({ running: z.literal(true), driving: z.literal(false), sessionGeneration: z.string() }).passthrough().parse(value))
+                if (status.sessionGeneration !== call.target.sessionGeneration) throw denied()
+            }
         }
         const root = join(/* turbopackIgnore: true */ await canonicalDesktopEngineRoot(runtime), 'agents', call.engineAgentId, 'workspace')
         const workspaceIdentity = await browserWorkspaceIdentity(root)
@@ -65,8 +72,16 @@ export function createDesktopBrowserExports(runtime: DesktopRuntime, db: Client)
             const source = screenExportIdentity(details.source)
             const ownerId = JSON.parse(key)[0] as string
             if (key !== JSON.stringify([ownerId, source.sessionId, source.runId, source.toolCallId, 'browser-exports'])) throw denied()
-            const html = browserHtmlPath(source.url, { agentId: source.engineAgentId, sessionId: source.sessionId, runId: source.runId, toolCallId: source.toolCallId })
-            for (const file of files) if (file.path !== (file.kind === 'screenshot' ? source.navigation?.screenshotPath : file.kind === 'rendered-html' ? html : html.replace(/\.html\.txt$/, '.meta.txt'))) throw denied()
+            const identity = { engineAgentId: source.engineAgentId, sessionId: source.sessionId, runId: source.runId, toolCallId: source.toolCallId, target: source.target, url: source.url }
+            const savedHtml = files.some(file => file.kind === 'served-html')
+                ? servedHtmlPath(source.url, identity)
+                : browserHtmlPath(source.url, { agentId: source.engineAgentId, sessionId: source.sessionId, runId: source.runId, toolCallId: source.toolCallId })
+            const expected = (kind: string) => kind === 'screenshot'
+                ? source.navigation?.screenshotPath
+                : kind === 'page-metadata'
+                    ? savedHtml.replace(/\.html\.txt$/, '.meta.txt')
+                    : savedHtml
+            for (const file of files) if (file.path !== expected(file.kind)) throw denied()
             const bytes = files.reduce((total, file) => total + file.byteLength, 0)
             const tx = await db.transaction('write')
             try {

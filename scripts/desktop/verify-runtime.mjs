@@ -1,29 +1,56 @@
-import { lstat, mkdir, mkdtemp, rm, readdir, readFile, realpath } from 'node:fs/promises'
-import { basename, join, relative, resolve, sep } from 'node:path'
+import { mkdir, mkdtemp, rm, readdir, readFile, realpath } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { tmpdir, userInfo } from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
-import { dirname } from 'node:path'
+import { loadBundle } from '../../apps/desktop/src/main/runtime.mjs'
 import { existsSync, output, repoRoot, resourcesDir } from './lib.mjs'
 import { readUiSharpManifest } from './ui-sharp.mjs'
 import { verifyPdfHelper } from './pdf-helper-probe.mjs'
 import { verifyPdfTextHelper } from './pdf-text-probe.mjs'
+import { runtimeSymlinkIsContained } from './runtime-symlinks.mjs'
 
 const execFileAsync = promisify(execFile)
 const failures = []
 const check = (ok, label) => { console.log(`${ok ? 'PASS' : 'FAIL'} ${label}`); if (!ok) failures.push(label) }
-
-const manifest = JSON.parse(await readFile(join(resourcesDir, 'runtime-manifest.json'), 'utf8'))
-check(manifest.protocolVersion === 1 && typeof manifest.buildId === 'string' && manifest.buildId.length > 0, 'manifest protocolVersion/buildId')
-
-const resolved = {}
-for (const field of ['nodePath', 'uiRoot', 'engineEntry', 'uiHost', 'codexPath', 'claudePath', 'claudeSandboxPath', 'renameHelperPath', 'pdfHelperPath', 'pdfTextHelperPath']) {
-    const path = resolve(resourcesDir, manifest[field] ?? '')
-    resolved[field] = path
-    const rel = relative(resourcesDir, path)
-    check(!rel.startsWith('..') && existsSync(path), `manifest ${field} exists inside resources`)
+function refuseFailures() {
+    if (!failures.length) return
+    console.error(`\n${failures.length} verification failure(s)`)
+    process.exit(1)
 }
+
+const root = await realpath(resourcesDir)
+const forbidden = /^(?:\.env(?:$|\.)|\.(?:git|svn|hg)$)/i
+const secretExt = /\.(pem|key|p12|pfx|mobileprovision|jks|keystore)$/i
+const offenders = []
+const escapees = []
+async function scan(dir) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (forbidden.test(entry.name) || secretExt.test(entry.name)) offenders.push(path)
+        else if (entry.isDirectory()) await scan(path)
+        else if (entry.isSymbolicLink() && !await runtimeSymlinkIsContained(root, path)) escapees.push(path)
+    }
+}
+await scan(root)
+check(offenders.length === 0, `no secrets/vcs files staged${offenders.length ? ` (${offenders.join(', ')})` : ''}`)
+check(escapees.length === 0, `all symlinks can relocate inside resources${escapees.length ? ` (${escapees.join(', ')})` : ''}`)
+refuseFailures()
+
+// Use the same manifest rules as startup, and finish the static checks before
+// executing or resolving modules from any part of the staged runtime.
+const resolved = await loadBundle(root)
+check(true, 'manifest protocolVersion/buildId and contained runtime paths')
+const engineDir = join(root, 'runtime', 'engine')
+const uiDir = resolved.uiRoot
+check(resolved.engineEntry === join(engineDir, 'dist', 'cli', 'bin.js'), 'manifest engine entry matches the staged runtime')
+check(existsSync(join(uiDir, 'server.js')), 'manifest UI server.js staged')
+check(!['components', 'test'].some(dir => existsSync(join(uiDir, dir))), 'compiled UI ships without source components or test fixtures')
+check(existsSync(join(uiDir, '.next', 'static')), 'ui .next/static staged')
+check(existsSync(join(uiDir, 'public')), 'ui public staged')
+check(existsSync(join(root, 'runtime', 'node', 'bin', 'npm')) || existsSync(join(root, 'runtime', 'node', 'lib', 'node_modules', 'npm')), 'bundled npm staged')
+refuseFailures()
 
 const nodeVersion = await output(resolved.nodePath, ['--version']).catch(error => `error: ${error.message}`)
 check(nodeVersion === 'v22.23.4', `bundled node runs (${nodeVersion})`)
@@ -51,7 +78,6 @@ try {
     check(version === `codex-cli ${pinnedVersion}`, 'isolated bundled Codex CLI matches the pinned version')
 } finally { await rm(probeHome, { recursive: true, force: true }) }
 
-const engineDir = join(resourcesDir, 'runtime', 'engine')
 const claudeProbe = await realpath(await mkdtemp(join(tmpdir(), 'rerun-verify-claude-')))
 try {
     await mkdir(join(claudeProbe, 'tmp'), { mode: 0o700 })
@@ -61,14 +87,6 @@ try {
     const version = await output('/usr/bin/sandbox-exec', ['-D', `PROFILE=${claudeProbe}`, '-D', `BINARY=${resolved.claudePath}`, '-f', resolved.claudeSandboxPath, resolved.claudePath, '--version'], { cwd: claudeProbe, env: { PATH: '/usr/bin:/bin', HOME: claudeProbe, CLAUDE_CONFIG_DIR: claudeProbe, TMPDIR: join(claudeProbe, 'tmp') }, timeout: 15000 }).catch(() => '')
     check(version === `${sdk.claudeCodeVersion} (Claude Code)`, 'isolated bundled Claude CLI matches the locked SDK')
 } finally { await rm(claudeProbe, { recursive: true, force: true }) }
-const uiDir = join(resourcesDir, 'runtime', 'ui')
-check(existsSync(join(uiDir, 'server.js')), 'ui server.js staged')
-check(!['components', 'test'].some(dir => existsSync(join(uiDir, dir))), 'compiled UI ships without source components or test fixtures')
-check(existsSync(join(uiDir, '.next', 'static')), 'ui .next/static staged')
-check(existsSync(join(uiDir, 'public')), 'ui public staged')
-check(existsSync(join(engineDir, 'dist', 'cli', 'bin.js')), 'engine bin entry staged')
-check(existsSync(join(resourcesDir, 'runtime', 'node', 'bin', 'npm')) || existsSync(join(resourcesDir, 'runtime', 'node', 'lib', 'node_modules', 'npm')), 'bundled npm staged')
-
 async function probe(moduleName, cwd, expression) {
     const script = `const m = await import('${moduleName}'); ${expression}`
     try {
@@ -102,30 +120,5 @@ try {
     check(false, `UI Sharp runtime metadata (${error.message})`)
 }
 
-const forbidden = /^\.env($|\.)/i
-const secretExt = /\.(pem|key|p12|pfx|mobileprovision|jks|keystore)$/i
-const offenders = []
-const escapees = []
-async function scan(dir) {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-        const path = join(dir, entry.name)
-        if (entry.isDirectory()) {
-            if (['.git', '.svn', '.hg'].includes(entry.name)) offenders.push(path)
-            else await scan(path)
-        } else if (entry.isSymbolicLink()) {
-            const target = await realpath(path).catch(() => null)
-            if (target && relative(await realpath(resourcesDir), target).startsWith('..' + sep)) escapees.push(path)
-        } else if (forbidden.test(entry.name) || secretExt.test(entry.name)) {
-            offenders.push(path)
-        }
-    }
-}
-await scan(resourcesDir)
-check(offenders.length === 0, `no secrets/vcs files staged${offenders.length ? ` (${offenders.join(', ')})` : ''}`)
-check(escapees.length === 0, `no symlinks escape resources${escapees.length ? ` (${escapees.join(', ')})` : ''}`)
-
-if (failures.length) {
-    console.error(`\n${failures.length} verification failure(s)`)
-    process.exit(1)
-}
+refuseFailures()
 console.log('\nruntime verification passed')

@@ -70,7 +70,7 @@ export function validateScreenExportResult(result: ScreenSavedExports, files: Sc
 export function validateScreenExportManifest(files: ScreenExportFiles): ScreenExportFiles {
     if (!Array.isArray(files) || !files.length || files.length > 3 || new Set(files.map(item => item?.kind)).size !== files.length) throw new Error('Invalid browser export inventory.')
     for (const item of files) {
-        if (!item || !['rendered-html', 'screenshot', 'page-metadata'].includes(item.kind) || Object.keys(item).some(key => !['kind', 'path', 'sha256', 'byteLength'].includes(key))) throw new Error('Invalid browser export inventory.')
+        if (!item || !['rendered-html', 'served-html', 'screenshot', 'page-metadata'].includes(item.kind) || Object.keys(item).some(key => !['kind', 'path', 'sha256', 'byteLength'].includes(key))) throw new Error('Invalid browser export inventory.')
         exportPath(item.path, item.kind)
         const max = item.kind === 'screenshot' ? EXPORT_PNG_MAX : item.kind === 'page-metadata' ? PAGE_METADATA_MAX : EXPORT_HTML_MAX
         if (!/^[a-f0-9]{64}$/.test(item.sha256) || !Number.isSafeInteger(item.byteLength) || item.byteLength < 1 || item.byteLength > max) throw new Error('Invalid browser export inventory.')
@@ -95,10 +95,10 @@ export function screenExportIdentity(input: ScreenExportIdentity): ScreenExportI
 async function validatedArtifacts(input: ScreenExportArtifact[], signal: AbortSignal): Promise<ScreenExportArtifact[]> {
     if (!Array.isArray(input) || input.length < 1 || input.length > 3) throw new Error('Invalid browser export count.')
     const artifacts = input.map(item => {
-        if (!item || !['rendered-html', 'screenshot', 'page-metadata'].includes(item.kind)
+        if (!item || !['rendered-html', 'served-html', 'screenshot', 'page-metadata'].includes(item.kind)
             || Object.keys(item).some(key => !['kind', 'path', 'mediaType', 'bytes', 'sha256', 'width', 'height'].includes(key))) throw new Error('Invalid browser export kind.')
         exportPath(item.path, item.kind)
-        const max = item.kind === 'rendered-html' ? EXPORT_HTML_MAX : item.kind === 'screenshot' ? EXPORT_PNG_MAX : PAGE_METADATA_MAX
+        const max = item.kind === 'rendered-html' || item.kind === 'served-html' ? EXPORT_HTML_MAX : item.kind === 'screenshot' ? EXPORT_PNG_MAX : PAGE_METADATA_MAX
         if (!Buffer.isBuffer(item.bytes) || !item.bytes.length || item.bytes.length > max
             || item.mediaType !== (item.kind === 'screenshot' ? 'image/png' : 'text/plain')
             || createHash('sha256').update(item.bytes).digest('hex') !== item.sha256) throw new Error('Invalid browser export bytes.')

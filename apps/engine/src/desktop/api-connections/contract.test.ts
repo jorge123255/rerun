@@ -4,7 +4,7 @@ import { desktopApiCanonicalJson, desktopApiConnectionViewSchema, desktopApiDefa
 it('keeps redacted views strict and permits defaults from existing providers', () => {
     expect(desktopApiDefaultModelSchema.parse({ connectionId: 'mac-chatgpt', model: 'gpt-6-sol', reasoningEffort: 'high' })).toMatchObject({ connectionId: 'mac-chatgpt' })
     const view = {
-        version: 1, workspaceId: 1, connectionId: 'cnx_test-1', revision: 'rev_test-1', provider: 'openai', name: 'OpenAI work', models: ['gpt-5'], extraModels: [], connected: true, credentialRejected: false, createdAt: '2026-11-06T00:00:00.000Z',
+        version: 1, workspaceId: 1, connectionId: 'cnx_fixture-00000001', revision: 'rev_fixture-00000001', provider: 'openai', name: 'OpenAI work', models: ['gpt-5'], extraModels: [], connected: true, credentialRejected: false, createdAt: '2026-11-06T00:00:00.000Z',
     }
     expect(desktopApiConnectionViewSchema.parse(view)).toEqual(view)
     expect(desktopApiConnectionViewSchema.safeParse({ ...view, env: { OPENAI_API_KEY: 'sk-secret' } }).success).toBe(false)

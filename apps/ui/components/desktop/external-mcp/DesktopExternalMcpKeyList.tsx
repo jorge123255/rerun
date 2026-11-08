@@ -3,7 +3,7 @@
 import type { ExternalMcpKeyView } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { BanIcon } from '@/lib/icons'
-import { shortRelativeTime } from '@/lib/time'
+import { fullDateTime, shortRelativeTime } from '@/lib/time'
 
 export function DesktopExternalMcpKeyList({ keys, busy, pendingKeyIds = new Set<string>(), onRevoke }: { keys: ExternalMcpKeyView[]; busy: boolean; pendingKeyIds?: ReadonlySet<string>; onRevoke: (key: ExternalMcpKeyView) => void }) {
     return (
@@ -26,7 +26,7 @@ function Row({ apiKey, busy, pending, onRevoke }: { apiKey: ExternalMcpKeyView; 
             <div className="min-w-0 flex-1">
                 <span className="block truncate text-sm">{apiKey.name}</span>
                 <span className="block font-mono text-[11px] break-all text-muted-foreground">{apiKey.keyPrefix}…</span>
-                <span className="block text-[11px] break-words text-muted-foreground">{apiKey.scopes.join(', ')}{apiKey.expiresAt ? ` · Expires ${shortRelativeTime(apiKey.expiresAt)}` : ''}</span>
+                <span className="block text-[11px] break-words text-muted-foreground">{apiKey.scopes.join(', ')}{apiKey.expiresAt ? ` · Expires ${fullDateTime(apiKey.expiresAt)}` : ''}</span>
             </div>
             <span className="shrink-0 text-[11px] text-muted-foreground">{pending ? 'Revoke unfinished' : state}</span>
             <Button

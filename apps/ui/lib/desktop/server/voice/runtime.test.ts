@@ -15,7 +15,7 @@ const bytes = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4, ...new TextEn
 const format = { mimeType: 'audio/webm;codecs=opus', extension: 'webm' as const, transcriptionFormat: 'webm' as const }
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of cleanup.splice(0)) await close() })
-async function fixture(initial: DesktopVoiceScope = scope) {
+async function fixture(initial: DesktopVoiceScope = scope, workspaceId = 1) {
     const folder = await mkdtemp(join(tmpdir(), 'rerun-voice-runtime-')), url = `file:${join(folder, 'voice.db')}`
     let db: Client = createClient({ url })
     cleanup.push(async () => { db.close(); await rm(folder, { recursive: true, force: true }) })
@@ -34,7 +34,7 @@ async function fixture(initial: DesktopVoiceScope = scope) {
       INSERT INTO desktop_sessions VALUES('other-session','sibling','engine-other','Other','now','now');`)
     const layout = async (tabs = [{ uid: initial.tabUid, id: initial.sessionId ?? null }]) => db.execute({ sql: 'INSERT OR REPLACE INTO desktop_agent_tabs(agent_id,revision,layout) VALUES(?,1,?)', args: [initial.agentId, JSON.stringify({ tabs, activeIndex: 0 })] })
     await layout()
-    const runtime: DesktopRuntime = { protocolVersion: 1, launchNonce: 'launch', buildId: 'build', workspaceId: 1, dataRoot: folder, app: { origin: 'http://127.0.0.1:1111', sessionToken: 's'.repeat(32) }, engine: { origin: 'http://127.0.0.1:2222', apiKey: 'fixture' } }
+    const runtime: DesktopRuntime = { protocolVersion: 1, launchNonce: 'launch', buildId: 'build', workspaceId, dataRoot: folder, app: { origin: 'http://127.0.0.1:1111', sessionToken: 's'.repeat(32) }, engine: { origin: 'http://127.0.0.1:2222', apiKey: 'fixture' } }
     let enabled = true, lost = false, admissions = 0, active = true
     const saved = new Map<string, { text: string; sessionId: string; runId: string }>()
     const messages: Array<{ id: string; role: string; contentJson: string }> = []
@@ -71,6 +71,28 @@ async function fixture(initial: DesktopVoiceScope = scope) {
         lost: () => { lost = true }, disabled: () => { enabled = false }, invalidate: () => { active = false }, admissions: () => admissions,
         restart: async () => { db.close(); db = createClient({ url }); service = await createDesktopVoiceRuntime(runtime, db, ports); return service } }
 }
+it.each([1, 2])('uses the assigned database local owner row in runtime workspace %i across reopen', async workspaceId => {
+    const f = await fixture(scope, workspaceId)
+    expect(await f.service.list(scope, f.signal)).toEqual([])
+    const ready = await f.ready()
+    expect((await f.service.send(scope, { ...scope, attemptId, expectedRevision: ready.revision }, f.signal)).dispatch).toEqual({ sessionId: 'session', runId: attemptId })
+    const service = await f.restart()
+    expect((await service.audio(scope, attemptId, f.signal)).bytes).toEqual(bytes)
+    await expect(service.list({ ...scope, sessionId: 'other-session' }, f.signal)).rejects.toThrow()
+    expect(f.admissions()).toBe(1)
+})
+it('rejects a voice owner stored under another workspace id even when that id equals the runtime', async () => {
+    const f = await fixture(scope, 2)
+    await f.db.execute("UPDATE desktop_agents SET workspace_id=2 WHERE id='owner'")
+    await expect(f.service.list(scope, f.signal)).rejects.toThrow()
+})
+it('does not read a voice owner that exists only in another workspace database', async () => {
+    const home = await fixture(scope, 1)
+    const other = await fixture(scope, 2)
+    await home.db.execute("INSERT INTO desktop_agents VALUES('only-home',1,'engine-home','Home','',1,'now','now')")
+    await expect(other.service.list({ ...scope, agentId: 'only-home' }, other.signal)).rejects.toThrow()
+    expect(await home.service.list(scope, home.signal)).toEqual([])
+})
 it('persists real immutable bytes and send receipt across reopen, with one canonical queued admission', async () => {
     const f = await fixture(), ready = await f.ready()
     const input = { ...scope, attemptId, expectedRevision: ready.revision }

@@ -19,29 +19,33 @@ You are the Foreman of this Rerun workspace: the assistant that sets up and runs
 // the server, so a file it made is seen there or not at all.
 const FOREMAN_TOOL_KEYS = new Set<ToolKey>(['filesystem', 'shared', 'shell', 'web', 'sharedDb', 'brain', 'delegate', 'callAgent', 'browser', 'vision', 'askUser', 'requestApproval', 'cards'])
 
-function foremanConfig(modelPin: ModelPin): AgentConfig {
+function foremanConfig(choice: ForemanChoice): AgentConfig {
     const tools = Object.fromEntries(TOOL_KEYS.map(key => [key, FOREMAN_TOOL_KEYS.has(key)]))
     return agentConfigSchema.parse({
-        ...modelPin,
+        ...choice.model,
         name: FOREMAN_AGENT_ID,
         kind: 'foreman',
         displayName: 'Foreman',
-        tools,
+        tools: { ...tools, desktopToolGrants: choice.fileGrants },
         selfImprovement: { enabled: false, allowToolInstall: false, allowSoulEdit: false, autoMemory: false },
         setup: { required: false },
     })
 }
 
 type ModelPin = Pick<AgentConfig, 'connectionId' | 'provider' | 'model'>
+type ForemanChoice = { model: ModelPin; fileGrants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean } }
 
-// The model is the one thing the user picks for the foreman, as for any agent, so it is the one
-// thing a reboot keeps.
-async function currentModelPin(): Promise<ModelPin> {
+// Preserve only the user's model and explicit separate file permissions; program-owned
+// identity, instructions and every other capability are still rebuilt from code.
+async function currentChoice(): Promise<ForemanChoice> {
     try {
-        const { connectionId, provider, model } = agentConfigSchema.parse(JSON.parse(await readFile(configPath(FOREMAN_AGENT_ID), 'utf8')))
-        return { connectionId, provider, model }
+        const { connectionId, provider, model, tools } = agentConfigSchema.parse(JSON.parse(await readFile(configPath(FOREMAN_AGENT_ID), 'utf8')))
+        return { model: { connectionId, provider, model }, fileGrants: {
+            foremanAgentFilesRead: tools.desktopToolGrants?.foremanAgentFilesRead === true,
+            foremanAgentFilesWrite: tools.desktopToolGrants?.foremanAgentFilesWrite === true,
+        } }
     } catch {
-        return { connectionId: null, provider: null, model: null }
+        return { model: { connectionId: null, provider: null, model: null }, fileGrants: { foremanAgentFilesRead: false, foremanAgentFilesWrite: false } }
     }
 }
 
@@ -49,7 +53,7 @@ async function currentModelPin(): Promise<ModelPin> {
 // foreman it was built with. Deliberately never inserted in the agent index.
 export async function ensureForeman(): Promise<void> {
     await mkdir(workspaceDir(FOREMAN_AGENT_ID), { recursive: true })
-    await writeAgentConfig(FOREMAN_AGENT_ID, foremanConfig(await currentModelPin()))
+    await writeAgentConfig(FOREMAN_AGENT_ID, foremanConfig(await currentChoice()))
     await writeFile(soulPath(FOREMAN_AGENT_ID), FOREMAN_SOUL, 'utf8')
     unloadAgent(FOREMAN_AGENT_ID)
 }

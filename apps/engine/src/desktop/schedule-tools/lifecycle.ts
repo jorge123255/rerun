@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { Cron } from 'croner'
+import { computeNextRun, isSchedulePauseWithoutTimingChange, isValidTimezone } from '../../schedules/next-run.js'
 import { DESKTOP_SCHEDULE_TOOL_MESSAGES as M, type DesktopScheduleToolNotice, type DesktopScheduleToolOutcome, type DesktopScheduleToolProjection } from '@rerun/contracts'
 import { slugify } from '../../lib/ids.js'
 import { withAgentLock } from '../../agents/lock.js'
-import { desktopScheduleModelDecision, isIanaTimezone } from './model.js'
+import { desktopScheduleModelDecision } from './model.js'
 import { desktopScheduleDefinitionRevision } from './revision.js'
 import { projectScheduleGet, projectScheduleList } from './project.js'
 import type { DesktopScheduleDefinition, DesktopScheduleFilePort, DesktopScheduleIntent, DesktopScheduleIntentStore, DesktopScheduleOwner, DesktopScheduleReceipt, DesktopScheduleToolAuthority } from './types.js'
@@ -54,12 +54,12 @@ function exclusive(cron: string | null, runAt: string | null) {
     if (Boolean(cron) === Boolean(runAt)) throw reject(M.exclusive)
 }
 
-function assertTiming(cron: string | null, runAt: string | null, timezone: string | null, requireTimezone: boolean) {
+function assertTiming(cron: string | null, runAt: string | null, timezone: string | null, requireTimezone: boolean, from: Date) {
     exclusive(cron, runAt)
     if (requireTimezone && !timezone) throw reject(M.timezone)
-    if (timezone && !isIanaTimezone(timezone)) throw reject(M.invalidTimezone(timezone))
+    if (timezone && !isValidTimezone(timezone)) throw reject(M.invalidTimezone(timezone))
     if (cron) {
-        try { new Cron(cron, timezone ? { timezone } : undefined) } catch { throw reject(M.invalidCron(cron)) }
+        if (!computeNextRun({ cron, timezone }, from).ok) throw reject(M.invalidCron(cron))
     }
     if (runAt && Number.isNaN(new Date(runAt).getTime())) throw reject(M.invalidRunAt(runAt))
 }
@@ -265,7 +265,7 @@ export function createDesktopScheduleLifecycle(input: {
                 const timezone = raw.timezone ?? null
                 const cron = raw.cron ?? null
                 const runAt = raw.runAt ?? null
-                assertTiming(cron, runAt, timezone, true)
+                assertTiming(cron, runAt, timezone, true, now())
                 return {
                     slug,
                     name: raw.name.trim(),
@@ -305,8 +305,7 @@ export function createDesktopScheduleLifecycle(input: {
                     next.provider = null
                     next.model = null
                 }
-                assertTiming(next.cron, next.runAt, next.timezone, false)
-                if ((next.cron || next.runAt) && next.timezone && !isIanaTimezone(next.timezone)) throw reject(M.invalidTimezone(next.timezone))
+                if (!isSchedulePauseWithoutTimingChange(raw)) assertTiming(next.cron, next.runAt, next.timezone, false, now())
                 return next
             }, async () => {
                 await admission?.()
@@ -328,7 +327,7 @@ export function createDesktopScheduleLifecycle(input: {
                 if (count > 1 && !raw.replaceAll) throw reject(M.ambiguous(slug, count))
                 const body = raw.replaceAll ? current.body.split(raw.oldString).join(raw.newString) : current.body.replace(raw.oldString, raw.newString)
                 if (body.length > 64000) throw reject(M.tooLong)
-                assertTiming(current.cron, current.runAt, current.timezone, false)
+                assertTiming(current.cron, current.runAt, current.timezone, false, now())
                 return { ...current, body }
             }, admission)
         },

@@ -1,7 +1,8 @@
-import { BRAIN_CHANGE_NOTES, brainChangeHeadline, brainChangeOf, type BrainChangeStatus, mcpRegisterCardOf, unwrapToolOutputEnvelope } from '@rerun/contracts'
+import { BRAIN_CHANGE_NOTES, brainChangeHeadline, brainChangeOf, brainSlugSchema, type BrainChangeStatus, mcpRegisterCardOf, unwrapToolOutputEnvelope } from '@rerun/contracts'
 import { redactHistoricalText } from './redact'
 import {
     DESKTOP_HISTORICAL_OUTPUT_BOUND,
+    DESKTOP_NOTIFICATION_DELIVERED,
     desktopHistoricalCallId,
     desktopHistoricalToolName,
     projectDesktopToolStatus,
@@ -11,8 +12,7 @@ import {
     type DesktopHistoricalToolSource,
 } from './status'
 
-export const DESKTOP_NOTIFICATION_DELIVERED = 'Notification sent to the user.'
-export const DESKTOP_NOTIFICATION_UNDELIVERED = 'Notification not delivered'
+export { DESKTOP_NOTIFICATION_DELIVERED, DESKTOP_NOTIFICATION_UNDELIVERED } from './status'
 const NOTIFICATION_MESSAGE_LIMIT = 16_000
 
 export type DesktopHistoricalCard =
@@ -73,10 +73,6 @@ function notificationCard(part: DesktopHistoricalToolSource, identity: DesktopHi
     const input = inputRecord(part.input)
     const message = input && typeof input.message === 'string' ? input.message : ''
     if (!message.trim() || message.length > NOTIFICATION_MESSAGE_LIMIT) return null
-    const output = boundedString(part.output)
-    if (output == null) return null
-    if (output.includes(DESKTOP_NOTIFICATION_UNDELIVERED)) return null
-    if (output.trim() !== DESKTOP_NOTIFICATION_DELIVERED) return null
     const shown = redactHistoricalText(message).trim()
     if (!shown) return null
     return { kind: 'notification', toolCallId, message: shown, identity, status: 'succeeded' }
@@ -146,4 +142,35 @@ export function selectDesktopHistoricalCard(part: DesktopHistoricalToolSource, c
     if (toolName === 'mcp_register' || toolName === 'mcp_login') return mcpCard(part, toolName, identity.identity, toolCallId)
     if (toolName === 'brain_write' || toolName === 'brain_delete' || toolName === 'brain_decide') return brainCard(part, toolName, identity.identity, toolCallId)
     return null
+}
+
+/**
+ * The history boundary retains only fields needed to reconstruct an already-recorded card.
+ * It never forwards original transport envelopes, credentials, Brain contents or undo tokens.
+ * Using the same selector first keeps refusal/unknown acknowledgements out of success cards.
+ */
+export function projectDesktopHistoricalCard(part: DesktopHistoricalToolSource): { input: Record<string, unknown>; output: string } | null {
+    const card = selectDesktopHistoricalCard(part)
+    if (!card) return null
+    switch (card.kind) {
+        case 'notification':
+            return { input: { message: card.message }, output: DESKTOP_NOTIFICATION_DELIVERED }
+        case 'mcp':
+            return {
+                input: { name: card.name, ...(card.host && { url: `https://${card.host}` }) },
+                output: card.outcome === 'saved' ? `Saved ${card.name}.` : `Nothing was saved via remote: ${card.failure || 'The server was not added.'}`,
+            }
+        case 'brain-change': {
+            const change = brainChangeOf(desktopHistoricalToolName(part), part.output)
+            const slug = brainSlugSchema.safeParse(change?.slug)
+            if (!change || !slug.success) return null
+            return { input: {}, output: JSON.stringify({
+                status: change.status,
+                slug: slug.data,
+                title: redactHistoricalText(change.title),
+                ...((change.mode === 'create' || change.mode === 'edit') && { mode: change.mode }),
+                ...(typeof change.agentName === 'string' && { agentName: redactHistoricalText(change.agentName, 200) }),
+            }) }
+        }
+    }
 }

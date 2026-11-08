@@ -10,6 +10,7 @@ import { MarkdownTextarea } from '@/components/ui/markdown-textarea'
 import { Segmented } from '@/components/ui/segmented'
 import { Switch } from '@/components/ui/switch'
 import type { DesktopCoworkerSettings as Settings } from '@/lib/desktop/coworker-settings'
+import { FxSettingsLoading } from './fx-repairs/PanelLoadingSkeletons'
 import type { DesktopAgentView } from './DesktopApp'
 import { useDesktopDialogControl, type DesktopDialogControl } from '@/lib/desktop/use-dialog-control'
 
@@ -131,7 +132,7 @@ export function DesktopCoworkerSettings({ agent, disabled, dialogControl }: { ag
                                 aria-description={learningHelp(draft)} onCheckedChange={autoMemory => setDraft({ ...draft, autoMemory })} />
                         </Field>
                     </fieldset>
-                </fieldset> : !error && <p role="status" className="text-sm text-muted-foreground">Loading coworker settings…</p>}
+                </fieldset> : !error && <FxSettingsLoading />}
                 {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
                 <DialogFooter>
                     <Button type="button" variant="outline" disabled={saving} onClick={() => changeOpen(false)}>Cancel</Button>

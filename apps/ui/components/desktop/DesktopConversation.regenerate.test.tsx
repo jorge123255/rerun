@@ -19,6 +19,36 @@ function Harness() {
     return <DesktopConversation agent={agent} sessions={sessions} sessionId={selected} onSelectSession={select} onChatSession={select} />
 }
 
+test('provider recovery cannot replay the previous reply after a newer attachment turn fails', async () => {
+    const terminal = { ...row('engine-q2', 'user', 'Read this newer file'), metadata: { attachmentPath: 'newer.md' } }
+    const send = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const review = desktopNativeReviewRead(input, init); if (review) return review
+        const url = new URL(String(input), 'http://local')
+        if (url.pathname.endsWith('/takeover')) return Response.json({ takeover: null })
+        if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
+        if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
+        if (url.pathname.endsWith('/queue')) return Response.json({ queued: null })
+        if (url.pathname.endsWith('/chat')) { send(init?.body); return Response.json({ error: 'Unexpected replay' }, { status: 400 }) }
+        if (url.pathname.endsWith('/messages')) return Response.json({ messages: [firstQuestion, row('engine-a1', 'assistant', 'Previous answer'), terminal] })
+        return Response.json({ running: false, failedRunId: 'failed-turn', failedRunError: 'The model failed to answer this message' })
+    }))
+    const container = document.body.appendChild(document.createElement('div'))
+    const root = createRoot(container)
+    try {
+        await act(async () => { root.render(<Harness />) })
+        expect(container.textContent).toContain('Read this newer file')
+        expect(container.textContent).toContain('The model failed to answer this message')
+        const retry = [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Retry')
+        if (retry) await act(async () => { retry.click() })
+        expect(send).not.toHaveBeenCalled()
+    } finally {
+        await act(async () => { root.unmount() })
+        container.remove()
+        vi.unstubAllGlobals()
+    }
+})
+
 test('regenerates the selected saved reply in a separate chat and retries a lost response without duplicating it', async () => {
     const requests: Record<string, unknown>[] = []
     let completeRequest!: (response: Response) => void

@@ -19,6 +19,8 @@ type MarkdownEditorDialogProps = {
     submitting?: boolean
     onClose: (markdown: string) => void
     onSubmit?: (markdown: string) => void
+    /** Optional canonical draft sink; typing can then survive Quit while this dialog stays open. */
+    onDraftChange?: (markdown: string) => void
 }
 
 /**
@@ -38,19 +40,20 @@ export function MarkdownEditorDialog({
     submitting,
     onClose,
     onSubmit,
+    onDraftChange,
 }: MarkdownEditorDialogProps) {
     const [markdown, setMarkdown] = useState(initialValue)
-    // TipTap normalizes whatever text it is given, so the first markdown it emits is the untouched
-    // baseline. Comparing against it lets us hand back the original text when nothing was edited,
-    // rather than a round-tripped version with re-escaped characters and merged soft breaks.
-    const baselineRef = useRef<string | null>(null)
-
-    const resolve = useCallback(() => (baselineRef.current !== null && markdown === baselineRef.current ? initialValue : markdown), [markdown, initialValue])
+    // RichTextEditor emits onUpdate, not onCreate: its first emission is already an edit.
+    // Keep untouched input verbatim, and read the latest edit even when a shortcut submits
+    // in the same event before React has rendered the state update.
+    const latestMarkdown = useRef(initialValue)
+    const resolve = useCallback(() => latestMarkdown.current, [])
 
     const handleChange = useCallback((next: string) => {
-        if (baselineRef.current === null) baselineRef.current = next
+        latestMarkdown.current = next
         setMarkdown(next)
-    }, [])
+        onDraftChange?.(next)
+    }, [onDraftChange])
 
     const handleOpenChange = useCallback(
         (next: boolean) => {

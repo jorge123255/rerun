@@ -29,11 +29,13 @@ test.runIf(process.env.RERUN_TAB_ACCEPTANCE === '1').each(['Which color is marke
         const conn = { baseUrl: runtime.engine.origin, apiKey: runtime.engine.apiKey }
         const provider = await createConnection(conn, { name: 'Fixture', provider: 'openrouter', models: ['qa-local'], extraModels: [], baseUrl: engine.providerOrigin, keys: { OPENROUTER_API_KEY: 'fixture-only' } })
         await setBoxDefault(conn, { connectionId: provider.id, model: 'qa-local' })
-        const agent = await createAgent(conn, { config: { name: 'tabbed', connectionId: provider.id, provider: 'openrouter', tools: { memory: false }, selfImprovement: { enabled: false } } })
+        const config = { connectionId: provider.id, provider: 'openrouter' as const, tools: { memory: false }, selfImprovement: { enabled: false } }
+        const agent = await createAgent(conn, { config: { ...config, name: 'tabbed' } })
+        const other = await createAgent(conn, { config: { ...config, name: 'other' } })
         const db = await openDesktopDatabase(root)
         const coworker = await createDesktopAgent(db, { name: 'Tab worker', engineAgentId: agent.id })
         const agentId = coworker.id
-        const sibling = await createDesktopAgent(db, { name: 'Other', engineAgentId: 'other' })
+        const sibling = await createDesktopAgent(db, { name: 'Other', engineAgentId: other.id })
         const earlier = await createDesktopSession(db, { agentId, engineSessionId: 'earlier', title: 'Earlier chat' })
         const context = { params: Promise.resolve({ agentId }) }
         const path = '/api/desktop/agents/' + agentId

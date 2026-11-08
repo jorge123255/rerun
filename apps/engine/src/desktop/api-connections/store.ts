@@ -101,16 +101,14 @@ export function sqliteDesktopApiConnectionStore(db: Client): DesktopApiConnectio
         async revision(workspaceId, connectionId) {
             desktopApiConnectionIdSchema.parse(connectionId)
             const row = (await db.execute({ sql: 'SELECT revision FROM desktop_api_connection_revisions WHERE workspace_id=? AND connection_id=?', args: [workspaceId, connectionId] })).rows[0]
-            if (row) return desktopApiConnectionRevisionSchema.parse(row.revision)
-            const initial = seed(connectionId)
-            await db.execute({ sql: 'INSERT INTO desktop_api_connection_revisions(workspace_id,connection_id,revision,updated_at) VALUES(?,?,?,?) ON CONFLICT DO NOTHING', args: [workspaceId, connectionId, initial, new Date().toISOString()] })
-            const current = (await db.execute({ sql: 'SELECT revision FROM desktop_api_connection_revisions WHERE workspace_id=? AND connection_id=?', args: [workspaceId, connectionId] })).rows[0]
-            return desktopApiConnectionRevisionSchema.parse(current.revision)
+            // A catalog read can see a connection's files before its create
+            // commits a revision. Reading the seed must not consume that insert.
+            return row ? desktopApiConnectionRevisionSchema.parse(row.revision) : seed(connectionId)
         },
         setRevision: (workspaceId, connectionId, expected, next) => write(db, async tx => {
             const current = (await tx.execute({ sql: 'SELECT revision FROM desktop_api_connection_revisions WHERE workspace_id=? AND connection_id=?', args: [workspaceId, connectionId] })).rows[0]
             if (!current) {
-                if (expected !== null) throw new Error('API connection revision changed')
+                if (expected !== null && expected !== seed(connectionId)) throw new Error('API connection revision changed')
                 await tx.execute({ sql: 'INSERT INTO desktop_api_connection_revisions(workspace_id,connection_id,revision,updated_at) VALUES(?,?,?,?)', args: [workspaceId, connectionId, next, new Date().toISOString()] })
                 return
             }
@@ -143,18 +141,13 @@ export function memoryDesktopApiConnectionStore(): DesktopApiConnectionStore {
             receipts.set(receipt.requestId, { receipt, result: { ...result, recovered: false } })
         },
         async revision(workspaceId, connectionId) {
-            const key = `${workspaceId}:${connectionId}`
-            const current = revisions.get(key)
-            if (current) return current
-            const initial = seed(connectionId)
-            revisions.set(key, initial)
-            return initial
+            return revisions.get(`${workspaceId}:${connectionId}`) ?? seed(connectionId)
         },
         async setRevision(workspaceId, connectionId, expected, next) {
             const key = `${workspaceId}:${connectionId}`
             const current = revisions.get(key)
             if (!current) {
-                if (expected !== null) throw new Error('API connection revision changed')
+                if (expected !== null && expected !== seed(connectionId)) throw new Error('API connection revision changed')
                 revisions.set(key, next)
                 return
             }

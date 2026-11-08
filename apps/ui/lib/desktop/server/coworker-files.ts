@@ -36,7 +36,7 @@ const inside = (root: string, target: string) => {
 const missing = (error: unknown) => ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException)?.code ?? '')
 
 /** The engine stores each agent's workspace under `<engine data>/agents/<id>/workspace` (apps/engine/src/config/paths.ts). */
-async function coworkerWorkspace(runtime: DesktopRuntime, agentId: string): Promise<string> {
+export async function coworkerWorkspace(runtime: DesktopRuntime, agentId: string): Promise<string> {
     const coworker = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), agentId)
     if (!coworker) throw new DesktopHttpError(404, 'Coworker not found')
     if (!SAFE_ENGINE_ID.test(coworker.engineAgentId)) throw new DesktopHttpError(400, 'This coworker has no readable workspace.')
@@ -97,7 +97,7 @@ export async function listCoworkerFiles(runtime: DesktopRuntime, agentId: string
 
 // Listing and reading can recover an interrupted save. Order those mutations with imports,
 // other saves and deletion, including requests admitted through a different route bundle.
-function withCoworkerFiles<T>(runtime: DesktopRuntime, agentId: string, action: () => Promise<T>): Promise<T> {
+export function withCoworkerFiles<T>(runtime: DesktopRuntime, agentId: string, action: () => Promise<T>): Promise<T> {
     return withRosterWrite(async () => {
         await assertCoworkerNotDeleting(await openDesktopDatabase(runtime.dataRoot), agentId)
         return action()

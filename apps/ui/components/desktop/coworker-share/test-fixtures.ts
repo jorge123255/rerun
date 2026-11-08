@@ -1,4 +1,4 @@
-import { DESKTOP_PORTABLE_TEMPLATE_LIMITS, DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING, type DesktopCoworkerShareReviewResult, type DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
+import { DESKTOP_PORTABLE_TEMPLATE_LIMITS, DESKTOP_PORTABLE_TEMPLATE_PROSE_WARNING, type DesktopCoworkerSharePlan, type DesktopCoworkerShareReviewResult, type DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
 
 export const shareManifest: DesktopCoworkerSnapshotManifest = {
     format: 'desktop-portable-template',
@@ -32,7 +32,7 @@ export const shareReview: DesktopCoworkerShareReviewResult = {
     reviewId: 'a'.repeat(64),
 }
 
-export const sharePlan = {
+export const sharePlan: DesktopCoworkerSharePlan = {
     agentName: 'Ada',
     warnings: ['Binary files are not text-scanned for secrets.'],
     envKeyCount: 0,

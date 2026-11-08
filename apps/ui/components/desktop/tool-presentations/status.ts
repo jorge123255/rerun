@@ -1,7 +1,9 @@
-import { stripBridgePrefix } from '@rerun/contracts'
+import { stripBridgePrefix, unwrapToolOutputEnvelope } from '@rerun/contracts'
 
 export const DESKTOP_HISTORICAL_OUTPUT_BOUND = 8000
 export const DESKTOP_HISTORICAL_ID_LIMIT = 200
+export const DESKTOP_NOTIFICATION_DELIVERED = 'Notification sent to the user.'
+export const DESKTOP_NOTIFICATION_UNDELIVERED = 'Notification not delivered'
 
 export type DesktopToolPresentationStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown'
 
@@ -134,6 +136,21 @@ function envelopeFailed(output: unknown): boolean {
     return body?.type === 'error-text' || body?.type === 'error-json'
 }
 
+function notificationStatus(output: unknown): DesktopToolPresentationStatus {
+    let value = unwrapToolOutputEnvelope(output)
+    if (typeof value === 'string') {
+        const text = value.trim()
+        if (text === DESKTOP_NOTIFICATION_DELIVERED) return 'succeeded'
+        if (text.startsWith(DESKTOP_NOTIFICATION_UNDELIVERED)) return 'failed'
+        if (text.length > DESKTOP_HISTORICAL_OUTPUT_BOUND) return 'unknown'
+        try { value = JSON.parse(text) } catch { return 'unknown' }
+    }
+    const receipt = record(value)
+    if (receipt?.status === 'shown' && receipt.nativeStatus === 'shown') return 'succeeded'
+    if (receipt?.status === 'failed') return 'failed'
+    return 'unknown'
+}
+
 export function resolveDesktopHistoricalIdentity(part: DesktopHistoricalToolSource, context?: DesktopHistoricalContext): { ok: true; identity: DesktopHistoricalIdentity } | { ok: false } {
     const blocks = metaBlocks(part)
     if (!blocks.ok) return { ok: false }
@@ -188,7 +205,8 @@ export function projectDesktopToolStatus(part: DesktopHistoricalToolSource, cont
         case 'approval-responded':
             return 'pending'
         case 'output-available':
-            return part.preliminary === true ? 'running' : 'succeeded'
+            if (part.preliminary === true) return 'running'
+            return desktopHistoricalToolName(part) === 'notify_user' ? notificationStatus(part.output) : 'succeeded'
         default:
             return 'unknown'
     }

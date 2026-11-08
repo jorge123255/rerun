@@ -5,6 +5,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopOpencodeConnectionSnapshot, DesktopOpencodeDriver } from '@/lib/desktop/opencode/driver'
 import { DesktopOpencodeConnection } from './DesktopOpencodeConnection'
 
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 let root: Root | undefined
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.innerHTML = ''; vi.restoreAllMocks() })
 
@@ -26,14 +28,23 @@ function driver(overrides: Partial<DesktopOpencodeDriver> = {}): DesktopOpencode
 }
 const callbacks = () => ({ onSave: vi.fn(async () => {}), onProviders: vi.fn(async () => {}), onRename: vi.fn(async () => {}), onDisconnect: vi.fn(async () => {}), onBack: vi.fn() })
 async function mount(driverValue: DesktopOpencodeDriver, props: Partial<Parameters<typeof DesktopOpencodeConnection>[0]> = {}) {
-    const ports = callbacks()
+    const defaults = callbacks()
+    const ports = {
+        onSave: props.onSave ?? defaults.onSave,
+        onProviders: props.onProviders ?? defaults.onProviders,
+        onRename: props.onRename ?? defaults.onRename,
+        onDisconnect: props.onDisconnect ?? defaults.onDisconnect,
+        onBack: props.onBack ?? defaults.onBack,
+    }
     root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => root!.render(<DesktopOpencodeConnection workspaceId={1} connection={connection()} driver={driverValue} {...ports} {...props} />))
+    await act(async () => root!.render(<DesktopOpencodeConnection workspaceId={1} connection={connection()} driver={driverValue} {...props} {...ports} />))
     return ports
 }
 async function input(label: string, value: string) {
-    const field = [...document.querySelectorAll<HTMLInputElement>('input')].find(item => item.getAttribute('aria-label') === label || item.placeholder === label)
+    const labelled = [...document.querySelectorAll('label')].find(item => item.textContent?.trim() === label)
+    const field = labelled?.htmlFor ? document.getElementById(labelled.htmlFor) : [...document.querySelectorAll<HTMLInputElement>('input')].find(item => item.getAttribute('aria-label') === label || item.placeholder === label)
     expect(field, label).toBeTruthy()
+    expect(field).toBeInstanceOf(HTMLInputElement)
     await act(async () => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value)
         field!.dispatchEvent(new Event('input', { bubbles: true }))
@@ -71,6 +82,30 @@ it('does not report connected when the canonical save fails, then reconnects wit
     expect(document.body.textContent).not.toContain('OpenCode connected.')
 })
 
+it('accepts a synchronous provider-list refresh after a successful save', async () => {
+    const onProviders = vi.fn(() => {})
+    const ports = await mount(driver(), { onProviders })
+    await input('API key', 'oc_sk_new')
+    await click('Save key')
+    expect(ports.onSave).toHaveBeenCalledOnce()
+    expect(onProviders).toHaveBeenCalledOnce()
+    expect(document.body.textContent).toContain('API key saved.')
+    expect(document.body.textContent).not.toContain('Could not save')
+    expect(document.body.textContent).not.toContain('Refresh the provider list')
+})
+
+it('keeps the saved result truthful when a synchronous provider-list refresh throws', async () => {
+    const onProviders = vi.fn(() => { throw new Error('List unavailable') })
+    const ports = await mount(driver(), { onProviders })
+    await input('API key', 'oc_sk_new')
+    await click('Save key')
+    expect(ports.onSave).toHaveBeenCalledOnce()
+    expect(onProviders).toHaveBeenCalledOnce()
+    expect(document.body.textContent).toContain('API key saved.')
+    expect(document.body.textContent).toContain('Saved. Refresh the provider list to confirm the current connection.')
+    expect(document.body.textContent).not.toContain('Could not save')
+})
+
 it('cancels a dirty form without effects and discards only on confirmation', async () => {
     const value = driver()
     const ports = await mount(value)
@@ -86,8 +121,8 @@ it('cancels a dirty form without effects and discards only on confirmation', asy
 })
 
 it('ignores a stale catalog response after the connection revision changes', async () => {
-    let resolveOld!: (value: unknown) => void
-    const value = driver({ refresh: vi.fn(async () => new Promise<any>(resolve => { resolveOld = resolve })) })
+    let resolveOld!: (value: Awaited<ReturnType<DesktopOpencodeDriver['refresh']>>) => void
+    const value = driver({ refresh: vi.fn(async () => new Promise<Awaited<ReturnType<DesktopOpencodeDriver['refresh']>>>(resolve => { resolveOld = resolve })) })
     await mount(value)
     await click('Refresh models')
     const next = connection('rev-2')

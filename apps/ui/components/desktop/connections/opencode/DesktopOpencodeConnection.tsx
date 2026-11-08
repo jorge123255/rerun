@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { DetailBlock } from '@/components/connections/DetailBlock'
 import { SourceAvatar } from '@/components/connections/SourceBits'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
@@ -35,6 +35,7 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
     onBack: () => void
     onConnected?: () => void
 }) {
+    const credentialFieldsId = useId()
     const driver = useRef(suppliedDriver ?? createDesktopOpencodeDriver()).current
     const [catalog, setCatalog] = useState<DesktopOpencodeRefresh>(() => snapshotCatalog(workspaceId, connection?.defaultModelId))
     const [usage, setUsage] = useState(emptyUsage)
@@ -55,6 +56,11 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
     const refreshUsageId = useRef<string | null>(null)
     const cancelling = useRef(false)
     const current = useCallback((value: number) => generation.current === value, [])
+
+    async function refreshProviders(value: number) {
+        try { await onProviders() }
+        catch { if (current(value)) setError('Saved. Refresh the provider list to confirm the current connection.') }
+    }
 
     useEffect(() => {
         generation.current += 1
@@ -134,7 +140,7 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
             setApiKey('')
             setNotice(connection ? 'API key saved.' : 'OpenCode connected.')
             onConnected?.()
-            await onProviders().catch(() => { if (current(value)) setError('Saved. Refresh the provider list to confirm the current connection.') })
+            await refreshProviders(value)
         } catch (cause) {
             if (current(value)) setError(cause instanceof Error ? cause.message : 'Could not save the OpenCode key.')
         } finally {
@@ -154,7 +160,7 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
             if (!current(value)) return
             setNotice('Connection name saved.')
             setEditingName(false)
-            await onProviders().catch(() => { if (current(value)) setError('Saved. Refresh the provider list to confirm the current connection.') })
+            await refreshProviders(value)
         } catch (cause) {
             if (current(value)) setError(cause instanceof Error ? cause.message : 'Could not rename the connection.')
         } finally {
@@ -175,7 +181,7 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
             await onSave({ action: 'models', connectionId: connection.connectionId, models: change.enabledModelIds, extraModels: [], expectedConnectionRevision: connection.connectionRevision })
             if (!current(value)) return
             setNotice('Available models updated.')
-            await onProviders().catch(() => { if (current(value)) setError('Saved. Refresh the provider list to confirm the current connection.') })
+            await refreshProviders(value)
         } catch (cause) {
             if (current(value)) setError(cause instanceof Error ? cause.message : 'Could not update available models.')
         } finally {
@@ -230,8 +236,8 @@ export function DesktopOpencodeConnection({ workspaceId, connection, driver: sup
                     <p className="text-[11px] text-muted-foreground">
                         {rejected ? 'This key was rejected. Coworkers using it are stopped until you paste a new one.' : connection?.apiKey ? 'Key saved. Paste a replacement only when you want to change it.' : 'No key on file. Coworkers using it are stopped until you paste one.'}
                     </p>
-                    <Input hideRequired label="Name" value={name} onChange={event => setName(event.target.value)} disabled={saving} className="h-8" />
-                    <Input hideRequired label="API key" type="password" autoComplete="off" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="Paste your key" disabled={saving} className="h-8 font-mono text-xs" />
+                    <Input id={`${credentialFieldsId}-name`} hideRequired label="Name" value={name} onChange={event => setName(event.target.value)} disabled={saving} className="h-8" />
+                    <Input id={`${credentialFieldsId}-api-key`} hideRequired label="API key" type="password" autoComplete="off" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="Paste your key" disabled={saving} className="h-8 font-mono text-xs" />
                     <CredentialGuide label="OpenCode Go or Console" title="How to get your OpenCode key" guide={'1. Open [OpenCode](https://opencode.ai/auth) and sign in.\n2. Subscribe to **OpenCode Go**, or add credits to use the Console models.\n3. Create an API key, copy it (it starts with `oc_sk_`) and paste it above.'} />
                     <div className="flex justify-end"><Button type="button" size="sm" disabled={saving || !apiKey.trim()} onClick={() => void saveKey()}>{saving ? 'Saving…' : connection ? 'Save key' : 'Connect'}</Button></div>
                 </DetailBlock>

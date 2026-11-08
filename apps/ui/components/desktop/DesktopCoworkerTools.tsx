@@ -10,6 +10,7 @@ import { PANEL_CARD } from '@/components/ui/panel-row'
 import { Switch } from '@/components/ui/switch'
 import type { CoworkerTools, CoworkerToolPatch, CoworkerToolRow, DesktopToolGroup } from '@/lib/desktop/coworker-tools'
 import { DesktopCoworkerCallTargets } from './coworker-calls/DesktopCoworkerCallTargets'
+import { FxToolsLoading } from './fx-repairs/PanelLoadingSkeletons'
 import { getToolMeta } from '@/lib/tool-meta'
 import { ChevronDownIcon, FolderIcon, PencilIcon, TerminalIcon, GlobeIcon, WandSparklesIcon, WrenchIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -144,7 +145,7 @@ function ToolsPanel({ agent, saving, setSaving }: { agent: DesktopAgentView; sav
                     <ToolSections agentId={agent.id} tools={tools} unavailable saving={saving} toggle={toggle} />
                 </CollapsibleContent>
             </Collapsible>}
-        </> : !error && <p role="status" className="text-sm text-muted-foreground">Loading tools…</p>}
+        </> : !error && <FxToolsLoading />}
         {error && <div role="alert" className="space-y-2 text-sm text-destructive">{error}
             {!tools && <Button type="button" variant="outline" size="sm" onClick={() => { setError(''); setAttempt(n => n + 1) }}>Retry</Button>}
         </div>}

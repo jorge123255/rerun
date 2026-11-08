@@ -1,11 +1,43 @@
-import { readdir, readFile } from 'node:fs/promises'
+import { constants, type BigIntStats } from 'node:fs'
+import { open, opendir, type FileHandle } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
 import { FOREMAN_AGENT_FILE_COPY, FOREMAN_AGENT_FILE_READ_BYTES, foremanAgentVisiblePath } from './contract.js'
 import { openWithoutLinks } from '../open-without-links.js'
 import { containedCoworkerWorkspace, deny, ForemanAgentFileError } from './policy.js'
 
 const LIST_LIMIT = 512
+const LIST_SCAN_LIMIT = LIST_LIMIT * 2
 const SEARCH_LIMIT = 128
+const SEARCH_DIRECTORY_LIMIT = 32
+type VisibleDirectory = { entries: { name: string; directory: boolean }[]; truncated: boolean }
+const version = (info: BigIntStats) => [info.dev, info.ino, info.uid, info.nlink, info.size, info.mtimeNs, info.ctimeNs].join(':')
+const ownedFile = (info: BigIntStats) => info.isFile() && info.nlink === 1n && (typeof process.getuid !== 'function' || info.uid === BigInt(process.getuid()))
+
+async function readOpenedText(handle: FileHandle, signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted()
+    const before = await handle.stat({ bigint: true })
+    if (!ownedFile(before)) deny(FOREMAN_AGENT_FILE_COPY.unavailable)
+    if (before.size > BigInt(FOREMAN_AGENT_FILE_READ_BYTES)) deny(FOREMAN_AGENT_FILE_COPY.text)
+    // Read only the admitted size plus one byte; growth never allocates unbounded data.
+    const bytes = Buffer.alloc(Number(before.size) + 1)
+    let used = 0
+    while (used < bytes.length) {
+        signal.throwIfAborted()
+        const read = await handle.read(bytes, used, bytes.length - used, used)
+        if (!read.bytesRead) break
+        used += read.bytesRead
+    }
+    const after = await handle.stat({ bigint: true })
+    signal.throwIfAborted()
+    if (!ownedFile(after) || used !== Number(before.size) || version(after) !== version(before)) deny(FOREMAN_AGENT_FILE_COPY.unavailable)
+    return textOf(bytes.subarray(0, used))
+}
+
+async function pinnedDirectory(handle: FileHandle): Promise<string> {
+    const info = await handle.stat({ bigint: true })
+    if (!info.isDirectory() || typeof process.getuid === 'function' && info.uid !== BigInt(process.getuid())) deny(FOREMAN_AGENT_FILE_COPY.unavailable)
+    return process.platform === 'darwin' ? `/.vol/${info.dev}/${info.ino}` : `/proc/self/fd/${handle.fd}`
+}
 
 function textOf(bytes: Buffer): string {
     if (bytes.includes(0) || bytes.byteLength > FOREMAN_AGENT_FILE_READ_BYTES) throw new ForemanAgentFileError(FOREMAN_AGENT_FILE_COPY.text)
@@ -30,47 +62,54 @@ async function visible(coworkerId: string, input: string): Promise<{ root: strin
 
 export async function readCoworkerVisibleText(coworkerId: string, input: string, signal: AbortSignal): Promise<string> {
     signal.throwIfAborted()
-    const { root, full } = await visible(coworkerId, input)
+    const { full } = await visible(coworkerId, input)
     const handle = await openWithoutLinks(full).catch(() => deny(FOREMAN_AGENT_FILE_COPY.unavailable))
     try {
-        const info = await handle.stat()
-        if (!info.isFile()) deny(FOREMAN_AGENT_FILE_COPY.unavailable)
-        if (info.size > FOREMAN_AGENT_FILE_READ_BYTES) deny(FOREMAN_AGENT_FILE_COPY.text)
-        return textOf(await readFile(handle))
+        return await readOpenedText(handle, signal)
     } finally {
         await handle.close()
     }
 }
 
-async function visibleChildren(root: string, directory: string, signal: AbortSignal): Promise<{ name: string; directory: boolean }[]> {
+async function visibleChildren(root: string, directory: string, signal: AbortSignal): Promise<VisibleDirectory> {
+    signal.throwIfAborted()
     const handle = await openWithoutLinks(directory, true).catch(() => deny(FOREMAN_AGENT_FILE_COPY.unavailable))
     try {
-        if (!(await handle.stat()).isDirectory()) deny(FOREMAN_AGENT_FILE_COPY.unavailable)
-        const names = (await readdir(handle)).filter(name => !name.startsWith('.') && name !== 'node_modules' && !name.toLowerCase().startsWith('.rerun')).slice(0, LIST_LIMIT + 1)
+        const pinned = await pinnedDirectory(handle)
+        const names: string[] = []
+        let scanned = 0
+        let truncated = false
+        for await (const { name } of await opendir(pinned)) {
+            signal.throwIfAborted()
+            if (++scanned > LIST_SCAN_LIMIT) { truncated = true; break }
+            if (!name.startsWith('.') && name !== 'node_modules') names.push(name)
+        }
         const entries: { name: string; directory: boolean }[] = []
-        for (const name of names) {
+        for (const name of names.sort((a, b) => a.localeCompare(b))) {
             signal.throwIfAborted()
             try { foremanAgentVisiblePath(name) } catch { continue }
             const child = join(directory, name)
             if (relative(root, child).startsWith('..')) continue
-            const opened = await openWithoutLinks(child).catch(() => null)
+            // Only the final child is untrusted: its parent is the held directory inode.
+            const opened = await open(join(pinned, name), constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW).catch(() => null)
             if (!opened) continue
             try {
-                const info = await opened.stat()
+                const info = await opened.stat({ bigint: true })
                 if (info.isDirectory()) entries.push({ name, directory: true })
-                else if (info.isFile()) entries.push({ name, directory: false })
+                else if (ownedFile(info)) entries.push({ name, directory: false })
             } finally { await opened.close() }
+            if (entries.length > LIST_LIMIT) { truncated = true; break }
         }
-        return entries
+        signal.throwIfAborted()
+        return { entries: entries.slice(0, LIST_LIMIT), truncated }
     } finally {
         await handle.close()
     }
 }
 
-export async function listCoworkerVisible(coworkerId: string, input: string, signal: AbortSignal): Promise<{ entries: { name: string; directory: boolean }[]; truncated: boolean }> {
+export async function listCoworkerVisible(coworkerId: string, input: string, signal: AbortSignal): Promise<VisibleDirectory> {
     const located = await visible(coworkerId, input || '.')
-    const entries = await visibleChildren(located.root, located.full, signal)
-    return { entries: entries.slice(0, LIST_LIMIT), truncated: entries.length > LIST_LIMIT }
+    return visibleChildren(located.root, located.full, signal)
 }
 
 export async function searchCoworkerVisibleText(coworkerId: string, input: string, pattern: string, maxResults: number, signal: AbortSignal): Promise<string> {
@@ -81,31 +120,42 @@ export async function searchCoworkerVisibleText(coworkerId: string, input: strin
     const hits: string[] = []
     const queue = [full]
     let scanned = 0
-    while (queue.length && hits.length < maxResults && scanned < SEARCH_LIMIT) {
+    let truncated = false
+    for (let index = 0; index < queue.length; index++) {
+        if (hits.length >= maxResults || scanned >= SEARCH_LIMIT) { truncated = true; break }
         signal.throwIfAborted()
-        const current = queue.shift()!
-        const children = await visibleChildren(root, current, signal).catch(error => {
+        const current = queue[index]!
+        const listing = await visibleChildren(root, current, signal).catch(error => {
+            signal.throwIfAborted()
             if (current === full) throw error
-            return [] as { name: string; directory: boolean }[]
+            return { entries: [], truncated: false }
         })
-        for (const entry of children) {
+        truncated ||= listing.truncated
+        for (const entry of listing.entries) {
+            if (hits.length >= maxResults || scanned >= SEARCH_LIMIT) { truncated = true; break }
             const child = join(current, entry.name)
-            if (entry.directory) queue.push(child)
-            else if (hits.length < maxResults && scanned < SEARCH_LIMIT) {
-                scanned += 1
-                const file = await openWithoutLinks(child).catch(() => null)
-                if (!file) continue
-                let text = ''
-                try {
-                    const info = await file.stat()
-                    if (info.isFile() && info.size <= FOREMAN_AGENT_FILE_READ_BYTES) text = textOf(await readFile(file))
-                } catch { text = '' } finally { await file.close() }
-                if (!text) continue
-                text.split('\n').forEach((line, index) => {
-                    if (hits.length < maxResults && line.toLowerCase().includes(needle)) hits.push(`${relative(root, child).split(sep).join('/')}:${index + 1}:${line.slice(0, 240)}`)
-                })
+            if (entry.directory) {
+                if (queue.length < SEARCH_DIRECTORY_LIMIT) queue.push(child)
+                else truncated = true
+                continue
+            }
+            scanned += 1
+            const file = await openWithoutLinks(child).catch(() => null)
+            if (!file) continue
+            let text = ''
+            try {
+                text = await readOpenedText(file, signal)
+            } catch { signal.throwIfAborted(); text = '' } finally { await file.close() }
+            const lines = text.split('\n')
+            for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+                const line = lines[lineIndex]!
+                if (!line.toLowerCase().includes(needle)) continue
+                if (hits.length >= maxResults) { truncated = true; break }
+                hits.push(`${relative(root, child).split(sep).join('/')}:${lineIndex + 1}:${line.slice(0, 240)}`)
             }
         }
     }
-    return hits.join('\n') || 'No matches.'
+    signal.throwIfAborted()
+    const result = hits.join('\n') || (truncated ? 'No matches in the scanned files.' : 'No matches.')
+    return truncated ? `${result}\n(search limit reached)` : result
 }

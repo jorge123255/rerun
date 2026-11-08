@@ -16,6 +16,8 @@ import { DESKTOP_CODEX_ID } from '../../desktop/codex-runtime.js'
 import { badRequest, HttpError } from '../../lib/errors.js'
 
 export const connectionRoutes = new Hono()
+const namedDesktopConnection = (id: string) => desktopApp() && /^cnx_/i.test(id)
+const NAMED_CONNECTION_REFUSAL = 'Use the named API connection settings. This legacy route cannot change its revision or receipt.'
 
 // Tells the hub the box now runs on the workspace's own AI, which ticks its getting-started step.
 // Fire and forget: an unreachable hub never fails the write that just succeeded.
@@ -35,6 +37,7 @@ connectionRoutes.get('/', async c => {
 // would otherwise be read as a connection id.
 connectionRoutes.put('/default', async c => {
     const { connectionId, model, reasoningEffort } = boxDefaultUpdateSchema.parse(await c.req.json())
+    if (namedDesktopConnection(connectionId)) return c.json({ error: 'Named API model selection is unavailable. The workspace default was not changed.' }, 409)
     if (desktopApp() && connectionId === DESKTOP_CODEX_ID) {
         return withConnectionLock(connectionId, async () => {
             const connection = await findConnection(connectionId)
@@ -76,6 +79,7 @@ connectionRoutes.post('/', async c => {
 
 connectionRoutes.patch('/:id', async c => {
     const id = c.req.param('id')
+    if (namedDesktopConnection(id)) return c.json({ error: NAMED_CONNECTION_REFUSAL }, 409)
     if (!connectionExists(id)) return c.json({ error: 'connection not found' }, 404)
     const patch = updateConnectionSchema.parse(await c.req.json())
     const connection = await patchConnection(id, patch)
@@ -88,6 +92,7 @@ connectionRoutes.patch('/:id', async c => {
 
 connectionRoutes.patch('/:id/keys', async c => {
     const id = c.req.param('id')
+    if (namedDesktopConnection(id)) return c.json({ error: NAMED_CONNECTION_REFUSAL }, 409)
     if (!connectionExists(id)) return c.json({ error: 'connection not found' }, 404)
     if (desktopApp() && (await getConnection(id)).config.provider === 'codex') return c.json({ error: 'Use ChatGPT sign-in in Settings.' }, 400)
     const body = updateConnectionKeysSchema.parse(await c.req.json())
@@ -107,6 +112,7 @@ connectionRoutes.get('/:id/usage', async c => {
 
 connectionRoutes.delete('/:id', async c => {
     const id = c.req.param('id')
+    if (namedDesktopConnection(id)) return c.json({ error: NAMED_CONNECTION_REFUSAL }, 409)
     if (!connectionExists(id)) return c.json({ error: 'connection not found' }, 404)
     // Before the release, not after: detaching every agent and then refusing the delete would leave
     // the box worse off than a plain refusal.

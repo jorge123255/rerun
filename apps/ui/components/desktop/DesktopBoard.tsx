@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ChromeBar, ChromeButton, ChromeDivider } from '@rerun/ui/chrome'
-import type { ContainerCellRect, GridPosition, ResizePatch, TileStyle } from '@rerun/ui/iso-grid'
+import type { ContainerCellRect, GridPosition, IsoCamera, ResizePatch, TileStyle } from '@rerun/ui/iso-grid'
 import { IsoGrid, SPACE_COLOR, agentTileStyle, disabledAgentTileStyle, DISABLED_AGENT_LABEL, type Container, type Tile } from '@rerun/ui/iso-grid'
 import { Plus } from 'lucide-react'
 import type { DesktopAgentView } from './DesktopApp'
@@ -35,7 +35,7 @@ type CopyPlacement = {
     error?: string
 }
 
-export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate }: {
+export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspaceMenu, selectedAgentId, visibleSessionId, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange }: {
     activitySnapshot?: BoardActivitySnapshot
     agents: DesktopAgentView[]
     workspaceName: string
@@ -75,6 +75,9 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
     onPlaceTemplate?: (position: GridPosition, board: DesktopBoardState) => Promise<void>
     onCancelTemplate?: () => void
     onReviewTemplate?: () => void
+    cameraMountKey?: string
+    initialCamera?: IsoCamera | null
+    onCameraChange?: (camera: IsoCamera) => void
 }) {
     const localActivity = useBoardActivity(useMemo(() => agents.map(agent => agent.id), [agents]), !activitySnapshot)
     const { statuses: activity, attention } = activitySnapshot ?? localActivity
@@ -358,6 +361,9 @@ export function DesktopBoard({ activitySnapshot, agents, workspaceName, workspac
                 onMoveAgent={onBoardCommand ? (agentId, spaceId) => moveAgent(agentId, spaceId) : undefined} onInteractionChange={setMenuInteracting}>
                 {(onTileContextMenu, onContainerContextMenu) =>
                 <IsoGrid
+                    key={cameraMountKey}
+                    initialCamera={initialCamera ?? undefined}
+                    onCameraChange={onCameraChange}
                     tiles={placedTemplateTiles.length ? [...tiles, ...placedTemplateTiles] : tiles}
                     containers={containers}
                     onTileContextMenu={placement || gridBlocked ? undefined : onTileContextMenu}

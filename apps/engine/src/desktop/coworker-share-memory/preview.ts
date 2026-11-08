@@ -3,7 +3,7 @@ import {
     desktopCoworkerShareMemoryPreviewSchema,
     type DesktopCoworkerShareMemoryNote,
     type DesktopCoworkerShareMemoryPreview,
-} from '../../../../../packages/contracts/src/desktop-coworker-share-memory.ts'
+} from '@rerun/contracts'
 import { DesktopCoworkerShareMemoryError } from './errors.ts'
 import { measureNotes, packageDigest, serializeMemoryNote, type DesktopCoworkerShareMemoryNoteInput } from './serialize.ts'
 

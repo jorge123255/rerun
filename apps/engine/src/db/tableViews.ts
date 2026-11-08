@@ -152,9 +152,12 @@ export async function saveView(client: Client, table: string, input: TableViewIn
 }
 
 /** Deletes by id, or by name for the agent. Returns whether a view was removed. */
-export async function deleteView(client: Client, table: string, idOrName: string): Promise<boolean> {
+export async function deleteView(client: Client, table: string, idOrName: string, match: 'id-or-name' | 'name' = 'id-or-name'): Promise<boolean> {
+    const byName = match === 'name'
+    const where = byName ? 'name = ?' : '(id = ? OR name = ?)'
+    const args = byName ? [table, idOrName] : [table, idOrName, idOrName]
     try {
-        const rs = await withBusyRetry(() => client.execute({ sql: `DELETE FROM ${VIEWS_TABLE} WHERE table_name = ? AND (id = ? OR name = ?)`, args: [table, idOrName, idOrName] }))
+        const rs = await withBusyRetry(() => client.execute({ sql: `DELETE FROM ${VIEWS_TABLE} WHERE table_name = ? AND ${where}`, args }))
         return rs.rowsAffected > 0
     } catch (e) {
         if (MISSING_TABLE.test((e as Error).message ?? '')) return false

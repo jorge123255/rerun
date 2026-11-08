@@ -21,8 +21,9 @@ export function isDesktopCoworkerShareReviewCurrent(reviewed: DesktopCoworkerRev
         && input.include.memories === current.include.memories
         && input.include.database === current.include.database
         && input.include.files === current.include.files
+        // An exact persisted archive is a valid new review too; `reused`
+        // describes storage reuse, not a changed source or owner.
         && result.reviewId.slice(0, 32) === result.manifest.packageKey
-        && result.reused === false
 }
 
 export function isDesktopCoworkerShareSectionDigestCurrent(reviewed: DesktopCoworkerReviewedShare, current: { memories: { enabled: boolean; digest: string | null }; database: { enabled: boolean; digest: string | null } }): boolean {

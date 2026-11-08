@@ -40,6 +40,7 @@ import { desktopClaudeRuntime } from '../desktop/claude-plan/runtime.js'
 import { desktopCodexRuntime, signedInFlag } from '../desktop/codex-runtime.js'
 import type { DesktopNativeWorker } from '../desktop/native-worker.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
+import { isDesktopMcpLoginTool } from '../desktop/mcp-login-tools/admission.js'
 import { isDesktopMcpTool } from '../desktop/mcp-tools.js'
 import { isDesktopStdioTool } from '../desktop/mcp-stdio/client.js'
 import { isDesktopServiceTool } from '../desktop/service-tools.js'
@@ -259,7 +260,7 @@ export function codexMcpConfig(tools?: ToolSet, mcpServers: McpServer[] = [], sc
 // one-shot call (compaction, curator, vision) has none here and keeps passing its own to
 // generateText, where the provider folds it into the user turn. `claudeTools` reopens named Claude
 // built-ins for that call alone; a run has only CLAUDE_RUN_TOOLS.
-export type CliModelOptions = { system?: string; claudeTools?: readonly string[]; screenshots?: ScreenshotLookup; nativeWorker?: DesktopNativeWorker }
+export type CliModelOptions = { system?: string; claudeTools?: readonly string[]; screenshots?: ScreenshotLookup; nativeWorker?: DesktopNativeWorker; desktopVision?: boolean }
 
 // The subscription pays for the CLI's own web search, where Rerun's web_search would bill Brave to
 // Rerun. Its WebFetch stays closed: it hands back a summary of the page, web_fetch the page itself.
@@ -292,7 +293,7 @@ function claudeProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers: RunMcpS
     if (desktop && !desktopRuntime) throw new Error('The isolated Claude runtime is unavailable.')
     const grants = desktopRerunGrantsOf(agent.config.tools)
     const allowed = new Set(desktopRerunToolCatalog.filter(entry => entry.available && grants[entry.id as keyof typeof grants]).flatMap(entry => entry.tools))
-    const admitted = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name, tool]) => allowed.has(name) || isDesktopForemanTool(tool, name, agent.id, agent.config.kind) || name === 'install_complete' && isDesktopSetupTool(tool, agent.id) || grants.mcp && isDesktopMcpTool(tool) || grants.localMcpStdio && isDesktopStdioTool(tool) || grants.services && isDesktopServiceTool(tool))) : tools
+    const admitted = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name, tool]) => allowed.has(name) || isDesktopForemanTool(tool, name, agent.id, agent.config.kind) || name === 'install_complete' && isDesktopSetupTool(tool, agent.id) || grants.mcp && isDesktopMcpTool(tool) || grants.mcp && isDesktopMcpLoginTool(tool, name, agent.id) || grants.localMcpStdio && isDesktopStdioTool(tool) || grants.services && isDesktopServiceTool(tool))) : tools
     const { mcpServers: servers, allowedTools } = claudeMcpConfig(admitted, desktop ? [] : mcpServers, options.screenshots)
     const { cwd, env: agentEnv } = agentProcessEnv(agent)
     return createClaudeCode({
@@ -372,7 +373,7 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
     const shared = codexShared(agent)
     const grants = desktopRerunGrantsOf(agent.config.tools)
     const allowed = new Set(desktopRerunToolCatalog.filter(entry => entry.available && grants[entry.id as keyof typeof grants]).flatMap(entry => entry.tools))
-    const localTools = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name, tool]) => allowed.has(name) || isDesktopForemanTool(tool, name, agent.id, agent.config.kind) || name === 'install_complete' && isDesktopSetupTool(tool, agent.id) || grants.mcp && isDesktopMcpTool(tool) || grants.localMcpStdio && isDesktopStdioTool(tool) || grants.services && isDesktopServiceTool(tool))) : {}
+    const localTools = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name, tool]) => allowed.has(name) || isDesktopForemanTool(tool, name, agent.id, agent.config.kind) || name === 'install_complete' && isDesktopSetupTool(tool, agent.id) || grants.mcp && isDesktopMcpTool(tool) || grants.mcp && isDesktopMcpLoginTool(tool, name, agent.id) || grants.localMcpStdio && isDesktopStdioTool(tool) || grants.services && isDesktopServiceTool(tool))) : {}
     const names = Object.keys(localTools)
     const native = desktopCodexGrantsOf(agent.config.tools)
     const worker = options.nativeWorker
@@ -477,6 +478,29 @@ function pairFor(agent: LoadedAgent, override?: ModelOverride): { provider: Prov
 // and exits — nothing to dispose. A run that streams must use `resolveModel` instead.
 export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: McpServer[], options?: CliModelOptions): LanguageModel {
     const { provider, model } = pairFor(agent, override)
+    if (desktopApp() && provider === 'codex' && options?.desktopVision) {
+        return wrapLanguageModel({
+            model: codexExecProvider(agent).languageModel(model),
+            middleware: {
+                specificationVersion: 'v3',
+                async wrapGenerate({ params }) {
+                    // The exec SDK writes images outside the sandbox. App-server accepts bytes
+                    // inline, with no filesystem grant or live workspace path in the request.
+                    const codex = createCodexAppServer({ defaultSettings: {
+                        ...desktopCodexRuntime(),
+                        threadMode: 'stateless',
+                        minCodexVersion: CODEX_MIN_VERSION,
+                        sandboxPolicy: 'read-only',
+                        approvalPolicy: 'never',
+                        autoApprove: false,
+                        baseInstructions: CODEX_ONE_SHOT_INSTRUCTIONS,
+                    } })
+                    try { return await codex(model).doGenerate(params) }
+                    finally { await codex.close() }
+                },
+            },
+        })
+    }
     if (desktopApp() && provider === 'claude') {
         // One-shot helpers may reuse the model. Each invocation gets an isolated process owner;
         // the metadata-only model below is never invoked by either middleware path.

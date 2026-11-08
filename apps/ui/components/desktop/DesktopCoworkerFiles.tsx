@@ -13,6 +13,10 @@ import { ArrowLeftIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, FileTextIcon, Fol
 import { DesktopFileAudioPreview, isDesktopAudioName } from './DesktopFileAudioPreview'
 import { DesktopFileImagePreview, isDesktopRasterName } from './DesktopFileImagePreview'
 import { DesktopFilePdfPreview, isDesktopPdfName } from './DesktopFilePdfPreview'
+import { DesktopFilesGrid, desktopFilesTextHead } from '@/components/desktop/files-grid'
+import { FilesImportMenu, FilesImportTray, FilesImportWriteError, useFilesImportQueue } from '@/components/desktop/files-import'
+import { useFileThumbnails } from '@/components/files/useFileThumbnails'
+import { FxFilesLoading } from './fx-repairs/PanelLoadingSkeletons'
 import { FileSiblingControls, useFileSiblingKeys } from './DesktopFileSiblingNav'
 import { DesktopFileVideoPreview, isDesktopVideoName } from './DesktopFileVideoPreview'
 import { applyEol, splitEol } from '@/lib/files/editable'
@@ -105,7 +109,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         return ((await response.json()) as { entries: Entry[] }).entries
     }, [base])
 
-    const { currentPath, entries, loading, busy, showHidden, navigate, enter, goUp, goHome, setShowHidden, reload } = useFileNavigation<Entry>({ list })
+    const { currentPath, entries, loading, busy, showHidden, navigate, enter, goUp, goHome, setShowHidden, reload, refreshCurrent } = useFileNavigation<Entry>({ list })
     const [editingPath, setEditingPath] = useState<string | null>(null)
 
     useEffect(() => {
@@ -174,28 +178,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
         return () => controller.abort()
     }, [base, openPath, textIdentity, editingPath])
 
-    const fileInput = useRef<HTMLInputElement>(null)
-    const [importing, setImporting] = useState(false)
     const [notice, setNotice] = useState<{ ok: boolean; text: string; folder: string } | null>(null)
-    const importFile = async (file: File) => {
-        setImporting(true)
-        setNotice(null)
-        const folder = currentPath
-        try {
-            const form = new FormData()
-            form.set('path', folder)
-            form.set('file', file)
-            const response = await fetch(base, { method: 'POST', body: form })
-            if (response.ok) {
-                setNotice({ ok: true, folder, text: `Imported “${file.name}” into ${folder || 'the workspace home'}.` })
-                await reload()
-            } else setNotice({ ok: false, folder, text: await errorOf(response, `Could not import “${file.name}”.`) })
-        } catch {
-            setNotice({ ok: false, folder, text: `Could not import “${file.name}”.` })
-        } finally {
-            setImporting(false)
-        }
-    }
 
     const openListed = useCallback((name: string) => {
         if (renamingNow.current || deletingNow.current) return
@@ -300,6 +283,48 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
     // Keyed on the path (as FileDetail does), so opening another file leaves the editor by itself.
     const editing = !!preview && editingPath === preview.path
 
+    const textHeadKey = `${agent.id}\0${currentPath}\0${entries.map(entry => `${entry.type}:${entry.name}:${entry.size}:${entry.identity ?? ''}:${entry.modifiedAt}`).join('\0')}`
+    const readTextHead = useCallback(async (path: string) => {
+        try {
+            const response = await fetch(`${base}/read?path=${encodeURIComponent(path)}`, { cache: 'no-store' })
+            const body: unknown = await response.json().catch(() => null)
+            return desktopFilesTextHead(body, response.ok)
+        } catch {
+            return ''
+        }
+    }, [base])
+    const { heads, request } = useFileThumbnails({ read: readTextHead, resetKey: textHeadKey })
+    const writeImport = useCallback(async (item: { path: string; bytes: Uint8Array; signal: AbortSignal; onProgress: (loaded: number, total: number) => void }) => {
+        item.onProgress(0, item.bytes.byteLength)
+        const { buffer, byteOffset, byteLength } = item.bytes
+        const body = buffer instanceof ArrayBuffer ? new Uint8Array(buffer, byteOffset, byteLength) : Uint8Array.from(item.bytes)
+        const response = await fetch(`${base}/import?path=${encodeURIComponent(item.path)}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/octet-stream' },
+            body,
+            signal: item.signal,
+        })
+        const payload: unknown = await response.json().catch(() => null)
+        if (!response.ok) {
+            const record = payload && typeof payload === 'object' ? payload as { error?: unknown; code?: unknown } : {}
+            const code = typeof record.code === 'string' ? record.code : 'http'
+            throw new FilesImportWriteError(typeof record.error === 'string' ? record.error : 'Import failed.', code as never, response.status)
+        }
+        if (!payload || typeof payload !== 'object' || !('saved' in payload) || payload.saved !== true
+            || !('path' in payload) || typeof payload.path !== 'string') {
+            throw new FilesImportWriteError('The file import result could not be confirmed. Check Files before retrying.', 'unconfirmed', response.status)
+        }
+        item.onProgress(item.bytes.byteLength, item.bytes.byteLength)
+        return { saved: true as const, path: payload.path }
+    }, [base])
+    const imports = useFilesImportQueue({
+        rootDir: currentPath,
+        disabled: pending || loading || busy || !!error,
+        write: writeImport,
+        onRejected: message => setNotice({ ok: false, folder: currentPath, text: message }),
+        onFileSaved: refreshCurrent,
+    })
+
     if (preview && 'conflict' in preview) {
         return <FileEditor base={base} path={preview.path} content={preview.conflict.content} hash={preview.conflict.hash} identity={preview.conflict.identity} initialConflict={preview.conflict} registerCloseGuard={registerCloseGuard}
             onClose={() => setPreview(null)}
@@ -368,43 +393,35 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                 className={`shrink-0 rounded p-1 hover:bg-accent/50 ${showHidden ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
                 {showHidden ? <EyeIcon className="size-3.5" /> : <EyeOffIcon className="size-3.5" />}
             </button>
-            <input ref={fileInput} type="file" accept=".txt,.md,text/plain,text/markdown" className="hidden" data-testid="import-file-input"
-                onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importFile(file) }} />
-            <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 px-2 text-xs" disabled={pending || importing || loading || busy || !!error} onClick={() => fileInput.current?.click()}>
-                {importing ? 'Importing…' : 'Import file'}
-            </Button>
+            <FilesImportMenu onPick={imports.enqueueEntries} disabled={pending || loading || busy || !!error} />
             <button type="button" aria-label="Refresh files" disabled={pending} onClick={reload} className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground"><RefreshCwIcon className="size-3.5" /></button>
         </nav>
         {renamePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Renaming…</p>}
         {deletePending && <p role="status" className="pt-2 text-xs text-muted-foreground">Deleting…</p>}
         {notice?.folder === currentPath && <p role={notice.ok ? 'status' : 'alert'} data-testid="import-notice" className={`pt-2 text-xs ${notice.ok ? 'text-muted-foreground' : 'text-destructive'}`}>{notice.text}</p>}
-        <div className={`min-h-0 flex-1 overflow-y-auto py-2 ${busy || pending ? 'pointer-events-none opacity-60' : ''}`}>
-            {loading ? <p role="status" className="text-sm text-muted-foreground">Loading files…</p>
+        <div className={`relative min-h-0 flex-1 overflow-y-auto py-2 ${busy || pending ? 'pointer-events-none opacity-60' : ''}`}
+            onDragOver={imports.onDragOver} onDragLeave={imports.onDragLeave} onDrop={imports.onDrop}>
+            {imports.dragOver && <p role="status" className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-md border border-dashed bg-background/80 text-sm">Drop files or folders to import</p>}
+            {loading && !error ? <FxFilesLoading />
                 : error ? <p role="alert" className="text-sm text-destructive">{error}</p>
                 : <ContextMenu onOpenChange={open => { if (!open) setMenuName(null) }}>
                     <ContextMenuTrigger asChild>
-                        <ul className="space-y-0.5">
-                            {currentPath && <li><button type="button" onContextMenu={event => { event.preventDefault(); setMenuName(null) }} disabled={pending} onClick={goUp} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50"><FolderIcon className="size-4 text-muted-foreground" />..</button></li>}
-                            {entries.map(entry => {
-                                const path = childPath(entry.name)
-                                const glyph = entry.type === 'dir' ? <FolderIcon className="size-4 shrink-0 text-muted-foreground" /> : <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
-                                return <li key={entry.name}>
-                                    {renaming === entry.name ? <div className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm">
-                                        {glyph}
-                                        <RenameField name={entry.name} onSubmit={next => { setRenaming(null); void renameEntry(entry.name, next) }} onCancel={() => setRenaming(null)} />
-                                    </div> : <button type="button" disabled={pending} aria-selected={selectedHere === entry.name} onContextMenu={() => setMenuName(entry.name)}
-                                        onClick={() => {
-                                            if (entry.type === 'dir') { setSelected(path); enter(entry.name) }
-                                            else openListed(entry.name)
-                                        }}
-                                        className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent/50 ${selectedHere === entry.name ? 'bg-accent/60' : ''}`}>
-                                        {glyph}
-                                        <span className="truncate">{entry.name}</span>
-                                    </button>}
-                                </li>
-                            })}
-                            {entries.length === 0 && <li className="px-2 py-6 text-center text-sm text-muted-foreground">This is your coworker’s workspace. Files it downloads, creates or edits during its runs are stored here.</li>}
-                        </ul>
+                        <DesktopFilesGrid
+                            entries={entries}
+                            currentPath={currentPath}
+                            filesBase={base}
+                            selectedName={selectedHere}
+                            renamingName={renaming}
+                            pending={pending}
+                            textHeads={heads}
+                            onRequestText={request}
+                            onOpenFile={name => openListed(name)}
+                            onOpenDir={name => { setSelected(childPath(name)); enter(name) }}
+                            onGoUp={currentPath ? goUp : undefined}
+                            onContextMenu={name => setMenuName(name)}
+                            onClearMenu={() => setMenuName(null)}
+                            renderRename={name => <RenameField name={name} onSubmit={next => { setRenaming(null); void renameEntry(name, next) }} onCancel={() => setRenaming(null)} />}
+                        />
                     </ContextMenuTrigger>
                     {menuEntry && <ContextMenuContent onCloseAutoFocus={event => {
                         const name = renameAfterMenu.current
@@ -427,6 +444,7 @@ function FilesPanel({ agent, registerCloseGuard }: { agent: DesktopAgentView; re
                         </ContextMenuItem>
                     </ContextMenuContent>}
                 </ContextMenu>}
+            <FilesImportTray items={imports.items} onCancel={imports.cancel} onRetry={imports.retry} onDismiss={imports.dismiss} />
         </div>
         {deleting && <ConfirmDialog open pending={deletePending} onOpenChange={open => { if (!open && !deletingNow.current) setDeleting(null) }}
             title={`Delete ${deleting.name}?`}

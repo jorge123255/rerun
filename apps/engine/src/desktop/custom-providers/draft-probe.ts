@@ -7,7 +7,7 @@ export async function probeCustomDraft(input: CustomProviderDraftProbe, checkWor
     const signal = AbortSignal.any([stop, AbortSignal.timeout(30_000)])
     const config: CustomProviderConfig = { name: 'Draft', baseUrl: input.baseUrl, policy: input.policy, preset: null, models: [], contextWindow: null, vision: false }
     const network = createPinnedProviderFetch(config, checkWorkspace, signal)
-    const headers = input.apiKey ? { Authorization: `Bearer ${input.apiKey}` } : {}
+    const headers: Record<string, string> = input.apiKey ? { Authorization: `Bearer ${input.apiKey}` } : {}
     let models: CustomProviderModel[] = [], status: CustomProviderProbe['status'] = 'unavailable', problem: CustomProviderProbe['problem'] = 'not_listed', manualUsable = false
     await checkWorkspace(signal)
     try {

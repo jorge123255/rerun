@@ -49,11 +49,17 @@ export type DesktopApiConnectionAuthority = {
     clearDefault(): Promise<void>
     pendingRuns(connectionId: string): Promise<DesktopApiPendingRun[]>
     stopAndDrain?(connectionId: string): Promise<void>
+    withMutation?<T>(effect: () => Promise<T>): Promise<T>
+    removalAvailable?(): boolean
+    withRemoval?<T>(connectionId: string, effect: () => Promise<T>): Promise<T>
 }
 
 export class DesktopApiConnectionRefusal extends Error {}
 
 type Applied = { receipt: DesktopApiMutationReceipt; result: DesktopApiMutationResult }
+type ReservedReceiptRecord = DesktopApiConnectionReceiptRecord & {
+    receipt: DesktopApiMutationReceipt & { connectionId: string; connectionRevision: string }
+}
 type MutationInput = {
     kind: DesktopApiMutationKind
     workspaceId: number
@@ -63,7 +69,7 @@ type MutationInput = {
     input: unknown
     initial?: { connection: LoadedConnection | null; catalog?: DesktopApiConnectionCatalog; removal?: DesktopApiRemovalResult }
     apply: () => Promise<Applied>
-    reconcile: (previous: DesktopApiConnectionReceiptRecord) => Promise<Applied | null>
+    reconcile: (previous: ReservedReceiptRecord) => Promise<Applied | null>
 }
 
 const allowed = new Set(['anthropic', 'openai', 'google', 'openrouter'])
@@ -174,24 +180,30 @@ export function createDesktopApiConnectionService({ authority, store, connection
             if (error instanceof DesktopApiConnectionRefusal) return refusedUnstored(input)
             throw error
         }
-        const { created } = await store.reserve(initialReceipt, null)
+        const { created, record: previous } = await store.reserve(initialReceipt, null)
         if (!created) {
-            const previous = await store.read(input.requestId)
-            if (!previous) throw new Error('API connection receipt disappeared')
+            if (previous.receipt.kind !== input.kind || previous.receipt.workspaceId !== input.workspaceId
+                || input.kind !== 'create' && previous.receipt.connectionId !== input.connectionId) throw new Error('API connection request identity changed')
             if (previous.receipt.status === 'saved' && previous.result) return { ...previous.result, recovered: true }
             if (previous.receipt.status === 'refused' && previous.result) return { ...previous.result, recovered: true }
-            const reconciled = await input.reconcile(previous)
+            const previousId = desktopApiConnectionIdSchema.safeParse(previous.receipt.connectionId)
+            const previousRevision = desktopApiConnectionRevisionSchema.safeParse(previous.receipt.connectionRevision)
+            if (!previousId.success || !previousRevision.success) return desktopApiMutationResultSchema.parse({
+                status: 'uncertain', recovered: true, connection: null,
+                receipt: { ...previous.receipt, status: 'uncertain', message: 'The original connection reservation is incomplete. It will not be repeated automatically.', updatedAt: now().toISOString() },
+            })
+            const reserved = { ...previous, receipt: { ...previous.receipt, connectionId: previousId.data, connectionRevision: previousRevision.data } }
+            const reconciled = await input.reconcile(reserved)
             if (reconciled) {
+                reconciled.receipt = { ...reconciled.receipt, createdAt: previous.receipt.createdAt }
+                reconciled.result = { ...reconciled.result, receipt: reconciled.receipt }
                 await store.finish(reconciled.receipt, reconciled.result)
                 return { ...reconciled.result, recovered: true }
             }
-            return (await uncertain(input, true)).result
+            // Preserve the original reservation when the effect still cannot be proved.
+            return (await uncertain({ ...input, connectionId: previousId.data, revision: previousRevision.data }, true)).result
         }
-        try {
-            const applied = await input.apply()
-            await store.finish(applied.receipt, applied.result)
-            return applied.result
-        } catch (error) {
+        const failed = async (error: unknown): Promise<DesktopApiMutationResult> => {
             if (error instanceof DesktopApiConnectionRefusal || error instanceof Error && error.name === 'AbortError') {
                 const refused = await result(input.kind, 'refused', input.workspaceId, input.connectionId, input.revision, input.requestId, input.input, input.initial ?? { connection: null })
                 await store.finish(refused.receipt, refused.result).catch(() => {})
@@ -201,6 +213,18 @@ export function createDesktopApiConnectionService({ authority, store, connection
             await store.finish(pending.receipt, pending.result).catch(() => {})
             return pending.result
         }
+        const apply = async (): Promise<DesktopApiMutationResult> => {
+            try {
+                const applied = await input.apply()
+                await store.finish(applied.receipt, applied.result)
+                return applied.result
+            } catch (error) { return failed(error) }
+        }
+        if (input.kind !== 'remove' && authority.withMutation) {
+            try { return await authority.withMutation(apply) }
+            catch (error) { return failed(error) } // Admission itself refused before an effect.
+        }
+        return apply()
     }
 
     async function current(id: string, expectedRevision: string): Promise<LoadedConnection> {
@@ -224,7 +248,9 @@ export function createDesktopApiConnectionService({ authority, store, connection
                 await store.setRevision(input.workspaceId, desktopApiConnectionIdSchema.parse(id), null, nextRevision)
                 return result('create', 'saved', input.workspaceId, id, nextRevision, input.requestId, input, { connection: created, catalog: await catalog() })
             },
-            reconcile: async () => {
+            reconcile: async previous => {
+                const id = previous.receipt.connectionId
+                const nextRevision = previous.receipt.connectionRevision
                 const existing = await authority.get(id)
                 if (!existing || existing.config.name !== input.name || existing.config.provider !== input.provider || JSON.stringify(existing.config.models) !== JSON.stringify(input.models) || JSON.stringify(existing.config.extraModels) !== JSON.stringify(input.extraModels) || existing.config.baseUrl !== input.baseUrl || existing.env[CONNECTION_TOKEN_KEY[input.provider]] !== input.secret) return null
                 if (await store.revision(input.workspaceId, desktopApiConnectionIdSchema.parse(id)) !== nextRevision) return null
@@ -246,7 +272,8 @@ export function createDesktopApiConnectionService({ authority, store, connection
                 await store.setRevision(input.workspaceId, input.connectionId, input.expectedRevision, nextRevision)
                 return result('rename', 'saved', input.workspaceId, input.connectionId, nextRevision, input.requestId, input, { connection: updated, catalog: await catalog() })
             },
-            reconcile: async () => {
+            reconcile: async previous => {
+                const nextRevision = previous.receipt.connectionRevision
                 const existing = await authority.get(input.connectionId)
                 if (!existing || existing.config.name !== input.name || await store.revision(input.workspaceId, input.connectionId) !== nextRevision) return null
                 return result('rename', 'saved', input.workspaceId, input.connectionId, nextRevision, input.requestId, input, { connection: existing, catalog: await catalog() }, true)
@@ -269,7 +296,8 @@ export function createDesktopApiConnectionService({ authority, store, connection
                 await store.setRevision(input.workspaceId, input.connectionId, input.expectedRevision, nextRevision)
                 return result('models', 'saved', input.workspaceId, input.connectionId, nextRevision, input.requestId, input, { connection: updated, catalog: await catalog() })
             },
-            reconcile: async () => {
+            reconcile: async previous => {
+                const nextRevision = previous.receipt.connectionRevision
                 const existing = await authority.get(input.connectionId)
                 if (!existing || JSON.stringify(existing.config.models) !== JSON.stringify(input.models) || JSON.stringify(existing.config.extraModels) !== JSON.stringify(input.extraModels) || await store.revision(input.workspaceId, input.connectionId) !== nextRevision) return null
                 return result('models', 'saved', input.workspaceId, input.connectionId, nextRevision, input.requestId, input, { connection: existing, catalog: await catalog() }, true)
@@ -290,7 +318,8 @@ export function createDesktopApiConnectionService({ authority, store, connection
                 await store.setRevision(input.workspaceId, input.connectionId, input.expectedRevision, nextRevision)
                 return result('credential', 'saved', input.workspaceId, input.connectionId, nextRevision, input.requestId, input, { connection: (await authority.get(input.connectionId))!, catalog: await catalog() })
             },
-            reconcile: async () => {
+            reconcile: async previous => {
+                const nextRevision = previous.receipt.connectionRevision
                 const existing = await authority.get(input.connectionId)
                 if (!existing || existing.env[CONNECTION_TOKEN_KEY[existing.config.provider]] !== input.secret || await store.revision(input.workspaceId, input.connectionId) !== nextRevision) return null
                 return result('credential', 'saved', input.workspaceId, input.connectionId, nextRevision, input.requestId, input, { connection: existing, catalog: await catalog() }, true)
@@ -312,7 +341,8 @@ export function createDesktopApiConnectionService({ authority, store, connection
                 await store.setRevision(input.workspaceId, input.connectionId, input.expectedRevision, nextRevision)
                 return result('select', 'saved', input.workspaceId, input.connectionId, nextRevision, input.requestId, input, { connection: (await authority.get(input.connectionId))!, catalog: await catalog() })
             },
-            reconcile: async () => {
+            reconcile: async previous => {
+                const nextRevision = previous.receipt.connectionRevision
                 const existing = await authority.get(input.connectionId)
                 const selected = await authority.readDefault()
                 if (!existing || selected?.connectionId !== input.connectionId || selected.model !== input.model || selected.reasoningEffort !== input.reasoningEffort || await store.revision(input.workspaceId, input.connectionId) !== nextRevision) return null
@@ -330,7 +360,8 @@ export function createDesktopApiConnectionService({ authority, store, connection
         const usage = await authority.usage(id)
         const pendingRuns = await authority.pendingRuns(id)
         const preservedConnectionIds = (await authority.list()).filter(connection => connection.id !== id && allowed.has(connection.config.provider)).map(connection => desktopApiConnectionIdSchema.parse(connection.id))
-        const canRemove = pendingRuns.length === 0 && !!authority.stopAndDrain
+        const idle = authority.removalAvailable?.() === true
+        const canRemove = pendingRuns.length === 0 && !!authority.stopAndDrain && !!authority.withRemoval && idle
         return desktopApiRemovalPlanSchema.parse({
             version: 1,
             workspaceId,
@@ -341,7 +372,9 @@ export function createDesktopApiConnectionService({ authority, store, connection
             pendingRuns,
             preservedConnectionIds,
             canRemove,
-            ...(!canRemove ? { reason: pendingRuns.length ? 'Stop the pending runs before removing this connection.' : 'Removal drain authority is unavailable.' } : {}),
+            ...(!canRemove ? { reason: pendingRuns.length ? 'Stop the pending or unclassified runs in their conversations before removing this connection.'
+                : !authority.stopAndDrain || !authority.withRemoval || !authority.removalAvailable ? 'Removal admission authority is unavailable.'
+                    : 'Wait for workspace replies and background work to finish before removing this connection.' } : {}),
         })
     }
 
@@ -352,20 +385,26 @@ export function createDesktopApiConnectionService({ authority, store, connection
         const operation: MutationInput = {
             kind: 'remove', workspaceId: input.workspaceId, connectionId: input.connectionId, revision: nextRevision, requestId: input.requestId, input,
             apply: async () => {
-                await current(input.connectionId, input.expectedRevision)
-                plan = await removalPlan(input.workspaceId, input.connectionId)
-                if (!plan.canRemove) throw new DesktopApiConnectionRefusal(plan.reason ?? 'Connection cannot be removed.')
-                operation.initial = { connection: null, removal: { released: plan.usage, preservedConnectionIds: plan.preservedConnectionIds } }
-                signal?.throwIfAborted()
-                await authority.stopAndDrain!(input.connectionId)
-                plan = await removalPlan(input.workspaceId, input.connectionId)
-                if (!plan.canRemove) throw new DesktopApiConnectionRefusal(plan.reason ?? 'Connection cannot be removed.')
-                const released = await authority.release(input.connectionId)
-                await authority.delete(input.connectionId)
-                await store.setRevision(input.workspaceId, input.connectionId, input.expectedRevision, nextRevision)
-                return result('remove', 'saved', input.workspaceId, input.connectionId, nextRevision, input.requestId, input, { connection: null, catalog: await catalog(), removal: { released, preservedConnectionIds: plan.preservedConnectionIds } })
+                if (!authority.withRemoval || !authority.removalAvailable || !authority.stopAndDrain) throw new DesktopApiConnectionRefusal('Removal admission authority is unavailable.')
+                if (!authority.removalAvailable()) throw new DesktopApiConnectionRefusal('Wait for workspace replies and background work to finish before removing this connection.')
+                return authority.withRemoval(input.connectionId, async () => {
+                    await current(input.connectionId, input.expectedRevision)
+                    plan = await removalPlan(input.workspaceId, input.connectionId)
+                    // The exclusive gate is held here, so its own availability flag is false.
+                    if (plan.pendingRuns.length || !authority.stopAndDrain) throw new DesktopApiConnectionRefusal(plan.reason ?? 'Connection cannot be removed.')
+                    operation.initial = { connection: null, removal: { released: plan.usage, preservedConnectionIds: plan.preservedConnectionIds } }
+                    signal?.throwIfAborted()
+                    await authority.stopAndDrain(input.connectionId)
+                    plan = await removalPlan(input.workspaceId, input.connectionId)
+                    if (plan.pendingRuns.length) throw new DesktopApiConnectionRefusal(plan.reason ?? 'Connection cannot be removed.')
+                    const released = await authority.release(input.connectionId)
+                    await authority.delete(input.connectionId)
+                    await store.setRevision(input.workspaceId, input.connectionId, input.expectedRevision, nextRevision)
+                    return result('remove', 'saved', input.workspaceId, input.connectionId, nextRevision, input.requestId, input, { connection: null, catalog: await catalog(), removal: { released, preservedConnectionIds: plan.preservedConnectionIds } })
+                })
             },
             reconcile: async previous => {
+                const nextRevision = previous.receipt.connectionRevision
                 if (await authority.get(input.connectionId)) return null
                 if (await store.revision(input.workspaceId, input.connectionId) !== nextRevision) return null
                 const removal = previous.result?.removal ?? operation.initial?.removal

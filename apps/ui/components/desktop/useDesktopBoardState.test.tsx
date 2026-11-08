@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useLayoutEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
@@ -14,7 +14,11 @@ const saved = (revision = 4) => ({ ...initial, revision, spaces: [{ ...initial.s
 let state: ReturnType<typeof useDesktopBoardState>
 let root: ReturnType<typeof createRoot>
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r }); return { promise, resolve } }
-function Harness() { state = useDesktopBoardState(initial); return <p>{state.board?.spaces[0]?.name}</p> }
+function Harness() {
+    const value = useDesktopBoardState(initial)
+    useLayoutEffect(() => { state = value })
+    return <p>{value.board?.spaces[0]?.name}</p>
+}
 beforeEach(async () => {
     cancelDraftShutdown()
     const container = document.createElement('div'); document.body.append(container)
