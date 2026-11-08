@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ConnectionsList, DesktopCodexStatus } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
+import { DESKTOP_CODEX_LOGIN_BUDGET_MS } from '@/lib/desktop/codex-login-budget'
 
 type Action = 'start' | 'cancel' | 'logout' | 'refresh'
-type Snapshot = { status: DesktopCodexStatus; providers: ConnectionsList }
+type Snapshot = { status: DesktopCodexStatus; providers: ConnectionsList | null }
 async function read(action?: Action, signal?: AbortSignal): Promise<Snapshot> {
     const res = await fetch('/api/desktop/codex-login', action ? {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action }), signal,
@@ -22,9 +23,13 @@ export function DesktopCodexLogin({ connected, modelCount, onProviders }: {
     const busy = pendingAction !== null
     const [error, setError] = useState('')
     const [notice, setNotice] = useState('')
+    const [watchingStart, setWatchingStart] = useState(false)
     const revision = useRef(0)
+    const watchUntil = useRef(0)
+    const providersCallback = useRef(onProviders)
+    useEffect(() => { providersCallback.current = onProviders }, [onProviders])
 
-    const shouldPoll = !status || status.phase === 'waiting'
+    const shouldPoll = watchingStart || !status || status.phase === 'waiting'
     const refreshOnOpen = !status && connected
     useEffect(() => {
         const controller = new AbortController()
@@ -35,33 +40,48 @@ export function DesktopCodexLogin({ connected, modelCount, onProviders }: {
                 const snap = await read(refreshOnOpen ? 'refresh' : undefined, controller.signal)
                 if (controller.signal.aborted || at !== revision.current) return
                 setStatus(snap.status)
-                setError('')
-                if (snap.status.phase !== 'waiting') onProviders(snap.providers)
+                if (snap.status.phase === 'idle' && watchingStart) {
+                    if (Date.now() >= watchUntil.current) {
+                        setWatchingStart(false)
+                        setError('Cannot reach the local Codex runner. Try again.')
+                    }
+                } else {
+                    if (watchingStart) setWatchingStart(false)
+                    setError('')
+                    if (snap.status.phase !== 'waiting' && snap.providers) providersCallback.current(snap.providers)
+                }
             } catch {
-                if (!controller.signal.aborted && at === revision.current) {
+                if (!controller.signal.aborted && at === revision.current && !(watchingStart && Date.now() < watchUntil.current)) {
                     if (refreshOnOpen) setStatus({ phase: 'connected', catalogError: 'Could not refresh the Codex models. You can still use the saved list.' })
-                    else setError('Cannot read ChatGPT sign-in status.')
+                    else setError(watchingStart ? 'Cannot reach the local Codex runner. Try again.' : 'Cannot read ChatGPT sign-in status.')
+                    if (watchingStart) setWatchingStart(false)
                 }
             }
             if (!controller.signal.aborted && at === revision.current && shouldPoll) timer = setTimeout(poll, 1800)
         }
         if (!busy && shouldPoll) void poll()
         return () => { controller.abort(); clearTimeout(timer) }
-    }, [busy, shouldPoll, refreshOnOpen, onProviders])
+    }, [busy, shouldPoll, refreshOnOpen, watchingStart])
 
     async function act(action: Action) {
         revision.current++
         setPendingAction(action); setError(''); setNotice('')
         try {
             const snap = await read(action)
-            setStatus(snap.status); onProviders(snap.providers)
+            setStatus(snap.status)
+            setWatchingStart(false)
+            if (snap.status.phase !== 'waiting' && snap.providers) providersCallback.current(snap.providers)
             if (action === 'refresh' && snap.status.phase === 'connected' && !snap.status.catalogError) setNotice('Model list refreshed.')
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : 'ChatGPT sign-in failed.')
+            if (action === 'start') {
+                watchUntil.current = Date.now() + DESKTOP_CODEX_LOGIN_BUDGET_MS
+                setWatchingStart(true)
+            } else setError(cause instanceof Error ? cause.message : 'ChatGPT sign-in failed.')
         } finally { setPendingAction(null) }
     }
 
     const refreshing = pendingAction === 'refresh' || refreshOnOpen
+    const requesting = pendingAction === 'start' || watchingStart
     return <div className="space-y-3">
         <p className="text-sm text-muted-foreground">Use your ChatGPT subscription for coworker chat. Signing in sets a Codex model as your workspace default.</p>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
@@ -83,6 +103,6 @@ export function DesktopCodexLogin({ connected, modelCount, onProviders }: {
                 </Button>
                 <Button type="button" variant="outline" disabled={busy} onClick={() => void act('logout')}>Sign out of ChatGPT</Button>
             </div>
-        </> : <Button type="button" disabled={busy || (!status && !error)} onClick={() => void act('start')}>{busy ? 'Requesting code…' : 'Sign in with ChatGPT'}</Button>}
+        </> : <Button type="button" disabled={requesting || (!status && !error)} onClick={() => void act('start')}>{requesting ? 'Requesting code…' : 'Sign in with ChatGPT'}</Button>}
     </div>
 }
