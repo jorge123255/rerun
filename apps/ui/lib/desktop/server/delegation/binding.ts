@@ -10,7 +10,7 @@ import { readDesktopRuntime, type DesktopRuntime } from '../runtime'
 import { engineOf } from '../settings'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
 import { boundedText } from '../mcp/remote'
-import { foremanTurn, ownedForemanChat } from '../foreman/chat-store'
+import { ownedForemanDispatch, ownedForemanChat } from '../foreman/chat-store'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import { delegationReceipts, delegationStore } from './store'
 import { delegationApi } from './api'
@@ -23,18 +23,8 @@ const sourceKey = (source: Source) => JSON.stringify([source.parentAgentId, sour
 const changed = () => new DesktopHttpError(409, 'Delegation ownership or permission changed.')
 async function currentEpoch(runtime: DesktopRuntime) { if ((await readDesktopRuntime()).launchNonce !== runtime.launchNonce) throw changed() }
 
-async function foremanDelegationChat(runtime: DesktopRuntime, db: Client, input: EngineSource) {
-    assertDesktopWorkspaceAdmission(runtime)
-    const turn = await foremanTurn(db, input.runId)
-    if (!turn || !['pending', 'admitted'].includes(turn.status) || turn.body.binding.runId !== input.runId
-        || turn.body.binding.workspaceId !== String(runtime.workspaceId) || turn.body.sessionId !== input.sessionId) throw changed()
-    const owner = await ownedForemanChat(db, turn.body.binding)
-    if (owner.sessionId !== input.sessionId) throw changed()
-    return owner.chat.chatId
-}
-
 async function authorizeForemanDelegation(runtime: DesktopRuntime, db: Client, input: EngineSource, signal: AbortSignal) {
-    const chatId = await foremanDelegationChat(runtime, db, input)
+    const chatId = (await ownedForemanDispatch(runtime, db, input.sessionId, input.runId)).chat.chatId
     const prefix = `/agents/${FOREMAN_AGENT_ID}`
     const [agent, run] = await Promise.all([
         request(engineOf(runtime), prefix, { signal }, value => z.object({
@@ -47,7 +37,7 @@ async function authorizeForemanDelegation(runtime: DesktopRuntime, db: Client, i
         }).parse(value)),
     ])
     if (agent.config.ephemeral || run.id !== input.runId || run.sessionId !== input.sessionId
-        || await foremanDelegationChat(runtime, db, input) !== chatId) throw changed()
+        || (await ownedForemanDispatch(runtime, db, input.sessionId, input.runId)).chat.chatId !== chatId) throw changed()
     await currentEpoch(runtime)
     signal.throwIfAborted()
     assertDesktopWorkspaceAdmission(runtime)

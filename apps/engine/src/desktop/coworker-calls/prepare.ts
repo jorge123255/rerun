@@ -1,5 +1,7 @@
 import {
     DESKTOP_COWORKER_CALL_NAME_MAX_CHARS,
+    FOREMAN_AGENT_ID,
+    type AgentConfig,
     DESKTOP_COWORKER_CALL_TITLE_CHARS,
 } from '@rerun/contracts'
 import { createHash } from 'node:crypto'
@@ -30,9 +32,12 @@ export function desktopCoworkerCallTitle(callerName: string, message: string): s
     return `from ${callerName}: ${message.slice(0, DESKTOP_COWORKER_CALL_TITLE_CHARS)}`
 }
 
-export function desktopCoworkerCallee<T extends { config: { selfImprovement: { enabled: boolean } } }>(target: T): T {
+export function desktopCoworkerCallee<T extends { config: { selfImprovement: { enabled: boolean }; tools?: AgentConfig['tools'] } }>(target: T, originAgentId?: string): T {
     const config = structuredClone(target.config)
     config.selfImprovement.enabled = false
+    if (originAgentId === FOREMAN_AGENT_ID && config.tools) {
+        config.tools.desktopToolGrants = { ...config.tools.desktopToolGrants, delegate: false, callAgent: false }
+    }
     return { ...target, config }
 }
 

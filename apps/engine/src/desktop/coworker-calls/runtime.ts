@@ -63,7 +63,7 @@ export type DesktopCoworkerCallDeps = {
     adoptPublicSession: (input: { publicAgentId: string; engineSessionId: string; title: string }) => Promise<{ publicSessionId: string }>
     notifyOpened: (input: { engineTargetAgentId: string; engineSessionId: string; title: string; callerName: string; originAgentId: string }) => Promise<void>
     notifyFailed: (input: { engineTargetAgentId: string; engineSessionId: string; reason: string }) => Promise<void>
-    startChildRun: (input: { engineTargetAgentId: string; engineSessionId: string; prompt: string; model: PreparedCoworkerCallTarget; assertActive: () => Promise<void>; onRunCreated: (runId: string) => Promise<void> }) => Promise<{ engineRunId: string; follow: ChildFollow }>
+    startChildRun: (input: { originAgentId?: string; engineTargetAgentId: string; engineSessionId: string; prompt: string; model: PreparedCoworkerCallTarget; assertActive: () => Promise<void>; onRunCreated: (runId: string) => Promise<void> }) => Promise<{ engineRunId: string; follow: ChildFollow }>
     cancelChildRun: (input: { engineTargetAgentId: string; engineRunId: string }) => Promise<void>
 }
 
@@ -319,7 +319,7 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
             await publish(linked, input.onProgress)
             await deps.notifyOpened({ engineTargetAgentId: target.engineAgentId, engineSessionId: session.engineSessionId, title, callerName: input.callerName, originAgentId: input.engineAgentId })
             const child = await deps.startChildRun({
-                engineTargetAgentId: target.engineAgentId, engineSessionId: session.engineSessionId, prompt, model: model!, assertActive,
+                engineTargetAgentId: target.engineAgentId, engineSessionId: session.engineSessionId, prompt, model: model!, assertActive, originAgentId: input.engineAgentId,
                 onRunCreated: async runId => {
                     if (savedChildId && savedChildId !== runId) throw new Error('Coworker run identity changed')
                     savedChildId = runId

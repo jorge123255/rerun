@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+    agentConfigSchema,
     DESKTOP_COWORKER_CALL_INTERRUPTED_REASON,
     DESKTOP_COWORKER_CALL_MAX_FANOUT,
     DESKTOP_COWORKER_CALL_RESULT_MAX_CHARS,
@@ -324,6 +325,14 @@ describe('desktop coworker call runtime', () => {
             execute: async () => { throw new Error('should not run') },
         })
         expect(await (missing.call_agent as { execute: (input: unknown, options: unknown) => Promise<string> }).execute({ agent: 'Bob', message: 'Hello', wait: false }, { toolCallId: 'tool-2' })).toBe('This run can no longer call a coworker.')
+    })
+
+    it('Foreman-origin calls cannot delegate or call again and keep the target config intact', () => {
+        const target = { config: agentConfigSchema.parse({ name: 'Target', tools: { desktopToolGrants: { callAgent: true, delegate: true, workspaceRead: true } } }) }
+        const called = desktopCoworkerCallee(target, 'foreman')
+        expect(called.config.tools.desktopToolGrants).toMatchObject({ callAgent: false, delegate: false, workspaceRead: true })
+        expect(target.config.tools.desktopToolGrants).toMatchObject({ callAgent: true, delegate: true })
+        expect(desktopCoworkerCallee(target, 'ordinary-agent').config.tools.desktopToolGrants).toEqual(target.config.tools.desktopToolGrants)
     })
 
     it('turns self-improvement off on a copy and refuses duplicate names', () => {
