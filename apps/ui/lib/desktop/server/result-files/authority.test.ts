@@ -1,4 +1,5 @@
-import { mkdtemp, mkdir, writeFile, stat, symlink, link, rm } from 'node:fs/promises'
+import { rmSync } from 'node:fs'
+import { mkdtemp, mkdir, writeFile, stat, symlink, link } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -9,7 +10,13 @@ import { createDesktopAgent } from '../store'
 import type { DesktopRuntime } from '../runtime'
 
 const roots: string[] = []
-afterEach(async () => { for (const root of roots.splice(0)) { await closeDesktopDatabase(root); await rm(root, { recursive: true, force: true }) } })
+afterEach(async () => {
+    for (const root of roots.splice(0)) {
+        await closeDesktopDatabase(root)
+        // Remove fixture entries serially so hardlink names are never unlinked concurrently.
+        rmSync(root, { recursive: true, force: true })
+    }
+})
 async function fixture() {
     const root = await mkdtemp(join(tmpdir(), 'rerun-result-authority-')); roots.push(root)
     const db = await openDesktopDatabase(root)
