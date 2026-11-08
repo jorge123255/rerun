@@ -11,6 +11,7 @@ import { createDesktopForemanBridge, type ForemanRuntime } from './bridge.js'
 import { createDesktopForemanDocsBridge } from '../foreman-docs/bridge.js'
 import { desktopForemanDocsTools } from '../foreman-docs/tools.js'
 import { foremanAgentFileTools } from '../foreman-agent-files/tools.js'
+import { readDesktopDelegation } from '../delegation/binding.js'
 type Binding = ReturnType<typeof createDesktopForemanBridge>
 let installed: Binding | undefined
 let installedDocs: ReturnType<typeof createDesktopForemanDocsBridge> | undefined
@@ -25,7 +26,7 @@ export function bindDesktopForeman(runtime: ForemanRuntime, network?: typeof fet
 }
 export function readDesktopForemanBinding() { return installed }
 export async function desktopForemanTools(ctx: RunContext) {
-    if (!desktopApp() || ctx.agent.id !== FOREMAN_AGENT_ID || ctx.agent.config.kind !== 'foreman' || !ctx.runId || !ctx.agent.resolved.connection?.id) return { tools: {}, close: async () => {} }
+    if (!desktopApp() || ctx.agent.id !== FOREMAN_AGENT_ID || ctx.agent.config.kind !== 'foreman' || ctx.agent.config.ephemeral || !ctx.runId || !ctx.agent.resolved.connection?.id) return { tools: {}, close: async () => {} }
     const runtime = installed
     if (!runtime) throw new Error('Desktop Foreman is not bound to this app launch.')
     const signal = ctx.abortSignal ?? new AbortController().signal
@@ -51,5 +52,8 @@ export async function desktopForemanTools(ctx: RunContext) {
     const docs = installedDocs
     Object.assign(tools, desktopForemanDocsTools({ binding, corpus: RERUN_PUBLIC_DOCS_CORPUS, assertCurrent: current, search: docs ? (input, requestSignal) => docs.search(input, requestSignal ?? signal) : null }))
     Object.assign(tools, foremanAgentFileTools(ctx))
-    return { tools: registerDesktopForemanTools(tools), close: async () => {} }
+    return {
+        tools: { ...registerDesktopForemanTools(tools), ...readDesktopDelegation()?.tools(ctx) },
+        close: async () => {},
+    }
 }

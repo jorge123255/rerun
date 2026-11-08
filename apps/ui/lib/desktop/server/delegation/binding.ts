@@ -1,6 +1,7 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { FOREMAN_AGENT_ID } from '@rerun/contracts'
 import type { Client } from '@libsql/client'
 import { request } from '@/lib/engine/client'
 import { authenticateDesktopEngineRequest, authenticateDesktopRequest, DesktopHttpError } from '../auth'
@@ -9,6 +10,8 @@ import { readDesktopRuntime, type DesktopRuntime } from '../runtime'
 import { engineOf } from '../settings'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
 import { boundedText } from '../mcp/remote'
+import { foremanTurn, ownedForemanChat } from '../foreman/chat-store'
+import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import { delegationReceipts, delegationStore } from './store'
 import { delegationApi } from './api'
 import { delegationIpcSchema, engineSourceSchema, sourceSchema, type Allocation, type EngineSource } from '../../../../../engine/src/desktop/delegation/protocol'
@@ -20,8 +23,40 @@ const sourceKey = (source: Source) => JSON.stringify([source.parentAgentId, sour
 const changed = () => new DesktopHttpError(409, 'Delegation ownership or permission changed.')
 async function currentEpoch(runtime: DesktopRuntime) { if ((await readDesktopRuntime()).launchNonce !== runtime.launchNonce) throw changed() }
 
+async function foremanDelegationChat(runtime: DesktopRuntime, db: Client, input: EngineSource) {
+    assertDesktopWorkspaceAdmission(runtime)
+    const turn = await foremanTurn(db, input.runId)
+    if (!turn || !['pending', 'admitted'].includes(turn.status) || turn.body.binding.runId !== input.runId
+        || turn.body.binding.workspaceId !== String(runtime.workspaceId) || turn.body.sessionId !== input.sessionId) throw changed()
+    const owner = await ownedForemanChat(db, turn.body.binding)
+    if (owner.sessionId !== input.sessionId) throw changed()
+    return owner.chat.chatId
+}
+
+async function authorizeForemanDelegation(runtime: DesktopRuntime, db: Client, input: EngineSource, signal: AbortSignal) {
+    const chatId = await foremanDelegationChat(runtime, db, input)
+    const prefix = `/agents/${FOREMAN_AGENT_ID}`
+    const [agent, run] = await Promise.all([
+        request(engineOf(runtime), prefix, { signal }, value => z.object({
+            id: z.literal(FOREMAN_AGENT_ID),
+            config: z.object({ kind: z.literal('foreman'), enabled: z.literal(true), ephemeral: z.boolean().optional(),
+                tools: z.object({ desktopToolGrants: z.object({ delegate: z.literal(true) }) }) }),
+        }).parse(value)),
+        request(engineOf(runtime), `${prefix}/runs/${encodeURIComponent(input.runId)}`, { signal }, value => z.object({
+            id, agentId: z.literal(FOREMAN_AGENT_ID), sessionId: id, status: z.literal('running'),
+        }).parse(value)),
+    ])
+    if (agent.config.ephemeral || run.id !== input.runId || run.sessionId !== input.sessionId
+        || await foremanDelegationChat(runtime, db, input) !== chatId) throw changed()
+    await currentEpoch(runtime)
+    signal.throwIfAborted()
+    assertDesktopWorkspaceAdmission(runtime)
+    return { source: { parentAgentId: FOREMAN_AGENT_ID, parentSessionId: chatId, parentRunId: input.runId, toolCallId: input.toolCallId }, webFetch: false }
+}
+
 export async function authorizeDelegationSource(runtime: DesktopRuntime, db: Client, input: EngineSource, signal: AbortSignal) {
     await currentEpoch(runtime); signal.throwIfAborted()
+    if (input.engineAgentId === FOREMAN_AGENT_ID) return authorizeForemanDelegation(runtime, db, input, signal)
     const local = (await db.execute({ sql: 'SELECT a.id,a.enabled,s.id AS session_id FROM desktop_agents a JOIN desktop_sessions s ON s.agent_id=a.id WHERE a.engine_agent_id=? AND s.engine_session_id=? AND a.workspace_id=1', args: [input.engineAgentId, input.sessionId] })).rows[0]
     if (!local || !Number(local.enabled)) throw changed()
     await assertCoworkerNotDeleting(db, String(local.id))
@@ -38,7 +73,11 @@ export async function authorizeDelegationSource(runtime: DesktopRuntime, db: Cli
     return { source: { parentAgentId: String(local.id), parentSessionId: String(local.session_id), parentRunId: input.runId, toolCallId: input.toolCallId }, webFetch: agent.config.tools.desktopToolGrants?.webFetch === true }
 }
 
-async function engineSource(db: Client, source: Source): Promise<EngineSource> {
+async function engineSource(runtime: DesktopRuntime, db: Client, source: Source): Promise<EngineSource> {
+    if (source.parentAgentId === FOREMAN_AGENT_ID) {
+        const chat = await ownedForemanChat(db, { workspaceId: String(runtime.workspaceId), chatId: source.parentSessionId })
+        return { engineAgentId: FOREMAN_AGENT_ID, sessionId: chat.sessionId, runId: source.parentRunId, toolCallId: source.toolCallId }
+    }
     const row = (await db.execute({ sql: 'SELECT a.engine_agent_id,s.engine_session_id FROM desktop_agents a JOIN desktop_sessions s ON s.agent_id=a.id WHERE a.id=? AND s.id=? AND a.enabled=1 AND a.workspace_id=1', args: [source.parentAgentId, source.parentSessionId] })).rows[0]
     if (!row) throw changed()
     return { engineAgentId: String(row.engine_agent_id), sessionId: String(row.engine_session_id), runId: source.parentRunId, toolCallId: source.toolCallId }
@@ -75,7 +114,7 @@ export async function handleDesktopDelegationBridge(incoming: Request): Promise<
         case 'authority': result = await authorizeDelegationSource(runtime, db, engineSourceSchema.parse(data), signal); break
         case 'record-reserve': {
             const record = recordOf(data), source = record.snapshot
-            await authorizeDelegationSource(runtime, db, await engineSource(db, source), signal)
+            await authorizeDelegationSource(runtime, db, await engineSource(runtime, db, source), signal)
             if (record.resources.some(Boolean) || record.outputs.some(Boolean) || record.snapshot.tasks.some(task => task.status !== 'queued')) throw changed()
             result = await store.reserve(record); break
         }
@@ -92,7 +131,7 @@ export async function handleDesktopDelegationBridge(incoming: Request): Promise<
         case 'stop-settle': await receipts.put(id.parse(data.requestId), data.receipt as StopReceipt); result = null; break
         case 'allocate': {
             const source = sourceSchema.parse(data.source), taskId = z.string().uuid().parse(data.taskId)
-            await authorizeDelegationSource(runtime, db, await engineSource(db, source), signal)
+            await authorizeDelegationSource(runtime, db, await engineSource(runtime, db, source), signal)
             const record = (await store.list(source.parentSessionId)).find(row => sourceKey(row.snapshot) === sourceKey(source))
             if (!record?.snapshot.tasks.some(task => task.taskId === taskId && task.status === 'queued')) throw changed()
             const old = (await db.execute({ sql: 'SELECT record FROM desktop_delegation_resources WHERE source=? AND task_id=?', args: [sourceKey(source), taskId] })).rows[0]

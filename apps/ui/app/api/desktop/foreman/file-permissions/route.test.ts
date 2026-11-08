@@ -54,3 +54,13 @@ test('only the dedicated Foreman UI exposes these grants; proxy response contain
     expect((await PATCH(request('PATCH'))).status).toBe(500)
     expect(fetchMock).toHaveBeenCalledTimes(2)
 })
+
+test('the managed Foreman route forwards a revision-checked delegation opt-in without changing file grants', async () => {
+    const expectedGrants = { ...off, delegate: false }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ ...snapshot, grants: { ...off, delegate: true } }))
+    const response = await PATCH(request('PATCH', { ...body, id: 'delegate', expectedGrants }))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ grants: { ...off, delegate: true } })
+    const init = vi.mocked(fetch).mock.calls[0]?.[1]
+    expect(JSON.parse(String(init?.body))).toMatchObject({ workspaceId: chat.workspaceId, id: 'delegate', enabled: true, expectedGrants })
+})

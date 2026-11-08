@@ -52,3 +52,19 @@ test('unsupported native notifications create no attempt',async()=>{
     const bridge=createDesktopNotifications({Notification,onClick:()=>{}})
     assert.deepEqual(await bridge.notify(payload),{status:'unavailable'});assert.equal(attempts,0)
 })
+test('capacity evicts a settled notice and retains current click routing', async () => {
+    const {notices,clicks,bridge}=fixture()
+    for (let i=0; i<128; i++) {
+        const result=bridge.notify({...payload,key:`event:${i}`})
+        notices.at(-1).emit('show')
+        assert.deepEqual(await result,{status:'shown'})
+    }
+    const next=bridge.notify({...payload,key:'event:128'})
+    assert.equal(notices.length,129)
+    notices[0].emit('click')
+    notices.at(-1).emit('show')
+    assert.deepEqual(await next,{status:'shown'})
+    notices.at(-1).emit('click')
+    assert.deepEqual(clicks.map(target=>target.key),['event:128'])
+    bridge.close()
+})

@@ -34,6 +34,15 @@ export const desktopNotificationEventSchema = z.object({
 })
 export type DesktopNotificationEvent = z.infer<typeof desktopNotificationEventSchema>
 
+export const desktopNotificationStatusSchema = z.enum(['shown', 'unavailable', 'failed', 'unknown'])
+export const desktopNotificationReceiptSchema = z.strictObject({
+    key: z.string().min(8).max(600),
+    attemptId: z.string().uuid(),
+    status: desktopNotificationStatusSchema,
+    nativeStatus: desktopNotificationStatusSchema.nullable().optional(),
+})
+export type DesktopNotificationReceipt = z.infer<typeof desktopNotificationReceiptSchema>
+
 export const desktopNotificationChannelsSchema = z.object({ toast: z.boolean(), sound: z.boolean() })
 export const desktopNotificationEventsSchema = z.object({
     events: z.array(desktopNotificationEventSchema),

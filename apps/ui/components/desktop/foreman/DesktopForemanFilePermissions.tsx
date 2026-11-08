@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { DesktopForemanChatRef } from '@rerun/contracts'
-import { FileTextIcon, PencilIcon } from 'lucide-react'
+import { FileTextIcon, PencilIcon, WorkflowIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { SETTINGS_CARD, SettingsSection, SwitchRow } from '@/components/notifications/settings/SettingsSection'
@@ -35,7 +35,7 @@ export function DesktopForemanFilePermissions({ chat, disabled = false }: { chat
             }).catch(() => { if (current()) setError('Could not read Foreman file permissions. Refresh to try again.') })
         return () => controller.abort()
     }, [open, disabled, owner, refresh, chat.workspaceId, chat.chatId])
-    const change = async (id: 'foremanAgentFilesRead' | 'foremanAgentFilesWrite', enabled: boolean) => {
+    const change = async (id: keyof ForemanFilePermissionSnapshot['grants'], enabled: boolean) => {
         if (!snapshot || busy || disabled || isDesktopQuitting()) return
         const own = live.current, before = snapshot
         setBusy(true); setError(null)
@@ -51,15 +51,18 @@ export function DesktopForemanFilePermissions({ chat, disabled = false }: { chat
         } finally { if (own === live.current && own.current) setBusy(false) }
     }
     return <Dialog open={open} onOpenChange={next => { if (!busy) setOpen(next) }}>
-        <DialogTrigger asChild><Button size="sm" variant="ghost" disabled={disabled}>File access</Button></DialogTrigger>
+        <DialogTrigger asChild><Button size="sm" variant="ghost" disabled={disabled}>Permissions</Button></DialogTrigger>
         <DialogContent>
-            <DialogHeader><DialogTitle>Foreman file access</DialogTitle><DialogDescription>Allow Foreman to work with other coworkers’ visible Files in this workspace. Chats, memories, credentials and hidden stores stay excluded.</DialogDescription></DialogHeader>
+            <DialogHeader><DialogTitle>Foreman permissions</DialogTitle><DialogDescription>Choose whether Foreman can delegate tasks or work with other coworkers’ visible Files. Chats, memories, credentials and hidden stores stay excluded.</DialogDescription></DialogHeader>
             {error ? <div className="space-y-2"><p role="alert" className="text-sm text-destructive">{error}</p><Button size="sm" variant="outline" onClick={() => setRefresh(value => value + 1)} disabled={busy}>Refresh permissions</Button></div>
                 : !snapshot ? <p role="status" className="text-sm text-muted-foreground">Loading permissions…</p>
-                : <SettingsSection title="Other coworkers’ files"><div className={SETTINGS_CARD}>
+                : <><SettingsSection title="Other coworkers’ files"><div className={SETTINGS_CARD}>
                     <SwitchRow icon={FileTextIcon} label="Read coworkers’ files" description="Read, list and search saved visible text files." checked={snapshot.grants.foremanAgentFilesRead} disabled={busy || disabled} onChange={enabled => { void change('foremanAgentFilesRead', enabled) }} />
                     <SwitchRow icon={PencilIcon} label="Edit coworkers’ files" description="Create and edit text and Markdown files. This does not turn on read access." checked={snapshot.grants.foremanAgentFilesWrite} disabled={busy || disabled} onChange={enabled => { void change('foremanAgentFilesWrite', enabled) }} />
-                </div></SettingsSection>}
+                </div></SettingsSection>
+                {snapshot.grants.delegate !== undefined && <SettingsSection title="Delegation"><div className={SETTINGS_CARD}>
+                    <SwitchRow icon={WorkflowIcon} label="Delegate tasks" description="Run isolated workers that receive only the task and return text." checked={snapshot.grants.delegate} disabled={busy || disabled} onChange={enabled => { void change('delegate', enabled) }} />
+                </div></SettingsSection>}</>}
             <p className="text-xs text-muted-foreground">New permissions apply from Foreman’s next reply. Turning a permission off blocks later calls.</p>
         </DialogContent>
     </Dialog>

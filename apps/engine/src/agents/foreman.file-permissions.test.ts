@@ -25,3 +25,15 @@ test('first boot defaults both file permissions off and later boots preserve eac
     expect(restarted.kind).toBe('foreman')
     expect(restarted.selfImprovement.enabled).toBe(false)
 })
+
+test('rebuild preserves only an explicit Foreman delegation grant', async () => {
+    await ensureForeman()
+    const config = await read()
+    expect(config.tools.desktopToolGrants.delegate).not.toBe(true)
+    config.tools.desktopToolGrants.delegate = true
+    await writeFile(join(location.root, 'config.json'), JSON.stringify(config))
+    await ensureForeman()
+    expect((await read()).tools.desktopToolGrants).toEqual({
+        foremanAgentFilesRead: false, foremanAgentFilesWrite: false, delegate: true,
+    })
+})

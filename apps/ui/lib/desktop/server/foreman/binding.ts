@@ -222,7 +222,9 @@ async function createBinding(runtime: DesktopRuntime) {
         async stop(chat: DesktopForemanChatRef) {
           return withForemanChatWrite(db, async () => {
             const current = await live(chat)
-            if (current) await cancelRun(engineOf(runtime), 'foreman', current.runId)
+            if (current) await cancelRun(engineOf(runtime), 'foreman', current.runId).catch(error => {
+                if (!(error instanceof EngineRequestError && error.status === 409)) throw error
+            })
             const discovery = (await core.readView(chat)).discovery
             if (discovery?.status === 'running') await core.stopDiscovery(discovery.discoveryId)
           })
