@@ -45,9 +45,15 @@ test('environment names never include values and links/hardlinks are rejected', 
     await mkdir(join(root,'workspace')); await writeFile(join(root,'workspace','asset.bin'),Buffer.from([0,1]),{mode:0o600})
     await symlink(join(root,'workspace','asset.bin'),join(root,'workspace','linked.bin'))
     expect((await readConfinedBytes(root,'workspace/linked.bin',100)).ok).toBe(false)
-    await link(join(root,'workspace','asset.bin'),join(root,'workspace','hard.bin'))
-    expect((await readConfinedBytes(root,'workspace/asset.bin',100)).ok).toBe(false)
-    expect((await readFile(join(root,'.env'),'utf8'))).toBe(bytes)
+    const hardlink = join(root, 'workspace', 'hard.bin')
+    await link(join(root, 'workspace', 'asset.bin'), hardlink)
+    try {
+        expect((await readConfinedBytes(root,'workspace/asset.bin',100)).ok).toBe(false)
+        expect((await readFile(join(root,'.env'),'utf8'))).toBe(bytes)
+    } finally {
+        // Remove the alias before the recursive fixture cleanup reaches both names.
+        await rm(hardlink, { force: true })
+    }
 })
 test('requirements preserve identifiers and discard untrusted detail instead of treating prose as scrubbed', () => {
     expect(normalizeTemplateRequirements([{kind:'service-reconnect',name:'notion',detail:'https://private/?token=secret'}])[0].detail).not.toContain('secret')

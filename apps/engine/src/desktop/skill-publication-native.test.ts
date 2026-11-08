@@ -17,6 +17,8 @@ beforeEach(async () => { root = await realpath(await mkdtemp(join(tmpdir(), 'rer
 afterEach(async () => {
     for (const child of children) child.stop()
     await Promise.all(children.splice(0).map(child => child.closed))
+    // Unlink the marker first so recursive removal cannot unlink two names of the same inode concurrently.
+    await rm(join(root, '.rerun-skill-lock'), { force: true })
     await rm(root, { recursive: true, force: true })
 })
 afterAll(async () => {

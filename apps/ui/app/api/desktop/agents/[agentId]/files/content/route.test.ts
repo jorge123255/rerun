@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs'
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -57,7 +58,8 @@ afterEach(async () => {
     hooks.beforeRename = undefined
     await closeDesktopDatabase(root)
     process.env = { ...originalEnv }
-    await rm(root, { recursive: true, force: true })
+    // Remove fixture entries serially so hardlink names are never unlinked concurrently.
+    rmSync(root, { recursive: true, force: true })
 })
 
 test('preview hands out the hash an edit starts from; save replaces only that coworker’s file', async () => {
