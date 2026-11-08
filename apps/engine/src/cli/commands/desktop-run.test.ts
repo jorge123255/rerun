@@ -12,6 +12,10 @@ vi.mock('../../agents/foreman.js', () => ({ ensureForeman: vi.fn(async () => {})
 vi.mock('../../desktop/claude-plan/auth.js', () => ({ bindDesktopClaudePlanAuth: () => ({ status: vi.fn(), action: vi.fn(), stop: vi.fn() }) }))
 vi.mock('../../desktop/claude-plan/runtime.js', () => ({ stopDesktopClaudeWorkers: vi.fn(async () => {}) }))
 vi.mock('../../desktop/guest-shell/runtime.js', () => ({ bindDesktopGuestShell: () => ({ close: vi.fn(async () => {}) }) }))
+vi.mock('../../desktop/custom-providers/binding.js', async () => {
+    const { Hono } = await import('hono')
+    return { bindDesktopCustomProviders: () => ({ routes: new Hono(), abort: vi.fn(), close: vi.fn() }), desktopCustomProviderBinding: () => undefined }
+})
 vi.mock('../../desktop/foreman/binding.js', () => ({ bindDesktopForeman: () => ({ close: vi.fn() }) }))
 vi.mock('../../desktop/foreman/routes.js', async () => { const { Hono } = await import('hono'); return { createDesktopForemanRoutes: () => new Hono() } })
 vi.mock('../../desktop/tool-install/binding.js', async () => { const { Hono } = await import('hono'); return { bindDesktopToolInstall: () => ({ routes: new Hono(), close: vi.fn(async () => {}) }) } })

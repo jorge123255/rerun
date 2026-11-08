@@ -8,7 +8,7 @@ import type { Provider } from '@rerun/contracts'
 import { Badge } from '@rerun/ui/primitives'
 import { useRef, useState } from 'react'
 
-export type AddableProvider = Exclude<Provider, 'rerun'>
+export type AddableProvider = Exclude<Provider, 'rerun' | 'custom'>
 export type SubscriptionProvider = Extract<AddableProvider, 'claude' | 'codex'>
 
 export const SUBSCRIPTION_PROVIDERS: SubscriptionProvider[] = ['claude', 'codex']

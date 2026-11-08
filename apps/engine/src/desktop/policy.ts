@@ -1,6 +1,6 @@
 import { desktopTemplateRouteAllowed } from './templates/allow.js'
 import { DESKTOP_CODEX_ID, desktopCodexAvailable } from './codex-runtime.js'
-import { DESKTOP_CLAUDE_CONNECTION_ID } from '@rerun/contracts'
+import { DESKTOP_CLAUDE_CONNECTION_ID, registeredCustomConnectionIdSchema } from '@rerun/contracts'
 import { desktopClaudeAvailable } from './claude-plan/runtime.js'
 import { desktopBrainPagesRouteAllowed } from './brain-pages-policy.js'
 import { badRequest } from '../lib/errors.js'
@@ -10,7 +10,7 @@ export const desktopApp = (): boolean => process.env.RERUN_DESKTOP_APP === '1'
 const API_PROVIDERS = new Set(['openai', 'anthropic', 'google', 'openrouter'])
 
 export function desktopProviderAllowed(provider: string, id?: string) {
-    return API_PROVIDERS.has(provider) || (provider === 'codex' && id === DESKTOP_CODEX_ID && desktopCodexAvailable())
+    return API_PROVIDERS.has(provider) || (provider === 'custom' && registeredCustomConnectionIdSchema.safeParse(id).success) || (provider === 'codex' && id === DESKTOP_CODEX_ID && desktopCodexAvailable())
         || (provider === 'claude' && id === DESKTOP_CLAUDE_CONNECTION_ID && desktopClaudeAvailable())
 }
 
@@ -29,6 +29,7 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (path === '/desktop/external-mcp/keys') return method === 'GET' || method === 'POST'
     if (path === '/desktop/external-mcp/listener') return method === 'GET'
     if (/^\/desktop\/external-mcp\/(?:keys\/revoke|listener\/enable|listener\/disable|recheck)$/.test(path)) return method === 'POST'
+    if (path === '/desktop/custom-providers') return method === 'POST'
     if (path === '/desktop/workspace-admission') return method === 'POST'
     if (/^\/desktop\/workspace-routines\/[A-Za-z0-9_-]+$/.test(path)) return method === 'GET' || method === 'POST'
     if (/^\/desktop\/brain\/semantic\/[A-Za-z0-9_-]+\/status$/.test(path)) return method === 'GET'

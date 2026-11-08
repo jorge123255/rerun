@@ -7,7 +7,8 @@ export function bindRegisteredCustomConnection(authority: CustomProviderAuthorit
         await authority.assertCurrent(identity, signal); signal.throwIfAborted()
         const registered = await getConnection(identity.connectionId)
         await authority.assertCurrent(identity, signal); signal.throwIfAborted()
-        if (registered.id !== identity.connectionId || String(registered.config.provider) !== 'custom') throw new Error('Custom connection registry identity changed.')
+        if (registered.id !== identity.connectionId || registered.config.provider !== 'custom' || registered.custom?.workspaceId !== identity.workspaceId
+            || registered.custom.revision !== identity.revision) throw new Error('Custom connection registry identity changed.')
         return registered
     }
     return {

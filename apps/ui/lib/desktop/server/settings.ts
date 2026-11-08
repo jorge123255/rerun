@@ -2,7 +2,8 @@ import 'server-only'
 import { writeDesktopWorkspaceIcon } from './workspace-icon'
 import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS } from '@rerun/contracts'
 import { createConnection, listConnections, patchConnection, setBoxDefault, updateConnectionKeys } from '@/lib/engine/client'
-import { desktopProvider, type SettingsChange } from '../settings'
+import type { SettingsChange } from '../settings'
+import { desktopConnections } from '../chat-model'
 import { DesktopHttpError } from './auth'
 import { reconcileDesktopDuplicates } from '@/lib/desktop/server/coworker-duplicate'
 import { reconcileDesktopRenames } from './coworker-rename'
@@ -19,7 +20,7 @@ export function engineOf(runtime: DesktopRuntime) {
 
 export async function readDesktopProviders(runtime: DesktopRuntime) {
     const list = await listConnections(engineOf(runtime), { cache: 'no-store' })
-    const connections = list.connections.filter(c => desktopProvider.safeParse(c.provider).success)
+    const connections = desktopConnections(list.connections)
     return { connections, default: list.default }
 }
 

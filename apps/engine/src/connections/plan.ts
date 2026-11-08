@@ -35,5 +35,5 @@ export async function writeBoxPlan(next: BoxPlan): Promise<BoxPlan> {
 // The model a run really gets. The pin itself is never rewritten, so paying gives Opus back to every
 // agent that asked for it.
 export function allowedModel(provider: Provider, model: string): string {
-    return readBoxPlan().premiumModels ? model : trialModelFor(provider, model)
+    return provider === 'custom' || readBoxPlan().premiumModels ? model : trialModelFor(provider, model)
 }

@@ -33,6 +33,7 @@ async function writeConfig(id: string, config: ConnectionConfig): Promise<void> 
 type CodexCatalogFields = Pick<ConnectionConfig, 'codexReasoning'>
 
 export async function createConnection(input: CreateConnectionInput & CodexCatalogFields, id = newId()): Promise<LoadedConnection> {
+    if (input.provider === 'custom') throw badRequest('Use Custom endpoint Settings to register this connection.')
     assertDesktopProvider(input.provider, id)
     const config = connectionConfigSchema.parse({
         name: input.name,
@@ -58,6 +59,7 @@ export async function patchConnection(id: string, patch: UpdateConnectionInput &
     if (id === RERUN_CONNECTION_ID && patch.models && !patch.models.includes(RERUN_MODEL)) throw badRequest('Rerun Balanced cannot be switched off')
     return withConnectionLock(id, async () => {
         const current = await getConnection(id)
+        if (current.custom) throw badRequest('Use Custom endpoint Settings to change this connection.')
         assertDesktopProvider(current.config.provider, id)
         const next = connectionConfigSchema.parse({ ...current.config, ...patch })
         await writeConfig(id, next)
@@ -69,7 +71,9 @@ export async function updateConnectionKeys(id: string, { set, remove }: UpdateCo
     return withConnectionLock(id, async () => {
         // Recheck after the lock: a queued edit cannot recreate a connection
         // whose removal finished while this request was waiting.
-        assertDesktopProvider((await getConnection(id)).config.provider, id)
+        const current = await getConnection(id)
+        if (current.custom) throw badRequest('Use Custom endpoint Settings to change this credential.')
+        assertDesktopProvider(current.config.provider, id)
         if (id === RERUN_CONNECTION_ID) throw badRequest('The Rerun connection is keyless')
         const path = connectionEnvPath(id)
         const next = await readEnvFile(path)

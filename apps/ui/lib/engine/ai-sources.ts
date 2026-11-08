@@ -8,7 +8,7 @@ import { PROVIDER_LABELS, RERUN_CONNECTION_ID, RERUN_MODEL, RERUN_MODELS, RERUN_
 // Rerun, the user's own subscription, or the user's own API key.
 export type SourceKind = 'included' | 'plan' | 'key'
 
-export type AddableProvider = Exclude<Provider, 'rerun'>
+export type AddableProvider = Exclude<Provider, 'rerun' | 'custom'>
 
 export type KeyProvider = Exclude<AddableProvider, 'claude' | 'codex'>
 

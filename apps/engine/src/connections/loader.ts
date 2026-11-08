@@ -16,6 +16,7 @@ export function connectionExists(id: string): boolean {
 
 export async function loadConnectionFromDisk(id: string): Promise<LoadedConnection> {
     const config = connectionConfigSchema.parse(JSON.parse(await readFile(connectionConfigPath(id), 'utf8')))
+    if (config.provider === 'custom') throw new Error('Custom connections require registered desktop custody.')
     const connEnv = await readEnvFile(connectionEnvPath(id))
     return { id, config, env: connEnv }
 }
@@ -30,6 +31,7 @@ export async function listConnectionIds(): Promise<string[]> {
 // The keyless `rerun` connection is served by the hub, which holds the shared key: it counts as
 // connected when the box knows where to reach the hub and how to authenticate against it.
 export function isConnected(connection: LoadedConnection): boolean {
+    if (connection.config.provider === 'custom') return desktopApp() && connection.custom?.state === 'configured'
     if (desktopApp() && connection.config.provider === 'codex') return connection.id === DESKTOP_CODEX_ID && connection.env[signedInFlag] === '1'
     if (connection.id === RERUN_CONNECTION_ID) {
         const { RERUN_HUB_BASE_URL, RERUN_API_KEY } = env()
@@ -40,5 +42,5 @@ export function isConnected(connection: LoadedConnection): boolean {
 }
 
 export function toSummary(connection: LoadedConnection): ConnectionSummary {
-    return { id: connection.id, ...connection.config, connected: isConnected(connection), credentialRejected: isCredentialRejected(connection.id), planLimits: readPlanLimits(connection.id) }
+    return { id: connection.id, ...connection.config, connected: isConnected(connection), credentialRejected: isCredentialRejected(connection.id), planLimits: readPlanLimits(connection.id), ...(connection.custom && { customRevision: connection.custom.revision }) }
 }

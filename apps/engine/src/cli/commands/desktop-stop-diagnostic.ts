@@ -3,7 +3,7 @@ import { rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const components = [
-    'http-listener', 'schedule-admission', 'trigger-runtime', 'delegation',
+    'http-listener', 'schedule-admission', 'trigger-runtime', 'delegation', 'custom-providers',
     'mcp-callback', 'skill-proposals', 'screen-viewer', 'isolated-screens',
     'semantic-memory', 'schedule-tools', 'tool-install', 'foreman',
     'computer-panel', 'guest-shell', 'claude-workers', 'run-abort-initial',

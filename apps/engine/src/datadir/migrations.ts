@@ -18,6 +18,8 @@ import { boxPlanPath, mcpPackagesDir, dataDir } from '../config/paths.js'
 // come back from before it. `up` must be re-runnable: a crash between the step and the version write
 // replays it on the next boot. Per-agent `system.db` and `shared.db` carry their own ladders.
 import { initializeDesktopExternalMcp } from '../desktop/external-mcp-authority/runtime.js'
+import { raw } from '../db/client.js'
+import { DESKTOP_CUSTOM_CONNECTIONS_SCHEMA_SQL } from '../desktop/custom-providers/store.js'
 import { initializeDesktopApiConnections } from '../desktop/api-connections/runtime.js'
 
 export type DataDirMigration = { version: number; id: string; up: () => Promise<void> }
@@ -89,6 +91,9 @@ export const DATA_DIR_MIGRATIONS: DataDirMigration[] = [
     { version: 8, id: 'desktop-api-connections', up: async () => {
         if (!desktopApp()) return
         await initializeDesktopApiConnections()
+    } },
+    { version: 9, id: 'desktop-custom-connections', up: async () => {
+        if (desktopApp()) await raw().executeMultiple(DESKTOP_CUSTOM_CONNECTIONS_SCHEMA_SQL)
     } },
 ]
 

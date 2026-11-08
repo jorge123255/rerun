@@ -41,12 +41,14 @@ function pick(connection: LoadedConnection, model: string): RunModel {
 export async function boxDefaultModel(): Promise<RunModel> {
     const configured = await readBoxDefault()
     const direct = await findConnection(configured?.connectionId)
+    if (configured && direct?.config.provider === 'custom') return pick(direct, configured.model)
     if (configured && isUsable(direct, configured.model)) return pick(direct!, configured.model)
 
     const all = await listConnections()
     const rerun = all.find(c => c.id === RERUN_CONNECTION_ID)
     const candidates = [...(rerun ? [rerun] : []), ...all]
     for (const connection of candidates) {
+        if (connection.config.provider === 'custom') continue
         const model = defaultModelOf(connection)
         if (isUsable(connection, model)) return pick(connection, model)
     }

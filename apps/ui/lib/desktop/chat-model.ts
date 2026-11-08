@@ -72,8 +72,9 @@ export function offeredModelIds(connection: { models: string[]; extraModels?: st
     return [...connection.models, ...(connection.extraModels ?? [])]
 }
 
-export function desktopConnections(connections: ConnectionSummary[]): CatalogConnection[] {
-    return connections.filter(connection => desktopProvider.safeParse(connection.provider).success)
+export function desktopConnections(connections: ConnectionSummary[]): ConnectionSummary[] {
+    return connections.filter(connection => desktopProvider.safeParse(connection.provider).success
+        && (connection.provider !== 'custom' || connection.customRevision !== undefined))
 }
 
 export function usableConnection(connections: CatalogConnection[], pick: DesktopModelPick | null): CatalogConnection | null {
