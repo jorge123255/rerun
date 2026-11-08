@@ -10,6 +10,37 @@ import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { RuntimeSupervisor } from '../src/main/supervisor.mjs'
 
+test('native draft drain forwards only a bounded save to its owned UI and rejects a stale lifetime', async () => {
+    const calls = []
+    const supervisor = new RuntimeSupervisor({ fetcher: async (...args) => {
+        calls.push(args)
+        return Response.json({ draft: { revision: 1, text: 'pending' } })
+    } })
+    const runtime = { app: { origin: 'http://127.0.0.1:1' }, engine: { apiKey: 'fixture-key' }, launchNonce: randomUUID() }
+    supervisor.runtime = runtime
+    const lifetime = new AbortController()
+    const body = JSON.stringify({ text: 'pending' })
+    await assert.rejects(supervisor.saveDrainingDraft('../outside', body, lifetime.signal), /Invalid pending draft/)
+    await assert.rejects(supervisor.saveDrainingDraft('agent-1', 'x'.repeat(256 * 1024 + 1), lifetime.signal), /Invalid pending draft/)
+    assert.equal(calls.length, 0)
+    const saved = await supervisor.saveDrainingDraft('agent-1', body, lifetime.signal)
+    assert.equal(saved.status, 200)
+    assert.deepEqual(JSON.parse(saved.body), { draft: { revision: 1, text: 'pending' } })
+    assert.deepEqual(calls[0], [runtime.app.origin + '/api/desktop/agents/agent-1/draft', {
+        method: 'PUT', redirect: 'error', signal: lifetime.signal,
+        headers: { Authorization: 'Bearer fixture-key', 'X-Rerun-Launch-Nonce': runtime.launchNonce, 'Content-Type': 'application/json' },
+        body,
+    }])
+    lifetime.abort()
+    await assert.rejects(supervisor.saveDrainingDraft('agent-1', body, lifetime.signal), { name: 'AbortError' })
+    assert.equal(calls.length, 1)
+    supervisor.fetcher = async () => {
+        supervisor.runtime = { ...runtime, launchNonce: randomUUID() }
+        return Response.json({ draft: { revision: 1, text: 'old workspace' } })
+    }
+    await assert.rejects(supervisor.saveDrainingDraft('agent-1', body, new AbortController().signal), /workspace changed/)
+})
+
 const fixture = fileURLToPath(new URL('./service-fixture.mjs', import.meta.url))
 const identity = () => ({ installId: randomUUID(), engineApiKey: randomBytes(32).toString('hex'), encryptionKey: randomBytes(32).toString('hex') })
 

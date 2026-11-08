@@ -177,6 +177,14 @@ async function launch() {
         if (quitting || transitioning || !isDesktopPage(event.senderFrame.url)) return { status: 'unavailable' }
         return desktopNotifications.notify(value)
     })
+    ipcMain.handle('desktop:save-draining-draft', (event, value) => {
+        trusted(event)
+        const signal = draftQuit.signalFor(value)
+        if (!signal || !runtime || runtime !== supervisor?.runtime || !isDesktopPage(event.senderFrame.url)) {
+            throw new Error('The pending draft save is no longer active')
+        }
+        return supervisor.saveDrainingDraft(value.agentId, value.body, signal)
+    })
     for (const [channel, handle] of [
         ['desktop:drafts-ready', value => draftQuit.register(value?.registrationId)],
         ['desktop:drafts-unready', value => draftQuit.unregister(value?.registrationId)],

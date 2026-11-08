@@ -6,7 +6,7 @@ import { readDesktopRuntime, type DesktopRuntime } from './runtime'
 export const DESKTOP_SESSION_COOKIE = 'rerun-desktop-session'
 
 export class DesktopHttpError extends Error {
-    constructor(readonly status: number, message: string) {
+    constructor(readonly status: number, message: string, readonly code?: string) {
         super(message)
         this.name = 'DesktopHttpError'
     }
@@ -40,10 +40,12 @@ export async function authenticateDesktopRequest(request: Request): Promise<Desk
     }
     if (desktopWorkspaceFrozen(runtime) && ['POST','PUT','PATCH','DELETE'].includes(request.method)) {
         const path = new URL(request.url).pathname
-        const draft = /\/agents\/[^/]+\/draft$/.test(path) || /^\/api\/desktop\/brain\/(?:pages(?:\/|$)|ui-state$)/.test(path) || path === '/api/desktop/recent-coworkers' || path === '/api/desktop/foreman' || path === '/api/desktop/foreman/voice' || path === '/api/desktop/foreman/company'
+        const switching = 'This workspace is switching. Wait for it to finish.'
+        if (/^\/api\/desktop\/agents\/[^/]+\/draft$/.test(path)) throw new DesktopHttpError(409, switching, 'draft_frozen')
+        const draft = /^\/api\/desktop\/brain\/(?:pages(?:\/|$)|ui-state$)/.test(path) || path === '/api/desktop/recent-coworkers' || path === '/api/desktop/foreman' || path === '/api/desktop/foreman/voice' || path === '/api/desktop/foreman/company'
         // The renderer flushes its pending board view after admissions freeze, before services stop.
         const boardView = request.method === 'PUT' && path === `/api/desktop/workspaces/${runtime.workspaceId}/board-camera`
-        if (!draft && !boardView && path !== '/api/desktop/foreman/intake') throw new DesktopHttpError(409, 'This workspace is switching. Wait for it to finish.')
+        if (!draft && !boardView && path !== '/api/desktop/foreman/intake') throw new DesktopHttpError(409, switching)
     }
     return runtime
 }

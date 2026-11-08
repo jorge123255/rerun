@@ -51,7 +51,7 @@ import { Button } from '@/components/ui/button'
 import { DesktopChatTabs } from './DesktopChatTabs'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
-import { cancelDraftShutdown, freezeDesktopAdmissions, flushDesktopDrafts, forgetCoworkerDrafts, holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { cancelDraftShutdown, freezeDesktopAdmissions, flushDesktopDrafts, forgetCoworkerDrafts, holdDraftAdmission, isDesktopQuitting, type DesktopDraftDrain } from '@/lib/desktop/draft-writes'
 import { flushDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
 import type { DesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers.schema'
 import type { DesktopOpenChat } from '@/lib/desktop/control-center-chats'
@@ -148,10 +148,10 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const creationAdmission = useRef({ blocked: false, settingsAllowed: true })
     useEffect(() => {
         const bridge = (window as Window & { desktopApp?: {
-            onBeforeQuit?: (listener: () => Promise<boolean>) => () => void
+            onBeforeQuit?: (listener: (saveDraft?: DesktopDraftDrain) => Promise<boolean>) => () => void
             onQuitCancelled?: (listener: () => void) => () => void
         } }).desktopApp
-        const stop = bridge?.onBeforeQuit?.(async () => {
+        const stop = bridge?.onBeforeQuit?.(async saveDraft => {
             freezeDesktopAdmissions()
             setControlCenterOpen(false)
             setShortcutsOpen(false)
@@ -173,7 +173,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             // notify cancellation listeners again before the user can retry or stay.
             if (!dockReady || !voiceReady) return false
             setQuitting(true)
-            const [chatReady, brainReady, foremanReady, intakeReady] = await Promise.all([flushDesktopDrafts(), flushDesktopBrainDrafts(), flushDesktopForemanUiSaves(), flushDesktopForemanIntakeWrites(), flushDesktopRecentCoworkers()])
+            const [chatReady, brainReady, foremanReady, intakeReady] = await Promise.all([flushDesktopDrafts(saveDraft), flushDesktopBrainDrafts(), flushDesktopForemanUiSaves(), flushDesktopForemanIntakeWrites(), flushDesktopRecentCoworkers()])
             const ready = dockReady && voiceReady && chatReady && brainReady && foremanReady && intakeReady
             if (!ready) setQuitting(false)
             return ready

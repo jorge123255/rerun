@@ -34,7 +34,7 @@ export class BeforeQuitDrafts {
         if (this.pending) return this.pending.promise
         let resolve
         const promise = new Promise(done => { resolve = done })
-        const pending = { requestId: this.nextId(), registrationId: this.registrationId, promise, resolve }
+        const pending = { requestId: this.nextId(), registrationId: this.registrationId, promise, resolve, lifetime: new AbortController() }
         this.pending = pending
         pending.timer = this.schedule(() => { if (this.pending === pending) this.finish(false) }, this.timeoutMs)
         try { send({ requestId: pending.requestId, registrationId: pending.registrationId }) }
@@ -42,10 +42,14 @@ export class BeforeQuitDrafts {
         return promise
     }
 
-    acknowledge(value) {
+    signalFor(value) {
         const pending = this.pending
-        if (!pending || value?.requestId !== pending.requestId || value?.registrationId !== pending.registrationId
-            || pending.registrationId !== this.registrationId) return
+        if (pending && value?.requestId === pending.requestId && value?.registrationId === pending.registrationId
+            && pending.registrationId === this.registrationId) return pending.lifetime.signal
+    }
+
+    acknowledge(value) {
+        if (!this.signalFor(value)) return
         this.finish(value.saved === true)
     }
 
@@ -54,6 +58,7 @@ export class BeforeQuitDrafts {
         if (!pending) return
         this.pending = null
         this.cancel(pending.timer)
+        pending.lifetime.abort()
         pending.resolve(saved)
     }
 }

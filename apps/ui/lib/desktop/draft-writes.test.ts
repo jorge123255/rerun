@@ -262,6 +262,53 @@ test('quit waits for send admission and its durable clear, then stays frozen unt
     unsubscribe()
 })
 
+test.each([false, true])('a browser save refused by freeze retries its exact attempt in the native drain (overlap %j)', async overlaps => {
+    const record = drafts.desktopDraftRecord('alice', 'one')
+    await drafts.saveDesktopDraft(record)
+    const refusal = deferred<Response>()
+    write = () => refusal.promise
+    drafts.updateDesktopDraft(record, { text: 'Typed before freeze' })
+    await vi.waitFor(() => expect(writes).toHaveLength(1))
+    const native = vi.fn(async (agentId: string, body: string) => {
+        const input = JSON.parse(body) as DesktopComposerDraftWrite
+        const result = commit(keyOf(agentId, input.tabUid), input)
+        return { status: result.status, body: await result.text() }
+    })
+    const blocked = Response.json({ code: 'draft_frozen', error: 'This workspace is switching.' }, { status: 409 })
+    drafts.freezeDesktopAdmissions()
+    drafts.updateDesktopDraft(record, { text: 'Fresh edit after freeze' })
+    expect(record.state.text).toBe('Typed before freeze')
+    const flushing = overlaps ? drafts.flushDesktopDrafts(native) : null
+    refusal.resolve(blocked)
+    if (!overlaps) {
+        await drafts.saveDesktopDraft(record)
+        expect(record.state).toMatchObject({ conflict: false, error: 'This workspace is switching.' })
+    }
+    expect(await (flushing ?? drafts.flushDesktopDrafts(native))).toBe(true)
+    const { agentId, ...attempt } = writes[0]
+    expect(native).toHaveBeenCalledExactlyOnceWith(agentId, JSON.stringify(attempt))
+    expect(saved.get(keyOf('alice', 'one'))).toEqual({ revision: 1, text: 'Typed before freeze' })
+    drafts.cancelDraftShutdown()
+    write = async (key, body) => commit(key, body)
+    drafts.updateDesktopDraft(record, { text: 'Normal edit after rollback' })
+    await drafts.saveDesktopDraft(record)
+    expect(native).toHaveBeenCalledTimes(1)
+    expect(writes[1]).toMatchObject({ baseRevision: 1, text: 'Normal edit after rollback' })
+})
+
+test('unfreezing after a failed switch reconciles a browser attempt refused by freeze', async () => {
+    const record = drafts.desktopDraftRecord('alice', 'one')
+    await drafts.saveDesktopDraft(record)
+    write = async () => Response.json({ code: 'draft_frozen', error: 'This workspace is switching.' }, { status: 409 })
+    drafts.updateDesktopDraft(record, { text: 'Kept on rollback' })
+    await drafts.saveDesktopDraft(record)
+    write = async (key, body) => commit(key, body)
+    drafts.cancelDraftShutdown()
+    await drafts.saveDesktopDraft(record)
+    expect(writes).toEqual([writes[0], writes[0]])
+    expect(saved.get(keyOf('alice', 'one'))).toEqual({ revision: 1, text: 'Kept on rollback' })
+})
+
 test('a save failure refuses quit and remains frozen until Stay, then explicit retry can succeed', async () => {
     const record = drafts.desktopDraftRecord('alice', 'one')
     await drafts.saveDesktopDraft(record)
