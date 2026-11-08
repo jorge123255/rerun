@@ -1,5 +1,5 @@
 import { desktopComposerDraftClearSchema, desktopComposerDraftScopeSchema, desktopComposerDraftWriteSchema } from '@/lib/desktop/composer-draft'
-import { DesktopHttpError } from '@/lib/desktop/server/auth'
+import { authenticateDesktopEngineRequest, authenticateDesktopRequest, DesktopHttpError } from '@/lib/desktop/server/auth'
 import { clearDesktopComposerDraft, DesktopDraftConflict, DraftAttachmentRejected, readDesktopComposerDraft, writeDesktopComposerDraft } from '@/lib/desktop/server/composer-draft'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
@@ -16,6 +16,14 @@ export async function GET(request: Request, { params }: Params) {
     })
 }
 
+async function authenticateDraftSave(request: Request) {
+    if (!request.headers.has('authorization')) return authenticateDesktopRequest(request)
+    // Only the native process forwards pending saves during its draft handshake.
+    const runtime = await authenticateDesktopEngineRequest(request)
+    if (request.headers.get('x-rerun-launch-nonce') !== runtime.launchNonce) throw new DesktopHttpError(409, 'The workspace launch changed.')
+    return runtime
+}
+
 export async function PUT(request: Request, { params }: Params) {
     return desktopRoute(request, async runtime => {
         const parsed = desktopComposerDraftWriteSchema.safeParse(await request.json().catch(() => null))
@@ -26,7 +34,7 @@ export async function PUT(request: Request, { params }: Params) {
             if (error instanceof DesktopDraftConflict) return Response.json({ error: error.message, draft: error.draft }, { status: 409, headers })
             throw error
         }
-    })
+    }, authenticateDraftSave)
 }
 
 export async function DELETE(request: Request, { params }: Params) {

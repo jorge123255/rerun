@@ -9,20 +9,27 @@ import { desktopComposerDraftSchema as savedSchema, type DesktopComposerDraft as
 
 export type ComposerValue = DesktopAttachmentFields & DesktopCoworkerMentionFields & { text: string }
 export type DraftState = ComposerValue & { loaded: boolean; saving: boolean; version: number; error?: string; conflict: boolean; attachmentRejected?: boolean }
+export type DesktopDraftDrain = (agentId: string, body: string) => Promise<{ status: number; body: string }>
 type Attempt = { tabUid: string; baseRevision: number; requestId: string; text: string } & DesktopAttachmentFields & DesktopCoworkerMentionFields
 type Record = {
     agentId: string; uid: string; state: DraftState; saved: Saved; dirty: boolean; forgotten: boolean;
-    listeners: Set<() => void>; work?: Promise<void>; attempt?: Attempt;
+    listeners: Set<() => void>; work?: Promise<void>; attempt?: Attempt; blockedByFreeze?: boolean;
 }
 const records = new Map<string, Record>()
 const admissions = new Set<Promise<void>>()
 const shutdownListeners = new Set<() => void>()
 let quitting = false
+let saveDuringFlush: DesktopDraftDrain | undefined
 export const isDesktopQuitting = () => quitting
 /** Stop new effects before custody drains; listeners run later in the canonical draft flush. */
 export function freezeDesktopAdmissions() { quitting = true }
 export function subscribeDraftShutdown(listener: () => void) { shutdownListeners.add(listener); return () => { shutdownListeners.delete(listener) } }
-export function cancelDraftShutdown() { quitting = false; for (const listener of shutdownListeners) listener() }
+export function cancelDraftShutdown() {
+    quitting = false
+    saveDuringFlush = undefined
+    for (const listener of shutdownListeners) listener()
+    for (const record of records.values()) if (record.dirty && record.blockedByFreeze) void saveDesktopDraft(record)
+}
 const empty = (): DraftState => ({ text: '', loaded: false, saving: false, version: 0, conflict: false })
 const pathsOf = (value: ComposerValue | Saved) => desktopAttachmentPathsOf(value as DesktopAttachmentFields)
 const same = (a: ComposerValue | Saved, b: ComposerValue | Saved) => a.text === b.text && JSON.stringify(pathsOf(a)) === JSON.stringify(pathsOf(b)) && JSON.stringify(a.coworkerMentions ?? []) === JSON.stringify(b.coworkerMentions ?? [])
@@ -69,10 +76,22 @@ async function drain(r: Record) {
         const version = r.state.version
         const attempt = r.attempt ?? { tabUid: r.uid, baseRevision: r.saved.revision, requestId: crypto.randomUUID(), text: r.state.text, ...desktopCoworkerMentionFieldsOf(r.state.coworkerMentions), ...desktopAttachmentFieldsOf(pathsOf(r.state)) }
         r.attempt = attempt
+        r.blockedByFreeze = false
         publish(r, { saving: true, error: undefined, attachmentRejected: false })
-        const response = await fetch(url(r), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(attempt) })
+        const save = saveDuringFlush
+        const json = JSON.stringify(attempt)
+        const response = save
+            ? await save(r.agentId, json).then(({ body, status }) => new Response(body, { status }))
+            : await fetch(url(r), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: json })
         const body = await response.json()
         if (r.forgotten) return
+        if (response.status === 409 && body.code === 'draft_frozen') {
+            // A browser save can reach the server just after freeze. Preserve its
+            // immutable request for the native drain or for retry after rollback.
+            if (!save && saveDuringFlush) continue
+            r.blockedByFreeze = !save
+            throw new Error(body.error)
+        }
         if (!response.ok && body.code === 'draft_attachment_rejected') {
             // This typed refusal is issued before acceptance. Other HTTP errors (including
             // a lost/invalid response) must retain the immutable attempt for exact replay.
@@ -115,6 +134,10 @@ export function saveDesktopDraft(r: Record): Promise<void> {
 }
 
 export function updateDesktopDraft(r: Record, value: ComposerValue) {
+    if (!quitting) applyDesktopDraft(r, value)
+}
+
+function applyDesktopDraft(r: Record, value: ComposerValue) {
     value = { ...value, coworkerMentions: value.coworkerMentions ?? reconcileDesktopCoworkerMentions(r.state.text, value.text, r.state.coworkerMentions ?? []) }
     if (r.forgotten || same(r.state, value)) return
     r.dirty = true
@@ -127,13 +150,15 @@ export function updateDesktopDraft(r: Record, value: ComposerValue) {
 
 export function clearDesktopDraft(r: Record, version: number) {
     if (r.state.version !== version || r.forgotten) return false
-    updateDesktopDraft(r, { text: '' })
+    // A send admitted before freeze can still acknowledge and clear its exact draft.
+    applyDesktopDraft(r, { text: '' })
     return true
 }
 
 export async function reloadDesktopDraft(r: Record) {
     await r.work
     r.attempt = undefined
+    r.blockedByFreeze = false
     r.dirty = false
     publish(r, { loaded: false, error: undefined, conflict: false, attachmentRejected: false })
     await saveDesktopDraft(r)
@@ -145,6 +170,7 @@ export function invalidateDesktopDraft(r: Record, error: string) {
 
 export async function keepDesktopDraft(r: Record) {
     await r.work
+    if (quitting) return
     // Refresh the comparison revision before an explicit choice to replace the saved version.
     r.attempt = undefined
     r.dirty = true
@@ -172,18 +198,26 @@ export function holdDraftAdmission() {
     return () => { admissions.delete(pending); release() }
 }
 
-export async function flushDesktopDrafts(): Promise<boolean> {
+export async function flushDesktopDrafts(save?: DesktopDraftDrain): Promise<boolean> {
     freezeDesktopAdmissions()
-    for (const listener of shutdownListeners) listener()
-    while (true) {
-        await Promise.all([...admissions])
-        await flushTabWrites()
-        const current = [...records.values()].filter(r => !r.forgotten)
-        await Promise.all(current.map(r => r.work ?? (r.dirty && !r.state.error ? saveDesktopDraft(r) : Promise.resolve())))
-        if (admissions.size) continue
-        const latest = [...records.values()].filter(r => !r.forgotten)
-        if (latest.some(r => r.work)) continue
-        if (latest.some(r => r.state.error || r.state.conflict || r.dirty)) return false
-        return true
+    saveDuringFlush = save
+    try {
+        for (const listener of shutdownListeners) listener()
+        while (true) {
+            await Promise.all([...admissions])
+            await flushTabWrites()
+            const current = [...records.values()].filter(r => !r.forgotten)
+            await Promise.all(current.map(r => {
+                if (r.work) return r.work
+                if (r.dirty && (!r.state.error || (saveDuringFlush && r.blockedByFreeze))) return saveDesktopDraft(r)
+            }))
+            if (admissions.size) continue
+            const latest = [...records.values()].filter(r => !r.forgotten)
+            if (latest.some(r => r.work || (saveDuringFlush && r.dirty && r.blockedByFreeze))) continue
+            if (latest.some(r => r.state.error || r.state.conflict || r.dirty)) return false
+            return true
+        }
+    } finally {
+        if (saveDuringFlush === save) saveDuringFlush = undefined
     }
 }

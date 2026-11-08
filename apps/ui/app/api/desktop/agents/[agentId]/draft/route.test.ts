@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
+import { readDesktopRuntime } from '@/lib/desktop/server/runtime'
+import { beginDesktopWorkspaceAdmission, completeDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-admission'
 import * as coworkerFiles from '@/lib/desktop/server/coworker-files'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, createDesktopSession } from '@/lib/desktop/server/store'
@@ -97,6 +99,31 @@ test('draft writes require authentication, ownership, and safe own-file paths', 
     expect((await put({ ...body, attachmentPath: 'foreign.md' })).status).toBe(400)
     expect((await put({ ...body, attachmentPath: 'missing.md' })).status).toBe(404)
     expect(await read()).toEqual({ revision: 0, text: '' })
+})
+
+test('freeze refuses fresh browser writes and only the current native drain can save a pending draft', async () => {
+    const runtime = await readDesktopRuntime()
+    const pending = input('Edit pending before the switch')
+    beginDesktopWorkspaceAdmission(runtime, 'freeze', 1)
+    const rejected = await put(input('Fresh edit during freeze'))
+    expect(rejected.status).toBe(409)
+    expect(await rejected.json()).toMatchObject({ code: 'draft_frozen' })
+    expect((await clear({ tabUid: pending.tabUid, requestId: crypto.randomUUID(), revision: 0, text: '' })).status).toBe(409)
+    expect(await read()).toEqual({ revision: 0, text: '' })
+    const drain = (authorization: string, launchNonce: string, body = pending, agentId = alice) =>
+        PUT(request(agentId, '', 'PUT', body, { cookie: '', authorization, 'x-rerun-launch-nonce': launchNonce }), params(agentId))
+    const bearer = `Bearer ${runtime.engine.apiKey}`
+    expect((await drain('Bearer browser-forgery', runtime.launchNonce)).status).toBe(401)
+    expect((await drain(bearer, 'stale-launch')).status).toBe(409)
+    expect((await drain(bearer, runtime.launchNonce, { ...pending, tabUid: 'missing' })).status).toBe(404)
+    expect((await drain(bearer, runtime.launchNonce, pending, 'missing-agent')).status).toBe(404)
+    expect((await drain(bearer, runtime.launchNonce)).status).toBe(200)
+    expect((await drain(bearer, runtime.launchNonce)).status).toBe(200)
+    await closeDesktopDatabase(root)
+    expect(await read()).toMatchObject({ revision: 1, text: pending.text })
+    beginDesktopWorkspaceAdmission(runtime, 'unfreeze', 2)
+    completeDesktopWorkspaceAdmission(runtime, 'unfreeze', 2)
+    expect((await put(input('Editing resumed', 1))).status).toBe(200)
 })
 
 test('attachment validation refusals are typed, unaccepted, and can be corrected without losing text', async () => {

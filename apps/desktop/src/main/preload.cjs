@@ -8,7 +8,10 @@ ipcRenderer.on('desktop:before-quit', (_event, value) => {
         || !value.requestId || value.requestId.length > 128) return
     if (current.requestId === value.requestId) return
     current.requestId = value.requestId
-    Promise.resolve().then(() => current.listener()).then(saved => reply(saved === true), () => reply(false))
+    const saveDraft = (agentId, body) => ipcRenderer.invoke('desktop:save-draining-draft', {
+        requestId: value.requestId, registrationId: current.registrationId, agentId, body,
+    })
+    Promise.resolve().then(() => current.listener(saveDraft)).then(saved => reply(saved === true), () => reply(false))
     function reply(saved) {
         if (beforeQuit === current && current.requestId === value.requestId) {
             ipcRenderer.send('desktop:drafts-flushed', { requestId: value.requestId, registrationId: current.registrationId, saved })

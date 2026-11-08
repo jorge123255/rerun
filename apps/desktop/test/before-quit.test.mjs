@@ -32,12 +32,18 @@ test('only the matching registration and request ACK can allow a pending save to
     gate.register('document-a')
     let request
     const pending = gate.request(value => { request = value })
+    const signal = gate.signalFor(request)
+    assert.equal(signal.aborted, false)
+    assert.equal(gate.signalFor({ ...request, registrationId: 'other-document' }), undefined)
+    assert.equal(gate.signalFor({ ...request, requestId: 'old-request' }), undefined)
     assert.equal(gate.request(() => assert.fail('Duplicate quit must share the request')), pending)
     gate.acknowledge({ ...request, requestId: 'old-request', saved: true })
     gate.acknowledge({ ...request, registrationId: 'other-document', saved: true })
     assert.equal(timers.size, 1)
     gate.acknowledge({ ...request, saved: true })
     assert.equal(await pending, true)
+    assert.equal(signal.aborted, true)
+    assert.equal(gate.signalFor(request), undefined)
     assert.equal(timers.size, 0)
 })
 
@@ -57,8 +63,10 @@ test('timeout ignores its late ACK and the same registered page can save on the 
     gate.register('document-a')
     let first
     const timedOut = gate.request(value => { first = value })
+    const signal = gate.signalFor(first)
     expire()
     assert.equal(await timedOut, false)
+    assert.equal(signal.aborted, true)
     assert.equal(timers.size, 0)
     let retry
     const pending = gate.request(value => { retry = value })

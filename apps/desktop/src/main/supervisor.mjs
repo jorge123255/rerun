@@ -265,6 +265,22 @@ export class RuntimeSupervisor extends EventEmitter {
         return true
     }
 
+    async saveDrainingDraft(agentId, body, signal) {
+        const runtime = this.runtime
+        if (!runtime || typeof agentId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(agentId)
+            || typeof body !== 'string' || Buffer.byteLength(body) > 256 * 1024) throw new Error('Invalid pending draft save')
+        signal.throwIfAborted()
+        const reply = await this.fetcher(`${runtime.app.origin}/api/desktop/agents/${agentId}/draft`, {
+            method: 'PUT', redirect: 'error', signal,
+            headers: { Authorization: `Bearer ${runtime.engine.apiKey}`, 'X-Rerun-Launch-Nonce': runtime.launchNonce, 'Content-Type': 'application/json' },
+            body,
+        })
+        const result = { status: reply.status, body: await reply.text() }
+        signal.throwIfAborted()
+        if (this.runtime !== runtime) throw new Error('The draft workspace changed')
+        return result
+    }
+
     async confirmToolsStopped(runtime) {
         // The UI owns detached local MCP groups. Obtain its explicit drain result
         // while both services are alive; killing a parent alone proves nothing.
