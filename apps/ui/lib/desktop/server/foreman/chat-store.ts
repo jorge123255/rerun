@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import type { DesktopForemanChatRef, DesktopForemanModelRef, ForemanBrief } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
+import type { DesktopRuntime } from '../runtime'
+import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 
 export const DESKTOP_FOREMAN_CHAT_SCHEMA = `
 CREATE TABLE IF NOT EXISTS desktop_foreman_chats(
@@ -44,4 +46,17 @@ export async function ownedForemanChat(db: Client, chat: DesktopForemanChatRef):
 export async function foremanTurn(db: Client, id: string) {
     const row = (await db.execute({ sql: 'SELECT * FROM desktop_foreman_turns WHERE request_id=?', args: [id] })).rows[0]
     return row ? { body: JSON.parse(String(row.body)) as ForemanTurn, fingerprint: String(row.fingerprint), status: String(row.status), error: row.error ? String(row.error) : null } : null
+}
+
+/** Resolve a managed Foreman dispatch through its exact workspace-owned turn and engine session. */
+export async function ownedForemanDispatch(runtime: DesktopRuntime, db: Client, sessionId: string, runId: string): Promise<ForemanChat> {
+    assertDesktopWorkspaceAdmission(runtime)
+    const turn = await foremanTurn(db, runId)
+    if (!turn || !['pending', 'admitted'].includes(turn.status) || turn.body.binding.runId !== runId
+        || turn.body.binding.workspaceId !== String(runtime.workspaceId) || turn.body.sessionId !== sessionId) {
+        throw new DesktopHttpError(409, 'This Foreman run is no longer active.')
+    }
+    const owner = await ownedForemanChat(db, turn.body.binding)
+    if (owner.sessionId !== sessionId) throw new DesktopHttpError(409, 'This Foreman conversation changed.')
+    return owner
 }

@@ -21,22 +21,43 @@ export function createDesktopNotifications({ Notification, onClick, timeoutMs = 
         // A refused OS delivery must not generate another native request every UI poll.
         // The durable event remains unconsumed and can be retried after this short cooldown.
         if (now() < retryAfter) return Promise.resolve({ status: 'unavailable' })
-        if (active.size >= 128) return Promise.resolve({ status: 'unavailable' })
+        if (active.size >= 128) {
+            // Retain recent click targets and pending results, but never fill the bridge
+            // forever with old notices for which the OS omitted a close event.
+            const evicted = [...active].find(([, entry]) => entry.settled)
+            if (!evicted) return Promise.resolve({ status: 'unavailable' })
+            const [key, entry] = evicted
+            active.delete(key)
+            try { entry.notice.close() } catch { /* The native notice may already be gone. */ }
+        }
         let notice
         try { notice = new Notification({ title: payload.title, subtitle: payload.subtitle, body: payload.body, silent: true }) }
         catch { retryAfter = now() + 30_000; return Promise.resolve({ status: 'failed' }) }
         let settle
         const result = new Promise(resolve => { settle = resolve })
-        const entry = { notice, result }
+        const entry = { notice, result, settled: false }
         active.set(payload.key, entry)
-        const timer = setTimeout(() => settle({ status: 'unknown' }), timeoutMs)
+        const finish = status => {
+            if (entry.settled) return
+            entry.settled = true
+            clearTimeout(timer)
+            settle({ status })
+        }
+        const timer = setTimeout(() => finish('unknown'), timeoutMs)
         timer.unref?.()
-        const finish = status => { clearTimeout(timer); settle({ status }) }
         notice.once('show', () => finish('shown'))
-        notice.once('failed', () => { retryAfter = now() + 30_000; finish('failed'); active.delete(payload.key) })
-        notice.once('close', () => { finish('unknown'); active.delete(payload.key) })
+        notice.once('failed', () => {
+            if (active.get(payload.key) !== entry) return
+            retryAfter = now() + 30_000
+            finish('failed')
+            active.delete(payload.key)
+        })
+        notice.once('close', () => {
+            finish('unknown')
+            if (active.get(payload.key) === entry) active.delete(payload.key)
+        })
         notice.once('click', () => {
-            if (closed) return
+            if (closed || active.get(payload.key) !== entry) return
             const { title, subtitle, body, silent, ...target } = payload
             onClick(target)
         })

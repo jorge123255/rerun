@@ -2,6 +2,7 @@ import 'server-only'
 import type { Client } from '@libsql/client'
 import { coworkerRuleOf, mergeNotificationPrefs, normalizeNotificationPrefs, notificationPrefsPatchSchema, taskNotifies, taskRuleOf,
     type NotificationPrefs, type NotificationPrefsPatch } from '@rerun/contracts'
+import type { DesktopNotificationReceipt } from '@/lib/desktop/notifications'
 import type { NotificationPayload } from '@/lib/engine/types'
 import { readDesktopCompletions } from './completed-actions'
 import { readDesktopAttention } from './attention'
@@ -32,7 +33,8 @@ const CREATE_DESKTOP_NOTIFICATIONS = `
     );
     CREATE TABLE IF NOT EXISTS desktop_notifications_seen (
         event_key TEXT PRIMARY KEY,
-        notified_at TEXT NOT NULL
+        notified_at TEXT NOT NULL,
+        native_status TEXT CHECK (native_status IN ('shown', 'unavailable', 'failed', 'unknown'))
     );
     CREATE TABLE IF NOT EXISTS desktop_notification_attempts (
         event_key TEXT PRIMARY KEY,
@@ -63,6 +65,10 @@ export async function initializeDesktopNotifications(db: Client): Promise<void> 
     if (!ready) {
         ready = (async () => {
             await db.executeMultiple(CREATE_DESKTOP_NOTIFICATIONS)
+            const seenColumns = (await db.execute('PRAGMA table_info(desktop_notifications_seen)')).rows
+            if (!seenColumns.some(row => row.name === 'native_status')) {
+                await db.execute("ALTER TABLE desktop_notifications_seen ADD COLUMN native_status TEXT CHECK (native_status IN ('shown', 'unavailable', 'failed', 'unknown'))")
+            }
             const columns = new Set((await db.execute('PRAGMA table_info(desktop_notification_terminals)')).rows.map(row => String(row.name)))
             if (!columns.has('agent_local_id')) await db.execute('ALTER TABLE desktop_notification_terminals ADD COLUMN agent_local_id TEXT REFERENCES desktop_agents(id) ON DELETE CASCADE')
             if (!columns.has('session_local_id')) await db.execute('ALTER TABLE desktop_notification_terminals ADD COLUMN session_local_id TEXT REFERENCES desktop_sessions(id) ON DELETE CASCADE')
@@ -350,14 +356,17 @@ export async function admitDesktopNotificationEvents(runtime: DesktopRuntime, ke
     })
 }
 
-export async function finishDesktopNotificationAttempt(db: Client, input: { key: string; attemptId: string; status: 'shown' | 'unavailable' | 'failed' | 'unknown' }): Promise<void> {
+export async function finishDesktopNotificationAttempt(db: Client, input: DesktopNotificationReceipt): Promise<void> {
     await initializeDesktopNotifications(db)
     await withRosterWrite(async () => {
         const tx = await db.transaction('write')
         try {
             const owned = await tx.execute({ sql: 'SELECT 1 FROM desktop_notification_attempts WHERE event_key=? AND attempt_id=?', args: [input.key, input.attemptId] })
             if (owned.rows.length && input.status !== 'unknown') {
-                if (input.status === 'shown') await tx.execute({ sql: 'INSERT INTO desktop_notifications_seen (event_key,notified_at) VALUES (?,?) ON CONFLICT(event_key) DO NOTHING', args: [input.key, new Date().toISOString()] })
+                if (input.status === 'shown') await tx.execute({
+                    sql: 'INSERT INTO desktop_notifications_seen (event_key,notified_at,native_status) VALUES (?,?,?) ON CONFLICT(event_key) DO NOTHING',
+                    args: [input.key, new Date().toISOString(), input.nativeStatus ?? null],
+                })
                 await tx.execute({ sql: 'DELETE FROM desktop_notification_attempts WHERE event_key=? AND attempt_id=?', args: [input.key, input.attemptId] })
             }
             await tx.commit()

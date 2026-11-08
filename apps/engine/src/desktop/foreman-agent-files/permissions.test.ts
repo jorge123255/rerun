@@ -31,3 +31,16 @@ test('managed Foreman permissions default off, mutate only one explicit grant an
     f.close()
     expect((await f.app.request('/file-permissions')).status).toBe(409)
 })
+
+test('Foreman delegation requires an explicit current opt-in independent of file grants', async () => {
+    const f = fixture()
+    const body = { ...context, workspaceId: '1', expectedGrants: off, id: 'delegate', enabled: true }
+    expect((await f.app.request('/file-permissions', patch(body))).status).toBe(409)
+    const enabled = await f.app.request('/file-permissions', patch({ ...body, expectedGrants: { ...off, delegate: false } }))
+    expect(enabled.status).toBe(200)
+    expect(await enabled.json()).toMatchObject({ grants: { ...off, delegate: true } })
+    expect(f.config().tools.desktopToolGrants?.delegate).toBe(true)
+    const disabled = await f.app.request('/file-permissions', patch({ ...body, enabled: false, expectedGrants: { ...off, delegate: true } }))
+    expect(disabled.status).toBe(200)
+    expect(f.config().tools.desktopToolGrants?.delegate).toBe(false)
+})

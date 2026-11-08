@@ -13,6 +13,7 @@ import type { LoadedConnection } from '../../connections/types.js'
 import { sendNotification } from '../../runtime/notify.js'
 import { assertDesktopProvider, desktopApp, desktopProviderAllowed } from '../../desktop/policy.js'
 import { DESKTOP_CODEX_ID } from '../../desktop/codex-runtime.js'
+import { selectRegisteredCustomDefault } from '../../desktop/custom-providers/binding.js'
 import { badRequest, HttpError } from '../../lib/errors.js'
 
 export const connectionRoutes = new Hono()
@@ -56,12 +57,14 @@ connectionRoutes.put('/default', async c => {
         })
     }
     if (reasoningEffort !== undefined) return c.json({ error: 'Reasoning effort is only available for desktop Codex models.' }, 400)
-    const connection = await findConnection(connectionId)
-    if (!connection) return c.json({ error: 'connection not found' }, 404)
-    assertDesktopProvider(connection.config.provider, connection.id)
-    if (desktopApp() && !isConnected(connection)) return c.json({ error: 'Connect this provider first.' }, 400)
-    if (!servesModel(connection, model)) return c.json({ error: `This connection does not offer ${model}` }, 400)
-    return c.json(await writeBoxDefault({ connectionId, model }))
+    return selectRegisteredCustomDefault(connectionId, async () => {
+        const connection = await findConnection(connectionId)
+        if (!connection) return c.json({ error: 'connection not found' }, 404)
+        assertDesktopProvider(connection.config.provider, connection.id)
+        if (desktopApp() && !isConnected(connection)) return c.json({ error: 'Connect this provider first.' }, 400)
+        if (!servesModel(connection, model)) return c.json({ error: `This connection does not offer ${model}` }, 400)
+        return c.json(await writeBoxDefault({ connectionId, model }))
+    })
 })
 
 connectionRoutes.delete('/default', async c => {

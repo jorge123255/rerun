@@ -39,23 +39,23 @@ runRoutes.post('/:rid/cancel', async c => {
     if (desktopApp() && !await waitForRunCancellation(rid)) {
         return c.json({ error: 'This reply has not finished stopping. Wait a moment and try Stop again.' }, 503)
     }
-    if (run.status === 'running') {
-        await cancelRun(agentId, rid)
-        // When the run loop is still there it announces its own end. When it is not -- the process
-        // restarted, or the row outlived its loop -- nobody would ever tell the hub, and the
-        // conversation would stay "working" on the dashboard with no way back.
-        if (!aborted) {
-            await emitRunTerminal({
-                agentId,
-                sessionId: run.sessionId,
-                runId: rid,
-                trigger: triggerFromRun(run),
-                kind: 'done',
-                cancelled: true,
-                provider: run.provider ?? undefined,
-                model: run.model ?? undefined,
-            })
-        }
+    const cancelled = run.status === 'running' && await cancelRun(agentId, rid)
+    if (desktopApp() && !cancelled && (!aborted || (await getRun(agentId, rid))?.status !== 'cancelled')) {
+        return c.json({ error: 'This reply already finished.' }, 409)
+    }
+    // A live loop announces its own end. For an orphan, only the Stop that actually
+    // changed the running row may announce cancellation.
+    if (cancelled && !aborted) {
+        await emitRunTerminal({
+            agentId,
+            sessionId: run.sessionId,
+            runId: rid,
+            trigger: triggerFromRun(run),
+            kind: 'done',
+            cancelled: true,
+            provider: run.provider ?? undefined,
+            model: run.model ?? undefined,
+        })
     }
     return c.json({ ok: true, aborted })
 })

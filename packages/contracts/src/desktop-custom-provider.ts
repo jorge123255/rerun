@@ -1,5 +1,6 @@
 import { z } from 'zod'
 export const DESKTOP_CUSTOM_PROVIDER_VERSION = 1 as const
+export const registeredCustomConnectionIdSchema = z.uuidv4()
 export const CUSTOM_DEFAULT_CONTEXT_WINDOW = 128_000
 export const DESKTOP_CUSTOM_PRESETS = [
     { id: 'ollama', label: 'Ollama', baseUrl: 'http://localhost:11434/v1', keyRequired: false, local: true },

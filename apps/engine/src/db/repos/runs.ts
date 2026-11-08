@@ -122,9 +122,12 @@ export async function failRun(agentId: string, id: string, error: string): Promi
     await db.update(runs).set({ status: 'error', finishedAt: nowIso(), error }).where(eq(runs.id, id))
 }
 
-export async function cancelRun(agentId: string, id: string): Promise<void> {
+export async function cancelRun(agentId: string, id: string): Promise<boolean> {
     const { db } = await getSystemDb(agentId)
-    await db.update(runs).set({ status: 'cancelled', finishedAt: nowIso() }).where(eq(runs.id, id))
+    const changed = await db.update(runs).set({ status: 'cancelled', finishedAt: nowIso() })
+        .where(and(eq(runs.id, id), eq(runs.agentId, agentId), eq(runs.status, 'running')))
+        .returning({ id: runs.id })
+    return changed.length === 1
 }
 
 export type InterruptedRun = { id: string; sessionId: string; triggerSource: string | null; triggerSlug: string | null; startedAt: string }

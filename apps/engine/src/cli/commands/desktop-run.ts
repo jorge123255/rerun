@@ -34,6 +34,7 @@ import { stopDesktopSkillProposals } from '../../desktop/skill-proposal-work.js'
 import { recoverNativeWritebackOutbox } from '../../desktop/native-writeback/outbox.js'
 import { sendNativeWriteback } from '../../desktop/native-writeback/client.js'
 import { stopAllDesktopNativeWorkers } from '../../desktop/native-worker.js'
+import { bindDesktopCustomProviders } from '../../desktop/custom-providers/binding.js'
 import { initializeDesktopBrainStore } from '../../desktop/brain-pages-router.js'
 import { stopDesktopMcp } from '../../desktop/mcp-tools.js'
 import { logger } from '../../lib/logger.js'
@@ -100,10 +101,14 @@ export async function desktopRunCommand(): Promise<void> {
     // The schema version persists, but this process-local binding must be recreated.
     await initializeDesktopCompanyBriefStore()
     await initializeDesktopExternalMcp()
+    const customProviders = bindDesktopCustomProviders(runtime.workspaceId, runtime.launchNonce, () => stopping)
     observeDesktopAdmissionChange(async () => {
         let frozen = true
         try { assertDesktopRunAdmission(); frozen = false } catch {}
-        if (frozen) await getExternalMcpService().close()
+        if (frozen) {
+            customProviders.abort()
+            await getExternalMcpService().close()
+        }
     })
     registerExternalMcpDispatch(createExternalMcpUiDispatch({ recheck: input => getExternalMcpService().recheck(input) }))
     const lifetime = new AbortController()
@@ -151,6 +156,7 @@ export async function desktopRunCommand(): Promise<void> {
     const delegation = bindDesktopDelegation(runtime.launchNonce)
     installDesktopDelegation(delegation)
     app.route('/desktop/computer-panel', computerPanel.routes)
+    app.route('/desktop/custom-providers', customProviders.routes)
     app.route('/desktop/foreman', createDesktopForemanRoutes(undefined, { workspaceId: runtime.workspaceId, launchNonce: runtime.launchNonce }))
     app.route('/desktop/external-mcp', createDesktopExternalMcpRouter(getExternalMcpService))
     app.route('/desktop/tool-install', toolInstall.routes)
@@ -182,6 +188,7 @@ export async function desktopRunCommand(): Promise<void> {
             diagnostic.track('schedule-tools', () => scheduleTools?.close()),
             diagnostic.track('tool-install', () => toolInstall.close()),
             diagnostic.track('foreman', () => foreman.close()),
+            diagnostic.track('custom-providers', () => customProviders.close()),
             diagnostic.track('computer-panel', () => computerPanel.close()),
             diagnostic.track('guest-shell', () => guestShell.close()),
             diagnostic.track('external-mcp', () => closeDesktopExternalMcp()),

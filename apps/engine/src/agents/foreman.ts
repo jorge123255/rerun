@@ -26,26 +26,28 @@ function foremanConfig(choice: ForemanChoice): AgentConfig {
         name: FOREMAN_AGENT_ID,
         kind: 'foreman',
         displayName: 'Foreman',
-        tools: { ...tools, desktopToolGrants: choice.fileGrants },
+        tools: { ...tools, desktopToolGrants: choice.grants },
         selfImprovement: { enabled: false, allowToolInstall: false, allowSoulEdit: false, autoMemory: false },
         setup: { required: false },
     })
 }
 
 type ModelPin = Pick<AgentConfig, 'connectionId' | 'provider' | 'model'>
-type ForemanChoice = { model: ModelPin; fileGrants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean } }
+type ForemanChoice = { model: ModelPin; grants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean; delegate?: boolean; callAgent?: boolean } }
 
-// Preserve only the user's model and explicit separate file permissions; program-owned
+// Preserve only the user's model and explicit desktop permissions; program-owned
 // identity, instructions and every other capability are still rebuilt from code.
 async function currentChoice(): Promise<ForemanChoice> {
     try {
         const { connectionId, provider, model, tools } = agentConfigSchema.parse(JSON.parse(await readFile(configPath(FOREMAN_AGENT_ID), 'utf8')))
-        return { model: { connectionId, provider, model }, fileGrants: {
+        return { model: { connectionId, provider, model }, grants: {
             foremanAgentFilesRead: tools.desktopToolGrants?.foremanAgentFilesRead === true,
             foremanAgentFilesWrite: tools.desktopToolGrants?.foremanAgentFilesWrite === true,
+            ...(tools.desktopToolGrants?.delegate === true && { delegate: true }),
+            ...(tools.desktopToolGrants?.callAgent === true && { callAgent: true }),
         } }
     } catch {
-        return { model: { connectionId: null, provider: null, model: null }, fileGrants: { foremanAgentFilesRead: false, foremanAgentFilesWrite: false } }
+        return { model: { connectionId: null, provider: null, model: null }, grants: { foremanAgentFilesRead: false, foremanAgentFilesWrite: false } }
     }
 }
 

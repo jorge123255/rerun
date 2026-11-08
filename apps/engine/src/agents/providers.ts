@@ -1,3 +1,4 @@
+import { customInferenceModel } from '../desktop/custom-providers/model.js'
 import { desktopDelegationCodexCwd } from '../desktop/delegation/child-scope.js'
 import { createProviderRegistry, wrapLanguageModel, type LanguageModel, type ToolSet } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
@@ -470,6 +471,7 @@ export type ModelOverride = { connectionId?: string; provider?: Provider; model?
 function pairFor(agent: LoadedAgent, override?: ModelOverride): { provider: Provider; model: string } {
     const provider = agent.resolved.provider
     assertDesktopProvider(provider, agent.resolved.connection?.id)
+    if (provider === 'custom' && (!desktopApp() || !agent.resolved.connection?.custom)) throw new Error('This custom connection is unavailable.')
     if (desktopApp() && provider === 'codex' && agent.resolved.connection?.env[signedInFlag] !== '1') throw new Error('Sign in to ChatGPT in Settings.')
     return { provider, model: allowedModel(provider, override?.model ?? agent.resolved.model) }
 }
@@ -478,6 +480,7 @@ function pairFor(agent: LoadedAgent, override?: ModelOverride): { provider: Prov
 // and exits — nothing to dispose. A run that streams must use `resolveModel` instead.
 export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: McpServer[], options?: CliModelOptions): LanguageModel {
     const { provider, model } = pairFor(agent, override)
+    if (provider === 'custom') return customInferenceModel(agent.resolved.connection, model).model
     if (desktopApp() && provider === 'codex' && options?.desktopVision) {
         return wrapLanguageModel({
             model: codexExecProvider(agent).languageModel(model),
@@ -553,6 +556,10 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     const replies = createQuickRepliesCapture()
     const cardTags = createCardTagGuard(agent.id, provider)
     const guard = createFakeToolCallGuard(agent.id)
+    if (provider === 'custom') {
+        const custom = customInferenceModel(agent.resolved.connection, model)
+        return { model: wrapLanguageModel({ model: custom.model, middleware: [replies.middleware, cardTags, guard] }), close: custom.close, quickReplies: replies.read }
+    }
     if (provider === 'codex') {
         const codex = codexAppServerProvider(agent, tools, mcpServers, { system, screenshots, nativeWorker })
         return { model: wrapLanguageModel({ model: codex(model), middleware: [codexMcpCompatibilityMiddleware, replies.middleware, cardTags, guard] }), close: () => codex.close(), quickReplies: replies.read }

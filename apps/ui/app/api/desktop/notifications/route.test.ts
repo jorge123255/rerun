@@ -298,6 +298,18 @@ test('definite nondelivery retries with a fresh token and late old receipts cann
     expect((await (await openDesktopDatabase(root)).execute('SELECT * FROM desktop_notification_attempts')).rows).toHaveLength(0)
 })
 
+test.each(['failed', 'unknown', 'unavailable', 'shown'] as const)('persists a native %s outcome separately from the delivered toast', async nativeStatus => {
+    const { events } = await (await readEvents(eventsGet())).json() as { events: DesktopNotificationEvent[] }
+    const key = events[0]!.key
+    const { events: [admitted] } = await (await admit(notificationPost('admit', { keys: [key] }))).json()
+    expect((await delivery(notificationPost('delivery', { key, attemptId: admitted.attemptId, status: 'shown', nativeStatus }))).status).toBe(200)
+    await closeDesktopDatabase(root)
+    const db = await openDesktopDatabase(root)
+    expect((await db.execute({ sql: 'SELECT native_status FROM desktop_notifications_seen WHERE event_key=?', args: [key] })).rows)
+        .toEqual([expect.objectContaining({ native_status: nativeStatus })])
+    expect((await (await admit(notificationPost('admit', { keys: [key] }))).json()).events).toEqual([])
+})
+
 test('old acknowledged identities do not expire while a pending source still exists', async () => {
     const { events } = await (await readEvents(eventsGet())).json() as { events: DesktopNotificationEvent[] }
     const key = events[0]!.key

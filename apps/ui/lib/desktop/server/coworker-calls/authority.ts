@@ -1,6 +1,8 @@
 import 'server-only'
 import {
     desktopCoworkerCallTargetSchema,
+    FOREMAN_AGENT_ID,
+    type DesktopForemanChatRef,
     type DesktopCoworkerCallTarget,
 } from '@rerun/contracts'
 import type { Client } from '@libsql/client'
@@ -8,12 +10,14 @@ import { z } from 'zod'
 import { DesktopHttpError } from '../auth'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
 import { initializeDesktopCoworkerCalls } from './db'
-import type { DesktopRuntime } from '../runtime'
+import { readDesktopRuntime, type DesktopRuntime } from '../runtime'
+import { ownedForemanDispatch } from '../foreman/chat-store'
+import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 
 const detailSchema = z.object({
     id: z.string(),
     config: z.object({
-        enabled: z.boolean(),
+        enabled: z.boolean(), kind: z.string().optional(), ephemeral: z.boolean().optional(),
         tools: z.object({ desktopToolGrants: z.record(z.string(), z.boolean()).optional() }).passthrough(),
     }).passthrough(),
 }).passthrough()
@@ -43,14 +47,24 @@ async function bounded(response: Response, signal: AbortSignal): Promise<unknown
     return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-export async function replaceDesktopCoworkerCallAllows(db: Client, callerAgentId: string, targetAgentIds: readonly string[], expected?: readonly string[]): Promise<void> {
+export function replaceDesktopCoworkerCallAllows(db: Client, callerAgentId: string, targets: readonly string[], expected?: readonly string[]) {
+    return replaceCallAllows(db, callerAgentId, targets, expected)
+}
+
+export function replaceDesktopForemanCallAllows(db: Client, chat: DesktopForemanChatRef, targets: readonly string[], expected: readonly string[]) {
+    return replaceCallAllows(db, FOREMAN_AGENT_ID, targets, expected, chat)
+}
+
+async function replaceCallAllows(db: Client, callerAgentId: string, targetAgentIds: readonly string[], expected?: readonly string[], foreman?: DesktopForemanChatRef): Promise<void> {
     await initializeDesktopCoworkerCalls(db)
     const unique = [...new Set(targetAgentIds)]
     if (unique.length !== targetAgentIds.length) throw new DesktopHttpError(400, 'Each allowed coworker can be listed once.')
     if (unique.includes(callerAgentId)) throw new DesktopHttpError(400, 'A coworker cannot allow a call to itself.')
     const tx = await db.transaction('write')
     try {
-        const caller = await tx.execute({ sql: 'SELECT id FROM desktop_agents WHERE id = ? AND workspace_id = 1', args: [callerAgentId] })
+        const caller = foreman
+            ? await tx.execute({ sql: 'SELECT chat_id FROM desktop_foreman_chats WHERE chat_id=? AND workspace_id=?', args: [foreman.chatId, foreman.workspaceId] })
+            : await tx.execute({ sql: 'SELECT id FROM desktop_agents WHERE id = ? AND workspace_id = 1', args: [callerAgentId] })
         if (!caller.rows.length) throw new DesktopHttpError(404, 'Coworker not found.')
         const saved = (await tx.execute({ sql: 'SELECT target_agent_id FROM desktop_coworker_call_allows WHERE caller_agent_id=? ORDER BY target_agent_id', args: [callerAgentId] })).rows.map(row => String(row.target_agent_id))
         const same = (ids: readonly string[]) => JSON.stringify([...ids].sort()) === JSON.stringify(saved)
@@ -91,6 +105,28 @@ export async function listDesktopCoworkerCallTargets(db: Client, callerAgentId: 
 
 export async function authorizeDesktopCoworkerCall(runtime: DesktopRuntime, db: Client, input: { engineAgentId: string; engineSessionId: string; engineRunId: string }, fetchImpl: typeof fetch = fetch, signal = AbortSignal.timeout(5_000)): Promise<{ ok: true; caller: { publicAgentId: string; publicSessionId: string; name: string; targets: ServerTarget[] } } | { ok: false; reason: string }> {
     await initializeDesktopCoworkerCalls(db)
+    const response = async (path: string) => {
+        signal.throwIfAborted()
+        const result = await fetchImpl(`${runtime.engine.origin}${path}`, { headers: { Authorization: `Bearer ${runtime.engine.apiKey}` }, signal, cache: 'no-store', redirect: 'error' })
+        return bounded(result, signal)
+    }
+    if (input.engineAgentId === FOREMAN_AGENT_ID) {
+        try {
+            const owner = await ownedForemanDispatch(runtime, db, input.engineSessionId, input.engineRunId)
+            const agent = detailSchema.parse(await response('/agents/foreman'))
+            const run = runSchema.parse(await response(`/agents/foreman/runs/${encodeURIComponent(input.engineRunId)}`))
+            if (agent.id !== FOREMAN_AGENT_ID || agent.config.kind !== 'foreman' || !agent.config.enabled || agent.config.ephemeral
+                || agent.config.tools.desktopToolGrants?.callAgent !== true) return { ok: false, reason: 'Call coworkers is turned off for Foreman.' }
+            if (run.id !== input.engineRunId || run.agentId !== FOREMAN_AGENT_ID || run.sessionId !== owner.sessionId || run.status !== 'running') throw new Error('Run changed')
+            const targets = await targetRows(db, FOREMAN_AGENT_ID, true)
+            const current = await readDesktopRuntime()
+            if (current.launchNonce !== runtime.launchNonce || current.workspaceId !== runtime.workspaceId || current.dataRoot !== runtime.dataRoot
+                || (await ownedForemanDispatch(runtime, db, input.engineSessionId, input.engineRunId)).chat.chatId !== owner.chat.chatId) throw new Error('Owner changed')
+            signal.throwIfAborted()
+            assertDesktopWorkspaceAdmission(runtime)
+            return { ok: true, caller: { publicAgentId: FOREMAN_AGENT_ID, publicSessionId: owner.chat.chatId, name: 'Foreman', targets } }
+        } catch { return { ok: false, reason: 'This Foreman run can no longer call a coworker.' } }
+    }
     const local = await db.execute({ sql: 'SELECT id, name, enabled, engine_agent_id FROM desktop_agents WHERE engine_agent_id = ? AND workspace_id = 1', args: [input.engineAgentId] })
     const owner = local.rows[0]
     if (!owner) return { ok: false, reason: 'This run can no longer call a coworker.' }
@@ -99,11 +135,6 @@ export async function authorizeDesktopCoworkerCall(runtime: DesktopRuntime, db: 
     if (Number(owner.enabled) === 0) return { ok: false, reason: 'This coworker is switched off and cannot be called.' }
     const session = await db.execute({ sql: 'SELECT id FROM desktop_sessions WHERE agent_id = ? AND engine_session_id = ?', args: [publicAgentId, input.engineSessionId] })
     if (!session.rows[0]) return { ok: false, reason: 'This run can no longer call a coworker.' }
-    const response = async (path: string) => {
-        signal.throwIfAborted()
-        const result = await fetchImpl(`${runtime.engine.origin}${path}`, { headers: { Authorization: `Bearer ${runtime.engine.apiKey}` }, signal, cache: 'no-store', redirect: 'error' })
-        return bounded(result, signal)
-    }
     let agent: z.infer<typeof detailSchema>
     let currentSession: z.infer<typeof sessionSchema>
     let currentRun: z.infer<typeof runSchema>

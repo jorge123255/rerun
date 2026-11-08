@@ -1,6 +1,7 @@
 import 'server-only'
-import { desktopRerunGrantsOf } from '@rerun/contracts'
+import { desktopRerunGrantsOf, FOREMAN_AGENT_ID, type DesktopForemanChatRef } from '@rerun/contracts'
 import { z } from 'zod'
+import type { Client } from '@libsql/client'
 import { getAgent } from '@/lib/engine/client'
 import { DesktopHttpError } from '../auth'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
@@ -9,7 +10,9 @@ import { withRosterWrite } from '../roster-writes'
 import type { DesktopRuntime } from '../runtime'
 import { engineOf } from '../settings'
 import { findDesktopAgent } from '../store'
-import { listDesktopCoworkerCallTargets, replaceDesktopCoworkerCallAllows } from './authority'
+import { listDesktopCoworkerCallTargets, replaceDesktopCoworkerCallAllows, replaceDesktopForemanCallAllows } from './authority'
+import { ownedForemanChat } from '../foreman/chat-store'
+import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 
 const ids = z.array(z.string().uuid()).max(100)
 const patchSchema = z.strictObject({ targetAgentIds: ids, expectedTargetAgentIds: ids })
@@ -33,7 +36,32 @@ export async function desktopCoworkerCallTargets(runtime: DesktopRuntime, agentI
             await replaceDesktopCoworkerCallAllows(db, agentId, input.data.targetAgentIds, input.data.expectedTargetAgentIds)
         })
     }
-    const targets = await listDesktopCoworkerCallTargets(db, agentId, desktopRerunGrantsOf(detail.config.tools).callAgent)
+    return readTargets(db, agentId, desktopRerunGrantsOf(detail.config.tools).callAgent, signal)
+}
+
+export async function desktopForemanCallTargets(runtime: DesktopRuntime, chat: DesktopForemanChatRef, launchNonce: string, patch?: unknown, signal?: AbortSignal) {
+    if (chat.workspaceId !== String(runtime.workspaceId) || launchNonce !== runtime.launchNonce) throw new DesktopHttpError(409, 'The Foreman workspace or app launch changed.')
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    await ownedForemanChat(db, chat)
+    signal?.throwIfAborted()
+    const detail = await getAgent(engineOf(runtime), FOREMAN_AGENT_ID)
+    if (detail.id !== FOREMAN_AGENT_ID || detail.config.kind !== 'foreman' || !detail.config.enabled) throw new DesktopHttpError(409, 'Foreman is unavailable.')
+    const grant = desktopRerunGrantsOf(detail.config.tools).callAgent
+    if (patch !== undefined) {
+        if (!grant) throw new DesktopHttpError(409, 'Turn on Call coworkers for Foreman first.')
+        const input = patchSchema.safeParse(patch)
+        if (!input.success) throw new DesktopHttpError(400, 'Choose the allowed coworkers.')
+        await withRosterWrite(async () => {
+            signal?.throwIfAborted()
+            assertDesktopWorkspaceAdmission(runtime)
+            await replaceDesktopForemanCallAllows(db, chat, input.data.targetAgentIds, input.data.expectedTargetAgentIds)
+        })
+    }
+    return readTargets(db, FOREMAN_AGENT_ID, grant, signal)
+}
+
+async function readTargets(db: Client, agentId: string, grant: boolean, signal?: AbortSignal) {
+    const targets = await listDesktopCoworkerCallTargets(db, agentId, grant)
     const allowed = await db.execute({ sql: 'SELECT target_agent_id FROM desktop_coworker_call_allows WHERE caller_agent_id=? ORDER BY target_agent_id', args: [agentId] })
     signal?.throwIfAborted()
     return { targets, allowedTargetIds: allowed.rows.map(row => String(row.target_agent_id)) }

@@ -5,7 +5,7 @@ import type { Provider } from '@rerun/contracts'
 // What a caller asks a dialog to land on, beyond opening it: a provider to sign back in, a table to
 // browse, a provider to add. Read then cleared by the dialog it names, because the content it asks for only mounts on
 // the next render — which is why it cannot be an argument.
-type PanelFocus = { connectionId?: string; reconnect?: boolean; addProvider?: Exclude<Provider, 'rerun'>; tab?: KnowledgeBaseTab; table?: string; view?: string; page?: string }
+type PanelFocus = { connectionId?: string; reconnect?: boolean; addProvider?: Exclude<Provider, 'rerun' | 'custom'>; tab?: KnowledgeBaseTab; table?: string; view?: string; page?: string }
 
 type WorkspaceSettingsState = {
     // One panel at a time: they are all modal dialogs over the same board.
@@ -14,7 +14,7 @@ type WorkspaceSettingsState = {
     openWorkspacePanel: (panel: WorkspaceDialogPanel) => void
     openAiProviders: (connectionId?: string) => void
     reconnectAiProvider: (connectionId: string) => void
-    addAiProvider: (provider: Exclude<Provider, 'rerun'>) => void
+    addAiProvider: (provider: Exclude<Provider, 'rerun' | 'custom'>) => void
     openKnowledgeBase: (tab: KnowledgeBaseTab, table?: string, view?: string) => void
     openBrainPage: (slug: string) => void
     clearFocus: () => void

@@ -58,6 +58,7 @@ export const connectionSummarySchema = connectionConfigSchema.extend({
     // answered with a 401): `connected` cannot tell, and the user has to sign in again. Defaulted
     // for an engine older than it.
     credentialRejected: z.boolean().default(false),
+    customRevision: z.number().int().positive().optional(),
     // Defaulted rather than required: an engine older than plan limits answers without it.
     planLimits: planLimitsSchema.nullable().default(null),
 })
@@ -130,6 +131,7 @@ export const CONNECTION_TOKEN_KEY: Record<z.infer<typeof providerSchema>, string
     openai: 'OPENAI_API_KEY',
     google: 'GOOGLE_GENERATIVE_AI_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
+    custom: '',
 }
 
 // What is wrong with a value about to be stored as a Claude subscription token, or null when it
@@ -152,6 +154,7 @@ export const CONNECTION_SATELLITE_KEYS: Record<z.infer<typeof providerSchema>, s
     // The engine still resolves this alias, so a migration has to carry it over.
     google: ['GOOGLE_API_KEY'],
     openrouter: [],
+    custom: [],
 }
 
 // Every env var name that used to live on an agent and now belongs to a connection. What the boot
@@ -217,6 +220,7 @@ export const DEFAULT_CONNECTION_MODELS: Record<z.infer<typeof providerSchema>, s
         'qwen/qwen3.8-flash',
         'minimax/minimax-m3.1-flash',
     ],
+    custom: [],
 }
 
 // How a connection names itself when nobody has yet: the boot migration builds "Claude (Theo)"
@@ -229,6 +233,7 @@ export const PROVIDER_LABELS: Record<z.infer<typeof providerSchema>, string> = {
     openai: 'OpenAI',
     google: 'Google',
     openrouter: 'OpenRouter',
+    custom: 'Custom endpoint',
 }
 
 // The model the app's picker offers for one coworker, grouped and labelled by the hub with the web

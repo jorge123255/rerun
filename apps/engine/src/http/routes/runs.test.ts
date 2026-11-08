@@ -16,6 +16,19 @@ vi.mock('../../runtime/notify.js', async importOriginal => ({
     },
 }))
 
+const afterRunRead = vi.hoisted(() => ({ finish: undefined as (() => Promise<void>) | undefined }))
+
+vi.mock('../../db/repos/runs.js', async importOriginal => {
+    const original = await importOriginal<typeof import('../../db/repos/runs.js')>()
+    return { ...original, getRun: async (...args: Parameters<typeof original.getRun>) => {
+        const row = await original.getRun(...args)
+        const finish = afterRunRead.finish
+        afterRunRead.finish = undefined
+        await finish?.()
+        return row
+    } }
+})
+
 const { describe, expect, it, beforeAll, beforeEach } = await import('vitest')
 const { mkdir } = await import('node:fs/promises')
 const { createServer } = await import('../server.js')
@@ -23,7 +36,7 @@ const { agentConfigSchema } = await import('../../agents/types.js')
 const { writeAgentConfig } = await import('../../agents/config-write.js')
 const { agentDir } = await import('../../config/paths.js')
 const { createSession } = await import('../../db/repos/sessions.js')
-const { getRun, startRun } = await import('../../db/repos/runs.js')
+const { failRun, finishRun, getRun, startRun } = await import('../../db/repos/runs.js')
 const { appendMessage, listMessages } = await import('../../db/repos/messages.js')
 const { reserveDesktopQueuedTurn } = await import('../../db/repos/desktop-queued-turns.js')
 const { insertRunStep, insertToolCall } = await import('../../db/repos/telemetry.js')
@@ -326,6 +339,31 @@ describe('POST /agents/:id/runs/:rid/cancel', () => {
             message: 'Schedule "daily-digest" stopped',
             metadata: expect.objectContaining({ status: 'cancelled', scheduleSlug: 'daily-digest', provider: 'anthropic', model: 'claude-sonnet-4-6' }),
         })
+    })
+
+    it.each(['done', 'error'] as const)('keeps a %s terminal when Stop loses the race', async status => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const rid = await seedRun(id, sessionId)
+        afterRunRead.finish = () => status === 'done' ? finishRun(id, rid, null, 1) : failRun(id, rid, 'failed before Stop')
+        try {
+            expect((await cancel(rid)).status).toBe(409)
+            expect((await getRun(id, rid))?.status).toBe(status)
+            expect(sent).toEqual([])
+        } finally {
+            afterRunRead.finish = undefined
+            vi.unstubAllEnvs()
+        }
+    })
+
+    it('only the Stop that changes an orphaned run announces cancellation', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const rid = await seedRun(id, sessionId)
+        try {
+            const responses = await Promise.all([cancel(rid), cancel(rid)])
+            expect(responses.map(response => response.status).sort()).toEqual([200, 409])
+            expect((await getRun(id, rid))?.status).toBe('cancelled')
+            expect(sent).toHaveLength(1)
+        } finally { vi.unstubAllEnvs() }
     })
 
     it('leaves a finished run as it was', async () => {

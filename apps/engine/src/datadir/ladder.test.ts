@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-datadir-ladder-'))
 
-const { beforeEach, describe, expect, it } = await import('vitest')
+const { beforeEach, describe, expect, it, vi } = await import('vitest')
 const { mkdir, readFile, rm, writeFile } = await import('node:fs/promises')
 const { existsSync } = await import('node:fs')
 const { RERUN_CONNECTION_ID } = await import('@rerun/contracts')
@@ -162,6 +162,23 @@ describe('v2 to v3: mcp-packages', () => {
     })
 })
 
+it('adds custom custody to an existing v8 desktop data directory without replacing the API connection tables', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    try {
+        await raw().execute('CREATE TABLE IF NOT EXISTS desktop_api_connection_revisions (marker TEXT)')
+        await raw().execute("INSERT INTO desktop_api_connection_revisions(marker) VALUES('kept')")
+        await writeDataVersion(8)
+        await migrateDataDir()
+        expect(readDataVersion()).toBe(DATA_DIR_VERSION)
+        const tables = (await raw().execute("SELECT name FROM sqlite_master WHERE type='table'")).rows.map(row => row.name)
+        expect(tables).toEqual(expect.arrayContaining(['desktop_custom_connections', 'desktop_custom_connection_receipts']))
+        expect((await raw().execute('SELECT marker FROM desktop_api_connection_revisions')).rows[0]?.marker).toBe('kept')
+    } finally {
+        await raw().execute('DROP TABLE IF EXISTS desktop_api_connection_revisions')
+        vi.unstubAllEnvs()
+    }
+})
+
 // Append-only: a shipped step is never removed nor renamed, because a data-dir archived before it
 // still needs it. Updating this snapshot is the change to look at twice.
 describe('data-dir ladder', () => {
@@ -204,6 +221,10 @@ describe('data-dir ladder', () => {
             [
               8,
               "desktop-api-connections",
+            ],
+            [
+              9,
+              "desktop-custom-connections",
             ],
           ]
         `)

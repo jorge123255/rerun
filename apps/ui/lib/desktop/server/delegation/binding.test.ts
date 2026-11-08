@@ -14,6 +14,8 @@ import { closeDesktopDatabase, openDesktopDatabase } from '../database'
 import { createDesktopAgent, createDesktopSession } from '../store'
 import { authorizeDelegationSource, handleDesktopDelegationBridge, handleDesktopDelegationManagement } from './binding'
 import { delegationReceipts, delegationStore } from './store'
+import { ensureForemanChat } from '../foreman/chat-store'
+import { setDesktopWorkspaceFrozen } from '../workspace-admission'
 
 let root: string
 let runtime: DesktopRuntime
@@ -213,4 +215,37 @@ test('progress may change the storage revision but cannot replace or remove a ta
     next.snapshot.tasks[0]!.preview = 'New text'
     expect((await bridge('record-save', { record: next, expectedRevision: saved.snapshot.revision })).status).toBe(200)
     expect(await delegationStore(db).read(saved.snapshot.delegationId)).toEqual(next)
+})
+
+test('Foreman delegates only from its current owned chat/run with the explicit grant', async () => {
+    const owner = await ensureForemanChat(db, String(runtime.workspaceId))
+    const source = { engineAgentId: 'foreman', sessionId: owner.sessionId, runId: crypto.randomUUID(), toolCallId: 'foreman-task' }
+    const binding = { ...owner.chat, runId: source.runId, model: { connectionId: 'connection', model: 'model' } }
+    const turn = { binding, sessionId: owner.sessionId, text: 'Review a note', brief: { instructions: 'Fixture', tools: [] } }
+    await db.execute({ sql: "INSERT INTO desktop_foreman_turns(request_id,chat_id,fingerprint,body,status,created_at) VALUES(?,?,?,?,'admitted',?)",
+        args: [source.runId, owner.chat.chatId, 'digest', JSON.stringify(turn), new Date().toISOString()] })
+    let grant = false
+    mocks.request.mockImplementation(async (_connection: unknown, path: string, _options: unknown, parse: (value: unknown) => unknown) => {
+        if (path === '/agents/foreman') return parse({ id: 'foreman', config: { kind: 'foreman', enabled: true, tools: { desktopToolGrants: { delegate: grant, webFetch: true } } } })
+        if (path === `/agents/foreman/runs/${source.runId}`) return parse({ id: source.runId, agentId: 'foreman', sessionId: source.sessionId, status: 'running' })
+        throw new Error(`Unexpected engine request ${path}`)
+    })
+    expect((await bridge('authority', source)).status).toBe(409)
+    grant = true
+    const bound = { parentAgentId: 'foreman', parentSessionId: owner.chat.chatId, parentRunId: source.runId, toolCallId: source.toolCallId }
+    expect(await (await bridge('authority', source)).json()).toEqual({ result: { source: bound, webFetch: false } })
+    expect((await bridge('authority', { ...source, sessionId: input.sessionId })).status).toBe(409)
+    const saved = record(owner.chat.chatId)
+    Object.assign(saved.snapshot, bound)
+    expect((await bridge('record-reserve', saved)).status).toBe(200)
+    const allocation = { source: bound, taskId: saved.snapshot.tasks[0]!.taskId }
+    setDesktopWorkspaceFrozen(runtime, true)
+    try { expect((await bridge('allocate', allocation)).status).toBe(409) }
+    finally { setDesktopWorkspaceFrozen(runtime, false) }
+    expect((await bridge('allocate', { ...allocation, source: { ...bound, parentSessionId: session.id } })).status).toBe(404)
+    grant = false
+    expect((await bridge('allocate', allocation)).status).toBe(409)
+    grant = true
+    expect((await bridge('allocate', allocation)).status).toBe(200)
+    expect((await db.execute('SELECT * FROM desktop_delegation_resources')).rows).toHaveLength(1)
 })

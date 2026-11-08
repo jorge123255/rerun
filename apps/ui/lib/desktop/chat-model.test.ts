@@ -26,6 +26,18 @@ describe('desktop model selection', () => {
         expect(desktopReasoningChoice(codex, 'terra', null)).toEqual({ effort: 'medium', source: 'model-default' })
     })
 
+    it('offers exact registered custom models and keeps disconnected choices unavailable', () => {
+        const custom = connection({ id: 'custom-fixture', name: 'Fixture endpoint', provider: 'custom', customRevision: 1, models: ['synthetic/model'] })
+        const missingRevision = connection({ id: 'unregistered', provider: 'custom', models: ['unregistered/model'] })
+        const conversation = { connectionId: custom.id, model: 'synthetic/model' }
+        const base = { workspace, coworker: null, conversation }
+        const available = buildDesktopModelView({ ...base, connections: [codex, custom, missingRevision] })
+        expect(available.catalog.map(group => group.connectionId)).toEqual([codex.id, custom.id])
+        expect(available.effective).toMatchObject({ ...conversation, provider: 'custom', source: 'conversation', available: true })
+        const disconnected = buildDesktopModelView({ ...base, connections: [codex, { ...custom, connected: false }] })
+        expect(disconnected.effective).toMatchObject({ ...conversation, source: 'conversation', available: false })
+    })
+
     it('resolves a conversation, then a coworker pin, then the workspace, and leaves an unavailable choice in place', () => {
         const input = {
             connections: [local, codex, connection({ id: 'off', provider: 'openai', models: ['hidden'], connected: false }), connection({ id: 'empty', provider: 'google', models: [] })],

@@ -19,6 +19,7 @@ export async function connectionsOfProvider(provider: Provider): Promise<LoadedC
 export async function resolveConnection(connectionId: string | null | undefined, provider: Provider | null | undefined): Promise<LoadedConnection | null> {
     const direct = await findConnection(connectionId)
     if (direct) return direct
+    if (provider === 'custom') return null
     if (provider) {
         const match = (await connectionsOfProvider(provider))[0]
         if (match) return match

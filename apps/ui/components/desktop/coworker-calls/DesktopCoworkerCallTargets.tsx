@@ -9,12 +9,16 @@ import { Button } from '@/components/ui/button'
 const viewSchema = z.strictObject({ targets: z.array(desktopCoworkerCallTargetSchema), allowedTargetIds: z.array(z.string()) })
 type View = z.infer<typeof viewSchema>
 
-export function DesktopCoworkerCallTargets({ agentId }: { agentId: string }) {
+type TargetScope = { agentId: string } | { foreman: { workspaceId: string; chatId: string; launchNonce: string } }
+
+export function DesktopCoworkerCallTargets(scope: TargetScope) {
     const [view, setView] = useState<View | null>(null)
     const [error, setError] = useState('')
     const [saving, setSaving] = useState(false)
     const [attempt, setAttempt] = useState(0)
-    const url = `/api/desktop/coworkers/${encodeURIComponent(agentId)}/call-targets`
+    const url = 'foreman' in scope
+        ? `/api/desktop/foreman/call-targets?${new URLSearchParams(scope.foreman)}`
+        : `/api/desktop/coworkers/${encodeURIComponent(scope.agentId)}/call-targets`
     useEffect(() => {
         const controller = new AbortController()
         void fetch(url, { cache: 'no-store', signal: controller.signal }).then(async response => {

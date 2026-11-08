@@ -15,6 +15,7 @@ import { enabledModels, modelName } from '@/lib/engine/ai-sources'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { desktopProvider, type SettingsChange } from '@/lib/desktop/settings'
+import { DesktopCustomProviderPage } from './connections/custom/DesktopCustomProviderPage'
 import { ApiConnectionsPanel } from './connections/api/ApiConnectionsPanel'
 import { createApiConnectionsClient } from '@/lib/desktop/api-connections/client'
 import { desktopApiConnectionUiRoutes } from '@/lib/desktop/api-connections/routes'
@@ -45,8 +46,8 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const [notice, setNotice] = useState('')
     const [error, setError] = useState('')
     const current = providers.connections.find(c => c.id === source)
-    const provider = current ? desktopProvider.parse(current.provider) : desktopProvider.parse(source.replace(/^add:/, ''))
-    const missing = desktopProvider.options.filter(p => !providers.connections.some(c => c.provider === p))
+    const provider = current ? desktopProvider.parse(current.provider) : desktopProvider.safeParse(source.replace(/^add:/, '')).data ?? 'openai'
+    const missing = desktopProvider.options.filter(p => p !== 'custom' && !providers.connections.some(c => c.provider === p))
     const picks = providers.connections.filter(c => c.connected).flatMap(c => enabledModels(c).map(m => ({ connectionId: c.id, model: m.id })))
     const selected = picks.findIndex(p => p.connectionId === providers.default?.connectionId && p.model === providers.default.model)
     const active = providers.default
@@ -71,11 +72,11 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
 
     function saveKey(event: FormEvent) {
         event.preventDefault()
-        if (key.trim() && provider !== 'codex' && provider !== 'claude') void save({ action: 'key', provider, connectionId: current?.id, apiKey: key.trim() }, 'API key saved.')
+        if (key.trim() && provider !== 'codex' && provider !== 'claude' && provider !== 'custom') void save({ action: 'key', provider, connectionId: current?.id, apiKey: key.trim() }, 'API key saved.')
     }
 
     // A provider that was just added replaces its "add" option with the engine connection.
-    const connection = current ?? providers.connections.find(c => c.provider === provider)
+    const connection = current ?? (provider === 'custom' ? undefined : providers.connections.find(c => c.provider === provider))
     const changeModels = (models: string[], extraModels: string[]) => {
         if (connection) void save({ action: 'models', connectionId: connection.id, models, extraModels }, 'Available models updated.')
     }
@@ -128,19 +129,28 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 setSource(e.target.value); setKey(''); setNotice(''); setError('')
                             }}>
                                 {providers.connections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                {workspaceId && <option value="add:custom">Add custom endpoint</option>}
                                 {missing.map(p => <option key={p} value={'add:' + p}>Connect {p === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[p]}</option>)}
                             </select>
                             <div className="flex items-center gap-2 text-sm"><ProviderIcon provider={provider} className="size-5" /><strong>{provider === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[provider]}</strong>
-                                {provider !== 'codex' && provider !== 'claude' && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
+                                {provider !== 'codex' && provider !== 'claude' && provider !== 'custom' && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
                             </div>
-                            {provider === 'codex' ? <DesktopCodexLogin connected={!!connection?.connected} modelCount={connection?.models.length ?? 0} onProviders={onProviders} /> : provider === 'claude' ? <DesktopClaudeLogin connected={!!connection?.connected} rejected={connection?.credentialRejected} onProviders={onProviders} /> : <form onSubmit={saveKey} className="space-y-2">
+                            {provider === 'custom' ? workspaceId && (connection === undefined || connection.customRevision) ? <DesktopCustomProviderPage
+                                key={connection?.id ?? 'new-custom'}
+                                workspaceId={workspaceId}
+                                identity={connection?.customRevision ? { workspaceId, connectionId: connection.id, revision: connection.customRevision } : null}
+                                takenNames={providers.connections.filter(item => item.id !== connection?.id).map(item => item.name)}
+                                defaultModel={providers.default}
+                                onBack={() => setSource(providers.connections.find(item => item.provider !== 'custom')?.id ?? 'add:openai')}
+                                onReceipt={receipt => { if (receipt.status === 'recorded') onConnectionsChanged?.() }}
+                            /> : <p role="status">Custom endpoint settings are unavailable.</p> : provider === 'codex' ? <DesktopCodexLogin connected={!!connection?.connected} modelCount={connection?.models.length ?? 0} onProviders={onProviders} /> : provider === 'claude' ? <DesktopClaudeLogin connected={!!connection?.connected} rejected={connection?.credentialRejected} onProviders={onProviders} /> : <form onSubmit={saveKey} className="space-y-2">
                                 <label htmlFor="desktop-api-key" className="text-sm font-medium">{connection ? 'Replacement API key' : 'API key'}</label>
                                 <div className="flex gap-2">
                                     <Input id="desktop-api-key" type="password" autoComplete="off" placeholder={CONNECTION_TOKEN_KEY[provider]} value={key} onChange={e => setKey(e.target.value)} />
                                     <Button type="submit" disabled={busy || !key.trim()}>{connection ? 'Save key' : 'Connect'}</Button>
                                 </div>
                             </form>}
-                            {provider !== 'codex' && connection && <div inert={busy}>
+                            {provider !== 'codex' && provider !== 'custom' && connection && <div inert={busy}>
                                 <ModelBuckets connection={connection} defaultModel={providers.default?.connectionId === connection.id ? providers.default.model : null}
                                     onModelsChange={models => changeModels(models, connection.extraModels)} />
                                 {provider === 'openrouter' && <BaseUrlField key={connection.id + ':' + (connection.baseUrl ?? '')} baseUrl={connection.baseUrl ?? ''}

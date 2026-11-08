@@ -65,8 +65,8 @@ export async function bindDesktopCoworkerCalls(runtime: DesktopBind, fetchImpl?:
             const loaded = await getAgent(input.engineTargetAgentId)
             if (loaded.id !== input.engineTargetAgentId) throw new Error('Coworker identity changed')
             if (!loaded.config.enabled) throw new Error(`Coworker "${loaded.config.name}" is switched off and cannot be called.`)
-            // The copy keeps the target's model, tools and grants. Only self-improvement is off for this run.
-            const callee = desktopCoworkerCallee(loaded)
+            // The target uses its own permissions. Foreman-origin calls cannot dispatch again.
+            const callee = desktopCoworkerCallee(loaded, input.originAgentId)
             const run = await startHeadlessRun(callee, input.engineSessionId, input.prompt, { connectionId: input.model.connectionId, model: input.model.model }, { source: 'chat' }, {
                 beforeLaunch: input.assertActive,
                 onRunCreated: input.onRunCreated,

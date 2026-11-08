@@ -2,6 +2,7 @@ import { notFound } from '../lib/errors.js'
 import { clearAgentCache } from '../agents/registry.js'
 import { isPathSegment } from '../config/paths.js'
 import { connectionExists, listConnectionIds, loadConnectionFromDisk } from './loader.js'
+import { desktopCustomProviderBinding, readRegisteredCustomConnection } from '../desktop/custom-providers/binding.js'
 import type { LoadedConnection } from './types.js'
 
 // One instance per connection, shared by every agent pointing at it. Deliberate: a token refresh
@@ -10,6 +11,8 @@ import type { LoadedConnection } from './types.js'
 const cache = new Map<string, LoadedConnection>()
 
 export async function getConnection(id: string): Promise<LoadedConnection> {
+    const custom = await readRegisteredCustomConnection(id)
+    if (custom) return custom
     const cached = cache.get(id)
     if (cached) return cached
     if (!connectionExists(id)) throw notFound('connection')
@@ -19,13 +22,15 @@ export async function getConnection(id: string): Promise<LoadedConnection> {
 }
 
 export async function findConnection(id: string | null | undefined): Promise<LoadedConnection | null> {
-    if (!id || !isPathSegment(id) || !connectionExists(id)) return null
-    return getConnection(id)
+    if (!id || !isPathSegment(id)) return null
+    const custom = await readRegisteredCustomConnection(id)
+    return custom ?? (connectionExists(id) ? getConnection(id) : null)
 }
 
 export async function listConnections(): Promise<LoadedConnection[]> {
     const ids = await listConnectionIds()
-    return Promise.all(ids.map(id => getConnection(id)))
+    const custom = await desktopCustomProviderBinding()?.ids() ?? []
+    return Promise.all([...new Set([...ids, ...custom])].map(id => getConnection(id)))
 }
 
 // Agents hold a reference to the shared instance, so dropping a connection from the cache has to

@@ -2,6 +2,7 @@ import { generateText, type ModelMessage } from 'ai'
 import { isContextPart, modelContextWindow, type Provider } from '@rerun/contracts'
 import { modelFor, type ModelOverride } from '../../agents/providers.js'
 import { withoutQuickRepliesCalls } from '../../agents/quick-replies-stream.js'
+import { customConnectionContextWindow } from '../../desktop/custom-providers/binding.js'
 import { CLI_PROVIDERS } from '../../agents/types.js'
 import { ensureCliAuth } from '../../connections/cli-auth.js'
 import { listMessagesAfter, storedContent } from '../../db/repos/messages.js'
@@ -122,7 +123,7 @@ export async function prepareRunHistory(ctx: RunContext, system: string, overrid
     })
     const working = priorSummary ? [priorSummary, ...live] : live
 
-    const contextWindow = modelContextWindow(ctx.model, ctx.provider)
+    const contextWindow = customConnectionContextWindow(ctx.agent.resolved.connection, ctx.model) ?? modelContextWindow(ctx.model, ctx.provider)
     if (!contextWindow) return working
     if (estimateTokens(working, system, toolChars) < compactionThreshold(contextWindow, ctx.provider)) return working
 

@@ -15,7 +15,7 @@ export function AiProvidersDialog({ open, onOpenChange }: { open: boolean; onOpe
     // The signal is cleared as soon as it is read, but the panel it asks for only mounts on the
     // next render, so what it carried is held here until that panel picks it up.
     const [initialConnection, setInitialConnection] = useState<InitialConnection | null>(null)
-    const [initialAddProvider, setInitialAddProvider] = useState<Exclude<Provider, 'rerun'> | null>(null)
+    const [initialAddProvider, setInitialAddProvider] = useState<Exclude<Provider, 'rerun' | 'custom'> | null>(null)
 
     useEffect(() => {
         if (!focus?.connectionId && !focus?.addProvider) return
