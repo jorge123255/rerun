@@ -6,6 +6,7 @@ import type { DesktopDocumentAttachment, DesktopDocumentScope } from '@rerun/con
 import { useDesktopDocumentAttachments } from './useDesktopDocumentAttachments'
 import { queueTabWrite } from '@/lib/desktop/tab-writes'
 import { cancelDraftShutdown, flushDesktopDrafts } from '@/lib/desktop/draft-writes'
+;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const scope = { agentId: 'owner', tabUid: 'tab', sessionId: 'session' }
 const transport = vi.hoisted(() => ({ uploadDesktopDocument: vi.fn(), listDesktopDocuments: vi.fn(), convertDesktopDocument: vi.fn(), discardDesktopDocument: vi.fn(), detachDesktopDocument: vi.fn(), admitDesktopDocuments: vi.fn(), consumeDesktopDocuments: vi.fn(), cancelDesktopDocumentUpload: vi.fn() }))
 vi.mock('./client', () => transport)
@@ -19,7 +20,7 @@ beforeEach(() => {
     cancelDraftShutdown(); saved = []
     Object.values(transport).forEach(mock => mock.mockReset())
     transport.listDesktopDocuments.mockImplementation(async (owner: DesktopDocumentScope) => saved.filter(a => a.scope.agentId === owner.agentId && a.scope.tabUid === owner.tabUid))
-    transport.uploadDesktopDocument.mockImplementation(async (owner, id, _file, _signal, position) => { const a = attachment(id, owner, position); saved.push(a); return a })
+    transport.uploadDesktopDocument.mockImplementation(async (owner, id, file: File, _signal, position) => { const a = { ...attachment(id, owner, position), name: file.name, byteLength: file.size }; saved.push(a); return a })
     transport.convertDesktopDocument.mockImplementation(async (_owner, id) => { const a = saved.find(a => a.attachmentId === id)!; a.conversion = { mode: 'pdf-text', state: 'ready', text: 'actual content' }; return a })
 })
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.innerHTML = ''; cancelDraftShutdown(); vi.clearAllMocks() })

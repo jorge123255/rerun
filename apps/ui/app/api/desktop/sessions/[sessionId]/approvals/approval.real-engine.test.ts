@@ -1,9 +1,10 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { serializeApprovalDecisions } from '@rerun/contracts'
 import { POST as chat } from '@/app/api/desktop/chat/route'
+import { POST as triggerCallback } from '@/app/api/desktop/internal/triggers/route'
 import { closeDesktopDatabase, openDesktopDatabase } from '@/lib/desktop/server/database'
 import { createDesktopAgent, findDesktopSession, setDesktopSessionModel } from '@/lib/desktop/server/store'
 import { readDesktopHistory } from '@/lib/desktop/server/engine'
@@ -20,7 +21,8 @@ test.runIf(process.env.RERUN_APPROVAL_ACCEPTANCE === '1')('a real approval survi
         { action: 'Delete the source file' },
     ]
     const decisions: DesktopApprovalAnswer['decisions'] = [{ decision: 'approved' }, { decision: 'declined', note: 'Keep it local.' }, { decision: 'declined' }]
-    const engine = await disposableRunEngine(root, 'http://127.0.0.1:3197', {
+    const engine = await disposableRunEngine(root, undefined, {
+        triggerCallback,
         replyForRequest: index => index === 1 ? 'Please review these actions before I continue.' : index === 3 ? 'I recorded your decisions. One separate approval remains.' : 'A completed local run.',
         toolCallsForRequest: index => index === 1 ? [{ id: 'approval-call', name: 'request_approval', input: { approvals } }]
             : index === 3 ? [{ id: 'approval-call', name: 'request_approval', input: { approvals: [{ action: 'Prepare a separate summary', detail: 'This is a later approval batch.' }] } }] : [],
@@ -44,10 +46,10 @@ test.runIf(process.env.RERUN_APPROVAL_ACCEPTANCE === '1')('a real approval survi
         await engine.waitForProviderRequest(number); engine.finishReply(); await stream
         return response.headers.get('x-session-id')!
     }
-    async function restart(origin: string) {
-        await closeDesktopDatabase(root); await engine.stop(); await engine.start()
-        engine.runtime.app.origin = origin
-        await writeFile(join(root, 'runtime.json'), JSON.stringify(engine.runtime), { mode: 0o600 })
+    async function restart() {
+        await closeDesktopDatabase(root)
+        await engine.stop()
+        await engine.start()
     }
     try {
         await engine.start()
@@ -69,9 +71,11 @@ test.runIf(process.env.RERUN_APPROVAL_ACCEPTANCE === '1')('a real approval survi
         const payload = { approvalId: original!.id, requestId, decisions }
         // Save a valid intent while its pinned model is unavailable, then cold-start both layers.
         await setDesktopSessionModel(await openDesktopDatabase(root), sessionId, { connectionId: provider.id, model: 'not-offered' })
-        expect((await answer(sessionId, payload)).status).toBe(409)
+        const unavailableModel = await answer(sessionId, payload)
+        expect(unavailableModel.status).toBe(409)
+        expect(await unavailableModel.json()).toEqual({ error: 'This conversation’s model is no longer available. Choose another model or follow the coworker default.' })
         expect(engine.providerMessages).toHaveLength(2)
-        await restart('http://127.0.0.1:3198')
+        await restart()
         const restored = await pending(sessionId)
         expect(restored?.id).toBe(original!.id)
         expect(restored?.attempt).toEqual({ requestId, decisions })
@@ -93,7 +97,7 @@ test.runIf(process.env.RERUN_APPROVAL_ACCEPTANCE === '1')('a real approval survi
         expect(providerInput.match(/Here are my approval decisions:/g)).toHaveLength(1)
         expect(engine.providerModels).toEqual(['qa-chat', 'qa-local', 'qa-chat'])
         expect((await getAgent(conn(), engineAgent.id)).config.tools).toEqual(originalTools)
-        await restart('http://127.0.0.1:3199')
+        await restart()
         await patchAgent(conn(), engineAgent.id, { enabled: false })
         await (await openDesktopDatabase(root)).execute({ sql: 'UPDATE desktop_agents SET enabled = 0 WHERE id = ?', args: [agent.id] })
         const replay = await answer(sessionId, { ...payload, requestId: crypto.randomUUID() })

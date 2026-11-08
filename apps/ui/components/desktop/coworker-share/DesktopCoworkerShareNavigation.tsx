@@ -3,10 +3,11 @@
 import * as React from 'react'
 import { createDesktopCoworkerShareServerAttempts, type DesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
 import { createDesktopCoworkerShareClient, type DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
+import type { DesktopCoworkerShareSectionBindings } from '@/lib/desktop/coworker-share/sections'
 import { DesktopCoworkerImportDialog } from './DesktopCoworkerImportDialog'
 import { DesktopCoworkerShareDialog } from './DesktopCoworkerShareDialog'
 
-export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName, sourceRevision, open, onOpenChange, importSnapshot = null, onImportSnapshotChange, onOpenCoworker, attempts }: {
+export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName, sourceRevision, open, onOpenChange, importSnapshot = null, onImportSnapshotChange, onImported, onOpenCoworker, attempts, sectionBindings = null }: {
     workspaceId: number
     agentId: string
     agentName: string
@@ -15,8 +16,10 @@ export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName
     onOpenChange: (open: boolean) => void
     importSnapshot?: string | null
     onImportSnapshotChange?: (snapshotId: string | null) => void
+    onImported?: (agentId: string) => void | Promise<void>
     onOpenCoworker?: (agentId: string) => void
     attempts?: DesktopCoworkerShareAttempts
+    sectionBindings?: DesktopCoworkerShareSectionBindings | null
 }) {
     const [client, setClient] = React.useState<DesktopCoworkerShareClient | null>(null)
     const [localImport, setLocalImport] = React.useState<string | null>(importSnapshot)
@@ -43,6 +46,7 @@ export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName
             agentId={agentId}
             agentName={agentName}
             sourceRevision={sourceRevision}
+            sectionBindings={sectionBindings}
             onPreviewImport={snapshotId => {
                 onOpenChange(false)
                 setLocalImport(snapshotId)
@@ -56,6 +60,7 @@ export function DesktopCoworkerShareNavigation({ workspaceId, agentId, agentName
             attempts={attemptStore}
             targetWorkspaceId={workspaceId}
             snapshotId={snapshot}
+            onImported={onImported}
             onOpenCoworker={onOpenCoworker}
         />}
     </>}

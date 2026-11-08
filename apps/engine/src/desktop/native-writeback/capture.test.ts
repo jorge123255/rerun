@@ -1,4 +1,4 @@
-import {mkdtemp,mkdir,writeFile,readFile,symlink,rm,realpath} from 'node:fs/promises'
+import {mkdtemp,mkdir,writeFile,readFile,symlink,rm,realpath,utimes} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {afterEach,expect,it,vi} from 'vitest'
@@ -67,7 +67,24 @@ it('unchanged copied non-text is not proposed',async()=>{
  for(const path of [source,scratch]){await mkdir(path,{recursive:true});await writeFile(join(path,'same.bin'),Buffer.from([4,5,6]))}
  const ctx={agent:{id:'engine'},sessionId:'session',runId:'run'} as RunContext
  const baseline=await captureNativeBaseline(ctx,scratch,async()=>{})
+ expect(Object.keys(baseline.nonText.get('same.bin')!).sort()).toEqual(['size','version'])
  const proposal=await captureNativeChanges(ctx,scratch,baseline)
  expect(proposal.files).toEqual([])
  expect(proposal.unsupported).toEqual([])
+})
+
+it('a same-size non-text rewrite stays unsupported and never becomes a text publication',async()=>{
+ const folder=await realpath(await mkdtemp(join(tmpdir(),'native-writeback-')));folders.push(folder)
+ const source=join(folder,'source'),scratch=join(folder,'scratch');config.root=source
+ for(const path of [source,scratch]){await mkdir(path,{recursive:true});await writeFile(join(path,'same.bin'),Buffer.from([4,5,6]))}
+ const ctx={agent:{id:'engine'},sessionId:'session',runId:'run'} as RunContext
+ const baseline=await captureNativeBaseline(ctx,scratch,async()=>{})
+ await writeFile(join(scratch,'same.bin'),Buffer.from([7,8,9]))
+ // Make the metadata change deterministic without depending on filesystem clock precision.
+ await utimes(join(scratch,'same.bin'),new Date('2030-01-01T00:00:00Z'),new Date('2030-01-01T00:00:00Z'))
+ const proposal=await captureNativeChanges(ctx,scratch,baseline)
+ expect(proposal.files).toEqual([])
+ expect(proposal.unsupported).toEqual([expect.objectContaining({path:'same.bin',reason:'binary-or-non-text'})])
+ expect(await readFile(join(source,'same.bin'))).toEqual(Buffer.from([4,5,6]))
+ expect(JSON.stringify(proposal)).not.toContain('afterHash')
 })

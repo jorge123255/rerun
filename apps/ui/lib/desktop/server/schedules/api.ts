@@ -10,7 +10,7 @@ import { nextRunAt } from '@/lib/schedules/cron'
 import { adoptDesktopScheduledSession } from './adoption'
 
 const input=z.object({name:z.string().trim().min(1).max(120),description:z.string().max(4000).default(''),body:z.string().trim().min(1).max(64000),cron:z.string().max(120).nullable(),runAt:z.string().datetime({offset:true}).nullable(),timezone:z.string().min(1).max(100),enabled:z.boolean()}).strict().superRefine((value,ctx)=>{
-    try {new Intl.DateTimeFormat('en',{timeZone:value.timezone});if(Boolean(value.cron)===Boolean(value.runAt))throw new Error();if(value.cron)new Cron(value.cron,{timezone:value.timezone})}catch{ctx.addIssue({code:'custom',message:'Choose a valid cron or one-shot time and timezone'})}
+    try {new Intl.DateTimeFormat('en',{timeZone:value.timezone});if(Boolean(value.cron)===Boolean(value.runAt))throw new Error();if(value.cron)new Cron(value.cron,{timezone:value.timezone}).nextRun()}catch{ctx.addIssue({code:'custom',message:'Choose a valid cron or one-shot time and timezone'})}
 })
 export type DesktopScheduleInput=z.infer<typeof input>
 export type ScheduleAccess=(engineAgentId:string)=>Promise<void>

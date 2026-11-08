@@ -12,7 +12,8 @@ import type {
 } from '@rerun/contracts'
 import type { DesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
 import type { DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
-import { isDesktopCoworkerShareResultCurrent, isDesktopCoworkerShareReviewCurrent, type DesktopCoworkerReviewedShare } from '@/lib/desktop/coworker-share/state'
+import { gateShareInclude, shareSectionReadiness, type DesktopCoworkerShareSectionBindings } from '@/lib/desktop/coworker-share/sections'
+import { isDesktopCoworkerShareResultCurrent, isDesktopCoworkerShareReviewCurrent, isDesktopCoworkerShareSectionDigestCurrent, type DesktopCoworkerReviewedShare } from '@/lib/desktop/coworker-share/state'
 
 const DEFAULT_INCLUDE: DesktopCoworkerShareInclude = { memories: false, database: false, files: false }
 
@@ -23,13 +24,14 @@ export type DesktopCoworkerExportedShare = {
     requestId: string
 }
 
-export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, agentId, sourceRevision, active = true }: {
+export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, agentId, sourceRevision, active = true, sectionBindings = null }: {
     client: DesktopCoworkerShareClient
     attempts: DesktopCoworkerShareAttempts
     workspaceId: number
     agentId: string
     sourceRevision: string
     active?: boolean
+    sectionBindings?: DesktopCoworkerShareSectionBindings | null
 }) {
     const owner = React.useMemo(() => ({ workspaceId, agentId }), [workspaceId, agentId])
     const activeRef = React.useRef(active)
@@ -42,6 +44,13 @@ export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, age
     const [plan, setPlan] = React.useState<DesktopCoworkerSharePlan | null>(null)
     const [loading, setLoading] = React.useState(true)
     const [include, setIncludeState] = React.useState<DesktopCoworkerShareInclude>(DEFAULT_INCLUDE)
+    const planRef = React.useRef(plan)
+    planRef.current = plan
+    const bindingsRef = React.useRef(sectionBindings)
+    bindingsRef.current = sectionBindings
+    const includeRef = React.useRef(include)
+    includeRef.current = include
+    const sections = React.useMemo(() => shareSectionReadiness(plan, sectionBindings), [plan, sectionBindings])
     const [step, setStep] = React.useState<DesktopCoworkerShareStep>('configure')
     const [reviewed, setReviewed] = React.useState<DesktopCoworkerReviewedShare | null>(null)
     const [approved, setApproved] = React.useState(false)
@@ -104,24 +113,23 @@ export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, age
         if (reviewed && reviewed.input.sourceRevision !== sourceRevision) setApproved(false)
     }, [reviewed, sourceRevision])
 
-    const currentReviewInput = React.useCallback((requestId: string): DesktopCoworkerShareReviewInput => ({
-        workspaceId: latest.current.owner.workspaceId,
-        agentId: latest.current.owner.agentId,
-        sourceRevision: latest.current.sourceRevision,
-        requestId,
-        include: { ...include },
-    }), [include])
+    React.useEffect(() => {
+        setIncludeState(current => {
+            const next = gateShareInclude(current, plan, sectionBindings)
+            return next.memories === current.memories && next.database === current.database && next.files === current.files ? current : next
+        })
+    }, [plan, sectionBindings])
 
-    const stale = React.useMemo(() => reviewed !== null && !isDesktopCoworkerShareReviewCurrent(reviewed, {
+    const stale = React.useMemo(() => reviewed !== null && (!isDesktopCoworkerShareReviewCurrent(reviewed, {
         ...reviewed.input,
         workspaceId,
         agentId,
         sourceRevision,
-    }), [reviewed, workspaceId, agentId, sourceRevision])
+    }) || !isDesktopCoworkerShareSectionDigestCurrent(reviewed, sections)), [reviewed, workspaceId, agentId, sourceRevision, sections])
 
     function setInclude(next: Partial<DesktopCoworkerShareInclude>) {
         if (step !== 'configure' || running.current) return
-        setIncludeState(current => ({ ...current, ...next }))
+        setIncludeState(current => gateShareInclude({ ...current, ...next }, planRef.current, bindingsRef.current))
         setError(null)
     }
 
@@ -131,11 +139,28 @@ export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, age
         running.current = true
         setBusy(true)
         setError(null)
-        const input = currentReviewInput(crypto.randomUUID())
+        const readiness = shareSectionReadiness(planRef.current, bindingsRef.current)
+        const sent = gateShareInclude(includeRef.current, planRef.current, bindingsRef.current)
+        setIncludeState(sent)
+        const input: DesktopCoworkerShareReviewInput = {
+            workspaceId: latest.current.owner.workspaceId,
+            agentId: latest.current.owner.agentId,
+            sourceRevision: latest.current.sourceRevision,
+            requestId: crypto.randomUUID(),
+            include: sent,
+        }
         try {
             const result = await client.review({ sourceRevision: input.sourceRevision, requestId: input.requestId, include: input.include })
             if (!activeRef.current || request !== operation.current) return false
-            setReviewed({ input, result })
+            setReviewed({
+                input,
+                result,
+                sections: {
+                    memoriesDigest: sent.memories ? readiness.memories.digest : null,
+                    databaseDigest: sent.database ? readiness.database.digest : null,
+                    databaseViewCount: sent.database ? readiness.database.viewCount : null,
+                },
+            })
             setApproved(false)
             setStep('review')
             return true
@@ -253,6 +278,7 @@ export function useDesktopCoworkerShareFlow({ client, attempts, workspaceId, age
         plan,
         loading,
         include,
+        sections,
         setInclude,
         reviewed,
         approved,

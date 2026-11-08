@@ -25,3 +25,13 @@ it('blocks both click and keyboard drill while an action is pending, then restor
     view.sections[0]!.rows[0]!.onDrill!()
     expect(select).toHaveBeenCalledTimes(1); expect(drill).toHaveBeenCalledTimes(1)
 })
+it('keeps a denied Files row inert for selection and keyboard drill with its visible explanation', async () => {
+    const select = vi.fn(), drill = vi.fn()
+    await mount(false, select, drill)
+    const props = view
+    await act(async () => root!.render(<DesktopControlCenterParityView {...props} sections={[{ id: 'open', heading: 'Open', rows: [{ id: 'files', label: 'Files', disabledReason: 'This coworker is unavailable.', leading: { kind: 'icon', icon: FolderIcon }, onSelect: select, onDrill: drill }] }]} />))
+    view.sections[0].rows[0].onSelect()
+    expect(view.sections[0].rows[0].onDrill).toBeUndefined()
+    expect(view.sections[0].rows[0].disabledReason).toBe('This coworker is unavailable.')
+    expect(select).not.toHaveBeenCalled(); expect(drill).not.toHaveBeenCalled()
+})

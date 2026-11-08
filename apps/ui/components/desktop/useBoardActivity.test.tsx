@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, useLayoutEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { useBoardActivity } from './useBoardActivity'
@@ -10,7 +10,11 @@ const pending = { id: 'q', kind: 'question', agentId: 'alice', agentName: 'Alice
     sessionId: 'needs-answer', title: 'Choose version', summary: 'Which one?', updatedAt: '2026-11-04T11:00:00Z' }
 const reply = (agents: Record<string, string>, items: object[] = []) => Response.json({ agents,
     attention: { items, unavailableAgentIds: [], checkedAt: '2026-11-04T12:00:00Z' } })
-function Probe({ ids, enabled }: { ids: string[]; enabled?: boolean }) { result = useBoardActivity(ids, enabled); return null }
+function Probe({ ids, enabled }: { ids: string[]; enabled?: boolean }) {
+    const value = useBoardActivity(ids, enabled)
+    useLayoutEffect(() => { result = value })
+    return null
+}
 const render = (ids: string[], enabled?: boolean) => act(async () => { root.render(<Probe ids={ids} enabled={enabled} />) })
 beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })

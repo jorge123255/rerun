@@ -1,6 +1,7 @@
 import { createDesktopWorkspaceAdmissionRouter } from '../desktop/workspace-admission.js'
 import { createDesktopWorkspaceRoutineRouter } from '../desktop/workspace-routines/router.js'
 import { createDesktopBrainSemanticRouter } from '../desktop/brain-semantic/router.js'
+import { createDesktopApiConnectionRouter } from '../desktop/api-connections/router.js'
 import { createDesktopCompanyBriefRouter } from '../desktop/company-brief/router.js'
 import { getCompanyBriefService } from '../desktop/company-brief/runtime.js'
 import { desktopSetupRoutes } from '../desktop/setup/routes.js'
@@ -125,6 +126,7 @@ export function createServer(): Hono {
         api.route('/desktop/workspace-routines', createDesktopWorkspaceRoutineRouter())
         api.route('/desktop/brain/semantic', createDesktopBrainSemanticRouter())
         api.route('/desktop/company-brief', createDesktopCompanyBriefRouter(getCompanyBriefService))
+        api.route('/desktop/api-connections', createDesktopApiConnectionRouter())
         api.route('/desktop/brain/pages', createDesktopBrainPagesRouter())
         api.route('/desktop/brain/proposals', createDesktopBrainProposalsRouter())
     }

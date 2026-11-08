@@ -146,8 +146,9 @@ function editingFieldFocused(): boolean {
     return false
 }
 
-// ⌘F on a Mac, Ctrl+F elsewhere, exactly like the original control center: pressed while the
-// center is open it closes it; otherwise it opens the center. ⌘K
+// ⌘F on a Mac, Ctrl+F elsewhere opens the center. Pressed while the center is open it closes
+// the center and asks the shell to find in the open conversation. Electron has no browser find
+// bar, so the event is not left to the default. ⌘K
 // toggles the center where nothing else holds it — never from an open coworker chat or from an
 // editing field. The capture listener precedes every local handler, like the original's.
 export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, disabled = false }: {
@@ -176,6 +177,7 @@ export function useDesktopControlCenterKeys({ open, setOpen, conversationOpen, d
                 event.preventDefault()
                 event.stopPropagation()
                 setOpen(false)
+                window.dispatchEvent(new Event('rerun-desktop-conversation-find'))
                 return
             }
             event.preventDefault()

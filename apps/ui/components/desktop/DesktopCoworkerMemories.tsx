@@ -9,6 +9,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { PanelList } from '@/components/ui/panel-list'
+import { FxMemoriesLoading } from './fx-repairs/PanelLoadingSkeletons'
 import { Textarea } from '@/components/ui/textarea'
 import { BrainIcon, PlusIcon, Trash2Icon } from '@/lib/icons'
 import type { EngineMemory } from '@/lib/engine/types'
@@ -192,7 +193,7 @@ function MemoryPanel({ agent }: { agent: DesktopAgentView }) {
             </Button>}
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             {activeQuery && result && 'memories' in result && <p role="status" className="text-sm text-muted-foreground">{result.memories.length} recalled for “{activeQuery}”</p>}
-            {!result ? <p role="status" className="text-sm text-muted-foreground">{activeQuery ? 'Searching memories…' : 'Loading memories…'}</p>
+            {!result ? <FxMemoriesLoading searching={!!activeQuery} />
                 : 'error' in result ? <p role="alert" className="text-sm text-destructive">{result.error}</p>
                 : result.memories.length ? <PanelList>{result.memories.map(memory => <MemoryRow key={memory.id} memory={memory}
                     confirmDescription={`This permanently deletes “${memory.content.length > 140 ? memory.content.slice(0, 140) + '…' : memory.content}” from ${agent.name}’s memories.`}

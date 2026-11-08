@@ -1,9 +1,16 @@
 import { formatBytes } from '@/lib/files/format'
 import type { DesktopCoworkerShareInclude, DesktopCoworkerSharePlan, DesktopCoworkerShareReviewInput, DesktopCoworkerShareReviewResult, DesktopCoworkerSnapshotResult } from '@rerun/contracts'
 
+export type DesktopCoworkerShareReviewedSections = {
+    memoriesDigest: string | null
+    databaseDigest: string | null
+    databaseViewCount: number | null
+}
+
 export type DesktopCoworkerReviewedShare = {
     input: DesktopCoworkerShareReviewInput
     result: DesktopCoworkerShareReviewResult
+    sections?: DesktopCoworkerShareReviewedSections
 }
 
 export function isDesktopCoworkerShareReviewCurrent(reviewed: DesktopCoworkerReviewedShare, current: DesktopCoworkerShareReviewInput): boolean {
@@ -14,8 +21,17 @@ export function isDesktopCoworkerShareReviewCurrent(reviewed: DesktopCoworkerRev
         && input.include.memories === current.include.memories
         && input.include.database === current.include.database
         && input.include.files === current.include.files
+        // An exact persisted archive is a valid new review too; `reused`
+        // describes storage reuse, not a changed source or owner.
         && result.reviewId.slice(0, 32) === result.manifest.packageKey
-        && result.reused === false
+}
+
+export function isDesktopCoworkerShareSectionDigestCurrent(reviewed: DesktopCoworkerReviewedShare, current: { memories: { enabled: boolean; digest: string | null }; database: { enabled: boolean; digest: string | null } }): boolean {
+    const sections = reviewed.sections
+    if (!sections) return true
+    if (reviewed.input.include.memories && (!current.memories.enabled || sections.memoriesDigest !== current.memories.digest)) return false
+    if (reviewed.input.include.database && (!current.database.enabled || sections.databaseDigest !== current.database.digest)) return false
+    return true
 }
 
 export function isDesktopCoworkerShareResultCurrent(reviewed: DesktopCoworkerReviewedShare, result: DesktopCoworkerSnapshotResult): boolean {

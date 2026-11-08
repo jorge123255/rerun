@@ -24,5 +24,5 @@ it('iterates by Unicode code point so astral characters are one unit, not surrog
 it('mixed Latin-1 + kana chooses type once for the full payload (no dual clipboard+type plan)', () => {
     const mode = guestPasteMode('OK かな')
     expect(mode).toBe('unicode-type')
-    expect(mode === 'clipboard-ctrl-v' && mode === 'unicode-type').toBe(false)
+    expect(mode).not.toBe('clipboard-ctrl-v')
 })

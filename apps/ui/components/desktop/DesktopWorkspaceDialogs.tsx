@@ -51,7 +51,7 @@ export function DesktopServersNavigation({ workspaceId, onClose }: { workspaceId
     return <RemoteMachinesDialog open actor={lease.actor} bridge={lease.bridge} onOpenChange={next => { if (!next) onClose() }} />
 }
 
-export function DesktopCoworkerShareLauncher({ workspaceId, agentId, agentName, onClose, onOpenCoworker }: { workspaceId: number; agentId: string; agentName: string; onClose: () => void; onOpenCoworker: (agentId: string) => void }) {
+export function DesktopCoworkerShareLauncher({ workspaceId, agentId, agentName, onClose, onImported, onOpenCoworker }: { workspaceId: number; agentId: string; agentName: string; onClose: () => void; onImported?: (agentId: string) => void | Promise<void>; onOpenCoworker: (agentId: string) => void }) {
     const [revision, setRevision] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [attempt, setAttempt] = useState(0)
@@ -135,10 +135,10 @@ export function DesktopCoworkerShareLauncher({ workspaceId, agentId, agentName, 
     if (!revision || open && error) return <DesktopWorkspaceDialogStatus title={`Share ${agentName}`} error={error} onClose={onClose} onRetry={() => setAttempt(value => value + 1)} />
     return <DesktopCoworkerShareNavigation workspaceId={workspaceId} agentId={agentId} agentName={agentName} sourceRevision={revision}
         open={open} onOpenChange={next => { setOpen(next); if (!next) queueMicrotask(() => { if (current.current && !previewRef.current) onClose() }) }}
-        importSnapshot={preview} onImportSnapshotChange={snapshot => { previewRef.current = snapshot; setPreview(snapshot); if (!snapshot) onClose() }} onOpenCoworker={onOpenCoworker} />
+        importSnapshot={preview} onImportSnapshotChange={snapshot => { previewRef.current = snapshot; setPreview(snapshot); if (!snapshot) onClose() }} onImported={onImported} onOpenCoworker={onOpenCoworker} />
 }
 
-export function DesktopPortableCoworkerImport({ workspaceId, onClose, onOpenCoworker }: { workspaceId: number; onClose: () => void; onOpenCoworker: (agentId: string) => void }) {
+export function DesktopPortableCoworkerImport({ workspaceId, onClose, onImported, onOpenCoworker }: { workspaceId: number; onClose: () => void; onImported?: (agentId: string) => void | Promise<void>; onOpenCoworker: (agentId: string) => void }) {
     const [picked, setPicked] = useState<{ snapshotId: string; fileName: string } | null>(null)
     const [client, setClient] = useState<DesktopCoworkerShareClient | null>(null)
     const [error, setError] = useState<string | null>(null)
@@ -184,5 +184,5 @@ export function DesktopPortableCoworkerImport({ workspaceId, onClose, onOpenCowo
     </Dialog>
     if (!client || !picked) return <DesktopWorkspaceDialogStatus title="Import coworker" error={error} onClose={onClose} onRetry={() => setAttempt(value => value + 1)} />
     return <DesktopCoworkerImportDialog open client={client} attempts={attempts} targetWorkspaceId={workspaceId} snapshotId={picked.snapshotId}
-        onOpenChange={next => { if (!next) onClose() }} onOpenCoworker={onOpenCoworker} />
+        onOpenChange={next => { if (!next) onClose() }} onImported={onImported} onOpenCoworker={onOpenCoworker} />
 }

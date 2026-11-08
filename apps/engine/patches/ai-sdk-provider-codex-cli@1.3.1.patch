@@ -237,7 +237,38 @@ diff --git a/dist/index.cjs b/dist/index.cjs
        jsonModeLastTextBlockOnly: options.responseFormat?.type === "json",
        turnStartParams,
        requestHandlers: settings.serverRequests,
-@@ -5902,9 +5970,9 @@
+@@ -4270,7 +4338,11 @@
+   zod.z.object({ httpConnectionFailed: codexHttpStatusCodeSchema }).passthrough(),
+   zod.z.object({ responseStreamConnectionFailed: codexHttpStatusCodeSchema }).passthrough(),
+   zod.z.object({ responseStreamDisconnected: codexHttpStatusCodeSchema }).passthrough(),
+-  zod.z.object({ responseTooManyFailedAttempts: codexHttpStatusCodeSchema }).passthrough()
++  zod.z.object({ responseTooManyFailedAttempts: codexHttpStatusCodeSchema }).passthrough(),
++  // Codex adds error kinds independently of the SDK. Keep the terminal notification
++  // so a future string/object kind cannot silently leave the turn running.
++  zod.z.string(),
++  zod.z.object({}).passthrough()
+ ]);
+ var turnSchema = zod.z.object({
+   id: zod.z.string(),
+@@ -4279,7 +4351,7 @@
+   error: zod.z.object({
+     message: zod.z.string(),
+     codexErrorInfo: codexErrorInfoSchema.nullable(),
+-    additionalDetails: zod.z.string().nullable()
++    additionalDetails: zod.z.string().nullable().catch(null)
+   }).nullable()
+ }).passthrough();
+ var threadStartedNotificationSchema = zod.z.object({
+@@ -4353,7 +4425,7 @@
+   error: zod.z.object({
+     message: zod.z.string(),
+     codexErrorInfo: codexErrorInfoSchema.nullable(),
+-    additionalDetails: zod.z.string().nullable()
++    additionalDetails: zod.z.string().nullable().catch(null)
+   }).passthrough(),
+   willRetry: zod.z.boolean(),
+   threadId: zod.z.string(),
+@@ -5902,9 +5974,9 @@
      name,
      description,
      inputSchema: toJsonSchema(parameters),
@@ -580,7 +611,38 @@ diff --git a/dist/index.js b/dist/index.js
        jsonModeLastTextBlockOnly: options.responseFormat?.type === "json",
        turnStartParams,
        requestHandlers: settings.serverRequests,
-@@ -5894,9 +5962,9 @@
+@@ -4262,7 +4330,11 @@
+   z.object({ httpConnectionFailed: codexHttpStatusCodeSchema }).passthrough(),
+   z.object({ responseStreamConnectionFailed: codexHttpStatusCodeSchema }).passthrough(),
+   z.object({ responseStreamDisconnected: codexHttpStatusCodeSchema }).passthrough(),
+-  z.object({ responseTooManyFailedAttempts: codexHttpStatusCodeSchema }).passthrough()
++  z.object({ responseTooManyFailedAttempts: codexHttpStatusCodeSchema }).passthrough(),
++  // Codex adds error kinds independently of the SDK. Keep the terminal notification
++  // so a future string/object kind cannot silently leave the turn running.
++  z.string(),
++  z.object({}).passthrough()
+ ]);
+ var turnSchema = z.object({
+   id: z.string(),
+@@ -4271,7 +4343,7 @@
+   error: z.object({
+     message: z.string(),
+     codexErrorInfo: codexErrorInfoSchema.nullable(),
+-    additionalDetails: z.string().nullable()
++    additionalDetails: z.string().nullable().catch(null)
+   }).nullable()
+ }).passthrough();
+ var threadStartedNotificationSchema = z.object({
+@@ -4345,7 +4417,7 @@
+   error: z.object({
+     message: z.string(),
+     codexErrorInfo: codexErrorInfoSchema.nullable(),
+-    additionalDetails: z.string().nullable()
++    additionalDetails: z.string().nullable().catch(null)
+   }).passthrough(),
+   willRetry: z.boolean(),
+   threadId: z.string(),
+@@ -5894,9 +5966,9 @@
      name,
      description,
      inputSchema: toJsonSchema(parameters),

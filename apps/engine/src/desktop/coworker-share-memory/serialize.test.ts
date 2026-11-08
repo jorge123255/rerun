@@ -13,7 +13,7 @@ import { memoryArchiveMembersToNotes, memoryPackageToArchiveMembers } from './me
 import {
     DESKTOP_COWORKER_SHARE_MEMORY_FORMAT,
     DESKTOP_COWORKER_SHARE_MEMORY_FORMAT_VERSION,
-} from '../../../../../packages/contracts/src/desktop-coworker-share-memory.ts'
+} from '@rerun/contracts'
 
 const sample = {
     id: 'note1',

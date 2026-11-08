@@ -1,0 +1,58 @@
+# Candidate fragment ONLY — do not replace apps/engine/patches/ai-sdk-provider-codex-cli@1.3.1.patch.
+# Package: ai-sdk-provider-codex-cli@1.3.1
+# Bundled Codex pin (preserve): pnpm.overrides "ai-sdk-provider-codex-cli@1.3.1>@openai/codex" = "0.166.0"
+# Upstream original patch object (historical small patch that introduced this hunk):
+#   apps/engine/patches/ai-sdk-provider-codex-cli@1.3.1.patch at 2a57fa6dd53311f763bfc9abde85997b7f7e5309
+#   CJS blob index before original small patch: 45ed4bd9287395a0a4e35f2f4a1f66da88341516
+#   ESM blob index before original small patch: 0e2c370883354cd782ab878f645170a87081c8a2
+# Current Mac shipped patch is larger (effort string, public summary, code-mode, MCP callId, images,
+# attachments, execution permissions, reasoning). It does NOT yet include unknown codexErrorInfo
+# passthrough. Root must compose THIS fragment into the existing shipped patch without dropping any
+# desktop hunk. Line numbers below match the unpatched 1.3.1 package; after desktop hunks shift
+# lines, locate `var codexErrorInfoSchema =` / `codexErrorInfoSchema =` and append the two arms to
+# the union's final `responseTooManyFailedAttempts` object in BOTH dist/index.cjs and dist/index.js.
+#
+# Expected final union arms (CJS uses zod.z, ESM uses z):
+#   ..., responseTooManyFailedAttempts: ...,
+#   zod.z.string(),                        // or z.string()
+#   zod.z.object({}).passthrough()         // or z.object({}).passthrough()
+#
+# Activation order for root:
+# 1. Apply this semantic change onto the current shipped patch file (compose, do not replace).
+# 2. Reinstall / refresh pnpm patchedDependencies for ai-sdk-provider-codex-cli@1.3.1.
+# 3. Run apps/engine/src/desktop/upstream-compat/codex-app-server-errors.test.ts against the real
+#    createCodexAppServer boundary (fixtures spawn fake app-server; no success mock of the SDK).
+# 4. Keep bundled @openai/codex at 0.166.0 and every existing desktop hunk.
+
+diff --git a/dist/index.cjs b/dist/index.cjs
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -4270,7 +4270,11 @@ var codexErrorInfoSchema = zod.z.union([
+   zod.z.object({ httpConnectionFailed: codexHttpStatusCodeSchema }).passthrough(),
+   zod.z.object({ responseStreamConnectionFailed: codexHttpStatusCodeSchema }).passthrough(),
+   zod.z.object({ responseStreamDisconnected: codexHttpStatusCodeSchema }).passthrough(),
+-  zod.z.object({ responseTooManyFailedAttempts: codexHttpStatusCodeSchema }).passthrough()
++  zod.z.object({ responseTooManyFailedAttempts: codexHttpStatusCodeSchema }).passthrough(),
++  // rerun patch: Codex adds kinds with its releases (0.166 reports model_not_found). An unknown kind must
++  // not fail the whole notification, or the error and turn/completed are dropped and the run hangs.
++  zod.z.string(),
++  zod.z.object({}).passthrough()
+ ]);
+ var turnSchema = zod.z.object({
+   id: zod.z.string(),
+diff --git a/dist/index.js b/dist/index.js
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -4262,7 +4262,11 @@ var codexErrorInfoSchema = z.union([
+   z.object({ httpConnectionFailed: codexHttpStatusCodeSchema }).passthrough(),
+   z.object({ responseStreamConnectionFailed: codexHttpStatusCodeSchema }).passthrough(),
+   z.object({ responseStreamDisconnected: codexHttpStatusCodeSchema }).passthrough(),
+-  z.object({ responseTooManyFailedAttempts: codexHttpStatusCodeSchema }).passthrough()
++  z.object({ responseTooManyFailedAttempts: codexHttpStatusCodeSchema }).passthrough(),
++  // rerun patch: Codex adds kinds with its releases (0.166 reports model_not_found). An unknown kind must
++  // not fail the whole notification, or the error and turn/completed are dropped and the run hangs.
++  z.string(),
++  z.object({}).passthrough()
+ ]);
+ var turnSchema = z.object({
+   id: z.string(),

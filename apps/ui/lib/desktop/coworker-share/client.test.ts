@@ -45,6 +45,19 @@ test('preview is observational, download is explicit and import recovery retains
     client.dispose()
 })
 
+test('partial, unavailable and reused import responses are not a fresh copy', async () => {
+    const input = { requestId: '66666666-6666-4666-8666-666666666666', snapshotId: shareManifest.packageKey, expectedDigest: shareManifest.contentDigest, targetWorkspaceId: 2 }
+    vi.stubGlobal('fetch', vi.fn()
+        .mockResolvedValueOnce(response({ status: 'partial', reason: 'Two tables were not installed.' }))
+        .mockResolvedValueOnce(response({ status: 'unavailable', reason: 'Install writer is not bound.' }))
+        .mockResolvedValueOnce(response({ status: 'reused', importedAgentId: 'fresh-a' })))
+    const client = createDesktopCoworkerShareClient({ workspaceId: 1, routeAgentId: 'agent-a' })
+    await expect(client.import(input)).rejects.toMatchObject({ message: 'Two tables were not installed.', definite: true })
+    await expect(client.import(input)).rejects.toMatchObject({ message: 'Install writer is not bound.', definite: true })
+    await expect(client.import(input)).rejects.toMatchObject({ message: 'The destination did not install a fresh copy. Retry this same attempt.', definite: true })
+    client.dispose()
+})
+
 test('a stale review is definite while an interrupted acknowledgement is recoverable', async () => {
     vi.stubGlobal('fetch', vi.fn()
         .mockResolvedValueOnce(response({ error: 'The coworker changed.' }, 409))

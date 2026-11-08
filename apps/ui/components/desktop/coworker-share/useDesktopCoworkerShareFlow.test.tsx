@@ -4,8 +4,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
 import { createDesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
+import type { DesktopCoworkerShareSectionBindings } from '@/lib/desktop/coworker-share/sections'
 import { exportInput, sharePlan, shareReview } from './test-fixtures'
 import { useDesktopCoworkerShareFlow } from './useDesktopCoworkerShareFlow'
+
+const MEMORY_DIGEST = '1'.repeat(64)
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
@@ -18,16 +21,18 @@ function client(overrides: Partial<DesktopCoworkerShareClient> = {}): DesktopCow
     } as DesktopCoworkerShareClient
 }
 function attempts() { return createDesktopCoworkerShareAttempts() }
-async function mount(api: DesktopCoworkerShareClient, attemptStore = attempts()) {
+async function mount(api: DesktopCoworkerShareClient, attemptStore = attempts(), sectionBindings: DesktopCoworkerShareSectionBindings | null = null) {
     let flow!: ReturnType<typeof useDesktopCoworkerShareFlow>
-    function Probe({ sourceRevision }: { sourceRevision: string }) {
-        flow = useDesktopCoworkerShareFlow({ client: api, attempts: attemptStore, workspaceId: 1, agentId: 'agent-a', sourceRevision })
+    let props = { sourceRevision: exportInput.sourceRevision, sectionBindings }
+    function Probe() {
+        flow = useDesktopCoworkerShareFlow({ client: api, attempts: attemptStore, workspaceId: 1, agentId: 'agent-a', sourceRevision: props.sourceRevision, sectionBindings: props.sectionBindings })
         return null
     }
     root = createRoot(document.body.appendChild(document.createElement('div')))
-    await act(async () => root!.render(<Probe sourceRevision={exportInput.sourceRevision} />))
-    return { flow: () => flow, attemptStore, rerender: async (sourceRevision: string) => {
-        await act(async () => root!.render(<Probe sourceRevision={sourceRevision} />))
+    await act(async () => root!.render(<Probe />))
+    return { flow: () => flow, attemptStore, rerender: async (next: Partial<typeof props>) => {
+        props = { ...props, ...next }
+        await act(async () => root!.render(<Probe />))
     } }
 }
 
@@ -41,21 +46,82 @@ test('defaults exclude private data and Cancel creates no share', async () => {
     expect(mounted.attemptStore.listExport({ workspaceId: 1, agentId: 'agent-a' })).toEqual([])
 })
 
+test('reopening an exported coworker permits the same retained archive after a new explicit review', async () => {
+    const api = client({
+        review: vi.fn().mockResolvedValueOnce(shareReview).mockResolvedValue({ ...shareReview, reused: true }),
+        export: vi.fn().mockResolvedValueOnce(shareReview).mockResolvedValue({ ...shareReview, reused: true }),
+    })
+    const store = attempts(), first = await mount(api, store)
+    await act(async () => { await first.flow().reviewContent() })
+    await act(async () => first.flow().setApproved(true))
+    await act(async () => { await first.flow().exportShare() })
+    expect(first.flow().step).toBe('success')
+    await act(async () => root!.unmount()); root = undefined
+
+    const reopened = await mount(api, store)
+    await act(async () => { await reopened.flow().reviewContent() })
+    expect(reopened.flow().stale).toBe(false)
+    expect(reopened.flow().approved).toBe(false)
+    await act(async () => { await reopened.flow().exportShare() })
+    expect(api.export).toHaveBeenCalledTimes(1)
+    await act(async () => reopened.flow().setApproved(true))
+    await act(async () => { await reopened.flow().exportShare() })
+    expect(api.export).toHaveBeenCalledTimes(2)
+    expect(reopened.flow().step).toBe('success')
+    expect(reopened.flow().exported?.result).toMatchObject({ reused: true, manifest: { packageKey: shareReview.manifest.packageKey } })
+    expect(store.listExport({ workspaceId: 1, agentId: 'agent-a' })).toEqual([])
+})
+
 test('changed content blocks stale confirmation and retains choices for a new review', async () => {
     const api = client()
     const mounted = await mount(api)
-    await act(async () => mounted.flow().setInclude({ memories: true }))
+    await act(async () => mounted.flow().setInclude({ files: true }))
     await act(async () => { await mounted.flow().reviewContent() })
     await act(async () => mounted.flow().setApproved(true))
-    await mounted.rerender('2'.repeat(64))
+    await mounted.rerender({ sourceRevision: '2'.repeat(64) })
     expect(mounted.flow().stale).toBe(true)
-    expect(mounted.flow().include.memories).toBe(true)
+    expect(mounted.flow().include.files).toBe(true)
     await act(async () => { await mounted.flow().exportShare() })
     expect(api.export).not.toHaveBeenCalled()
     await act(async () => { await mounted.flow().reviewContent() })
     expect(mounted.flow().stale).toBe(false)
+    expect(mounted.flow().include.files).toBe(true)
+    expect(api.review).toHaveBeenLastCalledWith(expect.objectContaining({ sourceRevision: '2'.repeat(64), include: expect.objectContaining({ files: true, memories: false, database: false }) }))
+})
+
+test('a server unavailable reason stays in force after a ready binding is passed', async () => {
+    const api = client({ plan: vi.fn(async () => ({ ...sharePlan, unavailable: { memories: 'Memory transfer is unavailable.' } })) })
+    const mounted = await mount(api, attempts(), { memories: { authorities: { capture: true, validation: true, install: true }, preview: { available: true, contents: { count: 4, bytes: 80 }, digest: MEMORY_DIGEST } } })
+    await act(async () => mounted.flow().setInclude({ memories: true }))
+    expect(mounted.flow().include.memories).toBe(false)
+    expect(mounted.flow().sections.memories).toMatchObject({ enabled: false, reason: 'Memory transfer is unavailable.', digest: null })
+})
+
+test('unbound memories and database cannot be selected or sent', async () => {
+    const api = client()
+    const mounted = await mount(api)
+    await act(async () => mounted.flow().setInclude({ memories: true, database: true, files: true }))
+    expect(mounted.flow().include).toEqual({ memories: false, database: false, files: true })
+    await act(async () => { await mounted.flow().reviewContent() })
+    expect(api.review).toHaveBeenCalledWith(expect.objectContaining({ include: { memories: false, database: false, files: true } }))
+    expect(mounted.flow().reviewed?.sections).toEqual({ memoriesDigest: null, databaseDigest: null, databaseViewCount: null })
+})
+
+test('a changed bound memory digest blocks export and a new review sends the current digest', async () => {
+    const api = client()
+    const memories = { authorities: { capture: true, validation: true, install: true }, preview: { available: true, contents: { count: 4, bytes: 80 }, digest: MEMORY_DIGEST } }
+    const mounted = await mount(api, attempts(), { memories })
+    await act(async () => mounted.flow().setInclude({ memories: true }))
     expect(mounted.flow().include.memories).toBe(true)
-    expect(api.review).toHaveBeenLastCalledWith(expect.objectContaining({ sourceRevision: '2'.repeat(64), include: expect.objectContaining({ memories: true }) }))
+    await act(async () => { await mounted.flow().reviewContent() })
+    expect(api.review).toHaveBeenCalledWith(expect.objectContaining({ include: expect.objectContaining({ memories: true }) }))
+    expect(mounted.flow().reviewed?.sections?.memoriesDigest).toBe(MEMORY_DIGEST)
+    await act(async () => mounted.flow().setApproved(true))
+    await mounted.rerender({ sectionBindings: { memories: { ...memories, preview: { ...memories.preview, digest: '3'.repeat(64) } } } })
+    expect(mounted.flow().stale).toBe(true)
+    expect(mounted.flow().include.memories).toBe(true)
+    await act(async () => { await mounted.flow().exportShare() })
+    expect(api.export).not.toHaveBeenCalled()
 })
 
 test('lost acknowledgement retries the exact export and duplicate success has no second effect', async () => {

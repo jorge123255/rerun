@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { ToolSet } from 'ai'
+import { clearCachedEnvForTests } from '../config/env.js'
 import type { RunContext } from '../runtime/context.js'
 
 process.env.RERUN_DATA_DIR = mkdtempSync(join(tmpdir(), 'rerun-desktop-data-tools-'))
 process.env.RERUN_API_KEY = ''
+clearCachedEnvForTests()
 
 // The grant is read from the saved config immediately before every statement, so the test owns the
 // config a permission change would write: flipping it mid-test must change the next call.

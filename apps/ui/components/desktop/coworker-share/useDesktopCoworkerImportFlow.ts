@@ -4,15 +4,22 @@ import * as React from 'react'
 import type { DesktopCoworkerShareImportInput, DesktopCoworkerSnapshotManifest } from '@rerun/contracts'
 import type { DesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
 import type { DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
+import { classifyShareDestination } from '@/lib/desktop/coworker-share/sections'
 
-export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspaceId, snapshotId, active = true }: {
+export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspaceId, snapshotId, onImported, active = true }: {
     client: DesktopCoworkerShareClient
     attempts: DesktopCoworkerShareAttempts
     targetWorkspaceId: number
     snapshotId: string
+    onImported?: (agentId: string) => void | Promise<void>
     active?: boolean
 }) {
     const scope = React.useMemo(() => ({ targetWorkspaceId, snapshotId }), [targetWorkspaceId, snapshotId])
+    const currentScope = React.useRef(scope)
+    currentScope.current = scope
+    const importedCallback = React.useRef(onImported)
+    importedCallback.current = onImported
+    const notified = React.useRef(new Set<string>())
     const activeRef = React.useRef(active)
     activeRef.current = active
     const epoch = React.useRef(0)
@@ -29,7 +36,7 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
         const generation = epoch.current
         try {
             const pending = await attempts.listImport(scope)
-            if (activeRef.current && generation === epoch.current) setPendingImports(pending)
+            if (activeRef.current && generation === epoch.current && currentScope.current === scope) setPendingImports(pending)
         } catch { if (activeRef.current) setError('Durable import recovery is unavailable. Reopen the panel before importing.') }
     }, [attempts, scope])
 
@@ -79,35 +86,50 @@ export function useDesktopCoworkerImportFlow({ client, attempts, targetWorkspace
             targetWorkspaceId,
         }
         else return false
+        if (input.targetWorkspaceId !== targetWorkspaceId || input.snapshotId !== snapshotId) {
+            setError('This saved import belongs to another workspace or portable file.')
+            return false
+        }
         const request = ++epoch.current
+        const owns = () => activeRef.current && request === epoch.current && currentScope.current.targetWorkspaceId === input.targetWorkspaceId && currentScope.current.snapshotId === input.snapshotId
         running.current = true
         setBusy(true)
         setError(null)
         try {
             await attempts.rememberImport(input)
             await refreshAttempts()
-            if (!activeRef.current || request !== epoch.current) return false
+            if (!owns()) return false
             const result = await client.import(input)
-            if (result.status === 'uncertain') {
-                if (activeRef.current && request === epoch.current) setError(result.reason)
+            const outcome = classifyShareDestination(result)
+            if (!outcome.installed) {
+                if (owns()) setError(outcome.reason)
                 return false
             }
-            if (!result.importedAgentId) throw new Error('Import acknowledgement did not identify the fresh copy. Retry this same attempt.')
-            if (!activeRef.current || request !== epoch.current) return false
+            if (!owns()) return false
+            const notifyKey = JSON.stringify([input.targetWorkspaceId,outcome.importedAgentId])
+            const notify = importedCallback.current
+            if (notify && !notified.current.has(notifyKey)) {
+                notified.current.add(notifyKey)
+                // Start the workspace-owned refresh before showing Done. Closing the dialog
+                // must not cancel that read; refresh failure must never retry the installation.
+                const failed = () => { if (owns()) setError('The fresh copy is saved, but its board refresh could not be confirmed.') }
+                try { void Promise.resolve(notify(outcome.importedAgentId)).catch(failed) }
+                catch { failed() }
+            }
             await attempts.forgetImport(input)
-            if (!activeRef.current || request !== epoch.current) return false
-            setImportedAgentId(result.importedAgentId)
+            if (!owns()) return false
+            setImportedAgentId(outcome.importedAgentId)
             refreshAttempts()
             return true
         } catch (cause) {
-            if (activeRef.current && request === epoch.current) {
+            if (owns()) {
                 setError(cause instanceof Error ? cause.message : 'Could not confirm the import. Retry this same attempt.')
                 refreshAttempts()
             }
             return false
         } finally {
             running.current = false
-            if (activeRef.current && request === epoch.current) setBusy(false)
+            if (owns()) setBusy(false)
         }
     }
 

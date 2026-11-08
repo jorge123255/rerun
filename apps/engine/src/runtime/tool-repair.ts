@@ -1,4 +1,5 @@
-import { InvalidToolInputError, type ToolCallRepairFunction, type ToolSet } from 'ai'
+import { InvalidToolInputError, NoSuchToolError, type ToolCallRepairFunction, type ToolSet } from 'ai'
+import { canonicalBridgeName } from '../tools/builtin/hitl.js'
 
 // Many OpenAI-compatible models serialise an omitted optional field as an explicit `null`, which
 // every `.optional()` schema rejects. Dropping those keys turns the rejected call into the call the
@@ -26,7 +27,25 @@ export function repairNullToolInput(inputText: string): string | null {
     return repaired === JSON.stringify(parsed) ? null : repaired
 }
 
-export const repairToolCall: ToolCallRepairFunction<ToolSet> = async ({ toolCall, error }) => {
+const CLI_MCP_TOOL_NAME = /^mcp__(.+?)__(.+)$/
+
+// A conversation that ran on Claude or Codex holds their names for the same tools
+// (`mcp__rerun__schedule_list`, `mcp__github__pull_request_read`), and a model taking over the
+// conversation in Rerun's own loop sometimes copies them.
+// Only a name that already exists in the currently registered/enabled ToolSet is accepted: a typo,
+// punctuation or case change that does not resolve to an enabled tool must not invent one.
+export function loopToolNameFor(toolName: string, tools: ToolSet): string | null {
+    const bridged = canonicalBridgeName(toolName)
+    const connector = CLI_MCP_TOOL_NAME.exec(toolName)
+    const candidates = [bridged, connector ? `${connector[1]}_${connector[2]}` : null]
+    return candidates.find(name => name && name !== toolName && name in tools) ?? null
+}
+
+export const repairToolCall: ToolCallRepairFunction<ToolSet> = async ({ toolCall, tools, error }) => {
+    if (NoSuchToolError.isInstance(error)) {
+        const toolName = loopToolNameFor(toolCall.toolName, tools)
+        return toolName ? { ...toolCall, toolName, input: repairNullToolInput(toolCall.input) ?? toolCall.input } : null
+    }
     if (!InvalidToolInputError.isInstance(error)) return null
     const input = repairNullToolInput(toolCall.input)
     return input === null ? null : { ...toolCall, input }

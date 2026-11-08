@@ -4,7 +4,8 @@
 import { appendAttachmentsRef, attachmentDisplayName, buildAttachmentsRef, parseAttachments } from './chat-attachments.js'
 import { stripBridgePrefix } from './chat-tool-name.js'
 
-export type QuestionItem = { question: string; options: string[]; multiple?: boolean }
+export type QuestionOption = { label: string; description?: string }
+export type QuestionItem = { question: string; header?: string; options: (string | QuestionOption)[]; multiple?: boolean }
 
 export type ApprovalItem = {
     action: string
@@ -100,6 +101,94 @@ export function pendingQuestions(input: Record<string, unknown>): QuestionItem[]
     }
 
     return [toQuestionItem(input.question, Array.isArray(input.options) ? input.options : input.suggestions, input.multiple)]
+}
+
+export function questionOptionLabel(option: string | QuestionOption): string {
+    return typeof option === 'string' ? option : option.label
+}
+
+/** Presentation only; the legacy pendingQuestions reading remains the receipt fingerprint input. */
+export function pendingQuestionPresentation(input: Record<string, unknown>): QuestionItem[] {
+    const batch = coerceJsonArray(input.questions)
+    const entries = Array.isArray(batch) ? batch : [input]
+    return entries.map(value => {
+        const item = (value ?? {}) as Record<string, unknown>
+        const options = Array.isArray(item.options) ? item.options : item.suggestions
+        const choices: QuestionOption[] = []
+        for (const value of Array.isArray(options) ? options : []) {
+            if (typeof value === 'string') { if (value.trim()) choices.push({ label: value }); continue }
+            if (!value || typeof value !== 'object') continue
+            const { label, description } = value as Record<string, unknown>
+            if (typeof label !== 'string' || !label.trim()) continue
+            choices.push({ label, ...(typeof description === 'string' && description.trim() ? { description } : {}) })
+        }
+        return { question: String(item.question ?? 'The coworker has a question'),
+            ...(typeof item.header === 'string' && item.header.trim() ? { header: item.header } : {}),
+            options: choices, multiple: item.multiple === true && choices.length > 0 }
+    })
+}
+
+export const QUESTION_OPTIONS_VERSION = 2
+export function withHitlVersion<T>(toolName: string | undefined, input: T): T {
+    if (!toolName || hitlKindOf(toolName) !== 'question' || !input || typeof input !== 'object' || Array.isArray(input)) return input
+    const record = input as Record<string, unknown>
+    if (hitlVersionOf(record) >= QUESTION_OPTIONS_VERSION) return input
+    const batch = coerceJsonArray(record.questions)
+    if (!Array.isArray(batch) || !batch.some(value => {
+        const item = (value ?? {}) as Record<string, unknown>
+        const options = Array.isArray(item.options) ? item.options : item.suggestions
+        return Array.isArray(options) && options.some(option => option !== null && typeof option === 'object')
+    })) return input
+    return { ...record, v: QUESTION_OPTIONS_VERSION } as T
+}
+
+export const QUESTION_PRESENTATION_VERSION = 2 as const
+export type DesktopQuestionProjection = {
+    presentationVersion: 1 | 2
+    questions: QuestionItem[]
+    fingerprint: string
+}
+const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+function json(value: unknown): unknown { if (typeof value !== 'string') return value; try { return JSON.parse(value) } catch { return value } }
+
+/** Only for newly generated calls before persistence; never stamp history or an existing receipt. */
+export function prepareDesktopQuestionInput(raw: Record<string, unknown>): Record<string, unknown> {
+    const versioned = withHitlVersion('ask_user', raw)
+    if (hitlVersionOf(versioned) > 2) return versioned
+    const batch = json(raw.questions), entries = Array.isArray(batch) ? batch : [raw]
+    const presentation = entries.some(value => {
+        const item = object(value), choices = item.options ?? item.suggestions
+        return typeof item.header === 'string' && item.header.trim() || Array.isArray(choices) && choices.some(choice => choice !== null && typeof choice === 'object')
+    })
+    return presentation ? { ...raw, v: Math.max(2, hitlVersionOf(raw)), desktopQuestionPresentationVersion: 2 } : versioned
+}
+
+/** Version 1 is byte-compatible with the accepted desktop digest; version 2 binds presentation. */
+export function projectDesktopQuestionInput(raw: unknown): DesktopQuestionProjection | null {
+    const input = object(json(raw)), version = hitlVersionOf(input)
+    if (version > 2 || input.desktopQuestionPresentationVersion !== undefined && (input.desktopQuestionPresentationVersion !== 2 || version !== 2)) return null
+    const batch = json(input.questions), entries = Array.isArray(batch) ? batch : input.question !== undefined ? [input] : []
+    if (!entries.length || entries.length > 32) return null
+    for (const value of entries) {
+        const item = object(value), options = item.options ?? item.suggestions
+        if (typeof item.question !== 'string' || !item.question.trim() || item.question.length > 4000) return null
+        if (item.multiple != null && typeof item.multiple !== 'boolean') return null
+        if (version === 2 && item.header != null && (typeof item.header !== 'string' || item.header.length > 200)) return null
+        if (options != null && (!Array.isArray(options) || options.length > 100 || options.some(option => {
+            if (typeof option === 'string') return !option.trim() || option.length > 500
+            if (version === 1) return true
+            const choice = object(option)
+            return typeof choice.label !== 'string' || !choice.label.trim() || choice.label.length > 500
+                || choice.description != null && (typeof choice.description !== 'string' || choice.description.length > 2000)
+                || Object.keys(choice).some(key => !['label', 'description'].includes(key))
+        }))) return null
+    }
+    const structured = entries.some(value => { const item = object(value), choices = item.options ?? item.suggestions; return Array.isArray(choices) && choices.some(choice => choice !== null && typeof choice === 'object') })
+    const presentationVersion = input.desktopQuestionPresentationVersion === 2 || structured ? 2 : 1
+    const questions = presentationVersion === 1 ? pendingQuestions(input) : pendingQuestionPresentation(input)
+    const fingerprint = presentationVersion === 1 ? JSON.stringify(questions) : JSON.stringify({ v: 2, questions })
+    if (fingerprint.length > 32768) return null
+    return { presentationVersion, questions, fingerprint }
 }
 
 export type QuestionAnswer = { question: string; answers: string[]; attachments?: string[] }

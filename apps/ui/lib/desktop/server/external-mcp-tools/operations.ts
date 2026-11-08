@@ -20,6 +20,7 @@ import {
 } from '@/lib/engine/client'
 import { desktopRunView } from '../../run-history'
 import { DesktopHttpError } from '../auth'
+import { assertExternalMcpCatalogOmitsAuthorityFields } from './catalog'
 import { createCoworkerSkill, deleteCoworkerSkill, getCoworkerSkill, listCoworkerSkills, readCoworkerSkillFile, updateCoworkerSkill, writeCoworkerSkillFile } from '../coworker-skills'
 import { deleteDesktopCoworker } from '../coworker-delete'
 import { renameDesktopCoworker } from '../coworker-rename'
@@ -213,6 +214,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
     }
 
     if (tool === 'create_agent') {
+        assertExternalMcpCatalogOmitsAuthorityFields()
         if (!context.principal.scopes.includes('runs:send')) throw new Error('Creating a coworker starts its first chat and also requires runs:send.')
         if (['connectionId', 'model', 'provider', 'tools', 'selfImprovement', 'verbosity'].some(key => args[key] !== undefined)) {
             throw new Error('Local creation uses current workspace defaults. Model and reply settings can be changed afterward with update_agent; tool grants and self-improvement stay on the Mac Tools panel. No coworker was created.')
@@ -258,6 +260,7 @@ export async function invokeExternalMcpOperation(context: ExternalMcpCallContext
     }
 
     if (tool === 'update_agent') {
+        assertExternalMcpCatalogOmitsAuthorityFields()
         assertExternalMcpAgentMetadataOnlyUpdate(args)
         const agentId = requireString(args.agentId, 'agentId')
         const agent = await externalMcpOwnedAgent(db, context, deps.recheck, signal, agentId)

@@ -1,0 +1,7 @@
+export { desktopTeamReadPorts, readDesktopTeamAdmit, readDesktopTeamActivity, readDesktopTeamRun, readDesktopTeamRuns, readDesktopTeamSchedules, readDesktopTeamToolCalls, readDesktopTeamTriggers } from './adapters.js'
+export { bindDesktopTeamReads, readDesktopTeamReads, unbindDesktopTeamReads } from './binding.js'
+export { readDesktopTeamReadGrant, readDesktopTeamReadGrantFromDisk } from './grant.js'
+export { desktopTeamActivityFrom, desktopTeamMemberStatus, desktopTeamRunLimit, desktopTeamRunView, desktopTeamScheduleView, desktopTeamTriggerView, desktopTeamTruncateField } from './project.js'
+export { createDesktopTeamReadTools } from './tools.js'
+export type { DesktopTeamReadBindingInput } from './tools.js'
+export type { DesktopTeamDirectory, DesktopTeamMember, DesktopTeamReadAck, DesktopTeamReads } from './ports.js'

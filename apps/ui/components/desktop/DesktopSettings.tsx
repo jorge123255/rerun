@@ -1,5 +1,5 @@
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
@@ -15,6 +15,9 @@ import { enabledModels, modelName } from '@/lib/engine/ai-sources'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { WORKSPACE_NAME_MAX } from '@/lib/naming/workspace-name'
 import { desktopProvider, type SettingsChange } from '@/lib/desktop/settings'
+import { ApiConnectionsPanel } from './connections/api/ApiConnectionsPanel'
+import { createApiConnectionsClient } from '@/lib/desktop/api-connections/client'
+import { desktopApiConnectionUiRoutes } from '@/lib/desktop/api-connections/routes'
 
 type Props = {
     initialTab?: 'AI providers' | 'Tool services' | 'Workspace' | 'Notifications' | 'Shortcuts'
@@ -22,6 +25,8 @@ type Props = {
     workspaceName: string
     onProviders: (providers: ConnectionsList) => void
     onSave: (change: SettingsChange) => Promise<void>
+    workspaceId?: number | null
+    onConnectionsChanged?: () => void
 }
 
 const selectClass = 'w-full rounded-md border bg-background px-3 py-2 text-sm'
@@ -30,7 +35,8 @@ function effortLabel(effort: string) {
     return effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
-export function DesktopSettings({ providers, workspaceName, onSave, onProviders, initialTab }: Props) {
+export function DesktopSettings({ providers, workspaceName, onSave, onProviders, initialTab, workspaceId = null, onConnectionsChanged }: Props) {
+    const apiConnections = useMemo(() => Number.isSafeInteger(workspaceId) && (workspaceId ?? 0) > 0 ? createApiConnectionsClient(desktopApiConnectionUiRoutes) : null, [workspaceId])
     const [tab, setTab] = useState<typeof panels[number]>(initialTab ?? 'AI providers')
     const [source, setSource] = useState(providers.connections.find(c => c.id === providers.default?.connectionId)?.id ?? providers.connections[0]?.id ?? 'add:openai')
     const [key, setKey] = useState('')
@@ -113,6 +119,9 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                 </select>
                             </div>}
                         </div>
+                        {apiConnections && workspaceId ? <div className="flex min-h-64 min-w-0 flex-col overflow-hidden rounded-xl border">
+                            <ApiConnectionsPanel workspaceId={workspaceId} currentWorkspace={() => workspaceId} active api={apiConnections} selectionContext={null} onCatalog={() => onConnectionsChanged?.()} />
+                        </div> : <p role="status" className="text-sm text-muted-foreground">Named API-key connections stay unavailable until this workspace identity is confirmed. Choosing a default model here stays on the existing Settings authority.</p>}
                         <div className="space-y-4 rounded-xl border p-4">
                             <label htmlFor="desktop-provider" className="font-semibold">Provider connection</label>
                             <select id="desktop-provider" className={selectClass} value={connection?.id ?? 'add:' + provider} onChange={e => {

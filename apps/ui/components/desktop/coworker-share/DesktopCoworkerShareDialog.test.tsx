@@ -4,7 +4,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { createDesktopCoworkerShareAttempts } from '@/lib/desktop/coworker-share/attempts'
 import type { DesktopCoworkerShareClient } from '@/lib/desktop/coworker-share/client'
+import { DESKTOP_COWORKER_SHARE_DATABASE_UNAVAILABLE, DESKTOP_COWORKER_SHARE_MEMORY_UNAVAILABLE, sectionTransferReady } from '@/lib/desktop/coworker-share/sections'
 import { exportInput, sharePlan, shareReview } from './test-fixtures'
+import { DesktopCoworkerManifestReview } from './DesktopCoworkerManifestReview'
 import { DesktopCoworkerShareDialog } from './DesktopCoworkerShareDialog'
 import { DesktopCoworkerShareOptions } from './DesktopCoworkerShareOptions'
 
@@ -57,4 +59,36 @@ test('unsupported capture options stay disabled and do not describe omitted data
         expect(toggle.getAttribute('aria-checked')).toBe('false')
     }
     expect(onChange).not.toHaveBeenCalled()
+})
+
+test('omitted unavailable reasons do not enable memories or the database', async () => {
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopCoworkerShareOptions plan={sharePlan} include={{ memories: true, database: true, files: true }} disabled={false} onChange={vi.fn()} />))
+    expect(document.body.textContent).toContain(DESKTOP_COWORKER_SHARE_MEMORY_UNAVAILABLE)
+    expect(document.body.textContent).toContain(DESKTOP_COWORKER_SHARE_DATABASE_UNAVAILABLE)
+    expect(document.body.textContent).not.toContain('Nothing remembered yet')
+    expect(document.body.textContent).not.toContain('No tables yet')
+    expect(document.body.textContent).toContain('1 file')
+    for (const name of ['Memories', 'Coworker database']) expect((document.querySelector('[aria-label="' + name + '"]') as HTMLButtonElement).disabled).toBe(true)
+    expect((document.querySelector('[aria-label="Workspace files"]') as HTMLButtonElement).disabled).toBe(false)
+})
+
+test('review lists a bound section digest and hides a section that was not captured', async () => {
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopCoworkerManifestReview manifest={shareReview.manifest} approved={false} onApprovedChange={vi.fn()} sectionReview={{ memoriesDigest: '1'.repeat(64), databaseDigest: null, databaseViewCount: null }} />))
+    expect(document.body.textContent).toContain(`Memories SHA-256 ${'1'.repeat(64)}`)
+    expect(document.body.textContent).not.toContain('Database SHA-256')
+    expect(document.body.textContent).not.toContain('Saved database views')
+})
+
+test('a bound preview shows its own counts rather than snapshot path counts', async () => {
+    const memories = sectionTransferReady('memories', undefined, { authorities: { capture: true, validation: true, install: true }, preview: { available: true, contents: { count: 4, bytes: 80 }, digest: '1'.repeat(64) } })
+    const database = sectionTransferReady('database', undefined, { authorities: { capture: true, validation: true, install: true }, preview: { available: true, contents: { count: 2, bytes: 40 }, digest: '2'.repeat(64), viewCount: 3 } })
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopCoworkerShareOptions plan={sharePlan} include={{ memories: true, database: false, files: false }} sections={{ memories, database }} disabled={false} onChange={vi.fn()} />))
+    expect(document.body.textContent).toContain('4 memorys · 80 B')
+    expect(document.body.textContent).toContain('40 B · not scanned for secrets')
+    expect(document.body.textContent).not.toContain('1 memory')
+    expect((document.querySelector('[aria-label="Memories"]') as HTMLButtonElement).disabled).toBe(false)
+    expect((document.querySelector('[aria-label="Memories"]') as HTMLButtonElement).getAttribute('aria-checked')).toBe('true')
 })

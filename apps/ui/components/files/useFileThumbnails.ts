@@ -23,23 +23,21 @@ export function useFileThumbnails({ read, resetKey }: Options) {
 
     const request = useCallback(
         (path: string) => {
-            const q = queue.current
-            if (q.key !== resetKey) {
-                q.key = resetKey
-                q.paths = []
-                q.inFlight = 0
-                q.requested = new Set()
+            if (queue.current.key !== resetKey) {
+                queue.current = { key: resetKey, paths: [], inFlight: 0, requested: new Set() }
             }
+            const q = queue.current
             if (q.requested.has(path)) return
             q.requested.add(path)
             q.paths.push(path)
 
             const store = (target: string, head: string) => {
+                if (queue.current !== q) return
                 setCache(prev => (prev.key === resetKey ? { key: prev.key, heads: { ...prev.heads, [target]: head } } : prev))
             }
 
             const startNext = () => {
-                if (q.key !== resetKey || q.inFlight >= MAX_IN_FLIGHT || q.paths.length === 0) return
+                if (queue.current !== q || q.inFlight >= MAX_IN_FLIGHT || q.paths.length === 0) return
                 const next = q.paths.shift()!
                 q.inFlight += 1
                 read(next)

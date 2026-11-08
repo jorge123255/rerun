@@ -10,7 +10,7 @@ vi.mock('server-only', () => ({}))
 import { createDesktopDocumentRuntime } from './runtime'
 const cleanup: Array<() => void> = []
 afterEach(() => { cleanup.splice(0).forEach(close => close()) })
-async function fixture() {
+async function fixture(workspaceId = 1) {
     const directory = mkdtempSync(join(tmpdir(), 'rerun-doc-runtime-'))
     const db = createClient({ url: `file:${join(directory, 'app.db')}` }); cleanup.push(() => { db.close(); rmSync(directory, { recursive: true, force: true }) })
     await db.executeMultiple(`PRAGMA foreign_keys=ON;
@@ -28,13 +28,34 @@ async function fixture() {
     const scope: DesktopDocumentScope = { agentId: 'owner', tabUid: 'tab' }
     const layout = (id: string | null, uid = 'tab') => db.execute({ sql: 'INSERT OR REPLACE INTO desktop_agent_tabs VALUES(?,1,?)', args: ['owner', JSON.stringify({ tabs: [{ uid, id }], activeIndex: 0 })] })
     await layout(null)
-    const runtime: DesktopRuntime = { protocolVersion: 1, launchNonce: 'launch', buildId: 'build', workspaceId: 1, dataRoot: '/fixture', app: { origin: 'http://127.0.0.1:1111', sessionToken: 's'.repeat(32) }, engine: { origin: 'http://127.0.0.1:2222', apiKey: 'fixture' } }
+    const runtime: DesktopRuntime = { protocolVersion: 1, launchNonce: 'launch', buildId: 'build', workspaceId, dataRoot: '/fixture', app: { origin: 'http://127.0.0.1:1111', sessionToken: 's'.repeat(32) }, engine: { origin: 'http://127.0.0.1:2222', apiKey: 'fixture' } }
     let current = true, mutate: (() => Promise<void>) | undefined
     const service = await createDesktopDocumentRuntime(runtime, db, { isCurrent: () => current, agent: async id => { if (mutate) await mutate(); return { id, enabled: true } } })
     const signal = new AbortController().signal
     const upload = () => service.upload(scope, { ...scope, attachmentId: randomUUID(), name: 'archive.zip', mimeType: 'application/octet-stream', position: 0 }, new Uint8Array([1, 2, 3]), signal)
     return { db, service, scope, signal, layout, upload, invalidate: () => { current = false }, mutate: (callback: () => Promise<void>) => { mutate = callback } }
 }
+it.each([1, 2])('accepts the assigned database local owner row in runtime workspace %i', async workspaceId => {
+    const f = await fixture(workspaceId)
+    expect(await f.service.list(f.scope, f.signal)).toEqual([])
+    const attachment = await f.upload()
+    expect((await f.service.list(f.scope, f.signal)).map(item => item.attachmentId)).toEqual([attachment.attachmentId])
+    expect((await f.service.read(f.scope, attachment.attachmentId, attachment.sha256, f.signal)).bytes).toEqual(new Uint8Array([1, 2, 3]))
+    await expect(f.service.list({ ...f.scope, agentId: 'sibling' }, f.signal)).rejects.toThrow()
+})
+it('rejects a row stored under another workspace id even when that id equals the runtime', async () => {
+    const f = await fixture(2)
+    await f.db.execute("UPDATE desktop_agents SET workspace_id=2 WHERE id='owner'")
+    await expect(f.service.list(f.scope, f.signal)).rejects.toThrow()
+    await expect(f.upload()).rejects.toThrow()
+})
+it('does not read an owner that exists only in another workspace database', async () => {
+    const home = await fixture(1)
+    const other = await fixture(2)
+    await home.db.execute("INSERT INTO desktop_agents VALUES('only-home',1,'engine-home','Home','',1,'now','now')")
+    await expect(other.service.list({ ...other.scope, agentId: 'only-home' }, other.signal)).rejects.toThrow()
+    expect(await home.service.list(home.scope, home.signal)).toEqual([])
+})
 it('restores only the authenticated first-turn alias and keeps immutable read scope', async () => {
     const f = await fixture(), a = await f.upload()
     await f.db.execute("INSERT INTO desktop_tab_starts VALUES('owner','tab','engine-session','first-run')")
