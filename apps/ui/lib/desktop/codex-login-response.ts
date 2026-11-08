@@ -6,6 +6,8 @@ export async function desktopCodexLoginBody(
     readProviders: () => Promise<ConnectionsList>,
 ): Promise<{ status: DesktopCodexStatus; providers: ConnectionsList | null }> {
     const status = await readStatus()
+    // The sign-in screen needs the code now and uses the provider list after approval.
+    if (status.phase === 'waiting') return { status, providers: null }
     try {
         return { status, providers: await readProviders() }
     } catch {

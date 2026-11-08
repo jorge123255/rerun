@@ -10,9 +10,27 @@ const waiting = {
 }
 
 describe('desktop Codex sign-in response', () => {
-    it('keeps a valid device code when the provider snapshot fails', async () => {
-        const body = await desktopCodexLoginBody(async () => waiting, async () => { throw new Error('provider list unavailable') })
-        expect(body).toEqual({ status: waiting, providers: null })
+    it('returns the device code without waiting for a stalled provider snapshot', async () => {
+        const readProviders = vi.fn(() => new Promise<never>(() => {}))
+        const response = desktopCodexLoginBody(async () => waiting, readProviders)
+
+        await Promise.resolve()
+
+        expect(readProviders).not.toHaveBeenCalled()
+        await expect(response).resolves.toEqual({ status: waiting, providers: null })
+    })
+
+    it('returns the provider snapshot when the account is connected', async () => {
+        const status = { phase: 'connected' as const }
+        const providers = { connections: [], default: null }
+        const body = await desktopCodexLoginBody(async () => status, async () => providers)
+        expect(body).toEqual({ status, providers })
+    })
+
+    it('keeps connected status when the provider snapshot fails', async () => {
+        const status = { phase: 'connected' as const }
+        const body = await desktopCodexLoginBody(async () => status, async () => { throw new Error('provider list unavailable') })
+        expect(body).toEqual({ status, providers: null })
     })
 
     it('waits through Codex startup and device-code generation', () => {
