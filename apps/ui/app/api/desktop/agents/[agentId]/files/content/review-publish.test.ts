@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs'
 import { link, open, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -98,7 +99,8 @@ afterEach(async () => {
     hooks.beforeBackupUnlink = undefined
     await closeDesktopDatabase(root)
     process.env = { ...originalEnv }
-    await rm(root, { recursive: true, force: true })
+    // Remove fixture entries serially so hardlink names are never unlinked concurrently.
+    rmSync(root, { recursive: true, force: true })
 })
 
 

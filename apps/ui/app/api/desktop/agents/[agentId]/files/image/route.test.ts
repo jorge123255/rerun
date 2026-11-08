@@ -1,4 +1,5 @@
-import { link, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { rmSync } from 'node:fs'
+import { link, lstat, mkdir, mkdtemp, readFile, readdir, rename, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
@@ -119,7 +120,8 @@ afterEach(async () => {
     restorePreview()
     await closeDesktopDatabase(root)
     process.env = { ...env }
-    await rm(root, { recursive: true, force: true })
+    // Remove fixture entries serially so hardlink names are never unlinked concurrently.
+    rmSync(root, { recursive: true, force: true })
 })
 
 test('confined Files previews convert SVG AVIF ICO and BMP to inert PNG without changing the source', async () => {
