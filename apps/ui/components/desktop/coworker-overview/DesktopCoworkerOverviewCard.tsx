@@ -29,7 +29,7 @@ const TILES: DesktopOverviewDestination[] = ['services', 'skills', 'memories', '
 const ROWS: DesktopOverviewDestination[] = ['files', 'data']
 const FOOTER: DesktopOverviewDestination[] = ['monitoring', 'settings']
 
-export function DesktopCoworkerOverviewCard({ identity, name, boxName, enabled, canManage, mood, servicesNeedConfig, needsMachineReason, settingsDisabledReason, computerEnabled, computer, working, loadingSlot, focus, onFocus, onOpen, onClose, onShare, onDelete, onOpenComputer, onRenamed }: {
+export function DesktopCoworkerOverviewCard({ identity, name, boxName, enabled, canManage, mood, servicesNeedConfig, needsMachineReason, settingsDisabledReason, computerEnabled, computer, working, loadingSlot, visible, focus, onFocus, onOpen, onClose, onShare, onDelete, onOpenComputer, onRenamed }: {
     identity: DesktopOverviewIdentity
     name: string
     boxName: string
@@ -43,6 +43,7 @@ export function DesktopCoworkerOverviewCard({ identity, name, boxName, enabled, 
     computer: DesktopOverviewComputer
     working: boolean
     loadingSlot?: ReactNode
+    visible: boolean
     focus: DesktopOverviewControl
     onFocus: (target: DesktopOverviewControl) => void
     onOpen: (tab: DesktopOverviewDestination, from: HTMLElement) => void
@@ -55,9 +56,10 @@ export function DesktopCoworkerOverviewCard({ identity, name, boxName, enabled, 
     const root = useRef<HTMLDivElement>(null)
     const [deleteOpen, setDeleteOpen] = useState(false)
     useEffect(() => {
+        if (!visible) return
         const node = root.current?.querySelector<HTMLElement>(`[data-overview-focus="${CSS.escape(focus)}"]`)
         if (node && document.activeElement !== node) node.focus()
-    }, [focus])
+    }, [focus, visible])
     const offReason = enabled ? null : 'This coworker is off.'
     const manageReason = canManage === true ? null : DESKTOP_OVERVIEW_MANAGE_REASON
     const shareReason = needsMachineReason ?? manageReason ?? (onShare ? null : 'Sharing this coworker is not available in this window.')
