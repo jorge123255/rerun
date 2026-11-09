@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from './database'
-import { foremanWorkspaceReadAllowed, readForemanWorkspaceSnapshot } from './foreman-workspace-reads'
+import { foremanWorkspaceReadRuntimeMatches, readForemanWorkspaceSnapshot } from './foreman-workspace-reads'
 import { createDesktopAgent } from './store'
 import { readDesktopBoardState } from './spaces'
 
@@ -20,13 +20,13 @@ afterEach(async () => {
 
 it('refuses a workspace grant unless the runtime id and launch nonce still match', async () => {
     const runtime = { workspaceId: 1, launchNonce: 'nonce-a', dataRoot: '/unused' }
-    expect(await foremanWorkspaceReadAllowed('1', async () => { throw new Error('missing') })).toBe(false)
-    expect(await foremanWorkspaceReadAllowed('2', async () => runtime)).toBe(false)
+    expect(await foremanWorkspaceReadRuntimeMatches('1', async () => { throw new Error('missing') })).toBe(false)
+    expect(await foremanWorkspaceReadRuntimeMatches('2', async () => runtime)).toBe(false)
     let nonceReads = 0
-    expect(await foremanWorkspaceReadAllowed('1', async () => { nonceReads += 1; return { ...runtime, launchNonce: nonceReads === 1 ? 'nonce-a' : 'nonce-b' } })).toBe(false)
+    expect(await foremanWorkspaceReadRuntimeMatches('1', async () => { nonceReads += 1; return { ...runtime, launchNonce: nonceReads === 1 ? 'nonce-a' : 'nonce-b' } })).toBe(false)
     let reads = 0
-    expect(await foremanWorkspaceReadAllowed('1', async () => { reads += 1; return reads === 1 ? runtime : { ...runtime, workspaceId: 9 } })).toBe(false)
-    expect(await foremanWorkspaceReadAllowed('1', async () => runtime)).toBe(true)
+    expect(await foremanWorkspaceReadRuntimeMatches('1', async () => { reads += 1; return reads === 1 ? runtime : { ...runtime, workspaceId: 9 } })).toBe(false)
+    expect(await foremanWorkspaceReadRuntimeMatches('1', async () => runtime)).toBe(true)
 })
 
 it('reads boxes and coworkers through the board snapshot and the same rows after reopen', async () => {

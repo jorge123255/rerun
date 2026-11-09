@@ -410,7 +410,7 @@ test('a restored generic receipt keeps its status and does not render a secret o
         acknowledgement: 'lost', ownerId: 'foreign-agent', workspaceId: 'foreign-workspace', runId: 'foreign-run',
         providerMetadata: { desktop: { ownerId: 'foreign-agent', workspaceId: 'foreign-workspace', runId: 'foreign-run', token: secret, acknowledgement: 'lost' } },
     } as UIMessage['parts'][number]])
-    expect(container.textContent).toContain('Unknown')
+    expect(container.textContent).toContain('1 unknown')
     expect(container.querySelector('[data-historical="group"]')).not.toBeNull()
     expect(container.querySelector('[data-owner="foreign-agent"], [data-workspace="foreign-workspace"], [data-run="foreign-run"]')).toBeNull()
     expect(container.querySelector('[data-owner]')?.getAttribute('data-owner')).toBe('')
@@ -425,7 +425,7 @@ test('a restored generic receipt keeps its status and does not render a secret o
         type: 'dynamic-tool', toolName: 'fs_read', toolCallId: 'pending-read', state: 'approval-requested',
         input: { path: 'notes/plan.md' }, output: `seen ${secret} password=${password}`,
     } as UIMessage['parts'][number]])
-    expect(container.textContent).toContain('Pending')
+    expect(container.textContent).toContain('1 pending')
     expect(container.querySelector('[data-historical="group"]')).not.toBeNull()
     await act(async () => container.querySelector('button')!.click())
     expect(container.querySelector('[data-status="pending"]')).not.toBeNull()
@@ -440,7 +440,7 @@ test('a restored generic receipt keeps its status and does not render a secret o
     }
     const [saved] = publicDesktopHistory([{ id: 'engine-saved', role: 'assistant', parts: [cancelled] as HistoryMessage['parts'] }])
     await show(saved.id, saved.parts as UIMessage['parts'])
-    expect(container.textContent).toContain('Cancelled')
+    expect(container.textContent).toContain('1 cancelled')
     expect(container.querySelector('[data-owner="foreign-agent"]')).toBeNull()
     await act(async () => container.querySelector('button')!.click())
     expect(container.querySelector('[data-status="cancelled"]')).not.toBeNull()

@@ -1,3 +1,4 @@
+import type { EngineMessage } from '@rerun/contracts'
 import { describe, expect, it } from 'vitest'
 import { RERUN_PUBLIC_DOCS_CORPUS, workspaceAttachmentPart, desktopCoworkerMentionContextParts } from '@rerun/contracts'
 import { buildAttachmentsRef } from '@/lib/chat/attachments-marker'
@@ -617,11 +618,25 @@ describe('restored generic tool receipts', () => {
             id: 'a1', sessionId: 's1', role: 'assistant', toolCallsJson: null, createdAt: '2026-11-09T00:00:00.000Z',
             contentJson: JSON.stringify([{ type: 'tool-fs_read', toolCallId: 'c-mystery', toolName: 'fs_read', state: 'mystery', input: { path: `notes/${SECRET}.md` }, ownerId: FOREIGN_OWNER }]),
         }])
-        expect(transformed.parts[0]).toMatchObject({ state: 'mystery' })
+        expect(transformed.parts[0]).toMatchObject({ state: 'unknown' })
         expect(transformed.parts[0]).not.toHaveProperty('ownerId')
         const [history] = publicDesktopHistory([transformed])
         expect(history.parts[0]).toEqual({ type: 'tool-fs_read', toolName: 'fs_read', toolCallId: 'c-mystery', desktopPreview: true, state: 'unknown', input: preview })
         expectNoReceiptLeak(history)
+    })
+
+    it.each(['output-error', 'output-denied'] as const)('keeps a stored %s terminal with or without a result', state => {
+        for (const hasResult of [true, false]) {
+            const rows: EngineMessage[] = [{
+                id: 'a1', sessionId: 's1', role: 'assistant', toolCallsJson: null, createdAt: '2026-11-09T00:00:00.000Z',
+                contentJson: JSON.stringify([{ type: 'tool-fs_read', toolCallId: 'c-failed', toolName: 'fs_read', state, input: {} }]),
+            }]
+            if (hasResult) rows.push({
+                id: 'r1', sessionId: 's1', role: 'tool', toolCallsJson: null, createdAt: '2026-11-09T00:00:01.000Z',
+                contentJson: JSON.stringify([{ type: 'tool-result', toolCallId: 'c-failed', toolName: 'fs_read', output: 'synthetic diagnostic' }]),
+            })
+            expect(publicDesktopHistory(transformEngineMessages(rows))[0].parts[0]).toMatchObject({ state: 'output-error' })
+        }
     })
 
     it('keeps an unresolved legacy call running when its args are not JSON', () => {

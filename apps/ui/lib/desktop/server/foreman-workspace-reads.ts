@@ -16,7 +16,8 @@ const production: SnapshotDeps = {
     open: openDesktopDatabase,
 }
 
-export async function foremanWorkspaceReadAllowed(workspaceId: string, readRuntime: SnapshotDeps['runtime'] = production.runtime): Promise<boolean> {
+/** Runtime identity check. A separate explicit grant is required before using these reads. */
+export async function foremanWorkspaceReadRuntimeMatches(workspaceId: string, readRuntime: SnapshotDeps['runtime'] = production.runtime): Promise<boolean> {
     try {
         const first = await readRuntime()
         if (String(first.workspaceId) !== workspaceId) return false

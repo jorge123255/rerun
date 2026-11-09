@@ -179,7 +179,8 @@ type StoredToolCall = {
     restarted?: unknown
 }
 
-const OPEN_TOOL_STATES = new Set(['input-streaming', 'input-available', 'output-available', 'output-error', 'output-denied'])
+const NONTERMINAL_TOOL_STATES = new Set(['input-streaming', 'input-available', 'output-available'])
+const RECORDED_TOOL_STATES = new Set(['approval-requested', 'approval-responded', 'output-error', 'output-denied', 'cancelled', 'canceled'])
 
 function toolPartOf(call: unknown, toolResults?: Map<string, unknown>): ToolInvocationPart {
     const c = call as StoredToolCall
@@ -197,14 +198,15 @@ function toolPartOf(call: unknown, toolResults?: Map<string, unknown>): ToolInvo
     }
     // A paused ask_user / request_approval has no result yet. Keep that open state so the pinned
     // block re-renders on reload. Cancelled, pending, and malformed states must not become that.
-    if (recorded && !OPEN_TOOL_STATES.has(recorded)) {
-        return { type: `tool-${toolName}`, toolCallId, toolName, state: recorded as ToolReceiptState, input, ...receipt, ...(output !== undefined && { output }), ...(errorText && { errorText }) }
+    if (recorded && !NONTERMINAL_TOOL_STATES.has(recorded)) {
+        const state = RECORDED_TOOL_STATES.has(recorded) ? recorded as ToolReceiptState : 'unknown'
+        return { type: `tool-${toolName}`, toolCallId, toolName, state, input, ...receipt, ...(output !== undefined && { output }), ...(errorText && { errorText }) }
     }
     if (output !== undefined) return { type: `tool-${toolName}`, toolCallId, toolName, state: 'output-available', input, output, ...receipt }
     if (recorded === 'input-streaming' || recorded === 'input-available') {
         return { type: `tool-${toolName}`, toolCallId, toolName, state: recorded, input, ...receipt }
     }
-    return { type: `tool-${toolName}`, toolCallId, toolName, state: 'input-available', input, ...receipt }
+    return { type: `tool-${toolName}`, toolCallId, toolName, state: recorded === 'output-available' ? 'unknown' : 'input-available', input, ...receipt }
 }
 
 const PASSTHROUGH_TOOLS = new Set<string>(DESKTOP_HISTORICAL_PASSTHROUGH_TOOLS)

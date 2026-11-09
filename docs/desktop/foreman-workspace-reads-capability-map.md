@@ -84,13 +84,13 @@ Offline-read column values: `yes`, `needs new grant`, `needs remote service`, `n
 
 `write_memory` (`account-tools.ts:237`) is on the account catalog and is not on `FOREMAN_MCP_TOOL_NAMES`. It is not a Foreman belt tool.
 
-## What was mounted
+## Available through a gated adapter
 
-Four read-only tools, added through `bindForemanWorkspaceReads` and merged inside `desktopForemanTools` before `registerDesktopForemanTools` only when that call's grant check returns true. Names: `list_spaces`, `list_agents`, `list_schedules`, `list_triggers`. A grant that is false hides them. A grant that flips to false after they are on the belt is refused again inside each execute.
+Four read-only tool definitions. If an explicitly authorized production adapter is bound through `bindForemanWorkspaceReads`, they are merged inside `desktopForemanTools` before `registerDesktopForemanTools` only when that call's grant check returns true. Names: `list_spaces`, `list_agents`, `list_schedules`, `list_triggers`. A grant that is false hides them. A grant that flips to false after they are on the belt is refused again inside each execute.
 
 Authority, re-checked on every call:
 
-- `foremanWorkspaceReadAllowed` re-reads the desktop runtime. The binding workspace id must match `runtime.workspaceId` on both reads, with the same launch nonce. A missing runtime, a mismatch, or a nonce change is a refusal.
+- `foremanWorkspaceReadRuntimeMatches` checks runtime identity only. It does not authorize access. An independent, explicit workspace-read grant is required before mounting the adapter. The function re-reads the desktop runtime. The binding workspace id must match `runtime.workspaceId` on both reads, with the same launch nonce. A missing runtime, a mismatch, or a nonce change is a refusal.
 - `readForemanWorkspaceSnapshot` calls `readDesktopBoardState` and `listDesktopAgents` (no second SQL). A revision change between those reads is `uncertain` and is not served.
 - Roster membership for routines is `desktopTeamDirectory` queried with the in-file catalog id (`1`), never with a model-supplied path. Schedule and trigger bodies go through `desktopTeamScheduleView` and `desktopTeamTriggerView`.
 - The tool refuses when the caller pins a board `revision` that is not the one just read. It also refuses when the two snapshots in the call disagree.

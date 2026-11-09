@@ -76,6 +76,11 @@ describe('foreman workspace reads', () => {
         expect(triggers).not.toHaveBeenCalled()
     })
 
+    it('does not forward arbitrary adapter error text containing a lifecycle word', async () => {
+        const { call } = harness({ schedules: async () => { throw new Error('active credential: private-fixture') } })
+        await expect(call('list_schedules', { agentId: 'agent-1' })).rejects.toThrow(M.unavailable)
+    })
+
     it('refuses another workspace and does not return its routine text', async () => {
         const secret = 'other-workspace-routine-secret'
         const { call, schedules } = harness({

@@ -109,8 +109,7 @@ export function foremanWorkspaceResult(name: string, value: unknown): unknown {
     try {
         return desktopTeamPayload(name, value)
     } catch (error) {
-        if (error instanceof Error && error.message === desktopTeamReadTooLarge(name, JSON.stringify(desktopTeamScrub(value)).length)) throw error
-        if (error instanceof Error && error.message.includes('over the') && error.message.includes('tool result')) throw error
+        if (error instanceof Error && error.message === desktopTeamReadTooLarge(name, JSON.stringify(desktopTeamScrub(value)).length)) throw new Error(M.limit)
         throw new Error(M.unavailable)
     }
 }

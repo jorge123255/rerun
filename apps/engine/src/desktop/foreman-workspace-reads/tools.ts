@@ -24,7 +24,11 @@ const revisionField = z.number().int().nonnegative().optional()
 const spacesInput = z.strictObject({ revision: revisionField })
 const agentsInput = z.strictObject({ spaceId: z.string().optional(), revision: revisionField })
 const agentInput = z.strictObject({ agentId: z.string(), revision: revisionField })
-const KNOWN = new Set<string>(Object.values(M))
+const KNOWN = new Set<string>([
+    ...Object.values(M),
+    'Foreman launch changed.',
+    'This Foreman run is no longer active.',
+])
 
 function parse<T>(schema: z.ZodType<T>, args: unknown): T {
     const parsed = schema.safeParse(args ?? {})
@@ -47,7 +51,7 @@ export function createForemanWorkspaceReadTools(ports: ForemanWorkspaceReadPorts
 
     function fail(error: unknown, signal: AbortSignal): never {
         if (signal.aborted) throw new Error(M.runClosed)
-        if (error instanceof Error && (KNOWN.has(error.message) || /active|launch changed/.test(error.message) || (error.message.includes('over the') && error.message.includes('tool result')))) throw error
+        if (error instanceof Error && KNOWN.has(error.message)) throw error
         throw new Error(M.unavailable)
     }
 
