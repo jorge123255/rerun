@@ -1,5 +1,6 @@
 import { Cron } from 'croner'
 import { z } from 'zod'
+import { desktopProvider } from './settings'
 
 export type DesktopScheduleSelection =
     | { mode: 'cron'; cron: string; runAt: null; timezone: string }
@@ -40,4 +41,45 @@ export function validateDesktopSchedulePreview(value: unknown, currentTimezone: 
     }
     if (!data.runAt || data.cron || !z.string().datetime({ offset: true }).safeParse(data.runAt).success) return null
     return { selection: { mode: 'runAt', cron: null, runAt: data.runAt, timezone }, label: data.label || data.runAt }
+}
+
+
+export const desktopScheduleDescriptionRequestSchema = z.object({
+    description: z.string().trim().min(1).max(1000),
+    nowIso: z.string().datetime({ offset: true }),
+    timezone: z.string().trim().min(1).max(100),
+    connectionId: z.string().trim().min(1).max(256).nullable().default(null),
+    provider: desktopProvider.nullable().default(null),
+    model: z.string().trim().min(1).max(256).nullable().default(null),
+}).strict().superRefine((value, ctx) => {
+    const fields = [value.connectionId, value.provider, value.model]
+    if (fields.every(field => field === null) || fields.every(field => field !== null)) return
+    ctx.addIssue({ code: 'custom', message: 'Choose a connected provider and model, or follow the coworker default' })
+})
+
+export const desktopScheduleParseResultSchema = z.union([
+    z.object({ status: z.literal('ok'), value: z.unknown() }).strict(),
+    z.object({ status: z.enum(['invalid', 'unavailable']), message: z.string().max(300) }).strict(),
+])
+export const DESKTOP_SCHEDULE_PARSER_UNAVAILABLE = 'The local schedule parser is unavailable. Enter cron or an ISO time manually.'
+export const DESKTOP_SCHEDULE_PARSER_INVALID = 'The local schedule parser returned an invalid response. Enter cron or an ISO time manually.'
+
+export function createDesktopScheduleParser(selection: { agentId: string; connectionId: string | null; provider: z.infer<typeof desktopProvider> | null; model: string | null }): DesktopScheduleParser {
+    return async input => {
+        try {
+            const response = await fetch(`/api/desktop/coworkers/${encodeURIComponent(selection.agentId)}/schedule-description`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', redirect: 'error',
+                body: JSON.stringify({ description: input.description, nowIso: input.nowIso, timezone: input.timezone,
+                    connectionId: selection.connectionId, provider: selection.provider, model: selection.model }),
+                signal: AbortSignal.any([input.signal, AbortSignal.timeout(20_000)]),
+            })
+            const body = await response.json().catch(() => null)
+            if (!response.ok) return { status: 'unavailable', message: DESKTOP_SCHEDULE_PARSER_UNAVAILABLE }
+            const parsed = desktopScheduleParseResultSchema.safeParse(body)
+            return parsed.success ? parsed.data : { status: 'invalid', message: DESKTOP_SCHEDULE_PARSER_INVALID }
+        } catch (error) {
+            if (input.signal.aborted) throw error
+            return { status: 'unavailable', message: DESKTOP_SCHEDULE_PARSER_UNAVAILABLE }
+        }
+    }
 }
