@@ -136,7 +136,7 @@ function SharedFilesPanel({ onClose }: { onClose: () => void }) {
             <div className="flex min-h-0 flex-1 flex-col">
                 {selection.kind === 'folder'
                     ? <SharedFolder path={selection.path} onOpen={open} />
-                    : <SharedFile path={selection.path} entries={folderEntries} onOpen={open} />}
+                    : <SharedFile key={selection.path} path={selection.path} entries={folderEntries} onOpen={open} />}
             </div>
         </BrainChromeContext.Provider>
     )

@@ -424,8 +424,9 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
 
     const overviewScope = useRef({ workspaceId: runtimeWorkspaceId, ownerId: String(initialData.profile.id), launchNonce: initialData.runtimeLaunchNonce })
     overviewScope.current = { workspaceId: runtimeWorkspaceId, ownerId: String(initialData.profile.id), launchNonce: initialData.runtimeLaunchNonce }
+    const overviewBox = boardState.board?.placements.find(placement => placement.agentId === selectedAgent?.id)?.spaceId
     const overview: DesktopConversationOverviewAuthority | undefined = selectedAgent && runtimeWorkspaceId !== null &&
-        initialData.runtimeLaunchNonce && initialData.board && boardState.board && !boardState.error && initialData.profile.id > 0
+        initialData.runtimeLaunchNonce && overviewBox && boardState.board && !boardState.error && initialData.profile.id > 0
         ? {
             identity: { ownerId: String(initialData.profile.id), workspaceId: runtimeWorkspaceId, agentId: selectedAgent.id },
             boxes: boardState.board.spaces,
@@ -743,7 +744,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
                                     closePanel()
                                 }
                             }}>
-                            <CoworkerChat onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
+                            <CoworkerChat onOpenCoworkerChat={openCoworkerChat} key={selectedAgent.id} agent={overview ? { ...selectedAgent, spaceId: overviewBox } : selectedAgent} overview={overview} requested={requestedSession} selected={panelOpen && !workspaceDialogActive && !templatesActive && !settings && !workspaceSettings && !shortcutsOpen && !notificationsTarget && !sharedDataOpen && !sharedFilesOpen && !brainOpen && !boardInteraction}
                                 requestedPanel={requestedPanel?.agentId === selectedAgent.id ? requestedPanel : null} onPanelRequestHandled={panelRequestHandled}
                                 onVisibleSession={reportVisibleSession}
                                 onClosePanel={closePanel} modelLabel={modelLabel} onOpenModelSettings={openSettings} />

@@ -17,7 +17,7 @@ function chunk(name: string, data: Uint8Array): Uint8Array {
     const type = Buffer.from(name, 'ascii')
     const result = Buffer.alloc(12 + data.length)
     result.writeUInt32BE(data.length, 0)
-    result.write(type, 4)
+    result.set(type, 4)
     result.set(data, 8)
     result.writeUInt32BE(crc32(result.subarray(4, 8 + data.length)), 8 + data.length)
     return result

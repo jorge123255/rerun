@@ -31,9 +31,16 @@ afterEach(async () => {
 
 test('previews supported shared media and saves exact reviewed bytes with sibling navigation intact', async () => {
     const png = onePixelPng()
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(png, { status: 200, headers: { 'content-type': 'image/png', 'x-rerun-shared-sha256': 'a'.repeat(64) } })))
+    let changed = false
+    const hash = 'a'.repeat(64)
+    const fetchMedia = vi.fn(async (url: string) => {
+        const query = new URL(url, 'http://localhost').searchParams
+        if (query.has('download') && changed) return Response.json({ error: 'This shared file changed.' }, { status: 409 })
+        return new Response(new Uint8Array(png), { headers: { 'content-type': 'image/png', 'x-rerun-shared-sha256': hash } })
+    })
+    vi.stubGlobal('fetch', fetchMedia)
     await act(async () => {
-        root = createRoot(document.body.appendChild(document.createElement('div'))
+        root = createRoot(document.body.appendChild(document.createElement('div')))
         root!.render(<DesktopSharedFiles />)
     })
     await click('Shared files')
@@ -48,4 +55,8 @@ test('previews supported shared media and saves exact reviewed bytes with siblin
     const bytes = api.save.mock.calls[0][1] as Uint8Array
     expect(Buffer.from(bytes).equals(png)).toBe(true)
     expect(document.body.textContent).toContain('Saved pixel.png')
+    expect(fetchMedia).toHaveBeenLastCalledWith(expect.stringContaining(`identity=${hash}`), expect.any(Object))
+    changed = true
+    await click('Save As')
+    expect(api.save).toHaveBeenCalledTimes(1)
 })

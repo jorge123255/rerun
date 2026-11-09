@@ -25,12 +25,13 @@ export type DesktopFileVideoPreviewProps = {
     onBack: () => void
     siblings?: SiblingFiles | null
     viewerRef?: Ref<HTMLDivElement>
+    onPreviewIdentity?: (hash: string | null) => void
 }
 
 type View = { loading: true } | { error: string } | { src: string }
 
 /** FileDetail header and FilePreview video controls, filled from the authenticated desktop route. */
-export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef }: DesktopFileVideoPreviewProps) {
+export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef, onPreviewIdentity }: DesktopFileVideoPreviewProps) {
     const videoRef = useRef<HTMLVideoElement | null>(null)
     const failed = useRef(false)
     const [view, setView] = useState<View>({ loading: true })
@@ -46,6 +47,7 @@ export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack, 
     }, [])
 
     useEffect(() => {
+        onPreviewIdentity?.(null)
         if (!isDesktopVideoRoute(srcUrl, path, identity)) {
             setView({ error: 'Could not read this video.' })
             return
@@ -72,6 +74,7 @@ export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack, 
                 }
                 objectUrl = URL.createObjectURL(new Blob([bytes], { type }))
                 if (cancelled) { URL.revokeObjectURL(objectUrl); return }
+                onPreviewIdentity?.(response.headers.get('x-rerun-shared-sha256'))
                 setView({ src: objectUrl })
             } catch {
                 if (!cancelled) setView({ error: 'Could not read this video.' })
@@ -83,7 +86,7 @@ export function DesktopFileVideoPreview({ name, path, identity, srcUrl, onBack, 
             stopVideo(videoRef.current)
             if (objectUrl) URL.revokeObjectURL(objectUrl)
         }
-    }, [identity, path, srcUrl])
+    }, [identity, path, srcUrl, onPreviewIdentity])
 
     return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
         <PanelEditorHeader title={name} onBack={onBack} mono>
@@ -115,7 +118,7 @@ function stopVideo(node: HTMLVideoElement | null) {
 }
 
 function isDesktopVideoRoute(srcUrl: string, path: string, identity?: string): boolean {
-    if (!srcUrl.startsWith('/api/desktop/agents/') || srcUrl.includes('://') || srcUrl.includes('\\')) return false
+    if (!srcUrl.startsWith('/api/desktop/') || srcUrl.includes('://') || srcUrl.includes('\\')) return false
     try {
         const url = new URL(srcUrl, 'http://127.0.0.1')
         return (/^\/api\/desktop\/agents\/[^/]+\/files\/video$/.test(url.pathname) || url.pathname === '/api/desktop/shared-files/media')

@@ -39,6 +39,7 @@ export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: stri
     const kind = filePreviewKind(name)
     const [preview, setPreview] = useState<{ path: string; content: string | null; truncated: boolean; error: string | null } | null>(null)
     const [attempt, setAttempt] = useState(0)
+    const [previewHash, setPreviewHash] = useState<string | null>(null)
     const [saving, setSaving] = useState(false)
     const [saved, setSaved] = useState(false)
     const saveController = useRef<AbortController | null>(null)
@@ -48,7 +49,10 @@ export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: stri
         const controller = new AbortController()
         setPreview(null)
         void readDesktopSharedPreview(path, controller.signal)
-            .then(page => { if (!controller.signal.aborted) setPreview({ path, content: page.content, truncated: page.truncated, error: null }) })
+            .then(page => { if (!controller.signal.aborted) {
+                setPreviewHash(page.editIdentity?.expectedSha256 ?? null)
+                setPreview({ path, content: page.content, truncated: page.truncated, error: null })
+            } })
             .catch(error => { if (!controller.signal.aborted) setPreview({ path, content: null, truncated: false, error: messageOf(error, 'This file could not be read') }) })
         return () => controller.abort()
     }, [path, text, attempt])
@@ -66,16 +70,17 @@ export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: stri
         onOpen: next => onOpen(joinPath(dir, next), false),
     })
     const ready = preview?.path === path ? preview : null
+    const canSave = kind ? !!previewHash : !text || ready?.content != null
     const back = () => onOpen(dir, true)
 
     async function save() {
-        if (saving) return
+        if (saving || !canSave) return
         const controller = new AbortController()
         saveController.current = controller
         setSaving(true)
         setSaved(false)
         try {
-            const wrote = await saveDesktopSharedFile(path, name, undefined, controller.signal)
+            const wrote = await saveDesktopSharedFile(path, name, previewHash ?? undefined, controller.signal)
             if (controller.signal.aborted) return
             if (wrote) setSaved(true)
             else toast.error('The shared file was not saved.')
@@ -95,17 +100,17 @@ export function DesktopSharedFilePreview({ path, entries, onOpen }: { path: stri
                     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{siblings.index + 1} / {siblings.total}</span>
                     <Button size="icon-sm" variant="ghost" onClick={siblings.next} title="Next file" aria-label="Next file"><ChevronRightIcon className="size-4" /></Button>
                 </>}
-                <Button type="button" size="xs" variant="outline" disabled={saving} onClick={() => void save()}><DownloadIcon className="size-3.5" />{saving ? 'Saving…' : 'Save As'}</Button>
+                <Button type="button" size="xs" variant="outline" disabled={saving || !canSave} onClick={() => void save()}><DownloadIcon className="size-3.5" />{saving ? 'Saving…' : 'Save As'}</Button>
                 {saved && <Badge size="xs" tone="green" glow={false}>Saved {name}</Badge>}
                 {ready?.truncated && <Badge size="xs" tone="orange" glow={false}>Truncated</Badge>}
             </BrainTopBar>
             <div className="flex min-h-0 flex-1 flex-col border-t border-border">
                 {text ? (
                     ready?.error ? <div className="space-y-2 p-3"><p role="alert" className="text-xs text-destructive">{ready.error}</p><Button variant="outline" onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : <FilePreview fileName={name} content={ready?.content ?? null} rawUrl="" loading={!ready} />
-                ) : kind === 'image' ? <DesktopFileImagePreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'image')} onBack={back} siblings={siblings} />
-                    : kind === 'audio' ? <DesktopFileAudioPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'audio')} onBack={back} siblings={siblings} />
-                    : kind === 'video' ? <DesktopFileVideoPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'video')} onBack={back} siblings={siblings} />
-                    : kind === 'pdf' ? <DesktopFilePdfPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'pdf')} onBack={back} siblings={siblings} />
+                ) : kind === 'image' ? <DesktopFileImagePreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'image')} onBack={back} siblings={siblings} onPreviewIdentity={setPreviewHash} />
+                    : kind === 'audio' ? <DesktopFileAudioPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'audio')} onBack={back} siblings={siblings} onPreviewIdentity={setPreviewHash} />
+                    : kind === 'video' ? <DesktopFileVideoPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'video')} onBack={back} siblings={siblings} onPreviewIdentity={setPreviewHash} />
+                    : kind === 'pdf' ? <DesktopFilePdfPreview name={name} path={path} srcUrl={sharedMediaUrl(path, 'pdf')} onBack={back} siblings={siblings} onPreviewIdentity={setPreviewHash} />
                     : <FilePreview fileName={name} content={null} rawUrl={sharedMediaUrl(path, 'download')} loading={false} />}
             </div>
         </div>

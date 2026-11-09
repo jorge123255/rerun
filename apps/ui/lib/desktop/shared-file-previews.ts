@@ -21,12 +21,13 @@ export async function readDesktopSharedMedia(path: string, kind: 'image' | 'audi
     if (!response.ok) throw await errorOf(response)
     const bytes = new Uint8Array(await response.arrayBuffer())
     const hash = response.headers.get('x-rerun-shared-sha256')
-    if (!hash) throw new Error('This shared file could not be confirmed.')
+    if (!hash || identity !== undefined && hash !== identity) throw new Error('This shared file could not be confirmed.')
     return { bytes, contentType: response.headers.get('content-type') ?? 'application/octet-stream', identity: hash, name: path.split('/').filter(Boolean).at(-1) ?? path }
 }
 
 export async function saveDesktopSharedFile(path: string, name: string, identity: string | undefined, signal?: AbortSignal): Promise<boolean> {
     const file = await readDesktopSharedMedia(path, 'download', identity, signal)
+    signal?.throwIfAborted()
     return saveDesktopResultFile(name, file.bytes)
 }
 

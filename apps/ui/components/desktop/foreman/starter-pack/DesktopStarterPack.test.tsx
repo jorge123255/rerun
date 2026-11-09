@@ -16,7 +16,7 @@ vi.mock('@/components/foreman/widgets/starter-pack/StarterPackRail', () => ({
 
 afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks() })
 
-const agent = { key: 'agent-1', name: 'Researcher', description: 'Finds things', setupRequired: false, skills: [] }
+const agent = { key: 'agent-1', name: 'Researcher', description: 'Finds things', role: "Researcher", connectorSlugs: [], setupRequired: false, skills: [], schedules: [], triggers: [], tools: [] }
 
 const template = (templateId: string, patch: Partial<DesktopTemplateSummary> = {}): DesktopTemplateSummary => ({
     templateId, revision: 'rev-1', title: `Title ${templateId}`, tagline: `Tagline ${templateId}`, category: 'other', updatedAt: '', agents: [agent], ...patch,

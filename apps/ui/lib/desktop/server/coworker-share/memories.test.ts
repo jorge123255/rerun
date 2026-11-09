@@ -7,7 +7,7 @@ import { memoryPreviewFromSource, prepareMemoryShareImport } from './memories'
 
 function source(content = 'Keep the same identity.'): DesktopCoworkerShareSource {
     const note = serializeMemoryNote({ id: 'note', kind: 'preference', tags: ['project'], createdAt: '2026-01-02T03:04:05Z', content })
-    const file = (path: string, bytes: Buffer) => ({ path, bytes, kind: 'text' as const, binary: false, textScanned: true, flagged: [], ownership: 'user' as const })
+    const file = (path: string, bytes: Buffer) => ({ path, bytes: new Uint8Array(bytes), kind: 'text' as const, binary: false, textScanned: true, flagged: [], ownership: 'user' as const })
     return { workspaceId: 1, agentId: 'source', name: 'Ada', description: 'Notes', revision: 'a'.repeat(64), setup: { required: false, prompt: '', answered: false }, config: {}, envKeys: [], mcpAuth: [], members: [file('SOUL.md',Buffer.from('Keep notes.')), { ...file('config.json',Buffer.from(JSON.stringify({ name: 'source', displayName: 'Ada', enabled: false, kind: 'user', ephemeral: false, tools: {}, mcpServers: [], selfImprovement: {}, setup: { required: false, completedAt: null, sessionId: null } }))), kind: 'config' }, file('memory/note.md',Buffer.from(renderMemoryMarkdown(note)))] }
 }
 
