@@ -111,6 +111,7 @@ it('passes only listed safe files into the page editor and opens that file throu
 
 it('keeps the page in place for a missing, unsafe, or other-workspace link', async () => {
     await mount()
+    drafts.flush.mockClear()
     for (const label of ['page:../secret.md', 'page:/data/agents/other/workspace/notes.md', 'page:missing.md', 'page:empty', 'page:%2e%2e/readme.md', 'page:shared:readme.md']) {
         await clickLabel(label)
         expect(document.querySelector('[data-testid="file-preview"]')).toBeNull()

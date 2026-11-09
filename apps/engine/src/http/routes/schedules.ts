@@ -96,6 +96,7 @@ scheduleRoutes.patch('/:slug', async c => {
 })
 
 scheduleRoutes.post('/describe', async c => {
+    if (!desktopApp()) return c.notFound()
     const agentId = c.req.param('id')!
     const input = desktopScheduleDescriptionInputSchema.parse(await c.req.json())
     const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(20_000)])

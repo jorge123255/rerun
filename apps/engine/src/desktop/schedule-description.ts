@@ -89,8 +89,8 @@ async function completeDesktopScheduleDescription(agent: LoadedAgent, input: Des
     const releaseWork = beginDesktopApiConnectionWork()
     if (!releaseWork) throw new HttpError(409, 'A provider connection is being removed. Nothing new was started.')
     try {
-        if (input.model) await resolveDesktopScheduleModel(agent, input)
-        const resolved = input.model ? await resolveRunModel(agent, input) : await resolveConfiguredModel(agent.config)
+        const requested = input.model ? await resolveDesktopScheduleModel(agent, input) : undefined
+        const resolved = requested ? await resolveRunModel(agent, requested) : await resolveConfiguredModel(agent.config)
         const connection = resolved.connection
         if (!connection || !isUsable(connection, resolved.model)) throw new HttpError(409, 'The selected local model is unavailable.')
         assertDesktopProvider(resolved.provider, connection.id)
@@ -101,7 +101,7 @@ async function completeDesktopScheduleDescription(agent: LoadedAgent, input: Des
             let text: string
             try {
                 const result = await generateText({
-                    model: modelFor(agent, override), output: Output.object({ schema: modelOutputSchema }), prompt: schedulePrompt(input),
+                    model: modelFor({ ...agent, resolved }, override), output: Output.object({ schema: modelOutputSchema }), prompt: schedulePrompt(input),
                     maxOutputTokens: 1000, maxRetries: 0, abortSignal: signal, providerOptions: { openai: { store: false } },
                 })
                 text = result.text
@@ -110,7 +110,10 @@ async function completeDesktopScheduleDescription(agent: LoadedAgent, input: Des
                 else throw error
             }
             signal.throwIfAborted()
-            if (await findConnection(connection.id) !== connection) throw new HttpError(409, 'The selected connection changed. Preview was not accepted.')
+            const current = await findConnection(connection.id)
+            if (current !== connection && (!connection.custom || current?.custom?.revision !== connection.custom.revision)) {
+                throw new HttpError(409, 'The selected connection changed. Preview was not accepted.')
+            }
             return text
         } finally { releaseAuth() }
     } finally { releaseWork() }
@@ -125,6 +128,8 @@ export async function describeDesktopSchedule(agentId: string, input: DesktopSch
     try {
         const agent = await getAgent(agentId)
         const text = await completeDesktopScheduleDescription(agent, parsed, signal)
+        signal.throwIfAborted()
+        await authorizeDesktopSchedule(agentId)
         signal.throwIfAborted()
         return parseModelSchedule(text)
     } catch (error) {

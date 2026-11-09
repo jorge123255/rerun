@@ -43,7 +43,7 @@ it('rehydrates Markdown answers, reasoning and documentation at their saved posi
         expect(host.querySelector('h2')?.textContent).toBe('Saved heading')
         expect(host.querySelectorAll('li')).toHaveLength(2)
         expect(host.querySelector('pre')?.textContent).toContain('literal code')
-        expect(host.querySelector('details strong')?.textContent).toBe('Saved reasoning')
+        expect(host.querySelector('details [data-streamdown=strong]')?.textContent).toBe('Saved reasoning')
         expect(host.querySelector('a')?.textContent).toContain('Recorded source')
         const before = host.textContent!
         expect(before.indexOf('Saved heading')).toBeLessThan(before.indexOf('Saved reasoning'))
@@ -72,7 +72,7 @@ it('keeps active URLs, embedded content and forged source links inert while reta
             expect(a.getAttribute('href')).toBe('https://example.com/ok')
             expect(a.getAttribute('rel')).toContain('noopener')
         }
-        expect(host.querySelector('strong')?.textContent).toBe('Safe')
+        expect(host.querySelector('[data-streamdown=strong]')?.textContent).toBe('Safe')
         expect(host.textContent).toContain('Remote image')
         expect(host.textContent).toContain('Inert source')
         expect(host.querySelector('[data-historical="notification"]')).not.toBeNull()

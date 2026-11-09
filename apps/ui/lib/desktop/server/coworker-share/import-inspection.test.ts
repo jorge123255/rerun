@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createClient, type Client } from '@libsql/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { captureDesktopCoworkerShareDatabase } from '../../../../../engine/src/desktop/coworker-share-database/capture'
@@ -13,12 +16,14 @@ import { createDesktopCoworkerShareStore } from './store'
 import { ensureDesktopCoworkerShareSchema } from './schema'
 
 let db: Client
+let directory: string
 beforeEach(async () => {
-    db = createClient({ url: ':memory:' })
+    directory = await mkdtemp(join(tmpdir(), 'rerun-share-inspection-'))
+    db = createClient({ url: `file:${join(directory, 'app.db')}` })
     await db.executeMultiple('CREATE TABLE desktop_agents(id TEXT PRIMARY KEY); CREATE TABLE desktop_sessions(id TEXT PRIMARY KEY,agent_id TEXT);')
     await ensureDesktopCoworkerShareSchema(db)
 })
-afterEach(() => db.close())
+afterEach(async () => { db.close(); await rm(directory, { recursive: true, force: true }) })
 
 async function databasePackage(empty = false) {
     const pkg = await captureDesktopCoworkerShareDatabase({ workspaceId: 1,agentId: 'agent-a',listPrivateSnapshot: async () => ({
