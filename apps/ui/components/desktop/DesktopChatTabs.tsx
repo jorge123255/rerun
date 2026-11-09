@@ -12,6 +12,7 @@ import { queueTabWrite } from '@/lib/desktop/tab-writes'
 import { forgetDesktopDraft, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopChatHistory } from './DesktopChatHistory'
+import type { DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
 import { DesktopConversation, type ComposerDraft, type TabActivity } from './DesktopConversation'
 import { DesktopRunHistory } from './DesktopRunHistory'
 
@@ -30,6 +31,7 @@ type Props = {
     onClosePanel: () => void
     onOpenModelSettings: () => void
     modelLabel?: string
+    overview?: DesktopConversationOverviewAuthority
 }
 
 function initialTabs(layout: DesktopTabLayout | null, sessions: DesktopSessionView[], requested: DesktopChatRequest | null): SessionTabsState {
@@ -43,7 +45,7 @@ function initialTabs(layout: DesktopTabLayout | null, sessions: DesktopSessionVi
     return id && session?.id === id ? openSessionTab(initial, id, session.title) : initial
 }
 
-export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, reload, onOpenCoworkerChat, onClosePanel, modelLabel, onOpenModelSettings }: Props) {
+export function DesktopChatTabs({ agent, sessions, initialLayout, requested, requestedPanel, onPanelRequestHandled, selected, onVisibleSession, refreshSessions, reload, onOpenCoworkerChat, onClosePanel, modelLabel, onOpenModelSettings, overview }: Props) {
     const [layout, setLayout] = useState(() => initialTabs(initialLayout, sessions, requested))
     const [rejectedRequest, setRejectedRequest] = useState<DesktopChatRequest | null>(() =>
         requested && 'tabUid' in requested && !initialLayout?.tabs.some(tab => tab.uid === requested.tabUid && tab.id === requested.sessionId) ? requested : null)
@@ -271,7 +273,7 @@ export function DesktopChatTabs({ agent, sessions, initialLayout, requested, req
             const visible = !rejectedRequest && active.uid === tab.uid
             if (!visible && !visited.includes(tab.uid)) return null
             return <div key={tab.uid} data-desktop-tab-active={visible} hidden={!visible} className={visible ? 'flex h-full min-h-0 flex-col' : 'hidden'}>
-                <DesktopConversation agent={agent} sessionId={tab.id} sessions={sessions} tabUid={tab.uid} active={selected && visible}
+                <DesktopConversation overview={overview} agent={agent} sessionId={tab.id} sessions={sessions} tabUid={tab.uid} active={selected && visible}
                     requestedPanel={selected && visible ? requestedPanel : null} onPanelRequestHandled={onPanelRequestHandled}
                     tabStrip={visible ? strip : false} onTabActivity={report} initialDraft={drafts[tab.uid]} onStartFork={startFork} onFinishFork={uid => pendingForks.current.delete(uid)}
                     onSelectSession={(id, title) => {
