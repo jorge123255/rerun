@@ -31,6 +31,34 @@ afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.useRea
 const pillOf = (container: HTMLElement) => container.querySelector<HTMLElement>('button[aria-label^="Actions:"]')!
 const panelOf = (container: HTMLElement) => container.querySelector('[aria-label="Actions inbox"]')
 
+test('an attention row names its coworker, opens that chat, and acknowledging it leaves the sibling', async () => {
+    const info = { id: 'notify:ada:chat:run:call', kind: 'info', agentId: 'ada', agentName: 'Ada', agentEnabled: true, sessionId: 'chat-ada', title: 'Launch notes', summary: 'Please review the launch notes', updatedAt: checkedAt, requestedAt: checkedAt }
+    const sibling = { ...info, id: 'notify:ada:other:run:call', sessionId: 'chat-other', title: 'Other chat', summary: 'Leave this one unread' }
+    const bodies: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+        if (url === '/api/desktop/pending-inbox/read') { bodies.push(JSON.parse(String(init?.body))); return Promise.resolve(Response.json({ marked: 1, failedIds: [] })) }
+        if (url === '/api/desktop/completions/read') return Promise.resolve(Response.json({ marked: 1 }))
+        if (url === '/api/desktop/completions') return Promise.resolve(completionsEmpty())
+        return Promise.resolve(Response.json({ items: [info, sibling], unavailableAgentIds: [], checkedAt }))
+    }))
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container), onOpen = vi.fn()
+    await act(async () => root.render(<DesktopActionsInbox open onOpenConversation={onOpen} />))
+    expect(container.textContent).toContain('Ada')
+    expect(container.textContent).toContain('Please review the launch notes')
+    const row = container.querySelector<HTMLElement>('[data-actions-inbox-item="notify:ada:chat:run:call"]')!
+    await act(async () => row.querySelector<HTMLButtonElement>('button[aria-label="Mark as read"]')!.click())
+    expect(bodies).toEqual([{ items: [{ id: info.id, kind: 'info', agentId: 'ada', sessionId: 'chat-ada' }] }])
+    expect(container.textContent).toContain('Leave this one unread')
+    expect(container.querySelector('[data-actions-inbox-item="notify:ada:chat:run:call"]')).toBeNull()
+    await act(async () => root.unmount())
+    const again = createRoot(container)
+    await act(async () => again.render(<DesktopActionsInbox open onOpenConversation={onOpen} />))
+    await act(async () => container.querySelector<HTMLElement>('[data-actions-inbox-item="notify:ada:chat:run:call"]')!.click())
+    expect(onOpen).toHaveBeenCalledWith({ id: 'chat-ada', agentId: 'ada', agentName: 'Ada', title: 'Launch notes' })
+    await act(async () => again.unmount())
+})
+
 test('browser takeover renders with original waiting metadata and opens its exact chat', async () => {
     const takeover = { ...question, id: 'browser-request', kind: 'takeover', summary: 'Review the browser marker' }
     vi.stubGlobal('fetch', routedFetch(() => Response.json({ items: [takeover], unavailableAgentIds: [], checkedAt })))

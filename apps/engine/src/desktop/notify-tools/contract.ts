@@ -23,15 +23,48 @@ export const desktopNotifyUserReceiptSchema = z.strictObject({
 })
 export type DesktopNotifyUserReceipt = z.infer<typeof desktopNotifyUserReceiptSchema>
 
+export const desktopNotifyUserAdmissionSchema = z.strictObject({
+    notificationId: z.string().min(8).max(600),
+    eventKey: z.string().min(8).max(600),
+    toolCallId: z.string().min(1).max(128),
+    agentId: z.string().min(1).max(128),
+    agentName: z.string().min(1).max(200),
+    sessionId: z.string().min(1).max(128),
+    runId: z.string().min(1).max(128),
+    message: z.string().min(1).max(16_000),
+    metadata: z.record(z.string(), z.unknown()).nullable(),
+})
+
 export type DesktopNotifyUserAdmission = {
     notificationId: string
     eventKey: string
+    toolCallId: string
     agentId: string
     agentName: string
     sessionId: string
     runId: string | null
     message: string
     metadata: Record<string, unknown> | null
+}
+
+export function desktopNotifyUserModelReceipt(receipt: DesktopNotifyUserReceipt): {
+    notificationId: string
+    eventKey: string
+    attemptId: string
+    status: DesktopNotifyUserReceipt['status']
+    nativeStatus: DesktopNotifyUserReceipt['nativeStatus']
+    reason?: string
+    createdAt: string
+} {
+    return {
+        notificationId: receipt.notificationId,
+        eventKey: receipt.eventKey,
+        attemptId: receipt.attemptId,
+        status: receipt.status,
+        nativeStatus: receipt.nativeStatus,
+        ...(receipt.reason ? { reason: receipt.reason.slice(0, 400) } : {}),
+        createdAt: receipt.createdAt,
+    }
 }
 
 export function desktopNotifyUserEventKey(identity: { agentId: string; sessionId: string; runId: string | null; toolCallId: string }): string {

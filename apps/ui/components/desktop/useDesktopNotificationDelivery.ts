@@ -63,13 +63,31 @@ export function useDesktopNotificationDelivery({ onOpenConversation, visibleSess
                 const body = desktopNotificationEventsSchema.parse(await response.json())
                 if (signal.aborted || isDesktopQuitting()) return
                 const bridge = desktopNotificationsBridge()
-                const keys = body.events.filter(event => !(document.visibilityState === 'visible' && event.sessionId === visible.current)
-                    && (body.channels.toast || (body.channels.sound && event.kind !== 'done'))).slice(0, 50).map(event => event.key)
+                const keys = body.events.filter(event => event.kind === 'info' || (!(document.visibilityState === 'visible' && event.sessionId === visible.current)
+                    && (body.channels.toast || (body.channels.sound && event.kind !== 'done')))).slice(0, 50).map(event => event.key)
                 if (!keys.length) return
                 const admission = await fetch(DESKTOP_NOTIFICATION_ADMIT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keys }), cache: 'no-store', signal })
                 if (!admission.ok) return
                 const admitted = desktopNotificationAdmissionsSchema.parse(await admission.json())
                 for (const event of admitted.events) {
+                    if (event.kind === 'info') {
+                        const looking = document.visibilityState === 'visible' && event.sessionId === visible.current
+                        let nativeStatus: DesktopNotificationDeliveryResult['status'] = 'unavailable'
+                        if (!signal.aborted && !isDesktopQuitting() && !looking && admitted.channels.toast) {
+                            showDesktopNotificationToast(event, openTarget)
+                            if (bridge.available) {
+                                const native = await boundedDelivery(bridge.notify({ key: event.key, kind: event.kind, agentId: event.agentId, sessionId: event.sessionId,
+                                    groupId: event.groupId ?? null, terminalId: event.terminalId ?? null, requestId: event.requestId ?? null,
+                                    title: event.title, subtitle: event.subtitle, silent: true, body: event.body ?? undefined }))
+                                nativeStatus = native.status
+                            }
+                        }
+                        if (!looking && admitted.channels.sound) await playSound(signal)
+                        const status = nativeStatus === 'shown' ? 'shown' : nativeStatus === 'unknown' ? 'unknown' : 'failed'
+                        await fetch(DESKTOP_NOTIFICATION_DELIVERY_URL, { method: 'POST', headers: { 'content-type': 'application/json' },
+                            body: JSON.stringify({ key: event.key, attemptId: event.attemptId, status, nativeStatus }), cache: 'no-store', signal: AbortSignal.timeout(5000) }).catch(() => {})
+                        continue
+                    }
                     let status: DesktopNotificationDeliveryResult['status'] = 'unavailable'
                     let nativeStatus: DesktopNotificationDeliveryResult['status'] | null = null
                     if (!signal.aborted && !isDesktopQuitting()) {

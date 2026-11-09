@@ -22,6 +22,11 @@ test('only bounded exact notification copy and target fields cross into native n
     assert.equal(notificationPayload({...payload,key:'k'.repeat(601)}),null)
     assert.equal(notificationPayload({...payload,launchUrl:'https://example.com'}).launchUrl,undefined)
     assert.equal(notificationPayload({...payload,silent:false}).silent,true)
+    const info = notificationPayload({...payload,kind:'info',key:'notify-user:owner:chat:run:call',requestId:'notify:owner:chat:run:call',body:'Look here'})
+    assert.equal(info.kind,'info')
+    assert.equal(info.requestId,'notify:owner:chat:run:call')
+    assert.equal(info.body,'Look here')
+    assert.equal('title' in info && info.silent,true)
 })
 test('show acknowledgement and duplicate keys share one OS attempt; clicks contain identity only',async()=>{
     const {notices,clicks,bridge}=fixture()
