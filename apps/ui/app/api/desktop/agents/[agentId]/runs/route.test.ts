@@ -47,19 +47,23 @@ afterEach(async () => {
 })
 
 test('maps the local coworker server-side and returns only list fields using one bounded read', async () => {
+    reply = { runs: Array.from({ length: 100 }, (_, i) => ({ ...recordedRun(), id: `run-${i + 1}` })) }
     const response = await get(alice)
     expect(response.headers.get('cache-control')).toBe('no-store')
     const body = await response.json()
-    expect(body.runs[0]).toMatchObject({ id: 'run-1', status: 'running', startedAt: recordedRun().startedAt, finishedAt: null })
+    expect(body.runs).toHaveLength(100)
+    expect(body.runs[99].id).toBe('run-100')
+    expect(body.runs[0]).toMatchObject({ id: 'run-1', status: 'running', startedAt: recordedRun().startedAt, finishedAt: null,
+        triggerSource: 'dashboard', triggerSlug: null })
     expect(body.runs[0]).not.toHaveProperty('agentId')
     expect(body.runs[0]).not.toHaveProperty('sessionId')
     expect(body.runs[0]).not.toHaveProperty('usageJson')
-    expect(requests).toEqual(['GET /agents/engine-alice/runs?limit=50'])
+    expect(requests).toEqual(['GET /agents/engine-alice/runs?limit=100'])
 })
 test('keeps another coworker empty and rejects engine IDs as local coworker IDs', async () => {
     expect(await (await get(bob)).json()).toEqual({ runs: [] })
     expect((await get('engine-alice')).status).toBe(404)
-    expect(requests).toEqual(['GET /agents/engine-bob/runs?limit=50'])
+    expect(requests).toEqual(['GET /agents/engine-bob/runs?limit=100'])
 })
 test('requires the local session and rejects foreign hosts and cross-site requests before contacting the engine', async () => {
     const anonymous = request(alice); anonymous.headers.delete('cookie')
