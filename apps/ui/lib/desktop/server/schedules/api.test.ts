@@ -84,3 +84,55 @@ test('cancellation after a mutation starts does not turn its successful result i
     expect(engine.createSchedule).toHaveBeenCalledTimes(1)
     expect(authorize).toHaveBeenCalledWith('engine-owner')
 })
+
+
+const exactModel = { connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' }
+
+test('forwards a complete exact model selection on create', async () => {
+    engine.createSchedule.mockResolvedValueOnce({ slug: 'task' })
+    const response = await handle(new Request('http://localhost', {
+        method: 'PUT', body: JSON.stringify({ input: { ...valid.input, ...exactModel } }),
+    }))
+
+    expect(response.status).toBe(200)
+    expect(engine.createSchedule).toHaveBeenCalledWith(expect.anything(), 'engine-owner', expect.objectContaining(exactModel))
+})
+
+test('forwards a complete exact model selection on update', async () => {
+    engine.updateSchedule.mockResolvedValueOnce({ slug: 'task' })
+    const response = await handle(new Request('http://localhost', {
+        method: 'PUT', body: JSON.stringify({ slug: 'task', input: { ...valid.input, ...exactModel } }),
+    }))
+
+    expect(response.status).toBe(200)
+    expect(engine.updateSchedule).toHaveBeenCalledWith(expect.anything(), 'engine-owner', 'task', expect.objectContaining(exactModel))
+})
+
+test('omitted model fields preserve coworker-default semantics', async () => {
+    engine.createSchedule.mockResolvedValueOnce({ slug: 'task' })
+    const response = await handle(new Request('http://localhost', {
+        method: 'PUT', body: JSON.stringify(valid),
+    }))
+
+    expect(response.status).toBe(200)
+    expect(engine.createSchedule).toHaveBeenCalledWith(expect.anything(), 'engine-owner', expect.objectContaining({
+        connectionId: null, provider: null, model: null,
+    }))
+})
+
+test.each([
+    { model: 'gpt-exact' },
+    { connectionId: 'conn-b' },
+    { provider: 'openai' },
+    { connectionId: 'conn-b', model: 'gpt-exact' },
+    { provider: 'openai', model: 'gpt-exact' },
+    { connectionId: 'conn-b', provider: 'openai' },
+])('rejects an incomplete model tuple without a mutation: %j', async fields => {
+    const response = await handle(new Request('http://localhost', {
+        method: 'PUT', body: JSON.stringify({ input: { ...valid.input, ...fields } }),
+    }))
+
+    expect(response.status).toBe(400)
+    expect(engine.createSchedule).not.toHaveBeenCalled()
+    expect(engine.updateSchedule).not.toHaveBeenCalled()
+})

@@ -16,8 +16,8 @@ export function requestHome(dataRoot: string): string {
     return join(dataRoot, 'desktop-templates', 'requests')
 }
 
-export async function readOwnJson(directory: string, relativeName: string): Promise<unknown | null> {
-    const read = await readConfined(directory, relativeName, jsonLimit)
+export async function readOwnJson(directory: string, relativeName: string, canonicalRoot?: string): Promise<unknown | null> {
+    const read = await readConfined(directory, relativeName, jsonLimit, canonicalRoot)
     if (!read.ok) {
         if (read.reason === 'unsupported') {
             const missing = await lstat(join(directory, relativeName)).then(() => false, (error:NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return true; throw error })
@@ -35,9 +35,9 @@ function jsonBytes(value: unknown): Buffer {
     return bytes
 }
 
-export async function writeOwnJson(directory: string, relativeName: string, value: unknown): Promise<void> {
+export async function writeOwnJson(directory: string, relativeName: string, value: unknown, canonicalRoot?: string): Promise<void> {
     await ensurePrivateDir(directory)
-    await writeExclusiveFile(directory, relativeName, jsonBytes(value))
+    await writeExclusiveFile(directory, relativeName, jsonBytes(value), canonicalRoot)
 }
 
 export async function replaceOwnJson(directory: string, name: string, value: unknown): Promise<void> {

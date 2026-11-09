@@ -46,6 +46,21 @@ test('defaults exclude private data and Cancel creates no share', async () => {
     expect(mounted.attemptStore.listExport({ workspaceId: 1, agentId: 'agent-a' })).toEqual([])
 })
 
+test('the bound server preview enables memories without selecting or exporting them on restore', async () => {
+    const api = client({ plan: vi.fn(async () => ({ ...sharePlan, memoryPreview: { available: true, contents: { count: 2, bytes: 321 }, digest: MEMORY_DIGEST } })) })
+    const mounted = await mount(api)
+    expect(mounted.flow().sections.memories).toMatchObject({ enabled: true, contents: { count: 2, bytes: 321 }, digest: MEMORY_DIGEST })
+    expect(mounted.flow().include.memories).toBe(false)
+    expect(api.review).not.toHaveBeenCalled()
+    expect(api.export).not.toHaveBeenCalled()
+    await act(async () => mounted.flow().setInclude({ memories: true }))
+    await act(async () => { await mounted.flow().reviewContent() })
+    expect(api.review).toHaveBeenCalledWith(expect.objectContaining({ include: { memories: true, database: false, files: false } }))
+    expect(mounted.flow().reviewed?.sections?.memoriesDigest).toBe(MEMORY_DIGEST)
+    await act(async () => mounted.flow().cancel())
+    expect(api.export).not.toHaveBeenCalled()
+})
+
 test('reopening an exported coworker permits the same retained archive after a new explicit review', async () => {
     const api = client({
         review: vi.fn().mockResolvedValueOnce(shareReview).mockResolvedValue({ ...shareReview, reused: true }),

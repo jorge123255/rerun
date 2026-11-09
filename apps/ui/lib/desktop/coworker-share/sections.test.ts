@@ -11,11 +11,22 @@ import {
     isReservedCoworkerShareMetadataPath,
     refusedDestinationReason,
     sectionTransferReady,
+    shareSectionReadiness,
     type DesktopCoworkerShareSectionBinding,
 } from './sections'
 
 const MEMORY_DIGEST = '1'.repeat(64)
 const DATABASE_DIGEST = '2'.repeat(64)
+
+test('production memory preview enables only the opt-in section and keeps exact counts/digest', () => {
+    const plan = { ...sharePlan, memoryPreview: { available: true, contents: { count: 2, bytes: 321 }, digest: MEMORY_DIGEST } }
+    expect(shareSectionReadiness(plan,null).memories).toMatchObject({ enabled: true, contents: { count: 2, bytes: 321 }, digest: MEMORY_DIGEST })
+    expect(shareSectionReadiness(plan,null).database.enabled).toBe(false)
+    expect(gateShareInclude({ memories: false, database: false, files: false },plan,null)).toEqual({ memories: false, database: false, files: false })
+    expect(gateShareInclude({ memories: true, database: true, files: false },plan,null)).toEqual({ memories: true, database: false, files: false })
+    expect(shareSectionReadiness({ ...plan, unavailable: { memories: 'Notes unavailable.' } },null).memories.enabled).toBe(false)
+    expect(shareSectionReadiness(sharePlan,null).memories.enabled).toBe(false)
+})
 
 function binding(overrides: Partial<DesktopCoworkerShareSectionBinding['preview']> = {}, authorities: DesktopCoworkerShareSectionBinding['authorities'] = { capture: true, validation: true, install: true }): DesktopCoworkerShareSectionBinding {
     return {

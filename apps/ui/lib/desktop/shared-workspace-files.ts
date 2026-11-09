@@ -2,7 +2,7 @@ export type DesktopSharedEntry = { name: string; type: 'file' | 'dir'; size: num
 
 export type DesktopSharedListing = { path: string; entries: DesktopSharedEntry[]; truncated: boolean }
 
-export type DesktopSharedPreview = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null }
+export type DesktopSharedPreview = { path: string; content: string; size: number; truncated: boolean; offset: number; nextOffset: number | null; editIdentity?: { expectedBytes: number; expectedSha256: string } | null }
 
 const BASE = '/api/desktop/shared-files'
 const deadline = (signal?: AbortSignal) => AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)])

@@ -20,6 +20,8 @@ import { projectPlanCard } from '@/lib/desktop/foreman-client'
 import { useDesktopForemanUi } from './useDesktopForemanUi'
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
 import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader } from './intake'
+import { DesktopStarterPack } from './starter-pack'
+import type { DesktopTemplateIdentity } from '@/components/desktop/templates/types'
 
 function anchorOf(placement: DesktopForemanPlacement): ForemanAnchor {
     if (placement.mode === 'float') return 'float'
@@ -49,6 +51,8 @@ export type DesktopForemanColumnProps = {
     dockFeed?: ExactDockFeed | null
     voiceSlot?: ReactNode
     intake?: DesktopForemanIntakeController
+    /** Opens the template library on one template's review; absent until root wires the seam. */
+    onReviewTemplate?: (template: DesktopTemplateIdentity) => void
     onOpenChange?: (open: boolean) => void
     onLayout?: (layout: { scope: string; open: boolean; placement: ForemanPlacement; dragging: boolean; mobile: boolean }) => void
 }
@@ -67,7 +71,7 @@ export function DesktopForemanColumn({
     orbState = 'idle',
     headerActions,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, focusRequest, controlledOpen, hidden, centerOpen, dockFeed, voiceSlot, intake, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
     const opened = useRef(false)
@@ -109,6 +113,8 @@ export function DesktopForemanColumn({
     const onRoutines = ui.tab === 'routines'
     const plan = projectPlanCard(foreman.planSnapshot)
     const docked = ui.placement.mode === 'dock'
+    // The rail takes the empty conversation's place instead of sitting under the welcome orb.
+    const starterPack = Boolean(onReviewTemplate && foreman.restored && messages.length === 0 && !plan.view && !foreman.build)
     return (
         <>
         <DesktopForemanDockLayout scope={dockBinding.scope} open={ui.open} hidden={hidden}
@@ -136,7 +142,7 @@ export function DesktopForemanColumn({
                         messages={messages}
                         streaming={streaming}
                         restored={foreman.restored}
-                        emptyWelcome
+                        emptyWelcome={!starterPack}
                         planSnapshot={foreman.planSnapshot}
                         decisionStatus={ui.decision}
                         build={foreman.build}
@@ -155,7 +161,13 @@ export function DesktopForemanColumn({
                         onOpenCoworker={input => foreman.navigate({ kind: 'open_coworker', agentId: input.agentId, sessionId: input.sessionId })}
                         onOpenBox={spaceId => foreman.navigate({ kind: 'open_box', spaceId })}
                         className="min-h-0 flex-1"
-                    />
+                    >
+                        {starterPack && onReviewTemplate && <DesktopStarterPack
+                            workspaceId={chat.workspaceId}
+                            active={ui.open && !hidden}
+                            onReviewTemplate={onReviewTemplate}
+                        />}
+                    </DesktopForemanChatLayer>
                     <DesktopForemanComposer
                         trailing={ui.open ? voiceSlot ?? composerTrailing : composerTrailing}
                         draft={ui.draft}

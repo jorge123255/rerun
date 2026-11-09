@@ -25,6 +25,7 @@ export type DesktopFileImagePreviewProps = {
     onBack: () => void
     siblings?: SiblingFiles | null
     viewerRef?: Ref<HTMLDivElement>
+    onPreviewIdentity?: (hash: string | null) => void
 }
 
 type View = { loading: true } | { error: string } | { src: string }
@@ -33,7 +34,7 @@ type View = { loading: true } | { error: string } | { src: string }
  * The original preview is `<img src={rawUrl}>`. This Mac route has no hosted file URL, so the
  * same bytes are shown from a blob. GIF and animated WebP stay in that `<img>` and are not
  * drawn to a canvas or played as audio or video. */
-export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef }: DesktopFileImagePreviewProps) {
+export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, siblings = null, viewerRef, onPreviewIdentity }: DesktopFileImagePreviewProps) {
     const [view, setView] = useState<View>({ loading: true })
     const requestKey = `${path}\0${identity ?? ''}\0${srcUrl}`
     const [requestKeySeen, setRequestKeySeen] = useState(requestKey)
@@ -43,6 +44,7 @@ export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, 
     }
 
     useEffect(() => {
+        onPreviewIdentity?.(null)
         if (!isDesktopImageRoute(srcUrl, path, identity)) {
             setView({ error: 'Could not preview this image.' })
             return
@@ -68,6 +70,7 @@ export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, 
                 }
                 objectUrl = URL.createObjectURL(new Blob([bytes], { type }))
                 if (cancelled) { URL.revokeObjectURL(objectUrl); return }
+                onPreviewIdentity?.(response.headers.get('x-rerun-shared-sha256'))
                 setView({ src: objectUrl })
             } catch {
                 if (!cancelled) setView({ error: 'Could not preview this image.' })
@@ -78,7 +81,7 @@ export function DesktopFileImagePreview({ name, path, identity, srcUrl, onBack, 
             controller.abort()
             if (objectUrl) URL.revokeObjectURL(objectUrl)
         }
-    }, [identity, path, srcUrl])
+    }, [identity, path, srcUrl, onPreviewIdentity])
 
     return <div ref={viewerRef} className="flex min-h-0 flex-1 flex-col">
         <PanelEditorHeader title={name} onBack={onBack} mono>
@@ -104,10 +107,10 @@ function previewUrl(srcUrl: string): string {
 }
 
 function isDesktopImageRoute(srcUrl: string, path: string, identity?: string): boolean {
-    if (!srcUrl.startsWith('/api/desktop/agents/') || srcUrl.includes('://') || srcUrl.includes('\\')) return false
+    if (!srcUrl.startsWith('/api/desktop/') || srcUrl.includes('://') || srcUrl.includes('\\')) return false
     try {
         const url = new URL(srcUrl, 'http://127.0.0.1')
-        return /^\/api\/desktop\/agents\/[^/]+\/files\/image$/.test(url.pathname)
+        return (/^\/api\/desktop\/agents\/[^/]+\/files\/image$/.test(url.pathname) || url.pathname === '/api/desktop/shared-files/media')
             && url.searchParams.get('path') === path
             && (url.searchParams.get('identity') ?? undefined) === identity
     } catch { return false }

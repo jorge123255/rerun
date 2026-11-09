@@ -8,8 +8,11 @@ import { bindDesktopServiceSkillOwners } from '../service-skills/authority'
 import { trustedSkillOwners } from '../../../../../engine/src/desktop/service-skills/authority'
 import { readPortableArchive } from '../../../../../engine/src/desktop/templates/portable-package'
 import { importDesktopPortableTemplate } from '../../../../../engine/src/desktop/templates/portable-import'
-import { isTemplateManifestPath } from '../../../../../engine/src/desktop/templates/install'
-import { desktopCoworkerShareSourceSchema, desktopTemplateInstallResultSchema, type DesktopCoworkerShareSource } from '@rerun/contracts'
+import { readForemanTemplateImport } from '../../../../../engine/src/desktop/templates/install'
+import { readConfined } from '../../../../../engine/src/desktop/templates/files'
+import { captureScopedCoworkerMemories, restoreScopedCoworkerMemories } from '../../../../../engine/src/desktop/coworker-share-memory/scoped'
+import { memoryPackageToArchiveMembers } from '../../../../../engine/src/desktop/coworker-share-memory/members'
+import { DESKTOP_TEMPLATE_LIMITS, desktopCoworkerShareSourceSchema, desktopTemplateInstallResultSchema, scanTextForSecrets, type DesktopCoworkerShareSource } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { openDesktopDatabase } from '../database'
 import { readDesktopRuntime, canonicalDesktopEngineRoot, type DesktopRuntime } from '../runtime'
@@ -25,6 +28,7 @@ import { createDesktopCoworkerShareStore, shareFingerprint } from './store'
 import { createDesktopCoworkerShareService } from './service'
 import { createDesktopCoworkerShareApi } from './api'
 import { createDesktopCoworkerShareAttemptStore } from './attempts'
+import { memoryPreviewFromSource, prepareMemoryShareImport } from './memories'
 
 const stableId = (parts: unknown[]) => {
     const hex = shareFingerprint(parts)
@@ -50,12 +54,18 @@ export async function readCurrentDesktopCoworkerShareSource(runtime: DesktopRunt
     const ownership = await trustedSkillOwners(join(agentsRoot,owner.engineAgentId,'workspace'))
     const inspected = await inspectCoworker(agentsRoot,agentId,owner.engineAgentId,{ includeBinary: true,requireTrustedOwnership: true,skillOwnership: ({ slug }) => ownership.has(slug) || slug.startsWith('svc-') ? 'connector' : 'user' })
     if (inspected.blocked) throw new DesktopHttpError(409,'This coworker cannot be safely shared until its source is available.')
+    const memory = await captureScopedCoworkerMemories({ agentRoot: join(agentsRoot,owner.engineAgentId), workspaceId, agentId, requestId: `source:${agentId}`, assertCurrent: async () => {
+        await current(runtime,false,signal)
+        await assertCoworkerNotDeleting(db,agentId)
+        if ((await findDesktopAgent(db,agentId))?.engineAgentId !== owner.engineAgentId) throw new DesktopHttpError(409,'The coworker was replaced during memory review.')
+    } })
     await current(runtime,false,signal)
     await assertCoworkerNotDeleting(db,agentId)
     const fresh = await findDesktopAgent(db,agentId)
     if (!fresh || fresh.engineAgentId !== owner.engineAgentId) throw new DesktopHttpError(409,'The coworker was replaced during review.')
     const files = [inspected.soul,inspected.install,inspected.config,...inspected.selectableFiles,...inspected.selectableSkills.flatMap(skill => skill.files)].filter((file): file is NonNullable<typeof file> => file !== null)
-    const members = files.map(file => ({ path: file.path,bytes: Buffer.from(file.raw),kind: file.path === 'config.json' ? 'config' as const : ['SOUL.md','INSTALL.md'].includes(file.path) ? 'instruction' as const : file.path.startsWith('skills/') ? 'skill' as const : file.binary ? 'binary' as const : 'text' as const,binary: file.binary,textScanned: file.textScanned,flagged: file.flagged,ownership: 'user' as const }))
+    const members = [...files.map(file => ({ path: file.path,bytes: Buffer.from(file.raw),kind: file.path === 'config.json' ? 'config' as const : ['SOUL.md','INSTALL.md'].includes(file.path) ? 'instruction' as const : file.path.startsWith('skills/') ? 'skill' as const : file.binary ? 'binary' as const : 'text' as const,binary: file.binary,textScanned: file.textScanned,flagged: file.flagged,ownership: 'user' as const })),
+        ...memoryPackageToArchiveMembers(memory).map(file => ({ ...file, kind: 'text' as const, binary: false, textScanned: true, flagged: scanTextForSecrets(file.bytes.toString('utf8')), ownership: 'user' as const }))]
     const body = { workspaceId,agentId,name: inspected.name,description: inspected.description,setup: inspected.setup,config: inspected.config?.text ? JSON.parse(inspected.config.text) : {},envKeys: inspected.envKeys,mcpAuth: inspected.mcpAuth,members }
     return desktopCoworkerShareSourceSchema.parse({ ...body,revision: shareFingerprint([body.workspaceId,body.agentId,body.name,body.description,body.setup,body.config,body.envKeys,body.mcpAuth,members.map(file => [file.path,createHash('sha256').update(file.bytes).digest('hex'),file.ownership,file.flagged])]) })
 }
@@ -81,10 +91,10 @@ export async function openDesktopCoworkerShareBinding(runtime: DesktopRuntime, r
     async function install(snapshotId: string, targetWorkspaceId: number, requestId: string) {
         if (targetWorkspaceId !== runtime.workspaceId) throw new DesktopHttpError(409,'Switch to the target workspace before importing.')
         await current(runtime,true)
-        const archive = await store.readArchive(snapshotId), restored = await readPortableArchive(archive.bytes)
-        if (restored.members.some(member => !isTemplateManifestPath(member.path))) throw new DesktopHttpError(409,'This share contains memory or database content unsupported by the current canonical template installer.')
+        const archive = await store.readArchive(snapshotId)
+        const prepared = await prepareMemoryShareImport(Buffer.from(archive.bytes),runtime.workspaceId,stableId(['share-memory',snapshotId,requestId]))
         const engineRoot = await canonicalDesktopEngineRoot(runtime)
-        const imported = await importDesktopPortableTemplate({ requestId: stableId(['share-package',runtime.workspaceId,snapshotId,requestId]),uploadId: stableId(['share-upload',snapshotId]),deps: { dataRoot: engineRoot,readImmutableUpload: async () => Buffer.from(archive.bytes) } })
+        const imported = await importDesktopPortableTemplate({ requestId: stableId(['share-package',runtime.workspaceId,snapshotId,requestId]),uploadId: stableId(['share-upload',snapshotId]),deps: { dataRoot: engineRoot,readImmutableUpload: async () => prepared.templateBytes } })
         if (imported.status !== 'imported') throw new DesktopHttpError(503,'The canonical package import is not confirmed.')
         await current(runtime,true)
         const installId = stableId(['share-install',runtime.workspaceId,snapshotId,requestId])
@@ -92,7 +102,23 @@ export async function openDesktopCoworkerShareBinding(runtime: DesktopRuntime, r
         const canonical = desktopTemplateAuthority(runtime)
         const templates = createDesktopTemplateServer({ db,engine: engineClient,foremanDisabled: true,
             initializeImportedSetup: async input => { await current(runtime,true); return canonical.initializeImportedSetup(input) },
-            commitInstalled: async input => { await current(runtime,true); return commitDesktopTemplateInstall(db,input,{ enabled: false }) },
+            commitInstalled: async input => {
+                await current(runtime,true,input.signal)
+                if (prepared.memories) {
+                    if (input.coworkers.length !== 1) throw new DesktopHttpError(409,'Memory import requires one fresh coworker.')
+                    const target = input.coworkers[0]!
+                    await restoreScopedCoworkerMemories({ agentRoot: join(engineRoot,'agents',target.engineAgentId), workspaceId: runtime.workspaceId, destinationAgentId: target.agentId, importReceiptId: input.receiptId, pkg: prepared.memories, assertFreshImport: async () => {
+                        await current(runtime,true,input.signal)
+                        const proof = await readForemanTemplateImport(join(engineRoot,'agents'),target.engineAgentId,input.receiptId)
+                        if (proof.state !== 'present' || proof.templateId !== input.templateId || proof.revision !== input.revision || await findDesktopAgent(db,target.agentId)) throw new DesktopHttpError(409,'Memory transfer requires the exact unpublished fresh coworker import.')
+                        const config = await readConfined(join(engineRoot,'agents',target.engineAgentId),'config.json',DESKTOP_TEMPLATE_LIMITS.maxFileBytes)
+                        if (!config.ok || JSON.parse(config.text).enabled !== false) throw new DesktopHttpError(409,'Memory transfer requires a fresh disabled coworker.')
+                        await current(runtime,true,input.signal)
+                    } })
+                }
+                await current(runtime,true,input.signal)
+                return commitDesktopTemplateInstall(db,input,{ enabled: false })
+            },
         })
         const parsed = desktopTemplateInstallResultSchema.safeParse(await templates.handle(operation))
         if (!parsed.success || parsed.data.status !== 'installed' || parsed.data.coworkers.length !== 1) throw new DesktopHttpError(503,'The canonical coworker installation is not confirmed.')
@@ -100,7 +126,8 @@ export async function openDesktopCoworkerShareBinding(runtime: DesktopRuntime, r
         return parsed.data.coworkers[0]!.id
     }
     const service = createDesktopCoworkerShareService(store,{
-        unavailable: { memories: 'Memory transfer is unavailable in this version. Existing memories stay on this Mac.', database: 'Database transfer is unavailable in this version. Existing tables stay on this Mac.' },
+        unavailable: { database: 'Database transfer is unavailable in this version. Existing tables stay on this Mac.' },
+        memoryPreview: memoryPreviewFromSource,
         assertCurrent: async input => {
             await current(runtime,input.operation !== 'read')
             if (input.workspaceId !== undefined && input.workspaceId !== runtime.workspaceId || input.agentId !== undefined && input.agentId !== routeAgentId) throw new DesktopHttpError(404,'This share belongs to another workspace or coworker.')

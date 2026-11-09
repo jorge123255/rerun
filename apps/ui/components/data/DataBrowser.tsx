@@ -7,6 +7,7 @@ import { DataBrowserPagination } from '@/components/data/DataBrowserPagination'
 import { DataBrowserTable, rowKey, type DbRow } from '@/components/data/DataBrowserTable'
 import { DataBrowserToolbar } from '@/components/data/DataBrowserToolbar'
 import { DataViewBar } from '@/components/data/DataViewBar'
+import { LeadSourcesSheet } from '@/components/data/sources/LeadSourcesSheet'
 import { ViewBoard } from '@/components/data/views/ViewBoard'
 import { ViewGallery } from '@/components/data/views/ViewGallery'
 import { ViewList } from '@/components/data/views/ViewList'
@@ -44,6 +45,7 @@ type DataBrowserProps = {
 
 type ViewDialog = { open: boolean; generation: number; view?: TableView; layout?: CardLayout }
 type BrowserScope = { source: DataSource; table: string | null }
+type OpenDetail = { source: DataSource; table: string; key: string | null; row: DbRow }
 
 export function DataBrowser({ source, initial, requireInitialView = false, onInitialConsumed, onExpand, table: pinnedTable, onTableDropped }: DataBrowserProps) {
     const [requested] = useState(() => initial ?? null)
@@ -99,6 +101,7 @@ export function DataBrowser({ source, initial, requireInitialView = false, onIni
     // The kind of each column is read from the first page of a table and view, then kept, so a
     // column does not change looks from one page to the next.
     const [kindSample, setKindSample] = useState<{ key: string; rows: DbRow[] } | null>(null)
+    const [openDetail, setOpenDetail] = useState<OpenDetail | null>(null)
 
     // Kept out of loadTables' deps: callers pass this callback inline, and a fresh identity on every
     // render would make the effect below refetch forever.
@@ -162,6 +165,7 @@ export function DataBrowser({ source, initial, requireInitialView = false, onIni
         setAddingView(false)
         setData(null)
         setKindSample(null)
+        setOpenDetail(null)
         setViewDialog(current => ({ open: false, generation: current.generation + 1 }))
     }, [source, selected])
 
@@ -252,6 +256,13 @@ export function DataBrowser({ source, initial, requireInitialView = false, onIni
     const friendly = useMemo(() => friendlyColumns(tableMeta?.columns ?? [], sampleRows ?? []), [tableMeta, sampleRows])
     const friendlyByKey = useMemo(() => new Map(friendly.map(column => [column.key, column])), [friendly])
     const viewOrder = activeView?.layout === 'table' && activeView.columns?.length ? activeView.columns : undefined
+    const sheetColumns = useMemo(() => gridColumns(friendly, viewOrder), [friendly, viewOrder])
+    const visibleDetail = openDetail && openDetail.source === source && openDetail.table === selected && rowKey(openDetail.row) === openDetail.key ? openDetail : null
+    const openRow = (row: DbRow) => {
+        const current = scopeRef.current
+        if (!current.table || current.source !== source || current.table !== selected) return
+        setOpenDetail({ source: current.source, table: current.table, key: rowKey(row), row })
+    }
     const returned = data?.columns
     const shownColumns = useMemo(() => {
         if (viewOrder) return viewOrder
@@ -565,15 +576,15 @@ export function DataBrowser({ source, initial, requireInitialView = false, onIni
             {preferenceError && <div role="alert" className="mx-4 mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive @3xl:mx-12">{preferenceError}</div>}
             <div className={cn('min-h-0 flex-1 overflow-auto', !boardView && '@3xl:px-12')}>
                 {boardView && selected ? (
-                    <ViewBoard source={source} table={selected} view={boardView} query={query} refreshKey={refreshKey} context={cellContext} onRowsChanged={onBoardRowsChanged} />
+                    <ViewBoard source={source} table={selected} view={boardView} query={query} refreshKey={refreshKey} context={cellContext} onRowsChanged={onBoardRowsChanged} onOpenRow={openRow} />
                 ) : (loadingRows && !data) || activeId === null ? (
                     <SkeletonGrid />
                 ) : rows.length === 0 ? (
                     <EmptyState className="h-full" icon={DatabaseIcon} title="No rows" description={search ? 'No row matches this search.' : 'This table is empty.'} />
                 ) : activeView?.layout === 'list' ? (
-                    <ViewList view={activeView} rows={rows} context={cellContext} />
+                    <ViewList view={activeView} rows={rows} context={cellContext} onOpenRow={openRow} />
                 ) : activeView?.layout === 'gallery' ? (
-                    <ViewGallery view={activeView} rows={rows} context={cellContext} />
+                    <ViewGallery view={activeView} rows={rows} context={cellContext} onOpenRow={openRow} />
                 ) : (
                     <DataBrowserTable
                         key={scopeSequence.current}
@@ -621,6 +632,16 @@ export function DataBrowser({ source, initial, requireInitialView = false, onIni
                     onSaved={view => onViewSaved(view, dialogRef.current.generation === viewDialog.generation)}
                 />
             )}
+            <LeadSourcesSheet
+                row={visibleDetail?.row ?? null}
+                onOpenChange={open => {
+                    if (open || !visibleDetail) return
+                    setOpenDetail(current => current && current.source === visibleDetail.source && current.table === visibleDetail.table && current.key === visibleDetail.key ? null : current)
+                }}
+                columns={sheetColumns}
+                sources={null}
+                tones={activeView?.tones}
+            />
             <PurgeTableDialog open={purgeDialogOpen} onOpenChange={setPurgeDialogOpen} onConfirm={confirmPurgeTable} table={selected ?? ''} />
             <DeleteTableDialog open={tableDialogOpen} onOpenChange={setTableDialogOpen} onConfirm={confirmDropTable} table={selected ?? ''} />
         </div>

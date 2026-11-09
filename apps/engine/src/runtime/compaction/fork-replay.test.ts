@@ -14,7 +14,7 @@ const { forkReply } = await import('../../db/repos/regenerations.js')
 
 it('replays a copied prefix with the actual OpenAI Responses adapter even if the source item references expired', async () => {
     const agent = 'drafts'
-    const scope = (sessionId: string) => ({ agent: { id: agent }, sessionId, model: 'fixture', provider: 'openai' } as RunContext)
+    const scope = (sessionId: string) => ({ agent: { id: agent, resolved: { provider: 'openai', model: 'fixture', connection: null } }, sessionId, model: 'fixture', provider: 'openai' } as RunContext)
     const source = await createSession(agent)
     await appendMessage(agent, source.id, { role: 'user', content: 'Find the sketch' })
     const citation = { type: 'source-url' as const, sourceId: 'original-source', url: 'https://example.org/cited-sketch' }

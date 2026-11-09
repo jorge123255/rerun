@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { desktopPortablePackageManifestSchema } from './desktop-portable-templates.js'
 import { desktopTemplateRevisionSchema } from './desktop-templates.js'
+import { desktopCoworkerShareMemoryPreviewSchema } from './desktop-coworker-share-memory.js'
 
 export const desktopCoworkerShareIncludeSchema = z.strictObject({
     memories: z.boolean(),
@@ -50,6 +51,8 @@ export type DesktopCoworkerShareReviewResult = z.infer<typeof desktopCoworkerSha
 export const desktopCoworkerSharePlanSchema = z.strictObject({
     agentName: z.string().min(1).max(200),
     sourceRevision: desktopTemplateRevisionSchema.optional(),
+    /** Present only when the canonical capture/validation/fresh-install binding is mounted. */
+    memoryPreview: desktopCoworkerShareMemoryPreviewSchema.optional(),
     unavailable: z.strictObject({ memories: z.string().min(1).max(400).optional(), database: z.string().min(1).max(400).optional(), files: z.string().min(1).max(400).optional() }).optional(),
     warnings: z.array(z.string().min(1).max(400)).max(30),
     envKeyCount: z.number().int().nonnegative().max(100),

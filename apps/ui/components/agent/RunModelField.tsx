@@ -57,9 +57,10 @@ type RunModelFieldProps = {
     helperText: string
     // What the agent's own model resolves to today, so the default entry is not a blind choice.
     agentModel?: string | null
+    disabled?: boolean
 }
 
-export function RunModelField({ id, value, onChange, availableGroups, helperText, agentModel }: RunModelFieldProps) {
+export function RunModelField({ id, value, onChange, availableGroups, helperText, agentModel, disabled }: RunModelFieldProps) {
     // Keep a pair that is no longer available (connection deleted, model switched off) selectable,
     // so the routine stays editable instead of silently losing it.
     const orphan = useMemo(
@@ -80,7 +81,7 @@ export function RunModelField({ id, value, onChange, availableGroups, helperText
 
     return (
         <Field label="Model" htmlFor={id} helperText={helperText}>
-            <Select value={encode(value)} onValueChange={pick}>
+            <Select value={encode(value)} onValueChange={pick} disabled={disabled}>
                 <SelectTrigger id={id} className="h-8 w-full text-sm">
                     <SelectValue placeholder="Select a model">{triggerLabel}</SelectValue>
                 </SelectTrigger>

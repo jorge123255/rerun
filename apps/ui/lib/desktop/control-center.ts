@@ -20,7 +20,7 @@ export function buildDesktopControlCoworkerTabs({ panels, setup, actions }: {
         : panels && isDesktopCoworkerPanel(tab.id) && (tab.id !== 'actions' || actions)).map(tab => tab.id === 'triggers' ? { ...tab, description: 'URLs that start a run when called on this Mac' } : tab)
 }
 
-export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'shared_files', 'company_brain', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'notifications', 'shortcuts'] as const
+export const DESKTOP_CONTROL_COMMAND_IDS = ['add_coworker', 'new_box', 'shared_files', 'company_brain', 'team_board', 'model_settings', 'workspace_settings', 'recenter_board', 'toggle_theme', 'notifications', 'shortcuts', 'getting_started'] as const
 
 export type DesktopControlCommandId = (typeof DESKTOP_CONTROL_COMMAND_IDS)[number]
 
@@ -36,6 +36,7 @@ export type DesktopControlCommand = {
 }
 
 export type DesktopControlCommandOptions = {
+    gettingStarted?: boolean
     sharedFiles?: boolean
     brain?: boolean
     addBox?: boolean
@@ -53,6 +54,7 @@ export function buildDesktopControlCommands(options: DesktopControlCommandOption
         { id: 'team_board', group: 'actions', label: 'Team board', keywords: ['board', 'team', 'return', 'workspace'] },
         { id: 'model_settings', group: 'settings', label: 'Model settings', keywords: ['models', 'providers', 'claude', 'chatgpt', 'openai', 'anthropic', 'api key', 'subscription'] },
     ]
+    if (options.gettingStarted) commands.push({ id: 'getting_started', group: 'actions', label: 'Getting started', keywords: ['onboarding', 'checklist', 'setup', 'progress', 'milestones'] })
     if (options.brain) commands.push({ id: 'company_brain', group: 'actions', label: 'Company Brain', keywords: ['knowledge', 'pages', 'proposals', 'company', 'team'] })
     if (options.sharedFiles) commands.push({ id: 'shared_files', group: 'actions', label: 'Shared files', keywords: ['workspace', 'documents', 'upload'] })
     if (options.addBox) commands.push({ id: 'new_box', group: 'actions', label: 'New Box', keywords: ['create', 'add', 'team', 'group'] })

@@ -1,5 +1,7 @@
 'use client'
 
+import { DesktopConversationOverview, type DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
+
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { useChat } from '@ai-sdk/react'
@@ -185,7 +187,7 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, onOpenModelSettings }: {
+export function DesktopConversation({ agent, sessionId, sessions, tabUid, active = true, requestedPanel, onPanelRequestHandled, tabStrip, initialDraft, onTabActivity, onStartFork, onFinishFork, onSelectSession, onChatSession, renderHistory, renderRunHistory, onOpenCoworkerChat, onClosePanel, modelLabel, onOpenModelSettings, overview }: {
     agent: DesktopAgentView
     sessionId: string | null
     sessions: DesktopSessionView[]
@@ -206,6 +208,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
     onClosePanel?: () => void
     modelLabel?: string
     onOpenModelSettings?: () => void
+    overview?: DesktopConversationOverviewAuthority
 }) {
     const setup = useDesktopSetup(agent.id)
     const setupBlocked = !setup.view || !!setup.error || setup.view.pending && (!setup.view.sessionId || setup.view.sessionId !== sessionId)
@@ -1250,7 +1253,14 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                 {onClosePanel && <Button type="button" aria-label="Close panel" variant="ghost" size="icon-sm" className="justify-self-end" onClick={onClosePanel}><XIcon className="size-4" /></Button>}
             </header>
             {cardOpen && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={dismissCard} />}
-            <section aria-label="Coworker details" hidden={!cardOpen} className="absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl">
+            <section aria-label="Coworker details" hidden={!cardOpen} className={!cardOpen ? "hidden" : overview ? "absolute inset-x-3 top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl" : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
+                {overview && cardOpen && active && <DesktopConversationOverview
+                    authority={overview} agent={agent} active={active && !draft.quitting}
+                    working={generating} settingsDisabledReason={generating || !!sessionId && engineRunning.id !== sessionId ? 'Wait for this coworker’s current run to finish.' : null}
+                    onClose={dismissCard} onOpenSession={onSelectSession}
+                    onOpenAcceptedPanel={panel => dialogControl(panel).onOpenChange(true)}
+                />}
+                <div hidden={!!overview}>
                 <p className="text-sm text-muted-foreground">{agent.description || 'Local coworker'}</p>
                 {panelNotice && <p role="status" className="mt-2 text-sm text-muted-foreground">{panelNotice}</p>}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1270,6 +1280,7 @@ export function DesktopConversation({ agent, sessionId, sessions, tabUid, active
                     <Button type="button" variant="ghost" size="sm" disabled={inactive} onClick={() => setScreenOpen('manual')}>Browser</Button>
                     <DesktopCoworkerMonitoring agent={agent} dialogControl={dialogControl('monitoring')} />
                     <DesktopCoworkerSettings agent={agent} disabled={generating || !!sessionId && engineRunning.id !== sessionId} dialogControl={dialogControl('settings')} />
+                </div>
                 </div>
             </section>
             {tabStrip ?? <div className="flex shrink-0 items-center gap-1 px-3 pt-2 pb-1">

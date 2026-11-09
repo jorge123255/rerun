@@ -5,7 +5,7 @@ import { RunStatusBadge } from '@rerun/ui/monitoring'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { useVisibleInterval } from '@/hooks/useVisibleInterval'
-import { desktopRunsSchema, recordedRunUsage, type DesktopRunView } from '@/lib/desktop/run-history'
+import { DESKTOP_RUN_HISTORY_LIMIT, desktopRunsSchema, recordedRunUsage, type DesktopRunView } from '@/lib/desktop/run-history'
 import { fullDateTime } from '@/lib/time'
 import type { DesktopAgentView } from './DesktopApp'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -19,6 +19,7 @@ function RecordedTime({ value, fallback = 'Not recorded' }: { value: string | nu
 
 function RunRow({ agentId, run }: { agentId: string; run: DesktopRunView }) {
     const [open, setOpen] = useState(false)
+    const trigger = run.triggerSlug ?? run.triggerSource
     return <li>
         <Collapsible open={open} onOpenChange={setOpen} className="overflow-hidden rounded-lg border">
             <CollapsibleTrigger className="group flex w-full flex-col gap-2 p-3 text-left hover:bg-accent/30">
@@ -30,6 +31,7 @@ function RunRow({ agentId, run }: { agentId: string; run: DesktopRunView }) {
                 <span className="text-xs text-muted-foreground">Finished <RecordedTime value={run.finishedAt} fallback={run.status === 'running' ? 'In progress' : 'Not recorded'} /></span>
                 <span className="break-words text-xs text-muted-foreground">{run.stepCount} step{run.stepCount === 1 ? '' : 's'} · {recordedRunUsage(run)}</span>
                 {(run.provider || run.model) && <span className="break-all text-xs text-muted-foreground">{[run.provider, run.model].filter(Boolean).join(' · ')}</span>}
+                {trigger && <span className="break-words text-xs text-muted-foreground">{trigger}</span>}
             </CollapsibleTrigger>
             <CollapsibleContent>{open && <DesktopRunDetails agentId={agentId} runId={run.id} status={run.status} />}</CollapsibleContent>
         </Collapsible>
@@ -81,7 +83,7 @@ export function DesktopRunHistory({ agent, dialogControl }: { agent: DesktopAgen
         <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-xl">
             <DialogHeader className="shrink-0">
                 <DialogTitle>Recent runs</DialogTitle>
-                <DialogDescription>Latest 50 runs for {agent.name}. Updates while this list is open.</DialogDescription>
+                <DialogDescription>Latest {DESKTOP_RUN_HISTORY_LIMIT} runs for {agent.name}. Updates while this list is open.</DialogDescription>
             </DialogHeader>
             {open && <RunList key={agent.id} agentId={agent.id} />}
         </DialogContent>

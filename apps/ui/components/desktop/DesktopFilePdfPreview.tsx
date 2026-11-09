@@ -32,6 +32,7 @@ type Props = {
     onBack: () => void
     siblings?: SiblingFiles | null
     viewerRef?: Ref<HTMLDivElement>
+    onPreviewIdentity?: (hash: string | null) => void
     /** `files` keeps the Files header and sibling arrows. `body` is the page frame for a lightbox that already has a title. */
     chrome?: 'files' | 'body'
 }
@@ -45,7 +46,7 @@ export function DesktopFilePdfPreview(props: Props) {
 }
 
 /** Rerun's FileDetail header and white PDF frame. The page is a PNG; selection and Find sit on top of it. */
-function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = null, viewerRef, chrome = 'files' }: Props) {
+function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = null, viewerRef, onPreviewIdentity, chrome = 'files' }: Props) {
     const [page, setPage] = useState(1)
     const [scale, setScale] = useState(1)
     const [pages, setPages] = useState<number | null>(null)
@@ -68,6 +69,7 @@ function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = 
     useEffect(() => { textRef.current = text }, [text])
 
     useEffect(() => {
+        onPreviewIdentity?.(null)
         const url = pdfRoute(srcUrl, path, identity)
         if (!source && !url) { setView({ key: requestKey, error: 'Could not read this PDF.' }); return }
         url?.searchParams.set('page', String(page))
@@ -103,13 +105,14 @@ function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = 
                 if (cancelled) { release(); return }
                 setPages(meta.pages)
                 setDocumentHash(meta.sha256)
+                onPreviewIdentity?.(meta.sha256)
                 setView({ key: requestKey, src: objectUrl, meta, release })
             } catch (error) {
                 if (!cancelled) setView({ key: requestKey, error: error instanceof Error ? error.message : 'Could not preview this PDF page.' })
             }
         })()
         return () => { cancelled = true; controller.abort(); release() }
-    }, [srcUrl, source, path, identity, page, scale, requestKey])
+    }, [srcUrl, source, path, identity, page, scale, requestKey, onPreviewIdentity])
 
     // Text is tied to the exact bytes rendered, not only dev:ino (which survives in-place edits).
     // Page and zoom reuse it while that content hash is unchanged.
@@ -212,10 +215,10 @@ function PdfDocument({ name, path, identity, srcUrl, source, onBack, siblings = 
 }
 
 function pdfRoute(srcUrl: string, path: string, identity?: string): URL | null {
-    if (!srcUrl.startsWith('/api/desktop/agents/') || srcUrl.includes('://') || srcUrl.includes('\\')) return null
+    if (!srcUrl.startsWith('/api/desktop/') || srcUrl.includes('://') || srcUrl.includes('\\')) return null
     try {
         const url = new URL(srcUrl, 'http://127.0.0.1')
-        if (!/^\/api\/desktop\/agents\/[^/]+\/files\/pdf$/.test(url.pathname)
+        if (!/^\/api\/desktop\/agents\/[^/]+\/files\/pdf$/.test(url.pathname) && url.pathname !== '/api/desktop/shared-files/pdf'
             || url.searchParams.getAll('path').length !== 1 || url.searchParams.get('path') !== path
             || url.searchParams.getAll('identity').length > 1 || (url.searchParams.get('identity') ?? undefined) !== identity
             || [...url.searchParams.keys()].some(key => key !== 'path' && key !== 'identity')) return null
@@ -227,7 +230,7 @@ function pdfTextRoute(srcUrl: string, path: string, identity?: string): URL | nu
     const url = pdfRoute(srcUrl, path, identity)
     if (!url) return null
     url.pathname = url.pathname.replace(/\/pdf$/, '/pdf-text')
-    return url.pathname.endsWith('/files/pdf-text') ? url : null
+    return url.pathname.endsWith('/files/pdf-text') || url.pathname === '/api/desktop/shared-files/pdf-text' ? url : null
 }
 
 function metadata(headers: Headers, requestedPage: number): PageMeta {

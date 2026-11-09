@@ -1,11 +1,14 @@
 import { runSchema, type Run } from '@rerun/contracts'
 import { z } from 'zod'
 
+export const DESKTOP_RUN_HISTORY_LIMIT = 100
+
 export const desktopRunSchema = runSchema.pick({
     id: true, status: true, startedAt: true, finishedAt: true, stepCount: true,
     provider: true, model: true, inputTokens: true, outputTokens: true,
     cachedInputTokens: true, reasoningTokens: true, totalTokens: true, costMicros: true,
-})
+    triggerSource: true, triggerSlug: true,
+}).partial({ triggerSource: true, triggerSlug: true })
 export const desktopRunsSchema = z.object({ runs: z.array(desktopRunSchema) })
 export type DesktopRunView = z.infer<typeof desktopRunSchema>
 

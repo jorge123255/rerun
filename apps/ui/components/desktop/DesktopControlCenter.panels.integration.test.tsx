@@ -8,6 +8,9 @@ import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
 import { resetDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
+import { fxCameraWriteSchema } from '@/lib/desktop/fx-repairs/board-camera'
+import { desktopGettingStartedResponse } from '@/lib/desktop/getting-started/progress'
+import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
 import { DesktopApp, type DesktopBootstrap } from './DesktopApp'
 
@@ -37,8 +40,8 @@ vi.mock('motion/react', async original => {
 
 const date = '2026-11-04T12:00:00.000Z'
 const providers = { connections: [], default: null }
-const reviewer = { id: 'panel-reviewer', name: 'Reviewer', description: 'Reviews', enabled: true, createdAt: date, updatedAt: date }
-const auditor = { id: 'panel-auditor', name: 'Auditor', description: 'Audits', enabled: true, createdAt: date, updatedAt: date }
+const reviewer = { id: 'bca843a7-f2c6-461a-9b56-e8b77888fac1', name: 'Reviewer', description: 'Reviews', enabled: true, createdAt: date, updatedAt: date }
+const auditor = { id: 'cbf9f65e-24bc-4563-9b8f-459c874b9064', name: 'Auditor', description: 'Audits', enabled: true, createdAt: date, updatedAt: date }
 const coworkers = [reviewer, auditor]
 const roots = new Set<ReturnType<typeof createRoot>>()
 const unexpected: string[] = []
@@ -110,7 +113,11 @@ async function dismissPanel(title: string) {
     await until(() => !panelDialog(title))
 }
 
-function fixture(runStatus?: () => Promise<Response>) {
+function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
+    const boxId = '05699308-9d0d-412b-b3e5-69ef56bd2a0e'
+    const board: DesktopBoardState = { revision: 1, spaces: [{ id: boxId, name: 'Review Box', col_start: 0, row_start: 0, col_end: 11, row_end: 7 }],
+        placements: coworkers.map((agent, index) => ({ agentId: agent.id, spaceId: boxId, col: index * 3, row: 0 })) }
+    let gettingStartedDismissed = false
     const drafts = createDesktopDraftFixture()
     const recent = createDesktopRecentFixture()
     const layouts = new Map<string, DesktopTabLayout>(coworkers.map(agent => [agent.id, {
@@ -136,6 +143,16 @@ function fixture(runStatus?: () => Promise<Response>) {
         if (draft) return draft
         const recentResponse = recent.handle(input, init)
         if (recentResponse) return recentResponse
+        if (productionBoard && url.pathname === '/api/desktop/spaces' && method === 'GET') return Response.json({ board })
+        if (productionBoard && url.pathname === '/api/desktop/workspaces/2/board-camera') {
+            if (method === 'GET') return Response.json({ workspaceId: 2, revision: 0, camera: null })
+            const { workspaceId, requestId, expectedRevision, camera } = fxCameraWriteSchema.parse(JSON.parse(String(init?.body)))
+            return Response.json({ status: 'saved', requestId, snapshot: { workspaceId, revision: expectedRevision + 1, camera } })
+        }
+        if (productionBoard && url.pathname === '/api/desktop/getting-started') {
+            if (method === 'POST') gettingStartedDismissed = JSON.parse(String(init?.body)).action === 'dismiss'
+            return Response.json(desktopGettingStartedResponse(2, gettingStartedDismissed, { coworkers: 2, connectedProviders: 0, modelChats: 0, schedules: 0 }))
+        }
         if (url.pathname === '/api/desktop/settings' && method === 'GET') return Response.json(providers)
         if (url.pathname === '/api/desktop/board-activity') return Response.json({ agents: Object.fromEntries(coworkers.map(agent => [agent.id, 'idle'])) })
         if (url.pathname === '/api/desktop/completions') return Response.json({ items: [], unavailableAgentIds: [], enabledAt: date, checkedAt: date, nextCursor: null })
@@ -205,7 +222,7 @@ function fixture(runStatus?: () => Promise<Response>) {
             const root = createRoot(container)
             roots.add(root)
             const initialData: DesktopBootstrap = { ...providers, theme: 'dark', profile: { id: 1, displayName: 'Local' },
-                workspace: { id: 1, name: 'Panel studio' }, agents: coworkers, recentCoworkers: recent.snapshot() }
+                workspace: { id: 1, name: 'Panel studio' }, ...(productionBoard ? { runtimeWorkspaceId: 2, runtimeLaunchNonce: 'test-board-launch', board } : {}), agents: coworkers, recentCoworkers: recent.snapshot() }
             await act(async () => { root.render(<DesktopApp initialData={initialData} />) })
             return { container, async unmount() {
                 await act(async () => { root.unmount() })
@@ -410,4 +427,35 @@ test('choosing Files cancels deferred Settings so its late status cannot replace
     expect(panelDialog('Files')).toBe(files)
     expect(panelDialog('Edit coworker')).toBeUndefined()
     expect(app.panelReads.some(path => path.endsWith('/settings'))).toBe(false)
+})
+
+
+test('opens the current Box overview from the board and restores the checklist dismissal on remount', async () => {
+    const app = fixture(undefined, true)
+    const pill = 'Getting started: 1 of 3 done'
+    const mounted = await app.mount()
+    await until(() => mounted.container.querySelector(`[aria-label="${pill}"]`))
+    await click(pill)
+    await until(() => document.querySelector('[aria-label="Hide"]'))
+    await click('Hide')
+    await until(() => !mounted.container.querySelector(`[aria-label="${pill}"]`))
+    await mounted.unmount()
+
+    const restarted = await app.mount()
+    await openBoardChat(restarted.container)
+    await click('Coworker card')
+    const details = await until(() => restarted.container.querySelector<HTMLElement>('section[aria-label="Coworker details"]:not([hidden])'))
+    expect(details.textContent).toContain('Review Box')
+    await click('Files', details)
+    await until(() => details.textContent?.includes('Open Files'))
+    await click('Open Files', details)
+    await until(() => panelDialog('Files')?.textContent?.includes('notes.md'))
+    await dismissPanel('Files')
+    await click('Close panel', restarted.container.querySelector('section[aria-label="Coworker chat"] header')!)
+    expect(restarted.container.querySelector(`[aria-label="${pill}"]`)).toBeNull()
+
+    await act(async () => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true, cancelable: true })) })
+    await enter(await until(commandField), 'Getting started')
+    await chooseOpenRow('Getting started')
+    await until(() => restarted.container.querySelector(`[aria-label="${pill}"]`))
 })

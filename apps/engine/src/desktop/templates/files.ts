@@ -36,8 +36,18 @@ export type ConfinedRead =
     | { ok: true; bytes: Buffer; text: string; inodeRevision: string; contentRevision: string }
     | { ok: false; reason: DesktopTemplateExclusionReason }
 
+// Darwin's inode anchor can be opened but cannot be passed to realpath. Keep IO
+// anchored and compare the open file to the separately authorized canonical name.
+async function matchesCanonicalFile(root: string, path: string, full: string, identity: { dev: bigint; ino: bigint }, canonicalRoot?: string): Promise<boolean> {
+    if (canonicalRoot === undefined) return await realpath(full) === resolve(await realpath(root), path)
+    const canonical = confinedFile(canonicalRoot, path)
+    if (await realpath(canonical) !== canonical) return false
+    const named = await lstat(canonical, { bigint: true })
+    return named.isFile() && named.dev === identity.dev && named.ino === identity.ino && named.nlink === BigInt(1)
+}
+
 // Read one regular file without following a link. A changed identity is a collision, not a silent reread.
-export async function readConfined(root: string, path: string, maxBytes: number): Promise<ConfinedRead> {
+export async function readConfined(root: string, path: string, maxBytes: number, canonicalRoot?: string): Promise<ConfinedRead> {
     if (!isDesktopTemplateRelativePath(path)) return { ok: false, reason: 'unsupported' }
     if (scanPathForSecrets(path).length > 0) return { ok: false, reason: 'credentials' }
     if (BINARY_EXTENSIONS.has(extensionOf(path))) return { ok: false, reason: 'binary' }
@@ -70,9 +80,7 @@ export async function readConfined(root: string, path: string, maxBytes: number)
         }
         const named = await lstat(full, { bigint: true })
         if (named.dev !== before.dev || named.ino !== before.ino || named.nlink !== BigInt(1)) return { ok: false, reason: 'collision' }
-        const rootReal = await realpath(root)
-        const fileReal = await realpath(full)
-        if (fileReal !== resolve(rootReal, path)) return { ok: false, reason: 'alias' }
+        if (!await matchesCanonicalFile(root, path, full, before, canonicalRoot)) return { ok: false, reason: 'alias' }
         if (buffer.includes(0)) return { ok: false, reason: 'binary' }
         let text: string
         try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer) }
@@ -135,7 +143,7 @@ export async function ensurePrivateDir(path: string): Promise<void> {
     } finally { await pin.close() }
 }
 
-export async function writeExclusiveFile(directory: string, relativeName: string, bytes: Buffer): Promise<'created' | 'same'> {
+export async function writeExclusiveFile(directory: string, relativeName: string, bytes: Buffer, canonicalRoot?: string): Promise<'created' | 'same'> {
     const full = confinedFile(directory, relativeName)
     const parent = join(full, '..')
     await ensurePrivateDir(parent)
@@ -144,7 +152,7 @@ export async function writeExclusiveFile(directory: string, relativeName: string
     try {
         const existing = await lstat(join(pin.pinned, name)).catch((error: NodeJS.ErrnoException) => error.code === 'ENOENT' ? null : Promise.reject(error))
         if (existing) {
-            const read = await readConfinedBytes(directory, relativeName, bytes.length)
+            const read = await readConfinedBytes(directory, relativeName, bytes.length, canonicalRoot)
             if (!read.ok || !read.bytes.equals(bytes)) throw new TemplateRequestError(409, 'A template file already exists with different bytes')
             return 'same'
         }
@@ -154,10 +162,11 @@ export async function writeExclusiveFile(directory: string, relativeName: string
             await handle.writeFile(bytes)
             await handle.sync()
             const identity = await handle.stat({ bigint: true })
-            const parentIdentity = await lstat(parent, { bigint: true })
-            try { await renameSkillEntry(parent, parentIdentity, temporary, identity, name) }
+            const parentIdentity = await lstat(pin.pinned, { bigint: true })
+            const canonicalParent = canonicalRoot === undefined ? parent : dirname(confinedFile(canonicalRoot, relativeName))
+            try { await renameSkillEntry(canonicalParent, parentIdentity, temporary, identity, name) }
             catch (error) {
-                const read = await readConfinedBytes(directory, relativeName, bytes.length)
+                const read = await readConfinedBytes(directory, relativeName, bytes.length, canonicalRoot)
                 if (!read.ok || !read.bytes.equals(bytes)) throw error
                 return 'same'
             }
@@ -227,7 +236,7 @@ export function isBinaryPath(path: string): boolean {
 }
 
 // Byte-faithful confined read. Binary files are allowed; they are never presented as text-scanned.
-export async function readConfinedBytes(root: string, path: string, maxBytes: number): Promise<ConfinedBytesRead> {
+export async function readConfinedBytes(root: string, path: string, maxBytes: number, canonicalRoot?: string): Promise<ConfinedBytesRead> {
     if (!isDesktopTemplateRelativePath(path)) return { ok: false, reason: 'unsupported' }
     if (scanPathForSecrets(path).length > 0) return { ok: false, reason: 'credentials' }
     const full = confinedFile(root, path)
@@ -259,9 +268,7 @@ export async function readConfinedBytes(root: string, path: string, maxBytes: nu
         }
         const named = await lstat(full, { bigint: true })
         if (named.dev !== before.dev || named.ino !== before.ino || named.nlink !== BigInt(1)) return { ok: false, reason: 'collision' }
-        const rootReal = await realpath(root)
-        const fileReal = await realpath(full)
-        if (fileReal !== resolve(rootReal, path)) return { ok: false, reason: 'alias' }
+        if (!await matchesCanonicalFile(root, path, full, before, canonicalRoot)) return { ok: false, reason: 'alias' }
         const looksBinary = isBinaryPath(path) || buffer.includes(0)
         let text: string | null = null
         let textScanned = false

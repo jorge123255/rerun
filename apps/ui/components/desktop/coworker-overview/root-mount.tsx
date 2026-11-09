@@ -38,7 +38,7 @@ export type DesktopCoworkerOverviewRootMountProps = {
     onOpenAcceptedPanel?: (tab: 'files' | 'memories' | 'data' | 'settings' | 'tools' | 'logs') => void
     onClose: () => void
     onShare?: () => void
-    onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void
+    onDelete?: (identity: DesktopOverviewIdentity, confirmationName: string) => void | Promise<void>
     onOpenComputer?: () => void
     onRenamed: (identity: DesktopOverviewIdentity, name: string) => void
 }
