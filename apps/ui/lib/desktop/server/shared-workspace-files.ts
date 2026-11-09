@@ -22,7 +22,7 @@ function isAbort(error: unknown): boolean {
     return error instanceof Error && error.name === 'AbortError'
 }
 
-function failure(error: unknown): never {
+export function rethrowDesktopSharedFileError(error: unknown): never {
     if (error instanceof DesktopHttpError) throw error
     if (error instanceof SharedWorkspaceFileError) throw new DesktopHttpError(error.status, error.message)
     if (isAbort(error)) throw new DesktopHttpError(499, 'This request was cancelled. Refresh Shared files before trying again.')
@@ -30,22 +30,22 @@ function failure(error: unknown): never {
     throw new DesktopHttpError(500, 'Shared files could not be opened.')
 }
 
-async function sharedDirectory(runtime: DesktopRuntime, signal?: AbortSignal): Promise<string> {
+export async function desktopSharedDirectory(runtime: DesktopRuntime, signal?: AbortSignal): Promise<string> {
     try { return await resolveEngineSharedDirectory(await canonicalDesktopEngineRoot(runtime), signal) }
-    catch (error) { failure(error) }
+    catch (error) { rethrowDesktopSharedFileError(error) }
 }
 
 export async function listDesktopSharedFiles(runtime: DesktopRuntime, path: string, access?: SharedFileAccess): Promise<SharedDirectoryListing> {
-    try { return await listSharedDirectory(await sharedDirectory(runtime, access?.signal), path, access) }
-    catch (error) { failure(error) }
+    try { return await listSharedDirectory(await desktopSharedDirectory(runtime, access?.signal), path, access) }
+    catch (error) { rethrowDesktopSharedFileError(error) }
 }
 
 export async function readDesktopSharedFile(runtime: DesktopRuntime, path: string, offset = 0, access?: SharedFileAccess): Promise<SharedTextPage> {
-    try { return await readSharedText(await sharedDirectory(runtime, access?.signal), path, offset, access) }
-    catch (error) { failure(error) }
+    try { return await readSharedText(await desktopSharedDirectory(runtime, access?.signal), path, offset, access) }
+    catch (error) { rethrowDesktopSharedFileError(error) }
 }
 
 export async function importDesktopSharedFile(runtime: DesktopRuntime, folder: string, name: string, bytes: Uint8Array, access?: SharedFileAccess): Promise<SharedImportResult> {
-    try { return await importSharedText(await sharedDirectory(runtime, access?.signal), folder, name, bytes, access) }
-    catch (error) { failure(error) }
+    try { return await importSharedText(await desktopSharedDirectory(runtime, access?.signal), folder, name, bytes, access) }
+    catch (error) { rethrowDesktopSharedFileError(error) }
 }

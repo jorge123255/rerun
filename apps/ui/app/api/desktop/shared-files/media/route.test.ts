@@ -23,8 +23,8 @@ let root: string
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-shared-media-route-'))
     Object.assign(process.env, { RERUN_DESKTOP_APP: '1', RERUN_DESKTOP_DATA_DIR: root, RERUN_DESKTOP_RUNTIME_FILE: join(root, 'runtime.json') })
-    await writeFile(join(root, 'runtime.json'), JSON.stringify({ protocolVersion: 1, launchNonce: 'shared', buildId: 'shared-test', workspaceId: 1, dataRoot: root, app: { origin, sessionToken: token }, engine: { origin: 'http://127.0.0.1:1', apiKey: 'unused' } }), { mode: 0o600 })
-    await mkdir(join(root, 'workspaces', '1', 'engine', 'shared'), { recursive: true })
+    await writeFile(join(root, 'runtime.json'), JSON.stringify({ protocolVersion: 1, launchNonce: 'shared', buildId: 'shared-test', workspaceId: 2, dataRoot: root, engineRoot: join(root, 'engine'), app: { origin, sessionToken: token }, engine: { origin: 'http://127.0.0.1:1', apiKey: 'unused' } }), { mode: 0o600 })
+    await mkdir(join(root, 'engine', 'shared'), { recursive: true })
 })
 afterEach(async () => { process.env = { ...env }; await rm(root, { recursive: true, force: true }) })
 
@@ -34,17 +34,20 @@ function request(path: string) {
 
 test('shared media returns exact bytes and a hash for Save As, not a hosted URL', async () => {
     const bytes = onePixelPng()
-    await writeFile(join(root, 'workspaces', '1', 'engine', 'shared', 'pixel.png'), bytes)
+    await writeFile(join(root, 'engine', 'shared', 'pixel.png'), bytes)
     const response = await media(request('/media?path=pixel.png'))
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toBe('image/png')
     expect(response.headers.get('content-security-policy')).toContain('sandbox')
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array(bytes))
-    expect(response.headers.get('x-rerun-shared-sha256')).toMatch(/^[a-f0-9]{64}$/)
+    const identity = response.headers.get('x-rerun-shared-sha256')
+    expect(identity).toMatch(/^[a-f0-9]{64}$/)
+    await writeFile(join(root, 'engine', 'shared', 'pixel.png'), 'replaced')
+    expect((await media(request(`/media?path=pixel.png&download=1&identity=${identity}`))).status).toBe(409)
 })
 
 test('PDF page and text are derived from the same exact document hash', async () => {
-    await writeFile(join(root, 'workspaces', '1', 'engine', 'shared', 'doc.pdf'), '%PDF-1.4\n1 0 obj\nendobj\n%%EOF')
+    await writeFile(join(root, 'engine', 'shared', 'doc.pdf'), '%PDF-1.4\n1 0 obj\nendobj\n%%EOF')
     const page = await pdf(request('/pdf?path=doc.pdf&page=1&scale=1'))
     expect(page.status).toBe(200)
     expect(page.headers.get('x-pdf-sha256')).toMatch(/^[a-f0-9]{64}$/)

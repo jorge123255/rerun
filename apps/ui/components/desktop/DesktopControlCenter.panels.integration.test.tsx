@@ -8,6 +8,7 @@ import { createDesktopDraftFixture } from '@/test/desktop-draft-fixture'
 import { createDesktopRecentFixture } from '@/test/desktop-recent-fixture'
 import { cancelDraftShutdown, flushDesktopDrafts, forgetCoworkerDrafts } from '@/lib/desktop/draft-writes'
 import { resetDesktopRecentCoworkers } from '@/lib/desktop/recent-coworkers'
+import { fxCameraWriteSchema } from '@/lib/desktop/fx-repairs/board-camera'
 import { desktopGettingStartedResponse } from '@/lib/desktop/getting-started/progress'
 import type { DesktopBoardState } from '@/lib/desktop/spaces'
 import type { DesktopTabLayout } from '@/lib/desktop/session-tabs'
@@ -143,7 +144,11 @@ function fixture(runStatus?: () => Promise<Response>, productionBoard = false) {
         const recentResponse = recent.handle(input, init)
         if (recentResponse) return recentResponse
         if (productionBoard && url.pathname === '/api/desktop/spaces' && method === 'GET') return Response.json({ board })
-        if (productionBoard && url.pathname === '/api/desktop/workspaces/2/board-camera' && method === 'GET') return Response.json({ workspaceId: 2, revision: 0, camera: null })
+        if (productionBoard && url.pathname === '/api/desktop/workspaces/2/board-camera') {
+            if (method === 'GET') return Response.json({ workspaceId: 2, revision: 0, camera: null })
+            const { workspaceId, requestId, expectedRevision, camera } = fxCameraWriteSchema.parse(JSON.parse(String(init?.body)))
+            return Response.json({ status: 'saved', requestId, snapshot: { workspaceId, revision: expectedRevision + 1, camera } })
+        }
         if (productionBoard && url.pathname === '/api/desktop/getting-started') {
             if (method === 'POST') gettingStartedDismissed = JSON.parse(String(init?.body)).action === 'dismiss'
             return Response.json(desktopGettingStartedResponse(2, gettingStartedDismissed, { coworkers: 2, connectedProviders: 0, modelChats: 0, schedules: 0 }))

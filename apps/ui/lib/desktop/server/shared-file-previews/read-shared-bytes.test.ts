@@ -8,7 +8,7 @@ import { readSharedBytes } from './read-shared-bytes'
 import { onePixelPng } from './test-helpers'
 
 let root: string
-const runtime = () => ({ dataRoot: root }) as DesktopRuntime
+const runtime = () => ({ dataRoot: root, workspaceId: 1 }) as DesktopRuntime
 
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-shared-preview-bytes-'))

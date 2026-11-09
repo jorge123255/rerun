@@ -4,12 +4,14 @@ import { lstat, realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type { FileHandle } from 'node:fs/promises'
 import { openWithoutLinks } from '../../../../../engine/src/desktop/open-without-links'
-import { resolveEngineSharedDirectory, SharedWorkspaceFileError, type SharedFileAccess } from '../../../../../engine/src/desktop/shared-workspace-files'
+import { SharedWorkspaceFileError, type SharedFileAccess } from '../../../../../engine/src/desktop/shared-workspace-files'
 import { desktopAudioKind, inspectDesktopAudioBytes } from '../audio-bytes'
 import { desktopRasterKind, inspectDesktopImageBytes } from '../image-bytes'
 import { desktopPdfKind, inspectDesktopPdfBytes } from '../pdf-bytes'
 import { desktopVideoKind, inspectDesktopVideoBytes } from '../video-bytes'
 import type { DesktopRuntime } from '../runtime'
+import { DesktopHttpError } from '../auth'
+import { desktopSharedDirectory, rethrowDesktopSharedFileError } from '../shared-workspace-files'
 
 export type SharedPreviewKind = 'image' | 'audio' | 'video' | 'pdf' | 'download'
 export type SharedPreviewBytes = { path: string; name: string; bytes: Uint8Array; contentType: string; identity: string }
@@ -39,18 +41,30 @@ function uid(): bigint {
 
 async function directory(path: string): Promise<FileHandle> {
     const handle = await openWithoutLinks(path, true)
-    const info = await handle.stat({ bigint: true })
-    if (!info.isDirectory() || info.uid !== uid() || await realpath(path) !== path) {
+    try {
+        const info = await handle.stat({ bigint: true })
+        if (!info.isDirectory() || info.uid !== uid() || await realpath(path) !== path) {
+            throw new SharedWorkspaceFileError(400, 'That path is outside the shared folder.')
+        }
+        return handle
+    } catch (error) {
         await handle.close()
-        throw new SharedWorkspaceFileError(400, 'That path is outside the shared folder.')
+        throw error
     }
-    return handle
 }
 
 export async function readSharedBytes(runtime: DesktopRuntime, path: string, kind: SharedPreviewKind, access?: SharedFileAccess): Promise<SharedPreviewBytes> {
+    try { return await read(runtime, path, kind, access) }
+    catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') throw new DesktopHttpError(404, 'Shared file not found.')
+        rethrowDesktopSharedFileError(error)
+    }
+}
+
+async function read(runtime: DesktopRuntime, path: string, kind: SharedPreviewKind, access?: SharedFileAccess): Promise<SharedPreviewBytes> {
     const parts = partsOf(path)
     const name = parts.at(-1)!
-    const root = await resolveEngineSharedDirectory(runtime.dataRoot, access?.signal)
+    const root = await desktopSharedDirectory(runtime, access?.signal)
     const rel = parts.join('/')
     await access?.beforeCommit?.()
     const rootHandle = await directory(root)

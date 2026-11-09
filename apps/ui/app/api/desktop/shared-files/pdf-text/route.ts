@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { extractDesktopPdfText } from '@/lib/desktop/server/pdf-text'
@@ -14,7 +13,7 @@ export function GET(request: Request) {
         const expectedHash = query.get('sha256')
         if (!expectedHash || !/^[a-f0-9]{64}$/.test(expectedHash)) throw new DesktopHttpError(400, 'Open the PDF page before reading its text.')
         const pdf = await readSharedBytes(runtime, query.get('path') ?? '', 'pdf', { signal: request.signal })
-        if (createHash('sha256').update(pdf.bytes).digest('hex') !== expectedHash) throw new DesktopHttpError(409, 'This shared PDF changed after the displayed page was read. Reopen it to search the current document.')
+        if (pdf.identity !== expectedHash) throw new DesktopHttpError(409, 'This shared PDF changed after the displayed page was read. Reopen it to search the current document.')
         const extract = await extractDesktopPdfText(pdf.bytes, { signal: request.signal })
         const encoded = Buffer.from(JSON.stringify({ identity: pdf.identity, path: pdf.path, pageCount: extract.pageCount, truncated: extract.truncated, reason: extract.reason, pages: extract.pages }))
         if (encoded.byteLength > DESKTOP_PDF_TEXT_MAX_RESPONSE || encoded.includes(0)) throw new DesktopHttpError(413, 'PDF text is too large to search.')
