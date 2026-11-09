@@ -1,5 +1,6 @@
 import { hasPendingSetup } from '../agents/setup.js'
 import { desktopScheduleDefinitionRevision } from '../desktop/schedule-tools/revision.js'
+import { resolveDesktopScheduleModel } from '../desktop/schedule-model.js'
 import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
 import { automationModel } from '../agents/availability.js'
 import { listAgentIdsOnDisk } from '../agents/loader.js'
@@ -112,7 +113,8 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
         // Resolved before markFired so a budget skip leaves the schedule due: it resumes on the first
         // tick after the latch clears, with no session, no run and no notification in the meantime.
         // Only the managed provider burns the workspace budget, so an agent on its own key still fires.
-        const override = await automationModel(agent, desktopApp() ? {...schedule,connectionId:null,provider:null,model:null} : schedule, 'schedule');check()
+        const pinned=desktopApp()?await resolveDesktopScheduleModel(agent,schedule):undefined;check()
+        const override = pinned ?? await automationModel(agent, desktopApp() ? {...schedule,connectionId:null,provider:null,model:null} : schedule, 'schedule');check()
         if(desktopApp())assertDesktopProvider(override.provider ?? agent.resolved.provider,override.connectionId ?? agent.resolved.connection?.id)
         await authorize();check()
         const latest=await readSchedule(agentId,schedule.slug);check()

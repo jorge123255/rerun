@@ -14,6 +14,10 @@ const state = vi.hoisted(() => ({
     receipts:{} as Record<string,{runId:string;sessionId:string}|'incomplete'>,
     files: {} as Record<string,unknown>,
     modelWait:null as Promise<void>|null,
+    modelUsable:true,
+    resolvedConnection:null as string|null,
+    resolvedProvider:null as string|null,
+    resolvedModel:null as string|null,
     agents: {} as Record<string, { id: string; config: { enabled: boolean; setup?: { required: boolean; completedAt: string | null } }; install?: string } | Error>,
     agentIds: [] as string[] | Error,
     schedules: {} as Record<string, unknown[] | Error>,
@@ -32,6 +36,12 @@ vi.mock('../desktop/policy.js',()=>({desktopApp:()=>state.desktop,assertDesktopP
 vi.mock('./desktop-schedule-state.js',()=>({replayDesktopSchedule:async(a:string,s:string,id:string)=>{const receipt=state.receipts[`${a}/${s}/${id}`];if(receipt==='incomplete')throw new Error('reconciliation required');return receipt ?? null},claimDesktopSchedule:async()=>true,recordDesktopSchedule:async(a:string,s:{slug:string},id:string,sessionId:string,runId:string)=>{state.receipts[`${a}/${s.slug}/${id}`]={sessionId,runId}},finishDesktopSchedule:async()=>{}}))
 vi.mock('../agents/availability.js', () => ({
     automationModel: async (_agent: unknown, schedule: { model?: string | null }) => {await state.modelWait;return { provider: state.provider, model: schedule.model ?? 'm' }},
+    resolveRunModel: async (_agent: unknown, override: { connectionId: string; provider: string; model: string }) => ({
+        connection: { id: state.resolvedConnection ?? override.connectionId },
+        provider: state.resolvedProvider ?? override.provider,
+        model: state.resolvedModel ?? override.model,
+    }),
+    isUsable: () => state.modelUsable,
 }))
 vi.mock('../agents/loader.js', () => ({
     listAgentIdsOnDisk: async () => {
@@ -57,6 +67,11 @@ vi.mock('../schedules/loader.js', () => ({
         return list
     },
     markFired: state.markFired,
+    consumeDesktopSchedule: async (_agentId: string, current: { slug: string; runAt: string | null; enabled: boolean }, firedAt: string) => {
+        const next = { ...current, lastRunAt: firedAt, enabled: current.runAt ? false : current.enabled }
+        state.files[current.slug] = next
+        return next
+    },
 }))
 vi.mock('../schedules/cron.js', () => ({
     isDue: (schedule: { slug: string }) => state.due.has(schedule.slug),
@@ -104,6 +119,10 @@ beforeEach(() => {
     state.schedules = {}
     state.due = new Set()
     state.provider = 'rerun'
+    state.modelUsable = true
+    state.resolvedConnection = null
+    state.resolvedProvider = null
+    state.resolvedModel = null
 })
 
 afterEach(async () => {
@@ -396,5 +415,69 @@ it('does not manually probe a paused task while its coworker still needs setup',
     await expect(fireSchedule('on', task, { markFired: false, manualId: 'setup-probe' })).rejects.toMatchObject({ status: 409 })
     expect(state.runs).toHaveLength(0)
     expect(state.sessions).toBe(0)
+    await stop.drain()
+})
+
+
+function desktopRoutineScheduler() {
+    state.agentIds = []
+    const stop = startScheduler()
+    state.desktop = true
+    configureDesktopSchedules({ authorize: async () => {}, adopt: async () => {} })
+    return stop
+}
+
+it('dispatches an automatic desktop routine on its exact saved connection and model', async () => {
+    const stop = desktopRoutineScheduler()
+    const task = schedule('exact-automatic', { connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })
+    state.due.add(task.slug)
+
+    await fireSchedule('on', task)
+
+    expect(state.runs).toHaveLength(1)
+    expect(state.runs[0].override).toEqual({ connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })
+    expect(state.files[task.slug]).toMatchObject({ lastRunAt: expect.any(String) })
+    await stop.drain()
+})
+
+it('dispatches a manual desktop probe on its exact saved connection and model', async () => {
+    const stop = desktopRoutineScheduler()
+    const task = schedule('exact-manual', { connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })
+
+    await fireSchedule('on', task, { markFired: false, manualId: 'exact-probe' })
+
+    expect(state.runs).toHaveLength(1)
+    expect(state.runs[0].override).toEqual({ connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })
+    expect(state.files[task.slug]).toMatchObject({ lastRunAt: null })
+    expect(state.markFired).not.toHaveBeenCalled()
+    await stop.drain()
+})
+
+it('refuses an unavailable automatic desktop pin before consuming or launching', async () => {
+    const stop = desktopRoutineScheduler()
+    const task = schedule('stale-automatic', { connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })
+    state.due.add(task.slug)
+    state.modelUsable = false
+
+    await expect(fireSchedule('on', task)).rejects.toMatchObject({ status: 409 })
+
+    expect(state.files[task.slug]).toMatchObject({ lastRunAt: null })
+    expect(state.sessions).toBe(0)
+    expect(state.sent).toHaveLength(0)
+    expect(state.runs).toHaveLength(0)
+    await stop.drain()
+})
+
+it('refuses a substituted manual desktop pin before consuming or launching', async () => {
+    const stop = desktopRoutineScheduler()
+    const task = schedule('stale-manual', { connectionId: 'conn-b', provider: 'openai', model: 'gpt-exact' })
+    state.resolvedModel = 'gpt-trial'
+
+    await expect(fireSchedule('on', task, { markFired: false, manualId: 'stale-probe' })).rejects.toMatchObject({ status: 409 })
+
+    expect(state.files[task.slug]).toMatchObject({ lastRunAt: null })
+    expect(state.sessions).toBe(0)
+    expect(state.sent).toHaveLength(0)
+    expect(state.runs).toHaveLength(0)
     await stop.drain()
 })
