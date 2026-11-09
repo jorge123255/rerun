@@ -14,7 +14,7 @@ const toEntry = (entry: DesktopSharedEntry): FileEntry => ({ name: entry.name, t
 
 /**
  * The shared-folder tree the Brain sidebar and the folder page both read.
- * Listing is the desktop folder API. Admission stays in `importDesktopSharedFile`, which the
+ * Listing is the desktop folder API. Admission stays in `importDesktopSharedFiles`, which the
  * panel calls on upload, so a change there shows up here without a second store.
  */
 export function useDesktopSharedFilesTree(): DesktopSharedFilesTree {

@@ -15,8 +15,8 @@ import type { DataFocus } from '@/lib/data/source'
 import { humanizeTableName } from '@/lib/data/table-name'
 import { DesktopBrainRequestError, type DesktopBrainOverview as PagesOverview } from '@/lib/desktop/brain-pages'
 import { desktopDataSource } from '@/lib/desktop/data-source'
-import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
-import { importDesktopSharedFile } from '@/lib/desktop/shared-workspace-files'
+import { holdDraftAdmission, isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
+import { importDesktopSharedFiles, type DesktopSharedImportResult } from '@/lib/desktop/shared-workspace-files'
 import { flushDesktopBrainDrafts, forgetBrainDraft, brainDraftHash, type BrainPageDetail } from '@/lib/desktop/use-brain-page-draft'
 import type { EngineDbTable } from '@/lib/engine/types'
 import type { UploadEntry } from '@/lib/files/upload'
@@ -97,7 +97,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     onRouteConsumed?: () => void
     /** Tests pass a tree. The panel otherwise lists the shared folder itself. */
     files?: SharedFilesTree
-    /** Tests pass an upload. The panel otherwise calls `importDesktopSharedFile`. */
+    /** Tests pass an upload. The panel otherwise calls `importDesktopSharedFiles`. */
     onUpload?: (entries: UploadEntry[], dir: string) => void
 }) {
     const isMobile = useIsMobile()
@@ -110,9 +110,19 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     const [dataFocus, setDataFocus] = useState<DataFocus | null>(null)
     const [tables, setTables] = useState<EngineDbTable[] | null>(null)
     const [tablesError, setTablesError] = useState<string | null>(null)
+    const [importResults, setImportResults] = useState<DesktopSharedImportResult[]>([])
+    const [importing, setImporting] = useState(false)
     const searchRef = useRef<HTMLInputElement>(null)
     const selectionRef = useRef(selection)
+    const importController = useRef<AbortController | null>(null)
+    const importSources = useRef(new WeakMap<DesktopSharedImportResult, File>())
+    const importMounted = useRef(true)
     useEffect(() => { selectionRef.current = selection })
+    useEffect(() => {
+        importMounted.current = true
+        const stop = subscribeDraftShutdown(() => importController.current?.abort())
+        return () => { importMounted.current = false; importController.current?.abort(); stop() }
+    }, [])
     const dataSource = useMemo(() => desktopDataSource({ kind: 'shared' }), [])
 
     const pages = useMemo(() => (overview?.available ? overview.pages : []), [overview])
@@ -267,18 +277,79 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     const refreshListed = files.refresh
     const uploadFiles = useCallback(async (entries: UploadEntry[], dir: string) => {
         if (onUpload) { onUpload(entries, dir); return }
-        if (isDesktopQuitting()) return
+        if (importController.current || isDesktopQuitting()) return
+        if (entries.length > 16) { toast.error('Import at most 16 files at a time.'); return }
+        if (entries.reduce((total, entry) => total + entry.file.size, 0) > 32 * 1024 * 1024) { toast.error('Import at most 32 MB at a time.'); return }
+        const controller = new AbortController()
+        importController.current = controller
         const release = holdDraftAdmission()
+        setImporting(true)
+        const active = () => importMounted.current && !controller.signal.aborted && !isDesktopQuitting()
         try {
+            const groups = new Map<string, File[]>()
             for (const entry of entries) {
-                if (isDesktopQuitting()) break
                 const folder = [dir, entry.subDir].filter(Boolean).join('/')
-                try { await importDesktopSharedFile(folder, entry.file) }
-                catch (error) { toast.error(error instanceof Error && error.message ? error.message : `Could not import ${entry.file.name}.`) }
+                const batch = groups.get(folder) ?? []
+                batch.push(entry.file)
+                groups.set(folder, batch)
             }
-            await refreshListed(dir)
-        } finally { release() }
+            const imported: DesktopSharedImportResult[] = []
+            for (const [folder, batch] of groups) {
+                if (!active()) return
+                let groupResults: DesktopSharedImportResult[]
+                try {
+                    groupResults = await importDesktopSharedFiles(folder, batch, controller.signal)
+                } catch (error) {
+                    if (!active()) return
+                    groupResults = batch.map(file => ({ name: file.name, folder, status: 'uncertain', message: error instanceof Error && error.message ? error.message : 'This import could not be confirmed. Inspect Shared files before trying again.' }))
+                }
+                groupResults.forEach((result, index) => {
+                    const file = batch[index]
+                    if (file) importSources.current.set(result, file)
+                })
+                imported.push(...groupResults)
+                if (active()) setImportResults([...imported])
+            }
+            if (active()) await refreshListed(dir)
+        } finally {
+            if (importController.current === controller) importController.current = null
+            if (importMounted.current) setImporting(false)
+            release()
+        }
     }, [onUpload, refreshListed])
+
+    const retryImport = useCallback(async (result: DesktopSharedImportResult) => {
+        if (importController.current || result.status !== 'refused' || isDesktopQuitting()) return
+        const folder = result.folder ?? ''
+        const file = importSources.current.get(result)
+        if (!file) return
+        const controller = new AbortController()
+        importController.current = controller
+        const release = holdDraftAdmission()
+        setImporting(true)
+        const active = () => importMounted.current && !controller.signal.aborted && !isDesktopQuitting()
+        try {
+            const imported = await importDesktopSharedFiles(folder, [file], controller.signal)
+            const next = imported[0]
+            if (active() && next) {
+                importSources.current.set(next, file)
+                setImportResults(current => current.map(item => item === result ? next : item))
+            }
+            if (active() && next?.status === 'created') {
+                await refreshListed(folder)
+                const selected = selectionRef.current
+                if (selected?.kind === 'folder' && selected.path !== folder) await refreshListed(selected.path)
+            }
+        } catch (error) {
+            if (active()) setImportResults(current => current.map(item => item === result
+                ? { ...item, status: 'uncertain', message: error instanceof Error && error.message ? error.message : 'This import could not be confirmed. Inspect Shared files before trying again.' }
+                : item))
+        } finally {
+            if (importController.current === controller) importController.current = null
+            if (importMounted.current) setImporting(false)
+            release()
+        }
+    }, [refreshListed])
 
     const openPage = useCallback((slug: string) => select({ kind: 'page', slug }), [select])
     const linkableFiles = useMemo(() => linkableSharedFiles(files.knownFiles), [files.knownFiles])
@@ -437,7 +508,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
             case 'proposals':
                 return renderProposals ? <>{renderProposals()}</> : <BrainTopBar crumbs={[{ label: 'Brain', icon: BrainIcon }]} />
             case 'folder':
-                return <DesktopBrainFolder path={selection.path} files={files} onSelect={select} onUpload={uploadFiles} />
+                return <DesktopBrainFolder path={selection.path} files={files} onSelect={select} onUpload={uploadFiles} importResults={importResults} importing={importing} onRetryImport={result => void retryImport(result)} />
             case 'file':
                 return <DesktopBrainFile path={selection.path} files={files} onSelect={select} />
             case 'database':
